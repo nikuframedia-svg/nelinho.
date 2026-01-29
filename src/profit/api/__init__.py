@@ -18,3 +18,12 @@ router.include_router(pricing_router)
 router.include_router(scenarios_router)
 router.include_router(kpis_router)
 
+
+
+
+
+
+
+
+
+

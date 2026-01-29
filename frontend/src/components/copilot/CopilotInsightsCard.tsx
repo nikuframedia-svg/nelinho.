@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Bot,
   AlertTriangle,
@@ -8,7 +8,6 @@ import {
   Loader2,
   BookOpen,
   MessageSquare,
-  Sparkles,
   TrendingUp,
   CheckCircle2,
   XCircle,
@@ -67,7 +66,16 @@ export function CopilotInsightsCard() {
   const explainMutation = useMutation({
     mutationFn: (data: { recommendations: InsightItem[]; user_query?: string }) =>
       copilotApi.explainRecommendations(data),
-    onSuccess: (response, variables) => {
+  });
+
+  // Track the last mutation variables to get itemId in useEffect
+  const [lastMutationVariables, setLastMutationVariables] = useState<{ recommendations: InsightItem[]; user_query?: string } | null>(null);
+
+  // Handle explainMutation success (React Query v5 pattern)
+  useEffect(() => {
+    if (explainMutation.isSuccess && explainMutation.data && lastMutationVariables) {
+      const response = explainMutation.data;
+      const variables = lastMutationVariables;
       const itemId = variables.recommendations[0]?.id;
       if (itemId) {
         setExplanations((prev) => ({ ...prev, [itemId]: response }));
@@ -77,11 +85,16 @@ export function CopilotInsightsCard() {
           return next;
         });
       }
-    },
-    onError: (error: any) => {
+    }
+  }, [explainMutation.isSuccess, explainMutation.data, lastMutationVariables]);
+
+  // Handle explainMutation error (React Query v5 pattern)
+  useEffect(() => {
+    if (explainMutation.isError && explainMutation.error) {
+      const error = explainMutation.error as any;
       console.error('Erro ao obter explicação:', error);
       // Mesmo em caso de erro, remover loading state
-      const itemId = expandedNext ? Array.from(expandedNext)[0] : null;
+      const itemId = expandedNext.size > 0 ? Array.from(expandedNext)[0] : null;
       if (itemId) {
         setLoadingExplanation((prev) => {
           const next = new Set(prev);
@@ -92,20 +105,28 @@ export function CopilotInsightsCard() {
         setExplanations((prev) => ({
           ...prev,
           [itemId]: {
+            suggestion_id: `error-${Date.now()}`,
+            correlation_id: `error-${Date.now()}`,
             type: 'ERROR',
+            intent: 'generic',
             summary: error.message || 'Erro ao obter explicação do COPILOT',
             facts: [],
             actions: [],
-            citations: [],
             warnings: [{
               code: 'SERVICE_ERROR',
               message: error.message || 'O backend ou o Ollama podem não estar a correr.',
             }],
+            meta: {
+              model: 'unknown',
+              tokens: 0,
+              latency_ms: 0,
+              validation_passed: false,
+            },
           } as CopilotResponse,
         }));
       }
-    },
-  });
+    }
+  }, [explainMutation.isError, explainMutation.error, expandedNext]);
 
   const handleToggleNow = (id: string) => {
     setExpandedNow((prev) => {
@@ -142,36 +163,38 @@ export function CopilotInsightsCard() {
   };
 
   const handleExplainRecommendation = async (item: InsightItem) => {
-    setLoadingExplanation((prev) => new Set(prev).add(item.id));
-    await explainMutation.mutateAsync({
+    const variables = {
       recommendations: [item],
       user_query: `Explica como implementar esta recomendação, com origem/confiança/limitações: ${item.title}`,
-    });
+    };
+    setLastMutationVariables(variables);
+    setLoadingExplanation((prev) => new Set(prev).add(item.id));
+    await explainMutation.mutateAsync(variables);
   };
 
   const getSeverityIcon = (severity: string) => {
     switch (severity) {
       case 'CRITICAL':
         return (
-          <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-red-500 to-red-600 flex items-center justify-center shadow-sm ring-2 ring-red-200/50">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-red-500 to-red-600 flex items-center justify-center shadow-glow-red border border-red-500/30">
             <XCircle size={20} className="text-white" />
           </div>
         );
       case 'WARN':
         return (
-          <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-yellow-500 to-yellow-600 flex items-center justify-center shadow-sm ring-2 ring-yellow-200/50">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500 to-amber-600 flex items-center justify-center shadow-glow-amber border border-amber-500/30">
             <AlertTriangle size={20} className="text-white" />
           </div>
         );
       case 'INFO':
         return (
-          <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-sm ring-2 ring-blue-200/50">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-glow-blue border border-blue-500/30">
             <Info size={20} className="text-white" />
           </div>
         );
       default:
         return (
-          <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-slate-400 to-slate-500 flex items-center justify-center shadow-sm">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-slate-500 to-slate-600 flex items-center justify-center border border-slate-500/30">
             <Info size={20} className="text-white" />
           </div>
         );
@@ -180,27 +203,27 @@ export function CopilotInsightsCard() {
 
   const getSeverityBadge = (severity: string) => {
     const classes = {
-      CRITICAL: 'bg-gradient-to-r from-red-50 to-red-100 text-red-800 border-red-300 shadow-sm',
-      WARN: 'bg-gradient-to-r from-yellow-50 to-yellow-100 text-yellow-800 border-yellow-300 shadow-sm',
-      INFO: 'bg-gradient-to-r from-blue-50 to-blue-100 text-blue-800 border-blue-300 shadow-sm',
+      CRITICAL: 'bg-red-500/15 text-red-400 border-red-500/30',
+      WARN: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
+      INFO: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
     };
     return classes[severity as keyof typeof classes] || classes.INFO;
   };
 
   const getCategoryBadge = (category: string) => {
     const classes = {
-      QUALITY: 'bg-gradient-to-r from-red-50 to-red-100 text-red-800 border-red-300 shadow-sm',
-      PERFORMANCE: 'bg-gradient-to-r from-amber-50 to-amber-100 text-amber-800 border-amber-300 shadow-sm',
-      MAINTENANCE: 'bg-gradient-to-r from-blue-50 to-blue-100 text-blue-800 border-blue-300 shadow-sm',
-      STANDARD_WORK: 'bg-gradient-to-r from-purple-50 to-purple-100 text-purple-800 border-purple-300 shadow-sm',
+      QUALITY: 'bg-red-500/15 text-red-400 border-red-500/30',
+      PERFORMANCE: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
+      MAINTENANCE: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
+      STANDARD_WORK: 'bg-purple-500/15 text-purple-400 border-purple-500/30',
     };
-    return classes[category as keyof typeof classes] || 'bg-gradient-to-r from-slate-50 to-slate-100 text-slate-800 border-slate-300 shadow-sm';
+    return classes[category as keyof typeof classes] || 'bg-slate-500/15 text-slate-400 border-slate-500/30';
   };
 
   const getPriorityBadge = (priority: number) => {
-    if (priority === 1) return 'bg-gradient-to-br from-red-500 to-red-600 shadow-md ring-2 ring-red-200/50';
-    if (priority === 2) return 'bg-gradient-to-br from-yellow-500 to-yellow-600 shadow-md ring-2 ring-yellow-200/50';
-    return 'bg-gradient-to-br from-blue-500 to-blue-600 shadow-md ring-2 ring-blue-200/50';
+    if (priority === 1) return 'bg-gradient-to-br from-red-500 to-red-600 shadow-glow-red border border-red-500/30';
+    if (priority === 2) return 'bg-gradient-to-br from-amber-500 to-amber-600 shadow-glow-amber border border-amber-500/30';
+    return 'bg-gradient-to-br from-blue-500 to-blue-600 shadow-glow-blue border border-blue-500/30';
   };
 
   const getOriginIcon = (origin: string) => {
@@ -220,25 +243,19 @@ export function CopilotInsightsCard() {
 
   const getConfidenceBadge = (confidence: string) => {
     const classes = {
-      LOW: 'bg-red-50 text-red-700 border-red-200',
-      MEDIUM: 'bg-yellow-50 text-yellow-700 border-yellow-200',
-      MEDIUM_HIGH: 'bg-blue-50 text-blue-700 border-blue-200',
-      HIGH: 'bg-green-50 text-green-700 border-green-200',
+      LOW: 'bg-red-500/15 text-red-400 border-red-500/30',
+      MEDIUM: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
+      MEDIUM_HIGH: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
+      HIGH: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
     };
     return classes[confidence as keyof typeof classes] || classes.MEDIUM;
   };
 
   if (isLoading) {
     return (
-      <div 
-        className="rounded-2xl p-6 border border-slate-200/50 backdrop-blur-sm"
-        style={{
-          background: 'linear-gradient(to bottom, #ffffff 0%, #f8fafc 100%)',
-          boxShadow: '0 8px 24px rgba(0, 0, 0, 0.04), 0 2px 8px rgba(0, 0, 0, 0.02)',
-        }}
-      >
-        <div className="flex items-center gap-3 text-slate-600">
-          <Loader2 size={24} className="animate-spin text-[#FF6B6B]" />
+      <div className="glass-card-strong p-6">
+        <div className="flex items-center gap-3 text-slate-400">
+          <Loader2 size={24} className="animate-spin text-accent-400" />
           <span className="font-medium">A carregar insights do COPILOT...</span>
         </div>
       </div>
@@ -266,51 +283,45 @@ export function CopilotInsightsCard() {
       ];
 
   return (
-    <div 
-      className="rounded-2xl p-6 border border-slate-200/50 backdrop-blur-sm transition-all duration-300 hover:shadow-xl"
-      style={{
-        background: 'linear-gradient(to bottom, #ffffff 0%, #f8fafc 100%)',
-        boxShadow: '0 8px 24px rgba(0, 0, 0, 0.04), 0 2px 8px rgba(0, 0, 0, 0.02)',
-      }}
-    >
+    <div className="glass-card-strong p-6 transition-all duration-300">
       {/* Header */}
-      <div className="flex items-start justify-between mb-6 pb-4 border-b border-slate-200/60">
+      <div className="flex items-start justify-between mb-6 pb-4 border-b border-white/[0.06]">
         <div className="flex items-center gap-3 flex-1">
-          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-[#FF6B6B] to-red-600 flex items-center justify-center shadow-lg ring-2 ring-[#FF6B6B]/20">
+          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-accent-500 to-accent-600 flex items-center justify-center shadow-glow-teal border border-accent-500/30">
             <Bot size={24} className="text-white" />
           </div>
           <div className="flex-1">
             <div className="flex items-center gap-2 mb-1">
-              <h3 className="text-2xl font-bold text-[#1a2744] tracking-tight">COPILOT INSIGHTS</h3>
-              <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs font-semibold rounded-full border border-green-200">
+              <h3 className="text-xl font-bold text-slate-100 tracking-tight">COPILOT INSIGHTS</h3>
+              <span className="px-2 py-0.5 bg-emerald-500/15 text-emerald-400 text-xs font-semibold rounded-full border border-emerald-500/30">
                 LIVE
               </span>
             </div>
-            <p className="text-sm text-slate-600/70">O que merece atenção agora e o que melhorar a seguir</p>
+            <p className="text-sm text-slate-500">O que merece atenção agora e o que melhorar a seguir</p>
           </div>
         </div>
-        <div className="text-xs text-slate-500/60 italic">
+        <div className="text-xs text-slate-600 italic">
           Insights gerados pelo COPILOT
         </div>
       </div>
 
       {/* Secção A: Agora (Estado Atual) */}
-      <div className="mb-8 bg-slate-50/50 rounded-xl p-4 -mx-2">
+      <div className="mb-8 bg-white/[0.02] rounded-xl p-4 -mx-2 border border-white/[0.04]">
         <div className="flex items-center gap-3 mb-5">
-          <div className="w-1 h-8 bg-gradient-to-b from-red-500 to-red-600 rounded-full shadow-sm" />
-          <Zap size={18} className="text-red-500" />
-          <h4 className="font-bold text-slate-900 text-lg">Agora (Estado Atual)</h4>
+          <div className="w-1 h-8 bg-gradient-to-b from-red-500 to-red-600 rounded-full" />
+          <Zap size={18} className="text-red-400" />
+          <h4 className="font-bold text-slate-200 text-lg">Agora (Estado Atual)</h4>
         </div>
 
         <div className="space-y-3">
           {nowItems.map((item) => (
             <div
               key={item.id}
-              className="bg-white rounded-lg border border-slate-200/60 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 ease-out overflow-hidden"
+              className="bg-white/[0.03] rounded-xl border border-white/[0.06] hover:border-white/[0.1] transition-all duration-200 overflow-hidden"
             >
               <button
                 onClick={() => handleToggleNow(item.id)}
-                className="w-full p-4 flex items-center justify-between text-left hover:bg-slate-50/50 transition-colors"
+                className="w-full p-4 flex items-center justify-between text-left hover:bg-white/[0.02] transition-colors"
               >
                 <div className="flex items-center gap-3 flex-1 min-w-0">
                   <div className="flex-shrink-0">
@@ -318,36 +329,36 @@ export function CopilotInsightsCard() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1.5">
-                      <span className={`px-2.5 py-1 rounded-md text-xs font-semibold border ${getSeverityBadge(
+                      <span className={`px-2.5 py-1 rounded-lg text-xs font-semibold border ${getSeverityBadge(
                         item.severity || 'INFO'
                       )}`}>
                         {item.severity || 'INFO'}
                       </span>
-                      <h5 className="font-bold text-slate-900 truncate text-base">{item.title}</h5>
+                      <h5 className="font-bold text-slate-200 truncate text-base">{item.title}</h5>
                     </div>
-                    <p className="text-sm text-slate-600 truncate leading-relaxed">{item.text || item.description}</p>
+                    <p className="text-sm text-slate-500 truncate leading-relaxed">{item.text || item.description}</p>
                   </div>
                 </div>
                 <div className="flex-shrink-0 ml-2">
                   {expandedNow.has(item.id) ? (
-                    <ChevronUp size={20} className="text-slate-400 transition-transform duration-200" />
+                    <ChevronUp size={20} className="text-slate-500 transition-transform duration-200" />
                   ) : (
-                    <ChevronDown size={20} className="text-slate-400 transition-transform duration-200" />
+                    <ChevronDown size={20} className="text-slate-500 transition-transform duration-200" />
                   )}
                 </div>
               </button>
 
               {expandedNow.has(item.id) && (
-                <div className="px-4 pb-4 pt-0 border-t border-slate-100 space-y-3 animate-in slide-in-from-top-2 duration-200">
+                <div className="px-4 pb-4 pt-0 border-t border-white/[0.06] space-y-3">
                   {/* Citations */}
                   {item.citations && item.citations.length > 0 && (
                     <div>
-                      <p className="text-xs font-semibold text-slate-700 mb-2">Citações:</p>
+                      <p className="text-xs font-semibold text-slate-400 mb-2">Citações:</p>
                       <div className="flex flex-wrap gap-1">
                         {item.citations.map((citation, idx) => (
                           <span
                             key={idx}
-                            className="text-xs px-2 py-0.5 bg-slate-100 rounded text-slate-600"
+                            className="text-xs px-2 py-0.5 bg-white/[0.05] rounded-lg text-slate-400 border border-white/[0.06]"
                           >
                             {citation.label || citation.ref}
                           </span>
@@ -359,11 +370,11 @@ export function CopilotInsightsCard() {
                   {/* Suggested Actions */}
                   {item.suggested_actions && item.suggested_actions.length > 0 && (
                     <div>
-                      <p className="text-xs font-semibold text-slate-700 mb-2">Ações sugeridas:</p>
+                      <p className="text-xs font-semibold text-slate-400 mb-2">Ações sugeridas:</p>
                       <ul className="space-y-1">
                         {item.suggested_actions.map((action, idx) => (
-                          <li key={idx} className="text-xs text-slate-600 flex items-start gap-2">
-                            <CheckCircle2 size={12} className="text-slate-400 mt-0.5 flex-shrink-0" />
+                          <li key={idx} className="text-xs text-slate-500 flex items-start gap-2">
+                            <CheckCircle2 size={12} className="text-emerald-500 mt-0.5 flex-shrink-0" />
                             <span>{action}</span>
                           </li>
                         ))}
@@ -374,14 +385,14 @@ export function CopilotInsightsCard() {
                   {/* Buttons */}
                   <div className="flex gap-2 pt-3">
                     {item.suggested_runbooks && item.suggested_runbooks.length > 0 && (
-                      <button className="text-xs px-3 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-slate-700 flex items-center gap-1.5 font-medium transition-all duration-150 hover:shadow-sm">
+                      <button className="text-xs px-3 py-2 bg-white/[0.05] hover:bg-white/[0.08] rounded-xl text-slate-400 flex items-center gap-1.5 font-medium transition-all duration-150 border border-white/[0.06]">
                         <BookOpen size={14} />
                         Abrir Runbook
                       </button>
                     )}
                     <button
                       onClick={() => handleOpenInCopilot(item, 'alert')}
-                      className="text-xs px-3 py-2 bg-gradient-to-r from-[#FF6B6B]/10 to-[#FF6B6B]/15 hover:from-[#FF6B6B]/20 hover:to-[#FF6B6B]/25 rounded-lg text-[#FF6B6B] flex items-center gap-1.5 font-semibold transition-all duration-150 hover:shadow-sm border border-[#FF6B6B]/20"
+                      className="text-xs px-3 py-2 bg-accent-500/15 hover:bg-accent-500/25 rounded-xl text-accent-400 flex items-center gap-1.5 font-semibold transition-all duration-150 border border-accent-500/30"
                     >
                       <MessageSquare size={14} />
                       Abrir no Copilot
@@ -395,59 +406,59 @@ export function CopilotInsightsCard() {
       </div>
 
       {/* Secção B: Próximos Passos (Melhoria) */}
-      <div className="bg-blue-50/30 rounded-xl p-4 -mx-2">
+      <div className="bg-blue-500/[0.03] rounded-xl p-4 -mx-2 border border-blue-500/10">
         <div className="flex items-center gap-3 mb-5">
-          <div className="w-1 h-8 bg-gradient-to-b from-blue-500 to-blue-600 rounded-full shadow-sm" />
-          <Target size={18} className="text-blue-500" />
-          <h4 className="font-bold text-slate-900 text-lg">Próximos Passos (Melhoria)</h4>
+          <div className="w-1 h-8 bg-gradient-to-b from-blue-500 to-blue-600 rounded-full" />
+          <Target size={18} className="text-blue-400" />
+          <h4 className="font-bold text-slate-200 text-lg">Próximos Passos (Melhoria)</h4>
         </div>
 
         <div className="space-y-3">
           {insights.next.map((item) => (
             <div
               key={item.id}
-              className="bg-white rounded-lg border border-slate-200/60 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 ease-out overflow-hidden"
+              className="bg-white/[0.03] rounded-xl border border-white/[0.06] hover:border-white/[0.1] transition-all duration-200 overflow-hidden"
             >
               <button
                 onClick={() => handleToggleNext(item.id)}
-                className="w-full p-4 flex items-center justify-between text-left hover:bg-slate-50/50 transition-colors"
+                className="w-full p-4 flex items-center justify-between text-left hover:bg-white/[0.02] transition-colors"
               >
                 <div className="flex items-center gap-3 flex-1 min-w-0">
-                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-white font-bold text-sm shadow-sm ${getPriorityBadge(item.priority || 999)}`}>
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-sm ${getPriorityBadge(item.priority || 999)}`}>
                     {item.priority || '?'}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                      <span className={`px-2.5 py-1 rounded-md text-xs font-semibold border ${getCategoryBadge(
+                      <span className={`px-2.5 py-1 rounded-lg text-xs font-semibold border ${getCategoryBadge(
                         item.category || 'GENERAL'
                       )}`}>
                         {item.category || 'GENERAL'}
                       </span>
-                      <h5 className="font-bold text-slate-900 text-base">{item.title}</h5>
+                      <h5 className="font-bold text-slate-200 text-base">{item.title}</h5>
                     </div>
-                    <p className="text-sm text-slate-600 truncate leading-relaxed">{item.description}</p>
+                    <p className="text-sm text-slate-500 truncate leading-relaxed">{item.description}</p>
                   </div>
                 </div>
                 <div className="flex-shrink-0 ml-2">
                   {expandedNext.has(item.id) ? (
-                    <ChevronUp size={20} className="text-slate-400 transition-transform duration-200" />
+                    <ChevronUp size={20} className="text-slate-500 transition-transform duration-200" />
                   ) : (
-                    <ChevronDown size={20} className="text-slate-400 transition-transform duration-200" />
+                    <ChevronDown size={20} className="text-slate-500 transition-transform duration-200" />
                   )}
                 </div>
               </button>
 
               {expandedNext.has(item.id) && (
-                <div className="px-4 pb-4 pt-0 border-t border-slate-100 space-y-3 animate-in slide-in-from-top-2 duration-200">
+                <div className="px-4 pb-4 pt-0 border-t border-white/[0.06] space-y-3">
                   {/* Origem */}
                   {item.origins && item.origins.length > 0 && (
                     <div>
-                      <p className="text-xs font-semibold text-slate-700 mb-2">Origem:</p>
+                      <p className="text-xs font-semibold text-slate-400 mb-2">Origem:</p>
                       <div className="flex flex-wrap gap-2">
                         {item.origins.map((origin, idx) => (
                           <span
                             key={idx}
-                            className="text-xs px-2 py-0.5 bg-slate-100 rounded text-slate-600 flex items-center gap-1"
+                            className="text-xs px-2 py-0.5 bg-white/[0.05] rounded-lg text-slate-400 flex items-center gap-1 border border-white/[0.06]"
                           >
                             <span>{getOriginIcon(origin)}</span>
                             {origin}
@@ -460,8 +471,8 @@ export function CopilotInsightsCard() {
                   {/* Confiança */}
                   {item.confidence && (
                     <div>
-                      <p className="text-xs font-semibold text-slate-700 mb-2">Confiança:</p>
-                      <span className={`text-xs px-2 py-0.5 rounded border ${getConfidenceBadge(item.confidence)}`}>
+                      <p className="text-xs font-semibold text-slate-400 mb-2">Confiança:</p>
+                      <span className={`text-xs px-2.5 py-1 rounded-lg border ${getConfidenceBadge(item.confidence)}`}>
                         {item.confidence}
                       </span>
                     </div>
@@ -470,11 +481,11 @@ export function CopilotInsightsCard() {
                   {/* Limitações */}
                   {item.limitations && item.limitations.length > 0 && (
                     <div>
-                      <p className="text-xs font-semibold text-slate-700 mb-2">Limitações:</p>
+                      <p className="text-xs font-semibold text-slate-400 mb-2">Limitações:</p>
                       <ul className="space-y-1">
                         {item.limitations.map((limitation, idx) => (
-                          <li key={idx} className="text-xs text-slate-600 flex items-start gap-2">
-                            <AlertCircle size={12} className="text-amber-500 mt-0.5 flex-shrink-0" />
+                          <li key={idx} className="text-xs text-slate-500 flex items-start gap-2">
+                            <AlertCircle size={12} className="text-amber-400 mt-0.5 flex-shrink-0" />
                             <span>{limitation}</span>
                           </li>
                         ))}
@@ -485,12 +496,12 @@ export function CopilotInsightsCard() {
                   {/* Próximo Passo */}
                   {item.next_steps && item.next_steps.length > 0 && (
                     <div>
-                      <p className="text-xs font-semibold text-slate-700 mb-2">Próximo passo:</p>
+                      <p className="text-xs font-semibold text-slate-400 mb-2">Próximo passo:</p>
                       <div className="flex flex-wrap gap-1">
                         {item.next_steps.map((step, idx) => (
                           <span
                             key={idx}
-                            className="text-xs px-2 py-0.5 bg-blue-50 rounded text-blue-700 border border-blue-200"
+                            className="text-xs px-2 py-0.5 bg-blue-500/15 rounded-lg text-blue-400 border border-blue-500/30"
                           >
                             {step}
                           </span>
@@ -502,11 +513,11 @@ export function CopilotInsightsCard() {
                   {/* Ações Sugeridas */}
                   {item.suggested_actions && item.suggested_actions.length > 0 && (
                     <div>
-                      <p className="text-xs font-semibold text-slate-700 mb-2">Ações sugeridas:</p>
+                      <p className="text-xs font-semibold text-slate-400 mb-2">Ações sugeridas:</p>
                       <ul className="space-y-1">
                         {item.suggested_actions.map((action, idx) => (
-                          <li key={idx} className="text-xs text-slate-600 flex items-start gap-2">
-                            <CheckCircle2 size={12} className="text-slate-400 mt-0.5 flex-shrink-0" />
+                          <li key={idx} className="text-xs text-slate-500 flex items-start gap-2">
+                            <CheckCircle2 size={12} className="text-emerald-500 mt-0.5 flex-shrink-0" />
                             <span>{action}</span>
                           </li>
                         ))}
@@ -517,12 +528,12 @@ export function CopilotInsightsCard() {
                   {/* Fases Afetadas */}
                   {item.affected_phases && item.affected_phases.length > 0 && (
                     <div>
-                      <p className="text-xs font-semibold text-slate-700 mb-2">Fases afetadas:</p>
+                      <p className="text-xs font-semibold text-slate-400 mb-2">Fases afetadas:</p>
                       <div className="flex flex-wrap gap-1">
                         {item.affected_phases.map((phase, idx) => (
                           <span
                             key={idx}
-                            className="text-xs px-2 py-0.5 bg-slate-100 rounded text-slate-600"
+                            className="text-xs px-2 py-0.5 bg-white/[0.05] rounded-lg text-slate-400 border border-white/[0.06]"
                           >
                             {phase}
                           </span>
@@ -533,28 +544,28 @@ export function CopilotInsightsCard() {
 
                   {/* LLM Explanation */}
                   {explanations[item.id] && (
-                    <div className={`rounded-lg p-3 border ${
+                    <div className={`rounded-xl p-3 border ${
                       explanations[item.id].type === 'ERROR'
-                        ? 'bg-red-50 border-red-200'
-                        : 'bg-slate-50 border-slate-200'
+                        ? 'bg-red-500/10 border-red-500/30'
+                        : 'bg-white/[0.03] border-white/[0.06]'
                     }`}>
                       <div className="flex items-center gap-2 mb-2">
-                        <Bot size={14} className={explanations[item.id].type === 'ERROR' ? 'text-red-500' : 'text-[#FF6B6B]'} />
+                        <Bot size={14} className={explanations[item.id].type === 'ERROR' ? 'text-red-400' : 'text-accent-400'} />
                         <span className={`text-xs font-semibold ${
-                          explanations[item.id].type === 'ERROR' ? 'text-red-700' : 'text-slate-700'
+                          explanations[item.id].type === 'ERROR' ? 'text-red-400' : 'text-slate-300'
                         }`}>
                           Explicação COPILOT
                         </span>
                       </div>
                       <p className={`text-xs leading-relaxed ${
-                        explanations[item.id].type === 'ERROR' ? 'text-red-600' : 'text-slate-600'
+                        explanations[item.id].type === 'ERROR' ? 'text-red-400' : 'text-slate-400'
                       }`}>
                         {explanations[item.id].summary}
                       </p>
                       {explanations[item.id].warnings && explanations[item.id].warnings.length > 0 && (
                         <div className="mt-2 space-y-1">
                           {explanations[item.id].warnings.map((warning: any, wIdx: number) => (
-                            <p key={wIdx} className="text-xs text-red-600 pl-4 border-l-2 border-red-300">
+                            <p key={wIdx} className="text-xs text-red-400 pl-4 border-l-2 border-red-500/50">
                               ⚠️ {warning.message}
                             </p>
                           ))}
@@ -563,7 +574,7 @@ export function CopilotInsightsCard() {
                       {explanations[item.id].facts && explanations[item.id].facts.length > 0 && (
                         <div className="mt-2 space-y-1">
                           {explanations[item.id].facts.map((fact: any, fIdx: number) => (
-                            <p key={fIdx} className="text-xs text-slate-600 pl-4 border-l-2 border-slate-300">
+                            <p key={fIdx} className="text-xs text-slate-500 pl-4 border-l-2 border-slate-600">
                               • {fact.text}
                             </p>
                           ))}
@@ -577,7 +588,7 @@ export function CopilotInsightsCard() {
                     <button
                       onClick={() => handleExplainRecommendation(item)}
                       disabled={loadingExplanation.has(item.id)}
-                      className="text-xs px-3 py-2 bg-gradient-to-r from-[#FF6B6B]/10 to-[#FF6B6B]/15 hover:from-[#FF6B6B]/20 hover:to-[#FF6B6B]/25 rounded-lg text-[#FF6B6B] flex items-center gap-1.5 font-semibold transition-all duration-150 hover:shadow-sm border border-[#FF6B6B]/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="text-xs px-3 py-2 bg-accent-500/15 hover:bg-accent-500/25 rounded-xl text-accent-400 flex items-center gap-1.5 font-semibold transition-all duration-150 border border-accent-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {loadingExplanation.has(item.id) ? (
                         <Loader2 size={14} className="animate-spin" />
@@ -586,7 +597,7 @@ export function CopilotInsightsCard() {
                       )}
                       Pedir explicação ao Copilot
                     </button>
-                    <button className="text-xs px-3 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-slate-700 flex items-center gap-1.5 font-medium transition-all duration-150 hover:shadow-sm">
+                    <button className="text-xs px-3 py-2 bg-white/[0.05] hover:bg-white/[0.08] rounded-xl text-slate-400 flex items-center gap-1.5 font-medium transition-all duration-150 border border-white/[0.06]">
                       <TrendingUp size={14} />
                       Criar PR
                     </button>
@@ -600,4 +611,3 @@ export function CopilotInsightsCard() {
     </div>
   );
 }
-

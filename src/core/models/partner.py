@@ -177,3 +177,12 @@ class Supplier(TenantBase):
     def __repr__(self) -> str:
         return f"<Supplier {self.supplier_code}: {self.supplier_name}>"
 
+
+
+
+
+
+
+
+
+

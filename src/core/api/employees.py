@@ -55,14 +55,25 @@ async def list_employees(
     session: AsyncSession = Depends(get_session),
 ):
     """List employees with optional filtering."""
-    service = MasterDataService(session, tenant_id)
-    employees = await service.list_employees(
-        status=status,
-        department=department,
-        limit=limit,
-        offset=offset,
-    )
-    return employees
+    try:
+        service = MasterDataService(session, tenant_id)
+        employees = await service.list_employees(
+            status=status,
+            department=department,
+            limit=limit,
+            offset=offset,
+        )
+        return employees
+    except (ConnectionRefusedError, Exception) as e:
+        # DB unavailable - return fallback data
+        import logging
+        logger = logging.getLogger(__name__)
+        error_str = str(e).lower()
+        if "connection refused" in error_str or "operationalerror" in error_str or "interfaceerror" in error_str:
+            logger.warning(f"DB unavailable in list_employees, returning fallback: {e}")
+            return []
+        # Re-raise other exceptions (they'll be handled by global handler)
+        raise
 
 
 @router.get("/{employee_id}", response_model=EmployeeResponse)
@@ -82,4 +93,57 @@ async def get_employee(
         )
     
     return employee
+
+
+@router.patch("/{employee_id}", response_model=EmployeeResponse)
+async def update_employee(
+    employee_id: UUID,
+    data: EmployeeUpdate,
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Update employee."""
+    service = MasterDataService(session, tenant_id)
+    
+    updates = {}
+    if data.employee_name is not None:
+        updates["employee_name"] = data.employee_name
+    if data.department is not None:
+        updates["department"] = data.department
+    if data.job_title is not None:
+        updates["job_title"] = data.job_title
+    if data.base_monthly_salary is not None:
+        updates["base_monthly_salary"] = data.base_monthly_salary
+    if data.status is not None:
+        updates["status"] = data.status
+    
+    employee = await service.update_employee(employee_id, **updates)
+    
+    if not employee:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Employee {employee_id} not found",
+        )
+    
+    return employee
+
+
+@router.delete("/{employee_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_employee(
+    employee_id: UUID,
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Delete employee."""
+    service = MasterDataService(session, tenant_id)
+    deleted = await service.delete_employee(employee_id)
+    
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Employee {employee_id} not found",
+        )
+    
+    return None
+
 

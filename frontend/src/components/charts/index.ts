@@ -1,6 +1,10 @@
-export { AreaChart } from './AreaChart';
+export { Sparkline } from './SparkLine';
+export { TrendIndicator } from './TrendIndicator';
 export { BarChart } from './BarChart';
-export { DonutChart, DonutLegend } from './DonutChart';
-export { SparkLine, MiniBarChart } from './SparkLine';
-export { PillBarChart, SegmentProgress } from './PillBarChart';
+export { LineChart } from './LineChart';
+export { DonutChart } from './DonutChart';
+export { AreaChart } from './AreaChart';
 export { GanttChart } from './GanttChart';
+export { Heatmap } from './Heatmap';
+export { PillBarChart } from './PillBarChart';
+export { WaterfallChart } from './WaterfallChart';

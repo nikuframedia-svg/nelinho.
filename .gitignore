@@ -121,3 +121,36 @@ dmypy.json
 # Legacy
 legacy/__pycache__/
 
+# Excel temp files (Office lock files)
+~$*.xlsx
+~$*.xls
+
+# Cursor AI
+.cursor/
+.cursorignore
+.cursorrules
+
+# Additional cache
+*.parquet
+*.pickle
+.cache/
+.ruff_cache/
+
+# Terraform (if used)
+*.tfstate
+*.tfstate.*
+.terraform/
+
+# Data files (optional - uncomment to exclude large data)
+# *.xlsx
+# *.csv
+
+
+
+
+
+
+
+
+
+

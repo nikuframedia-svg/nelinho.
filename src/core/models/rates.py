@@ -6,6 +6,8 @@ Cost rates for labor, machines, and overhead.
 Used by PROFIT module for COGS calculations.
 """
 
+from __future__ import annotations
+
 from datetime import date
 from decimal import Decimal
 from typing import Optional
@@ -217,4 +219,5 @@ class OverheadRate(TenantBase):
         if available_hours > 0:
             return total_overhead / available_hours
         return Decimal("0")
+
 

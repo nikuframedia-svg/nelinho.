@@ -16,6 +16,7 @@ from src.core.models.tenant import TenantStatus, SubscriptionLevel
 from src.core.models.product import ProductType, ProductStatus
 from src.core.models.machine import MachineStatus, MachineType
 from src.core.models.employee import EmploymentStatus, EmploymentType
+from src.core.models.partner import CustomerSegment, PaymentTerms, PriceTier, MaterialCategory
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -189,6 +190,15 @@ class OperationCreate(BaseModel):
     skills_required: Optional[List[str]] = None
 
 
+class OperationUpdate(BaseModel):
+    """Update operation request."""
+    operation_name: Optional[str] = Field(None, max_length=255)
+    machine_id: Optional[UUID] = None
+    std_time_minutes: Optional[Decimal] = Field(None, ge=0)
+    setup_time_minutes: Optional[Decimal] = Field(None, ge=0)
+    skills_required: Optional[List[str]] = None
+
+
 class OperationResponse(BaseModel):
     """Operation response."""
     model_config = ConfigDict(from_attributes=True)
@@ -200,6 +210,200 @@ class OperationResponse(BaseModel):
     std_time_minutes: Decimal
     std_time_hours: Decimal
     setup_time_minutes: Decimal
+    created_at: datetime
+    updated_at: datetime
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# BOM SCHEMAS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class BOMItemCreate(BaseModel):
+    """Create BOM item request."""
+    parent_product_id: UUID
+    component_product_id: UUID
+    quantity_per: Decimal = Field(..., ge=0)
+    unit_of_measure: str = Field(default="UN", max_length=10)
+    sequence: int = Field(default=0, ge=0)
+    operation_id: Optional[UUID] = None
+    scrap_factor: Decimal = Field(default=Decimal("1.0"), ge=1.0)
+    effective_from: Optional[date] = None
+    effective_to: Optional[date] = None
+    bom_version: int = Field(default=1, ge=1)
+    position_ref: Optional[str] = Field(None, max_length=50)
+    notes: Optional[str] = Field(None, max_length=500)
+
+
+class BOMItemUpdate(BaseModel):
+    """Update BOM item request."""
+    quantity_per: Optional[Decimal] = Field(None, ge=0)
+    unit_of_measure: Optional[str] = Field(None, max_length=10)
+    sequence: Optional[int] = Field(None, ge=0)
+    operation_id: Optional[UUID] = None
+    scrap_factor: Optional[Decimal] = Field(None, ge=1.0)
+    effective_from: Optional[date] = None
+    effective_to: Optional[date] = None
+    bom_version: Optional[int] = Field(None, ge=1)
+    position_ref: Optional[str] = Field(None, max_length=50)
+    notes: Optional[str] = Field(None, max_length=500)
+
+
+class BOMItemResponse(BaseModel):
+    """BOM item response."""
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: UUID
+    parent_product_id: UUID
+    component_product_id: UUID
+    quantity_per: Decimal
+    unit_of_measure: str
+    sequence: int
+    operation_id: Optional[UUID]
+    scrap_factor: Decimal
+    effective_from: Optional[date]
+    effective_to: Optional[date]
+    bom_version: int
+    position_ref: Optional[str]
+    notes: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CUSTOMER SCHEMAS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class CustomerCreate(BaseModel):
+    """Create customer request."""
+    customer_code: str = Field(..., min_length=1, max_length=50)
+    customer_name: str = Field(..., min_length=1, max_length=255)
+    segment: CustomerSegment = CustomerSegment.RETAIL
+    payment_terms: PaymentTerms = PaymentTerms.NET30
+    price_tier: PriceTier = PriceTier.STANDARD
+    credit_limit: Optional[Decimal] = Field(None, ge=0)
+    contact_name: Optional[str] = Field(None, max_length=255)
+    contact_email: Optional[str] = Field(None, max_length=255)
+    contact_phone: Optional[str] = Field(None, max_length=50)
+    address_line1: Optional[str] = Field(None, max_length=255)
+    address_line2: Optional[str] = Field(None, max_length=255)
+    city: Optional[str] = Field(None, max_length=100)
+    postal_code: Optional[str] = Field(None, max_length=20)
+    country: Optional[str] = Field(None, max_length=100)
+    is_active: bool = Field(default=True)
+    notes: Optional[str] = None
+
+
+class CustomerUpdate(BaseModel):
+    """Update customer request."""
+    customer_name: Optional[str] = Field(None, max_length=255)
+    segment: Optional[CustomerSegment] = None
+    payment_terms: Optional[PaymentTerms] = None
+    price_tier: Optional[PriceTier] = None
+    credit_limit: Optional[Decimal] = Field(None, ge=0)
+    contact_name: Optional[str] = Field(None, max_length=255)
+    contact_email: Optional[str] = Field(None, max_length=255)
+    contact_phone: Optional[str] = Field(None, max_length=50)
+    address_line1: Optional[str] = Field(None, max_length=255)
+    address_line2: Optional[str] = Field(None, max_length=255)
+    city: Optional[str] = Field(None, max_length=100)
+    postal_code: Optional[str] = Field(None, max_length=20)
+    country: Optional[str] = Field(None, max_length=100)
+    is_active: Optional[bool] = None
+    notes: Optional[str] = None
+
+
+class CustomerResponse(BaseModel):
+    """Customer response."""
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: UUID
+    customer_code: str
+    customer_name: str
+    segment: CustomerSegment
+    payment_terms: PaymentTerms
+    price_tier: PriceTier
+    credit_limit: Optional[Decimal]
+    contact_name: Optional[str]
+    contact_email: Optional[str]
+    contact_phone: Optional[str]
+    address_line1: Optional[str]
+    address_line2: Optional[str]
+    city: Optional[str]
+    postal_code: Optional[str]
+    country: Optional[str]
+    is_active: bool
+    notes: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SUPPLIER SCHEMAS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class SupplierCreate(BaseModel):
+    """Create supplier request."""
+    supplier_code: str = Field(..., min_length=1, max_length=50)
+    supplier_name: str = Field(..., min_length=1, max_length=255)
+    material_category: MaterialCategory = MaterialCategory.OTHER
+    lead_time_days: int = Field(default=7, ge=0)
+    payment_terms: PaymentTerms = PaymentTerms.NET30
+    contact_name: Optional[str] = Field(None, max_length=255)
+    contact_email: Optional[str] = Field(None, max_length=255)
+    contact_phone: Optional[str] = Field(None, max_length=50)
+    address_line1: Optional[str] = Field(None, max_length=255)
+    address_line2: Optional[str] = Field(None, max_length=255)
+    city: Optional[str] = Field(None, max_length=100)
+    postal_code: Optional[str] = Field(None, max_length=20)
+    country: Optional[str] = Field(None, max_length=100)
+    quality_rating: Optional[int] = Field(None, ge=1, le=5)
+    is_active: bool = Field(default=True)
+    is_preferred: bool = Field(default=False)
+    notes: Optional[str] = None
+
+
+class SupplierUpdate(BaseModel):
+    """Update supplier request."""
+    supplier_name: Optional[str] = Field(None, max_length=255)
+    material_category: Optional[MaterialCategory] = None
+    lead_time_days: Optional[int] = Field(None, ge=0)
+    payment_terms: Optional[PaymentTerms] = None
+    contact_name: Optional[str] = Field(None, max_length=255)
+    contact_email: Optional[str] = Field(None, max_length=255)
+    contact_phone: Optional[str] = Field(None, max_length=50)
+    address_line1: Optional[str] = Field(None, max_length=255)
+    address_line2: Optional[str] = Field(None, max_length=255)
+    city: Optional[str] = Field(None, max_length=100)
+    postal_code: Optional[str] = Field(None, max_length=20)
+    country: Optional[str] = Field(None, max_length=100)
+    quality_rating: Optional[int] = Field(None, ge=1, le=5)
+    is_active: Optional[bool] = None
+    is_preferred: Optional[bool] = None
+    notes: Optional[str] = None
+
+
+class SupplierResponse(BaseModel):
+    """Supplier response."""
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: UUID
+    supplier_code: str
+    supplier_name: str
+    material_category: MaterialCategory
+    lead_time_days: int
+    payment_terms: PaymentTerms
+    contact_name: Optional[str]
+    contact_email: Optional[str]
+    contact_phone: Optional[str]
+    address_line1: Optional[str]
+    address_line2: Optional[str]
+    city: Optional[str]
+    postal_code: Optional[str]
+    country: Optional[str]
+    quality_rating: Optional[int]
+    is_active: bool
+    is_preferred: bool
+    notes: Optional[str]
     created_at: datetime
     updated_at: datetime
 
@@ -295,4 +499,6 @@ class ErrorResponse(BaseModel):
     error: str
     detail: Optional[str] = None
     code: Optional[str] = None
+
+
 

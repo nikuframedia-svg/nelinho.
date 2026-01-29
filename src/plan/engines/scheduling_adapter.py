@@ -2,10 +2,14 @@
 ProdPlan ONE - Scheduling Adapter
 ==================================
 
-Adapter for the legacy scheduling engine from base-.
-Wraps the MILP/CP-SAT/Heuristic schedulers.
+Adapter for scheduling engines.
+Supports multiple scheduling algorithms:
+- Heuristic (EDD, SPT, FIFO, WSPT) - Fast dispatch rules
+- CP-SAT - Optimal constraint programming (Google OR-Tools)
+- Genetic - Evolutionary optimization (DEAP)
 """
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -15,12 +19,15 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+logger = logging.getLogger(__name__)
+
 
 class SchedulerEngine(str, Enum):
     """Available scheduling engines."""
     HEURISTIC = "heuristic"
-    MILP = "milp"
+    MILP = "milp"  # Legacy - not implemented
     CPSAT = "cpsat"
+    GENETIC = "genetic"
 
 
 class DispatchRule(str, Enum):
@@ -98,14 +105,25 @@ class SchedulingAdapter:
     """
     Adapter for scheduling engines.
     
-    Wraps the legacy scheduling engines from base- repository.
-    Provides a clean interface for the PLAN module.
+    Provides a unified interface for different scheduling algorithms:
+    - Heuristic: Fast dispatch rules (EDD, SPT, FIFO, WSPT)
+    - CP-SAT: Optimal constraint programming using Google OR-Tools
+    - Genetic: Evolutionary optimization using DEAP
+    
+    Usage:
+        adapter = SchedulingAdapter()
+        adapter.configure(engine=SchedulerEngine.CPSAT, time_limit_sec=30)
+        result = adapter.schedule(operations, machines, horizon_start, horizon_end)
     """
     
     def __init__(self):
         self._engine = SchedulerEngine.HEURISTIC
         self._rule = DispatchRule.EDD
         self._time_limit_sec = 60.0
+        
+        # Lazy-load advanced schedulers
+        self._cpsat_scheduler = None
+        self._genetic_scheduler = None
     
     def configure(
         self,
@@ -118,6 +136,38 @@ class SchedulingAdapter:
         self._rule = rule
         self._time_limit_sec = time_limit_sec
     
+    def _get_cpsat_scheduler(self):
+        """Lazy-load CP-SAT scheduler."""
+        if self._cpsat_scheduler is None:
+            try:
+                from .cpsat_engine import CPSATScheduler, CPSATConfig, is_cpsat_available
+                
+                if not is_cpsat_available():
+                    raise ImportError("OR-Tools not installed")
+                
+                config = CPSATConfig(time_limit_seconds=self._time_limit_sec)
+                self._cpsat_scheduler = CPSATScheduler(config)
+            except ImportError as e:
+                logger.warning(f"CP-SAT scheduler unavailable: {e}")
+                return None
+        return self._cpsat_scheduler
+    
+    def _get_genetic_scheduler(self):
+        """Lazy-load Genetic scheduler."""
+        if self._genetic_scheduler is None:
+            try:
+                from .genetic_engine import GeneticScheduler, GeneticConfig, is_genetic_available
+                
+                if not is_genetic_available():
+                    raise ImportError("DEAP not installed")
+                
+                config = GeneticConfig(time_limit_seconds=self._time_limit_sec)
+                self._genetic_scheduler = GeneticScheduler(config)
+            except ImportError as e:
+                logger.warning(f"Genetic scheduler unavailable: {e}")
+                return None
+        return self._genetic_scheduler
+    
     def schedule(
         self,
         operations: List[SchedulingOperation],
@@ -126,18 +176,128 @@ class SchedulingAdapter:
         horizon_end: datetime = None,
     ) -> SchedulingResult:
         """
-        Run scheduling algorithm.
+        Run scheduling algorithm based on configured engine.
         
-        This is a simplified implementation that uses EDD heuristic.
-        In production, would call the actual legacy engines.
+        Args:
+            operations: List of operations to schedule
+            machines: List of available machines
+            horizon_start: Start of planning horizon (defaults to now)
+            horizon_end: End of planning horizon (defaults to horizon_start + 4 weeks)
+            
+        Returns:
+            SchedulingResult with scheduled operations and KPIs
         """
         horizon_start = horizon_start or datetime.now()
+        horizon_end = horizon_end or (horizon_start + timedelta(weeks=4))
         
-        # Sort operations by due date (EDD)
-        sorted_ops = sorted(
-            operations,
-            key=lambda op: (op.due_date or datetime.max, -op.priority),
-        )
+        # Dispatch to appropriate engine
+        if self._engine == SchedulerEngine.CPSAT:
+            return self._schedule_cpsat(operations, machines, horizon_start, horizon_end)
+        elif self._engine == SchedulerEngine.GENETIC:
+            return self._schedule_genetic(operations, machines, horizon_start, horizon_end)
+        else:
+            # Default: heuristic
+            return self._schedule_heuristic(operations, machines, horizon_start, horizon_end)
+    
+    def _schedule_cpsat(
+        self,
+        operations: List[SchedulingOperation],
+        machines: List[SchedulingMachine],
+        horizon_start: datetime,
+        horizon_end: datetime,
+    ) -> SchedulingResult:
+        """Schedule using CP-SAT solver."""
+        scheduler = self._get_cpsat_scheduler()
+        
+        if scheduler is None:
+            logger.warning("CP-SAT unavailable, falling back to heuristic")
+            result = self._schedule_heuristic(operations, machines, horizon_start, horizon_end)
+            result.warnings.append("CP-SAT unavailable - used heuristic fallback")
+            return result
+        
+        try:
+            result_dict = scheduler.schedule(operations, machines, horizon_start, horizon_end)
+            return SchedulingResult(**result_dict)
+        except Exception as e:
+            logger.error(f"CP-SAT scheduling failed: {e}")
+            result = self._schedule_heuristic(operations, machines, horizon_start, horizon_end)
+            result.warnings.append(f"CP-SAT failed ({e}) - used heuristic fallback")
+            return result
+    
+    def _schedule_genetic(
+        self,
+        operations: List[SchedulingOperation],
+        machines: List[SchedulingMachine],
+        horizon_start: datetime,
+        horizon_end: datetime,
+    ) -> SchedulingResult:
+        """Schedule using Genetic Algorithm."""
+        scheduler = self._get_genetic_scheduler()
+        
+        if scheduler is None:
+            logger.warning("Genetic unavailable, falling back to heuristic")
+            result = self._schedule_heuristic(operations, machines, horizon_start, horizon_end)
+            result.warnings.append("Genetic unavailable - used heuristic fallback")
+            return result
+        
+        try:
+            result_dict = scheduler.schedule(operations, machines, horizon_start, horizon_end)
+            return SchedulingResult(**result_dict)
+        except Exception as e:
+            logger.error(f"Genetic scheduling failed: {e}")
+            result = self._schedule_heuristic(operations, machines, horizon_start, horizon_end)
+            result.warnings.append(f"Genetic failed ({e}) - used heuristic fallback")
+            return result
+    
+    def _schedule_heuristic(
+        self,
+        operations: List[SchedulingOperation],
+        machines: List[SchedulingMachine],
+        horizon_start: datetime,
+        horizon_end: datetime,
+    ) -> SchedulingResult:
+        """
+        Schedule using heuristic dispatch rules.
+        
+        Supported rules:
+        - EDD: Earliest Due Date first
+        - SPT: Shortest Processing Time first
+        - FIFO: First In First Out (by sequence)
+        - WSPT: Weighted Shortest Processing Time
+        """
+        import time
+        start_time = time.time()
+        
+        if not operations:
+            return SchedulingResult(
+                success=True,
+                engine_used="heuristic",
+                rule_used=self._rule.value,
+                warnings=["No operations to schedule"],
+            )
+        
+        # Sort operations based on dispatch rule
+        if self._rule == DispatchRule.EDD:
+            sorted_ops = sorted(
+                operations,
+                key=lambda op: (op.due_date or datetime.max, -op.priority),
+            )
+        elif self._rule == DispatchRule.SPT:
+            sorted_ops = sorted(
+                operations,
+                key=lambda op: (op.duration_minutes, -op.priority),
+            )
+        elif self._rule == DispatchRule.WSPT:
+            # Weighted SPT: sort by processing_time / priority (lower is better)
+            sorted_ops = sorted(
+                operations,
+                key=lambda op: op.duration_minutes / max(op.priority, 0.1),
+            )
+        else:  # FIFO
+            sorted_ops = sorted(
+                operations,
+                key=lambda op: (op.sequence, op.order_id),
+            )
         
         # Build machine availability map
         machine_next_available: Dict[str, datetime] = {
@@ -158,18 +318,18 @@ class SchedulingAdapter:
                     machine_next_available[machine_id] = horizon_start
             
             # Calculate start time
-            start_time = machine_next_available.get(machine_id, horizon_start)
+            start_dt = machine_next_available.get(machine_id, horizon_start)
             
             # Calculate end time
             duration = timedelta(minutes=op.duration_minutes)
-            end_time = start_time + duration
+            end_dt = start_dt + duration
             
             # Update machine availability
-            machine_next_available[machine_id] = end_time
+            machine_next_available[machine_id] = end_dt
             
             # Check tardiness
-            if op.due_date and end_time > op.due_date:
-                tardiness = (end_time - op.due_date).total_seconds() / 3600
+            if op.due_date and end_dt > op.due_date:
+                tardiness = (end_dt - op.due_date).total_seconds() / 3600
                 total_tardiness += tardiness
                 late_orders.add(op.order_id)
             
@@ -179,8 +339,8 @@ class SchedulingAdapter:
                 "product_id": op.product_id,
                 "operation_code": op.operation_code,
                 "machine_id": machine_id,
-                "start_time": start_time.isoformat(),
-                "end_time": end_time.isoformat(),
+                "start_time": start_dt.isoformat(),
+                "end_time": end_dt.isoformat(),
                 "duration_minutes": op.duration_minutes,
                 "setup_minutes": 0.0,
             })
@@ -199,11 +359,13 @@ class SchedulingAdapter:
         total_available_minutes = len(machines) * makespan * 60 if makespan > 0 else 1
         utilization = min(100, (total_work_minutes / total_available_minutes) * 100) if total_available_minutes > 0 else 0
         
+        solve_time = time.time() - start_time
+        
         return SchedulingResult(
             success=True,
-            engine_used=self._engine.value,
+            engine_used="heuristic",
             rule_used=self._rule.value,
-            solve_time_sec=0.01,
+            solve_time_sec=solve_time,
             status="optimal",
             operations=scheduled,
             makespan_hours=makespan,
@@ -235,4 +397,27 @@ class SchedulingAdapter:
                 utilization[m.machine_id] = 0
         
         return utilization
-
+    
+    @staticmethod
+    def get_available_engines() -> Dict[str, bool]:
+        """Check which scheduling engines are available."""
+        available = {
+            "heuristic": True,  # Always available
+            "milp": False,  # Not implemented
+        }
+        
+        # Check CP-SAT
+        try:
+            from .cpsat_engine import is_cpsat_available
+            available["cpsat"] = is_cpsat_available()
+        except ImportError:
+            available["cpsat"] = False
+        
+        # Check Genetic
+        try:
+            from .genetic_engine import is_genetic_available
+            available["genetic"] = is_genetic_available()
+        except ImportError:
+            available["genetic"] = False
+        
+        return available

@@ -220,3 +220,12 @@ class BOMAdapter:
         
         return max(req.cumulative_lead_time for req in requirements)
 
+
+
+
+
+
+
+
+
+

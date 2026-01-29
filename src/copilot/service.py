@@ -594,7 +594,7 @@ class CopilotService:
             
             # Usar URL base do próprio servidor
             base_url = getattr(settings, "api_base_url", "http://localhost:8000")
-            url = f"{base_url}/api/kpis/snapshot-dev"  # Usar dev endpoint para evitar auth
+            url = f"{base_url}/v1/profit/kpis/snapshot-dev"  # Usar dev endpoint para evitar auth
             
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.get(

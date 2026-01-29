@@ -389,3 +389,12 @@ class ScenarioSimulator:
         
         return f"This scenario shows a {severity} ({float(delta_percent):+.1f}%). {action}"
 
+
+
+
+
+
+
+
+
+

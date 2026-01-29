@@ -6,7 +6,7 @@ SHA-256 hashing for prompts and responses (audit).
 """
 
 import hashlib
-from typing import Any
+from typing import Any, Dict
 
 
 def sha256_hash(data: str) -> str:

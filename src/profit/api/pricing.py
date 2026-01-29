@@ -78,3 +78,12 @@ async def simulate_prices(
     
     return {"simulations": result}
 
+
+
+
+
+
+
+
+
+

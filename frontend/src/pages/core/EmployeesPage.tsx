@@ -1,39 +1,81 @@
 import { useState, useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { 
-  Search, 
   Plus, 
-  ChevronLeft,
   Users,
   UserCheck,
   UserX,
   Wrench,
+  Loader2,
+  AlertCircle,
+  Edit,
+  Trash2,
 } from 'lucide-react';
-import { DisabledButton, EmptyListState } from '../../components/ui';
-
-// Import real data
-import employeesData from '../../data/employees.json';
+import { DarkPageLayout } from '../../layouts';
+import { 
+  DarkCard, 
+  DarkStatCard, 
+  DarkButton,
+  DarkPillButton,
+  DarkBadge,
+  DarkSearchInput,
+  DarkSelect,
+  DarkIconButton,
+} from '../../components/dark';
+import { FormModal, DeleteConfirmDialog, type FormField } from '../../components/ui';
+import { employeesApi } from '../../lib/api';
+import { useToastContext } from '../../components/ToastProvider';
 
 interface Employee {
   id: string;
   name: string;
+  employee_code?: string;
   status: string;
   skills: string[];
   skillIds: string[];
   department: string;
+  shift_pattern?: string;
 }
 
-const employees: Employee[] = employeesData;
-
-// Get unique departments from data
-const departments = ['ALL', ...new Set(employees.map(e => e.department))].sort();
-
 export function EmployeesPage() {
+  const queryClient = useQueryClient();
+  const { success, error: toastError } = useToastContext();
+
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('ALL');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'ACTIVE' | 'INACTIVE'>('ALL');
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 12;
+
+  const [isFormModalOpen, setIsFormModalOpen] = useState(false);
+  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
+  const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
+  const [deletingEmployee, setDeletingEmployee] = useState<Employee | null>(null);
+
+  const { data: employeesList, isLoading, error } = useQuery({
+    queryKey: ['employees', 'list'],
+    queryFn: () => employeesApi.list({ limit: 1000 }),
+    refetchInterval: 300000,
+  });
+
+  const employees: Employee[] = useMemo(() => {
+    if (!employeesList) return [];
+    return (Array.isArray(employeesList) ? employeesList : []).map((e: any) => ({
+      id: e.id || e.employee_id || '',
+      name: e.name || e.employee_name || '',
+      employee_code: e.employee_code || '',
+      status: e.status || 'ACTIVE',
+      skills: e.skills || e.skill_names || [],
+      skillIds: e.skill_ids || [],
+      department: e.department || 'Unknown',
+      shift_pattern: e.shift_pattern || undefined,
+    }));
+  }, [employeesList]);
+
+  const departments = useMemo(() => {
+    const depts = new Set(employees.map(e => e.department).filter(Boolean));
+    return ['ALL', ...Array.from(depts)].sort();
+  }, [employees]);
 
   const filteredEmployees = useMemo(() => {
     return employees.filter(e => {
@@ -44,7 +86,7 @@ export function EmployeesPage() {
                             e.skills.some(s => s.toLowerCase().includes(search.toLowerCase()));
       return matchesFilter && matchesSearch && matchesStatus;
     });
-  }, [filter, statusFilter, search]);
+  }, [employees, filter, statusFilter, search]);
 
   const paginatedEmployees = useMemo(() => {
     const start = (currentPage - 1) * itemsPerPage;
@@ -53,253 +95,341 @@ export function EmployeesPage() {
 
   const totalPages = Math.ceil(filteredEmployees.length / itemsPerPage);
 
-  const stats = useMemo(() => ({
-    total: employees.length,
-    active: employees.filter(e => e.status === 'ACTIVE').length,
-    inactive: employees.filter(e => e.status === 'INACTIVE').length,
-    departments: new Set(employees.map(e => e.department)).size,
-    avgSkills: (employees.reduce((sum, e) => sum + e.skills.length, 0) / employees.length).toFixed(1),
-  }), []);
+  const stats = useMemo(() => {
+    if (employees.length === 0) {
+      return { total: 0, active: 0, inactive: 0, departments: 0, avgSkills: '0.0' };
+    }
+    return {
+      total: employees.length,
+      active: employees.filter(e => e.status === 'ACTIVE').length,
+      inactive: employees.filter(e => e.status === 'INACTIVE').length,
+      departments: new Set(employees.map(e => e.department)).size,
+      avgSkills: (employees.reduce((sum, e) => sum + e.skills.length, 0) / employees.length).toFixed(1),
+    };
+  }, [employees]);
 
-  // Department distribution for visualization
   const departmentCounts = useMemo(() => {
     const counts: Record<string, number> = {};
-    employees.forEach(e => {
-      counts[e.department] = (counts[e.department] || 0) + 1;
-    });
-    return Object.entries(counts)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 6);
-  }, []);
+    employees.forEach(e => { counts[e.department] = (counts[e.department] || 0) + 1; });
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 6);
+  }, [employees]);
+
+  const createMutation = useMutation({
+    mutationFn: employeesApi.create,
+    onSuccess: () => {
+      success('Employee added successfully');
+      queryClient.invalidateQueries({ queryKey: ['employees'] });
+      setIsFormModalOpen(false);
+    },
+    onError: (err: any) => toastError(err.message || 'Error adding employee'),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: any }) => employeesApi.update(id, data),
+    onSuccess: () => {
+      success('Employee updated successfully');
+      queryClient.invalidateQueries({ queryKey: ['employees'] });
+      setIsFormModalOpen(false);
+      setEditingEmployee(null);
+    },
+    onError: (err: any) => toastError(err.message || 'Error updating employee'),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: employeesApi.delete,
+    onSuccess: () => {
+      success('Employee deleted successfully');
+      queryClient.invalidateQueries({ queryKey: ['employees'] });
+      setIsDeleteConfirmOpen(false);
+      setDeletingEmployee(null);
+    },
+    onError: (err: any) => toastError(err.message || 'Error deleting employee'),
+  });
+
+  const employeeFormFields: FormField[] = [
+    { name: 'employee_code', label: 'Employee Code', type: 'text', required: true },
+    { name: 'employee_name', label: 'Employee Name', type: 'text', required: true },
+    { name: 'department', label: 'Department', type: 'text', required: true },
+    {
+      name: 'shift_pattern',
+      label: 'Shift Pattern',
+      type: 'select',
+      options: [
+        { value: 'DAY', label: 'Day Shift' },
+        { value: 'NIGHT', label: 'Night Shift' },
+        { value: 'ROTATING', label: 'Rotating' },
+        { value: 'FLEXIBLE', label: 'Flexible' },
+      ],
+      defaultValue: 'DAY',
+    },
+    {
+      name: 'status',
+      label: 'Status',
+      type: 'select',
+      options: [
+        { value: 'ACTIVE', label: 'Active' },
+        { value: 'INACTIVE', label: 'Inactive' },
+        { value: 'ON_LEAVE', label: 'On Leave' },
+      ],
+      defaultValue: 'ACTIVE',
+    },
+  ];
+
+  const handleFormSubmit = (data: Record<string, any>) => {
+    const payload = {
+      employee_code: data.employee_code,
+      employee_name: data.employee_name,
+      department: data.department,
+      shift_pattern: data.shift_pattern,
+      status: data.status,
+    };
+
+    if (editingEmployee) {
+      updateMutation.mutate({ id: editingEmployee.id, data: payload });
+    } else {
+      createMutation.mutate(payload);
+    }
+  };
+
+  const handleDeleteConfirm = () => {
+    if (deletingEmployee) deleteMutation.mutate(deletingEmployee.id);
+  };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-slate-100/50 to-slate-50">
-      {/* Header */}
-      <div className="bg-white border-b border-slate-200 sticky top-0 z-10">
-        <div className="max-w-[1400px] mx-auto px-6 py-4">
-          <div className="flex items-center gap-4 mb-4">
-            <Link to="/" className="text-slate-400 hover:text-slate-600">
-              <ChevronLeft size={20} />
-            </Link>
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-purple-600 flex items-center justify-center">
-                <Users size={20} className="text-white" />
-              </div>
-              <div>
-                <h1 className="text-xl font-bold text-[#1a2744]">Employees</h1>
-                <p className="text-sm text-slate-500">{employees.length} workforce members</p>
-              </div>
-            </div>
-          </div>
-          
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2 bg-slate-100 rounded-lg px-3 py-2 w-72">
-                <Search size={18} className="text-slate-400" />
-                <input 
-                  type="text" 
-                  placeholder="Search by name or skill..."
-                  value={search}
-                  onChange={(e) => { setSearch(e.target.value); setCurrentPage(1); }}
-                  className="flex-1 bg-transparent text-sm outline-none"
-                />
-              </div>
-              
-              <select 
-                value={filter}
-                onChange={(e) => { setFilter(e.target.value); setCurrentPage(1); }}
-                className="px-3 py-2 bg-slate-100 rounded-lg text-sm outline-none text-slate-700"
-              >
-                {departments.slice(0, 10).map((dept) => (
-                  <option key={dept} value={dept}>{dept}</option>
-                ))}
-              </select>
+    <DarkPageLayout
+      title="Employees"
+      subtitle={isLoading ? 'Loading...' : `${employees.length} workforce members`}
+      icon={<Users size={20} />}
+      actions={
+        <DarkButton
+          icon={<Plus size={18} />}
+          onClick={() => { setEditingEmployee(null); setIsFormModalOpen(true); }}
+        >
+          Add Employee
+        </DarkButton>
+      }
+    >
+      {/* Filters */}
+      <div className="flex items-center gap-4 mb-6">
+        <DarkSearchInput
+          placeholder="Search by name or skill..."
+          value={search}
+          onChange={(e) => { setSearch(e.target.value); setCurrentPage(1); }}
+          onClear={() => setSearch('')}
+          containerClassName="w-72"
+        />
+        
+        <DarkSelect
+          options={departments.slice(0, 10).map(dept => ({ value: dept, label: dept }))}
+          value={filter}
+          onChange={(e) => { setFilter(e.target.value); setCurrentPage(1); }}
+          containerClassName="w-40"
+        />
 
-              <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1">
-                {(['ALL', 'ACTIVE', 'INACTIVE'] as const).map((status) => (
-                  <button
-                    key={status}
-                    onClick={() => { setStatusFilter(status); setCurrentPage(1); }}
-                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                      statusFilter === status 
-                        ? 'bg-white text-[#1a2744] shadow-sm' 
-                        : 'text-slate-500 hover:text-slate-700'
-                    }`}
-                  >
-                    {status}
-                  </button>
-                ))}
-              </div>
-            </div>
-            
-            <DisabledButton icon={<Plus size={18} />}>
-              Add Employee
-            </DisabledButton>
-          </div>
+        <div className="flex items-center gap-1 bg-bg-secondary rounded-full p-1">
+          {(['ALL', 'ACTIVE', 'INACTIVE'] as const).map((status) => (
+            <DarkPillButton
+              key={status}
+              active={statusFilter === status}
+              onClick={() => { setStatusFilter(status); setCurrentPage(1); }}
+            >
+              {status}
+            </DarkPillButton>
+          ))}
         </div>
       </div>
-      
-      {/* Content */}
-      <div className="max-w-[1400px] mx-auto px-6 py-6">
-        {/* Stats */}
-        <div className="grid grid-cols-5 gap-4 mb-6">
-          <div className="bg-white rounded-xl p-4 border border-slate-200">
-            <div className="flex items-center gap-2 mb-2">
-              <Users size={16} className="text-slate-400" />
-              <span className="text-sm text-slate-500">Total</span>
-            </div>
-            <p className="text-2xl font-bold text-[#1a2744]">{stats.total}</p>
-          </div>
-          <div className="bg-white rounded-xl p-4 border border-slate-200">
-            <div className="flex items-center gap-2 mb-2">
-              <UserCheck size={16} className="text-emerald-500" />
-              <span className="text-sm text-slate-500">Active</span>
-            </div>
-            <p className="text-2xl font-bold text-emerald-600">{stats.active}</p>
-          </div>
-          <div className="bg-white rounded-xl p-4 border border-slate-200">
-            <div className="flex items-center gap-2 mb-2">
-              <UserX size={16} className="text-slate-400" />
-              <span className="text-sm text-slate-500">Inactive</span>
-            </div>
-            <p className="text-2xl font-bold text-slate-500">{stats.inactive}</p>
-          </div>
-          <div className="bg-white rounded-xl p-4 border border-slate-200">
-            <div className="flex items-center gap-2 mb-2">
-              <Wrench size={16} className="text-blue-500" />
-              <span className="text-sm text-slate-500">Departments</span>
-            </div>
-            <p className="text-2xl font-bold text-blue-600">{stats.departments}</p>
-          </div>
-          <div className="bg-white rounded-xl p-4 border border-slate-200">
-            <div className="flex items-center gap-2 mb-2">
-              <Wrench size={16} className="text-amber-500" />
-              <span className="text-sm text-slate-500">Avg Skills</span>
-            </div>
-            <p className="text-2xl font-bold text-amber-600">{stats.avgSkills}</p>
-          </div>
-        </div>
 
-        {/* Department Distribution */}
-        <div className="bg-white rounded-xl border border-slate-200 p-4 mb-6">
-          <h3 className="text-sm font-semibold text-[#1a2744] mb-3">Department Distribution</h3>
-          <div className="grid grid-cols-6 gap-3">
-            {departmentCounts.map(([dept, count]) => (
-              <button
-                key={dept}
-                onClick={() => { setFilter(dept); setCurrentPage(1); }}
-                className={`p-3 rounded-lg border transition-all text-center ${
-                  filter === dept 
-                    ? 'border-blue-500 bg-blue-50' 
-                    : 'border-slate-200 hover:border-slate-300'
-                }`}
-              >
-                <p className="text-lg font-bold text-[#1a2744]">{count}</p>
-                <p className="text-xs text-slate-500 truncate">{dept}</p>
-              </button>
-            ))}
+      {/* Loading State */}
+      {isLoading && (
+        <DarkCard className="mb-6">
+          <div className="flex items-center justify-center gap-3 text-text-secondary py-8">
+            <Loader2 size={20} className="animate-spin" />
+            <p>Loading employees...</p>
           </div>
-        </div>
-        
-        {/* Employee Cards */}
-        <div className="grid grid-cols-3 gap-4">
-          {paginatedEmployees.map((employee) => (
-            <div key={employee.id} className="bg-white rounded-2xl p-5 border border-slate-200 hover:shadow-md transition-all">
-              <div className="flex items-start gap-4 mb-4">
-                <div className={`w-12 h-12 rounded-full flex items-center justify-center text-white font-semibold ${
-                  employee.status === 'ACTIVE' 
-                    ? 'bg-gradient-to-br from-blue-500 to-blue-600' 
-                    : 'bg-gradient-to-br from-slate-300 to-slate-400'
-                }`}>
-                  {employee.name.split(' ').slice(0, 2).map(n => n[0]).join('')}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <h3 className="font-semibold text-[#1a2744] truncate">{employee.name}</h3>
-                  <p className="text-sm text-slate-500">{employee.department}</p>
-                  <span className={`inline-block mt-1 px-2 py-0.5 rounded-full text-xs font-medium ${
-                    employee.status === 'ACTIVE' ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'
+        </DarkCard>
+      )}
+
+      {/* Error State */}
+      {error && (
+        <DarkCard className="mb-6 border-danger/30 bg-danger/10">
+          <div className="flex items-center gap-3 text-danger-light">
+            <AlertCircle size={20} />
+            <div>
+              <p className="font-semibold">Error loading employees</p>
+              <p className="text-sm opacity-80">
+                {error instanceof Error ? error.message : 'Failed to load employees from API'}
+              </p>
+            </div>
+          </div>
+        </DarkCard>
+      )}
+
+      {!isLoading && !error && (
+        <>
+          {/* Stats */}
+          <div className="grid grid-cols-5 gap-4 mb-6">
+            <DarkStatCard icon={<Users size={18} />} label="Total" value={stats.total} size="sm" />
+            <DarkStatCard icon={<UserCheck size={18} />} iconBg="bg-success/20" label="Active" value={stats.active} size="sm" />
+            <DarkStatCard icon={<UserX size={18} />} iconBg="bg-neutral/20" label="Inactive" value={stats.inactive} size="sm" />
+            <DarkStatCard icon={<Wrench size={18} />} iconBg="bg-blue/20" label="Departments" value={stats.departments} size="sm" />
+            <DarkStatCard icon={<Wrench size={18} />} iconBg="bg-amber/20" label="Avg Skills" value={stats.avgSkills} size="sm" />
+          </div>
+
+          {/* Department Distribution */}
+          <DarkCard className="mb-6" title="Department Distribution">
+            <div className="grid grid-cols-6 gap-3">
+              {departmentCounts.map(([dept, count]) => (
+                <button
+                  key={dept}
+                  onClick={() => { setFilter(dept); setCurrentPage(1); }}
+                  className={`p-3 rounded-xl border transition-all text-center ${
+                    filter === dept 
+                      ? 'border-accent bg-accent/10' 
+                      : 'border-border-subtle hover:border-border-hover bg-bg-elevated'
+                  }`}
+                >
+                  <p className="text-lg font-bold text-text-white">{count}</p>
+                  <p className="text-xs text-text-tertiary truncate">{dept}</p>
+                </button>
+              ))}
+            </div>
+          </DarkCard>
+
+          {/* Employee Cards */}
+          <div className="grid grid-cols-3 gap-4">
+            {paginatedEmployees.map((employee) => (
+              <DarkCard key={employee.id} className="hover:border-border-hover transition-all">
+                <div className="flex items-start gap-4 mb-4">
+                  <div className={`w-12 h-12 rounded-full flex items-center justify-center text-white font-semibold ${
+                    employee.status === 'ACTIVE' 
+                      ? 'bg-gradient-to-br from-accent to-accent-dark' 
+                      : 'bg-gradient-to-br from-bg-elevated to-bg-tertiary'
                   }`}>
-                    {employee.status}
-                  </span>
-                </div>
-              </div>
-              
-              <div className="space-y-3">
-                <div>
-                  <p className="text-xs text-slate-400 mb-1">Employee ID</p>
-                  <p className="text-sm font-medium text-[#1a2744]">#{employee.id}</p>
-                </div>
-                
-                <div>
-                  <p className="text-xs text-slate-400 mb-1">Skills ({employee.skills.length})</p>
-                  <div className="flex flex-wrap gap-1">
-                    {employee.skills.slice(0, 3).map((skill) => (
-                      <span key={skill} className="px-2 py-0.5 bg-blue-50 text-blue-600 rounded text-xs">
-                        {skill}
-                      </span>
-                    ))}
-                    {employee.skills.length > 3 && (
-                      <span className="px-2 py-0.5 bg-slate-100 text-slate-500 rounded text-xs">
-                        +{employee.skills.length - 3}
-                      </span>
-                    )}
+                    {employee.name.split(' ').slice(0, 2).map(n => n[0]).join('')}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-semibold text-text-white truncate">{employee.name}</h3>
+                    <p className="text-sm text-text-tertiary">{employee.department}</p>
+                    <DarkBadge 
+                      variant={employee.status === 'ACTIVE' ? 'success' : 'neutral'} 
+                      dot 
+                      size="sm"
+                      className="mt-1"
+                    >
+                      {employee.status}
+                    </DarkBadge>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <DarkIconButton
+                      icon={<Edit size={14} />}
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => { setEditingEmployee(employee); setIsFormModalOpen(true); }}
+                    />
+                    <DarkIconButton
+                      icon={<Trash2 size={14} />}
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => { setDeletingEmployee(employee); setIsDeleteConfirmOpen(true); }}
+                    />
                   </div>
                 </div>
+                
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-xs text-text-tertiary mb-1">Employee ID</p>
+                    <p className="text-sm font-medium text-text-white">#{employee.id}</p>
+                  </div>
+                  
+                  <div>
+                    <p className="text-xs text-text-tertiary mb-1">Skills ({employee.skills.length})</p>
+                    <div className="flex flex-wrap gap-1">
+                      {employee.skills.slice(0, 3).map((skill) => (
+                        <DarkBadge key={skill} variant="info" size="sm">
+                          {skill}
+                        </DarkBadge>
+                      ))}
+                      {employee.skills.length > 3 && (
+                        <DarkBadge variant="neutral" size="sm">
+                          +{employee.skills.length - 3}
+                        </DarkBadge>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </DarkCard>
+            ))}
+            {paginatedEmployees.length === 0 && (
+              <div className="col-span-3">
+                <DarkCard className="text-center py-12">
+                  <Users size={40} className="mx-auto mb-3 text-text-tertiary opacity-50" />
+                  <p className="font-medium text-text-secondary">No employees found</p>
+                  <p className="text-sm text-text-tertiary">Try adjusting your search or filters</p>
+                </DarkCard>
               </div>
-            </div>
-          ))}
-          {paginatedEmployees.length === 0 && (
-            <div className="col-span-3 bg-white rounded-2xl border border-slate-200">
-              <EmptyListState
-                title="Sem funcionários encontrados"
-                message="Nenhum funcionário corresponde aos filtros aplicados. Tente alterar os critérios de pesquisa."
-              />
-            </div>
-          )}
-        </div>
-
-        {/* Pagination */}
-        {totalPages > 1 && (
-          <div className="flex items-center justify-between mt-6 bg-white rounded-xl p-4 border border-slate-200">
-            <p className="text-sm text-slate-500">
-              Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, filteredEmployees.length)} of {filteredEmployees.length} employees
-            </p>
-            <div className="flex items-center gap-2">
-              <button 
-                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                disabled={currentPage === 1}
-                className="px-3 py-1.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Previous
-              </button>
-              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                const page = currentPage <= 3 ? i + 1 : currentPage + i - 2;
-                if (page > totalPages || page < 1) return null;
-                return (
-                  <button
-                    key={page}
-                    onClick={() => setCurrentPage(page)}
-                    className={`w-8 h-8 rounded-lg text-sm font-medium ${
-                      currentPage === page 
-                        ? 'bg-[#1a2744] text-white' 
-                        : 'text-slate-600 hover:bg-slate-100'
-                    }`}
-                  >
-                    {page}
-                  </button>
-                );
-              })}
-              <button 
-                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                disabled={currentPage === totalPages}
-                className="px-3 py-1.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Next
-              </button>
-            </div>
+            )}
           </div>
-        )}
-      </div>
-    </div>
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <DarkCard className="mt-6">
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-text-tertiary">
+                  Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, filteredEmployees.length)} of {filteredEmployees.length} employees
+                </p>
+                <div className="flex items-center gap-2">
+                  <DarkButton variant="ghost" size="sm" onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1}>
+                    Previous
+                  </DarkButton>
+                  {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                    const page = currentPage <= 3 ? i + 1 : currentPage + i - 2;
+                    if (page > totalPages || page < 1) return null;
+                    return (
+                      <button
+                        key={page}
+                        onClick={() => setCurrentPage(page)}
+                        className={`w-8 h-8 rounded-lg text-sm font-medium transition-colors ${
+                          currentPage === page ? 'bg-accent text-bg-base' : 'text-text-secondary hover:bg-bg-elevated'
+                        }`}
+                      >
+                        {page}
+                      </button>
+                    );
+                  })}
+                  <DarkButton variant="ghost" size="sm" onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages}>
+                    Next
+                  </DarkButton>
+                </div>
+              </div>
+            </DarkCard>
+          )}
+        </>
+      )}
+
+      <FormModal
+        title={editingEmployee ? 'Edit Employee' : 'Add Employee'}
+        isOpen={isFormModalOpen}
+        onClose={() => { setIsFormModalOpen(false); setEditingEmployee(null); }}
+        onSubmit={handleFormSubmit}
+        initialData={editingEmployee ? {
+          employee_code: editingEmployee.employee_code,
+          employee_name: editingEmployee.name,
+          department: editingEmployee.department,
+          shift_pattern: editingEmployee.shift_pattern,
+          status: editingEmployee.status,
+        } : {}}
+        fields={employeeFormFields}
+        isLoading={createMutation.isPending || updateMutation.isPending}
+      />
+
+      <DeleteConfirmDialog
+        isOpen={isDeleteConfirmOpen}
+        onClose={() => { setIsDeleteConfirmOpen(false); setDeletingEmployee(null); }}
+        onConfirm={handleDeleteConfirm}
+        title={deletingEmployee ? `Employee ${deletingEmployee.name}` : 'Employee'}
+        message="Are you sure you want to delete this employee? This action cannot be undone."
+        isLoading={deleteMutation.isPending}
+      />
+    </DarkPageLayout>
   );
 }

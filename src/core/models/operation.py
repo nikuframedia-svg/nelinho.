@@ -114,3 +114,12 @@ class Operation(TenantBase):
         """Calculate total duration in hours."""
         return self.calculate_duration(quantity) / 60
 
+
+
+
+
+
+
+
+
+

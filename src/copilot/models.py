@@ -5,11 +5,13 @@ ProdPlan ONE - COPILOT Models
 SQLAlchemy models for copilot module.
 """
 
+from __future__ import annotations
+
 from datetime import datetime, date
 from typing import Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import String, Text, Integer, Date, ForeignKey, Index, JSON
+from sqlalchemy import String, Text, Integer, Date, ForeignKey, Index, JSON, text
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -201,5 +203,38 @@ class CopilotMessage(TenantBase):
     latency_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     validation_passed: Mapped[Optional[bool]] = mapped_column(nullable=True)
+
+
+class CopilotActionLog(TenantBase):
+    """
+    Audit log for Copilot actions.
+    
+    Tracks all executed actions with before/after state for rollback capability.
+    """
+    
+    __tablename__ = "copilot_action_logs"
+    __table_args__ = (
+        Index("idx_copilot_action_logs_tenant", "tenant_id"),
+        Index("idx_copilot_action_logs_user", "user_id"),
+        Index("idx_copilot_action_logs_plan", "plan_id"),
+        Index("idx_copilot_action_logs_status", "status"),
+        Index("idx_copilot_action_logs_rollback", "rollback_until", postgresql_where=text("status = 'executed'")),
+    )
+    
+    action_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    plan_id: Mapped[Optional[UUID]] = mapped_column(PG_UUID(as_uuid=True), nullable=True, index=True)
+    
+    before_state: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    after_state: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    
+    status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="executed",
+    )  # executed, failed, rolled_back
+    
+    executed_at: Mapped[datetime] = mapped_column(nullable=False, default=datetime.utcnow)
+    rollback_until: Mapped[Optional[datetime]] = mapped_column(nullable=True)  # 24h window for undo
 
 

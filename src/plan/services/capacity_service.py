@@ -268,3 +268,12 @@ class CapacityService:
             "availability": daily_availability,
         }
 
+
+
+
+
+
+
+
+
+

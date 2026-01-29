@@ -20,6 +20,9 @@ from src.shared.config import settings
 # Import all model modules
 from src.core.models import tenant, product, machine, employee, operation, bom, rates
 from src.copilot import models as copilot_models
+from src.dqa import models as dqa_models
+from src.supply import models as supply_models
+from src.shared.models import governance  # Decision ledger models
 
 # this is the Alembic Config object
 config = context.config

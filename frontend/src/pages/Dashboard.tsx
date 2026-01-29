@@ -1,678 +1,834 @@
+/**
+ * Dashboard - Decision Surface
+ * ============================
+ * 
+ * Main dashboard redesigned as a "Decision Surface" following Palantir-level principles:
+ * - Alert Banner for critical exceptions
+ * - Semantic metrics with trust indicators
+ * - "O Que Fazer Hoje" actionable recommendations
+ * - Quick navigation to key areas
+ */
+
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { Link, useNavigate } from 'react-router-dom';
 import { 
-  Search,
-  Bell,
-  ChevronRight,
-  Settings,
-  Package,
-  Cpu,
-  Users,
-  Calendar,
+  Factory, 
+  Clock, 
+  AlertTriangle, 
+  Users, 
   TrendingUp,
-  TrendingDown,
   Layers,
-  PieChart,
-  Briefcase,
-  AlertTriangle,
-  CheckCircle2,
-  PlayCircle,
-  Gauge,
-  Activity,
-  FileX,
+  AlertCircle,
+  Info,
+  RefreshCw,
+  ArrowRight,
+  Zap,
+  Play,
+  HelpCircle,
+  ChevronRight,
+  Inbox,
+  Database,
+  GitBranch,
 } from 'lucide-react';
-import { SimpleTooltip } from '../components/ui';
-import { CopilotInsightsCard } from '../components/copilot/CopilotInsightsCard';
+import { DarkPageLayout } from '../layouts/DarkPageLayout';
+import { DarkCard } from '../components/dark/DarkCard';
+import { StatusBadge } from '../components/dark/DarkBadge';
+import { DarkButton } from '../components/dark/DarkButton';
+import { 
+  DarkTable, 
+  DarkTableHead, 
+  DarkTableBody, 
+  DarkTableRow, 
+  DarkTableHeader, 
+  DarkTableCell 
+} from '../components/dark/DarkTable';
+import { ExplainDrawer } from '../components/explain';
+import { SimulateButton } from '../components/semantic';
+import { LiveActivityFeed } from '../components/activity/LiveActivityFeed';
+import { FocusModeModal } from '../components/focus/FocusModeModal';
 
-// Import real data
-import ordersData from '../data/orders.json';
-import productsData from '../data/products.json';
-import employeesData from '../data/employees.json';
-import phasesData from '../data/phases.json';
-import errorsData from '../data/errors.json';
-import oeeMetrics from '../data/oeeMetrics.json';
-import qualityAnalysis from '../data/qualityAnalysis.json';
+// PALANTIR-LEVEL COMPONENTS
+import { 
+  LiveKPICard, 
+  SchemaDriftAlert, 
+  BlockedMetricsWall,
+  ModuleErrorBoundary 
+} from '../components/palantir';
+import { useSchemaDrift } from '../hooks';
 
-// Computed stats
-// NOTE: Orders stats use oeeMetrics (from FULL Excel data) NOT ordersData (which is sampled for listings)
-const stats = {
-  // Products and Employees - complete data from JSON
-  totalProducts: productsData.length,
-  activeEmployees: employeesData.filter(e => e.status === 'ACTIVE').length,
-  totalEmployees: employeesData.length,
-  totalPhases: phasesData.length,
-  productionPhases: phasesData.filter(p => p.isProduction).length,
-  
-  // Orders - from oeeMetrics (FULL Excel data: 27,380 orders)
-  ordersInProgress: oeeMetrics.ordersInProgress || 0,
-  ordersCompleted: oeeMetrics.ordersCompleted || 0,
-  totalOrders: oeeMetrics.totalOrders,
-  
-  // Recent items for preview (from sampled data - OK for preview)
-  recentErrors: errorsData.slice(0, 5),
-  
-  // Product type counts
-  k1Count: productsData.filter(p => p.type === 'K1').length,
-  k2Count: productsData.filter(p => p.type === 'K2').length,
-  k4Count: productsData.filter(p => p.type === 'K4').length,
-};
+// Import the REAL factory API - uses ingested Excel data!
+import { factoryApi } from '../lib/factoryApi';
 
-// NELO Logo Component
-function NeloLogo() {
+// ═══════════════════════════════════════════════════════════════════════════════
+// ALERT BANNER - Shows when critical exceptions exist
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function AlertBanner({ 
+  criticalCount, 
+  highCount 
+}: { 
+  criticalCount: number; 
+  highCount: number;
+}) {
+  if (criticalCount === 0 && highCount === 0) return null;
+
   return (
-    <div className="flex items-center gap-2">
-      <div 
-        className="flex items-center justify-center font-extrabold"
-        style={{
-          width: 32,
-          height: 32,
-          background: '#f7df1e',
-          borderRadius: 10,
-          fontSize: 14,
-          color: '#1a2744',
-        }}
-      >
-        N
+    <div className="mb-6 p-4 bg-gradient-to-r from-danger/20 via-danger/10 to-transparent border border-danger/30 rounded-xl animate-pulse-subtle">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-danger/20 flex items-center justify-center">
+            <AlertTriangle className="w-5 h-5 text-danger" />
+          </div>
+          <div>
+            <h4 className="text-sm font-semibold text-danger">Atenção Requerida</h4>
+            <p className="text-xs text-danger/80">
+              {criticalCount > 0 && `${criticalCount} excepções críticas`}
+              {criticalCount > 0 && highCount > 0 && ' • '}
+              {highCount > 0 && `${highCount} excepções de alta prioridade`}
+            </p>
+          </div>
+        </div>
+        <Link 
+          to="/ops-inbox"
+          className="flex items-center gap-2 px-4 py-2 bg-danger/20 hover:bg-danger/30 text-danger rounded-lg text-sm font-medium transition-colors"
+        >
+          Ver Inbox <ArrowRight size={16} />
+        </Link>
       </div>
-      <span className="font-bold text-[#1a2744] text-lg tracking-tight">NELO</span>
     </div>
   );
 }
 
-// OEE Mini Gauge
-function OEEMiniGauge({ value, label, color }: { value: number; label: string; color: string }) {
-  const radius = 28;
-  const stroke = 6;
-  const circumference = 2 * Math.PI * radius;
-  const progress = (value / 100) * circumference;
-  const remaining = circumference - progress;
-  
-  return (
-    <div className="flex flex-col items-center">
-      <div className="relative">
-        <svg width={72} height={72} className="transform -rotate-90">
-          <circle
-            cx={36}
-            cy={36}
-            r={radius}
-            fill="none"
-            stroke="rgba(255,255,255,0.2)"
-            strokeWidth={stroke}
-          />
-          <circle
-            cx={36}
-            cy={36}
-            r={radius}
-            fill="none"
-            stroke={color}
-            strokeWidth={stroke}
-            strokeDasharray={`${progress} ${remaining}`}
-            strokeLinecap="round"
-          />
-        </svg>
-        <div className="absolute inset-0 flex items-center justify-center">
-          <span className="text-lg font-bold text-white">{value}%</span>
-        </div>
-      </div>
-      <span className="text-xs text-white/70 mt-1">{label}</span>
-    </div>
-  );
-}
+// ═══════════════════════════════════════════════════════════════════════════════
+// TRUST BADGE
+// ═══════════════════════════════════════════════════════════════════════════════
 
-// Navigation
-function TopNav() {
-  const [active, setActive] = useState('Home');
-  const items = [
-    { name: 'Home', href: '/' },
-    { name: 'CORE', href: '/core/products' },
-    { name: 'PLAN', href: '/plan/scheduling' },
-    { name: 'PROFIT', href: '/profit/cogs' },
-    { name: 'HR', href: '/hr/allocations' },
-  ];
-  
-  return (
-    <header className="bg-white/80 backdrop-blur-xl sticky top-0 z-50 border-b border-slate-100">
-      <div className="max-w-[1400px] mx-auto px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-10">
-          <NeloLogo />
-          <nav className="flex items-center gap-1">
-            {items.map((item) => (
-              <Link
-                key={item.name}
-                to={item.href}
-                onClick={() => setActive(item.name)}
-                className={cn(
-                  'px-4 py-2 rounded-lg text-sm font-medium transition-all',
-                  active === item.name 
-                    ? 'text-[#1a2744] bg-slate-100' 
-                    : 'text-slate-500 hover:text-[#1a2744] hover:bg-slate-50'
-                )}
-              >
-                {item.name}
-              </Link>
-            ))}
-          </nav>
-        </div>
-        
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-3 bg-slate-50 rounded-xl px-4 py-2.5 w-72">
-            <Search size={18} className="text-slate-400" />
-            <input 
-              type="text" 
-              placeholder="Search..."
-              className="flex-1 bg-transparent text-sm outline-none text-[#1a2744] placeholder:text-slate-400"
-            />
-          </div>
-          
-          <SimpleTooltip content="Configurações (em desenvolvimento)">
-            <button 
-              className="w-10 h-10 rounded-xl bg-slate-50 flex items-center justify-center text-slate-400 cursor-not-allowed"
-              aria-label="Configurações"
-            >
-              <Settings size={18} />
-            </button>
-          </SimpleTooltip>
-          
-          <SimpleTooltip content="Ver erros de qualidade">
-            <Link 
-              to="/profit/quality"
-              className="relative w-10 h-10 rounded-xl bg-slate-50 flex items-center justify-center text-slate-500 hover:bg-slate-100 transition-colors"
-              aria-label="Notificações de erros"
-            >
-              <Bell size={18} />
-              {stats.recentErrors.length > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-[#ff6b6b] rounded-full text-[10px] text-white font-bold flex items-center justify-center">
-                  {stats.recentErrors.length}
-                </span>
-              )}
-            </Link>
-          </SimpleTooltip>
-          
-          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-amber-400 to-orange-500 overflow-hidden cursor-pointer ring-2 ring-white shadow-md flex items-center justify-center text-white font-bold text-sm">
-            NL
-          </div>
-        </div>
-      </div>
-    </header>
-  );
-}
-
-// OEE Overview Card
-function OEEOverviewCard() {
-  const getColor = (val: number) => {
-    if (val >= 65) return '#22c55e';
-    if (val >= 40) return '#f59e0b';
-    return '#ef4444';
+function TrustBadge({ value, size = 'sm' }: { value: number; size?: 'sm' | 'md' }) {
+  const getColor = (v: number) => {
+    if (v >= 70) return 'bg-success/20 text-success border-success/30';
+    if (v >= 50) return 'bg-amber/20 text-amber border-amber/30';
+    return 'bg-danger/20 text-danger border-danger/30';
   };
-  
+
+  const sizeClasses = size === 'sm' ? 'text-xs px-1.5 py-0.5' : 'text-xs px-2 py-1';
+
   return (
-    <Link to="/profit/oee" className="block">
-      <div className="bg-gradient-to-br from-[#1a2744] to-[#2d4a7c] rounded-2xl p-6 text-white hover:shadow-xl transition-all">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3">
-            <Gauge size={24} />
-            <div>
-              <h3 className="font-bold text-lg">OEE Dashboard</h3>
-              <p className="text-white/60 text-sm">Overall Equipment Effectiveness</p>
-            </div>
-          </div>
-          <ChevronRight size={20} className="text-white/50" />
-        </div>
-        
-        <div className="grid grid-cols-4 gap-4">
-          <OEEMiniGauge value={oeeMetrics.oee} label="OEE" color={getColor(oeeMetrics.oee)} />
-          <OEEMiniGauge value={oeeMetrics.availability} label="Availability" color={getColor(oeeMetrics.availability)} />
-          <OEEMiniGauge value={oeeMetrics.performance} label="Performance" color={getColor(oeeMetrics.performance)} />
-          <OEEMiniGauge value={oeeMetrics.quality} label="Quality" color={getColor(oeeMetrics.quality)} />
-        </div>
-        
-        <div className="mt-4 pt-4 border-t border-white/10 flex items-center justify-between">
-          <div className="flex items-center gap-2 text-sm">
-            <TrendingDown size={14} className="text-red-400" />
-            <span className="text-white/70">{oeeMetrics.reworkRate}% rework rate</span>
-          </div>
-          <span className="text-xs text-white/50">{oeeMetrics.totalOrders.toLocaleString()} orders analyzed</span>
-        </div>
-      </div>
-    </Link>
+    <span className={`font-medium rounded border ${getColor(value)} ${sizeClasses}`}>
+      {value.toFixed(0)}% confiança
+    </span>
   );
 }
 
-// Module Card
-interface ModuleCardProps {
+// ═══════════════════════════════════════════════════════════════════════════════
+// SEMANTIC VALUE CARD - Enhanced with Explain and Simulate
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function SemanticValueCard({ 
+  title, 
+  metricId,
+  value, 
+  unit,
+  confidence,
+  semanticLabel,
+  icon: Icon,
+  trend,
+  isBlocked,
+  blockedReason,
+  onExplain,
+  canSimulate = true,
+}: {
+  title: string;
+  metricId: string;
+  value: number | string | null;
+  unit?: string;
+  confidence: number;
+  semanticLabel: string;
+  icon: React.ElementType;
+  trend?: { value: number; label: string };
+  isBlocked?: boolean;
+  blockedReason?: string;
+  onExplain: (metricId: string) => void;
+  canSimulate?: boolean;
+}) {
+  const navigate = useNavigate();
+
+  if (isBlocked) {
+    return (
+      <div className="bg-slate-800/50 border border-danger/30 rounded-xl p-4 opacity-90">
+        <div className="flex items-center gap-2 mb-2">
+          <div className="p-2 rounded-lg bg-danger/10">
+            <AlertCircle className="w-4 h-4 text-danger" />
+          </div>
+          <span className="text-sm text-slate-400">{title}</span>
+        </div>
+        <div className="text-lg font-semibold text-danger mb-1">BLOCKED</div>
+        <p className="text-xs text-danger/80">{blockedReason}</p>
+        <Link 
+          to="/profit/oee" 
+          className="inline-flex items-center gap-1 mt-2 text-xs text-danger hover:text-danger-light transition-colors"
+        >
+          Saber mais <ArrowRight size={12} />
+        </Link>
+      </div>
+    );
+  }
+
+  const hasValue = value !== null && value !== undefined;
+  const showLowTrustWarning = confidence < 50;
+
+  return (
+    <div className="group bg-slate-800/50 border border-slate-700/50 rounded-xl p-4 hover:border-accent/30 hover:bg-slate-800/70 transition-all">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <div className="p-2 rounded-lg bg-accent/10">
+            <Icon className="w-4 h-4 text-accent" />
+          </div>
+          <span className="text-sm text-slate-400">{title}</span>
+        </div>
+        <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button
+            onClick={() => onExplain(metricId)}
+            className="w-6 h-6 rounded-lg bg-accent/20 hover:bg-accent/30 flex items-center justify-center text-accent transition-colors"
+            title="Explicar"
+          >
+            <HelpCircle size={12} />
+          </button>
+          {canSimulate && confidence >= 30 && (
+            <button
+              onClick={() => navigate(`/twin?metric=${metricId}`)}
+              className={`w-6 h-6 rounded-lg flex items-center justify-center transition-colors ${
+                confidence >= 50 
+                  ? 'bg-purple/20 hover:bg-purple/30 text-purple' 
+                  : 'bg-purple/10 text-purple/40 cursor-not-allowed'
+              }`}
+              title={confidence >= 50 ? 'Simular' : `Trust baixo (${confidence}%)`}
+              disabled={confidence < 50}
+            >
+              <Play size={12} />
+            </button>
+          )}
+          {showLowTrustWarning && hasValue && (
+            <span title={`Trust baixo: ${confidence}%`}>
+              <AlertTriangle size={14} className="text-amber" />
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="flex items-baseline gap-1 mb-2">
+        <span className="text-2xl font-bold text-white group-hover:text-accent transition-colors">
+          {hasValue ? (typeof value === 'number' ? value.toLocaleString('pt-PT') : value) : '—'}
+        </span>
+        {unit && hasValue && <span className="text-sm text-slate-400">{unit}</span>}
+      </div>
+      <div className="flex items-center gap-2">
+        <TrustBadge value={confidence} />
+        <span className="text-xs text-slate-500 italic">{semanticLabel}</span>
+      </div>
+      {trend && hasValue && (
+        <div className={`flex items-center gap-1 mt-2 text-xs ${trend.value >= 0 ? 'text-success' : 'text-danger'}`}>
+          <TrendingUp className={`w-3 h-3 ${trend.value < 0 ? 'rotate-180' : ''}`} />
+          <span>{trend.value >= 0 ? '+' : ''}{trend.value}% {trend.label}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ACTION CARD - "O Que Fazer Hoje" item
+// ═══════════════════════════════════════════════════════════════════════════════
+
+interface ActionItem {
+  id: string;
+  type: 'bottleneck' | 'quality' | 'skills' | 'schedule';
+  severity: 'critical' | 'high' | 'medium';
   title: string;
   description: string;
-  icon: React.ReactNode;
-  iconBg: string;
-  links: { name: string; href: string }[];
-  stats?: { label: string; value: string }[];
+  impact: string;
+  trustIndex: number;
+  metricId: string;
+  actionType: 'capacity_adjustment' | 'quality_improvement' | 'skills_training' | 'schedule_change';
 }
 
-function ModuleCard({ title, description, icon, iconBg, links, stats: cardStats }: ModuleCardProps) {
-  return (
-    <div className="bg-white rounded-2xl p-6 border border-slate-100 hover:shadow-lg transition-all">
-      <div className="flex items-start gap-4 mb-4">
-        <div className={cn('w-12 h-12 rounded-xl flex items-center justify-center', iconBg)}>
-          {icon}
-        </div>
-        <div className="flex-1">
-          <h3 className="font-bold text-[#1a2744] text-lg">{title}</h3>
-          <p className="text-sm text-slate-500">{description}</p>
-        </div>
-      </div>
-      
-      {cardStats && (
-        <div className="grid grid-cols-3 gap-3 mb-4 p-3 bg-slate-50 rounded-xl">
-          {cardStats.map((stat) => (
-            <div key={stat.label} className="text-center">
-              <p className="text-xl font-bold text-[#1a2744]">{stat.value}</p>
-              <p className="text-xs text-slate-500">{stat.label}</p>
-            </div>
-          ))}
-        </div>
-      )}
-      
-      <div className="space-y-1">
-        {links.map((link) => (
-          <Link
-            key={link.href}
-            to={link.href}
-            className="flex items-center justify-between py-2 px-3 rounded-lg text-sm text-slate-600 hover:bg-slate-50 hover:text-[#1a2744] transition-colors group"
-          >
-            <span>{link.name}</span>
-            <ChevronRight size={16} className="text-slate-400 group-hover:text-[#1a2744] transition-colors" />
-          </Link>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// KPI Card
-function KPICard({ 
-  label, 
-  value, 
-  change, 
-  icon,
-  iconBg,
-  href,
+function ActionCard({ 
+  action, 
+  onExplain 
 }: { 
-  label: string;
-  value: string;
-  change?: { value: number; label: string };
-  icon: React.ReactNode;
-  iconBg: string;
-  href?: string;
+  action: ActionItem; 
+  onExplain: (metricId: string) => void;
 }) {
-  const content = (
-    <div className={cn(
-      "bg-white rounded-2xl p-5 border border-slate-100",
-      href && "hover:shadow-md transition-all cursor-pointer"
-    )}>
+  const severityColors = {
+    critical: 'border-danger/40 bg-danger/5',
+    high: 'border-amber/40 bg-amber/5',
+    medium: 'border-blue/40 bg-blue/5',
+  };
+
+  const severityBadge = {
+    critical: 'bg-danger/20 text-danger',
+    high: 'bg-amber/20 text-amber',
+    medium: 'bg-blue/20 text-blue',
+  };
+
+  const typeIcons = {
+    bottleneck: AlertCircle,
+    quality: AlertTriangle,
+    skills: Users,
+    schedule: Clock,
+  };
+
+  const Icon = typeIcons[action.type];
+
+  return (
+    <div className={`rounded-xl border p-4 ${severityColors[action.severity]} hover:scale-[1.01] transition-transform`}>
       <div className="flex items-start justify-between mb-3">
-        <div className={cn('w-10 h-10 rounded-xl flex items-center justify-center', iconBg)}>
-          {icon}
-        </div>
-        {change && (
-          <div className={cn(
-            'flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-full',
-            change.value >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'
-          )}>
-            {change.value >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
-            {change.value >= 0 ? '+' : ''}{change.value}%
+        <div className="flex items-center gap-2">
+          <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${severityBadge[action.severity]}`}>
+            <Icon size={16} />
           </div>
-        )}
-      </div>
-      <p className="text-2xl font-bold text-[#1a2744] mb-1">{value}</p>
-      <p className="text-sm text-slate-500">{label}</p>
-    </div>
-  );
-  
-  if (href) {
-    return <Link to={href}>{content}</Link>;
-  }
-  return content;
-}
-
-// Recent Activity - Using real order data
-function RecentActivity() {
-  const recentOrders = ordersData.slice(0, 4);
-  
-  return (
-    <div className="bg-white rounded-2xl p-6 border border-slate-100">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="font-bold text-[#1a2744]">Recent Orders</h3>
-        <Link to="/plan/scheduling" className="text-sm text-slate-500 hover:text-[#1a2744]">View all</Link>
-      </div>
-      {recentOrders.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-8 text-center">
-          <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center mb-2">
-            <FileX size={20} className="text-slate-300" />
-          </div>
-          <p className="text-sm text-slate-500">Sem ordens recentes</p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {recentOrders.map((order) => (
-            <div key={order.id} className="flex items-start gap-3 py-2">
-              <div className={cn(
-                'w-8 h-8 rounded-lg flex items-center justify-center',
-                order.status === 'IN_PROGRESS' ? 'bg-blue-100 text-blue-600' : 'bg-emerald-100 text-emerald-600'
-              )}>
-                {order.status === 'IN_PROGRESS' ? <PlayCircle size={16} /> : <CheckCircle2 size={16} />}
-              </div>
-              <div className="flex-1">
-                <p className="text-sm text-[#1a2744] font-medium">{order.productName}</p>
-                <p className="text-xs text-slate-400">OF-{order.id} · {order.currentPhaseName}</p>
-              </div>
-              <span className={cn(
-                'px-2 py-0.5 rounded-full text-xs font-medium',
-                order.status === 'IN_PROGRESS' ? 'bg-blue-50 text-blue-600' : 'bg-emerald-50 text-emerald-600'
-              )}>
-                {order.status === 'IN_PROGRESS' ? 'In Progress' : 'Completed'}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Quality Summary Card
-function QualitySummaryCard() {
-  return (
-    <Link to="/profit/quality" className="block">
-      <div className="bg-white rounded-2xl p-6 border border-slate-100 hover:shadow-lg transition-all">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <Activity size={20} className="text-emerald-500" />
-            <h3 className="font-bold text-[#1a2744]">Quality Overview</h3>
-          </div>
-          <ChevronRight size={16} className="text-slate-400" />
-        </div>
-        
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-slate-500">FPY Rate</span>
-            <span className={cn(
-              "font-bold",
-              oeeMetrics.quality >= 50 ? "text-emerald-600" : 
-              oeeMetrics.quality >= 30 ? "text-amber-600" : "text-red-600"
-            )}>
-              {oeeMetrics.quality}%
+          <div>
+            <span className={`text-xs font-medium px-2 py-0.5 rounded ${severityBadge[action.severity]}`}>
+              {action.severity.toUpperCase()}
             </span>
           </div>
-          
-          <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-            <div 
-              className={cn(
-                "h-full rounded-full",
-                oeeMetrics.quality >= 50 ? "bg-emerald-500" : 
-                oeeMetrics.quality >= 30 ? "bg-amber-500" : "bg-red-500"
-              )}
-              style={{ width: `${oeeMetrics.quality}%` }}
-            />
-          </div>
-          
-          <div className="grid grid-cols-3 gap-2 pt-2">
-            <div className="text-center p-2 bg-amber-50 rounded-lg">
-              <p className="text-lg font-bold text-amber-600">{qualityAnalysis.minorErrorsCount.toLocaleString()}</p>
-              <p className="text-[10px] text-amber-700">Minor</p>
-            </div>
-            <div className="text-center p-2 bg-orange-50 rounded-lg">
-              <p className="text-lg font-bold text-orange-600">{qualityAnalysis.majorErrorsCount.toLocaleString()}</p>
-              <p className="text-[10px] text-orange-700">Major</p>
-            </div>
-            <div className="text-center p-2 bg-red-50 rounded-lg">
-              <p className="text-lg font-bold text-red-600">{qualityAnalysis.criticalErrorsCount.toLocaleString()}</p>
-              <p className="text-[10px] text-red-700">Critical</p>
-            </div>
-          </div>
+        </div>
+        <TrustBadge value={action.trustIndex} />
+      </div>
+      
+      <h4 className="text-sm font-semibold text-white mb-1">{action.title}</h4>
+      <p className="text-xs text-slate-400 mb-3">{action.description}</p>
+      
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-accent">Impacto: {action.impact}</span>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => onExplain(action.metricId)}
+            className="text-xs text-slate-400 hover:text-accent transition-colors flex items-center gap-1"
+          >
+            <HelpCircle size={12} /> Porquê?
+          </button>
+          <SimulateButton
+            actionType={action.actionType}
+            description={action.title}
+            trustIndex={action.trustIndex}
+            size="sm"
+            variant="secondary"
+          />
         </div>
       </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// QUICK NAV CARD
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function QuickNavCard({ 
+  title, 
+  description, 
+  icon: Icon, 
+  to, 
+  color 
+}: { 
+  title: string; 
+  description: string; 
+  icon: React.ElementType; 
+  to: string; 
+  color: string;
+}) {
+  return (
+    <Link 
+      to={to}
+      className={`group flex items-center gap-4 p-4 rounded-xl border border-slate-700/50 hover:border-${color}/30 bg-slate-800/30 hover:bg-slate-800/50 transition-all`}
+    >
+      <div className={`w-10 h-10 rounded-xl bg-${color}/10 flex items-center justify-center group-hover:scale-110 transition-transform`}>
+        <Icon className={`w-5 h-5 text-${color}`} />
+      </div>
+      <div className="flex-1">
+        <h4 className="text-sm font-medium text-white group-hover:text-accent transition-colors">{title}</h4>
+        <p className="text-xs text-slate-500">{description}</p>
+      </div>
+      <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-accent group-hover:translate-x-1 transition-all" />
     </Link>
   );
 }
 
-// Quick Actions
-function QuickActions() {
-  const actions = [
-    { label: 'OEE Dashboard', icon: Gauge, href: '/profit/oee', color: 'bg-blue-500' },
-    { label: 'Quality Analysis', icon: CheckCircle2, href: '/profit/quality', color: 'bg-emerald-500' },
-    { label: 'Production Orders', icon: Calendar, href: '/plan/scheduling', color: 'bg-amber-500' },
-    { label: 'COGS Analysis', icon: PieChart, href: '/profit/cogs', color: 'bg-purple-500' },
-  ];
-  
-  return (
-    <div className="bg-white rounded-2xl p-6 border border-slate-100">
-      <h3 className="font-bold text-[#1a2744] mb-4">Quick Actions</h3>
-      <div className="grid grid-cols-2 gap-3">
-        {actions.map((action) => (
-          <Link
-            key={action.label}
-            to={action.href}
-            className="flex items-center gap-3 p-3 rounded-xl bg-slate-50 hover:bg-slate-100 transition-colors"
-          >
-            <div className={cn('w-9 h-9 rounded-lg flex items-center justify-center text-white', action.color)}>
-              <action.icon size={18} />
-            </div>
-            <span className="text-sm font-medium text-[#1a2744]">{action.label}</span>
-          </Link>
-        ))}
-      </div>
-    </div>
-  );
+// ═══════════════════════════════════════════════════════════════════════════════
+// MAIN DASHBOARD COMPONENT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Type for focus mode metric
+interface FocusMetric {
+  id: string;
+  label: string;
+  value: number | null;
+  unit?: string;
+  trustIndex: number;
+  coverage?: number;
+  semanticLabel?: string;
+  trend?: number;
+  sparklineData?: number[];
 }
 
-// Product Type Distribution - COMPLETE with C4 and Other
-function ProductDistribution() {
-  const c4Count = productsData.filter(p => p.type === 'C4').length;
-  const otherCount = productsData.filter(p => p.type === 'Other').length;
-  
-  const types = [
-    { type: 'K1', count: stats.k1Count, color: 'bg-blue-500' },
-    { type: 'K2', count: stats.k2Count, color: 'bg-purple-500' },
-    { type: 'K4', count: stats.k4Count, color: 'bg-amber-500' },
-    { type: 'C1', count: productsData.filter(p => p.type === 'C1').length, color: 'bg-emerald-500' },
-    { type: 'C2', count: productsData.filter(p => p.type === 'C2').length, color: 'bg-teal-500' },
-    { type: 'C4', count: c4Count, color: 'bg-cyan-500' },
-    { type: 'Other', count: otherCount, color: 'bg-slate-400' },
-  ];
-  
-  const total = types.reduce((sum, t) => sum + t.count, 0);
-  
-  return (
-    <div className="bg-white rounded-2xl p-6 border border-slate-100">
-      <h3 className="font-bold text-[#1a2744] mb-4">
-        Distribuição de Modelos <span className="font-normal text-sm text-slate-400">({total} total)</span>
-      </h3>
-      <div className="space-y-3">
-        {types.map((item) => (
-          <div key={item.type} className="flex items-center gap-3">
-            <div className={cn('w-3 h-3 rounded-full', item.color)} />
-            <span className="text-sm text-slate-600 w-8">{item.type}</span>
-            <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
-              <div 
-                className={cn('h-full rounded-full', item.color)} 
-                style={{ width: `${(item.count / total) * 100}%` }}
-              />
-            </div>
-            <span className="text-sm font-medium text-[#1a2744] w-12 text-right">{item.count}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// Main Dashboard
 export function Dashboard() {
+  const [explainMetricId, setExplainMetricId] = useState<string | null>(null);
+  const [focusMetric, setFocusMetric] = useState<FocusMetric | null>(null);
+
+  // PALANTIR: Schema Drift Detection
+  const { drifts, handleAction: handleDriftAction } = useSchemaDrift();
+
+  // Fetch WIP data from REAL API (Excel data!)
+  const { data: wipData, isLoading: wipLoading, refetch: refetchWip } = useQuery({
+    queryKey: ['factory', 'semantic', 'wip'],
+    queryFn: () => factoryApi.getWIP(),
+    staleTime: 60000,
+    retry: false,
+  });
+
+  // Fetch Bottlenecks data from REAL API
+  const { data: bottlenecksData, isLoading: bottlenecksLoading, refetch: refetchBottlenecks } = useQuery({
+    queryKey: ['factory', 'semantic', 'bottlenecks'],
+    queryFn: () => factoryApi.getBottlenecks(),
+    staleTime: 60000,
+    retry: false,
+  });
+
+  // Fetch Quality data from REAL API
+  const { data: qualityData, isLoading: qualityLoading, refetch: refetchQuality } = useQuery({
+    queryKey: ['factory', 'semantic', 'quality'],
+    queryFn: () => factoryApi.getQuality(),
+    staleTime: 60000,
+    retry: false,
+  });
+
+  // Fetch Skills Risk data from REAL API
+  const { data: skillsData, isLoading: skillsLoading, refetch: refetchSkills } = useQuery({
+    queryKey: ['factory', 'semantic', 'skills-risk'],
+    queryFn: () => factoryApi.getSkillsRisk(),
+    staleTime: 60000,
+    retry: false,
+  });
+
+  const handleRefreshAll = () => {
+    refetchWip();
+    refetchBottlenecks();
+    refetchQuality();
+    refetchSkills();
+  };
+
+  const isLoading = wipLoading || bottlenecksLoading || qualityLoading || skillsLoading;
+
+  // Calculate critical/high counts for alert banner - using REAL data
+  const criticalCount = (skillsData?.data?.critical_phases ?? 0) + 
+    (bottlenecksData?.data?.bottlenecks?.filter((b: any) => b.is_critical)?.length ?? 0);
+  const highCount = (skillsData?.data?.high_risk_phases ?? 0);
+
+  // Build action items for "O Que Fazer Hoje" - using REAL data
+  const actionItems: ActionItem[] = [];
+
+  // Add bottleneck actions from REAL bottleneck data
+  if (bottlenecksData?.data?.bottlenecks?.length > 0) {
+    const topBottleneck = bottlenecksData.data.bottlenecks[0];
+    if (topBottleneck.is_critical || topBottleneck.bottleneck_score > 50) {
+      actionItems.push({
+        id: 'bottleneck-1',
+        type: 'bottleneck',
+        severity: topBottleneck.is_critical ? 'critical' : 'high',
+        title: `Gargalo Crítico: ${topBottleneck.fase_nome || topBottleneck.fase_id}`,
+        description: `Backlog de ${topBottleneck.backlog_hours?.toFixed(0) || '?'} horas`,
+        impact: 'Reduzir backlog em ~20%',
+        trustIndex: bottlenecksData.data_confidence ?? 58,
+        metricId: 'bottleneck_ranking',
+        actionType: 'capacity_adjustment',
+      });
+    }
+  }
+
+  // Add quality actions from REAL quality data
+  if (qualityData?.data?.total_errors > 10) {
+    const topError = qualityData.data.by_type?.[0] || qualityData.data.top_items?.[0];
+    actionItems.push({
+      id: 'quality-1',
+      type: 'quality',
+      severity: qualityData.data.total_errors > 50 ? 'high' : 'medium',
+      title: `${qualityData.data.total_errors} Erros de Qualidade`,
+      description: topError ? `Top erro: ${topError.error_type || topError.descricao || 'N/A'}` : 'Erros registados no sistema',
+      impact: 'Reduzir taxa de retrabalho',
+      trustIndex: qualityData.data_confidence ?? 67,
+      metricId: 'quality_error_count',
+      actionType: 'quality_improvement',
+    });
+  }
+
+  // Add skills risk actions from REAL skills data
+  const criticalPhases = skillsData?.data?.critical_phases ?? skillsData?.data?.phases_at_risk ?? 0;
+  if (criticalPhases > 0) {
+    actionItems.push({
+      id: 'skills-1',
+      type: 'skills',
+      severity: 'critical',
+      title: `${criticalPhases} Fases com Risco de Competências`,
+      description: 'Risco de paragem de produção por falta de funcionários aptos',
+      impact: 'Garantir continuidade',
+      trustIndex: skillsData?.data_confidence ?? 55,
+      metricId: 'skills_risk_by_phase',
+      actionType: 'skills_training',
+    });
+  }
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-slate-100/50 to-slate-50">
-      <TopNav />
-      
-      <div className="max-w-[1400px] mx-auto px-6 py-8">
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-[#1a2744] mb-2">Dashboard</h1>
-          <p className="text-slate-500">Welcome back! Here's an overview of Nelo production.</p>
-        </div>
-        
-        {/* OEE Overview - Full Width */}
-        <div className="mb-8">
-          <OEEOverviewCard />
-        </div>
-        
-        {/* COPILOT INSIGHTS */}
-        <div className="mb-6">
-          <CopilotInsightsCard />
-        </div>
-        
-        {/* KPIs - All values from real data */}
-        <div className="grid grid-cols-5 gap-4 mb-8">
-          <KPICard
-            label="FPY Rate"
-            value={`${oeeMetrics.quality}%`}
-            icon={<CheckCircle2 size={20} className="text-white" />}
-            iconBg="bg-gradient-to-br from-emerald-500 to-emerald-600"
-            href="/profit/quality"
-          />
-          <KPICard
-            label="Kayak Models"
-            value={stats.totalProducts.toString()}
-            icon={<Package size={20} className="text-white" />}
-            iconBg="bg-gradient-to-br from-blue-500 to-blue-600"
-            href="/core/products"
-          />
-          <KPICard
-            label="Production Phases"
-            value={`${stats.productionPhases}/${stats.totalPhases}`}
-            icon={<Cpu size={20} className="text-white" />}
-            iconBg="bg-gradient-to-br from-purple-500 to-purple-600"
-            href="/core/operations"
-          />
-          <KPICard
-            label="Orders In Progress"
-            value={stats.ordersInProgress.toString()}
-            icon={<Calendar size={20} className="text-white" />}
-            iconBg="bg-gradient-to-br from-amber-500 to-amber-600"
-            href="/plan/scheduling"
-          />
-          <KPICard
-            label="Active Employees"
-            value={`${stats.activeEmployees}/${stats.totalEmployees}`}
-            icon={<Users size={20} className="text-white" />}
-            iconBg="bg-gradient-to-br from-slate-500 to-slate-600"
-            href="/core/employees"
-          />
-        </div>
-        
-        {/* Modules Grid */}
-        <div className="grid grid-cols-12 gap-6 mb-8">
-          {/* CORE Module */}
-          <div className="col-span-3">
-            <ModuleCard
-              title="CORE"
-              description="Master Data Management"
-              icon={<Briefcase size={24} className="text-white" />}
-              iconBg="bg-gradient-to-br from-slate-600 to-slate-700"
-              stats={[
-                { label: 'Products', value: stats.totalProducts.toString() },
-                { label: 'Phases', value: stats.totalPhases.toString() },
-                { label: 'Employees', value: stats.totalEmployees.toString() },
-              ]}
-              links={[
-                { name: 'Kayak Models', href: '/core/products' },
-                { name: 'Production Phases', href: '/core/operations' },
-                { name: 'Employees', href: '/core/employees' },
-                { name: 'Machines', href: '/core/machines' },
-                { name: 'Rates', href: '/core/rates' },
-              ]}
-            />
-          </div>
-          
-          {/* PLAN Module */}
-          <div className="col-span-3">
-            <ModuleCard
-              title="PLAN"
-              description="Production Planning"
-              icon={<Calendar size={24} className="text-white" />}
-              iconBg="bg-gradient-to-br from-blue-500 to-blue-600"
-              stats={[
-                { label: 'Orders', value: stats.totalOrders.toString() },
-                { label: 'In Progress', value: stats.ordersInProgress.toString() },
-                { label: 'Completed', value: stats.ordersCompleted.toString() },
-              ]}
-              links={[
-                { name: 'Production Orders', href: '/plan/scheduling' },
-                { name: 'MRP', href: '/plan/mrp' },
-                { name: 'Capacity', href: '/plan/capacity' },
-              ]}
-            />
-          </div>
-          
-          {/* PROFIT Module */}
-          <div className="col-span-3">
-            <ModuleCard
-              title="PROFIT"
-              description="Cost & Quality"
-              icon={<PieChart size={24} className="text-white" />}
-              iconBg="bg-gradient-to-br from-emerald-500 to-emerald-600"
-              stats={[
-                { label: 'OEE', value: `${oeeMetrics.oee}%` },
-                { label: 'FPY', value: `${oeeMetrics.quality}%` },
-                { label: 'Rework', value: `${oeeMetrics.reworkRate}%` },
-              ]}
-              links={[
-                { name: 'OEE Dashboard', href: '/profit/oee' },
-                { name: 'Quality Analysis', href: '/profit/quality' },
-                { name: 'COGS Analysis', href: '/profit/cogs' },
-                { name: 'Pricing', href: '/profit/pricing' },
-                { name: 'Scenarios', href: '/profit/scenarios' },
-              ]}
-            />
-          </div>
-          
-          {/* HR Module */}
-          <div className="col-span-3">
-            <ModuleCard
-              title="HR"
-              description="Human Resources"
-              icon={<Users size={24} className="text-white" />}
-              iconBg="bg-gradient-to-br from-purple-500 to-purple-600"
-              stats={[
-                { label: 'Activos', value: stats.activeEmployees.toString() },
-                { label: 'Inativos', value: (stats.totalEmployees - stats.activeEmployees).toString() },
-                { label: 'Total', value: stats.totalEmployees.toString() },
-              ]}
-              links={[
-                { name: 'Allocations', href: '/hr/allocations' },
-                { name: 'Payroll', href: '/hr/payroll' },
-                { name: 'Productivity', href: '/hr/productivity' },
-              ]}
-            />
-          </div>
-        </div>
-        
-        {/* Bottom Row */}
-        <div className="grid grid-cols-12 gap-6">
-          <div className="col-span-4">
-            <RecentActivity />
-          </div>
-          <div className="col-span-4">
-            <QualitySummaryCard />
-          </div>
-          <div className="col-span-4 space-y-6">
-            <ProductDistribution />
-            <QuickActions />
+    <ModuleErrorBoundary moduleName="Dashboard">
+    <DarkPageLayout
+      title="Dashboard"
+      subtitle="Superfície de Decisão — Visão geral baseada em dados semânticos"
+      actions={
+        <DarkButton 
+          variant="secondary" 
+          size="sm" 
+          onClick={handleRefreshAll}
+          disabled={isLoading}
+        >
+          <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+          Atualizar
+        </DarkButton>
+      }
+    >
+      {/* Alert Banner */}
+      <AlertBanner criticalCount={criticalCount} highCount={highCount} />
+
+      {/* PALANTIR: Schema Drift Alert - Floating notification for data changes */}
+      {drifts.length > 0 && (
+        <SchemaDriftAlert 
+          drifts={drifts} 
+          onAction={handleDriftAction}
+        />
+      )}
+
+      {/* Data Source Notice */}
+      <div className="mb-6 p-4 bg-accent/10 border border-accent/20 rounded-xl">
+        <div className="flex items-start gap-3">
+          <Info className="w-5 h-5 text-accent mt-0.5 flex-shrink-0" />
+          <div>
+            <h4 className="text-sm font-medium text-accent mb-1">Fonte de Dados: Factory Data Product</h4>
+            <p className="text-xs text-slate-400">
+              Todos os valores são calculados a partir dos dados CURATED. 
+              Cada métrica inclui um índice de confiança baseado na cobertura e qualidade dos dados.
+              <strong className="text-slate-300"> Clique em qualquer métrica para explicação detalhada.</strong>
+            </p>
           </div>
         </div>
       </div>
-    </div>
-  );
-}
 
-function cn(...classes: (string | boolean | undefined)[]) {
-  return classes.filter(Boolean).join(' ');
+      {/* Main Stats Grid - REAL DATA from Excel! */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <SemanticValueCard
+          title="Ordens Abertas"
+          metricId="wip_open_orders"
+          value={wipData?.data?.open_orders ?? null}
+          icon={Factory}
+          confidence={wipData?.data_confidence ?? 75}
+          semanticLabel={wipData?.semantic_label ?? 'WIP teórico'}
+          onExplain={setExplainMetricId}
+        />
+
+        <SemanticValueCard
+          title="Fases Abertas (Produção)"
+          metricId="wip_open_phases"
+          value={wipData?.data?.phases_total ?? wipData?.data?.open_phases ?? null}
+          icon={Layers}
+          confidence={wipData?.data_confidence ?? 75}
+          semanticLabel={wipData?.semantic_label ?? 'WIP teórico'}
+          onExplain={setExplainMetricId}
+        />
+
+        <SemanticValueCard
+          title="Horas Previstas (Backlog)"
+          metricId="backlog_theoretical_hours"
+          value={wipData?.data?.total_hours_pending ? Math.round(wipData.data.total_hours_pending) : null}
+          unit="h"
+          icon={Clock}
+          confidence={wipData?.data_confidence ?? 75}
+          semanticLabel={wipData?.semantic_label ?? 'WIP teórico'}
+          onExplain={setExplainMetricId}
+        />
+
+        <SemanticValueCard
+          title="OEE"
+          metricId="oee_real"
+          value={null}
+          icon={TrendingUp}
+          confidence={0}
+          semanticLabel=""
+          isBlocked={true}
+          blockedReason="OEE requer dados de paragens de máquina e tempos de ciclo que não existem."
+          onExplain={setExplainMetricId}
+          canSimulate={false}
+        />
+      </div>
+
+      {/* "O Que Fazer Hoje" Section */}
+      {actionItems.length > 0 && (
+        <div className="mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <Zap className="w-5 h-5 text-accent" />
+              <h3 className="text-lg font-semibold text-white">O Que Fazer Hoje</h3>
+              <span className="text-xs text-slate-500 bg-slate-800 px-2 py-0.5 rounded-full">
+                {actionItems.length} acções
+              </span>
+            </div>
+            <Link 
+              to="/ops-inbox" 
+              className="text-xs text-accent hover:text-accent-light flex items-center gap-1 transition-colors"
+            >
+              Ver todas <ArrowRight size={12} />
+            </Link>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {actionItems.slice(0, 3).map((action) => (
+              <ActionCard 
+                key={action.id} 
+                action={action} 
+                onExplain={setExplainMetricId}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Secondary Stats - REAL DATA */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <SemanticValueCard
+          title="Erros Registados"
+          metricId="quality_error_count"
+          value={qualityData?.data?.total_errors ?? null}
+          icon={AlertTriangle}
+          confidence={qualityData?.data_confidence ?? 75}
+          semanticLabel={qualityData?.semantic_label ?? 'Análise de qualidade'}
+          onExplain={setExplainMetricId}
+        />
+
+        <SemanticValueCard
+          title="Fases em Risco (Skills)"
+          metricId="skills_risk_by_phase"
+          value={skillsData?.data?.phases_count ?? skillsData?.data?.phases_at_risk ?? null}
+          icon={Users}
+          confidence={skillsData?.data_confidence ?? 75}
+          semanticLabel={skillsData?.semantic_label ?? 'Risco de competências'}
+          onExplain={setExplainMetricId}
+        />
+
+        <SemanticValueCard
+          title="Bottlenecks"
+          metricId="bottleneck_ranking"
+          value={bottlenecksData?.data?.bottlenecks?.length ?? null}
+          icon={AlertCircle}
+          confidence={bottlenecksData?.data_confidence ?? 75}
+          semanticLabel={bottlenecksData?.semantic_label ?? 'Gargalos teóricos'}
+          onExplain={setExplainMetricId}
+        />
+      </div>
+
+      {/* Two Column Layout - Tables */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        {/* Bottlenecks Table */}
+        <DarkCard
+          title="Top Bottlenecks"
+          subtitle="Fases com maior backlog teórico"
+          icon={<AlertCircle className="w-5 h-5" />}
+          footer={
+            bottlenecksData && (
+              <div className="flex items-center gap-2">
+                <TrustBadge value={bottlenecksData.data_confidence} />
+                <span className="text-xs text-slate-500">{bottlenecksData.semantic_label}</span>
+              </div>
+            )
+          }
+        >
+          {bottlenecksLoading ? (
+            <div className="animate-pulse space-y-2">
+              {[1,2,3,4,5].map(i => (
+                <div key={i} className="h-10 bg-slate-700/50 rounded" />
+              ))}
+            </div>
+          ) : bottlenecksData?.data?.bottlenecks?.length > 0 ? (
+            <DarkTable>
+              <DarkTableHead>
+                <DarkTableRow>
+                  <DarkTableHeader>#</DarkTableHeader>
+                  <DarkTableHeader>Fase</DarkTableHeader>
+                  <DarkTableHeader align="right">Backlog</DarkTableHeader>
+                  <DarkTableHeader align="right">Status</DarkTableHeader>
+                </DarkTableRow>
+              </DarkTableHead>
+              <DarkTableBody>
+                {bottlenecksData.data.bottlenecks.slice(0, 5).map((b: { fase_id?: string; fase_nome?: string; backlog_hours?: number; backlog_days?: number; bottleneck_score?: number; is_critical?: boolean }, idx: number) => (
+                  <DarkTableRow key={b.fase_id || idx}>
+                    <DarkTableCell>
+                      <span className="text-slate-500">{idx + 1}</span>
+                    </DarkTableCell>
+                    <DarkTableCell>
+                      <span className="font-medium text-white">{b.fase_nome || b.fase_id}</span>
+                    </DarkTableCell>
+                    <DarkTableCell align="right">
+                      <span className="font-mono">{b.backlog_hours?.toFixed(0) ?? b.backlog_days?.toFixed(1) ?? '—'}</span>
+                      <span className="text-slate-500 text-xs ml-1">{b.backlog_hours !== undefined ? 'h' : 'dias'}</span>
+                    </DarkTableCell>
+                    <DarkTableCell align="right">
+                      {b.is_critical || (b.bottleneck_score && b.bottleneck_score > 70) ? (
+                        <StatusBadge status="error" />
+                      ) : (
+                        <StatusBadge status="completed" />
+                      )}
+                    </DarkTableCell>
+                  </DarkTableRow>
+                ))}
+              </DarkTableBody>
+            </DarkTable>
+          ) : (
+            <div className="text-center py-8 text-slate-500">
+              <AlertCircle className="w-8 h-8 mx-auto mb-2 opacity-50" />
+              <p>Sem dados de bottlenecks</p>
+              <p className="text-xs mt-1">Os dados serão carregados da API</p>
+            </div>
+          )}
+        </DarkCard>
+
+        {/* Quality Issues Table */}
+        <DarkCard
+          title="Top Erros de Qualidade"
+          subtitle="Erros mais frequentes registados"
+          icon={<AlertTriangle className="w-5 h-5" />}
+          footer={
+            qualityData && (
+              <div className="flex items-center gap-2">
+                <TrustBadge value={qualityData.data_confidence} />
+                <span className="text-xs text-slate-500">{qualityData.semantic_label}</span>
+              </div>
+            )
+          }
+        >
+          {qualityLoading ? (
+            <div className="animate-pulse space-y-2">
+              {[1,2,3,4,5].map(i => (
+                <div key={i} className="h-10 bg-slate-700/50 rounded" />
+              ))}
+            </div>
+          ) : (qualityData?.data?.by_type?.length > 0 || qualityData?.data?.top_items?.length > 0) ? (
+            <DarkTable>
+              <DarkTableHead>
+                <DarkTableRow>
+                  <DarkTableHeader>Erro</DarkTableHeader>
+                  <DarkTableHeader align="right">Ocorrências</DarkTableHeader>
+                  <DarkTableHeader align="right">%</DarkTableHeader>
+                </DarkTableRow>
+              </DarkTableHead>
+              <DarkTableBody>
+                {(qualityData.data.by_type || qualityData.data.top_items || []).slice(0, 5).map((item: { error_type?: string; descricao?: string; count: number; percentage?: number; fase_culpada_pct?: number }, idx: number) => (
+                  <DarkTableRow key={idx}>
+                    <DarkTableCell>
+                      <span className="font-medium text-white truncate block max-w-[200px]" title={item.error_type || item.descricao}>
+                        {item.error_type || item.descricao || 'N/A'}
+                      </span>
+                    </DarkTableCell>
+                    <DarkTableCell align="right">
+                      <span className="font-mono">{item.count?.toLocaleString('pt-PT')}</span>
+                    </DarkTableCell>
+                    <DarkTableCell align="right">
+                      <span className="font-mono">{(item.percentage ?? item.fase_culpada_pct)?.toFixed(1) ?? '—'}%</span>
+                    </DarkTableCell>
+                  </DarkTableRow>
+                ))}
+              </DarkTableBody>
+            </DarkTable>
+          ) : (
+            <div className="text-center py-8 text-slate-500">
+              <AlertTriangle className="w-8 h-8 mx-auto mb-2 opacity-50" />
+              <p>Sem dados de qualidade</p>
+              <p className="text-xs mt-1">Os dados serão carregados da API</p>
+            </div>
+          )}
+        </DarkCard>
+      </div>
+
+      {/* PALANTIR: Blocked Metrics Preview */}
+      <div className="mb-6">
+        <BlockedMetricsWall compact maxItems={4} />
+      </div>
+
+      {/* Quick Navigation + Live Activity */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 border-t border-slate-700/50 pt-6">
+        {/* Quick Navigation */}
+        <div className="lg:col-span-2">
+          <h3 className="text-sm font-medium text-slate-400 mb-4">Navegação Rápida</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <QuickNavCard
+              title="Twin Sandbox"
+              description="Simular cenários what-if"
+              icon={GitBranch}
+              to="/twin"
+              color="purple"
+            />
+            <QuickNavCard
+              title="Data Quality Center"
+              description="Trust index e quarentena"
+              icon={Database}
+              to="/admin/data-quality"
+              color="amber"
+            />
+            <QuickNavCard
+              title="Ops Inbox"
+              description="Fila de excepções"
+              icon={Inbox}
+              to="/inbox"
+              color="danger"
+            />
+          </div>
+        </div>
+
+        {/* Live Activity Feed */}
+        <div className="lg:col-span-1">
+          <LiveActivityFeed 
+            maxItems={5}
+            showHeader={true}
+            compact={false}
+          />
+        </div>
+      </div>
+
+      {/* Explain Drawer */}
+      <ExplainDrawer 
+        open={!!explainMetricId} 
+        onClose={() => setExplainMetricId(null)} 
+        metricId={explainMetricId || ''} 
+      />
+
+      {/* Focus Mode Modal */}
+      <FocusModeModal
+        isOpen={!!focusMetric}
+        onClose={() => setFocusMetric(null)}
+        metric={focusMetric ? {
+          id: focusMetric.id,
+          label: focusMetric.label,
+          value: focusMetric.value,
+          unit: focusMetric.unit,
+          trustIndex: focusMetric.trustIndex,
+          coverage: focusMetric.coverage,
+          semanticLabel: focusMetric.semanticLabel,
+          trend: focusMetric.trend,
+          sparklineData: focusMetric.sparklineData,
+        } : null}
+        onExplain={(metricId) => {
+          setFocusMetric(null);
+          setExplainMetricId(metricId);
+        }}
+        onSimulate={(_metricId) => {
+          setFocusMetric(null);
+          // Navigate to Twin will be handled by the modal
+        }}
+      />
+    </DarkPageLayout>
+    </ModuleErrorBoundary>
+  );
 }

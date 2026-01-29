@@ -32,7 +32,7 @@ export function CopilotMascot({ size = 'md', className = '' }: CopilotMascotProp
   return (
     <img
       src={copilotMascotImage}
-      alt="COPILOT NELO - Mascote do sistema"
+      alt="Nelinho - Mascote do sistema"
       className={`${sizeMap[size]} w-auto object-contain ${className}`}
       style={{ opacity: 1 }}
       onError={() => setImageError(true)}

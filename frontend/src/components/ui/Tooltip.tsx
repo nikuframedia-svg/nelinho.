@@ -94,3 +94,12 @@ export function SimpleTooltip({ content, children, className }: Omit<TooltipProp
   );
 }
 
+
+
+
+
+
+
+
+
+

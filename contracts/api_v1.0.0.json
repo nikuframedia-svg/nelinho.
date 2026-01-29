@@ -1,0 +1,156 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://prodplan.io/schemas/factory-data-product/api/v1.0.0",
+  "title": "Factory Data Product - API Response Schema",
+  "description": "Schema for API responses with ExplainableValue",
+  "version": "1.0.0",
+  "definitions": {
+    "Unit": {
+      "type": "string",
+      "enum": ["hours", "minutes", "EUR", "pct", "pcs", "days", "unknown"]
+    },
+    "ExplainableValueQualifier": {
+      "type": "string",
+      "enum": ["real", "theoretical", "estimated", "imputted", "partial", "blocked"]
+    },
+    "Citation": {
+      "type": "object",
+      "required": ["source"],
+      "properties": {
+        "source": { "type": "string" },
+        "query": { "type": ["string", "null"] },
+        "row_count": { "type": ["integer", "null"], "minimum": 0 },
+        "timestamp": { "type": "string", "format": "date-time" }
+      }
+    },
+    "ExplainableValue": {
+      "type": "object",
+      "required": ["explain", "trust_index"],
+      "properties": {
+        "value": { "type": ["number", "string", "boolean", "null"] },
+        "unit": { "$ref": "#/definitions/Unit" },
+        "explain": { "type": "string", "minLength": 1 },
+        "formula": { "type": ["string", "null"] },
+        "qualifier": { "$ref": "#/definitions/ExplainableValueQualifier" },
+        "trust_index": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "confidence_score": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+        "citations": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/Citation" }
+        },
+        "warnings": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "limitations": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "blocked": { "type": "boolean", "default": false },
+        "blocked_reason": { "type": ["string", "null"] }
+      }
+    },
+    "KPIStatus": {
+      "type": "string",
+      "enum": ["available", "partial", "blocked", "not_applicable"]
+    },
+    "KPIResponse": {
+      "type": "object",
+      "required": ["kpi_name", "kpi_id", "value", "status"],
+      "properties": {
+        "kpi_name": { "type": "string" },
+        "kpi_id": { "type": "string" },
+        "value": { "$ref": "#/definitions/ExplainableValue" },
+        "status": { "$ref": "#/definitions/KPIStatus" },
+        "minimum_trust_required": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "trust_check_passed": { "type": "boolean" },
+        "calculated_at": { "type": "string", "format": "date-time" },
+        "cache_ttl_seconds": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "DataConfidence": {
+      "type": "object",
+      "required": ["trust_index", "coverage_pct", "sample_size", "confidence_score", "reliability"],
+      "properties": {
+        "trust_index": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "coverage_pct": { "type": "number", "minimum": 0, "maximum": 100 },
+        "sample_size": { "type": "integer", "minimum": 0 },
+        "confidence_score": { "type": "number", "minimum": 0, "maximum": 100 },
+        "reliability": { "type": "string", "enum": ["HIGH", "MEDIUM", "LOW", "VERY_LOW"] }
+      }
+    },
+    "APIErrorCode": {
+      "type": "string",
+      "enum": [
+        "VALIDATION_ERROR",
+        "CONTRACT_VIOLATION",
+        "INSUFFICIENT_DATA",
+        "TRUST_TOO_LOW",
+        "CALCULATION_BLOCKED",
+        "NOT_FOUND",
+        "INTERNAL_ERROR"
+      ]
+    },
+    "APIErrorDetail": {
+      "type": "object",
+      "required": ["message"],
+      "properties": {
+        "field": { "type": ["string", "null"] },
+        "message": { "type": "string" },
+        "code": { "type": ["string", "null"] }
+      }
+    },
+    "APIErrorResponse": {
+      "type": "object",
+      "required": ["error_code", "message"],
+      "properties": {
+        "error_code": { "$ref": "#/definitions/APIErrorCode" },
+        "message": { "type": "string" },
+        "details": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/APIErrorDetail" }
+        },
+        "contract_version": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      }
+    },
+    "BlockedResponse": {
+      "type": "object",
+      "required": ["blocked", "reason", "message"],
+      "properties": {
+        "blocked": { "type": "boolean", "const": true },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "insufficient_data",
+            "trust_index_too_low",
+            "semantic_null_dominates",
+            "contract_violation",
+            "calculation_not_allowed"
+          ]
+        },
+        "message": { "type": "string" },
+        "required_data": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "trust_index": { "type": ["integer", "null"] },
+        "minimum_trust_index": { "type": ["integer", "null"] }
+      }
+    }
+  },
+  "type": "object",
+  "properties": {
+    "success": { "type": "boolean" },
+    "data": {},
+    "error": { "$ref": "#/definitions/APIErrorResponse" },
+    "contract_version": { "type": "string", "const": "1.0.0" },
+    "request_id": { "type": ["string", "null"] },
+    "timestamp": { "type": "string", "format": "date-time" }
+  },
+  "if": { "properties": { "success": { "const": false } } },
+  "then": { "required": ["success", "error"] },
+  "else": { "required": ["success", "data"] }
+}
+
+

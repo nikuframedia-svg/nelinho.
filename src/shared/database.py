@@ -126,7 +126,9 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
     async with async_session_factory() as session:
         try:
             yield session
-            await session.commit()
+            # Only commit if there are pending changes
+            if session.dirty or session.new or session.deleted:
+                await session.commit()
         except Exception:
             await session.rollback()
             raise
@@ -146,7 +148,9 @@ async def get_session_context() -> AsyncGenerator[AsyncSession, None]:
     async with async_session_factory() as session:
         try:
             yield session
-            await session.commit()
+            # Only commit if there are pending changes
+            if session.dirty or session.new or session.deleted:
+                await session.commit()
         except Exception:
             await session.rollback()
             raise
@@ -211,4 +215,38 @@ async def check_db_health() -> bool:
         return True
     except Exception:
         return False
+
+
+# ============================================================================
+# Database Availability Check (with caching)
+# ============================================================================
+
+_db_available_cache = {"status": None, "timestamp": 0}
+_CACHE_TTL = 5  # seconds
+
+
+async def is_db_available() -> bool:
+    """Check if DB is available (with caching)."""
+    import time
+    now = time.time()
+    if now - _db_available_cache["timestamp"] < _CACHE_TTL:
+        return _db_available_cache["status"]
+    
+    status = await check_db_health()
+    _db_available_cache["status"] = status
+    _db_available_cache["timestamp"] = now
+    return status
+
+
+async def get_session_safe() -> AsyncGenerator[AsyncSession, None]:
+    """Safe session dependency that handles DB unavailability."""
+    from fastapi import HTTPException, status
+    
+    if not await is_db_available():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database service unavailable. Please check PostgreSQL connection."
+        )
+    async for session in get_session():
+        yield session
 

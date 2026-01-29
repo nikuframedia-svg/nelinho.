@@ -126,3 +126,12 @@ class Product(TenantBase):
             ProductType.SEMI_FINISHED,
         )
 
+
+
+
+
+
+
+
+
+

@@ -78,6 +78,36 @@ async def get_tenant(
     return tenant
 
 
+@router.patch("/{tenant_id}", response_model=TenantResponse)
+async def update_tenant(
+    tenant_id: UUID,
+    data: TenantUpdate,
+    session: AsyncSession = Depends(get_session),
+):
+    """Update tenant."""
+    service = TenantService(session)
+    
+    updates = {}
+    if data.tenant_name is not None:
+        updates["tenant_name"] = data.tenant_name
+    if data.contact_email is not None:
+        updates["contact_email"] = data.contact_email
+    if data.currency_code is not None:
+        updates["currency_code"] = data.currency_code
+    if data.timezone is not None:
+        updates["timezone"] = data.timezone
+    
+    tenant = await service.update_tenant(tenant_id, **updates)
+    
+    if not tenant:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Tenant {tenant_id} not found",
+        )
+    
+    return tenant
+
+
 @router.post("/{tenant_id}/activate", response_model=TenantResponse)
 async def activate_tenant(
     tenant_id: UUID,
@@ -132,4 +162,6 @@ async def update_subscription(
         )
     
     return tenant
+
+
 

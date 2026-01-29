@@ -381,6 +381,383 @@ class MasterDataService:
         )
         return list(result.scalars().all())
     
+    async def get_bom_item(self, bom_id: UUID) -> Optional[BOMItem]:
+        """Get BOM item by ID."""
+        result = await self.session.execute(
+            select(BOMItem).where(
+                and_(
+                    BOMItem.id == bom_id,
+                    BOMItem.tenant_id == self.tenant_id,
+                )
+            )
+        )
+        return result.scalar_one_or_none()
+    
+    async def delete_bom_item(self, bom_id: UUID) -> bool:
+        """Delete BOM item."""
+        bom_item = await self.get_bom_item(bom_id)
+        if bom_item:
+            await self.session.delete(bom_item)
+            await self.session.flush()
+            return True
+        return False
+    
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # CUSTOMERS
+    # ═══════════════════════════════════════════════════════════════════════════════
+    
+    async def create_customer(
+        self,
+        customer_code: str,
+        customer_name: str,
+        segment: str = "RETAIL",
+        payment_terms: str = "NET30",
+        price_tier: str = "STANDARD",
+        credit_limit: Optional[Decimal] = None,
+        contact_name: Optional[str] = None,
+        contact_email: Optional[str] = None,
+        contact_phone: Optional[str] = None,
+        address_line1: Optional[str] = None,
+        address_line2: Optional[str] = None,
+        city: Optional[str] = None,
+        postal_code: Optional[str] = None,
+        country: Optional[str] = None,
+        is_active: bool = True,
+        notes: Optional[str] = None,
+    ) -> Customer:
+        """Create a new customer."""
+        from src.core.models.partner import CustomerSegment, PaymentTerms, PriceTier
+        
+        customer = Customer(
+            tenant_id=self.tenant_id,
+            customer_code=customer_code.upper(),
+            customer_name=customer_name,
+            segment=CustomerSegment(segment),
+            payment_terms=PaymentTerms(payment_terms),
+            price_tier=PriceTier(price_tier),
+            credit_limit=credit_limit,
+            contact_name=contact_name,
+            contact_email=contact_email,
+            contact_phone=contact_phone,
+            address_line1=address_line1,
+            address_line2=address_line2,
+            city=city,
+            postal_code=postal_code,
+            country=country,
+            is_active=is_active,
+            notes=notes,
+        )
+        
+        self.session.add(customer)
+        await self.session.flush()
+        return customer
+    
+    async def get_customer(self, customer_id: UUID) -> Optional[Customer]:
+        """Get customer by ID."""
+        result = await self.session.execute(
+            select(Customer).where(
+                and_(
+                    Customer.id == customer_id,
+                    Customer.tenant_id == self.tenant_id,
+                )
+            )
+        )
+        return result.scalar_one_or_none()
+    
+    async def list_customers(
+        self,
+        segment: Optional[str] = None,
+        is_active: Optional[bool] = None,
+        price_tier: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[Customer]:
+        """List customers with filtering."""
+        from src.core.models.partner import CustomerSegment, PriceTier
+        
+        query = select(Customer).where(Customer.tenant_id == self.tenant_id)
+        
+        if segment:
+            query = query.where(Customer.segment == CustomerSegment(segment))
+        if is_active is not None:
+            query = query.where(Customer.is_active == is_active)
+        if price_tier:
+            query = query.where(Customer.price_tier == PriceTier(price_tier))
+        
+        query = query.order_by(Customer.customer_code).limit(limit).offset(offset)
+        result = await self.session.execute(query)
+        return list(result.scalars().all())
+    
+    async def update_customer(
+        self,
+        customer_id: UUID,
+        **updates,
+    ) -> Optional[Customer]:
+        """Update customer."""
+        from src.core.models.partner import CustomerSegment, PaymentTerms, PriceTier
+        
+        customer = await self.get_customer(customer_id)
+        if not customer:
+            return None
+        
+        for key, value in updates.items():
+            if value is not None and hasattr(customer, key):
+                if key == "segment" and isinstance(value, str):
+                    setattr(customer, key, CustomerSegment(value))
+                elif key == "payment_terms" and isinstance(value, str):
+                    setattr(customer, key, PaymentTerms(value))
+                elif key == "price_tier" and isinstance(value, str):
+                    setattr(customer, key, PriceTier(value))
+                else:
+                    setattr(customer, key, value)
+        
+        await self.session.flush()
+        return customer
+    
+    async def delete_customer(self, customer_id: UUID) -> bool:
+        """Soft delete customer (set is_active=False)."""
+        customer = await self.get_customer(customer_id)
+        if customer:
+            customer.is_active = False
+            await self.session.flush()
+            return True
+        return False
+    
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # SUPPLIERS
+    # ═══════════════════════════════════════════════════════════════════════════════
+    
+    async def create_supplier(
+        self,
+        supplier_code: str,
+        supplier_name: str,
+        material_category: str = "OTHER",
+        lead_time_days: int = 7,
+        payment_terms: str = "NET30",
+        contact_name: Optional[str] = None,
+        contact_email: Optional[str] = None,
+        contact_phone: Optional[str] = None,
+        address_line1: Optional[str] = None,
+        address_line2: Optional[str] = None,
+        city: Optional[str] = None,
+        postal_code: Optional[str] = None,
+        country: Optional[str] = None,
+        quality_rating: Optional[int] = None,
+        is_active: bool = True,
+        is_preferred: bool = False,
+        notes: Optional[str] = None,
+    ) -> Supplier:
+        """Create a new supplier."""
+        from src.core.models.partner import MaterialCategory, PaymentTerms
+        
+        supplier = Supplier(
+            tenant_id=self.tenant_id,
+            supplier_code=supplier_code.upper(),
+            supplier_name=supplier_name,
+            material_category=MaterialCategory(material_category),
+            lead_time_days=lead_time_days,
+            payment_terms=PaymentTerms(payment_terms),
+            contact_name=contact_name,
+            contact_email=contact_email,
+            contact_phone=contact_phone,
+            address_line1=address_line1,
+            address_line2=address_line2,
+            city=city,
+            postal_code=postal_code,
+            country=country,
+            quality_rating=quality_rating,
+            is_active=is_active,
+            is_preferred=is_preferred,
+            notes=notes,
+        )
+        
+        self.session.add(supplier)
+        await self.session.flush()
+        return supplier
+    
+    async def get_supplier(self, supplier_id: UUID) -> Optional[Supplier]:
+        """Get supplier by ID."""
+        result = await self.session.execute(
+            select(Supplier).where(
+                and_(
+                    Supplier.id == supplier_id,
+                    Supplier.tenant_id == self.tenant_id,
+                )
+            )
+        )
+        return result.scalar_one_or_none()
+    
+    async def list_suppliers(
+        self,
+        material_category: Optional[str] = None,
+        is_active: Optional[bool] = None,
+        is_preferred: Optional[bool] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[Supplier]:
+        """List suppliers with filtering."""
+        from src.core.models.partner import MaterialCategory
+        
+        query = select(Supplier).where(Supplier.tenant_id == self.tenant_id)
+        
+        if material_category:
+            query = query.where(Supplier.material_category == MaterialCategory(material_category))
+        if is_active is not None:
+            query = query.where(Supplier.is_active == is_active)
+        if is_preferred is not None:
+            query = query.where(Supplier.is_preferred == is_preferred)
+        
+        query = query.order_by(Supplier.supplier_code).limit(limit).offset(offset)
+        result = await self.session.execute(query)
+        return list(result.scalars().all())
+    
+    async def update_supplier(
+        self,
+        supplier_id: UUID,
+        **updates,
+    ) -> Optional[Supplier]:
+        """Update supplier."""
+        from src.core.models.partner import MaterialCategory, PaymentTerms
+        
+        supplier = await self.get_supplier(supplier_id)
+        if not supplier:
+            return None
+        
+        for key, value in updates.items():
+            if value is not None and hasattr(supplier, key):
+                if key == "material_category" and isinstance(value, str):
+                    setattr(supplier, key, MaterialCategory(value))
+                elif key == "payment_terms" and isinstance(value, str):
+                    setattr(supplier, key, PaymentTerms(value))
+                else:
+                    setattr(supplier, key, value)
+        
+        await self.session.flush()
+        return supplier
+    
+    async def delete_supplier(self, supplier_id: UUID) -> bool:
+        """Soft delete supplier (set is_active=False)."""
+        supplier = await self.get_supplier(supplier_id)
+        if supplier:
+            supplier.is_active = False
+            await self.session.flush()
+            return True
+        return False
+    
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # UPDATE/DELETE METHODS FOR EXISTING ENTITIES
+    # ═══════════════════════════════════════════════════════════════════════════════
+    
+    async def update_product(
+        self,
+        product_id: UUID,
+        **updates,
+    ) -> Optional[Product]:
+        """Update product."""
+        product = await self.get_product(product_id)
+        if not product:
+            return None
+        
+        for key, value in updates.items():
+            if value is not None and hasattr(product, key):
+                setattr(product, key, value)
+        
+        await self.session.flush()
+        return product
+    
+    async def delete_product(self, product_id: UUID) -> bool:
+        """Delete product."""
+        product = await self.get_product(product_id)
+        if product:
+            await self.session.delete(product)
+            await self.session.flush()
+            return True
+        return False
+    
+    async def update_machine(
+        self,
+        machine_id: UUID,
+        **updates,
+    ) -> Optional[Machine]:
+        """Update machine."""
+        machine = await self.get_machine(machine_id)
+        if not machine:
+            return None
+        
+        for key, value in updates.items():
+            if value is not None and hasattr(machine, key):
+                setattr(machine, key, value)
+        
+        await self.session.flush()
+        return machine
+    
+    async def delete_machine(self, machine_id: UUID) -> bool:
+        """Delete machine."""
+        machine = await self.get_machine(machine_id)
+        if machine:
+            await self.session.delete(machine)
+            await self.session.flush()
+            return True
+        return False
+    
+    async def update_employee(
+        self,
+        employee_id: UUID,
+        **updates,
+    ) -> Optional[Employee]:
+        """Update employee."""
+        employee = await self.get_employee(employee_id)
+        if not employee:
+            return None
+        
+        for key, value in updates.items():
+            if value is not None and hasattr(employee, key):
+                setattr(employee, key, value)
+        
+        await self.session.flush()
+        return employee
+    
+    async def delete_employee(self, employee_id: UUID) -> bool:
+        """Delete employee."""
+        employee = await self.get_employee(employee_id)
+        if employee:
+            await self.session.delete(employee)
+            await self.session.flush()
+            return True
+        return False
+    
+    async def update_operation(
+        self,
+        operation_id: UUID,
+        **updates,
+    ) -> Optional[Operation]:
+        """Update operation."""
+        operation = await self.get_operation(operation_id)
+        if not operation:
+            return None
+        
+        for key, value in updates.items():
+            if value is not None and hasattr(operation, key):
+                if key == "skills_required" and isinstance(value, list):
+                    operation.skills_required = {"skills": value}
+                elif key == "std_time_minutes" and value is not None:
+                    operation.std_time_minutes = value
+                    operation.std_time_hours = value / 60
+                else:
+                    setattr(operation, key, value)
+        
+        await self.session.flush()
+        return operation
+    
+    async def delete_operation(self, operation_id: UUID) -> bool:
+        """Delete operation."""
+        operation = await self.get_operation(operation_id)
+        if operation:
+            await self.session.delete(operation)
+            await self.session.flush()
+            return True
+        return False
+    
     # ═══════════════════════════════════════════════════════════════════════════════
     # BULK OPERATIONS
     # ═══════════════════════════════════════════════════════════════════════════════
@@ -398,4 +775,6 @@ class MasterDataService:
                 },
             ),
         )
+
+
 

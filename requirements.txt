@@ -31,11 +31,33 @@ numpy==1.26.3
 scikit-learn==1.3.2
 scipy==1.11.4
 
+# Advanced Scheduling Engines
+ortools>=9.8.3296  # Google OR-Tools for CP-SAT constraint programming
+deap>=1.4.1  # Distributed Evolutionary Algorithms for Genetic Algorithm
+
 # Utilities
 python-dotenv==1.0.0
 httpx==0.26.0
 tenacity==8.2.3
-structlog==24.1.0
+structlog==24.1.0  # Already included - used for structured logging
+
+# Event-Driven (LACUNA 1)
+# aiokafka==0.10.0 already included above
+# kafka-python==2.0.2  # Optional sync client (we use aiokafka)
+
+# Data Quality (LACUNA 2)
+# scipy==1.11.4 already included above for KS test (drift detection)
+
+# Supply Chain (LACUNA 4)
+prophet==1.1.5  # ARIMA forecasting with Prophet
+# pandas==2.1.4 already included above
+# numpy==1.26.3 already included above
+
+# Monitoring
+prometheus-client==0.19.0
+
+# Runbooks (LACUNA 3)
+pyyaml>=6.0  # Load runbooks YAML
 
 # Testing
 pytest==7.4.4

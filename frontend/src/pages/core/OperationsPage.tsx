@@ -1,9 +1,7 @@
 import { useState, useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { 
-  Search, 
   Plus, 
-  ChevronLeft,
   Wrench,
   Cog,
   PlayCircle,
@@ -12,270 +10,304 @@ import {
   Factory,
   Bot,
   Hand,
+  Loader2,
+  AlertCircle,
+  Edit,
+  Trash2,
 } from 'lucide-react';
-import { DisabledButton, EmptyTableState } from '../../components/ui';
-
-// Import real data
-import phasesData from '../../data/phases.json';
+import { DarkPageLayout } from '../../layouts';
+import { 
+  DarkCard, 
+  DarkStatCard, 
+  DarkTable, 
+  DarkTableHead, 
+  DarkTableBody, 
+  DarkTableRow, 
+  DarkTableHeader, 
+  DarkTableCell,
+  DarkButton,
+  DarkPillButton,
+  DarkBadge,
+  DarkSearchInput,
+  DarkIconButton,
+} from '../../components/dark';
+import { FormModal, DeleteConfirmDialog, type FormField } from '../../components/ui';
+import { operationsApi, machinesApi } from '../../lib/api';
+import { useToastContext } from '../../components/ToastProvider';
 
 interface Phase {
   id: string;
   name: string;
+  operation_code?: string;
   sequence: number;
   isProduction: boolean;
   isAutomatic: boolean;
   status: string;
+  machine_id?: string;
+  std_time_minutes?: number;
+  setup_time_minutes?: number;
 }
 
-const phases: Phase[] = phasesData;
-
 export function OperationsPage() {
+  const queryClient = useQueryClient();
+  const { success, error: toastError } = useToastContext();
+
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState<'ALL' | 'PRODUCTION' | 'NON_PRODUCTION'>('ALL');
   const [sortBy, setSortBy] = useState<'sequence' | 'name'>('sequence');
 
+  const [isFormModalOpen, setIsFormModalOpen] = useState(false);
+  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
+  const [editingPhase, setEditingPhase] = useState<Phase | null>(null);
+  const [deletingPhase, setDeletingPhase] = useState<Phase | null>(null);
+
+  const { data: machines = [] } = useQuery<any[]>({
+    queryKey: ['machines', 'list'],
+    queryFn: () => machinesApi.list({ limit: 1000 }),
+  });
+
+  const { data: operationsList, isLoading, error } = useQuery({
+    queryKey: ['operations', 'list'],
+    queryFn: () => operationsApi.list({ limit: 1000 }),
+    refetchInterval: 300000,
+  });
+
+  const phases: Phase[] = useMemo(() => {
+    if (!operationsList) return [];
+    return (Array.isArray(operationsList) ? operationsList : []).map((op: any) => ({
+      id: op.id || op.operation_id || '',
+      name: op.name || op.operation_name || '',
+      operation_code: op.operation_code || '',
+      sequence: op.sequence || op.sequence_number || 0,
+      isProduction: op.is_production ?? op.isProduction ?? true,
+      isAutomatic: op.is_automatic ?? op.isAutomatic ?? false,
+      status: op.status || 'ACTIVE',
+      machine_id: op.machine_id,
+      std_time_minutes: op.std_time_minutes,
+      setup_time_minutes: op.setup_time_minutes,
+    }));
+  }, [operationsList]);
+
   const filteredPhases = useMemo(() => {
     return phases
       .filter(p => {
-        const matchesSearch = p.name.toLowerCase().includes(search.toLowerCase()) || 
-                              p.id.includes(search);
+        const matchesSearch = p.name.toLowerCase().includes(search.toLowerCase()) || p.id.includes(search);
         const matchesType = filterType === 'ALL' || 
                            (filterType === 'PRODUCTION' && p.isProduction) ||
                            (filterType === 'NON_PRODUCTION' && !p.isProduction);
         return matchesSearch && matchesType;
       })
-      .sort((a, b) => {
-        if (sortBy === 'sequence') return a.sequence - b.sequence;
-        return a.name.localeCompare(b.name);
-      });
-  }, [search, filterType, sortBy]);
+      .sort((a, b) => sortBy === 'sequence' ? a.sequence - b.sequence : a.name.localeCompare(b.name));
+  }, [phases, search, filterType, sortBy]);
 
   const stats = useMemo(() => ({
     total: phases.length,
     production: phases.filter(p => p.isProduction).length,
     automatic: phases.filter(p => p.isAutomatic).length,
     manual: phases.filter(p => !p.isAutomatic).length,
-  }), []);
+  }), [phases]);
 
-  // Group phases by production sequence for visual flow
-  const productionPhases = phases.filter(p => p.isProduction).sort((a, b) => a.sequence - b.sequence);
+  const productionPhases = useMemo(() => {
+    return phases.filter(p => p.isProduction).sort((a, b) => a.sequence - b.sequence);
+  }, [phases]);
+
+  const machineOptions = useMemo(() => [
+    { value: '', label: '-- No Machine --' },
+    ...machines.map((m: any) => ({ value: m.id, label: `${m.machine_name} (${m.machine_code})` })),
+  ], [machines]);
+
+  const createMutation = useMutation({
+    mutationFn: operationsApi.create,
+    onSuccess: () => { success('Operation added'); queryClient.invalidateQueries({ queryKey: ['operations'] }); setIsFormModalOpen(false); },
+    onError: (err: any) => toastError(err.message || 'Error'),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: any }) => operationsApi.update(id, data),
+    onSuccess: () => { success('Operation updated'); queryClient.invalidateQueries({ queryKey: ['operations'] }); setIsFormModalOpen(false); setEditingPhase(null); },
+    onError: (err: any) => toastError(err.message || 'Error'),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: operationsApi.delete,
+    onSuccess: () => { success('Operation deleted'); queryClient.invalidateQueries({ queryKey: ['operations'] }); setIsDeleteConfirmOpen(false); setDeletingPhase(null); },
+    onError: (err: any) => toastError(err.message || 'Error'),
+  });
+
+  const operationFormFields: FormField[] = [
+    { name: 'operation_code', label: 'Operation Code', type: 'text', required: true },
+    { name: 'operation_name', label: 'Operation Name', type: 'text', required: true },
+    { name: 'machine_id', label: 'Machine', type: 'select', options: machineOptions },
+    { name: 'std_time_minutes', label: 'Standard Time (min)', type: 'number', min: 0, step: 0.1 },
+    { name: 'setup_time_minutes', label: 'Setup Time (min)', type: 'number', min: 0, step: 0.1, defaultValue: 0 },
+  ];
+
+  const handleFormSubmit = (data: Record<string, any>) => {
+    const payload = {
+      operation_code: data.operation_code,
+      operation_name: data.operation_name,
+      machine_id: data.machine_id || null,
+      std_time_minutes: data.std_time_minutes ? parseFloat(data.std_time_minutes) : null,
+      setup_time_minutes: data.setup_time_minutes ? parseFloat(data.setup_time_minutes) : 0,
+    };
+    editingPhase ? updateMutation.mutate({ id: editingPhase.id, data: payload }) : createMutation.mutate(payload);
+  };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-slate-100/50 to-slate-50">
-      {/* Header */}
-      <div className="bg-white border-b border-slate-200 sticky top-0 z-10">
-        <div className="max-w-[1400px] mx-auto px-6 py-4">
-          <div className="flex items-center gap-4 mb-4">
-            <Link to="/" className="text-slate-400 hover:text-slate-600">
-              <ChevronLeft size={20} />
-            </Link>
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500 to-amber-600 flex items-center justify-center">
-                <Wrench size={20} className="text-white" />
-              </div>
-              <div>
-                <h1 className="text-xl font-bold text-[#1a2744]">Production Phases</h1>
-                <p className="text-sm text-slate-500">{phases.length} phases in workflow</p>
-              </div>
-            </div>
-          </div>
-          
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2 bg-slate-100 rounded-lg px-3 py-2 w-72">
-                <Search size={18} className="text-slate-400" />
-                <input 
-                  type="text" 
-                  placeholder="Search phases..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="flex-1 bg-transparent text-sm outline-none"
-                />
-              </div>
-              
-              <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1">
-                {(['ALL', 'PRODUCTION', 'NON_PRODUCTION'] as const).map((type) => (
-                  <button
-                    key={type}
-                    onClick={() => setFilterType(type)}
-                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                      filterType === type 
-                        ? 'bg-white text-[#1a2744] shadow-sm' 
-                        : 'text-slate-500 hover:text-slate-700'
-                    }`}
-                  >
-                    {type === 'ALL' ? 'All' : type === 'PRODUCTION' ? 'Production' : 'Non-Production'}
-                  </button>
-                ))}
-              </div>
-
-              <button 
-                onClick={() => setSortBy(sortBy === 'sequence' ? 'name' : 'sequence')}
-                className="flex items-center gap-1 px-3 py-1.5 bg-slate-100 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-200"
-              >
-                <ArrowUpDown size={14} />
-                Sort by {sortBy === 'sequence' ? 'Sequence' : 'Name'}
-              </button>
-            </div>
-            
-            <DisabledButton icon={<Plus size={18} />}>
-              Add Phase
-            </DisabledButton>
-          </div>
-        </div>
-      </div>
-      
-      {/* Content */}
-      <div className="max-w-[1400px] mx-auto px-6 py-6">
-        {/* Stats */}
-        <div className="grid grid-cols-4 gap-4 mb-6">
-          <div className="bg-white rounded-xl p-4 border border-slate-200">
-            <div className="flex items-center gap-2 mb-2">
-              <Cog size={16} className="text-slate-400" />
-              <span className="text-sm text-slate-500">Total Phases</span>
-            </div>
-            <p className="text-2xl font-bold text-[#1a2744]">{stats.total}</p>
-          </div>
-          <div className="bg-white rounded-xl p-4 border border-slate-200">
-            <div className="flex items-center gap-2 mb-2">
-              <Factory size={16} className="text-blue-500" />
-              <span className="text-sm text-slate-500">Production</span>
-            </div>
-            <p className="text-2xl font-bold text-blue-600">{stats.production}</p>
-          </div>
-          <div className="bg-white rounded-xl p-4 border border-slate-200">
-            <div className="flex items-center gap-2 mb-2">
-              <Bot size={16} className="text-emerald-500" />
-              <span className="text-sm text-slate-500">Automatic</span>
-            </div>
-            <p className="text-2xl font-bold text-emerald-600">{stats.automatic}</p>
-          </div>
-          <div className="bg-white rounded-xl p-4 border border-slate-200">
-            <div className="flex items-center gap-2 mb-2">
-              <Hand size={16} className="text-amber-500" />
-              <span className="text-sm text-slate-500">Manual</span>
-            </div>
-            <p className="text-2xl font-bold text-amber-600">{stats.manual}</p>
-          </div>
-        </div>
-
-        {/* Production Flow Visualization */}
-        <div className="bg-white rounded-xl border border-slate-200 p-4 mb-6">
-          <h3 className="text-sm font-semibold text-[#1a2744] mb-3">Production Flow</h3>
-          <div className="flex items-center gap-1 overflow-x-auto pb-2">
-            {productionPhases.slice(0, 12).map((phase, index) => (
-              <div key={phase.id} className="flex items-center">
-                <div className="flex flex-col items-center min-w-[80px]">
-                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-white text-xs font-bold ${
-                    phase.isAutomatic ? 'bg-emerald-500' : 'bg-blue-500'
-                  }`}>
-                    {phase.sequence}
-                  </div>
-                  <p className="text-xs text-slate-600 mt-1 text-center truncate w-full">{phase.name}</p>
-                </div>
-                {index < Math.min(productionPhases.length, 12) - 1 && (
-                  <div className="w-4 h-0.5 bg-slate-200 mx-1" />
-                )}
-              </div>
-            ))}
-            {productionPhases.length > 12 && (
-              <span className="text-xs text-slate-400 ml-2">+{productionPhases.length - 12} more</span>
-            )}
-          </div>
-        </div>
+    <DarkPageLayout
+      title="Production Phases"
+      subtitle={isLoading ? 'Loading...' : `${phases.length} phases in workflow`}
+      icon={<Wrench size={20} />}
+      actions={
+        <DarkButton icon={<Plus size={18} />} onClick={() => { setEditingPhase(null); setIsFormModalOpen(true); }}>
+          Add Phase
+        </DarkButton>
+      }
+    >
+      <div className="flex items-center gap-4 mb-6">
+        <DarkSearchInput
+          placeholder="Search phases..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          onClear={() => setSearch('')}
+          containerClassName="w-72"
+        />
         
-        {/* Table */}
-        <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-slate-100">
-                <th className="text-left py-4 px-6 text-xs font-semibold text-slate-400 uppercase tracking-wider">Seq</th>
-                <th className="text-left py-4 px-6 text-xs font-semibold text-slate-400 uppercase tracking-wider">Phase</th>
-                <th className="text-left py-4 px-6 text-xs font-semibold text-slate-400 uppercase tracking-wider">Type</th>
-                <th className="text-left py-4 px-6 text-xs font-semibold text-slate-400 uppercase tracking-wider">Mode</th>
-                <th className="text-left py-4 px-6 text-xs font-semibold text-slate-400 uppercase tracking-wider">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredPhases.map((phase) => (
-                <tr key={phase.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
-                  <td className="py-4 px-6">
-                    <span className={`inline-flex items-center justify-center w-8 h-8 rounded-lg text-sm font-bold ${
-                      phase.isProduction ? 'bg-blue-50 text-blue-600' : 'bg-slate-100 text-slate-500'
-                    }`}>
-                      {phase.sequence}
-                    </span>
-                  </td>
-                  <td className="py-4 px-6">
-                    <div>
-                      <p className="font-semibold text-[#1a2744] text-sm">{phase.name}</p>
-                      <p className="text-xs text-slate-400">ID: {phase.id}</p>
-                    </div>
-                  </td>
-                  <td className="py-4 px-6">
-                    <span className={`px-2.5 py-1 rounded-full text-xs font-medium inline-flex items-center gap-1.5 ${
-                      phase.isProduction 
-                        ? 'bg-blue-50 text-blue-600' 
-                        : 'bg-slate-100 text-slate-600'
-                    }`}>
-                      {phase.isProduction ? (
-                        <>
-                          <PlayCircle size={12} />
-                          Production
-                        </>
-                      ) : (
-                        <>
-                          <PauseCircle size={12} />
-                          Non-Production
-                        </>
-                      )}
-                    </span>
-                  </td>
-                  <td className="py-4 px-6">
-                    <span className={`px-2.5 py-1 rounded-full text-xs font-medium inline-flex items-center gap-1.5 ${
-                      phase.isAutomatic 
-                        ? 'bg-emerald-50 text-emerald-600' 
-                        : 'bg-amber-50 text-amber-600'
-                    }`}>
-                      {phase.isAutomatic ? (
-                        <>
-                          <Bot size={12} />
-                          Automatic
-                        </>
-                      ) : (
-                        <>
-                          <Hand size={12} />
-                          Manual
-                        </>
-                      )}
-                    </span>
-                  </td>
-                  <td className="py-4 px-6">
-                    <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${
-                      phase.status === 'ACTIVE' ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'
-                    }`}>
-                      {phase.status}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-              {filteredPhases.length === 0 && (
-                <EmptyTableState 
-                  title="Sem fases encontradas"
-                  message="Nenhuma fase corresponde aos filtros aplicados. Tente alterar os critérios de pesquisa."
-                />
-              )}
-            </tbody>
-          </table>
-          
-          {/* Footer */}
-          <div className="px-6 py-4 border-t border-slate-100">
-            <p className="text-sm text-slate-500">
-              Showing {filteredPhases.length} of {phases.length} phases
-            </p>
-          </div>
+        <div className="flex items-center gap-1 bg-bg-secondary rounded-full p-1">
+          {(['ALL', 'PRODUCTION', 'NON_PRODUCTION'] as const).map((type) => (
+            <DarkPillButton key={type} active={filterType === type} onClick={() => setFilterType(type)}>
+              {type === 'ALL' ? 'All' : type === 'PRODUCTION' ? 'Production' : 'Non-Production'}
+            </DarkPillButton>
+          ))}
         </div>
+
+        <DarkButton variant="secondary" size="sm" icon={<ArrowUpDown size={14} />} onClick={() => setSortBy(sortBy === 'sequence' ? 'name' : 'sequence')}>
+          Sort by {sortBy === 'sequence' ? 'Sequence' : 'Name'}
+        </DarkButton>
       </div>
-    </div>
+
+      {isLoading && (
+        <DarkCard className="mb-6">
+          <div className="flex items-center justify-center gap-3 text-text-secondary py-8">
+            <Loader2 size={20} className="animate-spin" /><p>Loading operations...</p>
+          </div>
+        </DarkCard>
+      )}
+
+      {error && (
+        <DarkCard className="mb-6 border-danger/30 bg-danger/10">
+          <div className="flex items-center gap-3 text-danger-light">
+            <AlertCircle size={20} />
+            <div><p className="font-semibold">Error loading operations</p><p className="text-sm opacity-80">{error instanceof Error ? error.message : 'Failed to load'}</p></div>
+          </div>
+        </DarkCard>
+      )}
+
+      {!isLoading && !error && (
+        <>
+          <div className="grid grid-cols-4 gap-4 mb-6">
+            <DarkStatCard icon={<Cog size={18} />} label="Total Phases" value={stats.total} size="sm" />
+            <DarkStatCard icon={<Factory size={18} />} iconBg="bg-blue/20" label="Production" value={stats.production} size="sm" />
+            <DarkStatCard icon={<Bot size={18} />} iconBg="bg-success/20" label="Automatic" value={stats.automatic} size="sm" />
+            <DarkStatCard icon={<Hand size={18} />} iconBg="bg-amber/20" label="Manual" value={stats.manual} size="sm" />
+          </div>
+
+          <DarkCard className="mb-6" title="Production Flow">
+            <div className="flex items-center gap-1 overflow-x-auto pb-2">
+              {productionPhases.slice(0, 12).map((phase, index) => (
+                <div key={phase.id} className="flex items-center">
+                  <div className="flex flex-col items-center min-w-[80px]">
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-white text-xs font-bold ${phase.isAutomatic ? 'bg-success' : 'bg-blue'}`}>
+                      {phase.sequence}
+                    </div>
+                    <p className="text-xs text-text-tertiary mt-1 text-center truncate w-full">{phase.name}</p>
+                  </div>
+                  {index < Math.min(productionPhases.length, 12) - 1 && <div className="w-4 h-0.5 bg-border-subtle mx-1" />}
+                </div>
+              ))}
+              {productionPhases.length > 12 && <span className="text-xs text-text-tertiary ml-2">+{productionPhases.length - 12} more</span>}
+            </div>
+          </DarkCard>
+
+          <DarkCard padding="none">
+            <DarkTable>
+              <DarkTableHead>
+                <DarkTableRow>
+                  <DarkTableHeader>Seq</DarkTableHeader>
+                  <DarkTableHeader>Phase</DarkTableHeader>
+                  <DarkTableHeader>Type</DarkTableHeader>
+                  <DarkTableHeader>Mode</DarkTableHeader>
+                  <DarkTableHeader>Status</DarkTableHeader>
+                  <DarkTableHeader align="right">Actions</DarkTableHeader>
+                </DarkTableRow>
+              </DarkTableHead>
+              <DarkTableBody>
+                {filteredPhases.map((phase) => (
+                  <DarkTableRow key={phase.id}>
+                    <DarkTableCell>
+                      <span className={`inline-flex items-center justify-center w-8 h-8 rounded-lg text-sm font-bold ${phase.isProduction ? 'bg-blue/20 text-blue' : 'bg-bg-elevated text-text-tertiary'}`}>
+                        {phase.sequence}
+                      </span>
+                    </DarkTableCell>
+                    <DarkTableCell>
+                      <div><p className="font-semibold text-text-white text-sm">{phase.name}</p><p className="text-xs text-text-tertiary">ID: {phase.id}</p></div>
+                    </DarkTableCell>
+                    <DarkTableCell>
+                      <DarkBadge variant={phase.isProduction ? 'info' : 'neutral'} icon={phase.isProduction ? <PlayCircle size={12} /> : <PauseCircle size={12} />}>
+                        {phase.isProduction ? 'Production' : 'Non-Production'}
+                      </DarkBadge>
+                    </DarkTableCell>
+                    <DarkTableCell>
+                      <DarkBadge variant={phase.isAutomatic ? 'success' : 'warning'} icon={phase.isAutomatic ? <Bot size={12} /> : <Hand size={12} />}>
+                        {phase.isAutomatic ? 'Automatic' : 'Manual'}
+                      </DarkBadge>
+                    </DarkTableCell>
+                    <DarkTableCell>
+                      <DarkBadge variant={phase.status === 'ACTIVE' ? 'success' : 'neutral'} dot>{phase.status}</DarkBadge>
+                    </DarkTableCell>
+                    <DarkTableCell align="right">
+                      <div className="flex items-center justify-end gap-1">
+                        <DarkIconButton icon={<Edit size={16} />} size="sm" variant="ghost" onClick={() => { setEditingPhase(phase); setIsFormModalOpen(true); }} />
+                        <DarkIconButton icon={<Trash2 size={16} />} size="sm" variant="ghost" onClick={() => { setDeletingPhase(phase); setIsDeleteConfirmOpen(true); }} />
+                      </div>
+                    </DarkTableCell>
+                  </DarkTableRow>
+                ))}
+                {filteredPhases.length === 0 && (
+                  <DarkTableRow>
+                    <DarkTableCell colSpan={6} className="text-center py-12">
+                      <Wrench size={40} className="mx-auto mb-3 text-text-tertiary opacity-50" />
+                      <p className="font-medium text-text-secondary">No phases found</p>
+                    </DarkTableCell>
+                  </DarkTableRow>
+                )}
+              </DarkTableBody>
+            </DarkTable>
+            <div className="px-6 py-4 border-t border-border-subtle">
+              <p className="text-sm text-text-tertiary">Showing {filteredPhases.length} of {phases.length} phases</p>
+            </div>
+          </DarkCard>
+        </>
+      )}
+
+      <FormModal
+        title={editingPhase ? 'Edit Operation' : 'Add Operation'}
+        isOpen={isFormModalOpen}
+        onClose={() => { setIsFormModalOpen(false); setEditingPhase(null); }}
+        onSubmit={handleFormSubmit}
+        initialData={editingPhase ? { operation_code: editingPhase.operation_code, operation_name: editingPhase.name, machine_id: editingPhase.machine_id, std_time_minutes: editingPhase.std_time_minutes, setup_time_minutes: editingPhase.setup_time_minutes } : {}}
+        fields={operationFormFields}
+        isLoading={createMutation.isPending || updateMutation.isPending}
+      />
+
+      <DeleteConfirmDialog
+        isOpen={isDeleteConfirmOpen}
+        onClose={() => { setIsDeleteConfirmOpen(false); setDeletingPhase(null); }}
+        onConfirm={() => { if (deletingPhase) deleteMutation.mutate(deletingPhase.id); }}
+        title={deletingPhase ? `Operation ${deletingPhase.name}` : 'Operation'}
+        message="Are you sure you want to delete this operation?"
+        isLoading={deleteMutation.isPending}
+      />
+    </DarkPageLayout>
   );
 }

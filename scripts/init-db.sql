@@ -66,3 +66,12 @@ $$ LANGUAGE plpgsql;
 -- Comment for documentation
 COMMENT ON FUNCTION core.audit_trigger_func() IS 'Automatic audit logging for all tenant-scoped tables';
 
+
+
+
+
+
+
+
+
+

@@ -137,6 +137,23 @@ class TenantService:
         
         return tenant
     
+    async def update_tenant(
+        self,
+        tenant_id: UUID,
+        **updates,
+    ) -> Optional[Tenant]:
+        """Update tenant fields."""
+        tenant = await self.get_tenant(tenant_id)
+        if not tenant:
+            return None
+        
+        for key, value in updates.items():
+            if value is not None and hasattr(tenant, key):
+                setattr(tenant, key, value)
+        
+        await self.session.flush()
+        return tenant
+    
     async def delete_tenant(self, tenant_id: UUID) -> bool:
         """
         Soft delete a tenant (mark as cancelled).
@@ -151,4 +168,6 @@ class TenantService:
         await self.session.flush()
         
         return True
+
+
 

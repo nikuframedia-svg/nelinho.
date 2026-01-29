@@ -212,3 +212,12 @@ class ProductivityService:
             "employees_involved": list(set(str(r.employee_id) for r in records)),
         }
 
+
+
+
+
+
+
+
+
+

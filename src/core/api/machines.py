@@ -82,3 +82,55 @@ async def get_machine(
     
     return machine
 
+
+@router.patch("/{machine_id}", response_model=MachineResponse)
+async def update_machine(
+    machine_id: UUID,
+    data: MachineUpdate,
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Update machine."""
+    service = MasterDataService(session, tenant_id)
+    
+    updates = {}
+    if data.machine_name is not None:
+        updates["machine_name"] = data.machine_name
+    if data.location is not None:
+        updates["location"] = data.location
+    if data.capacity_units_per_hour is not None:
+        updates["capacity_units_per_hour"] = data.capacity_units_per_hour
+    if data.status is not None:
+        updates["status"] = data.status
+    
+    machine = await service.update_machine(machine_id, **updates)
+    
+    if not machine:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Machine {machine_id} not found",
+        )
+    
+    return machine
+
+
+@router.delete("/{machine_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_machine(
+    machine_id: UUID,
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Delete machine."""
+    service = MasterDataService(session, tenant_id)
+    deleted = await service.delete_machine(machine_id)
+    
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Machine {machine_id} not found",
+        )
+    
+    return None
+
+
+

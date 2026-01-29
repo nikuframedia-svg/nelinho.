@@ -243,3 +243,12 @@ Desenvolvido para NELO - Sistema de Gestão de Produção Industrial
 **Versão**: 2.0.0  
 **Última atualização**: Janeiro 2026
 
+
+
+
+
+
+
+
+
+

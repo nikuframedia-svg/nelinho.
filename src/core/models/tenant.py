@@ -105,3 +105,12 @@ class Tenant(GlobalBase):
     def is_enterprise(self) -> bool:
         return self.subscription_level == SubscriptionLevel.ENTERPRISE
 
+
+
+
+
+
+
+
+
+

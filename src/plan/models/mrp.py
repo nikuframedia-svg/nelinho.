@@ -3,6 +3,8 @@ ProdPlan ONE - MRP Models
 ==========================
 """
 
+from __future__ import annotations
+
 from datetime import datetime, date
 from decimal import Decimal
 from enum import Enum
@@ -135,4 +137,5 @@ class PurchaseOrder(TenantBase):
     
     def __repr__(self) -> str:
         return f"<PO {self.po_number}: {self.order_quantity} of {self.material_id}>"
+
 

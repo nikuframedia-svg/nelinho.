@@ -67,3 +67,12 @@ async def get_machine_availability(
     
     return result
 
+
+
+
+
+
+
+
+
+

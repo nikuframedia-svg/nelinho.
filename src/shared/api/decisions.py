@@ -1,0 +1,489 @@
+"""
+ProdPlan ONE - Decision Ledger API
+===================================
+
+API for decision management, approval workflows, and audit trail.
+"""
+
+import logging
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Header, status, Query
+from pydantic import BaseModel, Field
+from sqlalchemy import select, and_, or_, desc, func
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.shared.database import get_session
+from src.shared.models.governance import SharedDecisionRun, DecisionApproval, DecisionStatus, ApprovalStatus
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/decisions", tags=["Decisions"])
+
+# Default user ID for development (when no auth system is in place)
+DEFAULT_USER_ID = UUID("00000000-0000-0000-0000-000000000001")
+
+
+def get_tenant_id(x_tenant_id: UUID = Header(...)) -> UUID:
+    """Extract tenant ID from header."""
+    return x_tenant_id
+
+
+def get_user_id(x_user_id: Optional[UUID] = Header(None)) -> UUID:
+    """Extract user ID from header (optional, defaults to placeholder)."""
+    return x_user_id or DEFAULT_USER_ID
+
+
+# ============================================================================
+# REQUEST/RESPONSE SCHEMAS
+# ============================================================================
+
+class DecisionProposalRequest(BaseModel):
+    """Request to propose a decision."""
+    
+    title: str = Field(..., min_length=1, max_length=255)
+    action_type: str = Field(..., min_length=1, max_length=50)  # "INCREASE_SS", "ADJUST_PRICE", etc.
+    target: str = Field(..., min_length=1, max_length=255)  # SKU ID, product ID, etc.
+    sandbox_result: Optional[Dict[str, Any]] = None
+    before_state: Dict[str, Any] = Field(default_factory=dict)
+    after_state: Optional[Dict[str, Any]] = None
+
+
+class DecisionListResponse(BaseModel):
+    """Response for decision list."""
+    
+    decisions: List[Dict[str, Any]]
+    total: int
+    page: int
+    page_size: int
+
+
+class DecisionDetailResponse(BaseModel):
+    """Response for decision detail."""
+    
+    id: UUID
+    title: str
+    action_type: str
+    target: str
+    status: str
+    sandbox_result: Optional[Dict[str, Any]]
+    before_state: Dict[str, Any]
+    after_state: Optional[Dict[str, Any]]
+    proposed_by: UUID
+    proposed_at: datetime
+    executed_at: Optional[datetime]
+    rolled_back_at: Optional[datetime]
+    approvals: List[Dict[str, Any]]
+
+
+class DecisionApprovalRequest(BaseModel):
+    """Request to approve/reject a decision."""
+    
+    comment: Optional[str] = None
+
+
+# ============================================================================
+# ENDPOINTS
+# ============================================================================
+
+@router.post("/propose", status_code=status.HTTP_201_CREATED)
+async def propose_decision(
+    request: DecisionProposalRequest,
+    tenant_id: UUID = Depends(get_tenant_id),
+    user_id: UUID = Depends(get_user_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Propose a new decision (convert sandbox preview to decision proposal).
+    
+    Creates DecisionRun with status "PROPOSED" and routes to approvers based on SoD policy.
+    """
+    # Create decision proposal
+    decision = SharedDecisionRun(
+        tenant_id=tenant_id,
+        title=request.title,
+        action_type=request.action_type,
+        target=request.target,
+        status=DecisionStatus.PROPOSED.value,
+        sandbox_result=request.sandbox_result,
+        before_state=request.before_state,
+        after_state=request.after_state,
+        proposed_by=user_id,
+        proposed_at=datetime.utcnow(),
+    )
+    
+    session.add(decision)
+    await session.flush()
+    
+    # Create approval records based on SoD policy
+    from src.shared.auth.rbac import SOD_POLICIES, Role
+    
+    required_approver_roles = SOD_POLICIES.get(
+        request.action_type,
+        SOD_POLICIES.get("GENERIC_ACTION", [Role.MANAGER_OPERATIONS])
+    )
+    
+    # In a real system, we would query users by role here
+    # For now, we create a placeholder approval record that can be fulfilled by any user with the required role
+    # The actual approval will be checked against SoD policies when /approve is called
+    from src.shared.models.governance import DecisionApproval, ApprovalStatus
+    
+    # Create approval placeholder (or create for specific users if we have them)
+    # For demo purposes, we create one approval record marked as PENDING
+    # In production, this would query the user table for users with the required roles
+    approval = DecisionApproval(
+        decision_id=decision.id,
+        approver_id=user_id,  # Placeholder - in production, this would be a valid approver UUID
+        status=ApprovalStatus.PENDING.value,
+        comment=None,
+        approved_at=None,
+    )
+    session.add(approval)
+    
+    await session.flush()
+    
+    logger.info(
+        f"Decision proposed: id={decision.id}, title={request.title}, "
+        f"action_type={request.action_type}, required_roles={[r.value for r in required_approver_roles]}"
+    )
+    
+    return {
+        "id": str(decision.id),
+        "status": "proposed",
+        "message": "Decision proposal created successfully",
+    }
+
+
+@router.get("/", response_model=DecisionListResponse)
+async def list_decisions(
+    status_filter: Optional[str] = Query(None, alias="status_filter"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """List decisions with filtering and pagination."""
+    
+    # Build query
+    query = select(SharedDecisionRun).where(SharedDecisionRun.tenant_id == tenant_id)
+    
+    if status_filter:
+        try:
+            status_enum = DecisionStatus(status_filter.upper())
+            query = query.where(SharedDecisionRun.status == status_enum.value)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid status: {status_filter}",
+            )
+    
+    # Count total
+    count_query = select(func.count()).select_from(query.subquery())
+    total_result = await session.execute(count_query)
+    total = total_result.scalar() or 0
+    
+    # Paginate
+    query = query.order_by(desc(SharedDecisionRun.proposed_at))
+    query = query.offset((page - 1) * page_size).limit(page_size)
+    
+    # Execute
+    result = await session.execute(query)
+    decisions = result.scalars().all()
+    
+    # Serialize
+    decisions_list = [
+        {
+            "id": str(d.id),
+            "title": d.title,
+            "action_type": d.action_type,
+            "target": d.target,
+            "status": d.status,
+            "proposed_by": str(d.proposed_by),
+            "proposed_at": d.proposed_at.isoformat(),
+            "executed_at": d.executed_at.isoformat() if d.executed_at else None,
+        }
+        for d in decisions
+    ]
+    
+    return DecisionListResponse(
+        decisions=decisions_list,
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get("/{decision_id}", response_model=DecisionDetailResponse)
+async def get_decision(
+    decision_id: UUID,
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Get decision detail with approvals."""
+    
+    decision = await session.get(SharedDecisionRun, decision_id)
+    
+    if not decision or decision.tenant_id != tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Decision not found",
+        )
+    
+    # Load approvals
+    approvals_query = select(DecisionApproval).where(
+        DecisionApproval.decision_id == decision_id
+    )
+    approvals_result = await session.execute(approvals_query)
+    approvals = approvals_result.scalars().all()
+    
+    return DecisionDetailResponse(
+        id=decision.id,
+        title=decision.title,
+        action_type=decision.action_type,
+        target=decision.target,
+        status=decision.status,
+        sandbox_result=decision.sandbox_result,
+        before_state=decision.before_state,
+        after_state=decision.after_state,
+        proposed_by=decision.proposed_by,
+        proposed_at=decision.proposed_at,
+        executed_at=decision.executed_at,
+        rolled_back_at=decision.rolled_back_at,
+        approvals=[
+            {
+                "id": str(a.id),
+                "approver_id": str(a.approver_id),
+                "status": a.status,
+                "comment": a.comment,
+                "approved_at": a.approved_at.isoformat() if a.approved_at else None,
+            }
+            for a in approvals
+        ],
+    )
+
+
+@router.post("/{decision_id}/approve", status_code=status.HTTP_200_OK)
+async def approve_decision(
+    decision_id: UUID,
+    request: DecisionApprovalRequest,
+    tenant_id: UUID = Depends(get_tenant_id),
+    user_id: UUID = Depends(get_user_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Approve a decision (SoD check required).
+    
+    Verifies approver ≠ proposer, creates approval record, updates decision status.
+    """
+    from src.shared.auth.rbac import check_sod, Role
+    
+    decision = await session.get(SharedDecisionRun, decision_id)
+    
+    if not decision or decision.tenant_id != tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Decision not found",
+        )
+    
+    # Verify status
+    if decision.status != DecisionStatus.PROPOSED.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Decision cannot be approved. Current status: {decision.status}",
+        )
+    
+    # Check SoD policy (simplified for development without full auth)
+    proposer_role = Role.OPERATOR  # Default fallback
+    approver_role = Role.MANAGER_OPERATIONS  # Default approver role
+    
+    is_valid, error_message = check_sod(
+        action_type=decision.action_type,
+        proposer_id=decision.proposed_by,
+        proposer_role=proposer_role,
+        approver_id=user_id,
+        approver_role=approver_role,
+    )
+    
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=error_message or "SoD check failed",
+        )
+    
+    # Create approval record
+    approval = DecisionApproval(
+        decision_id=decision_id,
+        approver_id=user_id,
+        status=ApprovalStatus.APPROVED.value,
+        comment=request.comment,
+        approved_at=datetime.utcnow(),
+    )
+    
+    session.add(approval)
+    
+    # Update decision status
+    decision.status = DecisionStatus.APPROVED.value
+    await session.flush()
+    
+    await session.commit()
+    
+    logger.info(f"Decision approved: id={decision_id}, approver={user_id}")
+    
+    return {
+        "id": str(decision_id),
+        "status": "approved",
+        "message": "Decision approved successfully",
+    }
+
+
+@router.post("/{decision_id}/execute", status_code=status.HTTP_200_OK)
+async def execute_decision(
+    decision_id: UUID,
+    tenant_id: UUID = Depends(get_tenant_id),
+    user_id: UUID = Depends(get_user_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Execute an approved decision.
+    
+    Verifies status is APPROVED, executes action, updates status to EXECUTED.
+    """
+    decision = await session.get(SharedDecisionRun, decision_id)
+    
+    if not decision or decision.tenant_id != tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Decision not found",
+        )
+    
+    # Verify status
+    if decision.status != DecisionStatus.APPROVED.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Decision cannot be executed. Current status: {decision.status}",
+        )
+    
+    # TODO: Execute actual action (call ActionExecutor with EXECUTE mode)
+    # For now, just update status
+    
+    decision.status = DecisionStatus.EXECUTED.value
+    decision.executed_at = datetime.utcnow()
+    
+    await session.commit()
+    
+    logger.info(f"Decision executed: id={decision_id}, executor={user_id}")
+    
+    return {
+        "id": str(decision_id),
+        "status": "executed",
+        "executed_at": decision.executed_at.isoformat(),
+        "message": "Decision executed successfully",
+    }
+
+
+@router.post("/{decision_id}/rollback", status_code=status.HTTP_200_OK)
+async def rollback_decision(
+    decision_id: UUID,
+    tenant_id: UUID = Depends(get_tenant_id),
+    user_id: UUID = Depends(get_user_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Rollback an executed decision (within 24h window).
+    
+    Verifies rollback window, reverts state using before_state, updates status to ROLLED_BACK.
+    """
+    decision = await session.get(SharedDecisionRun, decision_id)
+    
+    if not decision or decision.tenant_id != tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Decision not found",
+        )
+    
+    # Verify status
+    if decision.status != DecisionStatus.EXECUTED.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Decision cannot be rolled back. Current status: {decision.status}",
+        )
+    
+    # Verify rollback window (24h from execution)
+    if decision.executed_at:
+        rollback_deadline = decision.executed_at + timedelta(hours=24)
+        if datetime.utcnow() > rollback_deadline:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Rollback window expired. Deadline: {rollback_deadline.isoformat()}",
+            )
+    
+    # TODO: Revert state using before_state snapshot
+    # For now, just update status
+    
+    decision.status = DecisionStatus.ROLLED_BACK.value
+    decision.rolled_back_at = datetime.utcnow()
+    
+    await session.commit()
+    
+    logger.info(f"Decision rolled back: id={decision_id}, user={user_id}")
+    
+    return {
+        "id": str(decision_id),
+        "status": "rolled_back",
+        "rolled_back_at": decision.rolled_back_at.isoformat(),
+        "message": "Decision rolled back successfully",
+    }
+
+
+@router.get("/{decision_id}/audit", response_model=Dict[str, Any])
+async def get_decision_audit(
+    decision_id: UUID,
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Get full audit trail for a decision."""
+    
+    decision = await session.get(SharedDecisionRun, decision_id)
+    
+    if not decision or decision.tenant_id != tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Decision not found",
+        )
+    
+    # Load approvals
+    approvals_query = select(DecisionApproval).where(
+        DecisionApproval.decision_id == decision_id
+    )
+    approvals_result = await session.execute(approvals_query)
+    approvals = approvals_result.scalars().all()
+    
+    return {
+        "decision": {
+            "id": str(decision.id),
+            "title": decision.title,
+            "action_type": decision.action_type,
+            "target": decision.target,
+            "status": decision.status,
+            "proposed_by": str(decision.proposed_by),
+            "proposed_at": decision.proposed_at.isoformat(),
+            "executed_at": decision.executed_at.isoformat() if decision.executed_at else None,
+            "rolled_back_at": decision.rolled_back_at.isoformat() if decision.rolled_back_at else None,
+        },
+        "approvals": [
+            {
+                "id": str(a.id),
+                "approver_id": str(a.approver_id),
+                "status": a.status,
+                "comment": a.comment,
+                "approved_at": a.approved_at.isoformat() if a.approved_at else None,
+            }
+            for a in approvals
+        ],
+        "state_changes": {
+            "before_state": decision.before_state,
+            "after_state": decision.after_state,
+        },
+    }

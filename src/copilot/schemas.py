@@ -34,6 +34,26 @@ class CopilotActionRequest(BaseModel):
     payload: Dict[str, Any] = Field(default_factory=dict)
 
 
+class SandboxRequest(BaseModel):
+    """Request para executar ação em sandbox."""
+    
+    action_type: str = Field(..., min_length=1, max_length=50)  # "INCREASE_SS", "ADJUST_PRICE", etc.
+    target: str = Field(..., min_length=1, max_length=255)  # SKU ID, product ID, etc.
+    params: Dict[str, Any] = Field(default_factory=dict)
+    capture_state: Optional[List[str]] = Field(default=None)  # ["inventory", "kpis", "schedules"]
+
+
+class SandboxResponse(BaseModel):
+    """Response do sandbox execution."""
+    
+    success: bool
+    before_state: Dict[str, Any]
+    after_state: Dict[str, Any]
+    deltas: Dict[str, Any]
+    actual_impact: Dict[str, Any]
+    message: str
+
+
 # ============================================================================
 # RESPONSE SCHEMAS (JSON estruturado obrigatório)
 # ============================================================================
@@ -120,4 +140,3 @@ class DailyFeedbackResponse(BaseModel):
     bullets: List[DailyFeedbackBullet] = Field(..., min_items=3, max_items=7)
     generated_at: str  # ISO datetime
     last_updated: str  # ISO datetime
-

@@ -3,6 +3,8 @@ ProdPlan ONE - Production Schedule Model
 =========================================
 """
 
+from __future__ import annotations
+
 from datetime import datetime, date, time
 from decimal import Decimal
 from enum import Enum
@@ -95,4 +97,5 @@ class ProductionSchedule(TenantBase):
     
     def __repr__(self) -> str:
         return f"<Schedule {self.order_id} op={self.operation_sequence} @ {self.scheduled_start_date}>"
+
 

@@ -16,9 +16,11 @@ interface DonutChartProps {
   outerRadius?: number;
   centerLabel?: string;
   centerValue?: string | number;
+  glowEffect?: boolean;
 }
 
-const DEFAULT_COLORS = ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'];
+// Dark theme optimized colors with good contrast
+const DEFAULT_COLORS = ['#14b8a6', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#10b981', '#ec4899'];
 
 export function DonutChart({
   data,
@@ -28,43 +30,60 @@ export function DonutChart({
   outerRadius = 70,
   centerLabel,
   centerValue,
+  glowEffect = true,
 }: DonutChartProps) {
   return (
     <div className="relative">
       <ResponsiveContainer width="100%" height={height}>
         <PieChart>
+          <defs>
+            {colors.map((_color, index) => (
+              <filter key={`glow-${index}`} id={`donut-glow-${index}`} x="-50%" y="-50%" width="200%" height="200%">
+                <feGaussianBlur stdDeviation="2" result="coloredBlur" />
+                <feMerge>
+                  <feMergeNode in="coloredBlur" />
+                  <feMergeNode in="SourceGraphic" />
+                </feMerge>
+              </filter>
+            ))}
+          </defs>
           <Pie
             data={data}
             cx="50%"
             cy="50%"
             innerRadius={innerRadius}
             outerRadius={outerRadius}
-            paddingAngle={2}
+            paddingAngle={3}
             dataKey="value"
             strokeWidth={0}
           >
             {data.map((_, index) => (
-              <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />
+              <Cell 
+                key={`cell-${index}`} 
+                fill={colors[index % colors.length]}
+                style={glowEffect ? { filter: `drop-shadow(0 0 4px ${colors[index % colors.length]}60)` } : undefined}
+              />
             ))}
           </Pie>
           <Tooltip
             contentStyle={{
-              backgroundColor: '#0f172a',
-              border: 'none',
-              borderRadius: '6px',
-              padding: '8px 12px',
-              boxShadow: '0 4px 12px rgb(0 0 0 / 0.15)',
+              backgroundColor: 'rgba(17, 24, 39, 0.95)',
+              border: '1px solid rgba(255, 255, 255, 0.1)',
+              borderRadius: '12px',
+              padding: '12px 16px',
+              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)',
+              backdropFilter: 'blur(8px)',
             }}
             labelStyle={{ color: '#94a3b8', fontSize: 11, marginBottom: 4 }}
-            itemStyle={{ color: 'white', fontSize: 13, fontWeight: 500 }}
+            itemStyle={{ color: '#f1f5f9', fontSize: 13, fontWeight: 600 }}
             formatter={(value) => [formatCompactNumber(value as number), '']}
           />
         </PieChart>
       </ResponsiveContainer>
       {(centerLabel || centerValue) && (
         <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-          {centerValue && <span className="metric-lg">{centerValue}</span>}
-          {centerLabel && <span className="text-[11px] text-slate-400 mt-0.5">{centerLabel}</span>}
+          {centerValue && <span className="text-xl font-semibold text-slate-100">{centerValue}</span>}
+          {centerLabel && <span className="text-[11px] text-slate-500 mt-0.5">{centerLabel}</span>}
         </div>
       )}
     </div>
@@ -85,7 +104,10 @@ export function DonutLegend({ data, colors = DEFAULT_COLORS, compact = false }: 
           <div key={item.name} className="flex items-center gap-1.5">
             <div
               className="w-2 h-2 rounded-full"
-              style={{ backgroundColor: colors[index % colors.length] }}
+              style={{ 
+                backgroundColor: colors[index % colors.length],
+                boxShadow: `0 0 4px ${colors[index % colors.length]}60`
+              }}
             />
             <span className="text-xs text-slate-500">{item.name}</span>
           </div>
@@ -100,12 +122,15 @@ export function DonutLegend({ data, colors = DEFAULT_COLORS, compact = false }: 
         <div key={item.name} className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div
-              className="w-2 h-2 rounded-full"
-              style={{ backgroundColor: colors[index % colors.length] }}
+              className="w-2.5 h-2.5 rounded-full"
+              style={{ 
+                backgroundColor: colors[index % colors.length],
+                boxShadow: `0 0 4px ${colors[index % colors.length]}60`
+              }}
             />
-            <span className="text-[13px] text-slate-600">{item.name}</span>
+            <span className="text-[13px] text-slate-400">{item.name}</span>
           </div>
-          <span className="text-[13px] font-medium text-slate-900 tabular-nums">
+          <span className="text-[13px] font-semibold text-slate-200 tabular-nums">
             {formatCompactNumber(item.value)}
           </span>
         </div>

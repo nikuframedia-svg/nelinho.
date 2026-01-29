@@ -141,3 +141,12 @@ async def get_order_margin(
         "total_gross_profit": gross_profit * float(calculation.quantity),
     }
 
+
+
+
+
+
+
+
+
+

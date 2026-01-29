@@ -126,3 +126,12 @@ class Machine(TenantBase):
     def weekly_capacity_minutes(self) -> Decimal:
         return self.weekly_capacity_hours * 60
 
+
+
+
+
+
+
+
+
+

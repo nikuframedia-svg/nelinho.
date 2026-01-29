@@ -5,6 +5,8 @@ ProdPlan ONE - Employee Model
 Master data for employees (operators, technicians).
 """
 
+from __future__ import annotations
+
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
@@ -129,4 +131,5 @@ class Employee(TenantBase):
     def hourly_loaded_rate(self) -> Decimal:
         """Calculate fully loaded hourly rate (base + burden)."""
         return self.hourly_base_rate * (1 + self.burden_rate)
+
 

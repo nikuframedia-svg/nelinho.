@@ -82,3 +82,12 @@ class AuditLog(Base):
     def __repr__(self) -> str:
         return f"<AuditLog {self.action} {self.entity_type}:{self.entity_id}>"
 
+
+
+
+
+
+
+
+
+

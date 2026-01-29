@@ -1,0 +1,157 @@
+name: OpenAPI Schema Check
+
+on:
+  pull_request:
+    paths:
+      - 'src/**/*.py'
+      - 'frontend/src/lib/**Api.ts'
+      - 'frontend/src/lib/**api.ts'
+
+jobs:
+  schema-check:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          
+      - name: Install Python dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install openapi-spec-validator
+          
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          
+      - name: Generate Current OpenAPI Schema
+        run: |
+          python -c "
+          import json
+          from src.main import app
+          schema = app.openapi()
+          print(json.dumps(schema, indent=2))
+          " > openapi-current.json
+          
+      - name: Validate OpenAPI Schema
+        run: openapi-spec-validator openapi-current.json
+        
+      - name: Get Base Branch Schema
+        run: |
+          git fetch origin ${{ github.base_ref }}
+          git show origin/${{ github.base_ref }}:openapi.json > openapi-base.json 2>/dev/null || echo '{}' > openapi-base.json
+          
+      - name: Check for Breaking Changes
+        id: breaking-check
+        run: |
+          npx oasdiff breaking openapi-base.json openapi-current.json --format json > breaking-changes.json || true
+          
+          if [ -s breaking-changes.json ] && [ "$(cat breaking-changes.json)" != "[]" ] && [ "$(cat breaking-changes.json)" != "{}" ]; then
+            echo "has_breaking=true" >> $GITHUB_OUTPUT
+            echo "::warning::Breaking API changes detected!"
+          else
+            echo "has_breaking=false" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Generate Schema Diff
+        run: |
+          npx oasdiff diff openapi-base.json openapi-current.json --format text > schema-diff.txt || true
+          
+      - name: Comment on PR - Breaking Changes
+        if: steps.breaking-check.outputs.has_breaking == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            
+            let breakingChanges = '{}';
+            try {
+              breakingChanges = fs.readFileSync('breaking-changes.json', 'utf8');
+            } catch {}
+            
+            let schemaDiff = '';
+            try {
+              schemaDiff = fs.readFileSync('schema-diff.txt', 'utf8');
+            } catch {}
+            
+            const body = `## ⚠️ Breaking API Changes Detected
+            
+This PR contains breaking changes to the API schema. Please ensure frontend compatibility.
+
+### Breaking Changes
+\`\`\`json
+${breakingChanges}
+\`\`\`
+
+### Schema Diff
+\`\`\`
+${schemaDiff.substring(0, 3000)}
+${schemaDiff.length > 3000 ? '... (truncated)' : ''}
+\`\`\`
+
+**Action Required:**
+1. Update frontend API clients to handle these changes
+2. Consider adding deprecation period for removed endpoints
+3. Update API documentation
+4. Add migration guide if needed`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+            
+      - name: Comment on PR - No Breaking Changes
+        if: steps.breaking-check.outputs.has_breaking == 'false' && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            
+            let schemaDiff = '';
+            try {
+              schemaDiff = fs.readFileSync('schema-diff.txt', 'utf8');
+            } catch {}
+            
+            if (schemaDiff.trim().length > 0) {
+              const body = `## ✅ API Schema Changes (Non-Breaking)
+              
+This PR modifies the API schema but no breaking changes were detected.
+
+### Schema Diff
+\`\`\`
+${schemaDiff.substring(0, 2000)}
+${schemaDiff.length > 2000 ? '... (truncated)' : ''}
+\`\`\``;
+
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: body
+              });
+            }
+            
+      - name: Save OpenAPI Schema
+        run: cp openapi-current.json openapi.json
+        
+      - name: Upload Schema Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi-schema
+          path: |
+            openapi.json
+            breaking-changes.json
+            schema-diff.txt
+          retention-days: 30
+

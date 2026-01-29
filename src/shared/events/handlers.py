@@ -187,3 +187,12 @@ async def start_event_consumer() -> KafkaConsumerClient:
     await consumer.start()
     return consumer
 
+
+
+
+
+
+
+
+
+

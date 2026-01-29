@@ -3,6 +3,8 @@ ProdPlan ONE - HR Allocation Models
 ====================================
 """
 
+from __future__ import annotations
+
 from datetime import date, datetime, time
 from decimal import Decimal
 from enum import Enum
@@ -199,4 +201,5 @@ class EmployeeSkill(TenantBase):
     
     def __repr__(self) -> str:
         return f"<EmpSkill {self.employee_id} has {self.skill_id} @L{self.proficiency_level}>"
+
 

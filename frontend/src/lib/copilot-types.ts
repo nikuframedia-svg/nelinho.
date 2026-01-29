@@ -35,7 +35,7 @@ export interface CopilotResponse {
     payload: any;
   }>;
   warnings: Array<{
-    code: "INSUFFICIENT_EVIDENCE" | "SECURITY_FLAG" | "LOW_TRUST_INDEX" | "MODEL_OFFLINE";
+    code: "INSUFFICIENT_EVIDENCE" | "SECURITY_FLAG" | "LOW_TRUST_INDEX" | "MODEL_OFFLINE" | "VALIDATION_FAILED" | "SERVICE_ERROR";
     message: string;
   }>;
   meta: {

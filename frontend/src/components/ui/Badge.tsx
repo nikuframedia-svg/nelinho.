@@ -61,7 +61,7 @@ export function Tag({ children, className }: TagProps) {
   return (
     <span className={cn(
       'inline-flex items-center px-3 py-1 rounded-full text-xs font-medium',
-      'bg-slate-100 text-slate-600 border border-slate-200',
+      'bg-white/[0.05] text-slate-400 border border-white/[0.08]',
       className
     )}>
       {children}

@@ -1,0 +1,108 @@
+# Bottleneck Analysis Runbook
+# Analyzes production bottlenecks and suggests capacity improvements
+
+name: Bottleneck Analysis
+description: |
+  Identifies production bottlenecks using TOC (Theory of Constraints) analysis,
+  estimates impact of capacity improvements, and creates a scenario for simulation.
+
+version: "1.0"
+triggers:
+  - manual
+  - scheduled:cron:0 8 * * *  # Daily at 8 AM
+
+inputs:
+  - name: min_trust_threshold
+    type: float
+    default: 0.6
+    description: Minimum trust index to proceed with recommendations
+
+outputs:
+  - bottlenecks
+  - scenario_id
+  - simulation_result
+
+steps:
+  - step_id: query_wip
+    name: Query Current WIP
+    action:
+      type: query_kpi
+      kpi_id: wip_theoretical
+    next_step: analyze_bottlenecks
+
+  - step_id: analyze_bottlenecks
+    name: Analyze Bottlenecks (TOC)
+    action:
+      type: analyze_bottleneck
+    next_step: check_results
+
+  - step_id: check_results
+    name: Check if Bottlenecks Found
+    action:
+      type: condition
+      expression: "len(bottlenecks.get('phases', [])) > 0"
+    on_success: create_scenario
+    on_failure: log_no_bottlenecks
+
+  - step_id: log_no_bottlenecks
+    name: Log No Bottlenecks
+    action:
+      type: log
+      level: info
+      message: "No significant bottlenecks detected in current data"
+    # End of runbook (no next_step)
+
+  - step_id: create_scenario
+    name: Create Improvement Scenario
+    action:
+      type: create_scenario
+      name: "Bottleneck Improvement - ${bottlenecks.phases[0].phase_name}"
+    next_step: apply_capacity_delta
+
+  - step_id: apply_capacity_delta
+    name: Apply Capacity Improvement
+    action:
+      type: apply_delta
+      delta_type: capacity
+      value: 10  # +10% capacity
+    next_step: simulate
+
+  - step_id: simulate
+    name: Simulate Improvement
+    action:
+      type: simulate_scenario
+    next_step: evaluate_impact
+
+  - step_id: evaluate_impact
+    name: Evaluate Impact
+    action:
+      type: condition
+      expression: "simulation_result.get('confidence', 0) >= 0.6"
+    on_success: propose_decision
+    on_failure: log_low_confidence
+
+  - step_id: log_low_confidence
+    name: Log Low Confidence
+    action:
+      type: log
+      level: warning
+      message: "Simulation confidence too low (${simulation_result.confidence}). Improve data quality first."
+    # End with warning
+
+  - step_id: propose_decision
+    name: Propose Capacity Decision
+    action:
+      type: propose_decision
+      decision_type: capacity_change
+      description: |
+        Increase capacity at bottleneck phase by 10%.
+        Estimated lead time improvement: ${simulation_result.kpis.lead_time_days.delta} days.
+    next_step: notify_complete
+
+  - step_id: notify_complete
+    name: Notify Completion
+    action:
+      type: notify
+      channel: log
+      message: "Bottleneck analysis complete. Decision ${decision_id} proposed."
+

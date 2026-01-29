@@ -189,3 +189,12 @@ class ProfitScenario(TenantBase):
     def __repr__(self) -> str:
         return f"<Scenario {self.scenario_name}: {self.delta_percent}%>"
 
+
+
+
+
+
+
+
+
+

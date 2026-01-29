@@ -324,3 +324,12 @@ class MRPAdapter:
             production_suggestions=production_suggestions,
         )
 
+
+
+
+
+
+
+
+
+

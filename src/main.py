@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from src.shared.config import settings
 from src.shared.database import init_db, close_db, check_db_health
@@ -24,13 +24,34 @@ from src.profit.api import router as profit_router
 from src.hr.api import router as hr_router
 from src.copilot.api import router as copilot_router
 from src.legacy.api import router as legacy_router
+from src.supply.api import router as supply_router
+from src.shared.api import router as shared_router
 
-# Configure logging
+# Import new module routers
+from src.explain.api import router as explain_router
+from src.twin.api import router as twin_router
+from src.sandbox.api import router as sandbox_router
+from src.improve.api import router as improve_router
+from src.factory_data_product import factory_router
+from src.copilot.api_endpoints.runbooks_api import router as runbooks_router
+from src.copilot.api_endpoints.tools_api import router as tools_router
+from src.governance.api import router as governance_router
+from src.workforce.api import router as workforce_router
+
+# Configure logging first
 logging.basicConfig(
     level=getattr(logging, settings.log_level),
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+# Import DQA middleware (optional - can be disabled via settings)
+try:
+    from src.dqa.quality_gates import QualityGateMiddleware
+    DQA_ENABLED = True
+except ImportError:
+    DQA_ENABLED = False
+    logger.warning("DQA module not available - quality gates disabled")
 
 
 @asynccontextmanager
@@ -101,11 +122,58 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# DQA Quality Gates middleware (optional)
+if DQA_ENABLED and not settings.is_development:
+    app.add_middleware(QualityGateMiddleware)
+    logger.info("DQA Quality Gates middleware enabled")
+
 
 # Exception handlers
+# DB connection errors - return 503 instead of 500
+@app.exception_handler(ConnectionRefusedError)
+async def db_connection_refused_handler(request: Request, exc: ConnectionRefusedError):
+    """Handle database connection refused errors."""
+    logger.warning(f"DB connection refused on {request.url.path}: {exc}")
+    response = JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={
+            "error": "Database service unavailable",
+            "detail": "PostgreSQL connection refused. Please ensure PostgreSQL is running.",
+            "path": str(request.url.path),
+        },
+    )
+    origin = request.headers.get("origin")
+    if origin and origin in settings.cors_origins_list:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+    return response
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Global exception handler."""
+    # Skip DB connection errors (handled above)
+    if isinstance(exc, (ConnectionRefusedError,)):
+        raise
+    
+    # Check for SQLAlchemy/asyncpg DB errors
+    error_str = str(exc).lower()
+    if "connection refused" in error_str or "operationalerror" in error_str or "interfaceerror" in error_str:
+        logger.warning(f"DB connection error on {request.url.path}: {exc}")
+        response = JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={
+                "error": "Database service unavailable",
+                "detail": "PostgreSQL connection error. Please ensure PostgreSQL is running.",
+                "path": str(request.url.path),
+            },
+        )
+        origin = request.headers.get("origin")
+        if origin and origin in settings.cors_origins_list:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+        return response
+    
     logger.exception(f"Unhandled exception: {exc}")
     response = JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -161,13 +229,42 @@ async def liveness_check():
     return {"status": "alive"}
 
 
+@app.get("/metrics", tags=["Monitoring"])
+async def metrics():
+    """
+    Prometheus metrics endpoint.
+    
+    Exposes metrics for scraping by Prometheus.
+    """
+    from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+    from src.shared.metrics import registry
+    
+    return Response(
+        content=generate_latest(registry),
+        media_type=CONTENT_TYPE_LATEST,
+    )
+
+
 # Include routers
 app.include_router(core_router)
 app.include_router(plan_router)
 app.include_router(profit_router)
 app.include_router(hr_router)
 app.include_router(copilot_router)
+app.include_router(supply_router)  # Supply Chain Planning module
+app.include_router(shared_router)  # Shared/Governance APIs (Decision Ledger)
 app.include_router(legacy_router)  # Legacy endpoints for compatibility
+
+# New module routers
+app.include_router(explain_router)  # Explainability API
+app.include_router(twin_router)     # Digital Twin API
+app.include_router(sandbox_router)  # Sandbox API
+app.include_router(improve_router)  # Improvement Suggestions API
+app.include_router(factory_router)  # Factory Data Product API (C10)
+app.include_router(runbooks_router) # Runbooks API (P2 Enterprise)
+app.include_router(tools_router)    # Tool Registry API (P2 Enterprise)
+app.include_router(governance_router)  # Governance API (Approvals, SoD)
+app.include_router(workforce_router)   # Workforce Operations API (NEW)
 
 
 # API info
@@ -177,7 +274,7 @@ async def root():
     return {
         "name": "ProdPlan ONE",
         "version": "1.0.0",
-        "modules": ["CORE", "PLAN", "PROFIT", "HR", "COPILOT"],
+        "modules": ["CORE", "PLAN", "PROFIT", "HR", "COPILOT", "FACTORY", "TWIN", "SANDBOX", "IMPROVE", "EXPLAIN", "WORKFORCE"],
         "docs_url": "/docs",
         "openapi_url": "/openapi.json",
     }

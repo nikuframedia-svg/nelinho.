@@ -19,7 +19,7 @@ from src.shared.database import get_session
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/kpis", tags=["KPIs"])
+router = APIRouter(prefix="/kpis", tags=["KPIs"])
 
 
 def get_tenant_id(x_tenant_id: UUID = Header(...)) -> UUID:
@@ -320,4 +320,150 @@ async def get_kpi_snapshot_dev(
         orders_completed=kpis.get("orders_completed", KPIMetric(value=None, reason="NO_SOURCE_DATA")),
         updated_at=datetime.utcnow(),
     )
+
+
+class KPISnapshotExplainedResponse(BaseModel):
+    """Response with KPI snapshot and explanations."""
+    snapshot: KPISnapshotResponse
+    explanations: Dict[str, Any]  # KPI name -> explanation dict
+    timestamp: datetime
+
+
+@router.get("/snapshot-explained", response_model=KPISnapshotExplainedResponse)
+async def get_kpi_snapshot_explained(
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Get KPI snapshot with explanations.
+    
+    Returns KPI values along with root cause analysis for each KPI.
+    """
+    from src.shared.explanation_engine import ExplanationEngine
+    
+    # Get snapshot
+    kpis = await calculate_kpis(session, tenant_id)
+    snapshot = KPISnapshotResponse(
+        oee=kpis.get("oee", KPIMetric(value=None, reason="NO_SOURCE_DATA")),
+        availability=kpis.get("availability", KPIMetric(value=None, reason="NO_SOURCE_DATA")),
+        performance=kpis.get("performance", KPIMetric(value=None, reason="NO_SOURCE_DATA")),
+        quality_fpy=kpis.get("quality_fpy", KPIMetric(value=None, reason="NO_SOURCE_DATA")),
+        rework_rate=kpis.get("rework_rate", KPIMetric(value=None, reason="NO_SOURCE_DATA")),
+        orders_total=kpis.get("orders_total", KPIMetric(value=None, reason="NO_SOURCE_DATA")),
+        orders_in_progress=kpis.get("orders_in_progress", KPIMetric(value=None, reason="NO_SOURCE_DATA")),
+        orders_completed=kpis.get("orders_completed", KPIMetric(value=None, reason="NO_SOURCE_DATA")),
+        updated_at=datetime.utcnow(),
+    )
+    
+    # Generate explanations for relevant KPIs
+    explanation_engine = ExplanationEngine(session, tenant_id)
+    explanations = {}
+    
+    # Explain OTD if orders data available
+    if snapshot.orders_total.value is not None and snapshot.orders_total.value > 0:
+        explanations["otd"] = await explanation_engine.explain_kpi("otd")
+    
+    # TODO: Add explanations for other KPIs (margin, inventory_turnover, etc.)
+    
+    return KPISnapshotExplainedResponse(
+        snapshot=snapshot,
+        explanations=explanations,
+        timestamp=datetime.utcnow(),
+    )
+
+
+@router.get("/otd-heatmap")
+async def get_otd_heatmap(
+    weeks: int = 12,
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Get OTD heatmap data by product and week.
+    
+    Returns a matrix of OTD percentages for each product type across weeks.
+    Uses product_code prefix (e.g., "K1", "K2", "C1") to group products.
+    """
+    from datetime import date, timedelta
+    from sqlalchemy import func as sql_func, and_, or_, case, cast, String
+    from sqlalchemy.sql import func as sql_func_expr
+    from src.plan.models.schedule import ProductionSchedule, ScheduleStatus
+    from src.core.models.product import Product
+    
+    # Calculate date range
+    end_date = date.today()
+    start_date = end_date - timedelta(weeks=weeks)
+    
+    # Extract product type from product_code (first 2 chars, e.g., "K1", "C2")
+    product_type_expr = sql_func.substr(Product.product_code, 1, 2).label('product_type')
+    week_start = sql_func.date_trunc('week', ProductionSchedule.scheduled_end_date)
+    
+    # Calculate OTD per product type per week
+    query = select(
+        product_type_expr,
+        week_start.label('week'),
+        sql_func.count(ProductionSchedule.order_id.distinct()).label('total_orders'),
+        sql_func.sum(
+            case(
+                (
+                    and_(
+                        ProductionSchedule.status == ScheduleStatus.COMPLETED,
+                        ProductionSchedule.actual_end.isnot(None),
+                        ProductionSchedule.scheduled_end_date.isnot(None),
+                        sql_func.date(ProductionSchedule.actual_end) <= ProductionSchedule.scheduled_end_date
+                    ),
+                    1
+                ),
+                else_=0
+            )
+        ).label('on_time_orders'),
+    ).select_from(
+        ProductionSchedule
+    ).join(
+        Product, ProductionSchedule.product_id == Product.id
+    ).where(
+        and_(
+            ProductionSchedule.tenant_id == tenant_id,
+            ProductionSchedule.scheduled_end_date >= start_date,
+            ProductionSchedule.scheduled_end_date <= end_date,
+        )
+    ).group_by(
+        product_type_expr,
+        week_start
+    )
+    
+    result = await session.execute(query)
+    rows = result.all()
+    
+    # Build heatmap data structure
+    product_types = sorted(set(row.product_type for row in rows if row.product_type))
+    weeks_list = sorted(set(row.week for row in rows))
+    
+    # Initialize heatmap matrix
+    heatmap = {}
+    for product_type in product_types:
+        heatmap[product_type] = {}
+        for week in weeks_list:
+            heatmap[product_type][week.isoformat()] = None  # None means no data
+    
+    # Fill in OTD values
+    for row in rows:
+        product_type = str(row.product_type) if row.product_type else None
+        if not product_type:
+            continue
+        week_str = row.week.isoformat()
+        total = float(row.total_orders) if row.total_orders else 0
+        on_time = float(row.on_time_orders) if row.on_time_orders else 0
+        otd = (on_time / total * 100) if total > 0 else None
+        if product_type not in heatmap:
+            heatmap[product_type] = {}
+        heatmap[product_type][week_str] = otd
+    
+    return {
+        "product_types": product_types,
+        "weeks": [w.isoformat() for w in weeks_list],
+        "heatmap": heatmap,
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+    }
 

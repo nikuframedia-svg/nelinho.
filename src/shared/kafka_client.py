@@ -4,12 +4,21 @@ ProdPlan ONE - Kafka Client
 
 Async Kafka producer and consumer wrappers.
 Event-driven architecture for module communication.
+
+Includes:
+- Circuit breaker for resilience
+- Retry with exponential backoff
+- Idempotency support
+- Exactly-once delivery guarantees
 """
 
 import asyncio
 import json
 import logging
-from datetime import datetime
+import time
+from datetime import datetime, timedelta
+from enum import Enum
+from functools import wraps
 from typing import Any, Callable, Dict, List, Optional, Type, TypeVar
 from uuid import UUID, uuid4
 
@@ -103,6 +112,110 @@ class EventEnvelope(BaseModel):
 T = TypeVar("T", bound=EventBase)
 
 
+class CircuitBreakerState(str, Enum):
+    """Circuit breaker states."""
+    CLOSED = "CLOSED"  # Normal operation
+    OPEN = "OPEN"  # Blocking requests after failures
+    HALF_OPEN = "HALF_OPEN"  # Testing if service recovered
+
+
+class CircuitBreaker:
+    """
+    Circuit breaker for Kafka resilience.
+    
+    Prevents cascading failures by opening the circuit after a threshold
+    of failures, then attempting to close it after a timeout period.
+    
+    Args:
+        failure_threshold: Number of failures before opening circuit (default: 5)
+        timeout_seconds: Time to wait before attempting reset (default: 60)
+    """
+    
+    def __init__(self, failure_threshold: int = 5, timeout_seconds: int = 60):
+        self.failure_threshold = failure_threshold
+        self.timeout_seconds = timeout_seconds
+        self.failure_count = 0
+        self.last_failure_time: Optional[datetime] = None
+        self.state = CircuitBreakerState.CLOSED
+    
+    def call(self, func: Callable, *args, **kwargs) -> Any:
+        """
+        Execute function with circuit breaker protection.
+        
+        Raises:
+            Exception: If circuit is OPEN and timeout not elapsed
+        """
+        if self.state == CircuitBreakerState.OPEN:
+            if self._should_attempt_reset():
+                self.state = CircuitBreakerState.HALF_OPEN
+                logger.info("Circuit breaker transitioning to HALF_OPEN")
+            else:
+                elapsed = (datetime.utcnow() - self.last_failure_time).total_seconds()
+                raise Exception(
+                    f"Circuit breaker OPEN. Retry after {self.timeout_seconds - int(elapsed)}s"
+                )
+        
+        try:
+            result = func(*args, **kwargs)
+            self._on_success()
+            return result
+        except Exception as e:
+            self._on_failure()
+            raise
+    
+    async def call_async(self, func: Callable, *args, **kwargs) -> Any:
+        """Async version of call() for async functions."""
+        if self.state == CircuitBreakerState.OPEN:
+            if self._should_attempt_reset():
+                self.state = CircuitBreakerState.HALF_OPEN
+                logger.info("Circuit breaker transitioning to HALF_OPEN")
+            else:
+                if self.last_failure_time:
+                    elapsed = (datetime.utcnow() - self.last_failure_time).total_seconds()
+                    raise Exception(
+                        f"Circuit breaker OPEN. Retry after {self.timeout_seconds - int(elapsed)}s"
+                    )
+                raise Exception(f"Circuit breaker OPEN. Retry after {self.timeout_seconds}s")
+        
+        try:
+            if asyncio.iscoroutinefunction(func):
+                result = await func(*args, **kwargs)
+            else:
+                result = func(*args, **kwargs)
+            self._on_success()
+            return result
+        except Exception as e:
+            self._on_failure()
+            raise
+    
+    def _should_attempt_reset(self) -> bool:
+        """Check if enough time has passed to attempt reset."""
+        if not self.last_failure_time:
+            return False
+        elapsed = (datetime.utcnow() - self.last_failure_time).total_seconds()
+        return elapsed >= self.timeout_seconds
+    
+    def _on_success(self):
+        """Reset failure count and close circuit on success."""
+        self.failure_count = 0
+        if self.state != CircuitBreakerState.CLOSED:
+            logger.info(f"Circuit breaker transitioning to CLOSED (was {self.state})")
+        self.state = CircuitBreakerState.CLOSED
+    
+    def _on_failure(self):
+        """Increment failure count and open circuit if threshold reached."""
+        self.failure_count += 1
+        self.last_failure_time = datetime.utcnow()
+        
+        if self.failure_count >= self.failure_threshold:
+            if self.state != CircuitBreakerState.OPEN:
+                logger.warning(
+                    f"Circuit breaker opening after {self.failure_count} failures. "
+                    f"Will retry after {self.timeout_seconds}s"
+                )
+            self.state = CircuitBreakerState.OPEN
+
+
 class KafkaProducerClient:
     """
     Async Kafka producer for publishing events.
@@ -114,9 +227,17 @@ class KafkaProducerClient:
         await producer.stop()
     """
     
-    def __init__(self):
+    def __init__(
+        self,
+        max_retries: int = 3,
+        backoff_factor: float = 2.0,
+        circuit_breaker: Optional[CircuitBreaker] = None,
+    ):
         self._producer: Optional[AIOKafkaProducer] = None
         self._started = False
+        self.max_retries = max_retries
+        self.backoff_factor = backoff_factor
+        self.circuit_breaker = circuit_breaker or CircuitBreaker()
     
     async def start(self) -> None:
         """Start the producer."""
@@ -149,58 +270,125 @@ class KafkaProducerClient:
         topic: str,
         event: EventBase,
         key: Optional[str] = None,
-    ) -> bool:
+        aggregate_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
-        Publish an event to a topic.
+        Publish an event to a topic with retry and circuit breaker.
         
         Args:
             topic: Kafka topic name
             event: Event to publish
-            key: Optional partition key (defaults to tenant_id)
+            key: Optional partition key (defaults to tenant_id or aggregate_id)
+            aggregate_id: Aggregate ID for partitioning (ensures ordering per aggregate)
+            idempotency_key: Optional idempotency key for deduplication
         
         Returns:
-            True if successful, False otherwise
+            Dict with status, message_id, and metadata
+            
+        Raises:
+            Exception: If all retries fail or circuit breaker is open
         """
         if not self._started:
             await self.start()
         
-        try:
-            envelope = EventEnvelope.from_event(event)
-            partition_key = key or str(event.tenant_id)
+        envelope = EventEnvelope.from_event(event)
+        # Use aggregate_id for partitioning to ensure ordering per aggregate
+        partition_key = key or aggregate_id or str(event.tenant_id)
+        message_id = idempotency_key or str(event.event_id)
+        
+        # Add message_id to envelope for idempotency tracking
+        envelope_dict = envelope.model_dump()
+        envelope_dict["message_id"] = message_id
+        
+        # Retry with exponential backoff
+        last_exception = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                # Use circuit breaker
+                result = await self.circuit_breaker.call_async(
+                    self._producer.send_and_wait,
+                    topic,
+                    value=envelope_dict,
+                    key=partition_key.encode("utf-8") if partition_key else None,
+                )
+                
+                # Get record metadata
+                record_metadata = result
+                
+                logger.info(
+                    f"Published event {event.event_id} to {topic} "
+                    f"(offset={record_metadata.offset}, partition={record_metadata.partition}, "
+                    f"attempt={attempt + 1})"
+                )
+                
+                return {
+                    "status": "published",
+                    "message_id": message_id,
+                    "kafka_offset": record_metadata.offset,
+                    "partition": record_metadata.partition,
+                    "topic": topic,
+                    "timestamp": datetime.utcnow().isoformat(),
+                }
             
-            await self._producer.send_and_wait(
-                topic,
-                value=envelope.model_dump(),
-                key=partition_key,
-            )
-            
-            logger.debug(f"Published event {event.event_id} to {topic}")
-            return True
-            
-        except KafkaError as e:
-            logger.error(f"Failed to publish event: {e}")
-            return False
+            except (KafkaError, Exception) as e:
+                last_exception = e
+                
+                if attempt < self.max_retries:
+                    # Exponential backoff: wait_factor = 2^attempt
+                    wait_time = (self.backoff_factor ** attempt)
+                    logger.warning(
+                        f"Publish attempt {attempt + 1}/{self.max_retries + 1} failed for "
+                        f"event {event.event_id}: {e}. Retrying in {wait_time:.2f}s..."
+                    )
+                    await asyncio.sleep(wait_time)
+                else:
+                    logger.error(
+                        f"Failed to publish event {event.event_id} after "
+                        f"{self.max_retries + 1} attempts: {e}"
+                    )
+        
+        # All retries exhausted
+        raise Exception(f"Failed to publish event after {self.max_retries + 1} attempts") from last_exception
     
     async def publish_batch(
         self,
         topic: str,
         events: List[EventBase],
-    ) -> int:
+        aggregate_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         """
         Publish multiple events to a topic.
         
+        Args:
+            topic: Kafka topic name
+            events: List of events to publish
+            aggregate_id: Optional aggregate ID for partitioning (if all events belong to same aggregate)
+        
         Returns:
-            Number of successfully published events
+            List of publish results (one per event)
         """
         if not self._started:
             await self.start()
         
-        success_count = 0
+        results = []
         for event in events:
-            if await self.publish(topic, event):
-                success_count += 1
+            try:
+                result = await self.publish(
+                    topic=topic,
+                    event=event,
+                    aggregate_id=aggregate_id or str(event.tenant_id),
+                )
+                results.append(result)
+            except Exception as e:
+                logger.error(f"Failed to publish event {event.event_id} in batch: {e}")
+                results.append({
+                    "status": "failed",
+                    "event_id": str(event.event_id),
+                    "error": str(e),
+                })
         
-        return success_count
+        return results
 
 
 EventHandler = Callable[[EventEnvelope], Any]

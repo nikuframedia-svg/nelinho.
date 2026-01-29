@@ -1,494 +1,202 @@
-import { useState, useEffect, useMemo } from 'react';
-import { Link } from 'react-router-dom';
-import { 
-  Search, 
-  Plus, 
-  ChevronLeft,
-  Calendar,
-  ClipboardList,
-  Clock,
-  CheckCircle2,
-  PlayCircle,
-  Truck,
-  ArrowUpDown,
-  Loader2,
-  AlertCircle,
-  RefreshCw,
-} from 'lucide-react';
-import { DisabledButton, EmptyTableState } from '../../components/ui';
-import { ordersApi, type Order, type OrdersStats } from '../../lib/api';
-
-// Helper to format dates
-function formatDate(dateStr: string | null): string {
-  if (!dateStr) return '-';
-  const date = new Date(dateStr);
-  return date.toLocaleDateString('pt-PT', { day: '2-digit', month: 'short', year: 'numeric' });
-}
-
-function formatShortDate(dateStr: string | null): string {
-  if (!dateStr) return '-';
-  const date = new Date(dateStr);
-  return date.toLocaleDateString('pt-PT', { day: '2-digit', month: 'short' });
-}
+import { useState, useMemo } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Calendar, Play, Clock, AlertTriangle, Loader2, RefreshCw, Download } from 'lucide-react';
+import { format } from 'date-fns';
+import { DarkPageLayout } from '../../layouts';
+import { DarkCard, DarkStatCard, DarkTable, DarkTableHead, DarkTableBody, DarkTableRow, DarkTableHeader, DarkTableCell, DarkButton, DarkPillButton, DarkBadge } from '../../components/dark';
+import { planApi, ordersApi } from '../../lib/api';
+import { useToastContext } from '../../components/ToastProvider';
+import { GanttChart } from '../../components/charts';
 
 export function SchedulingPage() {
-  // Filters & pagination state
-  const [search, setSearch] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'IN_PROGRESS' | 'COMPLETED'>('ALL');
-  const [sortBy, setSortBy] = useState<'createdDate' | 'productName'>('createdDate');
-  const [sortOrder, setSortOrder] = useState<'desc' | 'asc'>('desc');
-  const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 20;
+  const [filterStatus, setFilterStatus] = useState<string>('ALL');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const toast = useToastContext();
+  const queryClient = useQueryClient();
 
-  // Data state
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [totalOrders, setTotalOrders] = useState(0);
-  const [totalPages, setTotalPages] = useState(0);
-  const [stats, setStats] = useState<OrdersStats | null>(null);
-  
-  // Loading & error states
-  const [isLoading, setIsLoading] = useState(true);
-  const [isLoadingStats, setIsLoadingStats] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // FIX: API returns {data: [], total: 0} - extract .data from response
+  const { data: schedulesResponse, isLoading, error } = useQuery({
+    queryKey: ['schedules', 'list'],
+    queryFn: () => planApi.getSchedules({ limit: 100 }),
+  });
 
-  // Debounce search input
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedSearch(search);
-      setCurrentPage(1); // Reset to page 1 on search
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [search]);
+  // Normalize response - handle both array and {data: []} formats
+  const schedules = useMemo(() => {
+    if (!schedulesResponse) return [];
+    if (Array.isArray(schedulesResponse)) return schedulesResponse;
+    if (schedulesResponse.data && Array.isArray(schedulesResponse.data)) return schedulesResponse.data;
+    return [];
+  }, [schedulesResponse]);
 
-  // Fetch stats (once on mount)
-  useEffect(() => {
-    async function loadStats() {
-      try {
-        setIsLoadingStats(true);
-        const statsData = await ordersApi.stats();
-        setStats(statsData);
-      } catch (err) {
-        console.error('Failed to load stats:', err);
-      } finally {
-        setIsLoadingStats(false);
-      }
+  useQuery({
+    queryKey: ['orders', 'list'],
+    queryFn: () => ordersApi.list({ limit: 500 }),
+  });
+
+  const generateMutation = useMutation({
+    mutationFn: () => planApi.generateSchedule({ horizon_days: 14 }),
+    onMutate: () => setIsGenerating(true),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['schedules'] });
+      toast.success('Schedule generated successfully');
+    },
+    onError: (err: any) => toast.error(err.message || 'Generation failed'),
+    onSettled: () => setIsGenerating(false),
+  });
+
+  const filteredSchedules = useMemo(() => {
+    if (filterStatus === 'ALL') return schedules;
+    return schedules.filter((s: any) => s.status === filterStatus);
+  }, [schedules, filterStatus]);
+
+  const stats = useMemo(() => ({
+    total: schedules.length,
+    scheduled: schedules.filter((s: any) => s.status === 'SCHEDULED').length,
+    inProgress: schedules.filter((s: any) => s.status === 'IN_PROGRESS').length,
+    completed: schedules.filter((s: any) => s.status === 'COMPLETED').length,
+    delayed: schedules.filter((s: any) => s.status === 'DELAYED').length,
+  }), [schedules]);
+
+  // Prepare Gantt data
+  const ganttData = useMemo(() => {
+    return filteredSchedules.slice(0, 20).map((s: any, i: number) => ({
+      id: s.id?.toString() || `task-${i}`,
+      name: s.order_code || s.product_name || `Order ${i + 1}`,
+      start: s.scheduled_start || new Date().toISOString(),
+      end: s.scheduled_end || new Date(Date.now() + 86400000).toISOString(),
+      status: s.status,
+    }));
+  }, [filteredSchedules]);
+
+  const ganttDateRange = useMemo(() => {
+    if (ganttData.length === 0) {
+      return { startDate: new Date(), endDate: new Date(Date.now() + 7 * 86400000) };
     }
-    loadStats();
-  }, []);
+    const starts = ganttData.map((d: { start: string }) => new Date(d.start).getTime());
+    const ends = ganttData.map((d: { end: string }) => new Date(d.end).getTime());
+    return {
+      startDate: new Date(Math.min(...starts)),
+      endDate: new Date(Math.max(...ends)),
+    };
+  }, [ganttData]);
 
-  // Fetch orders with pagination
-  useEffect(() => {
-    async function loadOrders() {
-      try {
-        setIsLoading(true);
-        setError(null);
-        
-        const response = await ordersApi.list({
-          page: currentPage,
-          pageSize: itemsPerPage,
-          status: statusFilter,
-          search: debouncedSearch || undefined,
-          sortBy: sortBy,
-          sortOrder: sortOrder,
-        });
-        
-        setOrders(response.data);
-        setTotalOrders(response.total);
-        setTotalPages(response.totalPages);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load orders');
-      } finally {
-        setIsLoading(false);
-      }
-    }
-    loadOrders();
-  }, [currentPage, statusFilter, debouncedSearch, sortBy, sortOrder]);
-
-  // Phase distribution from current page (local computation)
-  const phaseDistribution = useMemo(() => {
-    if (!stats?.phaseDistribution) return [];
-    return stats.phaseDistribution;
-  }, [stats]);
-
-  // Get kayak type from product name
-  const getKayakType = (name: string): string => {
-    const match = name.match(/^(K\d|C\d)/);
-    return match ? match[1] : 'Other';
-  };
-
-  // Toggle sort
-  const toggleSort = () => {
-    if (sortBy === 'createdDate') {
-      setSortBy('productName');
-      setSortOrder('asc');
-    } else {
-      setSortBy('createdDate');
-      setSortOrder('desc');
-    }
-    setCurrentPage(1);
-  };
-
-  // Retry on error
-  const handleRetry = () => {
-    setError(null);
-    setCurrentPage(1);
-  };
+  if (error) {
+    return (
+      <DarkPageLayout title="Production Scheduling" icon={<Calendar size={20} />}>
+        <DarkCard className="border-danger/30 bg-danger/10">
+          <div className="flex items-center gap-3 text-danger-light">
+            <AlertTriangle size={20} />
+            <div><p className="font-medium">Error loading schedules</p><p className="text-sm">{(error as Error).message}</p></div>
+          </div>
+        </DarkCard>
+      </DarkPageLayout>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-slate-100/50 to-slate-50">
-      {/* Header */}
-      <div className="bg-white border-b border-slate-200 sticky top-0 z-10">
-        <div className="max-w-[1600px] mx-auto px-6 py-4">
-          <div className="flex items-center gap-4 mb-4">
-            <Link to="/" className="text-slate-400 hover:text-slate-600">
-              <ChevronLeft size={20} />
-            </Link>
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center">
-                <Calendar size={20} className="text-white" />
+    <DarkPageLayout
+      title="Production Scheduling"
+      subtitle={isLoading ? 'Loading...' : `${schedules.length} scheduled orders`}
+      icon={<Calendar size={20} />}
+      actions={
+        <div className="flex items-center gap-2">
+          <DarkButton variant="secondary" icon={<Download size={18} />}>Export</DarkButton>
+          <DarkButton icon={<Play size={18} />} onClick={() => generateMutation.mutate()} disabled={isGenerating}>
+            {isGenerating ? <><Loader2 size={18} className="animate-spin" /> Generating...</> : 'Generate Schedule'}
+          </DarkButton>
+        </div>
+      }
+    >
+      {/* Filters */}
+      <div className="flex items-center gap-4 mb-6">
+        <div className="flex items-center gap-1 bg-bg-secondary rounded-full p-1">
+          {['ALL', 'SCHEDULED', 'IN_PROGRESS', 'COMPLETED', 'DELAYED'].map((status) => (
+            <DarkPillButton key={status} active={filterStatus === status} onClick={() => setFilterStatus(status)}>
+              {status.replace('_', ' ')}
+            </DarkPillButton>
+          ))}
+        </div>
+        <DarkButton variant="ghost" size="sm" icon={<RefreshCw size={14} />} onClick={() => queryClient.invalidateQueries({ queryKey: ['schedules'] })}>
+          Refresh
+        </DarkButton>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-5 gap-4 mb-6">
+        <DarkStatCard icon={<Calendar size={18} />} label="Total" value={stats.total} size="sm" />
+        <DarkStatCard icon={<Clock size={18} />} iconBg="bg-blue/20" label="Scheduled" value={stats.scheduled} size="sm" />
+        <DarkStatCard icon={<Play size={18} />} iconBg="bg-amber/20" label="In Progress" value={stats.inProgress} size="sm" />
+        <DarkStatCard icon={<Calendar size={18} />} iconBg="bg-success/20" label="Completed" value={stats.completed} size="sm" />
+        <DarkStatCard icon={<AlertTriangle size={18} />} iconBg="bg-danger/20" label="Delayed" value={stats.delayed} size="sm" />
+      </div>
+
+      {isLoading ? (
+        <DarkCard className="text-center py-12"><Loader2 className="animate-spin mx-auto text-accent" size={32} /></DarkCard>
+      ) : (
+        <>
+          {/* Gantt Chart */}
+          {ganttData.length > 0 && (
+            <DarkCard className="mb-6" title="Schedule Timeline">
+              <div className="h-96 mt-4">
+                <GanttChart tasks={ganttData} startDate={ganttDateRange.startDate} endDate={ganttDateRange.endDate} />
               </div>
-              <div>
-                <h1 className="text-xl font-bold text-[#1a2744]">Production Orders</h1>
-                <p className="text-sm text-slate-500">
-                  {isLoadingStats ? (
-                    <span className="animate-pulse">Loading...</span>
-                  ) : stats ? (
-                    <>
-                      Total: <span className="font-semibold">{stats.total.toLocaleString()}</span> ordens 
-                      ({stats.inProgress.toLocaleString()} em progresso, {stats.completed.toLocaleString()} concluídas)
-                    </>
-                  ) : (
-                    'All production orders from database'
-                  )}
-                </p>
-              </div>
-            </div>
-          </div>
-          
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2 bg-slate-100 rounded-lg px-3 py-2 w-80">
-                <Search size={18} className="text-slate-400" />
-                <input 
-                  type="text" 
-                  placeholder="Search orders, products, phases..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="flex-1 bg-transparent text-sm outline-none"
-                />
-                {search && isLoading && (
-                  <Loader2 size={14} className="text-slate-400 animate-spin" />
-                )}
-              </div>
-              
-              <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1">
-                {(['ALL', 'IN_PROGRESS', 'COMPLETED'] as const).map((status) => (
-                  <button
-                    key={status}
-                    onClick={() => { setStatusFilter(status); setCurrentPage(1); }}
-                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                      statusFilter === status 
-                        ? 'bg-white text-[#1a2744] shadow-sm' 
-                        : 'text-slate-500 hover:text-slate-700'
-                    }`}
-                  >
-                    {status === 'ALL' ? 'All' : status === 'IN_PROGRESS' ? 'In Progress' : 'Completed'}
-                  </button>
+            </DarkCard>
+          )}
+
+          {/* Table */}
+          <DarkCard padding="none">
+            <DarkTable>
+              <DarkTableHead>
+                <DarkTableRow>
+                  <DarkTableHeader>Order</DarkTableHeader>
+                  <DarkTableHeader>Product</DarkTableHeader>
+                  <DarkTableHeader>Quantity</DarkTableHeader>
+                  <DarkTableHeader>Scheduled Start</DarkTableHeader>
+                  <DarkTableHeader>Scheduled End</DarkTableHeader>
+                  <DarkTableHeader>Progress</DarkTableHeader>
+                  <DarkTableHeader>Status</DarkTableHeader>
+                </DarkTableRow>
+              </DarkTableHead>
+              <DarkTableBody>
+                {filteredSchedules.slice(0, 50).map((schedule: any, i: number) => (
+                  <DarkTableRow key={schedule.id || i}>
+                    <DarkTableCell mono className="text-text-white">{schedule.order_code || '-'}</DarkTableCell>
+                    <DarkTableCell>{schedule.product_name || '-'}</DarkTableCell>
+                    <DarkTableCell mono>{schedule.quantity || 0}</DarkTableCell>
+                    <DarkTableCell>{schedule.scheduled_start ? format(new Date(schedule.scheduled_start), 'dd/MM HH:mm') : '-'}</DarkTableCell>
+                    <DarkTableCell>{schedule.scheduled_end ? format(new Date(schedule.scheduled_end), 'dd/MM HH:mm') : '-'}</DarkTableCell>
+                    <DarkTableCell>
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 h-2 bg-bg-elevated rounded-full overflow-hidden max-w-20">
+                          <div className="h-full bg-accent rounded-full" style={{ width: `${schedule.progress || 0}%` }} />
+                        </div>
+                        <span className="text-xs text-text-tertiary">{schedule.progress || 0}%</span>
+                      </div>
+                    </DarkTableCell>
+                    <DarkTableCell>
+                      <DarkBadge variant={
+                        schedule.status === 'COMPLETED' ? 'success' :
+                        schedule.status === 'IN_PROGRESS' ? 'warning' :
+                        schedule.status === 'DELAYED' ? 'danger' : 'info'
+                      } dot>
+                        {schedule.status || 'PENDING'}
+                      </DarkBadge>
+                    </DarkTableCell>
+                  </DarkTableRow>
                 ))}
-              </div>
-
-              <button 
-                onClick={toggleSort}
-                className="flex items-center gap-1 px-3 py-1.5 bg-slate-100 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-200"
-              >
-                <ArrowUpDown size={14} />
-                {sortBy === 'createdDate' ? 'Date ↓' : 'Product ↑'}
-              </button>
-            </div>
-            
-            <DisabledButton icon={<Plus size={18} />}>
-              New Order
-            </DisabledButton>
-          </div>
-        </div>
-      </div>
-      
-      {/* Content */}
-      <div className="max-w-[1600px] mx-auto px-6 py-6">
-        {/* Stats Cards - Real values from database */}
-        <div className="grid grid-cols-4 gap-4 mb-6">
-          <div className="bg-white rounded-xl p-4 border border-slate-200">
-            <div className="flex items-center gap-2 mb-2">
-              <ClipboardList size={16} className="text-slate-400" />
-              <span className="text-sm text-slate-500">Total Orders</span>
-            </div>
-            {isLoadingStats ? (
-              <div className="h-8 bg-slate-100 rounded animate-pulse" />
-            ) : (
-              <p className="text-2xl font-bold text-[#1a2744]">{stats?.total.toLocaleString() || '-'}</p>
-            )}
-          </div>
-          <div className="bg-white rounded-xl p-4 border border-slate-200">
-            <div className="flex items-center gap-2 mb-2">
-              <PlayCircle size={16} className="text-blue-500" />
-              <span className="text-sm text-slate-500">In Progress</span>
-            </div>
-            {isLoadingStats ? (
-              <div className="h-8 bg-slate-100 rounded animate-pulse" />
-            ) : (
-              <p className="text-2xl font-bold text-blue-600">{stats?.inProgress.toLocaleString() || '-'}</p>
-            )}
-          </div>
-          <div className="bg-white rounded-xl p-4 border border-slate-200">
-            <div className="flex items-center gap-2 mb-2">
-              <CheckCircle2 size={16} className="text-emerald-500" />
-              <span className="text-sm text-slate-500">Completed</span>
-            </div>
-            {isLoadingStats ? (
-              <div className="h-8 bg-slate-100 rounded animate-pulse" />
-            ) : (
-              <p className="text-2xl font-bold text-emerald-600">{stats?.completed.toLocaleString() || '-'}</p>
-            )}
-          </div>
-          <div className="bg-white rounded-xl p-4 border border-slate-200">
-            <div className="flex items-center gap-2 mb-2">
-              <Truck size={16} className="text-amber-500" />
-              <span className="text-sm text-slate-500">With Transport</span>
-            </div>
-            {isLoadingStats ? (
-              <div className="h-8 bg-slate-100 rounded animate-pulse" />
-            ) : (
-              <p className="text-2xl font-bold text-amber-600">{stats?.withTransport.toLocaleString() || '-'}</p>
-            )}
-          </div>
-        </div>
-
-        {/* Phase Distribution - From full database */}
-        {phaseDistribution.length > 0 && (
-          <div className="bg-white rounded-xl border border-slate-200 p-4 mb-6">
-            <h3 className="text-sm font-semibold text-[#1a2744] mb-3">
-              Top {phaseDistribution.length} Phases <span className="font-normal text-slate-400">(all orders)</span>
-            </h3>
-            <div className="grid grid-cols-8 gap-2">
-              {phaseDistribution.map(({ phase, count }) => (
-                <button
-                  key={phase}
-                  onClick={() => { setSearch(phase); setCurrentPage(1); }}
-                  className="p-2 rounded-lg border border-slate-200 hover:border-slate-300 transition-all text-center"
-                >
-                  <p className="text-lg font-bold text-[#1a2744]">{count.toLocaleString()}</p>
-                  <p className="text-[10px] text-slate-500 truncate">{phase}</p>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-        
-        {/* Error State */}
-        {error && (
-          <div className="bg-red-50 border border-red-200 rounded-xl p-6 mb-6 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <AlertCircle size={24} className="text-red-500" />
-              <div>
-                <p className="font-medium text-red-900">Error loading orders</p>
-                <p className="text-sm text-red-700">{error}</p>
-              </div>
-            </div>
-            <button
-              onClick={handleRetry}
-              className="flex items-center gap-2 px-4 py-2 bg-red-100 hover:bg-red-200 rounded-lg text-sm font-medium text-red-800"
-            >
-              <RefreshCw size={16} />
-              Retry
-            </button>
-          </div>
-        )}
-        
-        {/* Orders Table */}
-        <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-slate-100">
-                <th className="text-left py-4 px-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">Order</th>
-                <th className="text-left py-4 px-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">Product</th>
-                <th className="text-left py-4 px-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">Type</th>
-                <th className="text-left py-4 px-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">Current Phase</th>
-                <th className="text-left py-4 px-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">Created</th>
-                <th className="text-left py-4 px-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">Transport</th>
-                <th className="text-left py-4 px-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {isLoading ? (
-                // Loading skeleton
-                Array.from({ length: 10 }).map((_, i) => (
-                  <tr key={i} className="border-b border-slate-50">
-                    <td className="py-3 px-4"><div className="h-4 bg-slate-100 rounded w-20 animate-pulse" /></td>
-                    <td className="py-3 px-4"><div className="h-4 bg-slate-100 rounded w-32 animate-pulse" /></td>
-                    <td className="py-3 px-4"><div className="h-4 bg-slate-100 rounded w-12 animate-pulse" /></td>
-                    <td className="py-3 px-4"><div className="h-4 bg-slate-100 rounded w-24 animate-pulse" /></td>
-                    <td className="py-3 px-4"><div className="h-4 bg-slate-100 rounded w-20 animate-pulse" /></td>
-                    <td className="py-3 px-4"><div className="h-4 bg-slate-100 rounded w-16 animate-pulse" /></td>
-                    <td className="py-3 px-4"><div className="h-4 bg-slate-100 rounded w-20 animate-pulse" /></td>
-                  </tr>
-                ))
-              ) : orders.length > 0 ? (
-                orders.map((order) => {
-                  const kayakType = getKayakType(order.productName);
-                  return (
-                    <tr key={order.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
-                      <td className="py-3 px-4">
-                        <p className="font-semibold text-[#1a2744] text-sm">OF-{order.id}</p>
-                      </td>
-                      <td className="py-3 px-4">
-                        <div>
-                          <p className="font-medium text-[#1a2744] text-sm">{order.productName}</p>
-                          <p className="text-xs text-slate-400">ID: {order.productId}</p>
-                        </div>
-                      </td>
-                      <td className="py-3 px-4">
-                        <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${
-                          kayakType === 'K1' ? 'bg-blue-50 text-blue-600' :
-                          kayakType === 'K2' ? 'bg-purple-50 text-purple-600' :
-                          kayakType === 'K4' ? 'bg-amber-50 text-amber-600' :
-                          kayakType === 'C1' ? 'bg-emerald-50 text-emerald-600' :
-                          kayakType === 'C2' ? 'bg-teal-50 text-teal-600' :
-                          kayakType === 'C4' ? 'bg-pink-50 text-pink-600' :
-                          'bg-slate-100 text-slate-600'
-                        }`}>
-                          {kayakType}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4">
-                        <div className="flex items-center gap-2">
-                          <Clock size={14} className="text-slate-400" />
-                          <span className="text-sm text-slate-700">{order.currentPhaseName}</span>
-                        </div>
-                      </td>
-                      <td className="py-3 px-4 text-sm text-slate-600">
-                        {formatDate(order.createdDate)}
-                      </td>
-                      <td className="py-3 px-4">
-                        {order.transportDate ? (
-                          <div className="flex items-center gap-1.5">
-                            <Truck size={14} className="text-amber-500" />
-                            <span className="text-sm text-slate-700">{formatShortDate(order.transportDate)}</span>
-                          </div>
-                        ) : (
-                          <span className="text-sm text-slate-400">-</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4">
-                        <span className={`px-2.5 py-1 rounded-full text-xs font-medium inline-flex items-center gap-1.5 ${
-                          order.status === 'IN_PROGRESS' 
-                            ? 'bg-blue-50 text-blue-600' 
-                            : 'bg-emerald-50 text-emerald-600'
-                        }`}>
-                          {order.status === 'IN_PROGRESS' ? (
-                            <>
-                              <PlayCircle size={12} />
-                              In Progress
-                            </>
-                          ) : (
-                            <>
-                              <CheckCircle2 size={12} />
-                              Completed
-                            </>
-                          )}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })
-              ) : (
-                <EmptyTableState 
-                  title="No orders found"
-                  message="No orders match your current filters. Try adjusting your search criteria."
-                />
-              )}
-            </tbody>
-          </table>
-          
-          {/* Pagination */}
-          <div className="flex items-center justify-between px-4 py-4 border-t border-slate-100">
-            <p className="text-sm text-slate-500">
-              {isLoading ? (
-                <span className="animate-pulse">Loading...</span>
-              ) : (
-                <>
-                  Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, totalOrders)} of {totalOrders.toLocaleString()} orders
-                </>
-              )}
-            </p>
-            <div className="flex items-center gap-2">
-              <button 
-                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                disabled={currentPage === 1 || isLoading}
-                className="px-3 py-1.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Previous
-              </button>
-              
-              {/* Page numbers */}
-              {totalPages > 0 && (
-                <>
-                  {currentPage > 3 && (
-                    <>
-                      <button
-                        onClick={() => setCurrentPage(1)}
-                        className="w-8 h-8 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100"
-                      >
-                        1
-                      </button>
-                      {currentPage > 4 && <span className="text-slate-400">...</span>}
-                    </>
-                  )}
-                  
-                  {Array.from({ length: 5 }, (_, i) => {
-                    const page = Math.max(1, Math.min(totalPages - 4, currentPage - 2)) + i;
-                    if (page > totalPages || page < 1) return null;
-                    return (
-                      <button
-                        key={page}
-                        onClick={() => setCurrentPage(page)}
-                        disabled={isLoading}
-                        className={`w-8 h-8 rounded-lg text-sm font-medium transition-colors ${
-                          currentPage === page 
-                            ? 'bg-[#1a2744] text-white' 
-                            : 'text-slate-600 hover:bg-slate-100'
-                        }`}
-                      >
-                        {page}
-                      </button>
-                    );
-                  })}
-                  
-                  {currentPage < totalPages - 2 && (
-                    <>
-                      {currentPage < totalPages - 3 && <span className="text-slate-400">...</span>}
-                      <button
-                        onClick={() => setCurrentPage(totalPages)}
-                        className="w-8 h-8 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100"
-                      >
-                        {totalPages}
-                      </button>
-                    </>
-                  )}
-                </>
-              )}
-              
-              <button 
-                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                disabled={currentPage === totalPages || isLoading}
-                className="px-3 py-1.5 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Next
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+                {filteredSchedules.length === 0 && (
+                  <DarkTableRow>
+                    <DarkTableCell colSpan={7} className="text-center py-12">
+                      <Calendar size={40} className="mx-auto mb-3 text-text-tertiary opacity-50" />
+                      <p className="text-text-secondary">No schedules found</p>
+                    </DarkTableCell>
+                  </DarkTableRow>
+                )}
+              </DarkTableBody>
+            </DarkTable>
+          </DarkCard>
+        </>
+      )}
+    </DarkPageLayout>
   );
 }

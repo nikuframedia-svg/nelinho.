@@ -6,7 +6,7 @@ REST endpoints for rate configuration.
 """
 
 from datetime import date
-from typing import Optional
+from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Header, status
@@ -20,7 +20,7 @@ from .schemas import (
     OverheadRateCreate, OverheadRateResponse,
 )
 
-router = APIRouter(prefix="/config", tags=["Configuration"])
+router = APIRouter(prefix="/rates", tags=["Rates"])
 
 
 def get_tenant_id(x_tenant_id: UUID = Header(...)) -> UUID:
@@ -32,7 +32,20 @@ def get_tenant_id(x_tenant_id: UUID = Header(...)) -> UUID:
 # LABOR RATES
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@router.post("/labor-rates", response_model=LaborRateResponse, status_code=status.HTTP_201_CREATED)
+@router.get("/labor", response_model=List[LaborRateResponse])
+async def list_labor_rates(
+    limit: int = 100,
+    offset: int = 0,
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """List all labor rates."""
+    service = ConfigurationService(session, tenant_id)
+    rates = await service.list_labor_rates(limit=limit, offset=offset)
+    return rates
+
+
+@router.post("/labor", response_model=LaborRateResponse, status_code=status.HTTP_201_CREATED)
 async def create_labor_rate(
     data: LaborRateCreate,
     tenant_id: UUID = Depends(get_tenant_id),
@@ -52,7 +65,7 @@ async def create_labor_rate(
     return rate
 
 
-@router.get("/labor-rates/{employee_id}", response_model=LaborRateResponse)
+@router.get("/labor/{employee_id}", response_model=LaborRateResponse)
 async def get_labor_rate(
     employee_id: UUID,
     as_of_date: Optional[date] = None,
@@ -77,7 +90,20 @@ async def get_labor_rate(
 # MACHINE RATES
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@router.post("/machine-rates", response_model=MachineRateResponse, status_code=status.HTTP_201_CREATED)
+@router.get("/machine", response_model=List[MachineRateResponse])
+async def list_machine_rates(
+    limit: int = 100,
+    offset: int = 0,
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """List all machine rates."""
+    service = ConfigurationService(session, tenant_id)
+    rates = await service.list_machine_rates(limit=limit, offset=offset)
+    return rates
+
+
+@router.post("/machine", response_model=MachineRateResponse, status_code=status.HTTP_201_CREATED)
 async def create_machine_rate(
     data: MachineRateCreate,
     tenant_id: UUID = Depends(get_tenant_id),
@@ -98,7 +124,7 @@ async def create_machine_rate(
     return rate
 
 
-@router.get("/machine-rates/{machine_id}", response_model=MachineRateResponse)
+@router.get("/machine/{machine_id}", response_model=MachineRateResponse)
 async def get_machine_rate(
     machine_id: UUID,
     as_of_date: Optional[date] = None,
@@ -123,7 +149,20 @@ async def get_machine_rate(
 # OVERHEAD RATES
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@router.post("/overhead-rates", response_model=OverheadRateResponse, status_code=status.HTTP_201_CREATED)
+@router.get("/overhead", response_model=List[OverheadRateResponse])
+async def list_overhead_rates(
+    limit: int = 100,
+    offset: int = 0,
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """List all overhead rates."""
+    service = ConfigurationService(session, tenant_id)
+    rates = await service.list_overhead_rates(limit=limit, offset=offset)
+    return rates
+
+
+@router.post("/overhead", response_model=OverheadRateResponse, status_code=status.HTTP_201_CREATED)
 async def create_overhead_rate(
     data: OverheadRateCreate,
     tenant_id: UUID = Depends(get_tenant_id),
@@ -144,7 +183,7 @@ async def create_overhead_rate(
     return rate
 
 
-@router.get("/overhead-rates/{year_month}", response_model=OverheadRateResponse)
+@router.get("/overhead/{year_month}", response_model=OverheadRateResponse)
 async def get_overhead_rate(
     year_month: date,
     tenant_id: UUID = Depends(get_tenant_id),
@@ -162,4 +201,5 @@ async def get_overhead_rate(
         )
     
     return rate
+
 

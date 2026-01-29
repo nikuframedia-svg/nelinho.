@@ -42,7 +42,10 @@ async def generate_daily_feedback(
             feedback_date = target_date
         
         # Criar serviço COPILOT
-        service = CopilotService(session, tenant_id)
+        # Usar system user para jobs (UUID zero e role admin_platform)
+        system_actor_id = UUID('00000000-0000-0000-0000-000000000000')
+        system_actor_role = 'admin_platform'
+        service = CopilotService(session, tenant_id, system_actor_id, system_actor_role)
         
         # Gerar feedback usando o serviço
         # Por agora, retornamos um feedback básico

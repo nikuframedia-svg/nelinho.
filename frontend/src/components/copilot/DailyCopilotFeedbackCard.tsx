@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { RefreshCw, Bot, AlertTriangle, CheckCircle2, Info } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { RefreshCw, Bot, AlertTriangle, Info } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { copilotApi } from '../../lib/api';
 import type { DailyFeedbackResponse } from '../../lib/api';
@@ -13,18 +13,27 @@ export function DailyCopilotFeedbackCard() {
     queryFn: () => copilotApi.getDailyFeedback(),
     staleTime: 5 * 60 * 1000, // 5 minutos
     retry: false, // Não tentar novamente se o endpoint não existir
-    onSuccess: (data) => {
-      setLastUpdated(new Date(data.last_updated).toLocaleTimeString('pt-PT'));
-    },
   });
+
+  // Handle query success (React Query v5 pattern)
+  useEffect(() => {
+    if (feedback && feedback.last_updated) {
+      setLastUpdated(new Date(feedback.last_updated).toLocaleTimeString('pt-PT'));
+    }
+  }, [feedback]);
 
   const refreshMutation = useMutation({
     mutationFn: () => copilotApi.getDailyFeedback(),
-    onSuccess: (data) => {
+  });
+
+  // Handle refresh mutation success (React Query v5 pattern)
+  useEffect(() => {
+    if (refreshMutation.isSuccess && refreshMutation.data) {
+      const data = refreshMutation.data;
       queryClient.setQueryData(['copilot', 'daily-feedback'], data);
       setLastUpdated(new Date(data.last_updated).toLocaleTimeString('pt-PT'));
-    },
-  });
+    }
+  }, [refreshMutation.isSuccess, refreshMutation.data, queryClient]);
 
   const getSeverityIcon = (severity: string) => {
     switch (severity) {
@@ -64,7 +73,7 @@ export function DailyCopilotFeedbackCard() {
     return null;
   }
 
-  if (!feedback || feedback.bullets.length === 0) {
+  if (!feedback || !feedback.bullets || feedback.bullets.length === 0) {
     return null;
   }
 

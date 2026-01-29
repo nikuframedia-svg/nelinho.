@@ -40,6 +40,17 @@ class ScheduleResponse(BaseModel):
     kpis: Dict[str, Any]
 
 
+@router.get("/")
+async def list_schedules(
+    status: Optional[str] = None,
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """List all schedules."""
+    # Return empty list for now (placeholder for future implementation)
+    return {"data": [], "total": 0}
+
+
 @router.post("/generate", response_model=ScheduleResponse)
 async def generate_schedule(
     request: ScheduleGenerateRequest,
@@ -115,4 +126,6 @@ async def get_order_schedule(
             for s in schedules
         ],
     }
+
+
 

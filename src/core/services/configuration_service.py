@@ -127,6 +127,19 @@ class ConfigurationService:
         
         return Decimal("0")
     
+    async def list_labor_rates(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[LaborRate]:
+        """List all labor rates for the tenant."""
+        result = await self.session.execute(
+            select(LaborRate).where(
+                LaborRate.tenant_id == self.tenant_id,
+            ).order_by(LaborRate.effective_date.desc()).limit(limit).offset(offset)
+        )
+        return list(result.scalars().all())
+    
     # ═══════════════════════════════════════════════════════════════════════════════
     # MACHINE RATES
     # ═══════════════════════════════════════════════════════════════════════════════
@@ -226,6 +239,19 @@ class ConfigurationService:
         
         return Decimal("0")
     
+    async def list_machine_rates(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[MachineRate]:
+        """List all machine rates for the tenant."""
+        result = await self.session.execute(
+            select(MachineRate).where(
+                MachineRate.tenant_id == self.tenant_id,
+            ).order_by(MachineRate.effective_date.desc()).limit(limit).offset(offset)
+        )
+        return list(result.scalars().all())
+    
     # ═══════════════════════════════════════════════════════════════════════════════
     # OVERHEAD RATES
     # ═══════════════════════════════════════════════════════════════════════════════
@@ -309,6 +335,19 @@ class ConfigurationService:
             return rate.calculated_rate
         return Decimal("0")
     
+    async def list_overhead_rates(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[OverheadRate]:
+        """List all overhead rates for the tenant."""
+        result = await self.session.execute(
+            select(OverheadRate).where(
+                OverheadRate.tenant_id == self.tenant_id,
+            ).order_by(OverheadRate.year_month.desc()).limit(limit).offset(offset)
+        )
+        return list(result.scalars().all())
+    
     # ═══════════════════════════════════════════════════════════════════════════════
     # CACHE MANAGEMENT
     # ═══════════════════════════════════════════════════════════════════════════════
@@ -317,4 +356,6 @@ class ConfigurationService:
         """Invalidate all rate caches for this tenant."""
         redis = await get_redis()
         return await redis.invalidate_tenant_cache(self.tenant_id)
+
+
 

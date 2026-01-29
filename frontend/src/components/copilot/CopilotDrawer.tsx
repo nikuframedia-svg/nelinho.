@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { X, Send, Bot, AlertTriangle, CheckCircle2, Info, Plus, History, ChevronRight, Loader2 } from 'lucide-react';
+import { X, Send, Bot, Plus, History, Loader2, Archive, ArchiveRestore } from 'lucide-react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { copilotApi } from '../../lib/api';
 import type { CopilotResponse } from '../../lib/api';
@@ -26,6 +26,7 @@ export function CopilotDrawer({ isOpen, onClose, initialQuery, openedViaFab = fa
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [showConversationsList, setShowConversationsList] = useState(false);
   const [isSendingMessage, setIsSendingMessage] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Health check
@@ -38,17 +39,49 @@ export function CopilotDrawer({ isOpen, onClose, initialQuery, openedViaFab = fa
   // List conversations - apenas tentar se houver token (caso contrário, silenciar erro)
   const token = typeof window !== 'undefined' ? (localStorage.getItem('auth_token') || localStorage.getItem('token')) : null;
   const { data: conversations, refetch: refetchConversations, error: conversationsError } = useQuery({
-    queryKey: ['copilot', 'conversations'],
-    queryFn: () => copilotApi.listConversations({ limit: 20, archived: false }),
+    queryKey: ['copilot', 'conversations', showArchived],
+    queryFn: () => copilotApi.listConversations({ limit: 20, archived: showArchived }),
     enabled: isOpen && !!token, // Apenas tentar se houver token
     retry: false, // Não retry em 401 (não autorizado)
-    onError: (error: any) => {
-      // Silenciar erros de autenticação - não são críticos para o chat
-      if (error?.status !== 401 && error?.status !== 403) {
-        console.error('Erro ao carregar conversas:', error);
-      }
+  });
+
+  // Archive conversation mutation
+  const archiveConversationMutation = useMutation({
+    mutationFn: (conversationId: string) => {
+      return copilotApi.archiveConversation(conversationId);
+    },
+    onSuccess: () => {
+      // Refetch conversations after archiving
+      refetchConversations();
+      // If current conversation was archived, clear it
+      // (This will be handled in the useEffect below)
     },
   });
+
+  // Handle archive mutation success
+  useEffect(() => {
+    if (archiveConversationMutation.isSuccess && archiveConversationMutation.data) {
+      const archived = archiveConversationMutation.data.is_archived;
+      const conversationId = archiveConversationMutation.data.id;
+      
+      // If current conversation was archived, switch to non-archived view
+      if (archived && conversationId === currentConversationId && showArchived) {
+        // Don't clear current conversation, just switch view
+        setShowArchived(false);
+      }
+    }
+  }, [archiveConversationMutation.isSuccess, archiveConversationMutation.data, currentConversationId, showArchived]);
+
+  // Handle conversations error (React Query v5 pattern)
+  useEffect(() => {
+    if (conversationsError) {
+      // Silenciar erros de autenticação - não são críticos para o chat
+      const error = conversationsError as any;
+      if (error?.status !== 401 && error?.status !== 403) {
+        console.error('Erro ao carregar conversas:', conversationsError);
+      }
+    }
+  }, [conversationsError]);
 
   // Create conversation mutation
   const createConversationMutation = useMutation({
@@ -56,7 +89,12 @@ export function CopilotDrawer({ isOpen, onClose, initialQuery, openedViaFab = fa
       console.log('[COPILOT] createConversationMutation iniciado com título:', title);
       return copilotApi.createConversation(title || "Nova conversa");
     },
-    onSuccess: (data) => {
+  });
+
+  // Handle createConversationMutation success (React Query v5 pattern)
+  useEffect(() => {
+    if (createConversationMutation.isSuccess && createConversationMutation.data) {
+      const data = createConversationMutation.data;
       console.log('[COPILOT] createConversationMutation.onSuccess chamado:', data);
       console.log('[COPILOT] Estado de mensagens ANTES de criar conversa:', messages.length);
       setCurrentConversationId(data.id);
@@ -72,8 +110,13 @@ export function CopilotDrawer({ isOpen, onClose, initialQuery, openedViaFab = fa
       setTimeout(() => {
         inputRef.current?.focus();
       }, 100);
-    },
-    onError: (error: any) => {
+    }
+  }, [createConversationMutation.isSuccess, createConversationMutation.data, messages.length, refetchConversations]);
+
+  // Handle createConversationMutation error (React Query v5 pattern)
+  useEffect(() => {
+    if (createConversationMutation.isError && createConversationMutation.error) {
+      const error = createConversationMutation.error as any;
       // Se erro 401, apenas limpar estado e continuar sem conversa (mas NÃO limpar mensagens!)
       if (error?.status === 401) {
         console.warn('[COPILOT] Não autorizado para criar conversas, continuando sem conversa na BD');
@@ -85,8 +128,8 @@ export function CopilotDrawer({ isOpen, onClose, initialQuery, openedViaFab = fa
       } else {
         console.error('[COPILOT] Erro ao criar conversa:', error);
       }
-    },
-  });
+    }
+  }, [createConversationMutation.isError, createConversationMutation.error]);
 
   // Load conversation messages
   const { data: conversationMessages, refetch: refetchMessages } = useQuery({
@@ -157,7 +200,7 @@ export function CopilotDrawer({ isOpen, onClose, initialQuery, openedViaFab = fa
             if (data && data.length > 0) {
               setMessages(data.map(m => ({
                 id: m.id,
-                role: m.actor_role as 'user' | 'copilot',
+                role: m.role as 'user' | 'copilot',
                 content: m.content_structured || m.content_text,
                 timestamp: new Date(m.created_at),
               })));
@@ -225,7 +268,18 @@ export function CopilotDrawer({ isOpen, onClose, initialQuery, openedViaFab = fa
         console.log('[COPILOT] mutationFn finalizado, isSendingMessage = false');
       }
     },
-    onSuccess: (response, query) => {
+  });
+
+  // Handle askMutation success (React Query v5 pattern)
+  useEffect(() => {
+    if (askMutation.isSuccess && askMutation.data) {
+      const response = askMutation.data;
+      // Get the last query that was sent - we need to track this separately
+      // Since we can't access the query parameter from the success handler in v5
+      // We'll use the input state or the last sent message
+      const lastUserMessage = messages.filter(m => m.role === 'user').pop();
+      const query = lastUserMessage?.content as string || '';
+      
       console.log('[COPILOT] onSuccess chamado:', { response, query });
       
       if (!response || typeof response !== 'object' || !response.suggestion_id) {
@@ -235,11 +289,20 @@ export function CopilotDrawer({ isOpen, onClose, initialQuery, openedViaFab = fa
           id: `error-${Date.now()}`,
           role: 'copilot',
           content: {
+            suggestion_id: `error-${Date.now()}`,
+            correlation_id: `error-${Date.now()}`,
             type: 'ERROR',
+            intent: 'generic',
             summary: 'Resposta inválida do COPILOT. Tenta novamente.',
             facts: [],
             actions: [],
             warnings: [{ code: 'VALIDATION_FAILED', message: 'Resposta inválida' }],
+            meta: {
+              model: 'unknown',
+              tokens: 0,
+              latency_ms: 0,
+              validation_passed: false,
+            },
           } as CopilotResponse,
           timestamp: new Date(),
         };
@@ -269,7 +332,7 @@ export function CopilotDrawer({ isOpen, onClose, initialQuery, openedViaFab = fa
       // NÃO criar conversa automaticamente - isso pode causar problemas
       // Se o utilizador quiser, pode criar manualmente
       // Se não há conversa, criar uma nova após primeira mensagem (mas com delay maior)
-      if (!currentConversationId) {
+      if (!currentConversationId && query) {
         // Aguardar mais tempo para garantir que a mensagem já foi adicionada ao estado
         setTimeout(() => {
           console.log('[COPILOT] Criando nova conversa após resposta (delay)');
@@ -285,8 +348,13 @@ export function CopilotDrawer({ isOpen, onClose, initialQuery, openedViaFab = fa
           refetchConversations();
         }, 500);
       }
-    },
-    onError: (error: any) => {
+    }
+  }, [askMutation.isSuccess, askMutation.data, currentConversationId, refetchMessages, refetchConversations, createConversationMutation]);
+
+  // Handle askMutation error (React Query v5 pattern)
+  useEffect(() => {
+    if (askMutation.isError && askMutation.error) {
+      const error = askMutation.error as any;
       console.error('[COPILOT] onError chamado:', error);
       
       // Determinar mensagem humana baseada no tipo de erro
@@ -325,21 +393,29 @@ export function CopilotDrawer({ isOpen, onClose, initialQuery, openedViaFab = fa
         id: `error-${Date.now()}`,
         role: 'copilot',
         content: {
+          suggestion_id: `error-${Date.now()}`,
+          correlation_id: `error-${Date.now()}`,
           type: 'ERROR',
+          intent: 'generic',
           summary: userMessage,
           facts: [],
           actions: [],
-          citations: [],
           warnings: [{
             code: warningCode,
             message: userMessage,
           }],
+          meta: {
+            model: 'unknown',
+            tokens: 0,
+            latency_ms: 0,
+            validation_passed: false,
+          },
         } as CopilotResponse,
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, errorMsg]);
-    },
-  });
+    }
+  }, [askMutation.isError, askMutation.error]);
 
   // Se há initialQuery, enviar automaticamente quando drawer abrir (DEPOIS da definição de askMutation)
   useEffect(() => {
@@ -445,7 +521,7 @@ export function CopilotDrawer({ isOpen, onClose, initialQuery, openedViaFab = fa
             <button
               onClick={() => {
                 if (!createConversationMutation.isPending) {
-                  createConversationMutation.mutate();
+                  createConversationMutation.mutate(undefined);
                 }
               }}
               disabled={createConversationMutation.isPending}
@@ -490,18 +566,44 @@ export function CopilotDrawer({ isOpen, onClose, initialQuery, openedViaFab = fa
         {/* Conversations List Sidebar */}
         {showConversationsList && (
           <div className="absolute left-0 top-0 bottom-0 w-80 bg-white border-r border-slate-200 z-10 shadow-xl flex flex-col">
-            <div className="p-4 border-b border-slate-200 flex items-center justify-between flex-shrink-0">
-              <h3 className="font-semibold text-slate-900">Conversas</h3>
-              <button
-                onClick={() => setShowConversationsList(false)}
-                className="p-1 hover:bg-slate-100 rounded transition-colors duration-150"
-                aria-label="Fechar lista de conversas"
-              >
-                <X size={18} className="text-slate-600" />
-              </button>
+            <div className="p-4 border-b border-slate-200 flex flex-col gap-2 flex-shrink-0">
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold text-slate-900">Conversas</h3>
+                <button
+                  onClick={() => setShowConversationsList(false)}
+                  className="p-1 hover:bg-slate-100 rounded transition-colors duration-150"
+                  aria-label="Fechar lista de conversas"
+                >
+                  <X size={18} className="text-slate-600" />
+                </button>
+              </div>
+              {/* Archive filter toggle */}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowArchived(!showArchived)}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-150 ${
+                    showArchived
+                      ? 'bg-slate-100 text-slate-900 border border-slate-300'
+                      : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+                  }`}
+                  aria-label={showArchived ? "Mostrar conversas ativas" : "Mostrar conversas arquivadas"}
+                >
+                  {showArchived ? (
+                    <>
+                      <ArchiveRestore size={14} />
+                      Arquivadas
+                    </>
+                  ) : (
+                    <>
+                      <Archive size={14} />
+                      Ativas
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
             <div className="flex-1 overflow-y-auto p-2 space-y-1">
-              {conversationsError && conversationsError.status === 401 ? (
+              {conversationsError && (conversationsError as any).status === 401 ? (
                 <div className="text-center mt-8 p-4">
                   <History size={32} className="text-slate-300 mx-auto mb-2" />
                   <p className="text-sm text-slate-500 mb-2">
@@ -535,66 +637,96 @@ export function CopilotDrawer({ isOpen, onClose, initialQuery, openedViaFab = fa
                 conversations.map((conv) => {
                   const isActive = conv.id === currentConversationId;
                   return (
-                    <button
+                    <div
                       key={conv.id}
-                      onClick={() => {
-                        setCurrentConversationId(conv.id);
-                        localStorage.setItem('copilot_current_conversation_id', conv.id);
-                        // Carregar mensagens desta conversa
-                        copilotApi.getConversationMessages(conv.id)
-                          .then(data => {
-                            const loadedMessages: Message[] = data.map((m) => {
-                              let content: string | CopilotResponse = m.content_text;
-                              if (m.content_structured) {
-                                const structured = m.content_structured as any;
-                                if (structured && typeof structured === 'object' && structured.summary !== undefined) {
-                                  content = {
-                                    suggestion_id: structured.suggestion_id || m.id,
-                                    correlation_id: structured.correlation_id || m.id,
-                                    type: structured.type || 'ANSWER',
-                                    intent: structured.intent || 'generic',
-                                    summary: structured.summary || '',
-                                    facts: structured.facts || [],
-                                    actions: structured.actions || [],
-                                    warnings: structured.warnings || [],
-                                    meta: structured.meta || {},
-                                  } as CopilotResponse;
-                                }
-                              }
-                              return {
-                                id: m.id,
-                                role: m.actor_role as 'user' | 'copilot',
-                                content: content,
-                                timestamp: new Date(m.created_at),
-                              };
-                            });
-                            setMessages(loadedMessages);
-                          })
-                          .catch(e => {
-                            console.error("Failed to load conversation messages:", e);
-                            setMessages([]);
-                          });
-                        setShowConversationsList(false);
-                      }}
-                      className={`w-full text-left p-3 rounded-lg transition-all duration-150 flex items-center justify-between group ${
+                      className={`w-full p-3 rounded-lg transition-all duration-150 flex items-center justify-between group ${
                         isActive
                           ? 'bg-gradient-to-r from-blue-50 to-blue-100 text-blue-800 font-semibold border border-blue-200 shadow-sm'
                           : 'bg-white hover:bg-slate-50 text-slate-700 border border-transparent hover:border-slate-200'
                       }`}
                     >
-                      <span className="truncate flex-1 text-sm">{conv.title}</span>
-                      <span className={`text-xs ml-2 flex-shrink-0 ${
-                        isActive ? 'text-blue-600' : 'text-slate-500 group-hover:text-slate-700'
-                      }`}>
-                        {new Date(conv.last_message_at || conv.created_at).toLocaleDateString('pt-PT', { 
-                          day: '2-digit', 
-                          month: 'short',
-                          ...(new Date(conv.last_message_at || conv.created_at).getFullYear() !== new Date().getFullYear() && {
-                            year: '2-digit'
-                          })
-                        })}
-                      </span>
-                    </button>
+                      <button
+                        onClick={() => {
+                          setCurrentConversationId(conv.id);
+                          localStorage.setItem('copilot_current_conversation_id', conv.id);
+                          // Carregar mensagens desta conversa
+                          copilotApi.getConversationMessages(conv.id)
+                            .then(data => {
+                              const loadedMessages: Message[] = data.map((m) => {
+                                let content: string | CopilotResponse = m.content_text;
+                                if (m.content_structured) {
+                                  const structured = m.content_structured as any;
+                                  if (structured && typeof structured === 'object' && structured.summary !== undefined) {
+                                    content = {
+                                      suggestion_id: structured.suggestion_id || m.id,
+                                      correlation_id: structured.correlation_id || m.id,
+                                      type: structured.type || 'ANSWER',
+                                      intent: structured.intent || 'generic',
+                                      summary: structured.summary || '',
+                                      facts: structured.facts || [],
+                                      actions: structured.actions || [],
+                                      warnings: structured.warnings || [],
+                                      meta: structured.meta || {},
+                                    } as CopilotResponse;
+                                  }
+                                }
+                                return {
+                                  id: m.id,
+                                  role: m.role as 'user' | 'copilot',
+                                  content: content,
+                                  timestamp: new Date(m.created_at),
+                                };
+                              });
+                              setMessages(loadedMessages);
+                            })
+                            .catch(e => {
+                              console.error("Failed to load conversation messages:", e);
+                              setMessages([]);
+                            });
+                          setShowConversationsList(false);
+                        }}
+                        className="flex-1 text-left flex items-center gap-2"
+                      >
+                        {conv.is_archived && (
+                          <Archive size={12} className="text-slate-400 flex-shrink-0" />
+                        )}
+                        <span className="truncate flex-1 text-sm">{conv.title}</span>
+                        <span className={`text-xs ml-2 flex-shrink-0 ${
+                          isActive ? 'text-blue-600' : 'text-slate-500 group-hover:text-slate-700'
+                        }`}>
+                          {new Date(conv.last_message_at || conv.created_at).toLocaleDateString('pt-PT', { 
+                            day: '2-digit', 
+                            month: 'short',
+                            ...(new Date(conv.last_message_at || conv.created_at).getFullYear() !== new Date().getFullYear() && {
+                              year: '2-digit'
+                            })
+                          })}
+                        </span>
+                      </button>
+                      {/* Archive/Unarchive button */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          archiveConversationMutation.mutate(conv.id);
+                        }}
+                        disabled={archiveConversationMutation.isPending}
+                        className={`ml-2 p-1.5 rounded transition-all duration-150 flex-shrink-0 ${
+                          conv.is_archived
+                            ? 'text-amber-600 hover:bg-amber-50 hover:text-amber-700'
+                            : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600 opacity-0 group-hover:opacity-100'
+                        }`}
+                        aria-label={conv.is_archived ? "Desarquivar conversa" : "Arquivar conversa"}
+                        title={conv.is_archived ? "Desarquivar conversa" : "Arquivar conversa"}
+                      >
+                        {archiveConversationMutation.isPending ? (
+                          <Loader2 size={14} className="animate-spin" />
+                        ) : conv.is_archived ? (
+                          <ArchiveRestore size={14} />
+                        ) : (
+                          <Archive size={14} />
+                        )}
+                      </button>
+                    </div>
                   );
                 })
               )}

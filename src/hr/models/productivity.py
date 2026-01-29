@@ -3,6 +3,8 @@ ProdPlan ONE - HR Productivity Models
 ======================================
 """
 
+from __future__ import annotations
+
 from datetime import date
 from decimal import Decimal
 from typing import Optional
@@ -105,4 +107,5 @@ class MonthlyPayrollSummary(TenantBase):
     
     def __repr__(self) -> str:
         return f"<Payroll {self.year_month}: {self.total_cost} EUR>"
+
 

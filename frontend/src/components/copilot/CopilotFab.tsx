@@ -54,16 +54,16 @@ export function CopilotFab() {
       {/* Tooltip - apenas no desktop (hover) e quando chat não está aberto */}
       {showTooltip && !isOpen && (
         <div className="hidden sm:block fixed bottom-32 right-6 z-[99] animate-in fade-in slide-in-from-bottom-2 duration-200">
-          <div className="bg-white rounded-lg shadow-lg px-4 py-3 border border-slate-200 max-w-[200px] relative">
-            <p className="text-sm font-medium text-slate-900 mb-1">
-              Eu sou o NELO COPILOT.
+          <div className="glass-card-strong px-4 py-3 max-w-[200px] relative shadow-glow-teal">
+            <p className="text-base font-bold text-white mb-1 drop-shadow-lg">
+              Olá! Sou o Nelinho 👋
             </p>
-            <p className="text-xs text-slate-600">
+            <p className="text-sm text-slate-200 font-medium">
               Em que posso ajudar?
             </p>
             {/* Seta apontando para o robô */}
             <div className="absolute bottom-0 right-4 transform translate-y-full">
-              <div className="w-0 h-0 border-l-8 border-r-8 border-t-8 border-transparent border-t-white"></div>
+              <div className="w-0 h-0 border-l-8 border-r-8 border-t-8 border-transparent border-t-dark-700"></div>
             </div>
           </div>
         </div>
@@ -83,14 +83,14 @@ export function CopilotFab() {
             transform: showTooltip ? 'translateY(-2px) scale(1.03)' : 'translateY(0) scale(1)',
             transition: 'transform 200ms ease-out',
           }}
-          aria-label="Abrir COPILOT"
+          aria-label="Abrir Nelinho"
         >
           {/* Container do robô - sem background, sem círculo */}
           <div className="relative w-full h-full flex items-center justify-center">
             {/* Glow premium no hover - múltiplas camadas de drop-shadow */}
             <img
               src={copilotMascotImage}
-              alt="NELO COPILOT - Abrir chat"
+              alt="Nelinho - Abrir chat"
               className="w-full h-full object-contain select-none"
               style={{ 
                 filter: showTooltip 

@@ -31,7 +31,7 @@ export function RecommendationsCard() {
   const explainMutation = useMutation({
     mutationFn: (data: { recommendations: Recommendation[]; user_query?: string }) =>
       copilotApi.explainRecommendations(data),
-    onSuccess: (response, variables) => {
+    onSuccess: (response) => {
       // Guardar explicação para a recomendação expandida
       const index = expandedRecommendation;
       if (index !== null) {
