@@ -236,5 +236,3 @@ class CopilotActionLog(TenantBase):
     
     executed_at: Mapped[datetime] = mapped_column(nullable=False, default=datetime.utcnow)
     rollback_until: Mapped[Optional[datetime]] = mapped_column(nullable=True)  # 24h window for undo
-
-

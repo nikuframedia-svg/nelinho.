@@ -1038,5 +1038,3 @@ async def resolve_quarantine(
         "resolved_at": datetime.utcnow().isoformat(),
         "message": f"Row {row_id} resolved with action '{action}'",
     }
-
-

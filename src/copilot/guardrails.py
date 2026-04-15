@@ -377,5 +377,3 @@ def validate_copilot_output(response: Dict[str, Any]) -> Tuple[bool, List[str]]:
                 all_errors.append(f"Fact[{i}].{missing_key}: Evidence required")
     
     return len(all_errors) == 0, all_errors
-
-
