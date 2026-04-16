@@ -7,9 +7,9 @@ services:
     container_name: prodplan-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: prodplan
-      POSTGRES_PASSWORD: prodplan_secret_2026
-      POSTGRES_DB: prodplan_one
+      POSTGRES_USER: ${POSTGRES_USER:-prodplan}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-prodplan_one}
       PGDATA: /var/lib/postgresql/data/pgdata
     ports:
       - "5432:5432"
@@ -29,13 +29,13 @@ services:
     image: redis:7-alpine
     container_name: prodplan-redis
     restart: unless-stopped
-    command: redis-server --appendonly yes --requirepass redis_secret_2026
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-changeme}
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "redis_secret_2026", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-changeme}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -126,12 +126,14 @@ services:
       kafka:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql+asyncpg://prodplan:prodplan_secret_2026@postgres:5432/prodplan_one
-      REDIS_URL: redis://:redis_secret_2026@redis:6379/0
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-prodplan}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-prodplan_one}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-changeme}@redis:6379/0
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      SECRET_KEY: prodplan_jwt_secret_key_2026_very_secure
-      ENVIRONMENT: development
-      LOG_LEVEL: INFO
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma4:e4b}
     ports:
       - "8000:8000"
     volumes:

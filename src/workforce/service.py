@@ -146,8 +146,9 @@ class WorkforceService:
             },
             "trust_index": DEFAULT_TRUST_INDEX,
             "semantic_label": "Grafo baseado em FuncionariosFasesAptos (aptidões teóricas)",
+            "source": "curated",
         }
-    
+
     async def calculate_cascade_impact(self, phase_id: str) -> Dict[str, Any]:
         """
         Calculate cascading impact if a phase becomes unavailable.
@@ -593,6 +594,7 @@ class WorkforceService:
             },
             "trust_index": DEFAULT_TRUST_INDEX,
             "semantic_label": "Grafo baseado em dados MOCK (DB não disponível)",
+            "source": "mock",
         }
     
     def _get_mock_cascade_impact(self, phase_id: str) -> Dict[str, Any]:

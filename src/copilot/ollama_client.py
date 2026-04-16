@@ -115,43 +115,54 @@ class OllamaClient:
         prompt: str,
         model: str,
         format: Optional[str] = "json",
+        history: Optional[List[Dict[str, str]]] = None,
+        system_prompt: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Chamar Ollama /api/chat.
-        
+
         Args:
-            prompt: Prompt completo
-            model: Nome do modelo (ex: "llama3.2")
+            prompt: Prompt do utilizador
+            model: Nome do modelo (ex: "gemma4:e4b")
             format: "json" para resposta estruturada
-        
+            history: Previous conversation turns [{"role": "user"|"assistant", "content": "..."}]
+            system_prompt: Optional system prompt prepended to messages
+
         Returns:
             Dict com resposta do LLM
-        
+
         Raises:
             Exception se circuit breaker aberto ou falha após retries
         """
         if not self._check_circuit_breaker():
             raise Exception("Circuit breaker aberto - Ollama temporariamente indisponível")
-        
+
         client = await self._get_client()
-        
+
+        # Build messages array with optional system prompt and history
+        messages: List[Dict[str, str]] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        if history:
+            messages.extend(history)
+        messages.append({"role": "user", "content": prompt})
+
         payload = {
             "model": model,
-            "messages": [
-                {"role": "user", "content": prompt}
-            ],
+            "messages": messages,
             "stream": False,
-            "keep_alive": "10m",  # Manter modelo em memória por 10 minutos
+            "keep_alive": getattr(settings, "ollama_keep_alive", "30m"),
             "options": {
-                "temperature": 0.3,  # Reduzido de 0.7 para 0.3 (mais rápido, menos criativo)
+                "temperature": getattr(settings, "ollama_temperature", 0.1),
                 "top_p": 0.9,
-                "top_k": 40,  # Limitar vocabulary (mais rápido)
-                "num_predict": 500,  # Reduzido de 1000 para 500 tokens (respostas mais curtas = mais rápido)
-                "repeat_penalty": 1.1,  # Evitar repetição
-                "num_thread": 4,  # Usar mais threads se disponível
+                "top_k": 40,
+                "num_predict": getattr(settings, "ollama_num_predict", 1024),
+                "num_ctx": getattr(settings, "ollama_num_ctx", 8192),
+                "repeat_penalty": 1.1,
+                "num_thread": 8,
             },
         }
-        
+
         if format == "json":
             payload["format"] = "json"
         

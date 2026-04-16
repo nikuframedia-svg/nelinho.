@@ -366,8 +366,47 @@ class TwinService:
     # =========================================================================
     
     def _create_baseline_state(self) -> Dict[str, Any]:
-        """Create baseline factory state from Factory Data Product."""
-        # Same logic as in api.py but can be extended to fetch from DB
+        """
+        Create baseline factory state from the Factory Data Product semantic layer.
+        Falls back to None values if the data pipeline has not been run.
+        """
+        sq = None
+        try:
+            from src.factory_data_product.services.semantic_queries_inmemory import SemanticQueriesInMemory
+            sq = SemanticQueriesInMemory()
+        except Exception:
+            pass
+
+        def _query_safe(method_name: str) -> Optional[Dict]:
+            if sq is None:
+                return None
+            try:
+                result = getattr(sq, method_name)()
+                if result and result.get("status") != "BLOCKED":
+                    return result
+            except Exception:
+                pass
+            return None
+
+        wip_data = _query_safe("wip")
+        backlog_data = _query_safe("backlog_by_phase")
+        bottleneck_data = _query_safe("bottlenecks")
+        skills_data = _query_safe("skills_risk")
+        quality_data = _query_safe("quality_analysis")
+        lead_time_data = _query_safe("lead_time_analysis")
+
+        wip_value = len(wip_data.get("rows", [])) if wip_data else None
+        backlog_value = sum(r.get("backlog_horas", 0) for r in backlog_data.get("rows", [])) if backlog_data else None
+        bottleneck_value = len(bottleneck_data.get("rows", [])) if bottleneck_data else None
+        skills_value = len(skills_data.get("rows", [])) if skills_data else None
+        quality_value = sum(r.get("total_erros", 0) for r in quality_data.get("rows", [])) if quality_data else None
+        lead_time_value = None
+        if lead_time_data and lead_time_data.get("rows"):
+            lt_rows = lead_time_data["rows"]
+            lead_time_value = round(sum(r.get("lead_time_days", 0) for r in lt_rows) / max(len(lt_rows), 1), 1)
+
+        data_source = "semantic_layer" if sq else "unavailable"
+
         return {
             "oee": {
                 "value": None,
@@ -385,50 +424,56 @@ class TwinService:
                 "reason": BLOCKED_METRICS["otd_official"]["reason"],
             },
             "wip_theoretical": {
-                "value": 1523,
+                "value": wip_value,
                 "unit": "orders",
                 "trust_index": TRUST_INDEX.get("FasesOrdemFabrico_structure", 80),
                 "semantic_label": SEMANTIC_LABELS["wip"],
-                "status": "OK",
+                "status": "OK" if wip_value is not None else "NO_DATA",
+                "source": data_source,
             },
             "backlog_horas_theoretical": {
-                "value": 12450.5,
+                "value": round(backlog_value, 1) if backlog_value else None,
                 "unit": "hours",
                 "trust_index": TRUST_INDEX.get("FasesOrdemFabrico_HorasPrevistas", 58),
                 "semantic_label": SEMANTIC_LABELS["bottleneck"],
-                "status": "WARNING",
+                "status": "WARNING" if backlog_value else "NO_DATA",
+                "source": data_source,
             },
             "lead_time_days_observed": {
-                "value": 12.5,
+                "value": lead_time_value,
                 "unit": "days",
                 "trust_index": TRUST_INDEX.get("OrdensFabrico", 82),
                 "semantic_label": SEMANTIC_LABELS["lead_time"],
-                "status": "OK",
+                "status": "OK" if lead_time_value else "NO_DATA",
+                "source": data_source,
             },
             "bottleneck_count": {
-                "value": 5,
+                "value": bottleneck_value,
                 "unit": "phases",
                 "trust_index": TRUST_INDEX.get("FasesOrdemFabrico_HorasPrevistas", 58),
                 "semantic_label": SEMANTIC_LABELS["bottleneck"],
-                "status": "WARNING",
+                "status": "WARNING" if bottleneck_value else "NO_DATA",
+                "source": data_source,
             },
             "skills_at_risk_count": {
-                "value": 8,
+                "value": skills_value,
                 "unit": "phases",
                 "trust_index": TRUST_INDEX.get("FuncionariosFaseOrdemFabrico", 55),
                 "semantic_label": SEMANTIC_LABELS["skills"],
-                "status": "WARNING",
+                "status": "WARNING" if skills_value else "NO_DATA",
+                "source": data_source,
             },
             "quality_errors_total": {
-                "value": 89836,
+                "value": quality_value,
                 "unit": "errors",
                 "trust_index": TRUST_INDEX.get("OrdemFabricoErros", 67),
                 "semantic_label": SEMANTIC_LABELS["quality"],
-                "status": "WARNING",
+                "status": "WARNING" if quality_value else "NO_DATA",
+                "source": data_source,
             },
             "_metadata": {
                 "source": "factory_data_product",
-                "data_version": "mock",
+                "data_version": data_source,
                 "generated_at": datetime.utcnow().isoformat(),
             },
         }
@@ -562,6 +607,187 @@ class TwinService:
             return self._calculate_state_hash(result["after"])
         return ""
     
+    # =========================================================================
+    # Solver
+    # =========================================================================
+
+    async def solve(
+        self,
+        scenario_id: UUID,
+        objective: str = "maximize_oee",
+        operations: Optional[List[Dict[str, Any]]] = None,
+        machines: Optional[List[Dict[str, Any]]] = None,
+        time_limit_sec: float = 30.0,
+    ) -> Dict[str, Any]:
+        """
+        Run optimization on a scenario.
+
+        If `operations` and `machines` are provided, run CP-SAT via SchedulingAdapter
+        to produce a real schedule. Otherwise, return the delta-applied projected state
+        with status=INSUFFICIENT_DATA (no mock KPIs).
+        """
+        import asyncio
+
+        scenario = await self.get_scenario(scenario_id)
+        if not scenario:
+            raise ValueError(f"Scenario {scenario_id} not found")
+
+        # Apply deltas deterministically to get projected state
+        projected_state = dict(scenario.baseline_state)
+        for delta in sorted(scenario.deltas, key=lambda d: d.sequence):
+            projected_state = self._apply_delta_to_state(projected_state, {
+                "entity_type": delta.entity_type,
+                "entity_key": delta.entity_key,
+                "patch": delta.patch,
+            })
+
+        # Case 1: Real scheduling input → run CP-SAT
+        if operations and machines:
+            try:
+                schedule_result = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self._run_cpsat, operations, machines, time_limit_sec
+                    ),
+                    timeout=time_limit_sec + 5.0,
+                )
+                return {
+                    "scenario_id": str(scenario_id),
+                    "objective": objective,
+                    "status": "SOLVED",
+                    "engine_used": "cpsat",
+                    "schedule": schedule_result,
+                    "projected_kpis": projected_state,
+                    "solved_at": datetime.utcnow().isoformat(),
+                }
+            except asyncio.TimeoutError:
+                logger.warning(f"CP-SAT timed out for scenario {scenario_id}")
+                return {
+                    "scenario_id": str(scenario_id),
+                    "objective": objective,
+                    "status": "SOLVER_TIMEOUT",
+                    "time_limit_sec": time_limit_sec,
+                    "projected_kpis": projected_state,
+                    "solved_at": datetime.utcnow().isoformat(),
+                }
+            except Exception as e:
+                logger.error(f"Solver error for scenario {scenario_id}: {e}", exc_info=True)
+                return {
+                    "scenario_id": str(scenario_id),
+                    "objective": objective,
+                    "status": "SOLVER_ERROR",
+                    "error": str(e),
+                    "projected_kpis": projected_state,
+                    "solved_at": datetime.utcnow().isoformat(),
+                }
+
+        # Case 2: No scheduling input → return delta-projection only
+        return {
+            "scenario_id": str(scenario_id),
+            "objective": objective,
+            "status": "INSUFFICIENT_DATA",
+            "reason": (
+                "CP-SAT requires operations[] and machines[] in the request. "
+                "The scenario baseline alone is not enough to run scheduling — "
+                "supply structured scheduling input or rely on delta-only projection."
+            ),
+            "projected_kpis": projected_state,
+            "solved_at": datetime.utcnow().isoformat(),
+        }
+
+    @staticmethod
+    def _run_cpsat(
+        operations: List[Dict[str, Any]],
+        machines: List[Dict[str, Any]],
+        time_limit_sec: float,
+    ) -> Dict[str, Any]:
+        """Run CP-SAT synchronously (invoked via asyncio.to_thread)."""
+        from src.plan.engines.scheduling_adapter import (
+            SchedulingAdapter,
+            SchedulerEngine,
+            SchedulingOperation,
+            SchedulingMachine,
+        )
+        from datetime import timedelta
+
+        def _parse_dt(value: Any) -> Optional[datetime]:
+            if value is None or isinstance(value, datetime):
+                return value if isinstance(value, datetime) else None
+            if isinstance(value, str):
+                try:
+                    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+                except ValueError:
+                    return None
+            return None
+
+        op_objs = [
+            SchedulingOperation(
+                operation_id=o["operation_id"],
+                order_id=o["order_id"],
+                product_id=o.get("product_id", ""),
+                sequence=o.get("sequence", 0),
+                operation_code=o.get("operation_code", ""),
+                duration_minutes=float(o["duration_minutes"]),
+                machine_id=o.get("machine_id"),
+                setup_family=o.get("setup_family", ""),
+                due_date=_parse_dt(o.get("due_date")),
+                priority=float(o.get("priority", 1.0)),
+                predecessor_ops=o.get("predecessor_ops") or [],
+            )
+            for o in operations
+        ]
+        machine_objs = [
+            SchedulingMachine(
+                machine_id=m["machine_id"],
+                name=m.get("name", m["machine_id"]),
+                capacity=int(m.get("capacity", 1)),
+                speed_factor=float(m.get("speed_factor", 1.0)),
+            )
+            for m in machines
+        ]
+        horizon_start = datetime.utcnow()
+        horizon_end = horizon_start + timedelta(weeks=4)
+
+        adapter = SchedulingAdapter()
+        adapter.configure(engine=SchedulerEngine.CPSAT, time_limit_sec=time_limit_sec)
+        result = adapter.schedule(op_objs, machine_objs, horizon_start, horizon_end)
+        return result.model_dump() if hasattr(result, "model_dump") else dict(result)
+
+    # =========================================================================
+    # Serialization
+    # =========================================================================
+
+    @staticmethod
+    def scenario_to_dict(scenario: Scenario) -> Dict[str, Any]:
+        """Serialize a Scenario to a plain dict (for API responses)."""
+        return {
+            "id": str(scenario.id),
+            "tenant_id": str(scenario.tenant_id),
+            "title": scenario.title,
+            "description": scenario.description,
+            "status": scenario.status,
+            "base_scenario_id": str(scenario.base_scenario_id) if scenario.base_scenario_id else None,
+            "baseline_state": scenario.baseline_state,
+            "simulation_result": scenario.simulation_result,
+            "scenario_hash": scenario.scenario_hash,
+            "created_by": scenario.created_by,
+            "created_at": scenario.created_at.isoformat() if scenario.created_at else None,
+            "updated_at": scenario.updated_at.isoformat() if scenario.updated_at else None,
+            "simulated_at": scenario.simulated_at.isoformat() if scenario.simulated_at else None,
+            "deltas": [
+                {
+                    "id": str(d.id),
+                    "sequence": d.sequence,
+                    "entity_type": d.entity_type,
+                    "entity_key": d.entity_key,
+                    "patch": d.patch,
+                    "description": d.description,
+                    "applied_by": d.applied_by,
+                    "applied_at": d.created_at.isoformat() if d.created_at else None,
+                }
+                for d in sorted(scenario.deltas or [], key=lambda x: x.sequence)
+            ],
+        }
+
     def get_audit_hashes(self, scenario: Scenario) -> Dict[str, str]:
         """
         Get all hashes for audit/reproducibility.

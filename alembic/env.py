@@ -23,6 +23,7 @@ from src.copilot import models as copilot_models
 from src.dqa import models as dqa_models
 from src.supply import models as supply_models
 from src.shared.models import governance  # Decision ledger models
+from src.twin import models as twin_models  # Digital Twin scenario models
 
 # this is the Alembic Config object
 config = context.config

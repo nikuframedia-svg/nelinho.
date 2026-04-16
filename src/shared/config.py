@@ -24,20 +24,20 @@ class Settings(BaseSettings):
     
     # Database
     database_url: str = Field(
-        default="postgresql+asyncpg://prodplan:prodplan_secret_2026@localhost:5432/prodplan_one",
-        description="PostgreSQL connection URL (async)",
+        default="postgresql+asyncpg://prodplan:prodplan@localhost:5432/prodplan_one",
+        description="PostgreSQL connection URL (async). Override via DATABASE_URL env var.",
     )
     database_pool_size: int = Field(default=10, ge=1, le=100)
     database_max_overflow: int = Field(default=20, ge=0, le=100)
     database_echo: bool = Field(default=False)
-    
+
     # Redis
     redis_url: str = Field(
-        default="redis://:redis_secret_2026@localhost:6379/0",
-        description="Redis connection URL",
+        default="redis://localhost:6379/0",
+        description="Redis connection URL. Override via REDIS_URL env var.",
     )
     redis_pool_size: int = Field(default=10, ge=1, le=100)
-    
+
     # Kafka
     kafka_bootstrap_servers: str = Field(
         default="localhost:29092",
@@ -45,15 +45,29 @@ class Settings(BaseSettings):
     )
     kafka_consumer_group: str = Field(default="prodplan-one")
     kafka_auto_offset_reset: str = Field(default="earliest")
-    
+
     # Security
     secret_key: str = Field(
-        default="prodplan_jwt_secret_key_2026_change_in_production",
+        default="dev-only-insecure-key-override-in-production-via-env",
         min_length=32,
     )
     access_token_expire_minutes: int = Field(default=30, ge=5, le=1440)
     refresh_token_expire_days: int = Field(default=7, ge=1, le=30)
     algorithm: str = Field(default="HS256")
+
+    @field_validator("secret_key")
+    @classmethod
+    def validate_secret_key(cls, v: str, info) -> str:
+        """Block insecure default secrets in production."""
+        insecure_markers = ["dev-only", "change_in_production", "_secret_2026", "insecure"]
+        env = info.data.get("environment", "development") if info.data else "development"
+        if env.lower() in ("production", "prod"):
+            if any(marker in v.lower() for marker in insecure_markers):
+                raise ValueError(
+                    "SECRET_KEY contains insecure default value. "
+                    "Set a strong secret via SECRET_KEY env var for production."
+                )
+        return v
     
     # Environment
     environment: str = Field(default="development")
@@ -66,8 +80,12 @@ class Settings(BaseSettings):
     # COPILOT
     copilot_enabled: bool = Field(default=True)
     ollama_base_url: str = Field(default="http://localhost:11434")
-    ollama_model: str = Field(default="llama3:8b")  # Usar modelo disponível (pode ser override via .env)
-    copilot_embeddings_model: str = Field(default="all-minilm")
+    ollama_model: str = Field(default="gemma4:e4b")
+    ollama_num_ctx: int = Field(default=8192, ge=2048, le=131072, description="Context window size")
+    ollama_keep_alive: str = Field(default="30m", description="How long to keep model in VRAM")
+    ollama_temperature: float = Field(default=0.1, ge=0.0, le=2.0, description="LLM temperature (low = deterministic)")
+    ollama_num_predict: int = Field(default=1024, ge=64, le=8192, description="Max tokens to generate")
+    copilot_embeddings_model: str = Field(default="nomic-embed-text")
     copilot_rate_limit_per_hour: int = Field(default=60, ge=1)
     copilot_rate_limit_per_day: int = Field(default=300, ge=1)
     copilot_trust_index_threshold: float = Field(default=0.6, ge=0.0, le=1.0)

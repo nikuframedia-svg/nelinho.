@@ -193,18 +193,49 @@ async def _analyze_performance(
         
         # Se performance < 70%, recomendar Standard Work
         if performance < 70.0:
+            # Query worst-performing phases dynamically
+            worst_phases_query = select(
+                ProductionSchedule.operation_code,
+                func.avg(ProductionSchedule.scheduled_duration_hours).label("avg_std"),
+                func.avg(
+                    func.extract('epoch', ProductionSchedule.actual_end - ProductionSchedule.actual_start) / 3600.0
+                ).label("avg_actual"),
+            ).where(
+                and_(
+                    ProductionSchedule.tenant_id == tenant_id,
+                    ProductionSchedule.actual_start.isnot(None),
+                    ProductionSchedule.actual_end.isnot(None),
+                    ProductionSchedule.scheduled_duration_hours.isnot(None),
+                    ProductionSchedule.operation_code.isnot(None),
+                )
+            ).group_by(ProductionSchedule.operation_code).limit(10)
+
+            worst_result = await session.execute(worst_phases_query)
+            phase_rows = worst_result.all()
+
+            # Find phases where actual > standard (worst performers)
+            slow_phases = []
+            for row in phase_rows:
+                if row.avg_std and row.avg_actual and row.avg_actual > 0:
+                    phase_perf = min(100.0, (float(row.avg_std) / float(row.avg_actual)) * 100.0)
+                    if phase_perf < 80.0:
+                        slow_phases.append({"phase": row.operation_code, "performance": round(phase_perf, 1)})
+
+            slow_phases.sort(key=lambda x: x["performance"])
+            affected = [p["phase"] for p in slow_phases[:3]] or ["(sem dados por fase)"]
+
             return {
                 "priority": 2,
                 "category": "PERFORMANCE",
                 "title": "Standard Work",
-                "description": f"Standardizar processos de Laminagem + Preparação de Molde para melhorar taxa de desempenho de {performance:.1f}%.",
+                "description": f"Standardizar processos de {', '.join(affected)} para melhorar taxa de desempenho de {performance:.1f}%.",
                 "impact_metric": "performance",
                 "impact_value": performance,
-                "affected_phases": ["Laminagem", "Preparação de Molde"],
+                "affected_phases": affected,
                 "suggested_actions": [
-                    "Documentar procedimentos padrão para Laminagem",
-                    "Criar checklist de Preparação de Molde",
-                    "Implementar treino para operadores",
+                    f"Documentar procedimentos padrão para {affected[0]}",
+                    "Criar checklists operacionais por fase",
+                    "Implementar treino para operadores nas fases críticas",
                 ],
                 "data_evidence": {
                     "avg_standard_time": float(perf_row.avg_standard),
@@ -231,37 +262,85 @@ async def _analyze_maintenance_needs(
     session: AsyncSession,
     tenant_id: UUID,
 ) -> Optional[Dict[str, Any]]:
-    """Analisar necessidades de manutenção."""
+    """
+    Analisar necessidades de manutenção baseado em dados de erros reais.
+
+    Queries the Factory Data Product semantic layer for quality events
+    and identifies the top error types and affected phases.
+    """
     try:
-        # Por enquanto, retornar recomendação genérica baseada em problemas comuns
-        # TODO: Analisar erros específicos relacionados com moldes quando tabela de erros existir
-        
+        # Try to get quality data from semantic layer (curated error data)
+        try:
+            from src.factory_data_product.services.semantic_queries_inmemory import SemanticQueriesInMemory
+            sq = SemanticQueriesInMemory()
+            quality_result = sq.quality_analysis()
+
+            if quality_result and quality_result.get("status") != "BLOCKED":
+                rows = quality_result.get("rows", [])
+                if rows:
+                    # Find top error types by count
+                    top_errors = sorted(rows, key=lambda r: r.get("total_erros", 0), reverse=True)[:5]
+                    top_phases = list({e.get("fase_nome", "Desconhecida") for e in top_errors if e.get("fase_nome")})
+                    top_error_types = list({e.get("erro_tipo", "Desconhecido") for e in top_errors if e.get("erro_tipo")})
+                    total_errors = sum(e.get("total_erros", 0) for e in top_errors)
+
+                    return {
+                        "priority": 3,
+                        "category": "MAINTENANCE",
+                        "title": "Manutenção Preventiva — Fases Críticas",
+                        "description": (
+                            f"As fases {', '.join(top_phases[:3])} concentram os tipos de erro "
+                            f"mais frequentes ({', '.join(top_error_types[:3])}), "
+                            f"totalizando {total_errors} ocorrências. "
+                            f"Implementar manutenção preventiva e inspeções regulares."
+                        ),
+                        "impact_metric": "quality_errors",
+                        "impact_value": total_errors,
+                        "affected_phases": top_phases[:5],
+                        "suggested_actions": [
+                            f"Investigar causa-raiz do erro '{top_error_types[0]}'" if top_error_types else "Investigar erros mais frequentes",
+                            "Criar calendário de manutenção preventiva para fases afetadas",
+                            "Implementar checklist de inspeção visual pós-operação",
+                            "Documentar histórico de problemas por molde/máquina",
+                        ],
+                        "data_evidence": {
+                            "total_errors_top5": total_errors,
+                            "top_error_types": top_error_types[:5],
+                            "top_phases": top_phases[:5],
+                            "source": "factory_data_product.quality_analysis",
+                        },
+                        "origins": ["SYSTEM_DATA", "BEST_PRACTICE"],
+                        "confidence": "HIGH",
+                        "limitations": [
+                            "Análise limitada aos dados de erro do último ficheiro ingerido",
+                        ],
+                        "next_steps": ["RUNBOOK", "INSTRUMENTATION"],
+                    }
+        except ImportError:
+            logger.debug("SemanticQueriesInMemory not available for maintenance analysis")
+        except Exception as e:
+            logger.debug(f"Semantic quality query failed: {e}")
+
+        # Fallback: generic recommendation when no error data available
         return {
             "priority": 3,
             "category": "MAINTENANCE",
             "title": "Manutenção Moldes",
-            "description": 'Agendar inspeção/polimento regular de moldes para resolver issues de "Molde baço" e "Molde com deformações".',
+            "description": "Agendar inspeção/polimento regular de moldes. Sem dados de erros disponíveis para análise detalhada.",
             "impact_metric": "quality",
-            "impact_value": 0.0,  # Será preenchido quando houver dados de erros
-            "affected_phases": ["Preparação de Molde", "Laminagem"],
+            "impact_value": 0.0,
+            "affected_phases": [],
             "suggested_actions": [
+                "Ingerir dados de erros (OrdemFabricoErros) para análise detalhada",
                 "Criar calendário de manutenção preventiva de moldes",
-                "Implementar checklist de inspeção visual",
-                "Documentar histórico de problemas por molde",
             ],
-            "data_evidence": {
-                "note": "Recomendação baseada em problemas comuns reportados",
-            },
+            "data_evidence": {"note": "Sem dados de erros — recomendação genérica"},
             "origins": ["BEST_PRACTICE", "DATA_GAP"],
             "confidence": "LOW",
-            "limitations": [
-                "Sem evidência direta por fase/ativo, recomendação baseada em heurística e boas práticas",
-                "Não há dados de erros específicos relacionados com moldes na base de dados",
-                "Recomendação genérica baseada em conhecimento de domínio",
-            ],
-            "next_steps": ["INSTRUMENTATION", "ANALYSIS"],
+            "limitations": ["Sem dados de erros na base de dados"],
+            "next_steps": ["INSTRUMENTATION"],
         }
-        
+
     except Exception as e:
         logger.warning(f"Erro ao analisar manutenção: {e}")
         return None

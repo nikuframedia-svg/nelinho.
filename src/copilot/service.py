@@ -18,8 +18,10 @@ from src.copilot.models import CopilotSuggestion
 from src.copilot.schemas import CopilotResponse, CopilotAskRequest
 from pydantic import ValidationError
 from src.copilot.context_builder import build_context_facts
+from src.copilot.conversation_store import ConversationStore
 from src.copilot.rag import retrieve_rag_chunks
 from src.copilot.ollama_client import get_ollama_client
+from src.copilot.tool_executor import ToolExecutor
 from src.copilot.guardrails import (
     check_security_flag,
     validate_response_structure,
@@ -69,6 +71,16 @@ class CopilotService:
         if check_security_flag(request.user_query):
             logger.warning(f"SECURITY_FLAG detetado para query: {request.user_query[:100]}")
             return self._create_security_flag_response(correlation_id), {}
+
+        # 1.5. Load conversation history for multi-turn context
+        conversation_history: List[Dict[str, str]] = []
+        if request.conversation_id:
+            try:
+                conversation_history = await ConversationStore.get_history(
+                    self.tenant_id, request.conversation_id
+                )
+            except Exception as e:
+                logger.warning(f"Failed to load conversation history: {e}")
         
         # 2. Detectar intent
         intent_start = time.time()
@@ -174,7 +186,26 @@ class CopilotService:
         
         try:
             llm_start = time.time()
-            llm_response = await ollama_client.chat(prompt, model, format="json")
+            # For generic intents with tool registry loaded, use agentic tool loop
+            # so the LLM can call factory data tools (backlog, WIP, bottlenecks, etc.)
+            from src.copilot.tool_registry import get_tool_registry_sync
+            registry = get_tool_registry_sync()
+            if intent == "generic" and registry and registry.tools:
+                executor = ToolExecutor(registry)
+                llm_response, tool_log = await executor.execute_with_tools(
+                    user_query=prompt,
+                    model=model,
+                    history=conversation_history or None,
+                    format="json",
+                )
+                perf_metrics["tool_calls"] = len(tool_log)
+            else:
+                llm_response = await ollama_client.chat(
+                    prompt,
+                    model,
+                    format="json",
+                    history=conversation_history or None,
+                )
             perf_metrics["llm_call_ms"] = int((time.time() - llm_start) * 1000)
             # Garantir que é um dict
             if not isinstance(llm_response, dict):
@@ -333,16 +364,33 @@ class CopilotService:
                         logger.warning(f"Fact sem texto, ignorando. Correlation: {correlation_id}")
                         continue
                     
-                    # Se não há citations e não há INSUFFICIENT_EVIDENCE, criar citation básica
+                    # Evidence enforcement: facts without real citations
                     if not normalized_citations and not has_insufficient_evidence:
-                        # Criar citation básica para fact sem citations
-                        normalized_citations = [{
-                            "source_type": "system_data",
-                            "ref": "system:copilot:generated",
-                            "label": "Resposta do COPILOT",
-                            "confidence": 0.7,
-                            "trust_index": 0.65,
-                        }]
+                        if intent in ("kpi_current", "quality_summary", "plan_summary"):
+                            # KPI/data queries: downgrade confidence and flag as ungrounded
+                            normalized_citations = [{
+                                "source_type": "system_data",
+                                "ref": "system:copilot:ungrounded",
+                                "label": "Sem evidência direta — valor não verificado",
+                                "confidence": 0.3,
+                                "trust_index": 0.3,
+                            }]
+                            if not any(w.get("code") == "INSUFFICIENT_EVIDENCE" for w in llm_response.get("warnings", [])):
+                                warnings_list = llm_response.get("warnings", [])
+                                warnings_list.append({
+                                    "code": "INSUFFICIENT_EVIDENCE",
+                                    "message": f"Fact sem citation real: '{fact_text[:80]}...' — confiança reduzida",
+                                })
+                                llm_response["warnings"] = warnings_list
+                        else:
+                            # Generic queries: still allow but mark as copilot-generated
+                            normalized_citations = [{
+                                "source_type": "system_data",
+                                "ref": "system:copilot:generated",
+                                "label": "Resposta do COPILOT (sem fonte de dados)",
+                                "confidence": 0.5,
+                                "trust_index": 0.5,
+                            }]
                     
                     fact_normalized = {
                         "text": fact_text,
@@ -350,21 +398,21 @@ class CopilotService:
                     }
                     normalized_facts.append(fact_normalized)
                 elif isinstance(fact, str):
-                    # Se fact é string, converter para dict com citations
-                    # Se não há INSUFFICIENT_EVIDENCE, criar citation básica
-                    if not has_insufficient_evidence:
-                        # Criar citation básica para fact string
-                        normalized_citations_basic = [{
-                            "source_type": "system_data",
-                            "ref": "system:copilot:generated",
-                            "label": "Resposta do COPILOT",
-                            "confidence": 0.7,
-                            "trust_index": 0.65,
-                        }]
-                        normalized_facts.append({"text": fact, "citations": normalized_citations_basic})
-                    else:
-                        # Com INSUFFICIENT_EVIDENCE, facts podem não ter citations
+                    # String fact — no real citations possible
+                    if has_insufficient_evidence:
                         normalized_facts.append({"text": fact, "citations": []})
+                    else:
+                        confidence = 0.3 if intent in ("kpi_current", "quality_summary", "plan_summary") else 0.5
+                        normalized_facts.append({
+                            "text": fact,
+                            "citations": [{
+                                "source_type": "system_data",
+                                "ref": "system:copilot:generated",
+                                "label": "Resposta do COPILOT (sem fonte de dados)",
+                                "confidence": confidence,
+                                "trust_index": confidence,
+                            }],
+                        })
             llm_response["facts"] = normalized_facts
         
         # 7. Validate response (agora com actions e citations já normalizadas)
@@ -509,7 +557,19 @@ class CopilotService:
             perf_metrics["total_ms"],
         )
         audit_data["perf_metrics"] = perf_metrics
-        
+
+        # Persist conversation turn for multi-turn context
+        if request.conversation_id:
+            try:
+                await ConversationStore.append_turn(
+                    self.tenant_id,
+                    request.conversation_id,
+                    request.user_query,
+                    response_summary,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to persist conversation turn: {e}")
+
         # Log performance com detalhes de prompt size
         logger.info(
             f"COPILOT performance. Correlation: {correlation_id}. "

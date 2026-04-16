@@ -16,7 +16,9 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.shared.database import get_session
 from .models import (
     AutonomyLevel,
     DecisionStatus,
@@ -80,10 +82,12 @@ def get_current_user(x_user_id: str = Header(default="api_user")) -> str:
     return x_user_id
 
 
-def get_governance_service(tenant_id: UUID = Depends(get_tenant_id)) -> GovernanceService:
-    """Get governance service instance."""
-    # In production, this would use a proper DB session
-    return GovernanceService(db=None, tenant_id=tenant_id)
+async def get_governance_service(
+    tenant_id: UUID = Depends(get_tenant_id),
+    db: AsyncSession = Depends(get_session),
+) -> GovernanceService:
+    """Get governance service with DB session."""
+    return GovernanceService(db=db, tenant_id=tenant_id)
 
 
 # ============================================================================
@@ -133,7 +137,7 @@ async def propose_decision(
     This creates a decision record and initiates the approval workflow
     based on the policy for the decision type.
     """
-    decision = service.propose_decision(
+    decision = await service.propose_decision(
         decision_type=proposal.decision_type,
         title=proposal.title,
         action_data=proposal.action_data,
@@ -144,7 +148,7 @@ async def propose_decision(
         scenario_id=proposal.scenario_id,
         evidence_refs=proposal.evidence_refs,
     )
-    
+
     return DecisionResponse(**decision)
 
 
@@ -161,13 +165,13 @@ async def list_decisions(
     
     Supports filtering by status and decision type.
     """
-    decisions = service.list_decisions(
+    decisions = await service.list_decisions(
         status=status_filter,
         decision_type=decision_type,
         limit=limit,
         offset=offset,
     )
-    
+
     return [DecisionResponse(**d) for d in decisions]
 
 
@@ -177,7 +181,7 @@ async def get_decision(
     service: GovernanceService = Depends(get_governance_service),
 ):
     """Get details of a specific decision."""
-    decision = service.get_decision(decision_id)
+    decision = await service.get_decision(decision_id)
     if not decision:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -198,8 +202,8 @@ async def get_my_pending_approvals(
     - User is the proposer (if SoD required)
     - User has already voted
     """
-    pending = service.get_pending_approvals(user)
-    
+    pending = await service.get_pending_approvals(user)
+
     return {
         "user": user,
         "pending": [DecisionResponse(**d) for d in pending],
@@ -227,7 +231,7 @@ async def approve_decision(
     - No duplicate votes from same user
     """
     try:
-        decision = service.approve_decision(
+        decision = await service.approve_decision(
             decision_id=decision_id,
             action=request.action,
             approved_by=user,
@@ -272,7 +276,7 @@ async def execute_decision(
     Only approved decisions can be executed.
     """
     try:
-        decision = service.execute_decision(
+        decision = await service.execute_decision(
             decision_id=decision_id,
             executed_by=user,
         )
@@ -311,7 +315,7 @@ async def rollback_decision(
     Requires a reason (min 10 characters) for audit purposes.
     """
     try:
-        decision = service.rollback_decision(
+        decision = await service.rollback_decision(
             decision_id=decision_id,
             rolled_back_by=user,
             reason=reason,
@@ -352,7 +356,7 @@ async def get_audit_pack(
     - Evidence references
     """
     try:
-        return service.get_audit_pack(decision_id)
+        return await service.get_audit_pack(decision_id)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -379,7 +383,7 @@ async def activate_kill_switch(
     
     All kill switch activations are logged and audited.
     """
-    decision = service.activate_kill_switch(
+    decision = await service.activate_kill_switch(
         scope=scope,
         activated_by=user,
         reason=reason,

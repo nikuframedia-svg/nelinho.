@@ -10,10 +10,10 @@ import re
 from typing import List, Dict, Any, Optional, Tuple
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, func, text
+from sqlalchemy import select, func, text, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.copilot.models import CopilotRAGChunk
+from src.copilot.models import CopilotRAGChunk, PGVECTOR_AVAILABLE
 from src.copilot.ollama_client import get_ollama_client
 from src.shared.config import settings
 
@@ -116,15 +116,15 @@ async def retrieve_rag_chunks(
         logger.warning("Não foi possível obter embeddings - usando busca lexical")
         return await _lexical_search(session, tenant_id, query, top_k)
     
-    # Verificar se é PostgreSQL (tem pgvector)
-    db_url = str(session.bind.url) if hasattr(session, "bind") else ""
-    is_postgres = "postgresql" in db_url.lower()
-    
-    if is_postgres:
-        return await _vector_search(session, tenant_id, query_embedding, top_k)
-    else:
-        # SQLite: busca lexical
-        return await _lexical_search(session, tenant_id, query, top_k)
+    # Use pgvector if available, otherwise lexical fallback
+    if PGVECTOR_AVAILABLE:
+        results = await _vector_search(session, tenant_id, query_embedding, top_k)
+        if results:
+            return results
+        # Empty results from vector search — fall through to lexical
+        logger.info("Vector search returned no results — trying lexical fallback")
+
+    return await _lexical_search(session, tenant_id, query, top_k)
 
 
 async def _vector_search(
@@ -135,26 +135,32 @@ async def _vector_search(
 ) -> List[Dict[str, Any]]:
     """
     Vector search com pgvector (PostgreSQL).
-    
-    Nota: Requer extensão pgvector instalada.
+
+    Uses cosine distance operator (<=>): 0 = identical, 2 = opposite.
+    Score is converted to similarity: 1 - distance.
     """
-    # Converter embedding para formato pgvector
-    embedding_str = "[" + ",".join(str(f) for f in query_embedding) + "]"
-    
-    # Query com cosine distance
-    # Nota: Assumindo que embedding está em formato TEXT (JSON array)
-    # Em produção, usar tipo VECTOR do pgvector
-    query = select(CopilotRAGChunk).where(
-        CopilotRAGChunk.tenant_id == tenant_id
-    ).order_by(
-        # Placeholder - em produção usar: func.cosine_distance(CopilotRAGChunk.embedding, query_embedding)
-        CopilotRAGChunk.created_at.desc()
-    ).limit(top_k)
-    
-    result = await session.execute(query)
-    chunks = result.scalars().all()
-    
-    # Converter para dict com score placeholder
+    if not PGVECTOR_AVAILABLE:
+        logger.warning("pgvector not installed — falling back to lexical search")
+        return []
+
+    # Cosine distance via pgvector: embedding <=> query_vector
+    distance = CopilotRAGChunk.embedding.cosine_distance(query_embedding)
+
+    stmt = (
+        select(CopilotRAGChunk, distance.label("distance"))
+        .where(
+            and_(
+                CopilotRAGChunk.tenant_id == tenant_id,
+                CopilotRAGChunk.embedding.isnot(None),
+            )
+        )
+        .order_by(distance)
+        .limit(top_k)
+    )
+
+    result = await session.execute(stmt)
+    rows = result.all()
+
     return [
         {
             "id": str(chunk.id),
@@ -162,10 +168,10 @@ async def _vector_search(
             "source_id": chunk.source_id,
             "chunk_index": chunk.chunk_index,
             "chunk_text": chunk.chunk_text,
-            "score": 0.85,  # Placeholder - calcular cosine similarity real
+            "score": round(1.0 - dist, 4),
             "metadata": chunk.chunk_metadata or {},
         }
-        for chunk in chunks
+        for chunk, dist in rows
     ]
 
 
@@ -191,7 +197,6 @@ async def _lexical_search(
     for keyword in keywords[:5]:  # Limitar a 5 keywords
         conditions.append(CopilotRAGChunk.chunk_text.ilike(f"%{keyword}%"))
     
-    from sqlalchemy import or_
     query = select(CopilotRAGChunk).where(
         and_(
             CopilotRAGChunk.tenant_id == tenant_id,
@@ -250,25 +255,25 @@ async def ingest_document(
     chunks = chunk_text(text, chunk_size=600, overlap=100)
     
     created_count = 0
-    
+
     for idx, chunk_text_content in enumerate(chunks):
-        # Obter embedding
+        # Obter embedding (list[float] when pgvector is active, string fallback otherwise)
         try:
-            embedding = await get_embeddings(chunk_text_content)
-            embedding_str = str(embedding)  # JSON array como string
+            embedding_value = await get_embeddings(chunk_text_content)
+            if not PGVECTOR_AVAILABLE:
+                embedding_value = str(embedding_value)
         except Exception as e:
             logger.warning(f"Erro ao obter embedding para chunk {idx}: {e}")
-            embedding_str = None
-        
-        # Criar chunk
+            embedding_value = None
+
         chunk = CopilotRAGChunk(
             tenant_id=tenant_id,
             source_type=source_type,
             source_id=source_id,
             chunk_index=idx,
             chunk_text=chunk_text_content,
-            embedding=embedding_str,
-            metadata=metadata,
+            embedding=embedding_value,
+            chunk_metadata=metadata,
         )
         
         session.add(chunk)

@@ -17,10 +17,11 @@ from pydantic import BaseModel, Field
 
 class CopilotAskRequest(BaseModel):
     """Request para fazer pergunta ao COPILOT."""
-    
+
     user_query: str = Field(..., min_length=1, max_length=2000)
     entity_type: Optional[str] = Field(None, max_length=50)
     entity_id: Optional[UUID] = None
+    conversation_id: Optional[UUID] = Field(None, description="Conversation ID for multi-turn context")
     context_window_hours: int = Field(default=24, ge=1, le=168)
     include_citations: bool = Field(default=True)
     idempotency_key: Optional[str] = Field(None, max_length=100)

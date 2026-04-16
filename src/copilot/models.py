@@ -11,9 +11,15 @@ from datetime import datetime, date
 from typing import Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import String, Text, Integer, Date, ForeignKey, Index, JSON, text
+from sqlalchemy import String, Text, Integer, Date, Float, ForeignKey, Index, JSON, text
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
+
+try:
+    from pgvector.sqlalchemy import Vector
+    PGVECTOR_AVAILABLE = True
+except ImportError:
+    PGVECTOR_AVAILABLE = False
 
 from src.shared.database import TenantBase
 
@@ -76,25 +82,29 @@ class CopilotSuggestion(TenantBase):
 class CopilotRAGChunk(TenantBase):
     """
     Chunks de documentos para RAG (embeddings).
+
+    Uses pgvector for efficient cosine similarity search when available.
+    Falls back to TEXT storage + lexical search without pgvector.
     """
-    
+
     __tablename__ = "copilot_rag_chunk"
     __table_args__ = (
         Index("idx_copilot_rag_chunk_tenant", "tenant_id"),
         Index("idx_copilot_rag_chunk_source", "source_type", "source_id"),
     )
-    
+
     source_type: Mapped[str] = mapped_column(String(50), nullable=False)  # "sop", "doc", "policy"
     source_id: Mapped[str] = mapped_column(String(255), nullable=False)
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     chunk_text: Mapped[str] = mapped_column(Text, nullable=False)
-    
-    # Embedding: PostgreSQL usa VECTOR, SQLite usa TEXT
-    # Para compatibilidade, usar TEXT e fazer cast quando necessário
-    embedding: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON array ou pgvector
-    
+
+    if PGVECTOR_AVAILABLE:
+        embedding = mapped_column(Vector(768), nullable=True)
+    else:
+        embedding: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
     # Metadata
-    chunk_metadata: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)  # url, title, etc.
+    chunk_metadata: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
 
 
 class CopilotDailyFeedback(TenantBase):
