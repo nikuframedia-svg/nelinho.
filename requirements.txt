@@ -64,6 +64,8 @@ pytest==7.4.4
 pytest-asyncio==0.23.3
 pytest-cov==4.1.0
 httpx==0.26.0
+fakeredis>=2.20  # In-memory Redis stub for async tests
+aiosqlite>=0.19  # Async SQLite driver for tests that need a real DB
 
 # Development
 black==23.12.1
