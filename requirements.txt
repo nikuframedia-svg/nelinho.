@@ -75,3 +75,6 @@ mypy==1.8.0
 # COPILOT
 tiktoken==0.5.2  # Para token counting (opcional)
 pgvector>=0.2.5  # Vector similarity search for RAG
+
+# Background scheduling (Sprint C — alerts engine, daily feedback)
+apscheduler>=3.10,<4

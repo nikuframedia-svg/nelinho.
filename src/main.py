@@ -37,6 +37,8 @@ from src.copilot.api_endpoints.runbooks_api import router as runbooks_router
 from src.copilot.api_endpoints.tools_api import router as tools_router
 from src.governance.api import router as governance_router
 from src.workforce.api import router as workforce_router
+from src.copilot.alerts.api import router as copilot_alerts_router
+from src.shared.scheduler import start_scheduler, shutdown_scheduler
 
 # Configure logging first
 logging.basicConfig(
@@ -85,7 +87,24 @@ async def lifespan(app: FastAPI):
                 logger.info("Kafka producer started")
             except Exception as kafka_error:
                 logger.warning(f"Kafka connection failed: {kafka_error}")
-        
+
+        # Pre-warm the Copilot tool registry so the first /v1/tools call
+        # doesn't incur an OpenAPI parse round-trip.
+        try:
+            from src.copilot.tool_registry import get_tool_registry
+            await get_tool_registry()
+            logger.info("Tool registry pre-warmed")
+        except Exception as tr_error:
+            logger.warning(f"Tool registry pre-warm failed: {tr_error}")
+
+        # Start background scheduler (alerts scan + daily feedback).
+        # In production, list active tenants here from the DB; for dev we start
+        # empty and endpoints can register tenants via register_tenant().
+        try:
+            start_scheduler(tenants=None)
+        except Exception as sched_error:
+            logger.warning(f"Scheduler failed to start: {sched_error}")
+
         logger.info("ProdPlan ONE started successfully")
         
     except Exception as e:
@@ -98,10 +117,11 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("Shutting down ProdPlan ONE...")
     
+    await shutdown_scheduler()
     await close_db()
     await shutdown_redis()
     await shutdown_kafka()
-    
+
     logger.info("ProdPlan ONE shut down")
 
 
@@ -265,6 +285,7 @@ app.include_router(runbooks_router) # Runbooks API (P2 Enterprise)
 app.include_router(tools_router)    # Tool Registry API (P2 Enterprise)
 app.include_router(governance_router)  # Governance API (Approvals, SoD)
 app.include_router(workforce_router)   # Workforce Operations API (NEW)
+app.include_router(copilot_alerts_router)  # Proactive alerts (Sprint C — Fase 5)
 
 
 # API info
