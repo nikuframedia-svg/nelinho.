@@ -1,0 +1,45 @@
+# Minimal dependency set for running the unit-test suite in CI.
+#
+# Why separate from requirements.txt:
+# - Full requirements include heavy packages (ortools, prophet, pandas, scipy,
+#   scikit-learn, deap) that take 3-5 min to install in CI and are not needed
+#   by current mock-heavy unit tests.
+# - When integration tests are added that exercise real engines/pipelines,
+#   either install requirements.txt in that job, or extend this file.
+#
+# Kept version-pinned to match requirements.txt where applicable.
+
+# Core web stack (imported transitively by service modules)
+fastapi==0.109.0
+pydantic==2.5.3
+pydantic-settings==2.1.0
+python-multipart==0.0.6
+starlette  # pulled by fastapi; no explicit pin needed
+
+# Database (models declare pgvector types guarded by import; asyncpg is imported by database.py)
+sqlalchemy[asyncio]==2.0.25
+asyncpg==0.29.0
+greenlet==3.0.3
+aiosqlite>=0.19  # async SQLite driver for tests that may use real DB
+
+# Redis + Kafka (imported at module load; fakeredis replaces real client in tests)
+redis[hiredis]==5.0.1
+fakeredis>=2.20
+aiokafka==0.10.0
+
+# Auth stack (imported by shared.auth)
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+
+# HTTP / utilities imported by service modules
+httpx==0.26.0
+tenacity==8.2.3
+structlog==24.1.0
+python-dotenv==1.0.0
+pyyaml>=6.0
+prometheus-client==0.19.0
+
+# Testing
+pytest==7.4.4
+pytest-asyncio==0.23.3
+pytest-cov==4.1.0
