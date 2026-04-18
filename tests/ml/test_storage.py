@@ -50,12 +50,15 @@ class TestArtifactStorage:
 
     def test_name_with_slash_is_sanitized(self, storage, tmp_path):
         uri = storage.save({"x": 1}, "nested/name/../escape", 1)
-        saved_path = Path(uri.replace(FILE_SCHEME, "").lstrip("/"))
-        # Path stays under tmp_path regardless of "../" in the model name
+        # Use the storage's own URI → Path resolver so this test works on
+        # both POSIX (file:///abs/path) and Windows (file://C:/abs/path).
+        saved_path = storage._resolve(uri)
         try:
             saved_path.resolve().relative_to(tmp_path.resolve())
         except ValueError:
             pytest.fail(f"Saved path {saved_path} escaped outside {tmp_path}")
+        # And the roundtrip still works (not corrupted by the sanitization)
+        assert storage.load(uri) == {"x": 1}
 
     def test_handles_bare_path_uri(self, storage):
         """Backward compat: if someone passes a bare path (no file://), load still works."""
