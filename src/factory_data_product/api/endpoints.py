@@ -591,6 +591,61 @@ async def ingest_file(
         tmp_path.unlink(missing_ok=True)
 
 
+class IngestByPathRequest(BaseModel):
+    """Dev-friendly: ingest a local file by absolute path (skips multipart)."""
+    path: str = Field(..., description="Absolute path to the XLSX file")
+    auto_activate: bool = Field(default=False)
+    user: str = Field(default="api_user")
+
+
+@router.post(
+    "/ingest-by-path",
+    response_model=IngestResponse,
+    summary="Ingest Excel file by absolute path (dev)",
+    description=(
+        "Trigger ingestion against a file already on disk. Avoids the multipart "
+        "upload round-trip for large files (e.g. Folha_IA_extra.xlsx ~57 MB)."
+    ),
+)
+async def ingest_by_path(
+    request: IngestByPathRequest,
+    engine: IngestEngine = Depends(get_engine),
+):
+    """
+    Dev-only convenience: ingest by absolute path.
+
+    Validates the path exists and is an XLSX. Calls the same IngestEngine
+    pipeline as the upload endpoint — result shape is identical.
+    """
+    from pathlib import Path
+
+    path = Path(request.path)
+    if not path.exists():
+        raise HTTPException(status_code=400, detail=f"File not found: {path}")
+    if path.suffix.lower() not in (".xlsx", ".xls"):
+        raise HTTPException(status_code=400, detail="Only .xlsx/.xls files are accepted")
+
+    result = engine.ingest(
+        file_path=path,
+        source_type=SourceType.UPLOAD,
+        created_by=request.user,
+        auto_activate=request.auto_activate,
+    )
+
+    return IngestResponse(
+        success=result.success,
+        ingestion_id=str(result.ingestion_id) if result.ingestion_id else None,
+        status=result.status.value,
+        is_duplicate=result.is_duplicate,
+        duplicate_of=str(result.duplicate_of) if result.duplicate_of else None,
+        total_rows_raw=result.total_rows_raw,
+        total_rows_curated=result.total_rows_curated,
+        quality_gate_status=result.quality_gate_status.value,
+        errors=result.errors,
+        warnings=result.warnings,
+    )
+
+
 @router.post(
     "/activate/{ingestion_id}",
     summary="Activate ingestion",
@@ -601,20 +656,71 @@ async def activate_ingestion(
     request: ActivateRequest,
     engine: IngestEngine = Depends(get_engine),
 ):
-    """Activate an ingestion."""
+    """Activate an ingestion (+ emit drift alert if schema changed)."""
     try:
         uid = UUID(ingestion_id)
         success = engine.activate(uid, request.user)
-        
+
+        alert_id: Optional[str] = None
+        if success:
+            alert_id = await _emit_drift_alert_safe(engine, uid)
+
         return {
             "success": success,
             "activated_ingestion_id": ingestion_id,
             "activated_by": request.user,
             "activated_at": datetime.now(timezone.utc).isoformat(),
+            "drift_alert_id": alert_id,
         }
-        
+
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+async def _emit_drift_alert_safe(engine: IngestEngine, ingestion_id: UUID) -> Optional[str]:
+    """
+    Best-effort drift alert emission. Failure to create an alert must not
+    break activation itself — we log and return None.
+    """
+    try:
+        from src.factory_data_product.drift_bridge import emit_drift_alert_if_any
+        from src.shared.database import get_session_context
+
+        history = engine.get_schema_history()
+        # Use a default tenant id — a more complete solution pulls it from auth;
+        # for now, match the dev-default used by the alerts endpoints.
+        tenant_id = UUID("00000000-0000-0000-0000-000000000000")
+        async with get_session_context() as session:
+            alert_id = await emit_drift_alert_if_any(session, tenant_id, ingestion_id, history)
+            await session.commit()
+            return alert_id
+    except Exception as e:
+        logger.warning(f"Drift alert emission failed for ingestion {ingestion_id}: {e}")
+        return None
+
+
+# ============================================================================
+# Watcher status (Sprint J.2)
+# ============================================================================
+
+@router.get(
+    "/watcher/status",
+    summary="Factory data watcher status",
+    description="Inspect the periodic file watcher (hash-change → ingest).",
+)
+async def get_watcher_status():
+    """Report the watcher's last seen hash + any error."""
+    from src.factory_data_product.watcher import get_state, _resolve_watch_path
+
+    state = get_state()
+    path = _resolve_watch_path()
+    return {
+        "enabled": path is not None,
+        "watch_path": str(path) if path else None,
+        "last_hash": state.last_hash,
+        "last_ingestion_id": state.last_ingestion_id,
+        "last_error": state.last_error,
+    }
 
 
 @router.post(

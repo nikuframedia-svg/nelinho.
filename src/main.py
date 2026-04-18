@@ -101,10 +101,19 @@ async def lifespan(app: FastAPI):
         # Start background scheduler (alerts scan + daily feedback).
         # In production, list active tenants here from the DB; for dev we start
         # empty and endpoints can register tenants via register_tenant().
+        scheduler_instance = None
         try:
-            start_scheduler(tenants=None)
+            scheduler_instance = start_scheduler(tenants=None)
         except Exception as sched_error:
             logger.warning(f"Scheduler failed to start: {sched_error}")
+
+        # Factory data watcher — no-op unless PRODPLAN_FACTORY_FILE is set
+        if scheduler_instance is not None:
+            try:
+                from src.factory_data_product.watcher import register_with_scheduler
+                register_with_scheduler(scheduler_instance)
+            except Exception as watcher_error:
+                logger.warning(f"Factory watcher registration failed: {watcher_error}")
 
         logger.info("ProdPlan ONE started successfully")
         
