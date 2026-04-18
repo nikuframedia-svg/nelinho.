@@ -114,8 +114,19 @@ class _FakeResult:
     def scalar_one_or_none(self) -> Any:
         return self._scalar
 
+    def scalar(self) -> Any:
+        # SQLAlchemy's Result.scalar() — alias for scalar_one_or_none() in
+        # the fake; we don't simulate the "more than one row" error here.
+        return self._scalar
+
     def scalars(self) -> "_FakeScalars":
         return _FakeScalars(self._scalars)
+
+    def all(self) -> List[Any]:
+        # Multi-column selects (e.g. `SELECT a, b`) return Row tuples via
+        # `.all()`. Tests using queue_scalars([(a1, b1), (a2, b2)]) can rely
+        # on this.
+        return list(self._scalars)
 
 
 class _FakeScalars:
