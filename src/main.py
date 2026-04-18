@@ -40,6 +40,7 @@ from src.workforce.api import router as workforce_router
 from src.copilot.alerts.api import router as copilot_alerts_router
 from src.shared.scheduler import start_scheduler, shutdown_scheduler
 from src.plan.api.cpo import router as plan_cpo_router
+from src.ml.api import router as ml_router
 
 # Configure logging first
 logging.basicConfig(
@@ -297,6 +298,7 @@ app.include_router(governance_router)  # Governance API (Approvals, SoD)
 app.include_router(workforce_router)   # Workforce Operations API (NEW)
 app.include_router(copilot_alerts_router)  # Proactive alerts (Sprint C — Fase 5)
 app.include_router(plan_cpo_router)  # CPO v4 scheduler (Sprint E — DRCFFS-R)
+app.include_router(ml_router)  # ML learning infrastructure (Sprint G)
 
 
 # API info

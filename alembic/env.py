@@ -25,6 +25,7 @@ from src.supply import models as supply_models
 from src.shared.models import governance  # Decision ledger models
 from src.twin import models as twin_models  # Digital Twin scenario models
 from src.copilot.alerts import models as copilot_alerts_models  # Proactive alerts
+from src.ml.models import orm as ml_orm_models  # ML model artifacts (Sprint G)
 
 # this is the Alembic Config object
 config = context.config

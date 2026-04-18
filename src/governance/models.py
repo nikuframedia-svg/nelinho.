@@ -522,6 +522,18 @@ DEFAULT_POLICIES = [
         "requires_canary": False,
         "description": "Emergency kill switch (immediate effect)",
     },
+    {
+        "decision_type": "model_promotion",
+        "autonomy_level": AutonomyLevel.L3.value,
+        "requires_approval": True,
+        "required_approvers": 1,
+        "requires_different_approver": True,
+        "auto_approve_if_low_risk": True,   # risk_level="low" -> auto
+        "max_impact_threshold": 5.0,
+        "requires_sandbox": False,
+        "requires_canary": False,
+        "description": "Promote a trained ML model to active (Sprint G)",
+    },
 ]
 
 
