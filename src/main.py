@@ -294,6 +294,10 @@ app.include_router(tenant_config_router)  # Sprint L.3 — /v1/config/*
 # Sprint AA.4 — Trust Index v2.0 endpoint
 from src.dqa.api import router as dqa_router  # noqa: E402
 app.include_router(dqa_router)
+
+# Sprint N — Factory Map
+from src.factory_data_product.api.factory_map import router as factory_map_router  # noqa: E402
+app.include_router(factory_map_router)
 app.include_router(plan_router)
 app.include_router(profit_router)
 app.include_router(hr_router)

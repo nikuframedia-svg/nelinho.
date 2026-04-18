@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c ' *)",
+      "Bash(where python *)",
+      "Bash(.venv/Scripts/python.exe -c \"from src.shared.config import settings; print\\('env:', settings.environment\\); print\\('secret_key present:', bool\\(settings.secret_key\\)\\)\")",
+      "Bash(.venv/Scripts/python.exe -c ' *)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/plan/test_cpo_decoder.py -v)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/plan/ -v)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/)",
+      "Read(//c/Users/User/.claude/plans/**)"
+    ]
+  }
+}
