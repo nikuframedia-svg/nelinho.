@@ -16,6 +16,7 @@ Database models for:
 """
 
 from .tenant import Tenant
+from .tenant_configuration import TenantConfiguration
 from .product import Product
 from .machine import Machine
 from .employee import Employee
@@ -27,6 +28,7 @@ from .audit import AuditLog
 
 __all__ = [
     "Tenant",
+    "TenantConfiguration",
     "Product",
     "Machine",
     "Employee",
