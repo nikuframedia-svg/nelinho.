@@ -28,6 +28,7 @@ class SchedulerEngine(str, Enum):
     MILP = "milp"  # Legacy - not implemented
     CPSAT = "cpsat"
     GENETIC = "genetic"
+    CPO_V4 = "cpo_v4"  # Hyper-heuristic DRCFFS-R (NELO, Sprint E)
 
 
 class DispatchRule(str, Enum):
@@ -40,7 +41,11 @@ class DispatchRule(str, Enum):
 
 @dataclass
 class SchedulingOperation:
-    """Input operation for scheduling."""
+    """Input operation for scheduling.
+
+    Extended for CPO v4 (DRCFFS-R) with dual-resource and mold fields.
+    Legacy schedulers (heuristic/CPSAT/genetic) ignore the new fields.
+    """
     operation_id: str
     order_id: str
     product_id: str
@@ -52,21 +57,46 @@ class SchedulingOperation:
     due_date: Optional[datetime] = None
     priority: float = 1.0
     predecessor_ops: List[str] = None
-    
+
+    # CPO v4 — dual-resource + NELO-specific fields (default-safe for legacy callers)
+    required_skills: List[str] = None
+    alternative_machines: List[str] = None
+    mold_id: Optional[str] = None
+    mold_required: bool = False
+    model_id: str = ""
+    team_size: int = 1
+    phase_id: Optional[str] = None  # fase_id from NELO curated layer
+
     def __post_init__(self):
         if self.predecessor_ops is None:
             self.predecessor_ops = []
+        if self.required_skills is None:
+            self.required_skills = []
+        if self.alternative_machines is None:
+            self.alternative_machines = []
 
 
 @dataclass
 class SchedulingMachine:
-    """Input machine for scheduling."""
+    """Input machine for scheduling.
+
+    Extended with NELO cost-center and shift calendar; legacy schedulers
+    treat these as metadata only.
+    """
     machine_id: str
     name: str
     capacity: int = 1
     speed_factor: float = 1.0
     available_from: Optional[datetime] = None
     available_until: Optional[datetime] = None
+
+    # CPO v4 — NELO specifics
+    centro_custo: str = ""
+    shift_calendar: Dict[str, Any] = None  # {"morning": True, "afternoon": False, ...}
+
+    def __post_init__(self):
+        if self.shift_calendar is None:
+            self.shift_calendar = {"morning": True, "afternoon": False, "night": False}
 
 
 @dataclass
@@ -195,9 +225,50 @@ class SchedulingAdapter:
             return self._schedule_cpsat(operations, machines, horizon_start, horizon_end)
         elif self._engine == SchedulerEngine.GENETIC:
             return self._schedule_genetic(operations, machines, horizon_start, horizon_end)
+        elif self._engine == SchedulerEngine.CPO_V4:
+            return self._schedule_cpo_v4(operations, machines, horizon_start, horizon_end)
         else:
             # Default: heuristic
             return self._schedule_heuristic(operations, machines, horizon_start, horizon_end)
+
+    def _schedule_cpo_v4(
+        self,
+        operations: List[SchedulingOperation],
+        machines: List[SchedulingMachine],
+        horizon_start: datetime,
+        horizon_end: datetime,
+    ) -> SchedulingResult:
+        """CPO v4 hyper-heuristic scheduler (NELO DRCFFS-R)."""
+        try:
+            from src.plan.cpo.engine import CPOConfig, CPOv4Engine
+            from src.plan.cpo.state import FactoryState
+
+            # Callers must inject state via configure() in the future;
+            # for now, load a lightweight state from the semantic layer.
+            state = getattr(self, "_cpo_state", None)
+            if state is None:
+                # Fallback: empty state (decoder still works, just without
+                # skill matrix / mold info / historical durations).
+                state = FactoryState(tenant_id=getattr(self, "_tenant_id", None))
+
+            engine = CPOv4Engine(
+                state=state,
+                config=CPOConfig(time_limit_sec=self._time_limit_sec),
+            )
+            result_dict = engine.schedule(operations, machines, horizon_start, horizon_end)
+            return SchedulingResult(**{k: v for k, v in result_dict.items() if k in SchedulingResult.model_fields})
+        except Exception as e:
+            logger.error(f"CPO v4 scheduling failed: {e}", exc_info=True)
+            fallback = self._schedule_heuristic(operations, machines, horizon_start, horizon_end)
+            fallback.warnings.append(f"CPO v4 failed ({e}) - used heuristic fallback")
+            return fallback
+
+    def set_cpo_state(self, state) -> None:
+        """Inject a pre-loaded FactoryState for the CPO v4 engine."""
+        self._cpo_state = state
+
+    def set_tenant_id(self, tenant_id) -> None:
+        self._tenant_id = tenant_id
     
     def _schedule_cpsat(
         self,
