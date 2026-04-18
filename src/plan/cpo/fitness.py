@@ -32,6 +32,9 @@ QualityRiskPredictor = Callable[[List[Dict[str, Any]]], List[float]]
 
 @dataclass
 class FitnessConfig:
+    # Legacy Sprint E/I weights (kept for backward compat — unit tests rely on
+    # the scalar form. Blueprint v2.0 normalised weights are in the `w_*_v2`
+    # block below and activated via `use_v2_weights=True`.)
     w_makespan: float = 1.0
     w_tardiness: float = 10.0
     w_setups: float = 0.5
@@ -43,6 +46,23 @@ class FitnessConfig:
     quality_risk_hard_threshold: float = 0.4
     quality_risk_hard_penalty: float = 100.0
 
+    # ── Sprint P.6 — Blueprint v2.0 normalised weights (sum = 1.0) ─────
+    # When `use_v2_weights=True`, the legacy `w_makespan/w_tardiness/w_setups/
+    # w_quality_risk` values are IGNORED and the normalised set below drives
+    # fitness. `tardiness_transport` replaces the old `tardiness` term to mark
+    # that Blueprint v2.0 prioritises transport-date compliance specifically.
+    use_v2_weights: bool = False
+    w_v2_makespan: float = 0.20
+    w_v2_tardiness_transport: float = 0.25
+    w_v2_idle_operators: float = 0.15
+    w_v2_setup_time: float = 0.15
+    w_v2_quality_risk: float = 0.10
+    w_v2_throughput_eur_day: float = 0.15
+
+    # ── Sprint P.3 — truck consolidation penalty (Blueprint PL14) ──────
+    truck_consolidation_weight: float = 0.0      # disabled until transport batches exist
+    truck_consolidation_tolerance_h: float = 12.0
+
     # Cached feature extractor — filled at config creation to avoid
     # rebuilding the dict per-op at hot path time.
     _feature_extractor: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = field(
@@ -51,32 +71,46 @@ class FitnessConfig:
 
 
 def compute_fitness(schedule: Dict[str, Any], config: Optional[FitnessConfig] = None) -> float:
-    """
-    Compute a single scalar from a schedule result dict.
+    """Compute a single scalar from a schedule result dict.
 
-    Expected keys (all optional — missing → 0):
-      makespan_hours, total_tardiness_hours, setups, quality_risk,
-      safety_violated (bool), operations (list — used by the predictor).
+    With `use_v2_weights=False` (default), applies Sprint E/I legacy weights:
+      fit = w_makespan*makespan + w_tardiness*tardiness + w_setups*setups
+          + w_quality_risk*risk + safety_penalty
 
-    When `config.quality_risk_predictor` is set:
-    1. Build a feature dict for each scheduled op (via the extractor or
-       default projector).
-    2. Call the predictor → list of P(error).
-    3. Mean P(error) * w_quality_risk is added to the fitness.
-    4. Each op with P(error) above `hard_threshold` triggers an extra
-       `hard_penalty * w_quality_risk` (discourages unsafe assignments
-       even when the weighted average looks fine).
-    Predictor failures never crash the GA — they log and fall through.
+    With `use_v2_weights=True` (Blueprint v2.0), applies normalised weights
+    (sum=1.0) over normalised KPIs:
+      fit = 0.20*norm_makespan + 0.25*norm_tardiness_transport
+          + 0.15*norm_idle_operators + 0.15*norm_setup_time
+          + 0.10*norm_quality_risk - 0.15*norm_throughput_eur_day
+
+    In both modes the truck_consolidation_weight * (transport_penalty_h) is
+    added when `schedule["truck_consolidation_penalty_h"]` is present.
+    `safety_violated` always adds `safety_penalty`.
     """
     cfg = config or FitnessConfig()
 
+    if cfg.use_v2_weights:
+        fitness = _v2_fitness(schedule, cfg)
+    else:
+        fitness = _legacy_fitness(schedule, cfg)
+
+    # Sprint P.3 — truck consolidation penalty (transport-batch spread hours)
+    if cfg.truck_consolidation_weight > 0:
+        penalty_h = float(schedule.get("truck_consolidation_penalty_h", 0) or 0)
+        fitness += cfg.truck_consolidation_weight * penalty_h
+
+    if schedule.get("safety_violated"):
+        fitness += cfg.safety_penalty
+
+    return fitness
+
+
+def _legacy_fitness(schedule: Dict[str, Any], cfg: FitnessConfig) -> float:
     fitness = 0.0
     fitness += cfg.w_makespan * float(schedule.get("makespan_hours", 0))
     fitness += cfg.w_tardiness * float(schedule.get("total_tardiness_hours", 0))
     fitness += cfg.w_setups * float(schedule.get("setups", 0))
 
-    # Quality risk: prefer per-op prediction (Sprint I.3) when wired,
-    # else fall back to a scalar the caller may have stored under "quality_risk".
     risk_scalar = float(schedule.get("quality_risk", 0))
     if cfg.quality_risk_predictor is not None and cfg.w_quality_risk > 0:
         per_op = _predict_risks_safe(cfg, schedule)
@@ -87,14 +121,59 @@ def compute_fitness(schedule: Dict[str, Any], config: Optional[FitnessConfig] = 
             if hard_hits:
                 fitness += cfg.w_quality_risk * cfg.quality_risk_hard_penalty * hard_hits
         else:
-            # Predictor unavailable this run — use the scalar fallback
             fitness += cfg.w_quality_risk * risk_scalar
     else:
         fitness += cfg.w_quality_risk * risk_scalar
+    return fitness
 
-    if schedule.get("safety_violated"):
-        fitness += cfg.safety_penalty
 
+# Normalisation reference magnitudes — tuned for NELO scale (50-500 ops,
+# 1-4 week horizon). Values far beyond these cap at 1.0 so runaway KPI
+# values can't dominate fitness arithmetic.
+_NORM_MAKESPAN_H = 1000.0
+_NORM_TARDINESS_H = 500.0
+_NORM_IDLE_H = 400.0
+_NORM_SETUPS = 50.0
+_NORM_THROUGHPUT_EUR_DAY = 35000.0
+
+
+def _v2_fitness(schedule: Dict[str, Any], cfg: FitnessConfig) -> float:
+    """Blueprint v2.0 §5.5 normalised multi-objective."""
+    def _norm(value: float, ref: float) -> float:
+        if ref <= 0:
+            return 0.0
+        return max(0.0, min(1.0, float(value) / ref))
+
+    norm_makespan = _norm(schedule.get("makespan_hours", 0) or 0, _NORM_MAKESPAN_H)
+    norm_tardy = _norm(
+        schedule.get("total_tardiness_transport_hours",
+                     schedule.get("total_tardiness_hours", 0)) or 0,
+        _NORM_TARDINESS_H,
+    )
+    norm_idle = _norm(schedule.get("total_idle_hours", 0) or 0, _NORM_IDLE_H)
+    norm_setups = _norm(schedule.get("setups", 0) or 0, _NORM_SETUPS)
+    norm_throughput = _norm(
+        schedule.get("throughput_eur_day", 0) or 0, _NORM_THROUGHPUT_EUR_DAY,
+    )
+
+    # Quality-risk: mean P(error) already normalised in [0,1].
+    per_op = _predict_risks_safe(cfg, schedule) if cfg.quality_risk_predictor else []
+    if per_op:
+        mean_risk = sum(per_op) / len(per_op)
+    else:
+        mean_risk = float(schedule.get("quality_risk_mean", schedule.get("quality_risk", 0)) or 0)
+    hard_hits = sum(1 for r in per_op if r >= cfg.quality_risk_hard_threshold)
+
+    fitness = (
+        cfg.w_v2_makespan * norm_makespan
+        + cfg.w_v2_tardiness_transport * norm_tardy
+        + cfg.w_v2_idle_operators * norm_idle
+        + cfg.w_v2_setup_time * norm_setups
+        + cfg.w_v2_quality_risk * mean_risk
+        - cfg.w_v2_throughput_eur_day * norm_throughput  # negated: higher throughput → lower fitness
+    )
+    if hard_hits:
+        fitness += cfg.quality_risk_hard_penalty * hard_hits * cfg.w_v2_quality_risk
     return fitness
 
 

@@ -132,6 +132,17 @@ def _pocket_count(state: FactoryState, mold_id: str) -> int:
     return max(1, int(getattr(mold_info, "pocket_count", 1) or 1))
 
 
+# Sprint P.8 — queue time between consecutive phases (Blueprint PL22).
+# Default matches `planning.queue_time.median_h` seeded in Sprint L.4.
+DEFAULT_QUEUE_TIME_MINUTES = 5.2 * 60.0
+# Sprint P.9 — buffer pós-Desmolde (Blueprint PL21: 95% of errors detected
+# at Desmolde → reserve 4h after to absorb rework without cascade).
+DEFAULT_POST_DESMOLDE_BUFFER_MINUTES = 4 * 60.0
+# Phase names to which the post-Desmolde buffer applies. We recognise the
+# Portuguese canonical form stored in `SchedulingOperation.phase_name`.
+POST_DESMOLDE_PHASE_NAMES = {"desmolde", "Desmolde", "DESMOLDE"}
+
+
 def decode(
     chromosome: Chromosome,
     operations: List[SchedulingOperation],
@@ -139,15 +150,29 @@ def decode(
     state: FactoryState,
     horizon_start: datetime,
     horizon_end: datetime,
+    *,
+    queue_time_minutes: Optional[float] = None,
+    post_desmolde_buffer_minutes: Optional[float] = None,
 ) -> Dict[str, Any]:
-    """
-    Decode a chromosome into a feasible schedule.
+    """Decode a chromosome into a feasible schedule.
+
+    Sprint P.8/P.9 knobs:
+    * `queue_time_minutes` — minimum gap between consecutive phases of the
+      same order (PL22, default disabled unless caller passes a value).
+    * `post_desmolde_buffer_minutes` — extra slack after Desmolde phases
+      to absorb rework (PL21, default disabled).
+
+    Both knobs default to `None` (disabled) so legacy callers see identical
+    behaviour. CPOEngine threads these through from `CPOConfig.use_queue_time`
+    and `CPOConfig.use_post_desmolde_buffer`.
 
     Returns a dict compatible with `SchedulingResult` fields plus:
     - operations: list of scheduled ops (as dicts, serializable)
     - makespan_hours, total_tardiness_hours, num_late_orders, setups
     - warnings, infeasible_ops (ids that couldn't fit)
     """
+    queue_gap = timedelta(minutes=queue_time_minutes or 0.0)
+    post_desmolde_extra = timedelta(minutes=post_desmolde_buffer_minutes or 0.0)
     if not operations:
         return _empty_result(horizon_start)
 
@@ -188,6 +213,12 @@ def decode(
         if batch_id:
             batch_members[batch_id].append(op)
 
+    # Sprint P.8/P.9 — lookup for predecessor metadata by id (needed by
+    # _earliest_start to distinguish Desmolde endings).
+    op_by_id: Dict[str, SchedulingOperation] = {
+        op.operation_id: op for op in operations
+    }
+
     scheduled: List[ScheduledOp] = []
     infeasible: List[str] = []
     warnings: List[str] = []
@@ -225,7 +256,11 @@ def decode(
                 batch_peers = peers
 
             earliest_pred_end = max(
-                _earliest_start(p, order_to_ops, op_end_at, horizon_start)
+                _earliest_start(
+                    p, order_to_ops, op_end_at, horizon_start,
+                    queue_gap=queue_gap, post_desmolde_extra=post_desmolde_extra,
+                    op_by_id=op_by_id,
+                )
                 for p in batch_peers
             )
 
@@ -403,19 +438,57 @@ def _earliest_start(
     order_to_ops: Dict[str, List[SchedulingOperation]],
     op_end_at: Dict[str, datetime],
     default: datetime,
+    *,
+    queue_gap: Optional[timedelta] = None,
+    post_desmolde_extra: Optional[timedelta] = None,
+    op_by_id: Optional[Dict[str, SchedulingOperation]] = None,
 ) -> datetime:
+    """Earliest start honouring precedences, queue time (PL22) and
+    post-Desmolde buffer (PL21).
+
+    * `queue_gap` — minimum idle between predecessor end and this op's start
+      (Blueprint median 5.2h). Applied to EVERY sibling/explicit predecessor
+      that ended at a scheduled moment.
+    * `post_desmolde_extra` — extra buffer when the predecessor is a Desmolde
+      phase (95% of errors detected here). Stacks on top of `queue_gap`.
+    """
     earliest = default
+    q_gap = queue_gap or timedelta()
+    pd_extra = post_desmolde_extra or timedelta()
+
+    def _with_gaps(end: datetime, pred_op: Optional[SchedulingOperation]) -> datetime:
+        shifted = end + q_gap
+        if pred_op is not None and _is_desmolde(pred_op):
+            shifted += pd_extra
+        return shifted
+
     siblings = order_to_ops[op.order_id]
     for prev in siblings:
         if prev.sequence < op.sequence:
             end = op_end_at.get(prev.operation_id)
-            if end and end > earliest:
-                earliest = end
+            if end is None:
+                continue
+            candidate = _with_gaps(end, prev)
+            if candidate > earliest:
+                earliest = candidate
     for pid in op.predecessor_ops:
         end = op_end_at.get(pid)
-        if end and end > earliest:
-            earliest = end
+        if end is None:
+            continue
+        pred_op = op_by_id.get(pid) if op_by_id else None
+        candidate = _with_gaps(end, pred_op)
+        if candidate > earliest:
+            earliest = candidate
     return earliest
+
+
+def _is_desmolde(op: SchedulingOperation) -> bool:
+    """Match either the phase_name or a `desmolde`-style phase_id."""
+    name = (getattr(op, "phase_name", None) or "").strip().lower()
+    if name.startswith("desmolde"):
+        return True
+    phase_id = (op.phase_id or "").strip().lower()
+    return phase_id == "desmolde" or phase_id.endswith(".desmolde")
 
 
 def _pick_workers(

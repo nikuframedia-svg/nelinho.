@@ -28,6 +28,7 @@ from src.plan.cpo.chromosome import Chromosome
 from src.plan.cpo.decoder import decode
 from src.plan.cpo.fitness import FitnessConfig, compute_fitness
 from src.plan.cpo.frrmab import FRRMAB
+from src.plan.cpo.greedy_pipeline import GreedyPipeline, PHASE_BUDGETS_S
 from src.plan.cpo.mapelites import MAPElites3D
 from src.plan.cpo.safety_net import apply_safety_net
 from src.plan.cpo.state import FactoryState
@@ -37,9 +38,18 @@ from src.plan.engines.scheduling_adapter import SchedulingMachine, SchedulingOpe
 logger = logging.getLogger(__name__)
 
 
+# Sprint P.8/P.9 decoder defaults — match `planning.queue_time.median_h` and
+# `planning.buffer.post_desmolde_h` seeded in Sprint L.4.
+_DECODER_QUEUE_TIME_MIN = 5.2 * 60.0
+_DECODER_POST_DESMOLDE_MIN = 4.0 * 60.0
+
+
 @dataclass
 class CPOConfig:
     population_size: int = 100
+    # NOTE: blueprint v2.0 calls for 200 generations; default stays 50 for
+    # backwards-compat with Sprint E/F tests. Pass `generations=200`
+    # explicitly (or read from TenantConfig.planning.cpo.gen_count).
     generations: int = 50
     tournament_size: int = 5
     crossover_rate: float = 0.60
@@ -49,17 +59,60 @@ class CPOConfig:
     time_limit_sec: float = 30.0
 
     # -------------------- Sprint F adaptive flags -------------------- #
-    #: Use FRRMAB for mutation operator selection (6 ops).
     use_frrmab: bool = True
-    #: Track elite candidates in a MAP-Elites 3D archive.
     use_mapelites: bool = True
-    #: Let the surrogate skip clearly worse candidates before decode.
-    #: Off by default — requires >=20 real evals before useful.
     use_surrogate: bool = False
-    #: Restart fraction of the population when stagnant for N generations.
     use_restart: bool = True
     stagnation_limit_generations: int = 20
-    restart_random_fraction: float = 0.50  # rest comes from elite+MAP-Elites
+    restart_random_fraction: float = 0.50
+
+    # -------------------- Sprint P v2.0 cascade flags ---------------- #
+    #: Explicit greedy 8-phase pipeline instead of the embedded decoder.
+    use_greedy_pipeline: bool = False
+    #: Schedule backwards from `ProductionOrder.transport_date` (PL14).
+    use_backwards_scheduling: bool = False
+    #: Honor dual-resource requirement in Laminagem (WF11).
+    use_hungarian_pair_assignment: bool = False
+    #: Queue time (5.2h median) between consecutive phases (PL22).
+    use_queue_time: bool = False
+    #: Buffer pós-Desmolde (PL21 — 95% of errors detected at Desmolde).
+    use_post_desmolde_buffer: bool = False
+    #: MAP-Elites v2.0 axes (lam_util / tardiness_transport / idle_pct).
+    use_v2_mapelites_axes: bool = False
+    #: CP-SAT Rolling Horizon L-RHO as the 5th cascade phase.
+    use_cpsat_lrho: bool = False
+    #: Treat chromosome.routing_choices as an A/B selector per op.
+    use_routing_variants: bool = False
+
+    # -------------------- Sprint P.12 phase budgets ------------------ #
+    #: Total cascade budget (seconds). Sub-budgets MUST sum to ≤ this value.
+    total_budget_s: float = 60.0
+    greedy_budget_s: float = 2.0
+    ga_budget_s: float = 30.0
+    mapelites_budget_s: float = 5.0
+    cpsat_budget_s: float = 15.0
+    workforce_budget_s: float = 3.0
+
+    def __post_init__(self) -> None:
+        # Belt-and-braces: ensure the GA budget doesn't exceed total. The
+        # decoder-level `time_limit_sec` is kept in sync with `ga_budget_s`
+        # so a caller that tightens one of them doesn't see the GA happily
+        # run over the consolidated budget.
+        if self.ga_budget_s > self.total_budget_s:
+            self.ga_budget_s = self.total_budget_s
+        # A zero time_limit is used by tests that want synchronous decoding
+        # without GA iteration; leave that case alone.
+        if self.time_limit_sec > self.ga_budget_s and self.ga_budget_s > 0:
+            self.time_limit_sec = self.ga_budget_s
+
+    def phase_budget_total(self) -> float:
+        return (
+            self.greedy_budget_s
+            + self.ga_budget_s
+            + self.mapelites_budget_s
+            + self.cpsat_budget_s
+            + self.workforce_budget_s
+        )
 
 
 class CPOv4Engine:
@@ -107,8 +160,33 @@ class CPOv4Engine:
         n = len(operations)
 
         # 1. Baseline greedy (chromosome = identity permutation)
+        # Sprint P.1 — explicit 8-phase pipeline when opted-in.
         baseline_chromo = Chromosome.identity(n)
-        baseline = decode(baseline_chromo, operations, machines, self.state, horizon_start, horizon_end)
+        queue_time_min = (
+            _DECODER_QUEUE_TIME_MIN if self.config.use_queue_time else None
+        )
+        post_desmolde_min = (
+            _DECODER_POST_DESMOLDE_MIN if self.config.use_post_desmolde_buffer else None
+        )
+        greedy_meta: Optional[Dict[str, Any]] = None
+        if self.config.use_greedy_pipeline:
+            pipeline = GreedyPipeline(
+                self.state, budget_s=self.config.greedy_budget_s,
+            )
+            result = pipeline.run(
+                baseline_chromo, operations, machines, horizon_start, horizon_end,
+                queue_time_minutes=queue_time_min,
+                post_desmolde_buffer_minutes=post_desmolde_min,
+            )
+            baseline = result.schedule
+            greedy_meta = result.to_meta()
+        else:
+            baseline = decode(
+                baseline_chromo, operations, machines, self.state,
+                horizon_start, horizon_end,
+                queue_time_minutes=queue_time_min,
+                post_desmolde_buffer_minutes=post_desmolde_min,
+            )
         baseline_fit = compute_fitness(baseline, self.fitness_config)
         logger.info(
             f"CPO baseline: makespan={baseline['makespan_hours']:.1f}h, "
@@ -159,7 +237,12 @@ class CPOv4Engine:
                     total_skips += 1
                     continue
 
-                result = decode(chromo, operations, machines, self.state, horizon_start, horizon_end)
+                result = decode(
+                    chromo, operations, machines, self.state,
+                    horizon_start, horizon_end,
+                    queue_time_minutes=queue_time_min,
+                    post_desmolde_buffer_minutes=post_desmolde_min,
+                )
                 fit = compute_fitness(result, self.fitness_config)
                 scored.append((fit, chromo, result))
                 total_real_evals += 1
@@ -244,7 +327,7 @@ class CPOv4Engine:
         elapsed = time.time() - started
         best_final["solve_time_sec"] = round(elapsed, 3)
         best_final["status"] = "optimal" if not best_final.get("safety_net_triggered") else "safety_net"
-        best_final["cpo_meta"] = {
+        cpo_meta: Dict[str, Any] = {
             "baseline_fitness": round(baseline_fit, 2),
             "best_fitness": round(best_fit, 2),
             "improvement_pct": round(
@@ -257,6 +340,27 @@ class CPOv4Engine:
             "mapelites": self._mapelites.snapshot() if self._mapelites is not None else None,
             "surrogate": self._surrogate.snapshot() if self._surrogate is not None else None,
         }
+        if greedy_meta is not None:
+            cpo_meta["greedy_pipeline"] = greedy_meta
+        cpo_meta["phase_budgets"] = {
+            "total": self.config.total_budget_s,
+            "greedy": self.config.greedy_budget_s,
+            "ga": self.config.ga_budget_s,
+            "mapelites": self.config.mapelites_budget_s,
+            "cpsat": self.config.cpsat_budget_s,
+            "workforce": self.config.workforce_budget_s,
+        }
+        cpo_meta["flags"] = {
+            "use_greedy_pipeline": self.config.use_greedy_pipeline,
+            "use_queue_time": self.config.use_queue_time,
+            "use_post_desmolde_buffer": self.config.use_post_desmolde_buffer,
+            "use_backwards_scheduling": self.config.use_backwards_scheduling,
+            "use_hungarian_pair_assignment": self.config.use_hungarian_pair_assignment,
+            "use_v2_mapelites_axes": self.config.use_v2_mapelites_axes,
+            "use_cpsat_lrho": self.config.use_cpsat_lrho,
+            "use_routing_variants": self.config.use_routing_variants,
+        }
+        best_final["cpo_meta"] = cpo_meta
         return best_final
 
     # ------------------------------------------------------------------ #

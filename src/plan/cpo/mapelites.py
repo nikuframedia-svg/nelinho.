@@ -66,10 +66,19 @@ class Elite:
 
 @dataclass
 class MAPElites3D:
-    """
-    Discrete behavior archive for CPO v4.
+    """Discrete behavior archive for CPO v4.
 
     Thread-unsafe by design — the GA runs single-threaded.
+
+    Sprint P.11 — the three descriptor axes can be swapped for the Blueprint
+    v2.0 set via `use_v2_axes=True`:
+
+      Legacy (Sprint F):    x=avg_utilization, y=total_tardiness_hours, z=num_late_orders
+      v2.0 (Blueprint):     x=lam_utilization, y=tardiness_transport_d, z=idle_pct
+
+    The schedule dict is expected to carry both sets of keys when
+    `use_v2_axes=True`; missing v2.0 keys fall back to the legacy values
+    so that a half-migrated decoder still populates the grid sensibly.
     """
 
     bins: Tuple[int, int, int] = DEFAULT_BINS
@@ -77,6 +86,7 @@ class MAPElites3D:
     max_late_orders: int = DEFAULT_MAX_LATE_ORDERS
     injection_period_generations: int = 50
     injection_fraction: float = 0.10
+    use_v2_axes: bool = False
 
     _archive: Dict[Tuple[int, int, int], Elite] = field(default_factory=dict)
     _insertions: int = 0
@@ -98,11 +108,7 @@ class MAPElites3D:
         coord = self._cell_for(schedule)
         key = coord.as_tuple()
 
-        behavioral = {
-            "avg_utilization": float(schedule.get("avg_utilization", 0.0)),
-            "total_tardiness_hours": float(schedule.get("total_tardiness_hours", 0.0)),
-            "num_late_orders": int(schedule.get("num_late_orders", 0)),
-        }
+        behavioral = self._behavioral_from_schedule(schedule)
 
         existing = self._archive.get(key)
         if existing is None:
@@ -214,18 +220,68 @@ class MAPElites3D:
 
     # -------------------- internals ---------------------------------- #
 
+    def _behavioral_from_schedule(self, schedule: Dict[str, Any]) -> Dict[str, float]:
+        """Extract the descriptor values used for both binning and Timeline
+        display. When `use_v2_axes=True`, prefers the v2.0 keys (lam_utilization,
+        tardiness_transport_d, idle_pct) but falls back to legacy keys so a
+        partially-migrated decoder still populates the archive."""
+        if self.use_v2_axes:
+            return {
+                "lam_utilization": float(
+                    schedule.get("lam_utilization",
+                                 schedule.get("avg_utilization", 0.0)) or 0.0
+                ),
+                "tardiness_transport_d": float(
+                    schedule.get(
+                        "tardiness_transport_d",
+                        schedule.get("total_tardiness_hours", 0.0) / 24.0,
+                    ) or 0.0
+                ),
+                "idle_pct": float(schedule.get("idle_pct", 0.0) or 0.0),
+            }
+        return {
+            "avg_utilization": float(schedule.get("avg_utilization", 0.0)),
+            "total_tardiness_hours": float(schedule.get("total_tardiness_hours", 0.0)),
+            "num_late_orders": int(schedule.get("num_late_orders", 0)),
+        }
+
     def _cell_for(self, schedule: Dict[str, Any]) -> CellCoord:
+        if self.use_v2_axes:
+            return self._cell_for_v2(schedule)
         util = float(schedule.get("avg_utilization", 0.0))
         tardy_h = float(schedule.get("total_tardiness_hours", 0.0))
         late = int(schedule.get("num_late_orders", 0))
-
         return CellCoord(
             x=self._bin(util, 0.0, 100.0, self.bins[0]),
             y=self._bin(tardy_h, 0.0, self.max_tardy_hours, self.bins[1]),
             z=self._bin(float(late), 0.0, float(self.max_late_orders), self.bins[2]),
         )
 
+    def _cell_for_v2(self, schedule: Dict[str, Any]) -> CellCoord:
+        # Blueprint v2.0 axes:
+        # X: Laminagem utilisation (0..100%)
+        # Y: max tardiness vs transport (0..14 days)
+        # Z: operators idle (0..50%)
+        lam_util = float(schedule.get("lam_utilization",
+                                      schedule.get("avg_utilization", 0.0)) or 0.0)
+        tardy_d = float(schedule.get(
+            "tardiness_transport_d",
+            (schedule.get("total_tardiness_hours", 0.0) or 0.0) / 24.0,
+        ))
+        idle_pct = float(schedule.get("idle_pct", 0.0) or 0.0)
+        return CellCoord(
+            x=self._bin(lam_util, 0.0, 100.0, self.bins[0]),
+            y=self._bin(tardy_d, 0.0, 14.0, self.bins[1]),
+            z=self._bin(idle_pct, 0.0, 50.0, self.bins[2]),
+        )
+
     def _cell_for_behavioral(self, bd: Dict[str, float]) -> CellCoord:
+        if self.use_v2_axes:
+            return CellCoord(
+                x=self._bin(bd.get("lam_utilization", 0.0), 0.0, 100.0, self.bins[0]),
+                y=self._bin(bd.get("tardiness_transport_d", 0.0), 0.0, 14.0, self.bins[1]),
+                z=self._bin(bd.get("idle_pct", 0.0), 0.0, 50.0, self.bins[2]),
+            )
         return CellCoord(
             x=self._bin(bd.get("avg_utilization", 0.0), 0.0, 100.0, self.bins[0]),
             y=self._bin(bd.get("total_tardiness_hours", 0.0), 0.0, self.max_tardy_hours, self.bins[1]),
