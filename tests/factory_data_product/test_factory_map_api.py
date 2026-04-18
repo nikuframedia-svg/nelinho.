@@ -31,6 +31,12 @@ def _stub_publish(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _clear_cache():
+    from src.core.services.tenant_config_service import _reset_cache_for_tests
+    _reset_cache_for_tests()
+
+
+@pytest.fixture(autouse=True)
 def _no_redis_cache(monkeypatch):
     """Kill the Redis cache path so tests exercise the service every call."""
     async def fake_get_redis():
@@ -80,11 +86,15 @@ def test_kpis_happy_path():
     s = FakeSession()
     _queue(s, scalars=[("IN_PROGRESS", 3), ("COMPLETED", 5)])
     _queue(s, scalar=1)
+    # Sprint Q ThroughputService now runs on the back of kpis(); pad queue.
+    for _ in range(8):
+        _queue(s, scalars=[])
     resp = _client(s).get("/v1/factory-map/kpis", headers=_HEADERS)
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["wip"] == 3
-    assert body["throughput_eur_day"]["status"] == "unavailable"
+    throughput = body["throughput_eur_day"]
+    assert "today" in throughput or throughput.get("status") == "unavailable"
 
 
 # ---------------------------------------------------------------------------

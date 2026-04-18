@@ -470,11 +470,9 @@ class FactoryMapService:
             total_errors = int(quality.get("total_errors") or 0)
             defect_rate = round(total_errors / orders_summary["total"], 3)
 
-        # Throughput €/dia — intentionally stubbed until Sprint Q.0.
-        throughput_eur_day = {
-            "status": "unavailable",
-            "reason": "ProductPricing (Sprint Q.0) not yet deployed",
-        }
+        # Sprint Q.5 — real throughput €/dia from ThroughputService. Falls back
+        # to `unavailable` when the service / table isn't wired on this tenant.
+        throughput_eur_day = await self._throughput_eur_day()
 
         return {
             "wip": orders_summary["in_progress"],
@@ -483,6 +481,32 @@ class FactoryMapService:
             "defect_rate": defect_rate,
             "throughput_eur_day": throughput_eur_day,
         }
+
+    async def _throughput_eur_day(self) -> dict[str, Any]:
+        try:
+            from src.profit.services.throughput_service import (
+                ThroughputService,
+                on_target_band,
+            )
+
+            svc = ThroughputService(self.session, self.tenant_id)
+            targets = await svc.load_targets()
+            today = await svc.throughput_today()
+            band = on_target_band(
+                today, targets["min_eur_day"], targets["max_eur_day"],
+            )
+            return {
+                "today": float(today),
+                "target_min": float(targets["min_eur_day"]),
+                "target_max": float(targets["max_eur_day"]),
+                "on_target": band,
+            }
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning("throughput_eur_day unavailable: %s", exc)
+            return {
+                "status": "unavailable",
+                "reason": f"{type(exc).__name__}: {exc}",
+            }
 
     # ─── private helpers ──────────────────────────────────────────────────
 

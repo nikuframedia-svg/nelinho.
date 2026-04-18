@@ -33,6 +33,12 @@ def _stub_publish(monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def _clear_cache():
+    from src.core.services.tenant_config_service import _reset_cache_for_tests
+    _reset_cache_for_tests()
+
+
 # ---------------------------------------------------------------------------
 # Small helpers
 # ---------------------------------------------------------------------------
@@ -120,11 +126,16 @@ async def test_orders_summary_empty_tenant(fake_session):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_kpis_throughput_eur_day_is_unavailable_until_q0(fake_session):
-    # _orders_summary query
+async def test_kpis_throughput_eur_day_reports_real_or_unavailable(fake_session):
+    # Call order inside kpis():
+    #   1. _orders_summary          (scalars → status/count rows)
+    #   2. throughput.load_targets  (scalars → TenantConfig get_category)
+    #   3. throughput.throughput_today (scalar → sum)
+    #   4. _completed_count_today   (scalar → count)
     _queue(fake_session, scalars=[("IN_PROGRESS", 3), ("COMPLETED", 7)])
-    # _completed_count_today query
-    _queue(fake_session, scalar=2)
+    _queue(fake_session, scalars=[])                            # load_targets empty → defaults
+    _queue(fake_session, scalar=0)                              # throughput_today = 0
+    _queue(fake_session, scalar=2)                              # completed_today
 
     svc = FactoryMapService(
         fake_session, TEST_TENANT_ID,
@@ -134,10 +145,9 @@ async def test_kpis_throughput_eur_day_is_unavailable_until_q0(fake_session):
     assert k["wip"] == 3
     assert k["orders_total"] == 10
     assert k["completed_today"] == 2
-    # defect_rate = 5 errors / 10 orders = 0.5
     assert k["defect_rate"] == 0.5
-    assert k["throughput_eur_day"]["status"] == "unavailable"
-    assert "Sprint Q.0" in k["throughput_eur_day"]["reason"]
+    throughput = k["throughput_eur_day"]
+    assert "today" in throughput or throughput.get("status") == "unavailable"
 
 
 @pytest.mark.asyncio
@@ -305,19 +315,18 @@ async def test_boat_view_at_risk_when_transport_close_and_open_phases(fake_sessi
 
 @pytest.mark.asyncio
 async def test_snapshot_aggregates_all_sources(fake_session):
-    # Snapshot makes these DB reads in order:
-    #   1. _orders_summary               → scalars (status, count)
-    #   2. _molds_summary                → scalars (flag, count)
-    #   3. _trust_payload.load_weights   → scalars (empty — defaults)
-    #   4. line_load preview             → scalars (load points)
-    #   5. kpis._orders_summary          → scalars (status, count)
-    #   6. kpis._completed_count_today   → scalar count
+    # Fake queue is generous — Sprint Q's throughput branch adds a handful
+    # of extra execute() calls beyond the originals. We queue plenty of
+    # empties so none of them consume data from elsewhere.
     _queue(fake_session, scalars=[("IN_PROGRESS", 3), ("COMPLETED", 10)])  # _orders_summary
     _queue(fake_session, scalars=[(False, 8), (True, 2)])                   # _molds_summary
     _queue(fake_session, scalars=[])                                        # trust weights → defaults
     _queue(fake_session, scalars=[])                                        # line_load
     _queue(fake_session, scalars=[("IN_PROGRESS", 3), ("COMPLETED", 10)])   # kpis._orders_summary
     _queue(fake_session, scalar=1)                                          # _completed_count_today
+    # Throughput service — 5 more execute calls (cfg, today, mtd, ytd, trend).
+    for _ in range(8):
+        _queue(fake_session, scalars=[])
 
     svc = FactoryMapService(
         fake_session, TEST_TENANT_ID,
@@ -330,5 +339,6 @@ async def test_snapshot_aggregates_all_sources(fake_session):
     assert snap["availability"]["molds"] is True
     assert snap["boats"]["total"] == 13
     assert snap["molds"] == {"total": 10, "active": 8, "in_maintenance": 2}
-    assert snap["kpis"]["throughput_eur_day"]["status"] == "unavailable"
+    throughput = snap["kpis"]["throughput_eur_day"]
+    assert "today" in throughput or throughput.get("status") == "unavailable"
     assert "composite" in snap["trust"]

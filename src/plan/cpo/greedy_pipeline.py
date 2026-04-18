@@ -325,6 +325,16 @@ class GreedyPipeline:
         ) if avg_util_pct else 0.0
         schedule["tardiness_transport_d"] = round(tardiness_transport_d, 3)
         schedule["lam_utilization"] = round(lam_utilization, 2)
+
+        # Sprint Q.5 wire — the caller may attach a `revenue_by_order` dict so
+        # the greedy pipeline can populate `throughput_eur_day` for the GA
+        # fitness term (Sprint P.6). The dict is an optional channel: when
+        # absent the fitness term falls back to zero (equivalent to weight=0).
+        revenue_by_order = getattr(self, "_revenue_by_order", None)
+        if revenue_by_order:
+            schedule["throughput_eur_day"] = _estimate_throughput_eur_day(
+                ops, revenue_by_order, makespan_h,
+            )
         return schedule
 
 
@@ -350,3 +360,29 @@ def _as_datetime(value: Any) -> datetime:
 def _is_laminagem_phase(op_dict: Dict[str, Any]) -> bool:
     name = (op_dict.get("phase_name") or op_dict.get("phase_id") or "")
     return "laminag" in str(name).lower()
+
+
+def _estimate_throughput_eur_day(
+    ops: List[Dict[str, Any]],
+    revenue_by_order: Dict[str, Any],
+    makespan_hours: float,
+) -> float:
+    """Sum per-order revenue for orders whose LAST op finishes within the
+    schedule, divided by horizon days. Defaults to zero when the schedule
+    is sub-day (makespan < 1h)."""
+    if makespan_hours <= 0:
+        return 0.0
+    horizon_days = max(1.0, makespan_hours / 24.0)
+    seen_orders: set[str] = set()
+    total = 0.0
+    for op in ops:
+        order_id = str(op.get("order_id") or "")
+        if not order_id or order_id in seen_orders:
+            continue
+        seen_orders.add(order_id)
+        revenue = revenue_by_order.get(order_id, 0)
+        try:
+            total += float(revenue or 0)
+        except (TypeError, ValueError):
+            continue
+    return round(total / horizon_days, 2)

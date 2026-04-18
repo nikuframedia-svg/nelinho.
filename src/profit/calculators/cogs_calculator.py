@@ -69,6 +69,27 @@ class CostBreakdown:
             self.scrap.total
         )
 
+    def per_piece_breakdown(self) -> Dict[str, float]:
+        """Sprint Q.1 / CS01 — flat per-piece costs for the `/cogs/{sku}/breakdown`
+        endpoint. Totals always sum to `total_cogs / qty` within rounding."""
+        total_per_unit = (
+            self.material.per_unit +
+            self.labor.per_unit +
+            self.machine.per_unit +
+            self.setup.per_unit +
+            self.overhead.per_unit +
+            self.scrap.per_unit
+        )
+        return {
+            "material_per_unit": float(self.material.per_unit),
+            "labor_per_unit": float(self.labor.per_unit),
+            "machine_per_unit": float(self.machine.per_unit),
+            "setup_per_unit": float(self.setup.per_unit),
+            "overhead_per_unit": float(self.overhead.per_unit),
+            "scrap_per_unit": float(self.scrap.per_unit),
+            "total_per_unit": float(total_per_unit),
+        }
+
 
 @dataclass
 class COGSResult:
