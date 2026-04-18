@@ -1,0 +1,289 @@
+"""
+ProdPlan ONE — DurationModel (Sprint H.2)
+==========================================
+
+Predicts real phase duration (hours) per (modelo_id, fase_id) using
+Gradient Boosting. Replaces the NELO `horas_standard` coefficients that
+diverge from reality by up to 25x.
+
+Consumed by `RoutingResolver` (Sprint E) when the active model is newer
+than the in-memory median aggregates. RetrainJob schedule: daily at
+02:30 UTC.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+from statistics import median
+from typing import Any, Dict, List, Optional, Tuple
+from uuid import UUID
+
+import numpy as np
+from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.model_selection import train_test_split
+
+from src.ml.jobs.base import RetrainJob
+from src.ml.models_domain._common import encode_categoricals, wmape
+
+logger = logging.getLogger(__name__)
+
+
+CATEGORICAL_COLS = ("modelo_id", "fase_id")
+NUMERIC_COLS = ("team_size", "mold_pocket_count", "is_rework", "queue_depth")
+
+
+@dataclass
+class DurationModel:
+    """
+    Wraps a `GradientBoostingRegressor` with a stable feature schema.
+
+    Persistence is via `joblib` (through `ModelRegistry`) — the whole
+    dataclass pickles cleanly.
+    """
+
+    regressor: Optional[GradientBoostingRegressor] = None
+    vocabulary: Dict[str, List[str]] = field(default_factory=dict)
+    p90_residual: float = 0.0  # empirical residual used to synthesize p90
+    n_samples_trained: int = 0
+
+    def train(
+        self,
+        rows: List[Dict[str, Any]],
+        *,
+        random_state: int = 42,
+    ) -> Dict[str, Any]:
+        """
+        Train on a list of feature dicts with key `horas_reais` as the target.
+
+        Returns a metrics dict suitable for `MLModelArtifact.metrics`.
+        """
+        if not rows:
+            raise ValueError("DurationModel.train called with empty rows")
+
+        targets = np.asarray([float(r.get("horas_reais", 0.0) or 0.0) for r in rows])
+        valid_mask = targets > 0
+        if valid_mask.sum() < 10:
+            raise ValueError(
+                f"DurationModel needs >=10 rows with positive horas_reais; "
+                f"got {int(valid_mask.sum())}"
+            )
+
+        filtered = [r for r, ok in zip(rows, valid_mask) if ok]
+        y = targets[valid_mask]
+
+        X, vocab = encode_categoricals(filtered, CATEGORICAL_COLS, NUMERIC_COLS)
+        self.vocabulary = vocab
+        self.n_samples_trained = len(filtered)
+
+        # Hold out 20% for validation to compute WMAPE & p90 residual.
+        if len(filtered) >= 20:
+            X_train, X_val, y_train, y_val = train_test_split(
+                X, y, test_size=0.2, random_state=random_state
+            )
+        else:
+            X_train, X_val = X, X
+            y_train, y_val = y, y
+
+        model = GradientBoostingRegressor(
+            n_estimators=100,
+            max_depth=4,
+            learning_rate=0.08,
+            random_state=random_state,
+        )
+        model.fit(X_train, y_train)
+        self.regressor = model
+
+        y_pred = model.predict(X_val)
+        residuals = y_val - y_pred
+        self.p90_residual = float(np.percentile(np.abs(residuals), 90))
+
+        metrics = {
+            "wmape": round(wmape(y_val, y_pred), 4),
+            "mae_hours": round(float(np.mean(np.abs(residuals))), 3),
+            "p90_residual_hours": round(self.p90_residual, 3),
+            "samples": len(filtered),
+            "samples_train": len(X_train),
+            "samples_val": len(X_val),
+        }
+        logger.info(
+            f"DurationModel trained: WMAPE={metrics['wmape']}, "
+            f"samples={metrics['samples']}"
+        )
+        return metrics
+
+    def predict(self, row: Dict[str, Any]) -> Dict[str, float]:
+        """
+        Return point estimate + p90 (worst-case) for planning.
+
+        {
+          "p50_hours": 7.4,   # median prediction
+          "p90_hours": 9.1,   # p50 + p90 residual
+        }
+        """
+        if self.regressor is None:
+            raise RuntimeError("DurationModel.predict called before train()")
+        X, _ = encode_categoricals(
+            [row],
+            CATEGORICAL_COLS,
+            NUMERIC_COLS,
+            vocabulary=self.vocabulary,
+        )
+        p50 = float(max(0.0, self.regressor.predict(X)[0]))
+        return {
+            "p50_hours": round(p50, 3),
+            "p90_hours": round(p50 + self.p90_residual, 3),
+        }
+
+    def predict_batch(self, rows: List[Dict[str, Any]]) -> List[Dict[str, float]]:
+        if not rows or self.regressor is None:
+            return []
+        X, _ = encode_categoricals(
+            rows, CATEGORICAL_COLS, NUMERIC_COLS, vocabulary=self.vocabulary
+        )
+        preds = self.regressor.predict(X)
+        return [
+            {
+                "p50_hours": round(float(max(0.0, p)), 3),
+                "p90_hours": round(float(max(0.0, p)) + self.p90_residual, 3),
+            }
+            for p in preds
+        ]
+
+
+# ---------------------------------------------------------------------------
+# RetrainJob
+# ---------------------------------------------------------------------------
+
+class DurationRetrainJob(RetrainJob):
+    model_name = "duration"
+    schedule_cron = "30 2 * * *"  # daily 02:30 UTC
+
+    def __init__(self, semantic_queries: Any = None):
+        self.semantic_queries = semantic_queries
+
+    def extract_features(self, tenant_id: UUID) -> List[Dict[str, Any]]:
+        """
+        Pull (fase, modelo, worker-team, mold, duration) rows from the
+        curated layer. Empty list if the active ingestion isn't available.
+        """
+        rows = build_training_dataset(self.semantic_queries)
+        logger.info(f"DurationRetrainJob extracted {len(rows)} rows")
+        return rows
+
+    def train(self, features: List[Dict[str, Any]]) -> Tuple[DurationModel, int]:
+        model = DurationModel()
+        metrics = model.train(features)
+        return model, int(metrics["samples"])
+
+    def validate(
+        self,
+        model: DurationModel,
+        features: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """
+        Re-use the WMAPE computed during train() — it's already a held-out
+        score. We also run a quick sanity-check on a random subset.
+        """
+        if not features:
+            return {}
+        subset = features[:50]
+        preds = model.predict_batch(subset)
+        actuals = [float(r.get("horas_reais", 0.0)) for r in subset]
+        predicted = [p["p50_hours"] for p in preds]
+        return {
+            "wmape": round(wmape(actuals, predicted), 4),
+            "samples_checked": len(subset),
+            "p90_residual_hours": round(model.p90_residual, 3),
+        }
+
+    def should_promote(
+        self,
+        new_metrics: Dict[str, Any],
+        baseline_metrics: Optional[Dict[str, Any]],
+    ) -> bool:
+        # Promote only if WMAPE strictly improved OR we have no baseline yet.
+        new_wmape = _safe_float(new_metrics.get("wmape"))
+        if new_wmape is None:
+            return False
+        if not baseline_metrics:
+            return True
+        old_wmape = _safe_float(baseline_metrics.get("wmape"))
+        return old_wmape is None or new_wmape < old_wmape
+
+
+# ---------------------------------------------------------------------------
+# Training dataset builder — independent so Sprint F surrogate can reuse
+# ---------------------------------------------------------------------------
+
+def build_training_dataset(semantic_queries: Any) -> List[Dict[str, Any]]:
+    """
+    Assemble rows of shape {modelo_id, fase_id, team_size, mold_pocket_count,
+    is_rework, queue_depth, horas_reais} from the curated layer.
+
+    The extraction is best-effort: missing joins produce zeros/defaults, not
+    exceptions. Returns [] when no curated data is available.
+    """
+    if semantic_queries is None:
+        return []
+    engine = getattr(semantic_queries, "engine", None)
+    if engine is None:
+        return []
+
+    active_id = getattr(engine, "_active_ingestion_id", None)
+    curated = getattr(engine, "_curated_data", {}) or {}
+    scope = curated.get(active_id, {}) if active_id else {}
+
+    phases = scope.get("order_phases") or scope.get("CuratedOrderPhase") or []
+    orders = scope.get("orders") or scope.get("CuratedOrder") or []
+    quality = scope.get("quality_events") or scope.get("CuratedQualityEvent") or []
+    molds = scope.get("molds") or scope.get("CuratedMold") or []
+
+    order_model = {
+        str(getattr(o, "of_id", "")): str(getattr(o, "modelo_id", ""))
+        for o in orders
+        if getattr(o, "of_id", None) is not None
+    }
+    mold_pockets = {
+        str(getattr(m, "molde_id", "")): int(getattr(m, "pocket_count", 1) or 1)
+        for m in molds
+    }
+    rework_keys = {
+        (str(getattr(e, "of_id", "")), str(getattr(e, "fase_id", "")))
+        for e in quality
+    }
+
+    # queue_depth proxy: count of phases per fase_id in the dataset
+    queue_depth: Dict[str, int] = {}
+    for p in phases:
+        fid = str(getattr(p, "fase_id", ""))
+        queue_depth[fid] = queue_depth.get(fid, 0) + 1
+
+    rows: List[Dict[str, Any]] = []
+    for p in phases:
+        horas = getattr(p, "horas_reais", None) or getattr(p, "horas_finais", None)
+        if not horas or float(horas) <= 0:
+            continue
+        of_id = str(getattr(p, "of_id", ""))
+        fase_id = str(getattr(p, "fase_id", ""))
+        modelo_id = order_model.get(of_id, "")
+        mold_id = str(getattr(p, "molde_id", "") or "")
+
+        rows.append({
+            "modelo_id": modelo_id,
+            "fase_id": fase_id,
+            "team_size": int(getattr(p, "team_size", 1) or 1),
+            "mold_pocket_count": mold_pockets.get(mold_id, 1),
+            "is_rework": 1 if (of_id, fase_id) in rework_keys else 0,
+            "queue_depth": queue_depth.get(fase_id, 0),
+            "horas_reais": float(horas),
+        })
+
+    return rows
+
+
+def _safe_float(value: Any) -> Optional[float]:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None

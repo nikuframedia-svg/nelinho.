@@ -116,6 +116,15 @@ async def lifespan(app: FastAPI):
             except Exception as watcher_error:
                 logger.warning(f"Factory watcher registration failed: {watcher_error}")
 
+            # ML retrain jobs — no-op until active tenants are registered.
+            # In production, call register_ml_retrain_jobs(scheduler, tenant_ids)
+            # after the tenant list is resolved from the DB.
+            try:
+                from src.ml.jobs.scheduling import register_ml_retrain_jobs
+                register_ml_retrain_jobs(scheduler_instance, tenants=None)
+            except Exception as ml_error:
+                logger.warning(f"ML retrain job registration failed: {ml_error}")
+
         logger.info("ProdPlan ONE started successfully")
         
     except Exception as e:
