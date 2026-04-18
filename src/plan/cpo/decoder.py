@@ -8,6 +8,9 @@ Turns a `Chromosome` into a feasible schedule, honoring:
 - machine no-overlap (per centro_custo / machine)
 - worker no-overlap (skills + team_size, NELO pairs for Laminagem)
 - mold exclusivity when `mold_required`
+- Sprint I.4: **multi-pocket mold batching** — ops of the same model that
+  need the same mold run in parallel on the same mold (up to `pocket_count`
+  boats at once, each holding the mold for `max(duration_i)` time).
 
 Deterministic: same (chromosome, FactoryState, ops, machines, horizon)
 → same schedule.
@@ -39,6 +42,94 @@ class ScheduledOp:
     start: datetime
     end: datetime
     duration_minutes: float
+    mold_batch_id: Optional[str] = None  # Sprint I.4 — ops sharing the same mold slot
+
+
+def compute_mold_batches(
+    operations: List[SchedulingOperation],
+    state: FactoryState,
+) -> Dict[str, str]:
+    """
+    Sprint I.4 — group mould-bound operations that can share a multi-pocket
+    mould slot.
+
+    Returns `{operation_id: batch_id}`. Ops mapped to the same `batch_id`
+    will be scheduled together by the decoder: they start at the same time
+    and the mould stays busy for `max(duration_i)`.
+
+    Grouping rules:
+    - Only ops with `mold_required=True` are candidates.
+    - Ops are grouped by (`model_id`, chosen `mold_id`) — only the same
+      model fits a given mould.
+    - Each batch is capped at the mould's `pocket_count`. Extra ops form
+      a new batch with the same key.
+    - Ops without a model_id, without an eligible mould, or with
+      precedence conflicts between each other are not batched.
+    """
+    if not operations:
+        return {}
+
+    # Group candidate ops by (model_id, mold_id)
+    groups: Dict[tuple, List[SchedulingOperation]] = defaultdict(list)
+    for op in operations:
+        if not op.mold_required:
+            continue
+        if not op.model_id:
+            continue
+        mold_id = op.mold_id
+        if not mold_id:
+            info = state.mold_for(op.model_id)
+            mold_id = info.molde_id if info else None
+        if not mold_id:
+            continue
+        groups[(op.model_id, mold_id)].append(op)
+
+    batches: Dict[str, str] = {}
+
+    for (model_id, mold_id), members in groups.items():
+        if len(members) < 2:
+            continue  # single op — no batching benefit
+        pocket_count = _pocket_count(state, mold_id)
+        if pocket_count <= 1:
+            continue
+
+        # Precedence-free subsets: ops in the same batch must NOT depend on
+        # each other (directly or transitively through predecessor_ops).
+        # Simple filter: drop any op that lists a sibling's operation_id as a
+        # predecessor. Intra-order precedence is by `sequence` — siblings
+        # with different sequences can't run in parallel.
+        independent: List[SchedulingOperation] = []
+        for op in members:
+            conflicts = set(op.predecessor_ops or [])
+            has_sequence_peer = any(
+                peer.order_id == op.order_id and peer.sequence != op.sequence
+                and peer.operation_id != op.operation_id
+                for peer in members
+            )
+            if has_sequence_peer:
+                continue
+            if conflicts.intersection(m.operation_id for m in members if m is not op):
+                continue
+            independent.append(op)
+
+        # Pack into pocket-count-sized batches, deterministic order
+        independent.sort(key=lambda o: (o.order_id, o.sequence, o.operation_id))
+        for chunk_idx in range(0, len(independent), pocket_count):
+            chunk = independent[chunk_idx : chunk_idx + pocket_count]
+            if len(chunk) < 2:
+                continue
+            batch_id = f"mbatch:{model_id}:{mold_id}:{chunk_idx // pocket_count}"
+            for op in chunk:
+                batches[op.operation_id] = batch_id
+
+    return batches
+
+
+def _pocket_count(state: FactoryState, mold_id: str) -> int:
+    mold_info = state.molds.get(mold_id)
+    if mold_info is None:
+        return 1
+    return max(1, int(getattr(mold_info, "pocket_count", 1) or 1))
 
 
 def decode(
@@ -89,6 +180,14 @@ def decode(
     for ops in order_to_ops.values():
         ops.sort(key=lambda o: o.sequence)
 
+    # Sprint I.4 — pre-compute mould-batch assignments
+    mold_batches = compute_mold_batches(operations, state)
+    batch_members: Dict[str, List[SchedulingOperation]] = defaultdict(list)
+    for op in operations:
+        batch_id = mold_batches.get(op.operation_id)
+        if batch_id:
+            batch_members[batch_id].append(op)
+
     scheduled: List[ScheduledOp] = []
     infeasible: List[str] = []
     warnings: List[str] = []
@@ -108,7 +207,27 @@ def decode(
                 new_pending.append(op)
                 continue
 
-            earliest_pred_end = _earliest_start(op, order_to_ops, op_end_at, horizon_start)
+            # Sprint I.4 — if this op is in a mould batch, we must be able to
+            # schedule the WHOLE batch right now. Wait for peers otherwise.
+            batch_id = mold_batches.get(op.operation_id)
+            batch_peers: List[SchedulingOperation] = [op]
+            if batch_id:
+                peers = batch_members.get(batch_id, [])
+                if any(not _precedences_met(p, order_to_ops, op_end_at) for p in peers):
+                    new_pending.append(op)
+                    continue
+                # Members already scheduled in a previous pass are skipped;
+                # avoid double-scheduling the same batch.
+                already_done = {s.operation_id for s in scheduled}
+                peers = [p for p in peers if p.operation_id not in already_done]
+                if not peers:
+                    continue
+                batch_peers = peers
+
+            earliest_pred_end = max(
+                _earliest_start(p, order_to_ops, op_end_at, horizon_start)
+                for p in batch_peers
+            )
 
             # Machine choice: preferred + alternatives, pick earliest available
             candidate_machines = [op.machine_id] if op.machine_id else []
@@ -125,73 +244,88 @@ def decode(
                 key=lambda m: max(machine_free_at[m], earliest_pred_end),
             )
 
-            # Worker pool
+            # Worker pool — a mould batch needs team_size per member
             pool = state.workers_for(str(op.phase_id)) if op.phase_id else set()
             team_size = max(1, int(op.team_size))
+            total_workers_needed = team_size * len(batch_peers)
             if not pool and team_size > 0:
                 # No skill info → treat as manual; allow without worker binding
-                workers_chosen: List[str] = []
+                batch_workers: List[List[str]] = [[] for _ in batch_peers]
             else:
-                workers_chosen = _pick_workers(pool, team_size, worker_free_at, earliest_pred_end)
-                if len(workers_chosen) < team_size:
-                    infeasible.append(op.operation_id)
+                picked = _pick_workers(pool, total_workers_needed, worker_free_at, earliest_pred_end)
+                if len(picked) < total_workers_needed:
+                    # Cannot staff the full batch — infeasible for all peers
+                    for p in batch_peers:
+                        infeasible.append(p.operation_id)
                     continue
+                # Split flat pick into per-peer slots deterministically
+                batch_workers = [
+                    picked[i * team_size : (i + 1) * team_size]
+                    for i in range(len(batch_peers))
+                ]
 
-            # Mold
+            # Mold — all peers share the same mould
             mold_chosen: Optional[str] = op.mold_id
             if op.mold_required and not mold_chosen:
-                # assign from state
                 mold_info = state.mold_for(op.model_id) if op.model_id else None
                 mold_chosen = mold_info.molde_id if mold_info else None
                 if op.mold_required and not mold_chosen:
-                    infeasible.append(op.operation_id)
+                    for p in batch_peers:
+                        infeasible.append(p.operation_id)
                     continue
 
             # Start time = max of (pred end, machine free, workers free, mold free)
-            candidates = [
-                earliest_pred_end,
-                machine_free_at[best_machine],
-            ]
-            for w in workers_chosen:
-                candidates.append(worker_free_at.get(w, horizon_start))
+            candidates = [earliest_pred_end, machine_free_at[best_machine]]
+            for slot in batch_workers:
+                for w in slot:
+                    candidates.append(worker_free_at.get(w, horizon_start))
             if mold_chosen:
                 candidates.append(mold_free_at.get(mold_chosen, horizon_start))
             start = max(candidates)
 
-            duration_min = max(1.0, float(op.duration_minutes))
-            end = start + timedelta(minutes=duration_min)
+            # The batch occupies the mould for max(durations); individual ops
+            # finish at start + their own duration.
+            peer_duration_min = [max(1.0, float(p.duration_minutes)) for p in batch_peers]
+            batch_end = start + timedelta(minutes=max(peer_duration_min))
 
-            if end > horizon_end:
-                infeasible.append(op.operation_id)
-                warnings.append(
-                    f"Op {op.operation_id} exceeds horizon ({end.isoformat()} > "
-                    f"{horizon_end.isoformat()})"
-                )
-                # still schedule it (soft horizon) — track via warning
+            # Emit one ScheduledOp per peer; each peer's end is start + own duration,
+            # but the mould stays busy until batch_end so the next batch waits.
+            flat_worker_list: List[str] = [w for slot in batch_workers for w in slot]
+            for peer, slot_workers, peer_dur in zip(
+                batch_peers, batch_workers, peer_duration_min
+            ):
+                peer_end = start + timedelta(minutes=peer_dur)
+                if peer_end > horizon_end:
+                    infeasible.append(peer.operation_id)
+                    warnings.append(
+                        f"Op {peer.operation_id} exceeds horizon "
+                        f"({peer_end.isoformat()} > {horizon_end.isoformat()})"
+                    )
+                    # still schedule it (soft horizon) — track via warning
+                scheduled.append(ScheduledOp(
+                    operation_id=peer.operation_id,
+                    order_id=peer.order_id,
+                    phase_id=peer.phase_id,
+                    machine_id=best_machine,
+                    workers=list(slot_workers),
+                    mold_id=mold_chosen,
+                    start=start,
+                    end=peer_end,
+                    duration_minutes=peer_dur,
+                    mold_batch_id=batch_id,
+                ))
+                op_end_at[peer.operation_id] = peer_end
 
-            scheduled.append(ScheduledOp(
-                operation_id=op.operation_id,
-                order_id=op.order_id,
-                phase_id=op.phase_id,
-                machine_id=best_machine,
-                workers=list(workers_chosen),
-                mold_id=mold_chosen,
-                start=start,
-                end=end,
-                duration_minutes=duration_min,
-            ))
-
-            # Setup detection (same machine, different setup_family)
+            # Setup detection (same machine, different setup_family) — counted once per batch
             if _last_on_machine_has_different_family(best_machine, op, scheduled):
                 setups += 1
 
-            # update timelines
-            machine_free_at[best_machine] = end
-            for w in workers_chosen:
-                worker_free_at[w] = end
+            # Update timelines
+            machine_free_at[best_machine] = batch_end
+            for w in flat_worker_list:
+                worker_free_at[w] = batch_end
             if mold_chosen:
-                mold_free_at[mold_chosen] = end
-            op_end_at[op.operation_id] = end
+                mold_free_at[mold_chosen] = batch_end
             progress = True
 
         pending = new_pending
@@ -336,6 +470,7 @@ def _scheduled_to_dict(s: ScheduledOp) -> Dict[str, Any]:
         "machine_id": s.machine_id,
         "workers": list(s.workers),
         "mold_id": s.mold_id,
+        "mold_batch_id": s.mold_batch_id,
         "start_time": s.start.isoformat(),
         "end_time": s.end.isoformat(),
         "duration_minutes": s.duration_minutes,
