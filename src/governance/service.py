@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, and_, or_, func
+from sqlalchemy import select, and_, or_, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import (
@@ -31,6 +31,53 @@ from .models import (
     ApprovalAction,
     DEFAULT_POLICIES,
 )
+
+
+# Risk severity ordering (used by auto-approval + timeline grouping).
+RISK_ORDER: dict[str, int] = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+
+
+def _risk_at_or_below(actual: str, ceiling: str) -> bool:
+    a = RISK_ORDER.get((actual or "medium").lower(), 1)
+    c = RISK_ORDER.get((ceiling or "low").lower(), 0)
+    return a <= c
+
+
+def _aware(dt: Optional[datetime]) -> datetime:
+    """Coerce naive datetimes to UTC so subtraction works across both kinds."""
+    if dt is None:
+        return datetime.now(timezone.utc)
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _isoformat(dt: Optional[datetime]) -> Optional[str]:
+    return dt.isoformat() if dt else None
+
+
+def _impact_magnitude(expected_impact: Optional[Dict[str, Any]]) -> float:
+    """Reduce an `expected_impact` dict to a single float so `min_impact` can
+    filter against it. Picks the first numeric value (or the `magnitude` /
+    `delta` / `abs_euro` key when present); returns 0.0 when nothing is numeric."""
+    if not expected_impact:
+        return 0.0
+    for key in ("magnitude", "delta", "abs_euro", "impact", "score"):
+        if key in expected_impact and isinstance(expected_impact[key], (int, float)):
+            return abs(float(expected_impact[key]))
+    for value in expected_impact.values():
+        if isinstance(value, (int, float)):
+            return abs(float(value))
+    return 0.0
+
+
+def _group_sort_key(key: str, group_by: str) -> tuple:
+    """Deterministic ordering of group buckets. Risk levels sort high→low so
+    the worst fires float to the top."""
+    if group_by == "risk_level":
+        # We flip the sign so higher risk comes first.
+        return (-RISK_ORDER.get(key, -1),)
+    return (key,)
 
 if TYPE_CHECKING:
     pass
@@ -158,10 +205,21 @@ class GovernanceService:
             prev_hash=last_hash,
         )
 
-        # Determine initial status
+        # Determine initial status. Sprint M.5: if the tenant has enabled
+        # auto-approval for this decision_type AND the risk level is at/below
+        # the configured ceiling, the decision skips the human queue.
         initial_status = DecisionStatus.PROPOSED.value
         if policy.get("requires_approval", True):
             initial_status = DecisionStatus.PENDING_APPROVAL.value
+            if await self._auto_approval_allowed(
+                decision_type=decision_type,
+                risk_level=risk_level,
+            ):
+                initial_status = DecisionStatus.APPROVED.value
+                logger.info(
+                    "auto-approved decision (tenant=%s type=%s risk=%s)",
+                    self.tenant_id, decision_type, risk_level,
+                )
 
         # Persist to DB
         scenario_uuid = UUID(scenario_id) if scenario_id else None
@@ -363,6 +421,393 @@ class GovernanceService:
         result = await self.db.execute(stmt)
         runs = result.scalars().all()
         return [self._run_to_dict(r) for r in runs]
+
+    # =========================================================================
+    # Sprint M.1 — Timeline (grouped by criticality / risk / type / status)
+    # =========================================================================
+
+    async def get_timeline(
+        self,
+        *,
+        group_by: str = "criticality",
+        since: Optional[datetime] = None,
+        until: Optional[datetime] = None,
+        actor_id: Optional[str] = None,
+        autonomy_level: Optional[str] = None,
+        min_impact: Optional[float] = None,
+        hide_low_risk: bool = False,
+        max_per_user_shown: Optional[int] = None,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> Dict[str, Any]:
+        """Return pending decisions bucketed by the requested dimension.
+
+        `group_by` ∈ {"criticality", "risk_level", "decision_type", "status"}.
+        "criticality" is an alias for risk_level (kept for Blueprint wording).
+
+        Anti-fatigue knobs (`min_impact`, `hide_low_risk`, `max_per_user_shown`)
+        thin the returned list without mutating the backing data — the aggregated
+        KPIs `pending_count`/`overdue_count`/`avg_waiting_h` are computed over
+        the unfiltered population so the admin can see what's *hidden*.
+        """
+        group_by = "risk_level" if group_by == "criticality" else group_by
+        if group_by not in {"risk_level", "decision_type", "status"}:
+            raise ValueError(
+                f"Unsupported group_by '{group_by}'. "
+                "Allowed: criticality|risk_level|decision_type|status"
+            )
+
+        # Select ALL decisions in the window that are still waiting for a human
+        # (PROPOSED + PENDING_APPROVAL). APPROVED-but-not-yet-EXECUTED decisions
+        # aren't user-blocking so we exclude them from the Timeline.
+        conditions = [
+            DecisionRun.tenant_id == self.tenant_id,
+            DecisionRun.status.in_(
+                [
+                    DecisionStatus.PROPOSED.value,
+                    DecisionStatus.PENDING_APPROVAL.value,
+                ]
+            ),
+        ]
+        if since:
+            conditions.append(DecisionRun.proposed_at >= since)
+        if until:
+            conditions.append(DecisionRun.proposed_at <= until)
+        if actor_id:
+            conditions.append(DecisionRun.proposed_by == actor_id)
+        if autonomy_level:
+            conditions.append(DecisionRun.autonomy_level == autonomy_level)
+
+        stmt = (
+            select(DecisionRun)
+            .where(and_(*conditions))
+            .order_by(DecisionRun.proposed_at.desc())
+        )
+        all_rows = list((await self.db.execute(stmt)).scalars().all())
+
+        # Aggregated KPIs — computed BEFORE filters so the UI can show what's
+        # being hidden.
+        now = datetime.now(timezone.utc)
+        overdue_threshold_h = 24.0  # configurable later (Sprint L category governance)
+        waiting_hours: List[float] = []
+        overdue = 0
+        for r in all_rows:
+            waited_h = (now - _aware(r.proposed_at)).total_seconds() / 3600.0
+            waiting_hours.append(max(0.0, waited_h))
+            if waited_h >= overdue_threshold_h:
+                overdue += 1
+        avg_waiting_h = (
+            sum(waiting_hours) / len(waiting_hours) if waiting_hours else 0.0
+        )
+
+        # Anti-fatigue filters
+        filtered = all_rows
+        if hide_low_risk:
+            filtered = [r for r in filtered if (r.risk_level or "").lower() != "low"]
+        if min_impact is not None:
+            filtered = [
+                r for r in filtered
+                if _impact_magnitude(r.expected_impact) >= float(min_impact)
+            ]
+
+        # Bucketisation
+        buckets: Dict[str, List[DecisionRun]] = {}
+        for r in filtered:
+            key = self._bucket_key(r, group_by)
+            buckets.setdefault(key, []).append(r)
+
+        # Per-user cap inside each bucket: keep N most recent per proposer.
+        if max_per_user_shown is not None:
+            capped: Dict[str, List[DecisionRun]] = {}
+            for k, rows in buckets.items():
+                seen_per_user: Dict[str, int] = {}
+                out: List[DecisionRun] = []
+                for r in rows:
+                    count = seen_per_user.get(r.proposed_by, 0)
+                    if count < max_per_user_shown:
+                        seen_per_user[r.proposed_by] = count + 1
+                        out.append(r)
+                capped[k] = out
+            buckets = capped
+
+        # Pagination: we flatten buckets in group-key order for cursoring.
+        # Most UIs read one group at a time so this is a secondary concern.
+        offset = max(0, (page - 1) * page_size)
+        flat: List[DecisionRun] = []
+        for rows in buckets.values():
+            flat.extend(rows)
+        page_rows = flat[offset: offset + page_size]
+
+        # Re-group the paged rows so the response shape is stable.
+        groups_out: Dict[str, List[DecisionRun]] = {}
+        for r in page_rows:
+            k = self._bucket_key(r, group_by)
+            groups_out.setdefault(k, []).append(r)
+
+        return {
+            "group_by": group_by,
+            "groups": [
+                {
+                    "key": k,
+                    "count": len(rows),
+                    "decisions": [self._run_to_dict(r) for r in rows],
+                }
+                for k, rows in sorted(
+                    groups_out.items(),
+                    key=lambda kv: _group_sort_key(kv[0], group_by),
+                )
+            ],
+            "total": len(all_rows),
+            "shown": len(flat),
+            "aggregated_kpis": {
+                "pending_count": len(all_rows),
+                "overdue_count": overdue,
+                "avg_waiting_h": round(avg_waiting_h, 2),
+            },
+        }
+
+    @staticmethod
+    def _bucket_key(run: DecisionRun, group_by: str) -> str:
+        if group_by == "risk_level":
+            return (run.risk_level or "medium").lower()
+        if group_by == "decision_type":
+            return run.decision_type
+        if group_by == "status":
+            return run.status
+        return "unknown"
+
+    # =========================================================================
+    # Sprint M.2 — Bulk Approve/Reject (per-item, anti-fatigue)
+    # =========================================================================
+
+    async def bulk_act(
+        self,
+        *,
+        items: List[Dict[str, Any]],
+        approved_by: str,
+    ) -> List[Dict[str, Any]]:
+        """Apply a batch of approve/reject/request_changes actions.
+
+        Per-item independent: one failure does NOT abort the batch (the caller
+        shouldn't have to re-inspect the other N-1 items). Each result is
+        `{decision_id, status, error?}` — `error` is the exception message on
+        failure, absent on success.
+        """
+        results: List[Dict[str, Any]] = []
+        for item in items:
+            decision_id = item.get("decision_id")
+            action_raw = item.get("action")
+            reason = item.get("reason", "")
+            try:
+                if not decision_id:
+                    raise ValueError("decision_id is required")
+                if action_raw is None:
+                    raise ValueError("action is required")
+                action = (
+                    action_raw
+                    if isinstance(action_raw, ApprovalAction)
+                    else ApprovalAction(str(action_raw).lower())
+                )
+                decision = await self.approve_decision(
+                    decision_id=str(decision_id),
+                    action=action,
+                    approved_by=approved_by,
+                    reason=reason,
+                )
+                results.append({
+                    "decision_id": str(decision_id),
+                    "status": "ok",
+                    "new_status": decision["status"],
+                    "action": action.value,
+                })
+            except (SoDViolationError, ValueError) as exc:
+                results.append({
+                    "decision_id": str(decision_id) if decision_id else None,
+                    "status": "error",
+                    "error": str(exc),
+                })
+        return results
+
+    # =========================================================================
+    # Sprint M.4 — Modify payload before approval
+    # =========================================================================
+
+    async def modify_payload(
+        self,
+        *,
+        decision_id: str,
+        patch: Dict[str, Any],
+        modified_by: str,
+        reason: str,
+    ) -> Dict[str, Any]:
+        """Replace whitelisted fields of `action_data` before approval.
+
+        Only decisions in PROPOSED/PENDING_APPROVAL can be modified. Previous
+        payload is preserved under `action_data.__modifications__` with
+        `{modified_by, modified_at, reason, before_hash, after_hash}` so the
+        audit trail survives.
+
+        The full set of allowed fields per `decision_type` is currently
+        unrestricted — a Sprint R hook will tighten it per type (e.g. schedule
+        decisions let edd_gap/buffer_pct through but never `operations`).
+        """
+        if len(reason or "") < 10:
+            raise ValueError("Modification reason required (min 10 characters)")
+
+        decision_run = await self._get_decision_run(decision_id)
+        if not decision_run:
+            raise ValueError(f"Decision {decision_id} not found")
+
+        if decision_run.status not in (
+            DecisionStatus.PROPOSED.value,
+            DecisionStatus.PENDING_APPROVAL.value,
+        ):
+            raise ValueError(
+                f"Decision {decision_id} is not editable (status: {decision_run.status})"
+            )
+
+        before = dict(decision_run.action_data or {})
+        before_hash = hashlib.sha256(
+            json.dumps(before, sort_keys=True, default=str).encode()
+        ).hexdigest()
+
+        # Shallow merge; callers pass the fields they want to override.
+        new_data = dict(before)
+        new_data.update(patch or {})
+        after_hash = hashlib.sha256(
+            json.dumps(
+                {k: v for k, v in new_data.items() if k != "__modifications__"},
+                sort_keys=True, default=str,
+            ).encode()
+        ).hexdigest()
+
+        history = list(new_data.get("__modifications__") or [])
+        history.append({
+            "modified_by": modified_by,
+            "modified_at": datetime.now(timezone.utc).isoformat(),
+            "reason": reason,
+            "before_hash": before_hash,
+            "after_hash": after_hash,
+        })
+        new_data["__modifications__"] = history
+
+        decision_run.action_data = new_data
+        decision_run.input_snapshot_hash = after_hash
+        # Re-hash the audit chain so tamper detection stays consistent.
+        decision_run.audit_hash = DecisionRun.calculate_audit_hash(
+            decision_id=decision_run.id,
+            policy_version=decision_run.policy_version,
+            input_hash=after_hash,
+            outcome_hash=decision_run.outcome_hash,
+            prev_hash=decision_run.prev_hash,
+        )
+        await self.db.flush()
+        return self._run_to_dict(decision_run)
+
+    # =========================================================================
+    # Sprint M.6 — Cross-decision audit timeline
+    # =========================================================================
+
+    async def get_audit_timeline(
+        self,
+        *,
+        since: Optional[datetime] = None,
+        until: Optional[datetime] = None,
+        actor: Optional[str] = None,
+        limit: int = 200,
+    ) -> List[Dict[str, Any]]:
+        """Chronological event stream across all decisions.
+
+        Events: `proposed`, `approval_<action>`, `executed`, `rolled_back`.
+        Unlike `get_audit_pack(decision_id)` which returns a single-decision
+        timeline, this is the cross-cutting view a reviewer uses to ask
+        "what happened to us in the last hour?".
+        """
+        stmt = select(DecisionRun).where(DecisionRun.tenant_id == self.tenant_id)
+        if since:
+            stmt = stmt.where(DecisionRun.proposed_at >= since)
+        if until:
+            stmt = stmt.where(DecisionRun.proposed_at <= until)
+        stmt = stmt.order_by(DecisionRun.proposed_at.desc()).limit(max(10, limit))
+        rows = list((await self.db.execute(stmt)).scalars().all())
+
+        events: List[Dict[str, Any]] = []
+        for r in rows:
+            if (not actor) or r.proposed_by == actor:
+                events.append({
+                    "event": "proposed",
+                    "at": _isoformat(r.proposed_at),
+                    "by": r.proposed_by,
+                    "decision_id": str(r.id),
+                    "decision_type": r.decision_type,
+                    "risk_level": r.risk_level,
+                })
+            for a in (r.approvals or []):
+                if (not actor) or a.approved_by == actor:
+                    events.append({
+                        "event": f"approval_{a.action}",
+                        "at": _isoformat(a.approved_at),
+                        "by": a.approved_by,
+                        "decision_id": str(r.id),
+                        "reason": a.reason,
+                    })
+            if r.executed_at and ((not actor) or r.executed_by == actor):
+                events.append({
+                    "event": "executed",
+                    "at": _isoformat(r.executed_at),
+                    "by": r.executed_by,
+                    "decision_id": str(r.id),
+                })
+            if r.rolled_back_at and ((not actor) or r.rolled_back_by == actor):
+                events.append({
+                    "event": "rolled_back",
+                    "at": _isoformat(r.rolled_back_at),
+                    "by": r.rolled_back_by,
+                    "decision_id": str(r.id),
+                    "reason": r.rollback_reason,
+                })
+
+        # Sort globally newest-first.
+        events.sort(key=lambda e: e.get("at") or "", reverse=True)
+        return events[:limit]
+
+    # =========================================================================
+    # Sprint M.5 — Auto-approval rules configuráveis (TenantConfig)
+    # =========================================================================
+
+    async def _auto_approval_allowed(
+        self,
+        *,
+        decision_type: str,
+        risk_level: str,
+    ) -> bool:
+        """Check TenantConfig for `governance.auto_approval.{decision_type}.*`.
+
+        Returns True iff BOTH keys are present AND
+        `auto_approval.{decision_type}.enabled=True` AND the decision's risk
+        level is at or below `auto_approval.{decision_type}.risk_ceiling`.
+
+        Falls back to False on any error — auto-approval is a power-user
+        feature, never the default.
+        """
+        try:
+            from src.core.services.tenant_config_service import TenantConfigService
+
+            cfg = TenantConfigService(self.db, self.tenant_id)
+            enabled_key = f"auto_approval.{decision_type}.enabled"
+            ceiling_key = f"auto_approval.{decision_type}.risk_ceiling"
+            enabled = await cfg.get("governance", enabled_key, default=False)
+            if not bool(enabled):
+                return False
+            ceiling = await cfg.get("governance", ceiling_key, default="LOW")
+            return _risk_at_or_below(risk_level, str(ceiling))
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning("auto-approval check failed: %s", exc)
+            return False
+
+    # =========================================================================
+    # Existing methods continue below
+    # =========================================================================
 
     async def get_pending_approvals(self, user: str) -> List[Dict[str, Any]]:
         """Get decisions pending approval that user can approve."""

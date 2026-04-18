@@ -378,3 +378,116 @@ async def get_timeline(
         commit_sha256=commit.commit_sha256,
         candidates=candidates,
     )
+
+
+# =============================================================================
+# /commits/{sha}/alternatives (Sprint M.7 — WG10)
+# =============================================================================
+#
+# Enriches the raw MAP-Elites alternatives stored at commit time with:
+#   * deltas vs the primary commit's KPIs (human-readable percentages)
+#   * a deterministic narrative explaining the trade-off
+#   * optional `n` cap for smaller Timeline cards
+#
+# The narrative is template-based (not LLM) so the endpoint stays fast + cheap;
+# Sprint S.3 will upgrade this to Instructor+Pydantic structured output.
+
+def _relative_delta(a: Any, b: Any) -> Optional[float]:
+    """(b-a)/|a| as a fraction. Returns None when either value is non-numeric
+    or `a` is zero (undefined %)."""
+    if not isinstance(a, (int, float)) or not isinstance(b, (int, float)):
+        return None
+    if a == 0:
+        return None
+    return (float(b) - float(a)) / abs(float(a))
+
+
+def _format_delta_pct(delta: Optional[float]) -> Optional[str]:
+    if delta is None:
+        return None
+    sign = "+" if delta >= 0 else ""
+    return f"{sign}{delta * 100:.1f}%"
+
+
+def _build_narrative(vs_primary: Dict[str, Optional[str]]) -> str:
+    """Template-based trade-off summary. Picks the two most salient dimensions
+    (largest |delta|) and describes them in PT-PT."""
+    labels = {
+        "avg_utilization": "utilização média",
+        "total_tardiness_hours": "atraso total",
+        "num_late_orders": "ordens em atraso",
+    }
+    parts: List[tuple[float, str]] = []
+    for key, fmt in vs_primary.items():
+        if fmt is None:
+            continue
+        try:
+            # "+5.2%" → 5.2
+            magnitude = abs(float(fmt.rstrip("%")))
+        except ValueError:
+            continue
+        parts.append((magnitude, f"{labels.get(key, key)}: {fmt}"))
+    if not parts:
+        return "Trade-off indisponível (KPIs não comparáveis)."
+    parts.sort(reverse=True)
+    return "Trade-offs principais — " + "; ".join(p[1] for p in parts[:3]) + "."
+
+
+class AlternativeEnriched(BaseModel):
+    rank: int
+    fitness: float
+    generation: int
+    descriptor: Dict[str, Any]
+    vs_primary: Dict[str, Optional[str]]
+    trade_off_narrative: str
+
+
+class AlternativesResponse(BaseModel):
+    commit_sha256: str
+    primary_kpis: Dict[str, Any]
+    alternatives: List[AlternativeEnriched]
+
+
+@router.get("/commits/{sha}/alternatives", response_model=AlternativesResponse)
+async def get_alternatives(
+    sha: str,
+    n: int = Query(default=8, ge=1, le=50, description="Max alternatives to return"),
+    tenant_id: UUID = Depends(_tenant_id),
+    db: AsyncSession = Depends(get_session),
+):
+    """Enriched MAP-Elites alternatives for WG10.
+
+    Each alternative ships with `vs_primary` deltas (as percentage strings the
+    frontend can display directly) and a deterministic `trade_off_narrative`
+    describing the two most salient differences.
+    """
+    service = CommitsService(db, tenant_id)
+    commit = await _resolve_commit_or_404(service, sha)
+
+    primary_kpis = dict(commit.kpis or {})
+    raw_alts = list(commit.alternatives or [])[:n]
+
+    enriched: List[AlternativeEnriched] = []
+    for c in raw_alts:
+        behavioral = dict(c.get("behavioral") or {})
+        # Behavioural descriptors overlap with primary KPIs on several axes;
+        # compute %-deltas where both sides are numeric.
+        vs: Dict[str, Optional[str]] = {}
+        for key in behavioral:
+            vs[key] = _format_delta_pct(
+                _relative_delta(primary_kpis.get(key), behavioral.get(key))
+            )
+        enriched.append(AlternativeEnriched(
+            rank=int(c.get("rank", 0)),
+            fitness=float(c.get("fitness", 0.0)),
+            generation=int(c.get("generation", 0)),
+            descriptor=behavioral,
+            vs_primary=vs,
+            trade_off_narrative=_build_narrative(vs),
+        ))
+
+    return AlternativesResponse(
+        commit_sha256=commit.commit_sha256,
+        primary_kpis=primary_kpis,
+        alternatives=enriched,
+    )

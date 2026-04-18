@@ -190,6 +190,127 @@ async def get_decision(
     return DecisionResponse(**decision)
 
 
+# ============================================================================
+# TIMELINE (Sprint M.1 — Write-Gate WG02/WG08)
+# ============================================================================
+
+class BulkItemIn(BaseModel):
+    decision_id: str
+    action: ApprovalAction
+    reason: str = Field("", description="Required by approve_decision (min 10 chars)")
+
+
+class BulkRequest(BaseModel):
+    items: List[BulkItemIn]
+
+
+class ModifyPayloadIn(BaseModel):
+    patch: Dict[str, Any] = Field(default_factory=dict)
+    reason: str = Field(..., min_length=10)
+
+
+@router.get("/decisions/timeline")
+async def get_timeline(
+    group_by: str = Query(
+        "criticality",
+        description="criticality | risk_level | decision_type | status",
+    ),
+    since: Optional[datetime] = Query(None),
+    until: Optional[datetime] = Query(None),
+    actor_id: Optional[str] = Query(None, description="Proposer filter"),
+    autonomy_level: Optional[str] = Query(None),
+    min_impact: Optional[float] = Query(
+        None,
+        description="WG08 anti-fatigue: hide decisions with expected_impact magnitude below this",
+    ),
+    hide_low_risk: bool = Query(False, description="WG08 anti-fatigue"),
+    max_per_user_shown: Optional[int] = Query(
+        None,
+        description="WG08 anti-fatigue: cap rows per proposer inside each group",
+    ),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=500),
+    service: GovernanceService = Depends(get_governance_service),
+):
+    """Pending-decision dashboard grouped by criticality / risk / type / status."""
+    try:
+        return await service.get_timeline(
+            group_by=group_by,
+            since=since, until=until,
+            actor_id=actor_id, autonomy_level=autonomy_level,
+            min_impact=min_impact,
+            hide_low_risk=hide_low_risk,
+            max_per_user_shown=max_per_user_shown,
+            page=page, page_size=page_size,
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+# ============================================================================
+# BULK APPROVE (Sprint M.2 — WG04)
+# ============================================================================
+
+@router.post("/decisions/bulk")
+async def bulk_act(
+    body: BulkRequest,
+    user: str = Depends(get_current_user),
+    service: GovernanceService = Depends(get_governance_service),
+):
+    """Apply multiple approve/reject/request_changes in a single call.
+
+    Per-item response — a SoD violation on one decision does not abort the rest.
+    """
+    results = await service.bulk_act(
+        items=[item.model_dump() for item in body.items],
+        approved_by=user,
+    )
+    ok = sum(1 for r in results if r["status"] == "ok")
+    return {"ok": ok, "failed": len(results) - ok, "results": results}
+
+
+# ============================================================================
+# MODIFY BEFORE APPROVE (Sprint M.4 — WG05)
+# ============================================================================
+
+@router.patch("/decisions/{decision_id}/payload")
+async def modify_decision_payload(
+    decision_id: str,
+    body: ModifyPayloadIn,
+    user: str = Depends(get_current_user),
+    service: GovernanceService = Depends(get_governance_service),
+):
+    try:
+        return await service.modify_payload(
+            decision_id=decision_id,
+            patch=body.patch,
+            modified_by=user,
+            reason=body.reason,
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+# ============================================================================
+# AUDIT TIMELINE (Sprint M.6 — WG06)
+# ============================================================================
+
+@router.get("/audit/timeline")
+async def get_audit_timeline(
+    since: Optional[datetime] = Query(None),
+    until: Optional[datetime] = Query(None),
+    actor: Optional[str] = Query(None),
+    limit: int = Query(200, ge=10, le=1000),
+    service: GovernanceService = Depends(get_governance_service),
+):
+    """Chronological cross-decision event stream (propose/approve/execute/rollback)."""
+    return {
+        "events": await service.get_audit_timeline(
+            since=since, until=until, actor=actor, limit=limit,
+        ),
+    }
+
+
 @router.get("/decisions/pending/me")
 async def get_my_pending_approvals(
     user: str = Depends(get_current_user),
@@ -367,6 +488,87 @@ async def get_audit_pack(
 # ============================================================================
 # KILL SWITCH
 # ============================================================================
+
+# ============================================================================
+# DECISION DELTA (Sprint M.3 — WG03)
+# ============================================================================
+
+@router.get("/decisions/{decision_id}/delta")
+async def get_decision_delta(
+    decision_id: str,
+    tenant_id: UUID = Depends(get_tenant_id),
+    db: AsyncSession = Depends(get_session),
+    service: GovernanceService = Depends(get_governance_service),
+):
+    """Compute the scheduler delta that this decision represents.
+
+    The decision's `action_data` must include `commit_sha256` pointing to a
+    `ScheduleCommit`. We diff that commit against its immediate parent (the
+    previous approved plan) so reviewers see *what changed*, not the full plan.
+
+    Returns 404 if:
+      * the decision doesn't exist
+      * the decision doesn't carry a `commit_sha256` (not a schedule change)
+      * the commit or its parent can't be resolved
+    """
+    decision = await service.get_decision(decision_id)
+    if not decision:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, detail=f"Decision {decision_id} not found",
+        )
+    action_data = decision.get("action_data") or {}
+    commit_sha = action_data.get("commit_sha256") or action_data.get("commit_sha")
+    if not commit_sha:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail="Decision has no commit_sha256 in action_data — not a schedule change",
+        )
+
+    # Lazy import keeps governance free of plan deps at module import time.
+    from src.plan.cpo.commits import CommitsService
+
+    commits = CommitsService(db, tenant_id)
+    to_commit = await commits.get_by_sha(commit_sha) or await commits.get_by_sha_prefix(commit_sha)
+    if to_commit is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, detail=f"Commit {commit_sha} not found",
+        )
+    if to_commit.parent_id is None:
+        # Root commit — nothing to diff against.
+        return {
+            "decision_id": decision_id,
+            "commit_sha256": to_commit.commit_sha256,
+            "parent_sha256": None,
+            "is_root_commit": True,
+            "diff": None,
+        }
+
+    # Resolve the parent by id — CommitsService only exposes sha-based lookup,
+    # so do a direct query.
+    from sqlalchemy import select as _select
+    from src.plan.cpo.commits import ScheduleCommit
+
+    parent_stmt = _select(ScheduleCommit).where(
+        (ScheduleCommit.tenant_id == tenant_id) & (ScheduleCommit.id == to_commit.parent_id)
+    )
+    parent = (await db.execute(parent_stmt)).scalar_one_or_none()
+    if parent is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=f"Parent commit of {commit_sha} not found",
+        )
+
+    diff = await commits.diff(parent.commit_sha256, to_commit.commit_sha256)
+    return {
+        "decision_id": decision_id,
+        "commit_sha256": to_commit.commit_sha256,
+        "parent_sha256": parent.commit_sha256,
+        "trust_index_before": parent.trust_index,
+        "trust_index_after": to_commit.trust_index,
+        "trust_index_delta": round(to_commit.trust_index - parent.trust_index, 4),
+        "diff": diff,
+    }
+
 
 @router.post("/kill-switch")
 async def activate_kill_switch(
