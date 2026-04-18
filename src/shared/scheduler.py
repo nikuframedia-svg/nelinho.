@@ -109,13 +109,15 @@ def register_tenant(
     tenant_id: UUID,
     interval_minutes: int = 15,
     shortage_interval_minutes: int = 60,
+    mold_health_interval_minutes: int = 60 * 24,
+    quality_scoring_interval_minutes: int = 30,
 ) -> None:
     """Register per-tenant background jobs.
 
-    * **alerts_scan** — every `interval_minutes` (default 15 min) — runs the
-      copilot AlertsEngine (4 detectors).
-    * **shortage_scan** — every `shortage_interval_minutes` (default 60 min
-      per Sprint O.4) — runs the supply.ShortageDetector.
+    * **alerts_scan** — every `interval_minutes` (default 15 min)
+    * **shortage_scan** — every `shortage_interval_minutes` (Sprint O.4)
+    * **mold_health_scan** — daily (Sprint R.6.2); also emits AL08 alerts
+    * **quality_risk_scoring** — every 30 min (Sprint R.2)
     """
     if _scheduler is None:
         logger.warning("register_tenant called before start_scheduler")
@@ -140,6 +142,26 @@ def register_tenant(
         coalesce=True,
         max_instances=1,
     )
+    _scheduler.add_job(
+        _mold_health_scan_job,
+        trigger=IntervalTrigger(minutes=mold_health_interval_minutes),
+        args=[tenant_id],
+        id=f"mold_health_scan:{tenant_id}",
+        name=f"mold_health_scan[{tenant_id}]",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    _scheduler.add_job(
+        _quality_risk_scoring_job,
+        trigger=IntervalTrigger(minutes=quality_scoring_interval_minutes),
+        args=[tenant_id],
+        id=f"quality_risk_scoring:{tenant_id}",
+        name=f"quality_risk_scoring[{tenant_id}]",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
 
 
 async def shutdown_scheduler() -> None:
@@ -154,6 +176,40 @@ async def shutdown_scheduler() -> None:
 # ---------------------------------------------------------------------------
 # Jobs
 # ---------------------------------------------------------------------------
+
+async def _mold_health_scan_job(tenant_id: UUID) -> None:
+    """Recompute mold health daily + emit AL08 alerts (Sprint R.6.2/R.6.3)."""
+    from src.plan.services.mold_service import MoldService
+    from src.shared.database import get_session_context
+
+    started = datetime.utcnow()
+    try:
+        async with get_session_context() as session:
+            svc = MoldService(session, tenant_id)
+            molds = await svc.list_molds()
+            scored = 0
+            for mold in molds:
+                await svc.recompute_health(mold)
+                scored += 1
+            alerts = await svc.emit_maintenance_alerts()
+            await session.commit()
+        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        logger.info(
+            "mold_health_scan tenant=%s scored=%s alerts=%s elapsed_ms=%s",
+            tenant_id, scored, alerts, elapsed_ms,
+        )
+    except Exception as exc:
+        logger.error("mold_health_scan tenant=%s failed: %s", tenant_id, exc, exc_info=True)
+
+
+async def _quality_risk_scoring_job(tenant_id: UUID) -> None:
+    """Stub for Sprint R.2 — real scoring wired when ProductionSchedule flow
+    has enough data. The job logs today so observability is consistent."""
+    logger.info(
+        "quality_risk_scoring tenant=%s (stub — wire scoring model when ready)",
+        tenant_id,
+    )
+
 
 async def _shortage_scan_job(tenant_id: UUID) -> None:
     """Run ShortageDetector.scan() hourly for a single tenant (Sprint O.4)."""

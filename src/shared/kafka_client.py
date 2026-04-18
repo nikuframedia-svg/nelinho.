@@ -52,6 +52,14 @@ class Topics:
     STOCK_ADJUSTED = "prodplan.supply.stock_adjusted"
     MATERIAL_SHORTAGE_DETECTED = "prodplan.supply.material_shortage"
     STOCK_RECONCILED = "prodplan.supply.stock_reconciled"
+
+    # QUALITY events (Sprint R)
+    REWORK_ENTRY_CREATED = "prodplan.quality.rework_entry_created"
+    QUALITY_RISK_SCORED = "prodplan.quality.risk_scored"
+
+    # MOLD events (Sprint R.6)
+    MOLD_MAINT_DUE = "prodplan.mold.maint_due"
+    MOLD_HEALTH_DEGRADED = "prodplan.mold.health_degraded"
     
     # PROFIT events
     COGS_CALCULATED = "prodplan.profit.cogs_calculated"

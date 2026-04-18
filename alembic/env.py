@@ -30,6 +30,8 @@ from src.plan.cpo import commits as plan_commits_models  # Schedule-as-Code (Spr
 from src.plan.models import transport as plan_transport_models  # Sprint P.2
 from src.plan.models import routing_template as plan_routing_template_models  # Sprint P.4
 from src.profit.models import pricing as profit_pricing_models  # Sprint Q.0/Q.2
+from src.quality.models import rework as quality_rework_models  # Sprint R.1
+from src.plan.models import mold as plan_mold_models  # Sprint R.6
 
 # this is the Alembic Config object
 config = context.config

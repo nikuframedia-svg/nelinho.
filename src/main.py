@@ -298,6 +298,10 @@ app.include_router(dqa_router)
 # Sprint N — Factory Map
 from src.factory_data_product.api.factory_map import router as factory_map_router  # noqa: E402
 app.include_router(factory_map_router)
+
+# Sprint R — Quality
+from src.quality.api import router as quality_router  # noqa: E402
+app.include_router(quality_router)
 app.include_router(plan_router)
 app.include_router(profit_router)
 app.include_router(hr_router)

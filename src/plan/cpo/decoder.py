@@ -142,6 +142,29 @@ DEFAULT_POST_DESMOLDE_BUFFER_MINUTES = 4 * 60.0
 # Portuguese canonical form stored in `SchedulingOperation.phase_name`.
 POST_DESMOLDE_PHASE_NAMES = {"desmolde", "Desmolde", "DESMOLDE"}
 
+# Sprint R.9 — phases whose rework rate is known-high (QA11). The buffer
+# percentages default to config (Sprint L.4 seeded `quality.rework_buffer_pct.*`)
+# but are parameterised so decoder callers can stage them.
+REWORK_BUFFER_PHASE_KEYWORDS = {
+    "sanding_water": ("lixagem água", "lixagem water", "lixagem agua"),
+    "sanding_polish": ("lixagem polimento", "lixagem polish"),
+    "painting_finishing": ("pintura acabamento", "painting finishing"),
+}
+DEFAULT_REWORK_BUFFER_PCT = {
+    "sanding_water": 0.20,
+    "sanding_polish": 0.20,
+    "painting_finishing": 0.18,
+}
+
+
+def classify_rework_phase(phase_name: Optional[str], phase_id: Optional[str]) -> Optional[str]:
+    """Return the Sprint R.9 bucket key when the phase is rework-heavy."""
+    haystack = f"{(phase_name or '').lower()} {(phase_id or '').lower()}"
+    for bucket, keywords in REWORK_BUFFER_PHASE_KEYWORDS.items():
+        if any(keyword in haystack for keyword in keywords):
+            return bucket
+    return None
+
 
 def decode(
     chromosome: Chromosome,
