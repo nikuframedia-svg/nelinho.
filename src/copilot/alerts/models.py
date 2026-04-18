@@ -31,6 +31,10 @@ CODE_SKILLS_CONCENTRATION = "SKILLS_CONCENTRATION"
 CODE_QUALITY_DEGRADATION = "QUALITY_DEGRADATION"
 CODE_DELIVERY_RISK = "DELIVERY_RISK"  # currently blocked (no OTD data)
 
+# Sprint O.4 — material shortage codes (MR04 / AL02)
+CODE_MATERIAL_SHORTAGE_PROJECTED = "MATERIAL_SHORTAGE_PROJECTED"  # WARN — under min_stock
+CODE_MATERIAL_STOCKOUT_IMMINENT = "MATERIAL_STOCKOUT_IMMINENT"   # CRITICAL — within critical_days
+
 
 class CopilotAlert(TenantBase):
     """A proactive alert surfaced by the Copilot AlertsEngine."""

@@ -47,6 +47,11 @@ class Topics:
     MATERIAL_REQUIREMENT_PLANNED = "prodplan.plan.material_planned"
     PURCHASE_ORDER_CREATED = "prodplan.plan.po_created"
     CAPACITY_CONSTRAINT_DETECTED = "prodplan.plan.capacity_constraint"
+
+    # SUPPLY events (Sprint O)
+    STOCK_ADJUSTED = "prodplan.supply.stock_adjusted"
+    MATERIAL_SHORTAGE_DETECTED = "prodplan.supply.material_shortage"
+    STOCK_RECONCILED = "prodplan.supply.stock_reconciled"
     
     # PROFIT events
     COGS_CALCULATED = "prodplan.profit.cogs_calculated"

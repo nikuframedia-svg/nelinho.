@@ -105,8 +105,18 @@ def start_scheduler(
     return _scheduler
 
 
-def register_tenant(tenant_id: UUID, interval_minutes: int = 15) -> None:
-    """Add or replace the alerts-scan job for a single tenant."""
+def register_tenant(
+    tenant_id: UUID,
+    interval_minutes: int = 15,
+    shortage_interval_minutes: int = 60,
+) -> None:
+    """Register per-tenant background jobs.
+
+    * **alerts_scan** — every `interval_minutes` (default 15 min) — runs the
+      copilot AlertsEngine (4 detectors).
+    * **shortage_scan** — every `shortage_interval_minutes` (default 60 min
+      per Sprint O.4) — runs the supply.ShortageDetector.
+    """
     if _scheduler is None:
         logger.warning("register_tenant called before start_scheduler")
         return
@@ -116,6 +126,16 @@ def register_tenant(tenant_id: UUID, interval_minutes: int = 15) -> None:
         args=[tenant_id],
         id=f"alerts_scan:{tenant_id}",
         name=f"alerts_scan[{tenant_id}]",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    _scheduler.add_job(
+        _shortage_scan_job,
+        trigger=IntervalTrigger(minutes=shortage_interval_minutes),
+        args=[tenant_id],
+        id=f"shortage_scan:{tenant_id}",
+        name=f"shortage_scan[{tenant_id}]",
         replace_existing=True,
         coalesce=True,
         max_instances=1,
@@ -134,6 +154,28 @@ async def shutdown_scheduler() -> None:
 # ---------------------------------------------------------------------------
 # Jobs
 # ---------------------------------------------------------------------------
+
+async def _shortage_scan_job(tenant_id: UUID) -> None:
+    """Run ShortageDetector.scan() hourly for a single tenant (Sprint O.4)."""
+    from src.shared.database import get_session_context
+    from src.supply.shortage_detector import ShortageDetector
+
+    started = datetime.utcnow()
+    try:
+        async with get_session_context() as session:
+            detector = ShortageDetector(session=session, tenant_id=tenant_id)
+            summary = await detector.scan()
+            await session.commit()
+        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        logger.info(
+            "shortage_scan tenant=%s warn=%s critical=%s skipped=%s elapsed_ms=%s",
+            tenant_id, summary.get("warn_created"),
+            summary.get("critical_created"), summary.get("skipped_duplicate"),
+            elapsed_ms,
+        )
+    except Exception as exc:
+        logger.error("shortage_scan tenant=%s failed: %s", tenant_id, exc, exc_info=True)
+
 
 async def _alerts_scan_job(tenant_id: UUID) -> None:
     """Run AlertsEngine.scan() for a single tenant, own session."""
