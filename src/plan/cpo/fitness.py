@@ -88,6 +88,15 @@ class FitnessConfig:
     # hit the DB per evaluation.
     preference_rules: List[Dict[str, Any]] = field(default_factory=list)
 
+    # ── Sprint I.5 — Causal entropy (flexibility preservation) ────────
+    # Shannon-entropy penalty over the load distribution across
+    # machines / workers / moulds. A concentrated plan pays the
+    # penalty; a spread one rides free. Blueprint v2.0 §31 pegs the
+    # weight at 0.05 so it nudges tie-breaks without dominating any
+    # first-order cost term. Set to 0.0 to disable entirely (tests
+    # that predated this change keep their exact fitness).
+    w_causal_entropy: float = 0.05
+
     # Cached feature extractor — filled at config creation to avoid
     # rebuilding the dict per-op at hot path time.
     _feature_extractor: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = field(
@@ -162,6 +171,16 @@ def compute_fitness(schedule: Dict[str, Any], config: Optional[FitnessConfig] = 
             from src.plan.cpo.preference_adapter import compute_preference_penalty
             fitness += compute_preference_penalty(schedule, cfg.preference_rules)
         except Exception:  # pragma: no cover — never let the hook crash fitness
+            pass
+
+    # Sprint I.5 — causal-entropy penalty. Cheap (single pass over ops)
+    # so it lives in the hot path. Guarded so a zero weight is a true
+    # no-op and a buggy schedule can't take the fitness function down.
+    if cfg.w_causal_entropy > 0:
+        try:
+            from src.plan.cpo.causal_entropy import causal_entropy_penalty
+            fitness += cfg.w_causal_entropy * causal_entropy_penalty(schedule)
+        except Exception:  # pragma: no cover — defensive
             pass
 
     if schedule.get("safety_violated"):

@@ -14,11 +14,21 @@ from .adaptive_weights import (
     load_adaptive_weights,
 )
 from .detector import PreferenceRuleDetector
+from .dpo_dataset_builder import (
+    DPOBuildReport,
+    DPODatasetBuilder,
+    DPOTriplet,
+    build_prompt,
+)
 
 __all__ = [
     "AdaptiveFitnessWeights",
     "DEFAULT_WEIGHTS",
+    "DPOBuildReport",
+    "DPODatasetBuilder",
+    "DPOTriplet",
     "PreferenceRuleDetector",
     "RetrainResult",
+    "build_prompt",
     "load_adaptive_weights",
 ]
