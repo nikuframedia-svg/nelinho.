@@ -10,8 +10,15 @@ Public surface:
 * :mod:`.nelo_dag` — :func:`causal_query`, :data:`ALL_NODES`, graph
   traversal helpers.
 * :mod:`.chain` — :class:`CausalChain`, :func:`verify_chain`.
+* :mod:`.ablkit` — Sprint I.2 divergence tracking for DPO feedback.
 """
 
+from .ablkit import (
+    Divergence,
+    DivergenceStore,
+    detect_divergences,
+    render_dpo_triplet,
+)
 from .chain import (
     AristotleAnnotation,
     AristotleCause,
@@ -62,4 +69,9 @@ __all__ = [
     "LayerVerdict",
     "verify_chain",
     "verify_chain_dict",
+    # ABLkit (Sprint I.2)
+    "Divergence",
+    "DivergenceStore",
+    "detect_divergences",
+    "render_dpo_triplet",
 ]

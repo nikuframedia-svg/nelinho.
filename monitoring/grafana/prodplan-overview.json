@@ -1,0 +1,253 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "enable": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "ProdPlan ONE — Sprint J overview dashboard. Mirrors the SLOs in docs/sla.md and the alerts in monitoring/prometheus/alerts.yml.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "liveNow": true,
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "1 = up, 0 = down. The 99% SLO sits on top of this.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [
+            {"options": {"0": {"text": "DOWN"}}, "type": "value"},
+            {"options": {"1": {"text": "UP"}}, "type": "value"}
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "green", "value": 1}
+            ]
+          }
+        }
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "id": 1,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {"expr": "up{job=\"prodplan-api\"}", "legendFormat": "API", "refId": "A"},
+        {"expr": "up{job=\"postgres\"}", "legendFormat": "Postgres", "refId": "B"},
+        {"expr": "up{job=\"kafka\"}", "legendFormat": "Kafka", "refId": "C"},
+        {"expr": "probe_success{instance=~\".*11434.*\"}", "legendFormat": "Ollama", "refId": "D"}
+      ],
+      "title": "Platform up/down",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "5xx rate over 5-minute windows. Alerts fire at 5% sustained.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 0.02},
+              {"color": "red", "value": 0.05}
+            ]
+          },
+          "unit": "percentunit"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 6, "y": 0},
+      "id": 2,
+      "targets": [
+        {
+          "expr": "sum(rate(prodplan_http_requests_total{status=~\"5..\"}[5m])) / sum(rate(prodplan_http_requests_total[5m]))",
+          "legendFormat": "5xx ratio",
+          "refId": "A"
+        }
+      ],
+      "title": "HTTP 5xx rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Read-path P95 latency (GET requests only). SLO target 500ms.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 5},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 0.25},
+              {"color": "red", "value": 0.5}
+            ]
+          },
+          "unit": "s"
+        }
+      },
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 0},
+      "id": 3,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(prodplan_http_request_duration_seconds_bucket{method=\"GET\"}[5m])) by (le))",
+          "legendFormat": "GET P95",
+          "refId": "A"
+        }
+      ],
+      "title": "GET P95 latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Rate of requests hitting the API, split by HTTP status family.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 20, "stacking": {"mode": "normal"}}
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "id": 4,
+      "targets": [
+        {"expr": "sum by (status) (rate(prodplan_http_requests_total[1m]))", "legendFormat": "{{status}}", "refId": "A"}
+      ],
+      "title": "Request rate by status",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "P95 outbox → Kafka publish latency. SLO target: < 2s.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 5},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 1},
+              {"color": "red", "value": 2}
+            ]
+          },
+          "unit": "s"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "id": 5,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(prodplan_outbox_dispatcher_latency_seconds_bucket[5m])) by (le))",
+          "legendFormat": "P95",
+          "refId": "A"
+        }
+      ],
+      "title": "Outbox dispatch P95",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Kafka publishes split success vs failure.",
+      "fieldConfig": {
+        "defaults": {"color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10}}
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "id": 6,
+      "targets": [
+        {"expr": "sum by (topic) (rate(prodplan_kafka_producer_success_total[5m]))", "legendFormat": "success {{topic}}", "refId": "A"},
+        {"expr": "sum by (topic) (rate(prodplan_kafka_producer_failure_total[5m]))", "legendFormat": "failure {{topic}}", "refId": "B"}
+      ],
+      "title": "Kafka produce rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Minimum TrustIndex across entities — drives the auto-commit gate (<0.60 blocks).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 0.60},
+              {"color": "green", "value": 0.80}
+            ]
+          },
+          "min": 0,
+          "max": 1,
+          "unit": "percentunit"
+        }
+      },
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 16},
+      "id": 7,
+      "options": {
+        "orientation": "auto",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "targets": [
+        {"expr": "min(prodplan_trust_index_score)", "legendFormat": "min TrustIndex", "refId": "A"}
+      ],
+      "title": "TrustIndex floor",
+      "type": "gauge"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Copilot actions per minute, split by outcome.",
+      "fieldConfig": {
+        "defaults": {"color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10}}
+      },
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 16},
+      "id": 8,
+      "targets": [
+        {"expr": "sum by (status) (rate(prodplan_copilot_actions_total[5m]))", "legendFormat": "{{status}}", "refId": "A"},
+        {"expr": "sum(rate(prodplan_copilot_action_rollbacks_total[5m]))", "legendFormat": "rollbacks", "refId": "B"}
+      ],
+      "title": "Copilot actions",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Current number of HTTP requests being handled.",
+      "fieldConfig": {
+        "defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 20}, {"color": "red", "value": 50}]}}
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 24},
+      "id": 9,
+      "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"]}},
+      "targets": [{"expr": "prodplan_http_requests_in_flight", "refId": "A"}],
+      "title": "Requests in flight",
+      "type": "stat"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 38,
+  "tags": ["prodplan", "sprint-j"],
+  "templating": {"list": []},
+  "time": {"from": "now-1h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "ProdPlan ONE — Overview",
+  "uid": "prodplan-overview",
+  "version": 1,
+  "weekStart": ""
+}

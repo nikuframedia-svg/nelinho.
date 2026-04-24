@@ -137,6 +137,37 @@ inventory_movements_total = Counter(
 )
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# HTTP Request Metrics (Sprint J follow-up — surfaces in alerts.yml)
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# The alert file references `prodplan_http_requests_total` +
+# `prodplan_http_request_duration_seconds`; these instruments feed them.
+# Emitted by the middleware in `src/shared/http_metrics_middleware.py`
+# — ONE place to edit if the label cardinality needs trimming on a
+# busy tenant.
+
+http_requests_total = Counter(
+    "prodplan_http_requests_total",
+    "Total number of HTTP requests handled by the FastAPI app.",
+    ["method", "path_template", "status"],
+    registry=registry,
+)
+
+http_request_duration_seconds = Histogram(
+    "prodplan_http_request_duration_seconds",
+    "HTTP request handler latency, split by method/path/status.",
+    ["method", "path_template", "status"],
+    buckets=[0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
+    registry=registry,
+)
+
+http_requests_in_flight = Gauge(
+    "prodplan_http_requests_in_flight",
+    "Current number of HTTP requests being processed.",
+    registry=registry,
+)
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Utility Functions
 # ═══════════════════════════════════════════════════════════════════════════════
 

@@ -128,6 +128,119 @@ const EVENT_TEMPLATES: Record<
     actionLabel: 'Ver stock',
     actionPath: '/supply/inventory',
   },
+  // Sprint J polish — extended coverage of the 27 publishers so every
+  // event with a meaningful UI surface gets a toast in the panel.
+  SCHEDULE_CREATED: {
+    type: 'info',
+    title: () => 'Novo plano publicado',
+    message: (p) =>
+      `${p.operations_count ?? 0} operações · engine ${p.engine_used ?? 'CPO'}.`,
+    actionLabel: 'Abrir timeline',
+    actionPath: '/plan/timeline',
+  },
+  SCHEDULE_UPDATED: {
+    type: 'info',
+    title: () => 'Plano actualizado',
+    message: (p) =>
+      `Operação ${p.schedule_id?.slice(0, 8) ?? '?'} → ${p.status ?? 'status'}.`,
+    actionLabel: 'Ver plano',
+    actionPath: '/plan/scheduling',
+  },
+  MRP_CALCULATED: {
+    type: 'info',
+    title: () => 'MRP recalculado',
+    message: (p) =>
+      `${p.materials_analyzed ?? 0} materiais · ${p.purchase_orders_created ?? 0} OCs propostas.`,
+    actionLabel: 'Ver MRP',
+    actionPath: '/plan/mrp',
+  },
+  MATERIAL_REQUIREMENT_PLANNED: {
+    type: 'info',
+    title: () => 'Requisitos de material propostos',
+    message: (p) => `${p.count ?? 0} requisitos — validar antes de encomendar.`,
+    actionLabel: 'Ver MRP',
+    actionPath: '/plan/mrp',
+  },
+  PURCHASE_ORDER_CREATED: {
+    type: 'info',
+    title: () => 'Nova OC criada',
+    message: (p) =>
+      `${p.po_number ?? 'OC'} · ${p.supplier_id?.slice(0, 8) ?? '?'}`,
+    actionLabel: 'Ver compras',
+    actionPath: '/supply/inventory',
+  },
+  STOCK_RECONCILED: {
+    type: 'info',
+    title: () => 'Reconciliação aplicada',
+    message: (p) =>
+      `${p.sku_id ?? 'Item'} · variância ${p.variance_qty ?? '?'}`,
+    actionLabel: 'Ver stock',
+    actionPath: '/supply/inventory',
+  },
+  DECISION_PROPOSED: {
+    type: 'info',
+    title: () => 'Nova decisão proposta',
+    message: (p) =>
+      `${p.decision_type ?? 'Decisão'} por ${p.proposed_by ?? '?'} (${p.risk_level ?? 'medium'}).`,
+    actionLabel: 'Rever',
+    actionPath: '/decisions',
+  },
+  DECISION_APPROVED: {
+    type: 'success',
+    title: () => 'Decisão aprovada',
+    message: (p) =>
+      `${p.decision_type ?? 'Decisão'} · ${p.action ?? 'approve'} por ${p.approved_by ?? '?'}.`,
+    actionLabel: 'Ver timeline',
+    actionPath: '/decisions',
+  },
+  SCENARIO_SIMULATED: {
+    type: 'info',
+    title: () => 'Cenário simulado',
+    message: (p) =>
+      `${p.scenario_name ?? 'Cenário'}: Δ ${p.delta_percent?.toFixed?.(1) ?? '?'}%.`,
+    actionLabel: 'Ver cenários',
+    actionPath: '/profit/scenarios',
+  },
+  COGS_CALCULATED: {
+    type: 'info',
+    title: () => 'Custo unitário recalculado',
+    message: (p) =>
+      `Ordem ${p.order_id?.slice(0, 8) ?? '?'} · ${p.total_cogs?.toFixed?.(0) ?? '?'} €.`,
+    actionLabel: 'Ver custos',
+    actionPath: '/profit/cogs',
+  },
+  PRICING_RECOMMENDED: {
+    type: 'info',
+    title: () => 'Nova sugestão de preço',
+    message: (p) =>
+      `${p.product_id?.slice(0, 8) ?? '?'}: ${p.recommended_price?.toFixed?.(2) ?? '?'} €.`,
+    actionLabel: 'Ver pricing',
+    actionPath: '/profit/pricing',
+  },
+  EMPLOYEE_ALLOCATED: {
+    type: 'info',
+    title: () => 'Trabalhador alocado',
+    message: (p) =>
+      `${p.employee_id?.slice(0, 8) ?? '?'} → fase ${p.phase ?? '?'}.`,
+    actionLabel: 'Ver alocações',
+    actionPath: '/hr/allocations',
+  },
+  REWORK_ENTRY_CREATED: {
+    type: 'warning',
+    title: () => 'Retrabalho registado',
+    message: (p) =>
+      `${p.error_code ?? '?'} em OF ${p.of_id ?? '?'}.`,
+    actionLabel: 'Ver qualidade',
+    actionPath: '/profit/quality',
+  },
+  COST_VARIANCE_CALCULATED: {
+    type: 'info',
+    title: () => 'Análise de sensibilidade',
+    message: (p) =>
+      `${p.component ?? 'custo'} variado em ${p.variance_points ?? '?'} pontos.`,
+    actionLabel: 'Ver cenários',
+    actionPath: '/profit/scenarios',
+  },
 };
 
 function eventToNotification(event: RealtimeEvent): Notification | null {

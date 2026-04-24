@@ -187,6 +187,11 @@ if DQA_ENABLED and not settings.is_development:
     app.add_middleware(QualityGateMiddleware)
     logger.info("DQA Quality Gates middleware enabled")
 
+# Sprint J follow-up — HTTP request metrics. Installs the Counter +
+# Histogram that alerts.yml gates on (High5xxRate, High4xxRate).
+from src.shared.http_metrics_middleware import register as _register_http_metrics
+_register_http_metrics(app)
+
 
 # Exception handlers
 # DB connection errors - return 503 instead of 500

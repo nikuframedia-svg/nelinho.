@@ -50,6 +50,7 @@ import { DarkCard, DarkBadge, DarkButton } from '../components/dark';
 import { LiveBadge } from '../components/dashboard/LiveBadge';
 import { useRealtime } from '../providers/RealtimeProvider';
 import {
+  employeesApi,
   qualityReworkApi,
   workerOperationsApi,
   type ReworkCreatePayload,
@@ -343,6 +344,32 @@ export function OperadorPage() {
 
   const [manualWorkerId, setManualWorkerId] = useState('');
 
+  // Worker picker: pull the employee list so the operator can just tap
+  // their name instead of pasting a UUID. Gracefully degrades to the
+  // manual input when the API is unreachable (e.g. first-boot on an
+  // air-gapped box before core.employees is seeded).
+  const employeesQuery = useQuery({
+    queryKey: ['operador-employees'],
+    queryFn: () => employeesApi.list({ limit: 200 }),
+    enabled: !workerId,          // skip once the tablet remembers
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+
+  const employees: Array<{ id: string; label: string }> = useMemo(() => {
+    const raw = employeesQuery.data?.data ?? employeesQuery.data;
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((e: any) => {
+        const id = e.id ?? e.employee_id;
+        if (!id) return null;
+        const parts = [e.first_name, e.last_name].filter(Boolean);
+        const name = parts.join(' ') || e.full_name || e.name || id.slice(0, 8);
+        return { id: String(id), label: `${name} (${String(id).slice(0, 8)})` };
+      })
+      .filter(Boolean) as Array<{ id: string; label: string }>;
+  }, [employeesQuery.data]);
+
   const activeWorkerId = workerId ?? (manualWorkerId.trim() || null);
   const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
 
@@ -382,6 +409,7 @@ export function OperadorPage() {
   }
 
   if (!activeWorkerId) {
+    const hasPicker = employees.length > 0;
     return (
       <DarkPageLayout
         title="Operador"
@@ -390,16 +418,38 @@ export function OperadorPage() {
       >
         <DarkCard>
           <p className="text-sm text-text-secondary mb-4">
-            Ainda não tens um ID guardado. Introduz o teu UUID de
-            empregado — ficará no browser e não será pedido novamente.
+            {hasPicker
+              ? 'Escolhe o teu nome na lista — só é preciso uma vez, o tablet lembra.'
+              : 'Ainda não tens um ID guardado. Escreve o teu UUID de empregado (ou peço ao chefe se não souberes).'}
           </p>
-          <input
-            type="text"
-            value={manualWorkerId}
-            onChange={(e) => setManualWorkerId(e.target.value)}
-            placeholder="8d1f0c6a-..."
-            className="w-full h-14 rounded-xl bg-bg-elevated border border-border-subtle px-4 text-lg text-text-white focus:outline-none focus:border-accent mb-4"
-          />
+          {hasPicker ? (
+            <select
+              value={manualWorkerId}
+              onChange={(e) => setManualWorkerId(e.target.value)}
+              className="w-full h-14 rounded-xl bg-bg-elevated border border-border-subtle px-4 text-lg text-text-white focus:outline-none focus:border-accent mb-4"
+            >
+              <option value="">— escolher —</option>
+              {employees.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.label}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              type="text"
+              value={manualWorkerId}
+              onChange={(e) => setManualWorkerId(e.target.value)}
+              placeholder="8d1f0c6a-..."
+              className="w-full h-14 rounded-xl bg-bg-elevated border border-border-subtle px-4 text-lg text-text-white focus:outline-none focus:border-accent mb-4"
+            />
+          )}
+          {employeesQuery.isError && (
+            <p className="text-xs text-amber-300 mb-3">
+              Lista de empregados indisponível — pode introduzir o UUID
+              manualmente enquanto o backend não responde.
+            </p>
+          )}
           <DarkButton
             variant="primary"
             size="lg"
