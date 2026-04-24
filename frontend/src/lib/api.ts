@@ -1690,6 +1690,81 @@ export interface PreferenceRule {
   review_notes: string | null;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// CPO COMMITS API (Sprint E.1) — Timeline + MAP-Elites alternatives + decide
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface CpoCommit {
+  id: string;
+  tenant_id: string;
+  parent_id: string | null;
+  commit_sha256: string;
+  short_sha: string;
+  author: string;
+  message: string;
+  kpis: Record<string, any>;
+  delta: Record<string, any>;
+  alternatives: Array<Record<string, any>>;
+  cpo_meta: Record<string, any>;
+  trust_index: number;
+  operations_count: number;
+  created_at: string | null;
+  operations?: Array<Record<string, any>> | null;
+}
+
+export interface CpoAlternativeEnriched {
+  rank: number;
+  fitness: number;
+  generation: number;
+  descriptor: Record<string, any>;
+  vs_primary: Record<string, string | null>;
+  trade_off_narrative: string;
+}
+
+export interface CpoAlternativesResponse {
+  commit_sha256: string;
+  primary_kpis: Record<string, any>;
+  alternatives: CpoAlternativeEnriched[];
+}
+
+export interface CpoDecideRequest {
+  chosen_alt_idx?: number | null;
+  rejected_alt_idxs?: number[];
+  reason?: string | null;
+  decided_by?: string;
+}
+
+export interface CpoDecideResponse {
+  commit_sha256: string;
+  rejected_alternatives: Array<Record<string, any>>;
+  user_preference_signal: Record<string, any>;
+}
+
+export const cpoCommitsApi = {
+  list: (params?: { limit?: number }) => {
+    const qs = params?.limit ? `?limit=${params.limit}` : '';
+    return request<CpoCommit[]>(`/v1/plan/cpo/commits${qs}`);
+  },
+
+  get: (sha: string, opts?: { include_operations?: boolean }) => {
+    const qs = opts?.include_operations ? '?include_operations=true' : '';
+    return request<CpoCommit>(`/v1/plan/cpo/commits/${sha}${qs}`);
+  },
+
+  alternatives: (sha: string, opts?: { n?: number }) => {
+    const qs = opts?.n ? `?n=${opts.n}` : '';
+    return request<CpoAlternativesResponse>(
+      `/v1/plan/cpo/commits/${sha}/alternatives${qs}`,
+    );
+  },
+
+  decide: (sha: string, body: CpoDecideRequest) =>
+    request<CpoDecideResponse>(`/v1/plan/cpo/commits/${sha}/decide`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+};
+
 export const preferenceRulesApi = {
   list: (params?: {
     status?: PreferenceRuleStatus;

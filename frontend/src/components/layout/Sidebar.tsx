@@ -65,6 +65,7 @@ const navItems: NavItem[] = [
     module: 'plan',
     children: [
       { label: 'Scheduling', path: '/plan/scheduling' },
+      { label: 'Timeline', path: '/plan/timeline' },
       { label: 'MRP', path: '/plan/mrp' },
       { label: 'Capacity', path: '/plan/capacity' },
     ],

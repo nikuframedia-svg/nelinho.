@@ -17,6 +17,8 @@ const AuditTrailPage = lazy(() => import('./pages/admin/AuditTrailPage').then(m 
 const RBACPage = lazy(() => import('./pages/admin/RBACPage').then(m => ({ default: m.RBACPage })));
 // Sprint E.2 — Camada 1 learned-rules review
 const LearnedRulesPage = lazy(() => import('./pages/admin/LearnedRulesPage').then(m => ({ default: m.LearnedRulesPage })));
+// Sprint E.1 — CPO Timeline + MAP-Elites alternatives
+const TimelinePage = lazy(() => import('./pages/plan/TimelinePage').then(m => ({ default: m.TimelinePage })));
 
 // PALANTIR-LEVEL PAGES
 const DataQualityPage = lazy(() => import('./pages/admin/DataQualityPage').then(m => ({ default: m.DataQualityPage })));
@@ -117,6 +119,11 @@ function App() {
                     <Route path="scheduling" element={<SchedulingPage />} />
                     <Route path="mrp" element={<MRPPage />} />
                     <Route path="capacity" element={<CapacityPage />} />
+                    <Route path="timeline" element={
+                      <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
+                        <TimelinePage />
+                      </Suspense>
+                    } />
                   </Route>
                   
                   {/* PROFIT Module - Cost & Pricing */}
