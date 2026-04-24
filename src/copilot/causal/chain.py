@@ -341,20 +341,25 @@ def _layer_nli(
     """
     issues: List[str] = []
 
-    # Recommendation ↔ mechanism consistency.
+    # Recommendation ↔ mechanism consistency. Only meaningful when the
+    # chain's first mechanism step describes the root cause (a lever
+    # the operator can pull) rather than jumping straight to the
+    # target. If mechanism[0] IS the target, there is no lever claim
+    # to compare the recommendation against — skip the rule.
     if chain.recommendation and chain.mechanism:
         first_step = chain.mechanism[0]
-        rec = chain.recommendation
-        if first_step.direction == "increase" and _DECREASE_KEYWORDS.search(rec):
-            issues.append(
-                "recommendation suggests reducing, but mechanism says the "
-                "root cause should increase"
-            )
-        elif first_step.direction == "decrease" and _INCREASE_KEYWORDS.search(rec):
-            issues.append(
-                "recommendation suggests increasing, but mechanism says the "
-                "root cause should decrease"
-            )
+        if first_step.node != chain.target:
+            rec = chain.recommendation
+            if first_step.direction == "increase" and _DECREASE_KEYWORDS.search(rec):
+                issues.append(
+                    "recommendation suggests reducing, but mechanism says the "
+                    "root cause should increase"
+                )
+            elif first_step.direction == "decrease" and _INCREASE_KEYWORDS.search(rec):
+                issues.append(
+                    "recommendation suggests increasing, but mechanism says the "
+                    "root cause should decrease"
+                )
 
     # Target-direction consistency (if we have a kernel result).
     if kernel_result is not None:
@@ -450,9 +455,18 @@ def _layer_kernel(
     if expected_sign != claimed_sign:
         score = min(score, 0.3)
 
+    # Direction-only partial credit — but only when the kernel actually
+    # has a non-zero delta to measure against. An "unchanged" claim on
+    # a near-zero-delta kernel is a fully-specified answer (no
+    # magnitude needed), so it deserves the full mark.
     if target_claim.magnitude is None and not issues:
-        # Direction right, magnitude absent → partial credit.
-        score = 0.8
+        if (
+            target_claim.direction == "unchanged"
+            and abs(kernel_result.delta) < 1e-6
+        ):
+            score = 1.0
+        else:
+            score = 0.8
 
     passed = not issues
     return LayerVerdict(
