@@ -15,6 +15,8 @@ const SettingsPage = lazy(() => import('./pages/admin/SettingsPage').then(m => (
 const DQAPage = lazy(() => import('./pages/admin/DQAPage').then(m => ({ default: m.DQAPage })));
 const AuditTrailPage = lazy(() => import('./pages/admin/AuditTrailPage').then(m => ({ default: m.AuditTrailPage })));
 const RBACPage = lazy(() => import('./pages/admin/RBACPage').then(m => ({ default: m.RBACPage })));
+// Sprint E.2 — Camada 1 learned-rules review
+const LearnedRulesPage = lazy(() => import('./pages/admin/LearnedRulesPage').then(m => ({ default: m.LearnedRulesPage })));
 
 // PALANTIR-LEVEL PAGES
 const DataQualityPage = lazy(() => import('./pages/admin/DataQualityPage').then(m => ({ default: m.DataQualityPage })));
@@ -227,6 +229,11 @@ function App() {
                     <Route path="rbac" element={
                       <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
                         <RBACPage />
+                      </Suspense>
+                    } />
+                    <Route path="learned-rules" element={
+                      <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
+                        <LearnedRulesPage />
                       </Suspense>
                     } />
                     <Route path="data-quality" element={

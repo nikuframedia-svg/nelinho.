@@ -19,6 +19,7 @@ import {
   Inbox,
   Database,
   Shield,
+  Brain,
 } from 'lucide-react';
 import { useState } from 'react';
 import { useCapabilities } from '../../providers';
@@ -149,6 +150,11 @@ const dataNavItems: NavItem[] = [
     label: 'Data Quality',
     icon: <Shield size={20} />,
     path: '/admin/data-quality',
+  },
+  {
+    label: 'Regras Aprendidas',
+    icon: <Brain size={20} />,
+    path: '/admin/learned-rules',
   },
 ];
 

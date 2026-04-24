@@ -620,6 +620,13 @@ class PreferenceRule(TenantBase):
     confirmed_by: Mapped[Optional[UUID]] = mapped_column(
         PGUUID(as_uuid=True), nullable=True,
     )
+    # Sprint E.3 — free-text operator feedback captured at confirm OR
+    # reject time. Always optional on confirm; the API requires it on
+    # reject so the audit trail has a human reason ("detector overfit on
+    # a 2-week vacation gap", "rule is real but belongs to phase X").
+    review_notes: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True,
+    )
 
 
 

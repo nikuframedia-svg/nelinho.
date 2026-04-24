@@ -80,6 +80,14 @@ class FitnessConfig:
     truck_consolidation_weight: float = 0.0      # disabled until transport batches exist
     truck_consolidation_tolerance_h: float = 12.0
 
+    # ── Sprint E.4 — Camada 1 learned-rule enforcement ────────────────
+    # When non-empty, `compute_fitness` adds the penalty computed by
+    # `src.plan.cpo.preference_adapter.compute_preference_penalty`.
+    # Callers typically copy this list from `FactoryState.preference_
+    # rules` at engine-construction time so the GA fitness loop doesn't
+    # hit the DB per evaluation.
+    preference_rules: List[Dict[str, Any]] = field(default_factory=list)
+
     # Cached feature extractor — filled at config creation to avoid
     # rebuilding the dict per-op at hot path time.
     _feature_extractor: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = field(
@@ -146,6 +154,15 @@ def compute_fitness(schedule: Dict[str, Any], config: Optional[FitnessConfig] = 
     if cfg.truck_consolidation_weight > 0:
         penalty_h = float(schedule.get("truck_consolidation_penalty_h", 0) or 0)
         fitness += cfg.truck_consolidation_weight * penalty_h
+
+    # Sprint E.4 — Camada 1 preference enforcement. Adds a bounded
+    # soft penalty for each confirmed rule the schedule violates.
+    if cfg.preference_rules:
+        try:
+            from src.plan.cpo.preference_adapter import compute_preference_penalty
+            fitness += compute_preference_penalty(schedule, cfg.preference_rules)
+        except Exception:  # pragma: no cover — never let the hook crash fitness
+            pass
 
     if schedule.get("safety_violated"):
         fitness += cfg.safety_penalty

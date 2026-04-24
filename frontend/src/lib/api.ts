@@ -1659,9 +1659,82 @@ export const kpiRegistryApi = {
       body: JSON.stringify(data) 
     }),
   
-  getDomains: () => 
+  getDomains: () =>
     request<any>('/v1/kpi/domains'),
-  
-  getTrustGuide: () => 
+
+  getTrustGuide: () =>
     request<any>('/v1/kpi/trust-index-guide'),
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PREFERENCE RULES API (Sprint E.3) — Camada 1 learned rules review
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export type PreferenceRuleStatus = 'detected' | 'confirmed' | 'rejected';
+export type PreferenceRuleType =
+  | 'temporal_block'
+  | 'tradeoff_preference'
+  | 'operator_affinity'
+  | 'phase_threshold';
+
+export interface PreferenceRule {
+  id: string;
+  type: PreferenceRuleType;
+  description: string;
+  predicate: Record<string, any>;
+  confidence: number;
+  status: PreferenceRuleStatus;
+  detected_from_commits: string[];
+  confirmed_at: string | null;
+  confirmed_by: string | null;
+  review_notes: string | null;
+}
+
+export const preferenceRulesApi = {
+  list: (params?: {
+    status?: PreferenceRuleStatus;
+    type?: PreferenceRuleType;
+    min_confidence?: number;
+    limit?: number;
+    offset?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set('status', params.status);
+    if (params?.type) qs.set('type', params.type);
+    if (params?.min_confidence !== undefined) {
+      qs.set('min_confidence', String(params.min_confidence));
+    }
+    if (params?.limit !== undefined) qs.set('limit', String(params.limit));
+    if (params?.offset !== undefined) qs.set('offset', String(params.offset));
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    return request<PreferenceRule[]>(`/v1/governance/preference-rules${suffix}`);
+  },
+
+  get: (ruleId: string) =>
+    request<PreferenceRule>(`/v1/governance/preference-rules/${ruleId}`),
+
+  confirm: (ruleId: string, payload?: { review_notes?: string }) =>
+    request<PreferenceRule>(
+      `/v1/governance/preference-rules/${ruleId}/confirm`,
+      { method: 'POST', body: JSON.stringify(payload ?? {}) },
+    ),
+
+  reject: (ruleId: string, payload: { reason: string }) =>
+    request<PreferenceRule>(
+      `/v1/governance/preference-rules/${ruleId}/reject`,
+      { method: 'POST', body: JSON.stringify(payload) },
+    ),
+
+  patch: (
+    ruleId: string,
+    payload: {
+      description?: string;
+      predicate?: Record<string, any>;
+      confidence?: number;
+    },
+  ) =>
+    request<PreferenceRule>(
+      `/v1/governance/preference-rules/${ruleId}`,
+      { method: 'PATCH', body: JSON.stringify(payload) },
+    ),
 };

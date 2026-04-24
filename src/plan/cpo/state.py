@@ -117,6 +117,16 @@ class FactoryState:
     # back to NELO_CURING_GAPS_SEED when the table is empty or missing.
     phase_transition_gaps: Dict[Tuple[str, str], float] = field(default_factory=dict)
 
+    # Sprint E.4 — confirmed PreferenceRule rows (Camada 1 learning).
+    # Each entry is a plain dict with `type` + `predicate` (+ optional
+    # `description`/`confidence` for debugging). Populated by
+    # `FactoryState.load()` from `governance.preference_rule` filtered
+    # on `status=confirmed`. Consumed by
+    # `src.plan.cpo.preference_adapter.compute_preference_penalty` from
+    # inside the fitness function. Empty list means "no adaptive
+    # enforcement yet" — scheduler keeps its defaults.
+    preference_rules: List[Dict[str, Any]] = field(default_factory=list)
+
     # ----- NELO domain rules ---------------------------------------
 
     #: Phase codes that require a 2-person crew.
@@ -192,12 +202,20 @@ class FactoryState:
             session, tenant_id,
         )
 
+        # Sprint E.4 — confirmed preference rules (Camada 1). Best-effort:
+        # a missing governance schema / table (tests / legacy dbs) leaves
+        # the list empty and the scheduler keeps its defaults.
+        state.preference_rules = await _load_confirmed_preference_rules(
+            session, tenant_id,
+        )
+
         logger.info(
             f"FactoryState loaded: {len(state.open_orders)} orders, "
             f"{len(state.skill_matrix)} phases with skills, "
             f"{len(state.molds)} molds, "
             f"{len(state.historical_durations)} duration medians, "
-            f"{len(state.phase_transition_gaps)} curing gaps"
+            f"{len(state.phase_transition_gaps)} curing gaps, "
+            f"{len(state.preference_rules)} confirmed rules"
         )
         return state
 
@@ -425,6 +443,49 @@ async def _load_phase_transition_gaps(
     merged: Dict[Tuple[str, str], float] = dict(seed)
     merged.update(db_gaps)
     return merged
+
+
+async def _load_confirmed_preference_rules(
+    session: Any,
+    tenant_id: UUID,
+) -> List[Dict[str, Any]]:
+    """Return the CONFIRMED PreferenceRule rows for this tenant as plain
+    dicts. Swallows any failure (missing schema on a fresh test DB,
+    governance module not installed, etc.) and returns an empty list so
+    the scheduler boot path stays resilient.
+    """
+    if session is None:
+        return []
+    try:
+        from sqlalchemy import and_, select
+
+        from src.governance.models import (
+            PreferenceRule,
+            PreferenceRuleStatus,
+        )
+
+        stmt = select(PreferenceRule).where(
+            and_(
+                PreferenceRule.tenant_id == tenant_id,
+                PreferenceRule.status == PreferenceRuleStatus.CONFIRMED.value,
+            )
+        )
+        result = await session.execute(stmt)
+        rows = result.scalars().all()
+    except Exception as exc:  # pragma: no cover — defensive (table absent etc.)
+        logger.debug(f"preference_rule DB load skipped: {exc}")
+        return []
+
+    return [
+        {
+            "id": str(r.id),
+            "type": r.type,
+            "description": r.description,
+            "predicate": dict(r.predicate or {}),
+            "confidence": float(r.confidence),
+        }
+        for r in rows
+    ]
 
 
 def _extract_error_rates(engine: Any) -> Dict[str, float]:
