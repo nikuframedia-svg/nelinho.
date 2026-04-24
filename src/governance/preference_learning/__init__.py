@@ -7,6 +7,18 @@ confirmation. This is the moat: every confirmed rule is a piece of
 tacit factory knowledge that becomes part of the scheduler's behaviour.
 """
 
+from .adaptive_weights import (
+    AdaptiveFitnessWeights,
+    DEFAULT_WEIGHTS,
+    RetrainResult,
+    load_adaptive_weights,
+)
 from .detector import PreferenceRuleDetector
 
-__all__ = ["PreferenceRuleDetector"]
+__all__ = [
+    "AdaptiveFitnessWeights",
+    "DEFAULT_WEIGHTS",
+    "PreferenceRuleDetector",
+    "RetrainResult",
+    "load_adaptive_weights",
+]

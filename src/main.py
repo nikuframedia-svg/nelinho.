@@ -127,18 +127,35 @@ async def lifespan(app: FastAPI):
             except Exception as ml_error:
                 logger.warning(f"ML retrain job registration failed: {ml_error}")
 
+        # Sprint D.1 — Realtime bridge (Kafka → SSE fan-out).
+        # Graceful when Kafka is unavailable: bridge logs + stays unhealthy
+        # so the /v1/realtime/events endpoint answers 503 instead of hanging.
+        try:
+            from src.shared.realtime import RealtimeBridge
+            await RealtimeBridge.instance().start()
+        except Exception as bridge_error:
+            logger.warning(f"RealtimeBridge failed to start: {bridge_error}")
+
         logger.info("ProdPlan ONE started successfully")
-        
+
     except Exception as e:
         logger.error(f"Startup failed: {e}")
         # Não fazer raise - permite iniciar mesmo com erros parciais
         logger.warning("Continuando com funcionalidades limitadas...")
-    
+
     yield
-    
+
     # Shutdown
     logger.info("Shutting down ProdPlan ONE...")
-    
+
+    # Stop realtime bridge first — subscribers get a clean "None" sentinel
+    # before the Kafka producer/consumer teardown races in.
+    try:
+        from src.shared.realtime import RealtimeBridge
+        await RealtimeBridge.instance().stop()
+    except Exception as bridge_error:
+        logger.warning(f"RealtimeBridge shutdown failed: {bridge_error}")
+
     await shutdown_scheduler()
     await close_db()
     await shutdown_redis()
@@ -322,6 +339,10 @@ app.include_router(governance_router)  # Governance API (Approvals, SoD)
 app.include_router(workforce_router)   # Workforce Operations API (NEW)
 app.include_router(copilot_alerts_router)  # Proactive alerts (Sprint C — Fase 5)
 app.include_router(plan_cpo_router)  # CPO v4 scheduler (Sprint E — DRCFFS-R)
+
+# Sprint D.1 — Real-time SSE fan-out of Kafka events to the browser.
+from src.shared.realtime import router as realtime_router
+app.include_router(realtime_router)
 app.include_router(ml_router)  # ML learning infrastructure (Sprint G)
 app.include_router(copilot_poetiq_router)  # POETIQ copilot↔CPO loop (Sprint K.4)
 

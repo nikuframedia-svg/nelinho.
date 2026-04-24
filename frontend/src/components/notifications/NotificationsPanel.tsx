@@ -5,7 +5,7 @@
  * Supports different severity levels and actions.
  */
 
-import { useState, useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Bell,
@@ -21,6 +21,8 @@ import {
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { pt } from 'date-fns/locale';
+import { useRealtime } from '@/providers/RealtimeProvider';
+import type { RealtimeEvent } from '@/hooks/useRealtimeEvents';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -48,68 +50,145 @@ interface NotificationsPanelProps {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// MOCK NOTIFICATIONS (would come from backend/websocket in production)
+// SSE → Notification translation (Sprint D.2)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const generateMockNotifications = (): Notification[] => [
+// Map each backend event_type to the shape the panel renders. Keeping
+// this as a lookup table makes adding a new notification type a
+// one-liner: append to this object and the panel picks it up.
+const EVENT_TEMPLATES: Record<
+  string,
   {
-    id: '1',
+    type: Notification['type'];
+    title: (payload: Record<string, unknown>) => string;
+    message: (payload: Record<string, unknown>) => string;
+    actionLabel?: string;
+    actionPath?: string;
+  }
+> = {
+  MOLD_MAINT_DUE: {
+    type: 'warning',
+    title: () => 'Molde precisa de manutenção',
+    message: (p) =>
+      `Molde ${p.mold_code ?? p.mold_id ?? '?'} ultrapassou o threshold de ciclos.`,
+    actionLabel: 'Ver moldes',
+    actionPath: '/plan/mrp',
+  },
+  MOLD_HEALTH_DEGRADED: {
+    type: 'warning',
+    title: () => 'Saúde do molde a degradar',
+    message: (p) => `Molde ${p.mold_code ?? '?'} com sinais de degradação.`,
+    actionLabel: 'Ver moldes',
+    actionPath: '/plan/mrp',
+  },
+  MATERIAL_SHORTAGE_DETECTED: {
     type: 'critical',
-    title: 'Novo bottleneck detectado',
-    message: 'Laminação tem agora 450 dias de backlog teórico',
-    timestamp: new Date(Date.now() - 2 * 60 * 1000), // 2 min ago
-    read: false,
+    title: () => 'Rotura de material detectada',
+    message: (p) =>
+      `Stock ${p.material_code ?? p.sku ?? '?'} abaixo do mínimo (days_to_stockout=${p.days_to_stockout ?? '?'}).`,
+    actionLabel: 'Ver stock',
+    actionPath: '/supply/inventory',
+  },
+  CAPACITY_CONSTRAINT_DETECTED: {
+    type: 'critical',
+    title: () => 'Gargalo de capacidade',
+    message: (p) =>
+      `Fase ${p.phase ?? '?'} sobrecarregada (${p.utilisation_pct ?? '?'}%).`,
     actionLabel: 'Ver detalhes',
     actionPath: '/inbox',
-    simulateAction: {
-      type: 'capacity_adjustment',
-      params: { phase: 'laminacao' },
-    },
   },
-  {
-    id: '2',
+  QUALITY_RISK_SCORED: {
     type: 'warning',
-    title: 'Trust Index baixou',
-    message: 'Backlog teórico baixou de 63% para 58%',
-    timestamp: new Date(Date.now() - 15 * 60 * 1000), // 15 min ago
-    read: false,
+    title: () => 'Risco de qualidade elevado',
+    message: (p) => `Score ${p.score ?? '?'} em ${p.target ?? 'produção'}.`,
     actionLabel: 'Ver qualidade',
-    actionPath: '/admin/data-quality',
+    actionPath: '/profit/quality',
   },
-  {
-    id: '3',
+  DECISION_EXECUTED: {
     type: 'success',
-    title: 'Simulação concluída',
-    message: 'Cenário "Overtime +20%" completou com sucesso',
-    timestamp: new Date(Date.now() - 60 * 60 * 1000), // 1h ago
-    read: true,
-    actionLabel: 'Ver resultados',
-    actionPath: '/twin',
+    title: () => 'Decisão executada',
+    message: (p) =>
+      `${p.decision_type ?? 'Decisão'} aprovada por ${p.executed_by ?? 'sistema'}.`,
+    actionLabel: 'Ver timeline',
+    actionPath: '/decisions',
   },
-  {
-    id: '4',
+  DECISION_ROLLED_BACK: {
+    type: 'warning',
+    title: () => 'Decisão revertida',
+    message: (p) =>
+      `${p.decision_type ?? 'Decisão'} rolled back: ${p.reason ?? 'sem razão'}.`,
+    actionLabel: 'Ver timeline',
+    actionPath: '/decisions',
+  },
+  STOCK_ADJUSTED: {
     type: 'info',
-    title: 'Nova ingestão disponível',
-    message: 'Folha_IA_extra.xlsx foi actualizada',
-    timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000), // 2h ago
-    read: true,
-    actionLabel: 'Activar',
-    actionPath: '/admin/data-quality',
+    title: () => 'Stock ajustado',
+    message: (p) =>
+      `${p.sku ?? p.material_code ?? 'Item'} ajustado em ${p.delta_qty ?? '?'}.`,
+    actionLabel: 'Ver stock',
+    actionPath: '/supply/inventory',
   },
-];
+};
+
+function eventToNotification(event: RealtimeEvent): Notification | null {
+  const tpl = EVENT_TEMPLATES[event.event_type];
+  if (!tpl) return null;
+  const ts = event.timestamp ? new Date(event.timestamp) : new Date();
+  return {
+    id: event.event_id ?? `${event.event_type}-${ts.getTime()}`,
+    type: tpl.type,
+    title: tpl.title(event.payload ?? {}),
+    message: tpl.message(event.payload ?? {}),
+    timestamp: ts,
+    read: false,
+    actionLabel: tpl.actionLabel,
+    actionPath: tpl.actionPath,
+  };
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // COMPONENT
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// Keep at most this many notifications in the panel. Older ones fall off
+// the bottom — consistent with the rolling buffer in the SSE hook.
+const MAX_NOTIFICATIONS_IN_PANEL = 50;
+
 export function NotificationsPanel({ isOpen, onClose }: NotificationsPanelProps) {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const navigate = useNavigate();
+  const realtime = useRealtime();
+  // Track which buffer index we've already turned into notifications so
+  // a re-render (or an unrelated state update) doesn't re-process the
+  // same events. The provider's `events` array grows append-only, so
+  // "new" = anything past `processedLenRef.current`.
+  const processedLenRef = useRef(0);
 
-  // Load notifications
   useEffect(() => {
-    setNotifications(generateMockNotifications());
-  }, []);
+    if (!realtime) return;
+    const total = realtime.events.length;
+    if (total === processedLenRef.current) return;
+
+    const fresh = realtime.events.slice(processedLenRef.current, total);
+    processedLenRef.current = total;
+
+    setNotifications((prev) => {
+      const seen = new Set(prev.map((n) => n.id));
+      const toAdd: Notification[] = [];
+      for (const ev of fresh) {
+        const note = eventToNotification(ev);
+        if (!note) continue;
+        if (seen.has(note.id)) continue;
+        seen.add(note.id);
+        toAdd.push(note);
+      }
+      if (toAdd.length === 0) return prev;
+      const merged = [...toAdd.reverse(), ...prev];
+      return merged.length > MAX_NOTIFICATIONS_IN_PANEL
+        ? merged.slice(0, MAX_NOTIFICATIONS_IN_PANEL)
+        : merged;
+    });
+  }, [realtime?.events.length, realtime]);
 
   const unreadCount = notifications.filter(n => !n.read).length;
 

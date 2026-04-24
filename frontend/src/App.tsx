@@ -6,6 +6,7 @@ import { ToastProvider } from './components/ToastProvider';
 import { ContractDegradedBanner } from './components/ContractDegradedBanner';
 import { SkeletonLoader } from './components/ui/Skeleton';
 import { CommandPaletteProvider } from './hooks';
+import { RealtimeProvider } from './providers/RealtimeProvider';
 
 // Lazy load heavy pages for code splitting
 const Dashboard = lazy(() => import('./pages/Dashboard').then(m => ({ default: m.Dashboard })));
@@ -73,6 +74,9 @@ function App() {
     <ErrorBoundary>
       <CommandPaletteProvider>
         <ToastProvider>
+          {/* Sprint D.2 — single shared SSE connection for the whole app.
+              Components read via useRealtimeType(type, handler). */}
+          <RealtimeProvider>
           <BrowserRouter>
             {/* Contract Degraded Banner - shows when API version mismatch */}
             <ContractDegradedBanner />
@@ -247,6 +251,7 @@ function App() {
                 </Route>
                 </Routes>
           </BrowserRouter>
+          </RealtimeProvider>
         </ToastProvider>
       </CommandPaletteProvider>
     </ErrorBoundary>

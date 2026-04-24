@@ -86,6 +86,37 @@ class FitnessConfig:
         default=None, repr=False
     )
 
+    # ── Sprint D.4 — Adaptive Weights (Camada 2) factory ─────────────────
+    # Callers that want per-tenant learned weights go through this
+    # classmethod instead of `FitnessConfig()`. The only thing that
+    # changes is the four legacy scalar weights (w_makespan, w_tardiness,
+    # w_setups, w_quality_risk); safety penalty, v2 normalised weights,
+    # truck consolidation and the quality-risk hook stay on their
+    # declared defaults. See
+    # `src/governance/preference_learning/adaptive_weights.py`.
+    @classmethod
+    async def from_tenant_config(
+        cls,
+        session: "Any",  # AsyncSession — string-quoted to avoid an import at module top
+        tenant_id: "Any",  # UUID
+        **overrides: Any,
+    ) -> "FitnessConfig":
+        """Build a FitnessConfig with adaptive weights merged in.
+
+        ``overrides`` lets callers pin individual fields (e.g.
+        ``use_v2_weights=True``, or passing ``quality_risk_predictor``)
+        without touching the adaptive lookup.
+
+        Silent fallback: if the tenant has no adaptive weights row yet,
+        this returns a config identical to ``FitnessConfig()``.
+        """
+        from src.governance.preference_learning import load_adaptive_weights
+
+        adaptive = await load_adaptive_weights(session, tenant_id)
+        merged = dict(adaptive)
+        merged.update(overrides)
+        return cls(**merged)
+
 
 def compute_fitness(schedule: Dict[str, Any], config: Optional[FitnessConfig] = None) -> float:
     """Compute a single scalar from a schedule result dict.

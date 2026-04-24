@@ -5,6 +5,7 @@ ProdPlan ONE - Cost Service
 Business logic for COGS calculations.
 """
 
+import logging
 from datetime import datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
@@ -18,6 +19,8 @@ from src.profit.calculators.cogs_calculator import COGSCalculator, COGSResult
 from src.profit.calculators.scenario_simulator import ScenarioSimulator, CostMultipliers, ScenarioResult
 from src.shared.kafka_client import publish_event, Topics
 from src.shared.events import COGSCalculatedEvent
+
+_logger = logging.getLogger(__name__)
 
 
 class CostService:
@@ -211,13 +214,38 @@ class CostService:
             currency=calculation.currency_code,
         )
         
-        return self._simulator.simulate(
+        scenario = self._simulator.simulate(
             base_result=base_result,
             multipliers=multipliers,
             volume_multiplier=volume_multiplier,
             scenario_name=scenario_name,
         )
-    
+
+        try:
+            from src.shared.kafka_client import EventBase as _EventBase
+
+            await publish_event(
+                Topics.SCENARIO_SIMULATED,
+                _EventBase(
+                    event_type="SCENARIO_SIMULATED",
+                    tenant_id=self.tenant_id,
+                    source_module="profit",
+                    payload={
+                        "base_order_id": base_order_id,
+                        "scenario_name": scenario_name,
+                        "volume_multiplier": float(volume_multiplier),
+                        "base_cogs": float(calculation.total_cogs),
+                        "scenario_cogs": float(getattr(scenario, "total_cogs", 0) or 0),
+                        "delta_eur": float(getattr(scenario, "delta_eur", 0) or 0),
+                        "delta_percent": float(getattr(scenario, "delta_percent", 0) or 0),
+                    },
+                ),
+            )
+        except Exception as exc:  # pragma: no cover — best-effort
+            _logger.warning("SCENARIO_SIMULATED publish failed: %s", exc)
+
+        return scenario
+
     async def run_sensitivity_analysis(
         self,
         base_order_id: str,
@@ -251,11 +279,34 @@ class CostService:
             currency=calculation.currency_code,
         )
         
-        return self._simulator.sensitivity_analysis(
+        variance = self._simulator.sensitivity_analysis(
             base_result=base_result,
             component=component,
             range_percent=range_percent,
         )
+
+        try:
+            from src.shared.kafka_client import EventBase as _EventBase
+
+            await publish_event(
+                Topics.COST_VARIANCE_CALCULATED,
+                _EventBase(
+                    event_type="COST_VARIANCE_CALCULATED",
+                    tenant_id=self.tenant_id,
+                    source_module="profit",
+                    payload={
+                        "base_order_id": base_order_id,
+                        "component": component,
+                        "range_percent": range_percent,
+                        "base_cogs": float(calculation.total_cogs),
+                        "variance_points": len(variance) if hasattr(variance, "__len__") else None,
+                    },
+                ),
+            )
+        except Exception as exc:  # pragma: no cover — best-effort
+            _logger.warning("COST_VARIANCE_CALCULATED publish failed: %s", exc)
+
+        return variance
 
 
 

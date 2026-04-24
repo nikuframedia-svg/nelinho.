@@ -58,3 +58,13 @@ export { useCoverageAnalysis } from './useCoverageAnalysis';
 
 // TIER 4: CI/DevOps & Future
 export { useToolRegistry } from './useToolRegistry';
+
+// ============================================================================
+// REAL-TIME — Server-Sent Events bridge (Sprint D.2)
+// ============================================================================
+export { useRealtimeEvents } from './useRealtimeEvents';
+export type {
+  RealtimeEvent,
+  UseRealtimeEventsOptions,
+  UseRealtimeEventsResult,
+} from './useRealtimeEvents';

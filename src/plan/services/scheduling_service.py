@@ -21,8 +21,12 @@ from src.plan.engines.scheduling_adapter import (
     SchedulerEngine,
     DispatchRule,
 )
-from src.shared.kafka_client import publish_event, Topics
+import logging
+
+from src.shared.kafka_client import EventBase, publish_event, Topics
 from src.shared.events import ScheduleCreatedEvent
+
+logger = logging.getLogger(__name__)
 
 
 class SchedulingService:
@@ -217,6 +221,27 @@ class SchedulingService:
             schedule.actual_quantity = actual_quantity
         
         await self.session.flush()
+
+        try:
+            await publish_event(
+                Topics.SCHEDULE_UPDATED,
+                EventBase(
+                    event_type="SCHEDULE_UPDATED",
+                    tenant_id=self.tenant_id,
+                    source_module="plan",
+                    payload={
+                        "schedule_id": str(schedule.id),
+                        "order_id": str(schedule.order_id) if schedule.order_id else None,
+                        "status": status.value if hasattr(status, "value") else str(status),
+                        "actual_start": schedule.actual_start.isoformat() if schedule.actual_start else None,
+                        "actual_end": schedule.actual_end.isoformat() if schedule.actual_end else None,
+                        "actual_quantity": float(schedule.actual_quantity) if schedule.actual_quantity is not None else None,
+                    },
+                ),
+            )
+        except Exception as exc:  # pragma: no cover — bus outage is non-fatal
+            logger.warning("SCHEDULE_UPDATED publish failed for %s: %s", schedule.id, exc)
+
         return schedule
 
 

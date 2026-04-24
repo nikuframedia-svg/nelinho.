@@ -148,6 +148,35 @@ class ShortageDetector:
             else:
                 warn_created += 1
 
+            try:
+                from src.shared.kafka_client import EventBase, Topics, publish_event
+
+                await publish_event(
+                    Topics.MATERIAL_SHORTAGE_DETECTED,
+                    EventBase(
+                        event_type="MATERIAL_SHORTAGE_DETECTED",
+                        tenant_id=self.tenant_id,
+                        source_module="supply",
+                        payload={
+                            "sku_id": m.sku_id,
+                            "material_code": m.sku_id,
+                            "severity": severity,
+                            "code": code,
+                            "on_hand": position["on_hand"],
+                            "in_transit": position["in_transit"]["qty"],
+                            "min_stock": position["min_stock"],
+                            "days_to_stockout": days_to_stockout,
+                            "lead_time_days": position.get("lead_time_days"),
+                            "is_imminent": is_imminent,
+                        },
+                    ),
+                )
+            except Exception as exc:  # pragma: no cover — best-effort
+                logger.warning(
+                    "MATERIAL_SHORTAGE_DETECTED publish failed for %s: %s",
+                    m.sku_id, exc,
+                )
+
         await self.session.flush()
         return {
             "materials_scanned": len(materials),

@@ -248,6 +248,34 @@ class GovernanceService:
 
         logger.info(f"Decision proposed: {decision_id_uuid} ({decision_type})")
 
+        try:
+            from src.shared.kafka_client import EventBase, Topics, publish_event
+
+            await publish_event(
+                Topics.DECISION_PROPOSED,
+                EventBase(
+                    event_type="DECISION_PROPOSED",
+                    tenant_id=self.tenant_id,
+                    source_module="governance",
+                    payload={
+                        "decision_id": str(decision_run.id),
+                        "decision_type": decision_type,
+                        "title": title,
+                        "proposed_by": proposed_by,
+                        "risk_level": risk_level,
+                        "status": decision_run.status,
+                        "autonomy_level": decision_run.autonomy_level,
+                        "action_data": action_data,
+                        "expected_impact": expected_impact,
+                        "scenario_id": scenario_id,
+                    },
+                ),
+            )
+        except Exception as exc:  # pragma: no cover — best-effort
+            logger.warning(
+                "DECISION_PROPOSED publish failed for %s: %s", decision_run.id, exc,
+            )
+
         return self._run_to_dict(decision_run)
     
     async def approve_decision(
@@ -312,8 +340,39 @@ class GovernanceService:
         await self.db.flush()
         logger.info(f"Decision {decision_id} — {action.value} by {approved_by}")
 
+        # Publish a lifecycle event on every approval action so the Timeline
+        # UI can animate votes in real time. `status` tells the consumer
+        # whether the decision crossed the approval threshold, was rejected,
+        # or is still pending more votes.
+        try:
+            from src.shared.kafka_client import EventBase, Topics, publish_event
+
+            await publish_event(
+                Topics.DECISION_APPROVED,
+                EventBase(
+                    event_type="DECISION_APPROVED",
+                    tenant_id=self.tenant_id,
+                    source_module="governance",
+                    payload={
+                        "decision_id": str(decision_run.id),
+                        "decision_type": decision_run.decision_type,
+                        "status": decision_run.status,
+                        "action": action.value,
+                        "approved_by": approved_by,
+                        "approver_role": approver_role,
+                        "reason": reason,
+                        "conditions": conditions,
+                        "approvals_total": len(decision_run.approvals),
+                    },
+                ),
+            )
+        except Exception as exc:  # pragma: no cover — best-effort
+            logger.warning(
+                "DECISION_APPROVED publish failed for %s: %s", decision_run.id, exc,
+            )
+
         return self._run_to_dict(decision_run)
-    
+
     async def execute_decision(
         self,
         decision_id: str,

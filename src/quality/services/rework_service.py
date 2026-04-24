@@ -85,6 +85,35 @@ class ReworkService:
         )
         self.session.add(row)
         await self.session.flush()
+
+        try:
+            from src.shared.kafka_client import EventBase, Topics, publish_event
+
+            await publish_event(
+                Topics.REWORK_ENTRY_CREATED,
+                EventBase(
+                    event_type="REWORK_ENTRY_CREATED",
+                    tenant_id=self.tenant_id,
+                    source_module="quality",
+                    payload={
+                        "rework_id": str(row.id),
+                        "of_id": row.of_id,
+                        "error_code": row.error_code,
+                        "original_op_id": row.original_op_id,
+                        "rework_op_id": row.rework_op_id,
+                        "causer_employee_id": str(row.causer_employee_id) if row.causer_employee_id else None,
+                        "phase_id_causer": row.phase_id_causer,
+                        "phase_id_rework": row.phase_id_rework,
+                        "detected_at": row.detected_at.isoformat() if row.detected_at else None,
+                        "detected_by": row.detected_by,
+                        "cost_estimate_eur": float(row.cost_estimate_eur) if row.cost_estimate_eur is not None else None,
+                        "hours_lost": float(row.hours_lost) if row.hours_lost is not None else None,
+                    },
+                ),
+            )
+        except Exception as exc:  # pragma: no cover — best-effort
+            logger.warning("REWORK_ENTRY_CREATED publish failed for %s: %s", row.id, exc)
+
         return row
 
     async def list_rework(

@@ -436,6 +436,31 @@ class MaterialService:
         row.resolved_by = resolved_by
         row.resolved_ledger_entry_id = ledger_entry_id
         await self.session.flush()
+
+        try:
+            from src.shared.kafka_client import EventBase, Topics, publish_event
+
+            await publish_event(
+                Topics.STOCK_RECONCILED,
+                EventBase(
+                    event_type="STOCK_RECONCILED",
+                    tenant_id=self.tenant_id,
+                    source_module="supply",
+                    payload={
+                        "reconciliation_id": str(row.id),
+                        "sku_id": row.sku_id,
+                        "theoretical_qty": float(row.theoretical_qty) if row.theoretical_qty is not None else None,
+                        "physical_qty": float(row.physical_qty) if row.physical_qty is not None else None,
+                        "variance_qty": float(row.variance_qty) if row.variance_qty is not None else None,
+                        "resolved_by": resolved_by,
+                        "resolved_at": row.resolved_at.isoformat() if row.resolved_at else None,
+                        "ledger_entry_id": str(ledger_entry_id) if ledger_entry_id else None,
+                    },
+                ),
+            )
+        except Exception as exc:  # pragma: no cover — best-effort
+            logger.warning("STOCK_RECONCILED publish failed for %s: %s", row.id, exc)
+
         return row
 
     # ─── event emission ───────────────────────────────────────────────────

@@ -123,6 +123,9 @@ class MoldService:
     # ─── Health ───────────────────────────────────────────────────────────
 
     async def recompute_health(self, mold: Mold) -> MoldHealth:
+        # Pull the previous snapshot before the new one lands so we can tell
+        # the event consumer whether the mold is trending worse.
+        prev = await self.latest_health(mold.id)
         result = await self._calc.compute(mold)
         row = MoldHealth(
             id=uuid4(),
@@ -135,6 +138,38 @@ class MoldService:
         )
         self.session.add(row)
         await self.session.flush()
+
+        degraded = (
+            prev is not None
+            and (row.score_0_100 < prev.score_0_100 or row.risk_category != prev.risk_category)
+        )
+        if degraded:
+            try:
+                from src.shared.kafka_client import EventBase, Topics, publish_event
+
+                await publish_event(
+                    Topics.MOLD_HEALTH_DEGRADED,
+                    EventBase(
+                        event_type="MOLD_HEALTH_DEGRADED",
+                        tenant_id=self.tenant_id,
+                        source_module="mold",
+                        payload={
+                            "mold_id": str(mold.id),
+                            "mold_code": mold.mold_code,
+                            "score_0_100": row.score_0_100,
+                            "risk_category": row.risk_category,
+                            "previous_score": prev.score_0_100 if prev else None,
+                            "previous_risk_category": prev.risk_category if prev else None,
+                            "assessed_at": row.assessed_at.isoformat() if row.assessed_at else None,
+                            "components": row.components,
+                        },
+                    ),
+                )
+            except Exception as exc:  # pragma: no cover — best-effort
+                logger.warning(
+                    "MOLD_HEALTH_DEGRADED publish failed for %s: %s", mold.mold_code, exc,
+                )
+
         return row
 
     async def latest_health(self, mold_id: UUID) -> Optional[MoldHealth]:
@@ -353,6 +388,30 @@ class MoldService:
             )
             self.session.add(alert)
             created += 1
+
+            try:
+                from src.shared.kafka_client import EventBase, Topics, publish_event
+
+                await publish_event(
+                    Topics.MOLD_MAINT_DUE,
+                    EventBase(
+                        event_type="MOLD_MAINT_DUE",
+                        tenant_id=self.tenant_id,
+                        source_module="mold",
+                        payload={
+                            "mold_id": str(mold.id),
+                            "mold_code": mold.mold_code,
+                            "cycles_since_last_maint": counter.cycles_since_last_maint,
+                            "threshold": threshold,
+                            "severity": alert.severity,
+                        },
+                    ),
+                )
+            except Exception as exc:  # pragma: no cover — best-effort
+                logger.warning(
+                    "MOLD_MAINT_DUE publish failed for %s: %s", mold.mold_code, exc,
+                )
+
         await self.session.flush()
         return created
 

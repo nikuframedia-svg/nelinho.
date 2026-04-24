@@ -176,6 +176,21 @@ def register_tenant(
         coalesce=True,
         max_instances=1,
     )
+    # Sprint D.4 — AdaptiveFitnessWeights (Camada 2). Weekly retrain on
+    # Sunday 02:00 UTC so the weights the GA reads on Monday morning are
+    # fresh. Weekly cadence (not daily) matches the sample budget: <50
+    # new pairs per day for most tenants, so a longer accumulation window
+    # avoids training on noise.
+    _scheduler.add_job(
+        _preference_weights_retrain_job,
+        trigger=CronTrigger(day_of_week=6, hour=2, minute=0, timezone="UTC"),
+        args=[tenant_id],
+        id=f"preference_weights_retrain:{tenant_id}",
+        name=f"preference_weights_retrain[{tenant_id}]",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
 
 
 async def shutdown_scheduler() -> None:
@@ -262,6 +277,48 @@ async def _preference_rule_detector_job(tenant_id: UUID) -> None:
     except Exception as exc:
         logger.error(
             "preference_rule_detector tenant=%s failed: %s",
+            tenant_id, exc, exc_info=True,
+        )
+
+
+async def _preference_weights_retrain_job(tenant_id: UUID) -> None:
+    """Sprint D.4 — weekly retrain of AdaptiveFitnessWeights (Camada 2).
+
+    Pulls recent commits with rejected alternatives, fits a pairwise
+    logistic regression on the KPI deltas, and persists the blended
+    weights under ``tenant_config(governance, adaptive_fitness_weights)``.
+
+    Below the minimum sample threshold the retainer returns
+    ``status="skipped"`` and the previously persisted weights (or
+    domain defaults) remain in effect. Any exception is swallowed —
+    a broken training run must never break the scheduler thread.
+    """
+    try:
+        from src.governance.preference_learning import AdaptiveFitnessWeights
+    except ImportError:
+        logger.debug(
+            "adaptive_fitness_weights module missing — skipping tenant=%s",
+            tenant_id,
+        )
+        return
+
+    from src.shared.database import get_session_context
+
+    started = datetime.utcnow()
+    try:
+        async with get_session_context() as session:
+            retainer = AdaptiveFitnessWeights(session, tenant_id)
+            result = await retainer.retrain(window_days=30)
+            await session.commit()
+        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        logger.info(
+            "preference_weights_retrain tenant=%s status=%s pairs=%s commits=%s elapsed_ms=%s",
+            tenant_id, result.status, result.pairs_used,
+            result.commits_scanned, elapsed_ms,
+        )
+    except Exception as exc:
+        logger.error(
+            "preference_weights_retrain tenant=%s failed: %s",
             tenant_id, exc, exc_info=True,
         )
 

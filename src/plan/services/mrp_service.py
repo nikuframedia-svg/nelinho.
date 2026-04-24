@@ -5,6 +5,7 @@ ProdPlan ONE - MRP Service
 Business logic for Material Requirements Planning.
 """
 
+import logging
 from datetime import datetime, date, timedelta
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
@@ -18,6 +19,8 @@ from src.plan.engines.mrp_adapter import MRPAdapter, GrossRequirement, Inventory
 from src.plan.engines.bom_adapter import BOMAdapter
 from src.shared.kafka_client import publish_event, Topics
 from src.shared.events import MRPCalculatedEvent, PurchaseOrderCreatedEvent
+
+logger = logging.getLogger(__name__)
 
 
 class MRPService:
@@ -128,7 +131,7 @@ class MRPService:
             self.session.add(requirement)
         
         await self.session.flush()
-        
+
         # Publish event
         await publish_event(
             Topics.MRP_CALCULATED,
@@ -143,6 +146,40 @@ class MRPService:
                 },
             ),
         )
+
+        # Per-material drill-down. Consumers filtering on MRP_CALCULATED get
+        # the aggregate; UIs that want to show a list (shortage feed,
+        # procurement inbox) subscribe to MATERIAL_REQUIREMENT_PLANNED and
+        # read the `requirements` list. One batch envelope instead of N
+        # individual events avoids flooding the bus on large BOM explosions.
+        try:
+            from src.shared.kafka_client import EventBase as _EventBase
+
+            await publish_event(
+                Topics.MATERIAL_REQUIREMENT_PLANNED,
+                _EventBase(
+                    event_type="MATERIAL_REQUIREMENT_PLANNED",
+                    tenant_id=self.tenant_id,
+                    source_module="plan",
+                    payload={
+                        "mrp_run_id": mrp_run_id,
+                        "requirements": [
+                            {
+                                "item_id": s.get("item_id"),
+                                "quantity": float(s.get("quantity", 0)),
+                                "lead_time_days": int(s.get("lead_time_days", 0)),
+                                "order_date": s.get("start_date"),
+                                "due_date": s.get("due_date"),
+                                "unit_cost": float(s.get("unit_cost", 0)),
+                            }
+                            for s in result.purchase_suggestions
+                        ],
+                        "count": len(result.purchase_suggestions),
+                    },
+                ),
+            )
+        except Exception as exc:  # pragma: no cover — best-effort
+            logger.warning("MATERIAL_REQUIREMENT_PLANNED publish failed: %s", exc)
         
         return {
             "mrp_run_id": mrp_run_id,
