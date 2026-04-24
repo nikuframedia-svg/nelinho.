@@ -3,6 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { Bell, Settings, ChevronDown, Command } from 'lucide-react';
 import { NavTab } from './NavTab';
 import { NotificationsPanel } from '../notifications/NotificationsPanel';
+import { UmweltSwitcher } from '../dashboard/UmweltSwitcher';
 import { useCommandPalette } from '../../hooks';
 
 const navItems = [
@@ -69,6 +70,9 @@ export function AlphaHeader() {
 
       {/* Right Section */}
       <div className="flex items-center gap-3">
+        {/* Sprint H — Umwelt switcher */}
+        <UmweltSwitcher className="hidden md:inline-flex" />
+
         {/* Command Palette Trigger */}
         <button
           onClick={openCommandPalette}

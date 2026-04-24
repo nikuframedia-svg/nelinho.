@@ -1691,6 +1691,85 @@ export interface PreferenceRule {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// PROFIT DASHBOARD API (Sprint H.3) — €/dia + targets + trend
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface ProfitDashboardResponse {
+  date: string;
+  throughput_eur: {
+    today: number;
+    mtd: number;
+    ytd: number;
+    target_min: number;
+    target_max: number;
+    on_target: 'below' | 'on' | 'above';
+  };
+  trend_14d: Array<{ date: string; throughput_eur: number }>;
+  top_skus: Array<Record<string, any>>;
+  currency: string;
+  source: string;
+}
+
+export const profitDashboardApi = {
+  get: (params?: { as_of?: string }) => {
+    const qs = params?.as_of ? `?as_of=${params.as_of}` : '';
+    return request<ProfitDashboardResponse>(`/v1/profit/dashboard${qs}`);
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// WORKER OPERATIONS API (Sprint H.2) — operator tablet
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface WorkerOperation {
+  id: string;
+  order_id: string;
+  operation_sequence: number;
+  product_id: string;
+  quantity: number;
+  machine_id: string | null;
+  scheduled_start: string;
+  scheduled_end: string;
+  scheduled_duration_hours: number | null;
+  status: string;
+  actual_start: string | null;
+  actual_end: string | null;
+}
+
+export const workerOperationsApi = {
+  today: (employeeId: string, params?: { as_of?: string }) => {
+    const qs = params?.as_of ? `?as_of=${params.as_of}` : '';
+    return request<WorkerOperation[]>(
+      `/v1/plan/schedule/worker/${employeeId}/operations-today${qs}`,
+    );
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// QUALITY REWORK API (Sprint H.2) — tablet issue report
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface ReworkCreatePayload {
+  of_id: string;
+  error_code: string;
+  detected_at?: string;
+  error_description?: string;
+  root_cause_category?: string;
+  causer_employee_id?: string;
+  cost_estimate_eur?: number;
+  hours_lost?: number;
+  notes?: string;
+}
+
+export const qualityReworkApi = {
+  create: (payload: ReworkCreatePayload) =>
+    request<any>('/v1/quality/rework', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // CPO COMMITS API (Sprint E.1) — Timeline + MAP-Elites alternatives + decide
 // ═══════════════════════════════════════════════════════════════════════════════
 

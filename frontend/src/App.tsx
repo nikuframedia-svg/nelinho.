@@ -19,6 +19,9 @@ const RBACPage = lazy(() => import('./pages/admin/RBACPage').then(m => ({ defaul
 const LearnedRulesPage = lazy(() => import('./pages/admin/LearnedRulesPage').then(m => ({ default: m.LearnedRulesPage })));
 // Sprint E.1 — CPO Timeline + MAP-Elites alternatives
 const TimelinePage = lazy(() => import('./pages/plan/TimelinePage').then(m => ({ default: m.TimelinePage })));
+// Sprint H — 3 Umwelts (Gestor / Operador tablet / CEO)
+const CEODashboardPage = lazy(() => import('./pages/CEODashboardPage').then(m => ({ default: m.CEODashboardPage })));
+const OperadorPage = lazy(() => import('./pages/OperadorPage').then(m => ({ default: m.OperadorPage })));
 
 // PALANTIR-LEVEL PAGES
 const DataQualityPage = lazy(() => import('./pages/admin/DataQualityPage').then(m => ({ default: m.DataQualityPage })));
@@ -98,6 +101,19 @@ function App() {
                   <Route path="inbox" element={
                     <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
                       <OpsInboxPage />
+                    </Suspense>
+                  } />
+
+                  {/* Sprint H — 3 Umwelts */}
+                  <Route path="gestor" element={<Navigate to="/" replace />} />
+                  <Route path="ceo" element={
+                    <Suspense fallback={<div className="p-8"><SkeletonLoader count={3} /></div>}>
+                      <CEODashboardPage />
+                    </Suspense>
+                  } />
+                  <Route path="operador" element={
+                    <Suspense fallback={<div className="p-8"><SkeletonLoader count={3} /></div>}>
+                      <OperadorPage />
                     </Suspense>
                   } />
                   
