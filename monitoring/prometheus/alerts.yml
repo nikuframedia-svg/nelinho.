@@ -1,0 +1,303 @@
+# ProdPlan ONE — Alert rules (Sprint J.3)
+#
+# Reference: docs/sla.md defines the 99% uptime / RTO 2h / RPO 1h
+# contract these alerts defend.
+#
+# Severity vocabulary (matches the Alertmanager routing in production):
+#   critical → pages oncall immediately (SMS / phone)
+#   warning  → creates a ticket, oncall responds within 1 business day
+#   info     → dashboard only, no paging
+#
+# Every `for:` duration is tuned to ignore momentary spikes without
+# hiding real outages. Change them in-repo, not via Prometheus API —
+# this file is the source of truth.
+
+groups:
+
+  # ═══════════════════════════════════════════════════════════════════
+  # Platform availability (drives the 99% uptime SLO)
+  # ═══════════════════════════════════════════════════════════════════
+
+  - name: prodplan.platform
+    interval: 30s
+    rules:
+
+      - alert: APIDown
+        expr: up{job="prodplan-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: api
+        annotations:
+          summary: "ProdPlan API is down"
+          description: |
+            The FastAPI app has stopped responding on {{ $labels.instance }}.
+            SSE, Copilot and the CPO scheduler are all unavailable.
+          runbook: "docs/runbooks/api-down.md"
+
+      - alert: PostgresDown
+        expr: up{job="postgres"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: postgres
+        annotations:
+          summary: "PostgreSQL is not reachable by the exporter"
+          description: |
+            postgres_exporter can't connect to the instance on {{ $labels.instance }}.
+            All write paths will be returning 5xx within minutes.
+          runbook: "docs/runbooks/postgres-down.md"
+
+      - alert: OllamaDown
+        expr: probe_success{instance=~".*11434.*"} == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: ollama
+        annotations:
+          summary: "Ollama not responding — Copilot degraded"
+          description: |
+            The blackbox probe to Ollama failed for more than 5m.
+            The Copilot stack degrades to rule-based answers via the
+            guardrails fallback; no hard outage, but quality drops.
+          runbook: "docs/runbooks/ollama-down.md"
+
+      - alert: KafkaDown
+        expr: up{job="kafka"} == 0
+        for: 3m
+        labels:
+          severity: critical
+          component: kafka
+        annotations:
+          summary: "Kafka broker unreachable"
+          description: |
+            Events stop being delivered to SSE consumers; the realtime
+            UI will fall back to polling. Outbox will accumulate.
+          runbook: "docs/runbooks/kafka-down.md"
+
+  # ═══════════════════════════════════════════════════════════════════
+  # HTTP error budget (drives the 99% uptime + 99.9% success SLOs)
+  # ═══════════════════════════════════════════════════════════════════
+
+  - name: prodplan.http
+    interval: 30s
+    rules:
+
+      - alert: High5xxRate
+        expr: |
+          sum(rate(prodplan_http_requests_total{status=~"5.."}[5m]))
+          /
+          sum(rate(prodplan_http_requests_total[5m]))
+          > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          component: api
+        annotations:
+          summary: "5xx rate above 5% for 5 minutes"
+          description: |
+            {{ $value | humanizePercentage }} of HTTP responses are 5xx.
+            Likely suspects: DB connection pool, Kafka outage, LLM
+            rate-limits, or a recent deploy.
+          runbook: "docs/runbooks/high-5xx-rate.md"
+
+      - alert: High4xxRate
+        expr: |
+          sum(rate(prodplan_http_requests_total{status=~"4.."}[15m]))
+          /
+          sum(rate(prodplan_http_requests_total[15m]))
+          > 0.15
+        for: 15m
+        labels:
+          severity: warning
+          component: api
+        annotations:
+          summary: "4xx rate above 15% for 15 minutes"
+          description: |
+            {{ $value | humanizePercentage }} of HTTP responses are 4xx.
+            Usually a client-side bug, auth misconfiguration, or a
+            frontend deploy that drifted from the API contract.
+
+  # ═══════════════════════════════════════════════════════════════════
+  # Kafka + outbox (moat's realtime pipe)
+  # ═══════════════════════════════════════════════════════════════════
+
+  - name: prodplan.kafka
+    interval: 30s
+    rules:
+
+      - alert: KafkaProducerFailing
+        expr: |
+          rate(prodplan_kafka_producer_failure_total[5m])
+          >
+          rate(prodplan_kafka_producer_success_total[5m]) * 0.05
+        for: 5m
+        labels:
+          severity: critical
+          component: kafka
+        annotations:
+          summary: "Kafka producer failure rate above 5%"
+          description: |
+            Events are being lost. Outbox dispatcher will retry but
+            sustained failure means SSE consumers see stale data.
+
+      - alert: OutboxLagHigh
+        expr: histogram_quantile(
+                0.95,
+                sum(rate(prodplan_outbox_dispatcher_latency_seconds_bucket[5m]))
+                  by (le)
+              ) > 2
+        for: 10m
+        labels:
+          severity: warning
+          component: outbox
+        annotations:
+          summary: "Outbox dispatcher P95 latency > 2s"
+          description: |
+            Events are leaving the DB >2s after commit. SSE freshness
+            guarantee is degraded from <1s to several seconds.
+
+  # ═══════════════════════════════════════════════════════════════════
+  # Host resources (keep the on-prem box alive)
+  # ═══════════════════════════════════════════════════════════════════
+
+  - name: prodplan.host
+    interval: 30s
+    rules:
+
+      - alert: HostDiskFillingUp
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint="/"}
+           / node_filesystem_size_bytes{mountpoint="/"}) < 0.20
+        for: 10m
+        labels:
+          severity: warning
+          component: host
+        annotations:
+          summary: "Root partition < 20% free"
+          description: |
+            {{ $labels.instance }} root volume at {{ $value | humanizePercentage }} free.
+            Runbook: clear old Kafka segments + Postgres WAL archives.
+          runbook: "docs/runbooks/disk-full.md"
+
+      - alert: HostDiskCritical
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint="/"}
+           / node_filesystem_size_bytes{mountpoint="/"}) < 0.10
+        for: 5m
+        labels:
+          severity: critical
+          component: host
+        annotations:
+          summary: "Root partition < 10% free — imminent failure"
+          description: |
+            Postgres will refuse writes within an hour. Get on it.
+
+      - alert: HostHighMemoryPressure
+        expr: |
+          node_memory_MemAvailable_bytes
+            / node_memory_MemTotal_bytes < 0.10
+        for: 15m
+        labels:
+          severity: warning
+          component: host
+        annotations:
+          summary: "Available memory < 10%"
+          description: |
+            Risk of Ollama OOM-kill. Consider switching to the smaller
+            Gemma 3B model via Copilot settings.
+
+  # ═══════════════════════════════════════════════════════════════════
+  # Postgres health (drives the RPO guarantee)
+  # ═══════════════════════════════════════════════════════════════════
+
+  - name: prodplan.postgres
+    interval: 30s
+    rules:
+
+      - alert: PostgresConnectionsNearLimit
+        expr: |
+          pg_stat_activity_count
+            / pg_settings_max_connections > 0.80
+        for: 5m
+        labels:
+          severity: warning
+          component: postgres
+        annotations:
+          summary: "Postgres connection pool > 80% full"
+          description: |
+            Expect client-side retries to start failing. Check for
+            idle-in-transaction sessions or a leaked pool.
+
+      - alert: PostgresReplicationLagHigh
+        expr: pg_replication_lag > 60
+        for: 5m
+        labels:
+          severity: critical
+          component: postgres
+        annotations:
+          summary: "Replication lag > 60s — RPO at risk"
+          description: |
+            SLA commits to RPO ≤ 1h; this alert fires well before that
+            so the operator has time to intervene.
+          runbook: "docs/runbooks/replication-lag.md"
+
+      - alert: BackupStale
+        expr: time() - pg_backup_last_successful_seconds > 26 * 3600
+        for: 10m
+        labels:
+          severity: critical
+          component: postgres
+        annotations:
+          summary: "No successful Postgres backup in > 26h"
+          description: |
+            Daily backup has slipped — RPO violated if we lose the
+            primary in the next hour. Kick pgBackRest manually and
+            investigate.
+          runbook: "docs/disaster-recovery.md"
+
+  # ═══════════════════════════════════════════════════════════════════
+  # Business / data quality
+  # ═══════════════════════════════════════════════════════════════════
+
+  - name: prodplan.quality
+    interval: 60s
+    rules:
+
+      - alert: TrustIndexCollapsed
+        expr: min(prodplan_trust_index_score) < 0.60
+        for: 15m
+        labels:
+          severity: warning
+          component: dqa
+        annotations:
+          summary: "TrustIndex below the 0.60 auto-commit floor"
+          description: |
+            At least one entity's trust score is below the gate —
+            schedule commits will be blocked until the data is
+            repaired or approved manually.
+
+      - alert: DataQualityIssueRateHigh
+        expr: rate(prodplan_data_quality_issues_total[30m]) > 5
+        for: 30m
+        labels:
+          severity: warning
+          component: dqa
+        annotations:
+          summary: "Data quality issue rate > 5/min for 30m"
+          description: |
+            Upstream ingestion is producing garbage. Check the ERP
+            adapter logs before the auto-repair budget is exhausted.
+
+      - alert: CopilotRollbackSpike
+        expr: rate(prodplan_copilot_action_rollbacks_total[30m]) > 0.1
+        for: 30m
+        labels:
+          severity: warning
+          component: copilot
+        annotations:
+          summary: "Copilot rollback rate > 0.1/min"
+          description: |
+            The operator (or ActionExecutor) is rolling back decisions
+            faster than usual — likely a regression in the scheduler
+            or a bad LLM release.

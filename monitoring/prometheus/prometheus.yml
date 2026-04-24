@@ -1,0 +1,100 @@
+# ProdPlan ONE — Prometheus scrape configuration (Sprint J.3)
+#
+# Deploy recipe (Nelo on-site, native):
+#   1. Install Prometheus >= 2.50 natively (systemd unit in
+#      deploy/systemd/prometheus.service — see docs/disaster-
+#      recovery.md for the exact steps).
+#   2. Copy this file to /etc/prometheus/prometheus.yml.
+#   3. Copy alerts.yml to /etc/prometheus/alerts.yml.
+#   4. Reload: `systemctl reload prometheus`.
+#
+# Assumes the FastAPI app is exposed on localhost:8000, PostgreSQL on
+# 5432, Kafka on 9092, Ollama on 11434. Adjust the targets if the
+# on-site deploy uses different ports.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    deployment: nelo-onprem
+    env: prod
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - localhost:9093  # Alertmanager co-located on the same box
+
+scrape_configs:
+
+  # ── FastAPI app — exposes /metrics via prometheus_client ───────────
+  - job_name: prodplan-api
+    metrics_path: /metrics
+    scrape_interval: 15s
+    scrape_timeout: 10s
+    static_configs:
+      - targets:
+          - localhost:8000
+        labels:
+          component: api
+
+  # ── Node exporter — host CPU / disk / memory / network ─────────────
+  - job_name: node
+    static_configs:
+      - targets:
+          - localhost:9100
+        labels:
+          component: host
+
+  # ── Postgres exporter — query latency, connections, replication ────
+  - job_name: postgres
+    static_configs:
+      - targets:
+          - localhost:9187
+        labels:
+          component: postgres
+
+  # ── Kafka — JMX exporter on the broker ─────────────────────────────
+  - job_name: kafka
+    static_configs:
+      - targets:
+          - localhost:7071
+        labels:
+          component: kafka
+
+  # ── Ollama — /metrics if compiled with prometheus flag (optional). ─
+  #   When absent, the ollama_up recording rule in alerts.yml falls
+  #   back to a blackbox-exporter probe.
+  - job_name: ollama
+    scrape_interval: 30s
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - localhost:11434
+        labels:
+          component: ollama
+
+  # ── Blackbox probes — end-to-end HTTP health checks ────────────────
+  #   Used by the OllamaDown + APIDown alerts when scraping the
+  #   process itself is unavailable.
+  - job_name: blackbox
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          - http://localhost:8000/v1/ping
+          - http://localhost:8000/v1/realtime/health
+          - http://localhost:11434/api/tags
+        labels:
+          component: blackbox
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: localhost:9115  # blackbox exporter
