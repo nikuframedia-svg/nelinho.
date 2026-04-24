@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timezone
+from decimal import Decimal
 from enum import Enum
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
@@ -24,6 +25,7 @@ from sqlalchemy import (
     String,
     Text,
     Integer,
+    Numeric,
     DateTime,
     Boolean,
     Index,
@@ -535,6 +537,89 @@ DEFAULT_POLICIES = [
         "description": "Promote a trained ML model to active (Sprint G)",
     },
 ]
+
+
+# ============================================================================
+# Sprint C 2.1 — PreferenceRule (Camada 1 aprendizagem)
+# ============================================================================
+
+
+class PreferenceRuleType(str, Enum):
+    """Categories of patterns the PreferenceRuleDetector emits.
+
+    Each type has a distinct `predicate` shape so the scheduler can
+    decide at plan-time whether to respect the rule.
+    """
+
+    TEMPORAL_BLOCK = "temporal_block"          # "don't touch X on Fridays"
+    TRADEOFF_PREFERENCE = "tradeoff_preference"  # "prefer less setup over +€/day"
+    OPERATOR_AFFINITY = "operator_affinity"    # "Paulo always on K4 laminagem"
+    PHASE_THRESHOLD = "phase_threshold"        # "never < 18 pintores"
+
+
+class PreferenceRuleStatus(str, Enum):
+    """Lifecycle of a detected rule — needs human confirmation before
+    the scheduler applies it (avoids learning noise / false positives).
+    """
+
+    DETECTED = "detected"    # just mined; awaiting operator review
+    CONFIRMED = "confirmed"  # operator approved — scheduler honours it
+    REJECTED = "rejected"    # operator dismissed — detector must stop re-raising
+
+
+class PreferenceRule(TenantBase):
+    """A pattern learned from `ScheduleCommit.rejected_alternatives`.
+
+    The table is the first tangible moat (§50 of the blueprint): every
+    time the manager rejects 5+ plans that share a structural signal
+    (e.g. "Laminagem on Fridays"), the detector inserts a DETECTED row
+    and the frontend asks the manager to confirm, reject or edit it.
+
+    `predicate` is JSONB so each rule type can carry its own shape — the
+    detector + the scheduler are the only consumers and they know the
+    schema per type. Keep the column generic so we don't migrate the
+    DB every time a new detector is added.
+    """
+
+    __tablename__ = "preference_rule"
+    __table_args__ = (
+        Index(
+            "ix_preference_rule_tenant_status",
+            "tenant_id", "status",
+        ),
+        Index(
+            "ix_preference_rule_tenant_type",
+            "tenant_id", "type",
+        ),
+        {"schema": "governance"},
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=uuid4,
+    )
+
+    type: Mapped[str] = mapped_column(String(64), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    predicate: Mapped[Dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict,
+    )
+    confidence: Mapped[Decimal] = mapped_column(
+        Numeric(3, 2), nullable=False,
+    )
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False,
+        default=PreferenceRuleStatus.DETECTED.value,
+    )
+    detected_from_commits: Mapped[List[str]] = mapped_column(
+        JSONB, nullable=False, default=list,
+    )
+
+    confirmed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    confirmed_by: Mapped[Optional[UUID]] = mapped_column(
+        PGUUID(as_uuid=True), nullable=True,
+    )
 
 
 

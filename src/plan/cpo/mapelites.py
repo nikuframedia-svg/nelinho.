@@ -195,6 +195,47 @@ class MAPElites3D:
             remaining.remove(farthest)
         return picked
 
+    def explain_representative(
+        self,
+        elite: "Elite",
+        *,
+        primary_kpis: Optional[Dict[str, float]] = None,
+    ) -> str:
+        """Sprint C 4.3 ME2 — render a one-line trade-off narrative for a
+        MAP-Elites elite. Used by the WG10 Timeline UI so each of the
+        5-10 alternatives shows a human-readable caption without a
+        round-trip to the LLM.
+
+        Format: "{cell coordinates} — {headline BD values} [vs primary]"
+        """
+        coord = self._cell_for_behavioral(elite.behavioral).as_tuple()
+        parts: List[str] = [f"cell({coord[0]},{coord[1]},{coord[2]})"]
+
+        # Pick the top-3 behavioural descriptors — the one-liner stays
+        # readable even on the v2 axes (lam_util / tardiness_d / idle_pct).
+        bd_bits: List[str] = []
+        for key, value in list(elite.behavioral.items())[:3]:
+            if isinstance(value, (int, float)):
+                bd_bits.append(f"{key}={value:.1f}")
+            else:
+                bd_bits.append(f"{key}={value}")
+        if bd_bits:
+            parts.append(", ".join(bd_bits))
+
+        if primary_kpis and elite.behavioral:
+            deltas: List[str] = []
+            for key, value in elite.behavioral.items():
+                baseline = primary_kpis.get(key)
+                if isinstance(baseline, (int, float)) and isinstance(value, (int, float)):
+                    diff = round(value - baseline, 2)
+                    sign = "+" if diff > 0 else ""
+                    deltas.append(f"{key} {sign}{diff}")
+            if deltas:
+                parts.append("vs primary: " + "; ".join(deltas[:3]))
+
+        parts.append(f"fitness={elite.fitness:.2f}")
+        return " — ".join(parts)
+
     def inject_random_candidates(
         self,
         current_population_size: int,

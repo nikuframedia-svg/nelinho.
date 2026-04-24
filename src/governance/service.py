@@ -319,7 +319,22 @@ class GovernanceService:
         decision_id: str,
         executed_by: str,
     ) -> Dict[str, Any]:
-        """Execute an approved decision."""
+        """Execute an approved decision.
+
+        Sprint A WG1: in addition to the existing status/audit updates,
+        this method now publishes a `DECISION_EXECUTED` Kafka event. The
+        event carries the full audit trail (decision_id, input/outcome
+        hashes, action_data) so downstream consumers — the ActionExecutor
+        dispatcher, the frontend Timeline and the audit log — can react
+        without re-reading the DB.
+
+        The full action dispatch (actually applying `action_data` to the
+        FactoryState) is out of scope here — it belongs to the Sprint B
+        CO1 work alongside `rejected_alternatives`. What WG1 guarantees
+        today is that *the decision is announced* and the audit hash
+        chain is refreshed; the listener fan-out is the implementation
+        boundary for a proper ActionExecutor in the next sprint.
+        """
         decision_run = await self._get_decision_run(decision_id)
         if not decision_run:
             raise ValueError(f"Decision {decision_id} not found")
@@ -357,6 +372,18 @@ class GovernanceService:
             await self.db.flush()
             logger.info(f"Decision {decision_id} executed by {executed_by}")
 
+            # WG1 — announce the executed decision on the event bus. We
+            # best-effort this: the DB update is the source of truth, so
+            # a Kafka publish failure should not unwind the execution.
+            await self._publish_decision_executed(decision_run, executed_by)
+
+            # Sprint C 4.1 — dispatch to the ActionExecutor registry. A
+            # handler that's registered for this decision_type applies
+            # the action to domain state; unknown types stay "announced
+            # only" (advisory mode, §4.3 blueprint). Handler failures
+            # bubble up → we catch below and flip the status to FAILED.
+            await self._dispatch_action(decision_run, executed_by)
+
         except Exception as e:
             decision_run.status = DecisionStatus.FAILED.value
             await self.db.flush()
@@ -365,13 +392,89 @@ class GovernanceService:
 
         return self._run_to_dict(decision_run)
 
+    async def _dispatch_action(
+        self,
+        decision_run: "DecisionRun",
+        executed_by: str,
+    ) -> None:
+        """Route the decision's `action_data` to its registered handler.
+
+        Uses the module-level `default_executor` unless the caller
+        overrides via `self.action_executor` (dependency-injected for
+        tests). A handler failure propagates — the calling
+        `execute_decision` turns that into status=FAILED.
+        """
+        from src.governance.action_executor import (
+            ActionContext,
+            default_executor,
+        )
+
+        executor = getattr(self, "action_executor", None) or default_executor
+        ctx = ActionContext(
+            decision_id=decision_run.id,
+            decision_type=decision_run.decision_type,
+            tenant_id=decision_run.tenant_id,
+            action_data=decision_run.action_data or {},
+            executed_by=executed_by,
+            session=self.db,
+        )
+        # dispatch is best-effort for "no_handler" (advisory mode) but
+        # strict for handler failures — they propagate.
+        await executor.dispatch(ctx)
+
+    async def _publish_decision_executed(
+        self,
+        decision_run: "DecisionRun",
+        executed_by: str,
+    ) -> None:
+        """Publish a DECISION_EXECUTED event. Best-effort: logs + swallows
+        on Kafka failure so an outage of the message bus doesn't break
+        the decision execution path itself.
+        """
+        try:
+            from src.shared.kafka_client import Topics, publish_event
+            from src.shared.kafka_client import EventBase
+
+            event = EventBase(
+                event_type="DECISION_EXECUTED",
+                tenant_id=decision_run.tenant_id,
+                source_module="governance",
+                payload={
+                    "decision_id": str(decision_run.id),
+                    "decision_type": decision_run.decision_type,
+                    "risk_level": decision_run.risk_level,
+                    "executed_by": executed_by,
+                    "action_data": decision_run.action_data,
+                    "outcome_hash": decision_run.outcome_hash,
+                    "audit_hash": decision_run.audit_hash,
+                },
+            )
+            await publish_event(Topics.DECISION_EXECUTED, event)
+        except Exception as exc:  # pragma: no cover — bus outage is non-fatal
+            logger.warning(
+                "DECISION_EXECUTED publish failed for %s: %s",
+                decision_run.id, exc,
+            )
+
     async def rollback_decision(
         self,
         decision_id: str,
         rolled_back_by: str,
         reason: str,
     ) -> Dict[str, Any]:
-        """Rollback an executed decision."""
+        """Rollback an executed decision.
+
+        Sprint C 1.4 (WG2) — in addition to the status flip + audit
+        bookkeeping, this now emits a `DECISION_ROLLED_BACK` Kafka event
+        carrying the parent commit chain so downstream listeners (the
+        future ActionExecutor rollback handler, the Timeline UI, audit
+        sinks) can act on the reversal without re-reading the DB.
+
+        The actual state revert (applying `before_state` to the
+        FactoryState / DB) lives in the ActionExecutor — Sprint C 4.1
+        wires that dispatcher. Right now the contract is "announce the
+        rollback; database status is source of truth".
+        """
         decision_run = await self._get_decision_run(decision_id)
         if not decision_run:
             raise ValueError(f"Decision {decision_id} not found")
@@ -390,7 +493,44 @@ class GovernanceService:
         await self.db.flush()
         logger.info(f"Decision {decision_id} rolled back by {rolled_back_by}: {reason}")
 
+        # WG2 — announce on the event bus. Best-effort as with execute_decision.
+        await self._publish_decision_rolled_back(decision_run, rolled_back_by, reason)
+
         return self._run_to_dict(decision_run)
+
+    async def _publish_decision_rolled_back(
+        self,
+        decision_run: "DecisionRun",
+        rolled_back_by: str,
+        reason: str,
+    ) -> None:
+        """Publish a DECISION_ROLLED_BACK event. Best-effort — swallows
+        Kafka failures so a broker outage doesn't re-break the rollback
+        path the operator just used to recover.
+        """
+        try:
+            from src.shared.kafka_client import EventBase, Topics, publish_event
+
+            event = EventBase(
+                event_type="DECISION_ROLLED_BACK",
+                tenant_id=decision_run.tenant_id,
+                source_module="governance",
+                payload={
+                    "decision_id": str(decision_run.id),
+                    "decision_type": decision_run.decision_type,
+                    "rolled_back_by": rolled_back_by,
+                    "reason": reason,
+                    "action_data": decision_run.action_data,
+                    "outcome_hash": decision_run.outcome_hash,
+                    "audit_hash": decision_run.audit_hash,
+                },
+            )
+            await publish_event(Topics.DECISION_ROLLED_BACK, event)
+        except Exception as exc:  # pragma: no cover — bus outage is non-fatal
+            logger.warning(
+                "DECISION_ROLLED_BACK publish failed for %s: %s",
+                decision_run.id, exc,
+            )
 
     # =========================================================================
     # Query Methods (DB-backed)
@@ -780,16 +920,29 @@ class GovernanceService:
         *,
         decision_type: str,
         risk_level: str,
+        trust_index: Optional[float] = None,
     ) -> bool:
         """Check TenantConfig for `governance.auto_approval.{decision_type}.*`.
 
-        Returns True iff BOTH keys are present AND
-        `auto_approval.{decision_type}.enabled=True` AND the decision's risk
-        level is at or below `auto_approval.{decision_type}.risk_ceiling`.
+        Returns True iff ALL of:
+          * `auto_approval.{decision_type}.enabled=True`
+          * decision's risk level ≤ `auto_approval.{decision_type}.risk_ceiling`
+          * `trust_index >= 0.75` when a trust_index is supplied (Blueprint
+            v2.0 §4.5 gate — Sprint C 1.2). When `trust_index is None`
+            (legacy callers without a schedule commit) this check is
+            skipped so existing flows stay green.
 
         Falls back to False on any error — auto-approval is a power-user
         feature, never the default.
         """
+        # Trust gate comes BEFORE the config read so we short-circuit cheap.
+        if trust_index is not None and trust_index < 0.75:
+            logger.info(
+                "Trust gate blocked auto-approval: tenant=%s type=%s TI=%.3f < 0.75",
+                self.tenant_id, decision_type, trust_index,
+            )
+            return False
+
         try:
             from src.core.services.tenant_config_service import TenantConfigService
 

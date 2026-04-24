@@ -53,6 +53,21 @@ def is_worse_than_baseline(candidate: Dict[str, Any], baseline: Dict[str, Any]) 
             )
             return True
 
+    # Sprint C 4.2 SN1 — block catastrophic makespan regressions.
+    # A candidate that keeps tardiness/OTD equal but takes 2× longer to
+    # finish is a degenerate win — the optimizer flattens tardiness by
+    # pushing everything into the far future. We cap the acceptable
+    # regression at 1.5× the baseline makespan; anything beyond that
+    # flips to baseline.
+    cand_makespan = float(candidate.get("makespan_hours", 0) or 0)
+    base_makespan = float(baseline.get("makespan_hours", 0) or 0)
+    if base_makespan > 0 and cand_makespan > base_makespan * 1.5:
+        logger.warning(
+            f"Safety net: candidate makespan_h={cand_makespan:.2f} "
+            f"exceeds 1.5× baseline={base_makespan:.2f}"
+        )
+        return True
+
     return False
 
 

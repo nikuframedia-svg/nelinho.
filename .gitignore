@@ -21,6 +21,9 @@ htmlcov/
 dist/
 build/
 
+# Claude Code local settings (per-machine, not to be tracked)
+.claude/
+
 # Backend
 backend/prodplan.db
 backend/__pycache__/

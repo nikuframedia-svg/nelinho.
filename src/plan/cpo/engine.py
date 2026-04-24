@@ -47,10 +47,11 @@ _DECODER_POST_DESMOLDE_MIN = 4.0 * 60.0
 @dataclass
 class CPOConfig:
     population_size: int = 100
-    # NOTE: blueprint v2.0 calls for 200 generations; default stays 50 for
-    # backwards-compat with Sprint E/F tests. Pass `generations=200`
-    # explicitly (or read from TenantConfig.planning.cpo.gen_count).
-    generations: int = 50
+    # Sprint A E1 — Blueprint v2.0 §5.5 requires 200 generations for the
+    # FRRMAB window (window=200) to produce a stable reward signal.
+    # Was 50 in Sprint E/F; tests that want the old value pass
+    # `generations=50` explicitly.
+    generations: int = 200
     tournament_size: int = 5
     crossover_rate: float = 0.60
     mutation_rate: float = 0.30
@@ -61,7 +62,12 @@ class CPOConfig:
     # -------------------- Sprint F adaptive flags -------------------- #
     use_frrmab: bool = True
     use_mapelites: bool = True
-    use_surrogate: bool = False
+    # Sprint C 4.2 E2 — default ON. The layer is self-gated: `record()`
+    # is a no-op until we have ≥ min_samples_to_train, and
+    # `should_skip_candidate()` returns False until the model is trained.
+    # So flipping this to True is a pure win — nothing happens on small
+    # runs, and big runs automatically gain the 80% pre-screen benefit.
+    use_surrogate: bool = True
     use_restart: bool = True
     stagnation_limit_generations: int = 20
     restart_random_fraction: float = 0.50
@@ -149,6 +155,8 @@ class CPOv4Engine:
         machines: List[SchedulingMachine],
         horizon_start: Optional[datetime] = None,
         horizon_end: Optional[datetime] = None,
+        *,
+        product_price_eur: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         started = time.time()
         horizon_start = horizon_start or datetime.utcnow()
@@ -186,6 +194,7 @@ class CPOv4Engine:
                 horizon_start, horizon_end,
                 queue_time_minutes=queue_time_min,
                 post_desmolde_buffer_minutes=post_desmolde_min,
+                product_price_eur=product_price_eur,
             )
         baseline_fit = compute_fitness(baseline, self.fitness_config)
         logger.info(
@@ -242,10 +251,37 @@ class CPOv4Engine:
                     horizon_start, horizon_end,
                     queue_time_minutes=queue_time_min,
                     post_desmolde_buffer_minutes=post_desmolde_min,
+                    product_price_eur=product_price_eur,
                 )
                 fit = compute_fitness(result, self.fitness_config)
                 scored.append((fit, chromo, result))
                 total_real_evals += 1
+
+                # Sprint C 4.2 E3 — reward the FRRMAB operator immediately
+                # after this child is evaluated. The previous
+                # `_update_frrmab_rewards(scored)` at end-of-generation
+                # only rewarded children that SURVIVED the tournament,
+                # biasing the bandit toward operators whose kids happened
+                # to persist — unrelated to their true fitness contribution.
+                # Doing it here guarantees every produced child gives a
+                # reward signal regardless of whether it gets selected.
+                op_name_used = getattr(chromo, "_frrmab_op", None)
+                parent_fit_at_mutation = getattr(
+                    chromo, "_frrmab_parent_fit", None,
+                )
+                if (
+                    op_name_used is not None
+                    and parent_fit_at_mutation is not None
+                    and self._frrmab is not None
+                ):
+                    reward = max(
+                        0.0,
+                        (parent_fit_at_mutation - fit)
+                        / (abs(parent_fit_at_mutation) + 1e-6),
+                    )
+                    self._frrmab.record(op_name_used, reward)
+                    chromo._frrmab_op = None  # type: ignore[attr-defined]
+                    chromo._frrmab_parent_fit = None  # type: ignore[attr-defined]
 
                 # Track best + MAP-Elites + surrogate sample
                 if fit < best_fit:

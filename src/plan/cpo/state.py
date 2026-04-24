@@ -13,11 +13,67 @@ RoutingResolver (indirectly via median durations).
 from __future__ import annotations
 
 import logging
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
 from uuid import UUID
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# NELO curing / drying constraints — Blueprint v2.0 §3.8 (Sprint A / D2)
+# ---------------------------------------------------------------------------
+# 16 transitions where the successor phase cannot start before the modal
+# gap elapses (resin cure, paint dry, glue set). These are PHYSICAL
+# constraints, not queue time. Data-derived: each row matches the mode of
+# the observed gap for that transition in the curated ERP dataset.
+# Schema: (from_phase_code, to_phase_code, min_gap_hours, reason, n_obs)
+
+NELO_CURING_GAPS_SEED: Tuple[Tuple[str, str, float, str, int], ...] = (
+    ("LAMINAGEM", "CURA", 15.0, "curing_resin", 17012),
+    ("PINTURA_ACABAMENTO", "LIXAGEM_SECO", 12.5, "drying_paint", 20335),
+    ("PINTURA_ACABAMENTO", "COLAGEM_PECAS", 12.5, "drying_paint", 1229),
+    ("PINTURA_ACABAMENTO", "COLAGEM_GOLAS", 15.5, "drying_paint", 134),
+    ("COLAGEM_PECAS", "PINTURA_ACABAMENTO", 19.5, "curing_glue", 6912),
+    ("COLAGEM_PECAS", "ACABAMENTO_2", 23.5, "curing_glue", 2290),
+    ("COLAGEM_PECAS", "ACABAMENTO_3", 21.5, "curing_glue", 385),
+    ("COLAGEM_PECAS", "ACABAMENTO_PREPARACAO", 23.5, "curing_glue", 676),
+    ("COLAGEM_BARCOS", "PINTURA_ACABAMENTO", 19.0, "curing_glue", 777),
+    ("ACABAMENTO_ENVERNIZ", "LIXAGEM_AGUA", 18.0, "drying_varnish", 3016),
+    ("COLAGEM_GOLAS", "ACABAMENTO_3", 24.5, "curing_glue", 175),
+    ("COLAGEM_GOLAS", "ACABAMENTO_2", 24.0, "curing_glue", 183),
+    ("LIXAGEM_SECO", "ACABAMENTO_ENVERNIZ", 21.5, "drying", 474),
+    ("LIXAGEM_SECO", "ACABAMENTO_PINTURA", 21.5, "drying", 548),
+    ("LIXAGEM_AGUA", "ACABAMENTO_2", 15.0, "drying", 999),
+    ("LAMINAGEM_INFUSAO", "CURA", 24.0, "curing_infusion", 300),
+)
+
+
+def normalize_phase_code(name: Optional[str]) -> str:
+    """Canonical phase code: strip accents, UPPERCASE, spaces/hyphens/
+    dots → underscores. Used for curing gap lookups and
+    PAIR_REQUIRED_PHASES comparison.
+
+    Accent-stripping matters because the ERP stores names like
+    "Laminagem Infusão" while the seed table uses ASCII codes like
+    "LAMINAGEM_INFUSAO".
+
+    Returns empty string if input is falsy so callers can short-circuit
+    on missing phase info.
+    """
+    if not name:
+        return ""
+    # NFKD decomposes accented chars into base + combining mark; keep
+    # only ASCII so "Infusão" → "Infusao".
+    decomposed = unicodedata.normalize("NFKD", str(name))
+    ascii_only = decomposed.encode("ascii", "ignore").decode("ascii")
+    s = ascii_only.strip().upper()
+    for ch in (" ", "-", "/", "."):
+        s = s.replace(ch, "_")
+    while "__" in s:
+        s = s.replace("__", "_")
+    return s.strip("_")
 
 
 @dataclass
@@ -54,13 +110,24 @@ class FactoryState:
     # open orders available to schedule
     open_orders: List[Dict[str, Any]] = field(default_factory=list)
 
+    # min mandatory gap between consecutive phases (curing/drying).
+    # Key: (from_phase_code, to_phase_code) — both normalized via
+    # `normalize_phase_code`. Value: hours.
+    # Populated from the DB table `plan.phase_transition_gap`, falling
+    # back to NELO_CURING_GAPS_SEED when the table is empty or missing.
+    phase_transition_gaps: Dict[Tuple[str, str], float] = field(default_factory=dict)
+
     # ----- NELO domain rules ---------------------------------------
 
-    #: phase codes that require a 2-person crew (CoeficienteX > 0)
+    #: Phase codes that require a 2-person crew.
+    #: Criterion: phases where ≥80% of historical operations ran with 2+
+    #: workers (FuncionariosFaseOrdemFabrico, 2024 sample).
+    #: - Laminagem standard: 88.5% pair → INCLUDED
+    #: - Laminagem Infusão:  40% pair, 58% solo → EXCLUDED (pair optional)
+    #: NOTE: `CoeficienteX` in the ERP is a monetary bonus (€), NOT a
+    #: time coefficient — do NOT derive pair requirement from it.
     PAIR_REQUIRED_PHASES: Tuple[str, ...] = (
         "LAMINAGEM",
-        "LAMINAGEM_INFUSAO",
-        "LAMINAGEM INFUSAO",
     )
 
     @classmethod
@@ -120,19 +187,56 @@ class FactoryState:
                 state.historical_durations = _extract_durations(engine)
                 state.historical_error_rates = _extract_error_rates(engine)
 
+        # Curing/drying gaps (Sprint A D2): DB first, seed fallback
+        state.phase_transition_gaps = await _load_phase_transition_gaps(
+            session, tenant_id,
+        )
+
         logger.info(
             f"FactoryState loaded: {len(state.open_orders)} orders, "
             f"{len(state.skill_matrix)} phases with skills, "
             f"{len(state.molds)} molds, "
-            f"{len(state.historical_durations)} duration medians"
+            f"{len(state.historical_durations)} duration medians, "
+            f"{len(state.phase_transition_gaps)} curing gaps"
         )
         return state
+
+    def min_gap_hours(
+        self,
+        from_phase: Optional[str],
+        to_phase: Optional[str],
+    ) -> float:
+        """Mandatory minimum wait between two phases (hours).
+
+        Accepts either phase_id or phase_name (either form is normalized).
+        Returns 0.0 for transitions not in the curing/drying table —
+        caller layers queue_time on top separately.
+        """
+        a = normalize_phase_code(from_phase)
+        b = normalize_phase_code(to_phase)
+        if not a or not b:
+            return 0.0
+        return float(self.phase_transition_gaps.get((a, b), 0.0))
 
     def can_perform(self, fase_id: str, funcionario_id: str) -> bool:
         return funcionario_id in self.skill_matrix.get(fase_id, set())
 
     def workers_for(self, fase_id: str) -> Set[str]:
         return self.skill_matrix.get(fase_id, set())
+
+    def skill_count(self, funcionario_id: str) -> int:
+        """How many phases this worker is approved to perform.
+
+        Sprint A D5 — used by the decoder as a proxy for operator
+        experience/versatility when ranking workers in the same pool.
+        No per-worker quality model yet (that's Sprint H
+        QualityRiskModel); workers who master more phases are a
+        reasonable stand-in for "experienced".
+        """
+        return sum(
+            1 for skill_pool in self.skill_matrix.values()
+            if funcionario_id in skill_pool
+        )
 
     def median_duration_h(
         self,
@@ -268,6 +372,59 @@ def _extract_durations(engine: Any) -> Dict[Tuple[str, str], float]:
     except Exception as e:
         logger.debug(f"duration extraction failed: {e}")
         return {}
+
+
+async def _load_phase_transition_gaps(
+    session: Any,
+    tenant_id: UUID,
+) -> Dict[Tuple[str, str], float]:
+    """Load curing/drying gaps from the DB, fall back to the seed.
+
+    Returns a dict keyed by (from_phase_code, to_phase_code) — both
+    normalized via `normalize_phase_code`.
+    """
+    seed: Dict[Tuple[str, str], float] = {
+        (normalize_phase_code(a), normalize_phase_code(b)): float(h)
+        for (a, b, h, _reason, _n) in NELO_CURING_GAPS_SEED
+    }
+
+    if session is None:
+        return seed
+
+    try:
+        from sqlalchemy import select
+
+        from src.plan.models.phase_gap import PhaseTransitionGap
+
+        stmt = (
+            select(PhaseTransitionGap)
+            .where(PhaseTransitionGap.tenant_id == tenant_id)
+            .where(PhaseTransitionGap.active.is_(True))
+        )
+        result = await session.execute(stmt)
+        rows = result.scalars().all()
+    except Exception as exc:  # pragma: no cover — defensive (table absent etc.)
+        logger.debug(f"phase_transition_gap DB load failed, using seed: {exc}")
+        return seed
+
+    if not rows:
+        return seed
+
+    db_gaps: Dict[Tuple[str, str], float] = {}
+    for row in rows:
+        key = (
+            normalize_phase_code(row.from_phase_code),
+            normalize_phase_code(row.to_phase_code),
+        )
+        if not key[0] or not key[1]:
+            continue
+        db_gaps[key] = float(row.min_gap_hours)
+
+    # Seed entries the DB didn't override — this lets partial overrides
+    # per tenant work without losing the physical NELO defaults.
+    merged: Dict[Tuple[str, str], float] = dict(seed)
+    merged.update(db_gaps)
+    return merged
 
 
 def _extract_error_rates(engine: Any) -> Dict[str, float]:

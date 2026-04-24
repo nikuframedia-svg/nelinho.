@@ -644,17 +644,106 @@ async def get_full_available_metrics():
 async def get_catalog_as_markdown():
     """
     Generate markdown documentation from the metric catalog.
-    
+
     Useful for:
     - Auto-generating documentation
     - Exporting for external systems
     - Auditing metric definitions
     """
     markdown = generate_catalog_markdown()
-    
+
     return {
         "format": "markdown",
         "content": markdown,
         "generated_at": datetime.utcnow().isoformat(),
     }
+
+
+# ============================================================================
+# Sprint C 1.3 — commit explanations (explain ← plan)
+# ============================================================================
+
+
+class CommitExplanation(BaseModel):
+    """What the decoder produced for this commit + why it matters.
+
+    Surfaces the MAP-Elites alternatives + rejected signals so the
+    Copilot drawer can narrate "here's what we picked and how it differs
+    from the ones you declined".
+    """
+    commit_sha256: str
+    short_sha: str
+    kpis: Dict[str, Any]
+    alternatives: List[Dict[str, Any]]
+    rejected_alternatives: List[Dict[str, Any]]
+    user_preference_signal: Dict[str, Any]
+    trust_index: float
+    scenarios_tested: int
+    why_these_choices: str
+
+
+def _generate_explanation(kpis: Dict[str, Any]) -> str:
+    """Deterministic narrative describing the trade-offs this commit
+    accepted. Stays simple — 2-3 sentences citing the headline numbers
+    so the frontend can show a summary without waiting for the LLM.
+    """
+    makespan = kpis.get("makespan_hours", 0) or 0
+    tardiness = kpis.get("total_tardiness_hours", 0) or 0
+    late_orders = kpis.get("num_late_orders", 0) or 0
+    throughput = kpis.get("throughput_eur_day", 0) or 0
+    setups = kpis.get("setups", 0) or 0
+
+    parts = []
+    parts.append(
+        f"Makespan total {makespan:.1f}h com {setups} mudanças de setup"
+    )
+    if late_orders > 0:
+        parts.append(
+            f"; {late_orders} ordens com atraso acumulando {tardiness:.1f}h"
+        )
+    else:
+        parts.append("; nenhuma ordem atrasada")
+    if throughput > 0:
+        parts.append(f"; throughput alvo €{throughput:,.0f}/dia")
+    return "".join(parts) + "."
+
+
+@router.get("/commit/{commit_sha}", response_model=CommitExplanation)
+async def explain_commit(
+    commit_sha: str,
+    tenant_id: UUID = Header(..., alias="X-Tenant-ID"),
+):
+    """Return the KPIs, alternatives and rejection signals for one commit.
+
+    Supports full SHA-256 and short (≥7 char) prefixes — the same
+    lookup semantics the CPO commit endpoints already use.
+    """
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from src.plan.cpo.commits import CommitsService
+    from src.shared.database import get_session_context
+
+    async with get_session_context() as session:  # type: AsyncSession
+        service = CommitsService(session, tenant_id)
+        commit = await service.get_by_sha(commit_sha)
+        if commit is None and len(commit_sha) >= 7:
+            commit = await service.get_by_sha_prefix(commit_sha)
+        if commit is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"commit not found: {commit_sha}",
+            )
+
+        kpis = dict(commit.kpis or {})
+        return CommitExplanation(
+            commit_sha256=commit.commit_sha256,
+            short_sha=commit.commit_sha256[:12],
+            kpis=kpis,
+            alternatives=list(commit.alternatives or []),
+            rejected_alternatives=list(commit.rejected_alternatives or []),
+            user_preference_signal=dict(commit.user_preference_signal or {}),
+            trust_index=float(commit.trust_index or 0.0),
+            scenarios_tested=int(commit.scenarios_tested or 0),
+            why_these_choices=_generate_explanation(kpis),
+        )
 

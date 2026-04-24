@@ -46,6 +46,25 @@ class Settings(BaseSettings):
     kafka_consumer_group: str = Field(default="prodplan-one")
     kafka_auto_offset_reset: str = Field(default="earliest")
 
+    # Nelo SQL Server ERP (Sprint B.3 — read-only adapter)
+    # The factory ERP lives on a separate server on the Nelo LAN.
+    # Leave `sqlserver_enabled=False` (the default) to skip the adapter —
+    # the rest of the system keeps working on the curated Excel ingest.
+    sqlserver_enabled: bool = Field(
+        default=False,
+        description="Flip to True once the Nelo ERP adapter is configured",
+    )
+    sqlserver_url: Optional[str] = Field(
+        default=None,
+        description=(
+            "Async SQLAlchemy URL for the Nelo ERP. Example: "
+            "'mssql+aioodbc://user:pass@nelo-erp.lan:1433/NELO_ERP"
+            "?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes'"
+        ),
+    )
+    sqlserver_pool_size: int = Field(default=5, ge=1, le=20)
+    sqlserver_query_timeout_s: int = Field(default=30, ge=1, le=300)
+
     # Security
     secret_key: str = Field(
         default="dev-only-insecure-key-override-in-production-via-env",

@@ -3,8 +3,12 @@ ProdPlan ONE — Dual-Resource Pair Assignment (Sprint P.7 / WF11)
 =================================================================
 
 Blueprint v2.0 §3.5 requires that Laminagem operations are ALWAYS staffed
-by pairs — `CoeficienteX > 0` encodes the second worker's time, so a
-single-worker assignment is infeasible by design. This module is a thin
+by pairs. Historical data (FuncionariosFaseOrdemFabrico) shows Laminagem
+standard runs with 2 workers in 88.5% of operations — a single-worker
+assignment is treated as infeasible by design. NOTE: the ERP field
+`CoeficienteX` is the bonus payout (€) for that phase×product, NOT the
+second worker's time — do not use it for workforce logic. This module
+is a thin
 orchestrator around `src/plan/cpo/workforce.assign_workers_hungarian`
 that:
 
@@ -22,9 +26,9 @@ existing tests keep their expected outputs.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
-from src.plan.cpo.state import FactoryState
+from src.plan.cpo.state import FactoryState, normalize_phase_code
 from src.plan.engines.scheduling_adapter import SchedulingOperation
 
 logger = logging.getLogger(__name__)
@@ -34,12 +38,20 @@ PairCost = Callable[[str, str, SchedulingOperation], float]
 
 
 def requires_pair(op: SchedulingOperation, state: FactoryState) -> bool:
-    """True iff the op's phase is in `state.PAIR_REQUIRED_PHASES`."""
+    """True iff the op's phase is in `state.PAIR_REQUIRED_PHASES`.
+
+    Uses `normalize_phase_code` on both sides so "Laminagem", "LAMINAGEM"
+    and "laminagem" all match the canonical "LAMINAGEM" code in the
+    required set. Accents are stripped too.
+    """
     if not hasattr(state, "PAIR_REQUIRED_PHASES"):
         return False
-    required: Set[str] = set(getattr(state, "PAIR_REQUIRED_PHASES", set()) or set())
-    phase_key = _phase_key(op)
-    return phase_key in {r.lower() for r in required}
+    required: Set[str] = {
+        normalize_phase_code(r)
+        for r in (getattr(state, "PAIR_REQUIRED_PHASES", ()) or ())
+    }
+    phase_key = normalize_phase_code(_phase_key(op))
+    return phase_key in required
 
 
 def assign_pairs_for_ops(

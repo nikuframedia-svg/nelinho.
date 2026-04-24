@@ -276,7 +276,13 @@ class MoldService:
         """Scan all active molds and emit MOLD_MAINT_DUE alerts when the
         cycle counter exceeds `mold.maintenance_threshold_cycles`.
 
-        Returns the number of alerts created.
+        A threshold of **zero or negative** disables this alert entirely —
+        `Moldes` in the NELO ERP has no maintenance columns, so the 500
+        default is an unconfirmed hypothesis (H2). Operators that don't
+        yet have a real policy set the config to 0 to silence the alert
+        without losing the rest of the mold-health pipeline.
+
+        Returns the number of alerts created (0 when disabled).
         """
         try:
             from src.core.services.tenant_config_service import TenantConfigService
@@ -288,6 +294,15 @@ class MoldService:
             ))
         except Exception:
             threshold = DEFAULT_MAINT_THRESHOLD_CYCLES
+
+        if threshold <= 0:
+            logger.info(
+                "MOLD_MAINT_DUE disabled (threshold=%s). Configure "
+                "'mold.maintenance_threshold_cycles' with a positive "
+                "integer once CEO confirms the policy (H2).",
+                threshold,
+            )
+            return 0
 
         stmt = (
             select(Mold, MoldUsageCounter)

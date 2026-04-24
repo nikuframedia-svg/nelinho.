@@ -66,7 +66,13 @@ class Topics:
     PRICING_RECOMMENDED = "prodplan.profit.pricing_recommended"
     SCENARIO_SIMULATED = "prodplan.profit.scenario_simulated"
     COST_VARIANCE_CALCULATED = "prodplan.profit.cost_variance"
-    
+
+    # GOVERNANCE events (Sprint A WG1)
+    DECISION_PROPOSED = "prodplan.governance.decision_proposed"
+    DECISION_APPROVED = "prodplan.governance.decision_approved"
+    DECISION_EXECUTED = "prodplan.governance.decision_executed"
+    DECISION_ROLLED_BACK = "prodplan.governance.decision_rolled_back"
+
     # HR events
     EMPLOYEE_ALLOCATED = "prodplan.hr.employee_allocated"
     LABOR_COST_COMMITTED = "prodplan.hr.labor_cost_committed"

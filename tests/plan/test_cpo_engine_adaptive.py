@@ -87,7 +87,15 @@ class TestAdaptiveEngineIntegration:
         assert meta["surrogate"]["enabled"] is False
         assert result["success"] is True
 
-    def test_surrogate_off_by_default(self):
+    def test_surrogate_default_is_self_gated(self):
+        """Sprint C 4.2 E2 — `use_surrogate` default flipped from False
+        to True because the layer is self-gated: `should_skip_candidate`
+        returns False until the model is trained (≥ min_samples_to_train
+        samples). A short 2-generation run never trains it, so
+        behaviour is observably identical to the old "off" default —
+        zero skips. Callers that want the old default can still pass
+        `use_surrogate=False` explicitly.
+        """
         engine = CPOv4Engine(
             state=_state(),
             config=CPOConfig(
@@ -99,6 +107,22 @@ class TestAdaptiveEngineIntegration:
         )
         result = engine.schedule(_ops(6), _machines(), HORIZON_START, HORIZON_END)
         assert result["cpo_meta"]["surrogate_skips"] == 0
+        assert result["cpo_meta"]["surrogate"]["enabled"] is True
+
+    def test_surrogate_can_still_be_explicitly_disabled(self):
+        """Backwards-compat: pin `use_surrogate=False` and the layer
+        stays completely dark like before Sprint C."""
+        engine = CPOv4Engine(
+            state=_state(),
+            config=CPOConfig(
+                population_size=5,
+                generations=2,
+                time_limit_sec=3,
+                seed=7,
+                use_surrogate=False,
+            ),
+        )
+        result = engine.schedule(_ops(6), _machines(), HORIZON_START, HORIZON_END)
         assert result["cpo_meta"]["surrogate"]["enabled"] is False
 
     def test_mapelites_captures_baseline_even_on_short_runs(self):

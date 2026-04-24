@@ -1,0 +1,65 @@
+# ProdPlan ONE — Caddy reverse proxy
+# ====================================
+#
+# Terminates TLS on :443 and proxies to the uvicorn process bound to
+# 127.0.0.1:8000. Caddy fetches and renews a Let's Encrypt certificate
+# automatically when a real hostname is configured; for LAN-only
+# deployments replace ${PRODPLAN_HOST} with the server's hostname and
+# rely on Caddy's internal CA (`tls internal`).
+#
+# Reload with: systemctl reload caddy
+
+{
+    # Use the Caddy default email for ACME; override per-deployment.
+    email ops@nikufra.ai
+    admin off
+}
+
+# Production host — replace with the Nelo FQDN when configured.
+{$PRODPLAN_HOST:prodplan.local} {
+    # LAN deployments without a real domain fall back to Caddy's internal CA.
+    @lan expression `{host}.endsWith(".local")`
+    tls internal @lan
+
+    encode zstd gzip
+
+    # Security headers — parity with the blueprint v2.0 §4.8 table.
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options    "nosniff"
+        X-Frame-Options           "DENY"
+        Referrer-Policy           "strict-origin-when-cross-origin"
+        Permissions-Policy        "geolocation=(), microphone=(), camera=()"
+        -Server
+    }
+
+    # Health endpoint stays open — used by monitoring and install.sh smoke.
+    @health path /health /healthz /readyz
+    handle @health {
+        reverse_proxy 127.0.0.1:8000
+    }
+
+    # Everything else: proxy with the forwarded-for hop preserved so the
+    # uvicorn `--forwarded-allow-ips=127.0.0.1` picks it up correctly.
+    reverse_proxy 127.0.0.1:8000 {
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+
+    # Static frontend bundle (after `npm run build`) — served directly by
+    # Caddy so API workers don't waste threads on MIME types.
+    handle_path /app/* {
+        root * /opt/prodplan/frontend/dist
+        try_files {path} /index.html
+        file_server
+    }
+
+    log {
+        output file /var/log/prodplan/caddy-access.log {
+            roll_size     100mb
+            roll_keep     7
+            roll_keep_for 720h
+        }
+        format json
+    }
+}

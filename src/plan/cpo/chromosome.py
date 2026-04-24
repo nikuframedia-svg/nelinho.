@@ -44,6 +44,13 @@ class Chromosome:
     edd_gap: int = 14
     buffer_pct: float = 0.10
     quality_weight: float = 0.3
+    # Sprint C 4.3 C3 — days-gap used by the greedy phase-4 (setup
+    # grouping). Controls how aggressively batches of the same mould
+    # are packed together: higher gap → looser groups (better
+    # utilisation, later delivery), lower gap → tighter groups (more
+    # setups, earlier delivery). Defaulted to 5 days matching the
+    # NELO factory's typical mould-change cadence.
+    setup_grouping_gap: int = 5
     routing_choices: Dict[str, str] = field(default_factory=dict)
     schedule_direction: ScheduleDirection = "forward"
 
@@ -69,7 +76,11 @@ class Chromosome:
             permutation=perm,
             edd_gap=rng.randint(5, 30),
             buffer_pct=round(rng.uniform(0.0, 0.25), 3),
-            quality_weight=round(rng.uniform(0.0, 0.8), 3),
+            # Sprint C 4.3 C2 — the docstring promised 0.0-1.0, the code
+            # sampled 0.0-0.8. Align the random draw to the documented
+            # range so the GA can actually explore the "maximum quality"
+            # end of the spectrum.
+            quality_weight=round(rng.uniform(0.0, 1.0), 3),
             # routing_choices + schedule_direction intentionally defaulted —
             # v2.0 features are opt-in via CPOConfig flags so random chromos
             # produced by Sprint E/F tests still decode identically.

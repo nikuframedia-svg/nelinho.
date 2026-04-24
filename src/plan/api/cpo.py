@@ -237,7 +237,21 @@ async def schedule_cpo(
         ),
     )
 
-    result = engine.schedule(operations, machines, horizon_start, horizon_end)
+    # Sprint C 1.1 — load current product prices so the decoder can compute
+    # throughput €/day (F1). Without this lookup the fitness term stays at 0
+    # and the CEO never sees the real €/day target being optimised.
+    product_price_eur = await _load_product_prices(db, tenant_id)
+
+    result = engine.schedule(
+        operations, machines, horizon_start, horizon_end,
+        product_price_eur=product_price_eur,
+    )
+
+    # Sprint C 1.2 — real Trust Index for this schedule commit.
+    # Uses the v2 Calculator in factory scope, which reads tenant weights
+    # and falls back to neutral components when no signals provider is
+    # wired. The result drives the auto-commit gate in decisions.py.
+    trust_index_value = await _compute_trust_index_for_schedule(db, tenant_id)
 
     # Sprint K — persist a commit
     commit_sha: Optional[str] = None
@@ -251,7 +265,7 @@ async def schedule_cpo(
             delta=request.delta,
             author=request.author,
             message=request.message,
-            trust_index=0.0,  # full TI calculation lives in DQA (Fase C3 of the old plan)
+            trust_index=trust_index_value,  # Sprint C 1.2 — real TI from DQA calculator
         )
         commit_sha = commit.commit_sha256
         parent_sha = await _parent_sha(commits, commit)
@@ -288,6 +302,90 @@ async def _parent_sha(service: CommitsService, commit: ScheduleCommit) -> Option
     result = await service.session.execute(stmt)
     row = result.first()
     return row[0] if row else None
+
+
+async def _compute_trust_index_for_schedule(
+    db: AsyncSession,
+    tenant_id: UUID,
+) -> float:
+    """Sprint C 1.2 — compute the Trust Index for this schedule commit.
+
+    Uses `TrustIndexV2Calculator` in factory scope (the only scope that
+    makes sense for a full-horizon schedule). No signals provider is
+    wired yet — the calculator falls back to neutral components
+    (everything 1.0), which still exercises the v2 weights path so the
+    composite isn't hardcoded to 0. Once Sprint AA.3 attaches a real
+    `SignalsProvider`, this call lights up automatically.
+
+    Returns a float in [0, 1]. On any DQA failure we log and return
+    0.0 so the rest of the pipeline stays up — the approval gate then
+    forces human review, which is the safer default.
+    """
+    try:
+        from src.dqa.trust_v2 import SCOPE_FACTORY, TrustIndexV2Calculator
+
+        calc = TrustIndexV2Calculator(db, tenant_id)
+        result = await calc.compute_for_scope(SCOPE_FACTORY)
+        return float(result.composite)
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning("Trust Index computation failed: %s", exc)
+        return 0.0
+
+
+async def _load_product_prices(
+    db: AsyncSession,
+    tenant_id: UUID,
+) -> Dict[str, float]:
+    """Sprint C 1.1 — current sale prices per product (€).
+
+    Pulls the latest-valid `ProductPricing` row per product for this
+    tenant. Used by the CPO decoder to compute `throughput_eur_day`
+    (F1 final wire — without this the fitness term stays at 0 and the
+    €30–35K/day CEO target cannot be optimised).
+
+    Returns `{product_id: sale_value_default_eur}` as strings → floats
+    so the decoder's `product_price_eur` mapping is cheap to read.
+    An empty dict is returned when no rows exist — decoder then falls
+    back to `throughput_eur_day=0.0` (no-op, backwards compatible).
+    """
+    from datetime import date as _date
+    from sqlalchemy import and_, or_, select
+
+    from src.profit.models.pricing import ProductPricing
+
+    today = _date.today()
+    stmt = (
+        select(
+            ProductPricing.product_id,
+            ProductPricing.sale_value_default_eur,
+            ProductPricing.valid_from,
+        )
+        .where(
+            and_(
+                ProductPricing.tenant_id == tenant_id,
+                ProductPricing.active.is_(True),
+                ProductPricing.valid_from <= today,
+                or_(
+                    ProductPricing.valid_to.is_(None),
+                    ProductPricing.valid_to >= today,
+                ),
+            )
+        )
+        .order_by(ProductPricing.product_id, ProductPricing.valid_from.desc())
+    )
+    try:
+        rows = (await db.execute(stmt)).all()
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning("product_pricing lookup failed, using empty map: %s", exc)
+        return {}
+
+    # Latest-valid per product (rows are ordered DESC by valid_from — keep first).
+    prices: Dict[str, float] = {}
+    for product_id, price, _valid_from in rows:
+        key = str(product_id)
+        if key not in prices:
+            prices[key] = float(price)
+    return prices
 
 
 # =============================================================================
@@ -490,4 +588,77 @@ async def get_alternatives(
         commit_sha256=commit.commit_sha256,
         primary_kpis=primary_kpis,
         alternatives=enriched,
+    )
+
+
+# =============================================================================
+# Sprint B CO1 — record a decision on a commit's alternatives
+# =============================================================================
+
+
+class CommitDecisionRequest(BaseModel):
+    """Body for `POST /v1/plan/cpo/commits/{sha}/decide`.
+
+    * `chosen_alt_idx` — index into `commit.alternatives` the operator picked,
+      or `None` when accepting the primary commit without ranking.
+    * `rejected_alt_idxs` — the alternatives they explicitly declined. Each
+      becomes a `rejected_alternatives` entry with KPIs + delta vs chosen.
+    * `reason` — free-text rationale the operator can optionally give
+      ("too many setups", "laminagem overloaded on Friday").
+    * `decided_by` — who made the call (falls back to "unknown" when the
+      auth layer isn't wired yet; Sprint D replaces this with the real user).
+    """
+
+    chosen_alt_idx: Optional[int] = Field(default=None, ge=0)
+    rejected_alt_idxs: List[int] = Field(default_factory=list)
+    reason: Optional[str] = Field(default=None, max_length=500)
+    decided_by: str = Field(default="unknown", max_length=255)
+
+
+class CommitDecisionResponse(BaseModel):
+    commit_sha256: str
+    rejected_alternatives: List[Dict[str, Any]]
+    user_preference_signal: Dict[str, Any]
+
+
+@router.post(
+    "/commits/{sha}/decide",
+    response_model=CommitDecisionResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def decide_on_commit(
+    sha: str,
+    body: CommitDecisionRequest,
+    tenant_id: UUID = Depends(_tenant_id),
+    db: AsyncSession = Depends(get_session),
+):
+    """Record the operator's accept/reject choice on a commit's alternatives.
+
+    This is the single most important endpoint of the learning system —
+    each call creates a fresh data point for every MAP-Elites alternative
+    the operator declined (KPIs + delta vs chosen + weekday/hour). The
+    PreferenceRuleDetector (Sprint C) walks these rows nightly and turns
+    recurring rejection patterns into actionable rules.
+    """
+    service = CommitsService(db, tenant_id)
+    commit = await _resolve_commit_or_404(service, sha)
+
+    try:
+        updated = await service.record_decision(
+            commit_id=commit.id,
+            chosen_alt_idx=body.chosen_alt_idx,
+            rejected_alt_idxs=body.rejected_alt_idxs,
+            decided_by=body.decided_by,
+            reason=body.reason,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    return CommitDecisionResponse(
+        commit_sha256=updated.commit_sha256,
+        rejected_alternatives=list(updated.rejected_alternatives or []),
+        user_preference_signal=dict(updated.user_preference_signal or {}),
     )

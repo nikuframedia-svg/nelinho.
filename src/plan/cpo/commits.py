@@ -56,6 +56,15 @@ class ScheduleCommit(TenantBase):
     - `alternatives`: MAP-Elites representatives (for the Timeline endpoint).
     - `delta`: optional structured user-provided modification that led to
       this commit (POETIQ input); NULL for a plain re-plan.
+
+    Sprint B CO1 — learning data points:
+    - `rejected_alternatives`: each MAP-Elites alternative the operator
+      explicitly DID NOT pick, with its KPIs, delta vs chosen, and reason.
+    - `user_preference_signal`: who decided, when, on which weekday/hour —
+      so temporal patterns can be learned.
+    - `evidence_refs`: upstream events/state refs that fed this plan.
+    - `scenarios_tested`: how many POETIQ iterations / MAP-Elites cells
+      were considered before committing.
     """
 
     __tablename__ = "plan_schedule_commits"
@@ -75,6 +84,20 @@ class ScheduleCommit(TenantBase):
     delta: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     alternatives: Mapped[List[Dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
     cpo_meta: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+    # Sprint B CO1 — learning fields
+    rejected_alternatives: Mapped[List[Dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=list,
+    )
+    user_preference_signal: Mapped[Dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict,
+    )
+    evidence_refs: Mapped[List[Dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=list,
+    )
+    scenarios_tested: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0,
+    )
 
     trust_index: Mapped[float] = mapped_column(nullable=False, default=0.0)
     operations_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -244,6 +267,11 @@ class CommitsService:
             "delta": commit.delta or {},
             "alternatives": commit.alternatives or [],
             "cpo_meta": commit.cpo_meta or {},
+            # Sprint B CO1 — learning fields surfaced for the Timeline UI
+            "rejected_alternatives": commit.rejected_alternatives or [],
+            "user_preference_signal": commit.user_preference_signal or {},
+            "evidence_refs": commit.evidence_refs or [],
+            "scenarios_tested": commit.scenarios_tested or 0,
             "trust_index": commit.trust_index,
             "operations_count": commit.operations_count,
             "created_at": commit.created_at.isoformat() if commit.created_at else None,
@@ -251,6 +279,87 @@ class CommitsService:
         if include_operations:
             out["operations"] = commit.operations or []
         return out
+
+    # -------------------- CO1 — learning decisions ------------------- #
+
+    async def record_decision(
+        self,
+        *,
+        commit_id: UUID,
+        chosen_alt_idx: Optional[int],
+        rejected_alt_idxs: List[int],
+        decided_by: str,
+        decided_at: Optional[datetime] = None,
+        reason: Optional[str] = None,
+    ) -> ScheduleCommit:
+        """Record the operator's choice among this commit's alternatives.
+
+        Each rejected alternative's KPIs are captured together with its
+        delta vs the chosen one — that's the data the four learning
+        layers (PreferenceRuleDetector, AdaptiveFitnessWeights, DPO,
+        ABLkit) will consume. The chosen_alt can be None when the
+        operator accepts the primary commit without ranking alternatives
+        (still useful signal: rejected_alt_idxs tells us what they
+        looked at and declined).
+
+        Raises `ValueError` on out-of-range indices so callers can fail
+        loudly instead of silently dropping invalid decisions.
+        """
+        commit = await self.session.get(ScheduleCommit, commit_id)
+        if commit is None or commit.tenant_id != self.tenant_id:
+            raise ValueError(f"commit_not_found: {commit_id}")
+
+        alternatives = list(commit.alternatives or [])
+        n_alts = len(alternatives)
+
+        if chosen_alt_idx is not None and not (0 <= chosen_alt_idx < n_alts):
+            raise ValueError(
+                f"chosen_alt_idx={chosen_alt_idx} out of range [0, {n_alts})"
+            )
+        for idx in rejected_alt_idxs:
+            if not (0 <= idx < n_alts):
+                raise ValueError(
+                    f"rejected_alt_idx={idx} out of range [0, {n_alts})"
+                )
+        if chosen_alt_idx is not None and chosen_alt_idx in rejected_alt_idxs:
+            raise ValueError(
+                f"chosen_alt_idx={chosen_alt_idx} cannot appear in rejected_alt_idxs",
+            )
+
+        decided_at = decided_at or datetime.utcnow()
+        chosen = alternatives[chosen_alt_idx] if chosen_alt_idx is not None else None
+
+        rejected_records = [
+            _build_rejected_record(
+                alt=alternatives[idx],
+                chosen=chosen,
+                reason=reason,
+                rejected_at=decided_at,
+                alt_idx=idx,
+            )
+            for idx in rejected_alt_idxs
+        ]
+
+        commit.rejected_alternatives = rejected_records
+        commit.user_preference_signal = {
+            "chose_alt_idx": chosen_alt_idx,
+            "rejected_alt_idxs": list(rejected_alt_idxs),
+            "decided_by": decided_by,
+            "decided_at": decided_at.isoformat(),
+            # Temporal features so Camada 1 can spot weekday/hour patterns
+            "weekday": decided_at.isoweekday(),
+            "hour": decided_at.hour,
+            "reason": reason,
+        }
+        await self.session.flush()
+        logger.info(
+            "Decision recorded for commit %s: chosen=%s rejected=%s by %s",
+            commit.commit_sha256[:12],
+            chosen_alt_idx,
+            rejected_alt_idxs,
+            decided_by,
+        )
+        return commit
 
 
 # =============================================================================
@@ -328,10 +437,60 @@ def _extract_kpis(schedule_result: Dict[str, Any]) -> Dict[str, Any]:
         "total_tardiness_hours": schedule_result.get("total_tardiness_hours", 0.0),
         "num_late_orders": schedule_result.get("num_late_orders", 0),
         "setups": schedule_result.get("setups", 0),
+        "throughput_eur_day": schedule_result.get("throughput_eur_day", 0.0),
+        "throughput_eur_total": schedule_result.get("throughput_eur_total", 0.0),
         "avg_utilization": schedule_result.get("avg_utilization", 0.0),
         "solve_time_sec": schedule_result.get("solve_time_sec", 0.0),
         "status": schedule_result.get("status", "unknown"),
         "safety_net_triggered": bool(schedule_result.get("safety_net_triggered", False)),
+    }
+
+
+def _build_rejected_record(
+    *,
+    alt: Dict[str, Any],
+    chosen: Optional[Dict[str, Any]],
+    reason: Optional[str],
+    rejected_at: datetime,
+    alt_idx: int,
+) -> Dict[str, Any]:
+    """Serialize one rejected MAP-Elites alternative with its KPIs and
+    the delta vs the chosen plan. This is the per-alternative payload
+    the four learning layers (PreferenceRuleDetector, AdaptiveFitness-
+    Weights, DPO, ABLkit) consume.
+
+    `alt` is the alternative dict as stored in `commit.alternatives`.
+    Shape is heterogeneous across MAP-Elites sources, so we read KPIs
+    defensively via `.get(...)` and fall back to `{}` when absent.
+    """
+    alt_kpis: Dict[str, Any] = {}
+    if isinstance(alt, dict):
+        raw_kpis = alt.get("kpis") if isinstance(alt.get("kpis"), dict) else alt
+        if isinstance(raw_kpis, dict):
+            for k in (
+                "makespan_hours", "total_tardiness_hours", "num_late_orders",
+                "setups", "throughput_eur_day", "throughput_eur_total",
+                "avg_utilization", "quality_risk_score", "idle_ratio",
+            ):
+                if k in raw_kpis:
+                    alt_kpis[k] = raw_kpis[k]
+
+    delta_vs_chosen: Dict[str, Any] = {}
+    if chosen and isinstance(chosen, dict):
+        chosen_kpis = chosen.get("kpis") if isinstance(chosen.get("kpis"), dict) else chosen
+        if isinstance(chosen_kpis, dict):
+            for k, v in alt_kpis.items():
+                cv = chosen_kpis.get(k)
+                if isinstance(v, (int, float)) and isinstance(cv, (int, float)):
+                    delta_vs_chosen[k] = round(v - cv, 4)
+
+    return {
+        "alt_idx": alt_idx,
+        "kpis": alt_kpis,
+        "delta_vs_chosen": delta_vs_chosen,
+        "mapelites_cell": alt.get("mapelites_cell") if isinstance(alt, dict) else None,
+        "rejection_reason": reason,
+        "rejected_at": rejected_at.isoformat(),
     }
 
 

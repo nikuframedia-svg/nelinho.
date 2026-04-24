@@ -88,8 +88,15 @@ class CPSATLRHO:
         horizon_start: datetime,
         horizon_end: datetime,
         now: Optional[datetime] = None,
+        phase_gaps: Optional[Dict[Tuple[str, str], float]] = None,
     ) -> LRHOResult:
         """Refine `baseline_schedule["operations"]` over rolling windows.
+
+        * `phase_gaps` (Sprint A D2) — optional mapping
+          `(from_phase_code, to_phase_code) → min_gap_hours` so the solver
+          respects physical curing/drying transitions when it moves ops
+          around. Keys must already be normalized to match how the
+          scheduled ops expose their phase codes.
 
         Returns an `LRHOResult`. When OR-Tools isn't available the result's
         `used=False` and the caller keeps the baseline.
@@ -130,6 +137,7 @@ class CPSATLRHO:
 
             moved = self._solve_window(
                 window_ops, window_start, window_end, frozen_cutoff,
+                phase_gaps=phase_gaps,
             )
             total_ops_moved += moved
 
@@ -174,6 +182,8 @@ class CPSATLRHO:
         window_start: datetime,
         window_end: datetime,
         frozen_cutoff: datetime,
+        *,
+        phase_gaps: Optional[Dict[Tuple[str, str], float]] = None,
     ) -> int:
         """Solve one window. Returns how many ops the solver actually moved."""
         if cp_model is None:  # pragma: no cover — guarded at module level
@@ -240,6 +250,15 @@ class CPSATLRHO:
             if len(intervals) > 1:
                 model.AddNoOverlap(intervals)
 
+        # Sprint A D2 — intra-order precedence with curing/drying gaps.
+        # Without this, the solver is free to swap two ops of the same OF
+        # because the only hard constraint would be NoOverlap. For each
+        # ordered pair (A, B) inside the same order — where A's baseline
+        # start is earlier — require start_B >= end_A + gap(A→B).
+        self._add_precedence_constraints(
+            model, ops, interval_vars, phase_gaps,
+        )
+
         # Minimise makespan (last end).
         if interval_vars:
             makespan = model.NewIntVar(0, horizon_minutes, "makespan")
@@ -270,6 +289,57 @@ class CPSATLRHO:
                 op["start"] = new_start
                 op["end"] = new_end
         return moved
+
+
+    # Inner method on the class (referenced by _solve_window above).
+    def _add_precedence_constraints(
+        self,
+        model: Any,
+        ops: List[Dict[str, Any]],
+        interval_vars: Dict[str, Any],
+        phase_gaps: Optional[Dict[Tuple[str, str], float]],
+    ) -> None:
+        """Add start_B >= end_A (+ curing gap) for each ordered predecessor
+        pair in the window. Predecessors derived from baseline start order
+        within the same `order_id`. Curing gaps from `phase_gaps`.
+        """
+        # Group ops by order_id, sort by baseline start (earliest first).
+        from src.plan.cpo.state import normalize_phase_code
+
+        by_order: Dict[str, List[Dict[str, Any]]] = {}
+        for op in ops:
+            op_id = op.get("operation_id") or ""
+            if not op_id or op_id not in interval_vars:
+                continue
+            order_id = op.get("order_id") or ""
+            if not order_id:
+                continue
+            by_order.setdefault(order_id, []).append(op)
+
+        for order_ops in by_order.values():
+            order_ops.sort(
+                key=lambda o: _parse_dt(o.get("start")) or datetime.max,
+            )
+            for i in range(len(order_ops) - 1):
+                pred = order_ops[i]
+                succ = order_ops[i + 1]
+                pred_id = pred.get("operation_id")
+                succ_id = succ.get("operation_id")
+                if pred_id not in interval_vars or succ_id not in interval_vars:
+                    continue
+                _, pred_end, _, _ = interval_vars[pred_id]
+                succ_start, _, _, _ = interval_vars[succ_id]
+
+                # Base precedence: succ starts at or after pred ends.
+                gap_minutes = 0
+                if phase_gaps:
+                    key = (
+                        normalize_phase_code(pred.get("phase_name") or pred.get("phase_id")),
+                        normalize_phase_code(succ.get("phase_name") or succ.get("phase_id")),
+                    )
+                    gap_h = phase_gaps.get(key, 0.0)
+                    gap_minutes = int(round(float(gap_h) * 60))
+                model.Add(succ_start >= pred_end + gap_minutes)
 
 
 def _in_window(

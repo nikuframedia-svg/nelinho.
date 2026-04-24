@@ -397,6 +397,68 @@ class TestExecuteDecision:
         assert run.audit_hash != original_hash  # hash re-computed with outcome
         assert run.outcome_hash is not None
 
+    async def test_wg1_publishes_decision_executed_event(
+        self, fake_session, tenant_id, monkeypatch,
+    ):
+        """Sprint A WG1 — execute_decision fires a DECISION_EXECUTED event
+        with the audit trail so downstream listeners (Timeline, future
+        ActionExecutor dispatcher) know a decision was finalised.
+        """
+        run = _make_decision_run(
+            tenant_id=tenant_id,
+            status=DecisionStatus.APPROVED.value,
+        )
+        fake_session.queue_scalar(run)
+        svc = GovernanceService(fake_session, tenant_id)
+
+        published: list = []
+
+        async def _capture(topic, event):
+            published.append((topic, event))
+            return True
+
+        monkeypatch.setattr(
+            "src.shared.kafka_client.publish_event", _capture, raising=True,
+        )
+
+        await svc.execute_decision(str(run.id), executed_by="bob")
+
+        assert len(published) == 1
+        topic, event = published[0]
+        from src.shared.kafka_client import Topics
+        assert topic == Topics.DECISION_EXECUTED
+        assert event.event_type == "DECISION_EXECUTED"
+        assert event.source_module == "governance"
+        assert event.payload["decision_id"] == str(run.id)
+        assert event.payload["executed_by"] == "bob"
+        assert event.payload["outcome_hash"] == run.outcome_hash
+        assert event.payload["audit_hash"] == run.audit_hash
+
+    async def test_wg1_kafka_failure_does_not_rollback_execution(
+        self, fake_session, tenant_id, monkeypatch,
+    ):
+        """A Kafka outage must not unwind the DB-side execution — the
+        outbox/event publish is best-effort from this call site.
+        """
+        run = _make_decision_run(
+            tenant_id=tenant_id,
+            status=DecisionStatus.APPROVED.value,
+        )
+        fake_session.queue_scalar(run)
+        svc = GovernanceService(fake_session, tenant_id)
+
+        async def _boom(*_a, **_kw):
+            raise RuntimeError("broker down")
+
+        monkeypatch.setattr(
+            "src.shared.kafka_client.publish_event", _boom, raising=True,
+        )
+
+        result = await svc.execute_decision(str(run.id), executed_by="bob")
+        # Execution still completes even though publish raised.
+        assert result["status"] == DecisionStatus.EXECUTED.value
+        assert run.outcome_hash is not None
+
 
 # ---------------------------------------------------------------------------
 # rollback_decision
@@ -450,6 +512,74 @@ class TestRollbackDecision:
         assert result["status"] == DecisionStatus.ROLLED_BACK.value
         assert result["rolled_back_by"] == "carol"
         assert result["rollback_reason"] == "regression detected in prod"
+
+    async def test_wg2_publishes_decision_rolled_back_event(
+        self, fake_session, tenant_id, monkeypatch,
+    ):
+        """Sprint C 1.4 — rollback_decision fires a DECISION_ROLLED_BACK
+        event carrying the audit trail so downstream listeners (future
+        ActionExecutor rollback handler, audit sinks, Timeline UI) can
+        react without re-reading the DB.
+        """
+        run = _make_decision_run(
+            tenant_id=tenant_id,
+            status=DecisionStatus.EXECUTED.value,
+        )
+        fake_session.queue_scalar(run)
+        svc = GovernanceService(fake_session, tenant_id)
+
+        published: list = []
+
+        async def _capture(topic, event):
+            published.append((topic, event))
+            return True
+
+        monkeypatch.setattr(
+            "src.shared.kafka_client.publish_event", _capture, raising=True,
+        )
+
+        await svc.rollback_decision(
+            str(run.id),
+            rolled_back_by="carol",
+            reason="regression detected in prod",
+        )
+
+        assert len(published) == 1
+        topic, event = published[0]
+        from src.shared.kafka_client import Topics
+        assert topic == Topics.DECISION_ROLLED_BACK
+        assert event.event_type == "DECISION_ROLLED_BACK"
+        assert event.source_module == "governance"
+        assert event.payload["decision_id"] == str(run.id)
+        assert event.payload["rolled_back_by"] == "carol"
+        assert event.payload["reason"] == "regression detected in prod"
+
+    async def test_wg2_kafka_failure_does_not_unwind_rollback(
+        self, fake_session, tenant_id, monkeypatch,
+    ):
+        """Broker down must never re-break the rollback path — the
+        database status flip is the source of truth.
+        """
+        run = _make_decision_run(
+            tenant_id=tenant_id,
+            status=DecisionStatus.EXECUTED.value,
+        )
+        fake_session.queue_scalar(run)
+        svc = GovernanceService(fake_session, tenant_id)
+
+        async def _boom(*_a, **_kw):
+            raise RuntimeError("broker down")
+
+        monkeypatch.setattr(
+            "src.shared.kafka_client.publish_event", _boom, raising=True,
+        )
+
+        result = await svc.rollback_decision(
+            str(run.id),
+            rolled_back_by="carol",
+            reason="still needed to roll back now",
+        )
+        assert result["status"] == DecisionStatus.ROLLED_BACK.value
 
 
 # ---------------------------------------------------------------------------

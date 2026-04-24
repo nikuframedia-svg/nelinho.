@@ -162,6 +162,20 @@ def register_tenant(
         coalesce=True,
         max_instances=1,
     )
+    # Sprint C 2.3 — PreferenceRuleDetector (Camada 1 aprendizagem).
+    # Runs once a day, at 03:00 UTC, when the ERP is quiet and the
+    # previous day's commits are fully flushed. 30-day window scans
+    # ~1-2k commits in seconds for a single tenant.
+    _scheduler.add_job(
+        _preference_rule_detector_job,
+        trigger=CronTrigger(hour=3, minute=0, timezone="UTC"),
+        args=[tenant_id],
+        id=f"preference_rule_detector:{tenant_id}",
+        name=f"preference_rule_detector[{tenant_id}]",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
 
 
 async def shutdown_scheduler() -> None:
@@ -209,6 +223,47 @@ async def _quality_risk_scoring_job(tenant_id: UUID) -> None:
         "quality_risk_scoring tenant=%s (stub — wire scoring model when ready)",
         tenant_id,
     )
+
+
+async def _preference_rule_detector_job(tenant_id: UUID) -> None:
+    """Sprint C 2.3 — run Camada 1 learning detector nightly.
+
+    Mines `ScheduleCommit.rejected_alternatives` from the last 30 days
+    and persists new `PreferenceRule` rows in `governance.preference_rule`
+    for operator review (`status=detected`). Operator then confirms or
+    rejects via `/admin/learned-rules` (frontend — not wired yet).
+
+    Best-effort: a failure here never blocks other jobs. If the detector
+    import fails (e.g. partial deploy) the log captures it and the job
+    returns cleanly.
+    """
+    try:
+        from src.governance.preference_learning import PreferenceRuleDetector
+    except ImportError:
+        logger.debug(
+            "preference_rule_detector module missing — skipping tenant=%s",
+            tenant_id,
+        )
+        return
+
+    from src.shared.database import get_session_context
+
+    started = datetime.utcnow()
+    try:
+        async with get_session_context() as session:
+            detector = PreferenceRuleDetector(session, tenant_id)
+            rules = await detector.scan(window_days=30)
+            await session.commit()
+        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        logger.info(
+            "preference_rule_detector tenant=%s rules_detected=%s elapsed_ms=%s",
+            tenant_id, len(rules), elapsed_ms,
+        )
+    except Exception as exc:
+        logger.error(
+            "preference_rule_detector tenant=%s failed: %s",
+            tenant_id, exc, exc_info=True,
+        )
 
 
 async def _shortage_scan_job(tenant_id: UUID) -> None:

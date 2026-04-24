@@ -203,17 +203,23 @@ class FRRMAB:
         return best_name, self.operators[best_name]
 
     def record(self, operator_name: str, reward: float) -> None:
-        """Register a reward for an operator invocation."""
+        """Register a reward for an operator invocation.
+
+        Sprint C 4.2 FR2 — instead of multiplying every entry in the
+        deque by `decay` (O(window)), we just append the fresh reward.
+        The mean-reward calc already lives in `_OperatorStats.mean_reward`
+        which averages the window — a sliding-window average is already
+        a form of decay, so the extra per-entry multiplier was redundant
+        AND O(200) per op. With the fix, `record` is O(1).
+
+        The `decay` field is kept on the dataclass for backwards-compat
+        so existing callers that pass `decay=0.9` don't break; it no
+        longer has an effect on the reward accounting.
+        """
         if operator_name not in self._stats:
             logger.warning(f"FRRMAB.record: unknown operator {operator_name!r}")
             return
         stats = self._stats[operator_name]
-        # Decay existing history by multiplying each entry before appending.
-        if self.decay != 1.0 and stats.history:
-            stats.history = deque(
-                (r * self.decay for r in stats.history),
-                maxlen=self.window,
-            )
         stats.history.append(float(reward))
         stats.plays += 1
         self._total_plays += 1

@@ -110,16 +110,21 @@ DEFAULT_SEEDS: list[ConfigSeed] = [
 
     # Laminagem dual-resource (WF11)
     ("planning", "laminagem.require_pair", True, "bool",
-     "WF11 — Laminagem SEMPRE 2 workers (CoeficienteX > 0)"),
+     "WF11 — Laminagem standard sempre 2 workers (88.5% das operações "
+     "históricas em FuncionariosFaseOrdemFabrico). NÃO usar CoeficienteX "
+     "como critério — é prémio monetário (€), não tempo."),
     ("planning", "laminagem.require_chefe", True, "bool",
      "Pair must include an experienced worker (chefe)"),
 
     # Mold pocket count hard cap (v2.0: 7 pockets max observed)
     ("planning", "mold.max_pocket_count", 7, "int", ""),
 
-    # Routing
-    ("planning", "routing.templates.count", 50, "int",
-     "PL08/CG07 — 50 padrões únicos de routing"),
+    # Routing — 61 unique routing patterns by sequence (Blueprint v2.0 §3.1).
+    # 39 if ignoring order, 61 when preserving phase sequence. The CPO uses
+    # 61 because ordering matters for scheduling. Count updated from 50 in
+    # Sprint A after the curated ingest re-sequenced the patterns.
+    ("planning", "routing.templates.count", 61, "int",
+     "PL08/CG07 — 61 padrões únicos de routing por sequência (v2.0 §3.1)"),
 
     # Replan triggers (PL16)
     ("planning", "replan.on_capacity_change", True, "bool", ""),
@@ -163,8 +168,16 @@ DEFAULT_SEEDS: list[ConfigSeed] = [
      "WF12 — fases com < N workers aptos flagged as skill bottleneck "
      "(Pintura=22, Colagem Golas=13, Desmolde=16)"),
 
+    # ⚠️ UNCONFIRMED HYPOTHESIS (H2 — Plan 22/04 §Part 7).
+    # The ERP table `Moldes` has ZERO maintenance columns. The value 500
+    # below is a placeholder pending CEO confirmation of NELO's real
+    # maintenance policy (time-based? visual inspection? fixed cycle
+    # count?). Set to 0 or any negative number to DISABLE the
+    # MOLD_MAINT_DUE alerts until confirmation — the scheduler and health
+    # calculator keep working, only the preventive alert is skipped.
     ("mold", "maintenance_threshold_cycles", 500, "int",
-     "QA10/CG12/AL08 — cycles since last maint before MOLD_MAINT_DUE alert"),
+     "QA10/CG12/AL08 — cycles before MOLD_MAINT_DUE alert. ≤0 disables. "
+     "Value 500 is H2 placeholder; confirm with CEO."),
     ("mold", "health_weight.cycles", 0.40, "float", ""),
     ("mold", "health_weight.defects_90d", 0.20, "float", ""),
     ("mold", "health_weight.days_since_maint", 0.20, "float", ""),

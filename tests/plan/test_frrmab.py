@@ -145,11 +145,34 @@ class TestFRRMABRoundRobinThenExploitation:
 
 
 class TestFRRMABDecay:
-    def test_decay_shrinks_old_rewards(self):
+    def test_sliding_window_is_the_decay(self):
+        """Sprint C 4.2 FR2 — the per-record multiply-by-decay loop was
+        removed because it was O(window) per `record()` call. The
+        sliding-window mean (FIFO with maxlen) already decays old
+        rewards implicitly: once the window fills, the oldest reward
+        falls off on every append.
+
+        So two records of 1.0 give a clean mean of 1.0 — no artificial
+        geometric decay is applied anymore.
+        """
         rng = random.Random(0)
-        mab = FRRMAB(rng=rng, decay=0.5, window=100)
+        mab = FRRMAB(rng=rng, decay=0.5, window=100)  # decay kept for compat
         mab.record("swap_adjacent", reward=1.0)
         mab.record("swap_adjacent", reward=1.0)
-        # Second record decays the first 1.0 to 0.5 → history is [0.5, 1.0]
         snap = mab.snapshot()
-        assert snap["swap_adjacent"]["mean_reward"] == 0.75
+        assert snap["swap_adjacent"]["mean_reward"] == 1.0
+        assert snap["swap_adjacent"]["history_len"] == 2
+
+    def test_window_caps_history_at_maxlen(self):
+        """The window is the only decay mechanism: when it fills, older
+        rewards fall off the front so the running mean reflects only
+        recent behaviour.
+        """
+        rng = random.Random(0)
+        mab = FRRMAB(rng=rng, decay=1.0, window=3)
+        for r in (0.0, 0.0, 1.0, 1.0, 1.0):
+            mab.record("swap_adjacent", reward=r)
+        snap = mab.snapshot()
+        # Only the last 3 rewards (1, 1, 1) survive the window → mean=1.0
+        assert snap["swap_adjacent"]["history_len"] == 3
+        assert snap["swap_adjacent"]["mean_reward"] == 1.0

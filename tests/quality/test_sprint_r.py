@@ -361,6 +361,54 @@ async def test_mold_service_increment_cycle_creates_counter_if_missing(fake_sess
 
 
 # ---------------------------------------------------------------------------
+# Sprint A Day 5 — MOLD_MAINT_DUE disabled when threshold ≤ 0 (H2 placeholder)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_emit_maintenance_alerts_skipped_when_threshold_is_zero(
+    fake_session, monkeypatch,
+):
+    """A threshold of 0 disables the MOLD_MAINT_DUE alert entirely —
+    the NELO ERP lacks maintenance data, so until the CEO confirms H2
+    the operator can silence the alert without affecting mold health.
+    """
+    # Intercept the config read to return 0 deterministically.
+    from src.core.services import tenant_config_service
+
+    async def _get(self, *a, **kw):
+        return 0
+
+    monkeypatch.setattr(tenant_config_service.TenantConfigService, "get", _get)
+
+    svc = MoldService(fake_session, TEST_TENANT_ID)
+    created = await svc.emit_maintenance_alerts()
+    assert created == 0
+    # When disabled, the service must short-circuit before querying molds.
+    assert fake_session._scalars_queue == []
+    # And must never add any alert to the session.
+    from src.copilot.alerts.models import CopilotAlert
+
+    assert not any(isinstance(a, CopilotAlert) for a in fake_session.added)
+
+
+@pytest.mark.asyncio
+async def test_emit_maintenance_alerts_skipped_when_threshold_is_negative(
+    fake_session, monkeypatch,
+):
+    """Negative thresholds also disable — any "sentinel-off" value works."""
+    from src.core.services import tenant_config_service
+
+    async def _get(self, *a, **kw):
+        return -1
+
+    monkeypatch.setattr(tenant_config_service.TenantConfigService, "get", _get)
+
+    svc = MoldService(fake_session, TEST_TENANT_ID)
+    created = await svc.emit_maintenance_alerts()
+    assert created == 0
+
+
+# ---------------------------------------------------------------------------
 # R.9 — Decoder rework-buffer classifier
 # ---------------------------------------------------------------------------
 

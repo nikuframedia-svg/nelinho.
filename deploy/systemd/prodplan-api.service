@@ -1,0 +1,65 @@
+[Unit]
+Description=ProdPlan ONE — FastAPI service (Uvicorn)
+Documentation=https://github.com/nikufra-ai/prodplan-one
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+Requires=postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=prodplan
+Group=prodplan
+WorkingDirectory=/opt/prodplan
+EnvironmentFile=/etc/prodplan/env
+
+# Run Alembic migrations before the API boots.
+# Keep this idempotent — Alembic no-ops when already at head.
+ExecStartPre=/opt/prodplan/.venv/bin/alembic upgrade head
+
+# Uvicorn production worker.
+# 2 workers is plenty on a 32 GB single-server deployment;
+# more only helps if the Python workload is CPU-bound and we have cores
+# to spare after Postgres + Redis + Ollama.
+ExecStart=/opt/prodplan/.venv/bin/uvicorn src.main:app \
+    --host 127.0.0.1 \
+    --port 8000 \
+    --workers 2 \
+    --log-config /opt/prodplan/deploy/logging.yaml \
+    --access-log \
+    --proxy-headers \
+    --forwarded-allow-ips=127.0.0.1
+
+# Bind directly to localhost; Caddy terminates TLS on :443 and proxies here.
+
+Restart=on-failure
+RestartSec=5s
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+# Resource limits — guard rails on a shared box.
+MemoryHigh=6G
+MemoryMax=8G
+CPUQuota=400%
+TasksMax=512
+
+# Hardening — principle of least privilege.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+# The API needs to write only to its own log/temp and read-only to /opt/prodplan.
+ReadWritePaths=/var/log/prodplan /var/lib/prodplan
+
+# Logging to journald — queryable with `journalctl -u prodplan-api`.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=prodplan-api
+
+[Install]
+WantedBy=multi-user.target

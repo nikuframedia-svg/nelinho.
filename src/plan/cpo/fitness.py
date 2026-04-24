@@ -35,10 +35,27 @@ class FitnessConfig:
     # Legacy Sprint E/I weights (kept for backward compat — unit tests rely on
     # the scalar form. Blueprint v2.0 normalised weights are in the `w_*_v2`
     # block below and activated via `use_v2_weights=True`.)
+    #
+    # Sprint C 4.2 F3 — these weights are INTENTIONALLY un-normalised and
+    # operate on raw unit scales (hours for makespan/tardiness, count for
+    # setups). The 10×/1×/0.5× ratio encodes the domain preference:
+    #     * 1h of tardiness hurts 10× more than 1h of makespan — tardiness
+    #       is a contract breach, makespan is a marginal utilisation cost.
+    #     * 1 setup hurts half as much as 1h of makespan because setups
+    #       are measured in units (integer count), not hours; the 0.5
+    #       factor roughly normalises to "typical setup ~30min".
+    #
+    # Callers that want Blueprint v2.0 normalised (sum=1.0) weights flip
+    # `use_v2_weights=True` and the `w_v2_*` block below drives fitness.
     w_makespan: float = 1.0
     w_tardiness: float = 10.0
     w_setups: float = 0.5
-    w_quality_risk: float = 0.0  # off by default — requires a predictor
+    # Sprint A F4 — was 0.0; raised to 0.10 (Blueprint v2.0 §5.5).
+    # When no predictor is wired, `schedule["quality_risk_score"]` defaults
+    # to 0, so the term is 0.10 × 0 = 0 and nothing changes. Once a Sprint H
+    # predictor is attached via `quality_risk_predictor`, the weight is
+    # already live without a second config change.
+    w_quality_risk: float = 0.10
     safety_penalty: float = 1e6
 
     # Sprint I.3 — quality risk hook

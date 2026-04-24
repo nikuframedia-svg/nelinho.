@@ -21,8 +21,9 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from datetime import date, datetime, timedelta
+from decimal import Decimal
+from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
 from src.plan.cpo.chromosome import Chromosome
 from src.plan.cpo.state import FactoryState
@@ -43,6 +44,7 @@ class ScheduledOp:
     end: datetime
     duration_minutes: float
     mold_batch_id: Optional[str] = None  # Sprint I.4 — ops sharing the same mold slot
+    setup_family: str = ""  # Sprint A D1 — carried so the setup counter works
 
 
 def compute_mold_batches(
@@ -87,10 +89,30 @@ def compute_mold_batches(
     batches: Dict[str, str] = {}
 
     for (model_id, mold_id), members in groups.items():
-        if len(members) < 2:
-            continue  # single op — no batching benefit
         pocket_count = _pocket_count(state, mold_id)
         if pocket_count <= 1:
+            continue
+        if len(members) < 2:
+            # Sprint C 4.2 D6 — a single-op batch wastes pocket capacity
+            # unless the op is urgent. When the lone candidate has a
+            # due_date within URGENCY_DAYS from now, we still emit it
+            # as a batch so the mould slot commits (better one boat
+            # on-time than six boats late waiting for company).
+            op = members[0]
+            due = getattr(op, "due_date", None)
+            if due is None:
+                continue
+            # Use the op's own start hint if it's attached (greedy
+            # pipeline sets it); otherwise fall back to "now" semantics
+            # via datetime.utcnow() which matches the decoder's default.
+            now = datetime.utcnow()
+            urgency_window = timedelta(days=_MOLD_BATCH_URGENCY_DAYS)
+            if due - now > urgency_window:
+                continue
+            # urgent singleton → fall through to the batching block
+            independent: List[SchedulingOperation] = list(members)
+            batch_id = f"mbatch:{model_id}:{mold_id}:urgent"
+            batches[op.operation_id] = batch_id
             continue
 
         # Precedence-free subsets: ops in the same batch must NOT depend on
@@ -135,6 +157,12 @@ def _pocket_count(state: FactoryState, mold_id: str) -> int:
 # Sprint P.8 — queue time between consecutive phases (Blueprint PL22).
 # Default matches `planning.queue_time.median_h` seeded in Sprint L.4.
 DEFAULT_QUEUE_TIME_MINUTES = 5.2 * 60.0
+
+# Sprint C 4.2 D6 — days until a singleton-on-multi-pocket-mould still
+# commits the slot. Shorter = more aggressive (slots lock early, less
+# room to accumulate peers); longer = more patient. 3 days maps to the
+# NELO factory's typical 2-3 day "in-flight" transport window.
+_MOLD_BATCH_URGENCY_DAYS = 3
 # Sprint P.9 — buffer pós-Desmolde (Blueprint PL21: 95% of errors detected
 # at Desmolde → reserve 4h after to absorb rework without cascade).
 DEFAULT_POST_DESMOLDE_BUFFER_MINUTES = 4 * 60.0
@@ -176,6 +204,7 @@ def decode(
     *,
     queue_time_minutes: Optional[float] = None,
     post_desmolde_buffer_minutes: Optional[float] = None,
+    product_price_eur: Optional[Mapping[str, Union[float, Decimal]]] = None,
 ) -> Dict[str, Any]:
     """Decode a chromosome into a feasible schedule.
 
@@ -185,6 +214,14 @@ def decode(
     * `post_desmolde_buffer_minutes` — extra slack after Desmolde phases
       to absorb rework (PL21, default disabled).
 
+    Sprint A F1 knob:
+    * `product_price_eur` — mapping product_id → sale price (€). When
+      provided, the schedule's `throughput_eur_day` is computed as the
+      total revenue of final-phase ops divided by horizon days. Without
+      it (legacy callers), `throughput_eur_day` stays at 0 and the fitness
+      weight for throughput has no effect — the CEO's €30-35K/day target
+      needs this mapping populated to be actually optimised.
+
     Both knobs default to `None` (disabled) so legacy callers see identical
     behaviour. CPOEngine threads these through from `CPOConfig.use_queue_time`
     and `CPOConfig.use_post_desmolde_buffer`.
@@ -192,6 +229,7 @@ def decode(
     Returns a dict compatible with `SchedulingResult` fields plus:
     - operations: list of scheduled ops (as dicts, serializable)
     - makespan_hours, total_tardiness_hours, num_late_orders, setups
+    - throughput_eur_day, throughput_eur_total (Sprint A F1)
     - warnings, infeasible_ops (ids that couldn't fit)
     """
     queue_gap = timedelta(minutes=queue_time_minutes or 0.0)
@@ -246,6 +284,18 @@ def decode(
     infeasible: List[str] = []
     warnings: List[str] = []
     setups = 0
+    routing_variants_applied = 0  # Sprint A C1 — ops where variant B picked alt machine
+    backwards_shifts = 0  # Sprint A D4 — ops placed later than earliest because of target_start
+
+    # Sprint A D4 — pre-compute latest-start anchors for backwards scheduling.
+    # Only used when the chromosome requests backward direction; computed
+    # unconditionally because it's cheap (walks orders once) and the anchors
+    # are also useful for diagnostics.
+    is_backward = getattr(chromosome, "schedule_direction", "forward") == "backward"
+    target_starts = (
+        _compute_target_starts(order_to_ops, state) if is_backward else {}
+    )
+    max_op_start = horizon_end - timedelta(minutes=1)  # leave room for duration
 
     pending = list(priority_order)
     loop_guard = 0
@@ -282,35 +332,75 @@ def decode(
                 _earliest_start(
                     p, order_to_ops, op_end_at, horizon_start,
                     queue_gap=queue_gap, post_desmolde_extra=post_desmolde_extra,
-                    op_by_id=op_by_id,
+                    op_by_id=op_by_id, state=state,
                 )
                 for p in batch_peers
             )
 
-            # Machine choice: preferred + alternatives, pick earliest available
-            candidate_machines = [op.machine_id] if op.machine_id else []
-            candidate_machines = [m for m in candidate_machines if m in machine_free_at]
-            for alt in op.alternative_machines:
-                if alt in machine_free_at and alt not in candidate_machines:
-                    candidate_machines.append(alt)
+            # Machine choice: preferred + alternatives, pick earliest available.
+            # Sprint A C1 — when the chromosome routes this op to variant "B"
+            # and the op has alternative_machines, invert the priority so the
+            # alt machine is tried first. This is what actually lets the GA
+            # optimise routing A/B: same op, different machine path, different
+            # downstream makespan/quality trade-off.
+            op_variant = chromosome.routing_variant(op.operation_id)
+            primary_first = [op.machine_id] if op.machine_id else []
+            alt_pool = [
+                alt for alt in op.alternative_machines
+                if alt not in primary_first
+            ]
+            if op_variant == "B" and alt_pool:
+                ordered_candidates = alt_pool + primary_first
+            else:
+                ordered_candidates = primary_first + alt_pool
+
+            candidate_machines = [
+                m for m in ordered_candidates if m in machine_free_at
+            ]
             if not candidate_machines:
                 # Fall back to any machine (manual-style)
                 candidate_machines = list(machine_ids)
 
+            # Tie-break preserves our order — when two machines have the same
+            # `earliest available`, variant B's alt stays first.
             best_machine = min(
                 candidate_machines,
-                key=lambda m: max(machine_free_at[m], earliest_pred_end),
+                key=lambda m: (
+                    max(machine_free_at[m], earliest_pred_end),
+                    candidate_machines.index(m),
+                ),
             )
+            if op_variant == "B" and best_machine in alt_pool:
+                routing_variants_applied += 1
 
             # Worker pool — a mould batch needs team_size per member
             pool = state.workers_for(str(op.phase_id)) if op.phase_id else set()
             team_size = max(1, int(op.team_size))
             total_workers_needed = team_size * len(batch_peers)
             if not pool and team_size > 0:
-                # No skill info → treat as manual; allow without worker binding
+                # No skill info → treat as manual; allow without worker binding.
+                # NEW-2: log a warning because this is a SILENT risk — we may
+                # be scheduling a phase where nobody in the skill matrix can
+                # actually perform it. If the tenant has a skill_matrix and
+                # this phase_id simply isn't mapped, that's a config bug.
+                skill_matrix = getattr(state, "skill_matrix", None)
+                if skill_matrix and op.phase_id:
+                    warnings.append(
+                        f"No workers in skill_matrix for phase {op.phase_id!r} "
+                        f"(op {op.operation_id}); scheduled as manual."
+                    )
+                    logger.warning(
+                        "Phase %r has no eligible workers in skill_matrix — "
+                        "op %s scheduled as manual; verify skill seed.",
+                        op.phase_id, op.operation_id,
+                    )
                 batch_workers: List[List[str]] = [[] for _ in batch_peers]
             else:
-                picked = _pick_workers(pool, total_workers_needed, worker_free_at, earliest_pred_end)
+                picked = _pick_workers(
+                    pool, total_workers_needed, worker_free_at, earliest_pred_end,
+                    state=state,
+                    quality_weight=float(getattr(chromosome, "quality_weight", 0.0) or 0.0),
+                )
                 if len(picked) < total_workers_needed:
                     # Cannot staff the full batch — infeasible for all peers
                     for p in batch_peers:
@@ -339,7 +429,30 @@ def decode(
                     candidates.append(worker_free_at.get(w, horizon_start))
             if mold_chosen:
                 candidates.append(mold_free_at.get(mold_chosen, horizon_start))
-            start = max(candidates)
+            earliest_feasible = max(candidates)
+
+            # Sprint A D4 — backwards scheduling: for every peer in this batch
+            # we may have a precomputed target_start (order.due_date minus
+            # downstream durations + curing gaps). When it's later than
+            # earliest_feasible, we shift the whole batch to the latest common
+            # target so the operation sits as late as possible without
+            # violating precedence or resources. When any target is earlier
+            # than feasible, precedence wins and nothing moves.
+            start = earliest_feasible
+            if is_backward:
+                peer_targets = [
+                    target_starts[p.operation_id]
+                    for p in batch_peers
+                    if p.operation_id in target_starts
+                ]
+                if peer_targets:
+                    # The batch must start at or after the LATEST target among
+                    # its members (so each op still meets its own anchor) but
+                    # never later than the horizon minus its own duration.
+                    batch_target = min(max(peer_targets), max_op_start)
+                    if batch_target > earliest_feasible:
+                        start = batch_target
+                        backwards_shifts += len(batch_peers)
 
             # The batch occupies the mould for max(durations); individual ops
             # finish at start + their own duration.
@@ -371,11 +484,16 @@ def decode(
                     end=peer_end,
                     duration_minutes=peer_dur,
                     mold_batch_id=batch_id,
+                    setup_family=getattr(peer, "setup_family", "") or "",
                 ))
                 op_end_at[peer.operation_id] = peer_end
 
-            # Setup detection (same machine, different setup_family) — counted once per batch
-            if _last_on_machine_has_different_family(best_machine, op, scheduled):
+            # Setup detection (same machine, different setup_family) — counted once per batch.
+            # Compare the current op against the most recent prior op on the
+            # same machine (excluding the ones we just added in this batch).
+            if _last_on_machine_has_different_family(
+                best_machine, op, scheduled, batch_size=len(batch_peers),
+            ):
                 setups += 1
 
             # Update timelines
@@ -425,14 +543,110 @@ def decode(
             late_orders += 1
             tardy_hours += (end_time - due).total_seconds() / 3600.0
 
+    # Sprint A F2 — worker idle accounting. Each worker seen in the
+    # schedule consumed some duration across the horizon; whatever's left
+    # is "idle". `idle_ratio` is in [0, 1]; `total_idle_hours` aggregates
+    # across every active worker (so it scales with the team size).
+    #
+    # Only workers that actually appear on a ScheduledOp count in the pool
+    # — we don't charge idle for the entire skill matrix (a scheduler can't
+    # be "guilty" of not using a worker it wasn't allowed to pick anyway).
+    horizon_hours = max(0.01, (horizon_end - horizon_start).total_seconds() / 3600.0)
+    worker_busy_minutes: Dict[str, float] = defaultdict(float)
+    for s in scheduled:
+        share = s.duration_minutes  # each listed worker contributes the op's duration
+        for w in s.workers:
+            worker_busy_minutes[w] += share
+
+    active_workers = set(worker_busy_minutes)
+    n_active_workers = max(1, len(active_workers))
+    total_busy_hours = sum(worker_busy_minutes.values()) / 60.0
+    total_capacity_hours = n_active_workers * horizon_hours
+    total_idle_hours = max(0.0, total_capacity_hours - total_busy_hours)
+    idle_ratio = min(1.0, total_idle_hours / total_capacity_hours) if total_capacity_hours > 0 else 0.0
+
+    # Sprint A ME1 — Blueprint v2.0 MAP-Elites axes (x/y/z). The archive's
+    # `use_v2_axes=True` mode consumes these three fields directly; without
+    # them it falls back to the legacy global utilisation / tardiness_hours
+    # / num_late_orders, which is phase-agnostic and groups distinct NELO
+    # trade-offs into the same cell.
+    #
+    #   X — lam_utilization : share of minutes spent in LAMINAGEM* phases
+    #                         over total scheduled minutes (in %)
+    #   Y — tardiness_transport_d : convert legacy tardy_hours to days
+    #   Z — idle_pct        : idle_ratio × 100
+    _laminagem_keys = {"LAMINAGEM", "LAMINAGEM_INFUSAO", "LAMINACAO", "LAMINAGEM_STANDARD"}
+    lam_busy_minutes = 0.0
+    total_scheduled_minutes = 0.0
+    for s in scheduled:
+        total_scheduled_minutes += s.duration_minutes
+        phase_code = (s.phase_id or "").upper().replace(" ", "_")
+        if any(k in phase_code for k in _laminagem_keys):
+            lam_busy_minutes += s.duration_minutes
+
+    lam_utilization = (
+        (lam_busy_minutes / total_scheduled_minutes) * 100.0
+        if total_scheduled_minutes > 0 else 0.0
+    )
+    tardiness_transport_d = tardy_hours / 24.0
+    idle_pct = idle_ratio * 100.0
+
+    # Sprint A F1 — throughput €/day. Identify each order's final op
+    # (highest sequence within its order), look up the sale price for its
+    # product, and divide the total revenue by the number of horizon days.
+    throughput_total_eur = 0.0
+    throughput_eur_day = 0.0
+    if product_price_eur:
+        price_lookup: Dict[str, float] = {
+            str(pid): float(val) for pid, val in product_price_eur.items()
+        }
+        # Last op per order by sequence — matches "final phase" semantics
+        # without needing a schema-level `is_final_phase` flag.
+        final_op_by_order: Dict[str, SchedulingOperation] = {}
+        for op in operations:
+            current = final_op_by_order.get(op.order_id)
+            if current is None or op.sequence > current.sequence:
+                final_op_by_order[op.order_id] = op
+
+        scheduled_ids = {s.operation_id for s in scheduled}
+        for order_id, final_op in final_op_by_order.items():
+            if final_op.operation_id not in scheduled_ids:
+                # The final phase never got placed — don't count revenue.
+                continue
+            price = price_lookup.get(str(final_op.product_id), 0.0)
+            if price > 0:
+                throughput_total_eur += price
+
+        horizon_seconds = (horizon_end - horizon_start).total_seconds()
+        horizon_days = max(1.0, horizon_seconds / 86400.0)
+        throughput_eur_day = throughput_total_eur / horizon_days
+
+    # Sprint C 4.2 D7 — soft horizon coherence. Up to now `success=True`
+    # was stamped unconditionally even when ops landed beyond the horizon
+    # and got recorded as infeasible. That lied to the caller: a partial
+    # schedule looked identical to a clean one. Now `success` reflects
+    # whether every op fit within the horizon (soft horizon — still
+    # scheduled, but flagged) so downstream callers can gate on it.
+    success_flag = not infeasible
+
     return {
-        "success": True,
+        "success": success_flag,
         "engine_used": "cpo_v4",
         "operations": [_scheduled_to_dict(s) for s in scheduled],
         "makespan_hours": round(makespan_hours, 2),
         "total_tardiness_hours": round(tardy_hours, 2),
         "num_late_orders": late_orders,
         "setups": setups,
+        "routing_variants_applied": routing_variants_applied,
+        "backwards_shifts": backwards_shifts,
+        "total_idle_hours": round(total_idle_hours, 2),
+        "idle_ratio": round(idle_ratio, 4),
+        # Sprint A ME1 — Blueprint v2.0 MAP-Elites axes
+        "lam_utilization": round(lam_utilization, 2),
+        "idle_pct": round(idle_pct, 2),
+        "tardiness_transport_d": round(tardiness_transport_d, 2),
+        "throughput_eur_total": round(throughput_total_eur, 2),
+        "throughput_eur_day": round(throughput_eur_day, 2),
         "avg_utilization": _estimate_utilization(scheduled, machines, horizon_start, horizon_end),
         "warnings": warnings,
         "infeasible_op_ids": infeasible,
@@ -465,22 +679,37 @@ def _earliest_start(
     queue_gap: Optional[timedelta] = None,
     post_desmolde_extra: Optional[timedelta] = None,
     op_by_id: Optional[Dict[str, SchedulingOperation]] = None,
+    state: Optional[FactoryState] = None,
 ) -> datetime:
-    """Earliest start honouring precedences, queue time (PL22) and
-    post-Desmolde buffer (PL21).
+    """Earliest start honouring precedences, queue time (PL22),
+    post-Desmolde buffer (PL21) and curing/drying constraints (§3.8).
 
-    * `queue_gap` — minimum idle between predecessor end and this op's start
-      (Blueprint median 5.2h). Applied to EVERY sibling/explicit predecessor
-      that ended at a scheduled moment.
-    * `post_desmolde_extra` — extra buffer when the predecessor is a Desmolde
-      phase (95% of errors detected here). Stacks on top of `queue_gap`.
+    Gap stack applied to every predecessor:
+    1. `base_gap = max(queue_gap, state.min_gap_hours(pred→curr))` —
+       the curing gap is a physical minimum; queue_gap is the idle
+       default. We take whichever is larger, they don't stack.
+    2. `+ post_desmolde_extra` if predecessor is Desmolde (PL21 stacks
+       on top as a QC-absorption buffer).
     """
     earliest = default
     q_gap = queue_gap or timedelta()
     pd_extra = post_desmolde_extra or timedelta()
 
+    def _phase_of(o: Optional[SchedulingOperation]) -> Optional[str]:
+        if o is None:
+            return None
+        return getattr(o, "phase_name", None) or (o.phase_id or None)
+
+    curr_phase = _phase_of(op)
+
     def _with_gaps(end: datetime, pred_op: Optional[SchedulingOperation]) -> datetime:
-        shifted = end + q_gap
+        curing_h = 0.0
+        if state is not None and pred_op is not None:
+            curing_h = state.min_gap_hours(_phase_of(pred_op), curr_phase)
+        curing_gap = timedelta(hours=curing_h) if curing_h > 0 else timedelta()
+        # Curing gap (physical) dominates queue gap (soft queue) — take max
+        base_gap = q_gap if q_gap >= curing_gap else curing_gap
+        shifted = end + base_gap
         if pred_op is not None and _is_desmolde(pred_op):
             shifted += pd_extra
         return shifted
@@ -505,6 +734,63 @@ def _earliest_start(
     return earliest
 
 
+def _compute_target_starts(
+    order_to_ops: Dict[str, List[SchedulingOperation]],
+    state: FactoryState,
+) -> Dict[str, datetime]:
+    """Sprint A D4 — compute latest-start anchors for backwards scheduling.
+
+    For every op we walk the order's phase chain in reverse from the last
+    op (highest sequence) back to this one, accumulating:
+
+      * the op's own duration
+      * each downstream op's duration
+      * each downstream curing/drying gap (LAMINAGEM→CURA 15h etc.)
+
+    Then `target_start = order_due_date - accumulated_offset`. Ops whose
+    order has no `due_date` are skipped (no target → decoder falls back
+    to forward-only semantics for that op).
+
+    Returns `{operation_id: target_start_datetime}`. Only includes ops for
+    which we could compute a real target.
+    """
+    targets: Dict[str, datetime] = {}
+    for order_id, order_ops in order_to_ops.items():
+        # Latest due_date across the order's ops (first-set wins on ties).
+        order_due: Optional[datetime] = None
+        for op in order_ops:
+            due = getattr(op, "due_date", None)
+            if due is None:
+                continue
+            if order_due is None or due > order_due:
+                order_due = due
+        if order_due is None:
+            continue
+
+        ops_sorted = sorted(order_ops, key=lambda o: o.sequence)
+        # Cumulative tail-duration (in hours) starting at each op: includes
+        # the op's own duration + everything that comes after + every
+        # curing gap between consecutive phases downstream.
+        tail_hours: Dict[str, float] = {}
+        running = 0.0
+        for i in range(len(ops_sorted) - 1, -1, -1):
+            op = ops_sorted[i]
+            own_h = max(0.0, float(op.duration_minutes)) / 60.0
+            gap_h = 0.0
+            if i < len(ops_sorted) - 1:
+                nxt = ops_sorted[i + 1]
+                gap_h = state.min_gap_hours(
+                    getattr(op, "phase_name", None) or op.phase_id,
+                    getattr(nxt, "phase_name", None) or nxt.phase_id,
+                )
+            running += own_h + gap_h
+            tail_hours[op.operation_id] = running
+
+        for op_id, tail_h in tail_hours.items():
+            targets[op_id] = order_due - timedelta(hours=tail_h)
+    return targets
+
+
 def _is_desmolde(op: SchedulingOperation) -> bool:
     """Match either the phase_name or a `desmolde`-style phase_id."""
     name = (getattr(op, "phase_name", None) or "").strip().lower()
@@ -519,15 +805,55 @@ def _pick_workers(
     team_size: int,
     worker_free_at: Dict[str, datetime],
     earliest: datetime,
+    *,
+    state: Optional[FactoryState] = None,
+    quality_weight: float = 0.0,
 ) -> List[str]:
+    """Pick N workers from the pool by blending availability and experience.
+
+    Sprint A D3+D5 — the scoring:
+
+        skill_score       = min(1, state.skill_count(w) / skill_scale)
+        availability      = 1 / (1 + hours_until_free)     # 1 ⇒ free now
+        combined          = skill_score * quality_weight
+                          + availability * (1 - quality_weight)
+
+    * `quality_weight = 0` (legacy) → pure availability ranking, matches
+      the pre-fix first-fit behaviour so old tests are unaffected.
+    * `quality_weight = 1` → pick the most experienced workers in the
+      pool regardless of when they're free (good for high-stakes ops).
+    * Anything in between (the chromosome default is 0.3) blends both.
+
+    Ties are broken deterministically by worker id so schedules are
+    reproducible across runs.
     """
-    First-fit: pick the N workers from the pool with the earliest free-at.
-    Deterministic tie-break by worker id (lex sort).
-    """
-    candidates = sorted(
-        pool,
-        key=lambda w: (worker_free_at.get(w, earliest), w),
-    )
+    if not pool:
+        return []
+
+    qw = max(0.0, min(1.0, float(quality_weight)))
+
+    # Pre-compute per-worker skill score once; scale normalises against
+    # the busiest worker in the pool so the score stays in [0, 1].
+    skill_scores: Dict[str, float] = {}
+    if state is not None and qw > 0.0:
+        raw_counts = {w: float(state.skill_count(w)) for w in pool}
+        max_count = max(raw_counts.values(), default=1.0)
+        if max_count <= 0:
+            max_count = 1.0
+        skill_scores = {w: c / max_count for w, c in raw_counts.items()}
+
+    def _score(worker: str) -> Tuple[float, str]:
+        free_at = worker_free_at.get(worker, earliest)
+        hours_until_free = max(0.0, (free_at - earliest).total_seconds() / 3600.0)
+        availability = 1.0 / (1.0 + hours_until_free)
+        skill = skill_scores.get(worker, 0.0)
+        combined = skill * qw + availability * (1.0 - qw)
+        # Return negative because `sorted(..., reverse=False)` + negation
+        # gives us "highest combined first" with worker-id as a stable
+        # tie-break.
+        return (-combined, worker)
+
+    candidates = sorted(pool, key=_score)
     return candidates[:team_size]
 
 
@@ -535,13 +861,37 @@ def _last_on_machine_has_different_family(
     machine_id: str,
     op: SchedulingOperation,
     scheduled: List[ScheduledOp],
+    *,
+    batch_size: int = 1,
 ) -> bool:
-    # Find the last scheduled op on this machine (before the one we just added)
-    for s in reversed(scheduled[:-1]):
-        if s.machine_id == machine_id:
-            # Find that op to compare setup_family
-            # Not cheap here; skip if not available
+    """Return True when the current op introduces a mold/setup change on
+    `machine_id` vs the most recent *different* op previously scheduled on
+    that machine (Sprint A D1).
+
+    * A setup is charged **once per batch** — we skip `batch_size` trailing
+      ScheduledOps because they were just appended for the current batch.
+    * Empty `setup_family` on either side counts as "unknown" and does NOT
+      trigger a setup (conservative — avoids inflating setups when the ERP
+      hasn't tagged the family yet).
+    * First op on a machine never counts as a setup (there's no prior to
+      compare against).
+    """
+    current_family = (getattr(op, "setup_family", "") or "").strip()
+    if not current_family:
+        return False
+
+    tail_skip = max(0, batch_size)
+    # `scheduled` already contains the current batch — walk back past it.
+    frontier = scheduled[:-tail_skip] if tail_skip else list(scheduled)
+
+    for prior in reversed(frontier):
+        if prior.machine_id != machine_id:
+            continue
+        prior_family = (prior.setup_family or "").strip()
+        if not prior_family:
+            # Unknown family on the predecessor — no reliable comparison
             return False
+        return prior_family != current_family
     return False
 
 
@@ -570,6 +920,7 @@ def _scheduled_to_dict(s: ScheduledOp) -> Dict[str, Any]:
         "start_time": s.start.isoformat(),
         "end_time": s.end.isoformat(),
         "duration_minutes": s.duration_minutes,
+        "setup_family": s.setup_family,
     }
 
 
@@ -582,6 +933,15 @@ def _empty_result(horizon_start: datetime, warnings: Optional[List[str]] = None)
         "total_tardiness_hours": 0.0,
         "num_late_orders": 0,
         "setups": 0,
+        "routing_variants_applied": 0,
+        "backwards_shifts": 0,
+        "total_idle_hours": 0.0,
+        "idle_ratio": 0.0,
+        "lam_utilization": 0.0,
+        "idle_pct": 0.0,
+        "tardiness_transport_d": 0.0,
+        "throughput_eur_total": 0.0,
+        "throughput_eur_day": 0.0,
         "avg_utilization": 0.0,
         "warnings": list(warnings or []),
         "infeasible_op_ids": [],
