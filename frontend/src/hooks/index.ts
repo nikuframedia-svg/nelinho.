@@ -68,3 +68,13 @@ export type {
   UseRealtimeEventsOptions,
   UseRealtimeEventsResult,
 } from './useRealtimeEvents';
+
+// Sprint D.3 — Dashboard auto-refresh on SSE events + connection badge
+export {
+  useLiveDashboardRefresh,
+  DASHBOARD_TRIGGER_EVENTS,
+} from './useLiveDashboardRefresh';
+export type {
+  UseLiveDashboardRefreshOptions,
+  UseLiveDashboardRefreshResult,
+} from './useLiveDashboardRefresh';

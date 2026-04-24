@@ -49,13 +49,14 @@ import { LiveActivityFeed } from '../components/activity/LiveActivityFeed';
 import { FocusModeModal } from '../components/focus/FocusModeModal';
 
 // PALANTIR-LEVEL COMPONENTS
-import { 
-  LiveKPICard, 
-  SchemaDriftAlert, 
+import {
+  LiveKPICard,
+  SchemaDriftAlert,
   BlockedMetricsWall,
-  ModuleErrorBoundary 
+  ModuleErrorBoundary
 } from '../components/palantir';
-import { useSchemaDrift } from '../hooks';
+import { useSchemaDrift, useLiveDashboardRefresh } from '../hooks';
+import { LiveBadge } from '../components/dashboard/LiveBadge';
 
 // Import the REAL factory API - uses ingested Excel data!
 import { factoryApi } from '../lib/factoryApi';
@@ -417,6 +418,12 @@ export function Dashboard() {
     refetchSkills();
   };
 
+  // Sprint D.3 — plug the shared SSE stream into the dashboard. Any
+  // relevant event (schedule / MRP / decision / stock / rework …)
+  // triggers a debounced refetch; the returned `lastEventAt` feeds the
+  // `<LiveBadge />` so the operator sees the stream breathing.
+  const liveState = useLiveDashboardRefresh(handleRefreshAll);
+
   const isLoading = wipLoading || bottlenecksLoading || qualityLoading || skillsLoading;
 
   // Calculate critical/high counts for alert banner - using REAL data
@@ -483,15 +490,18 @@ export function Dashboard() {
       title="Dashboard"
       subtitle="Superfície de Decisão — Visão geral baseada em dados semânticos"
       actions={
-        <DarkButton 
-          variant="secondary" 
-          size="sm" 
-          onClick={handleRefreshAll}
-          disabled={isLoading}
-        >
-          <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
-          Atualizar
-        </DarkButton>
+        <div className="flex items-center gap-2">
+          <LiveBadge lastEventAt={liveState.lastEventAt} />
+          <DarkButton
+            variant="secondary"
+            size="sm"
+            onClick={handleRefreshAll}
+            disabled={isLoading}
+          >
+            <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+            Atualizar
+          </DarkButton>
+        </div>
       }
     >
       {/* Alert Banner */}
