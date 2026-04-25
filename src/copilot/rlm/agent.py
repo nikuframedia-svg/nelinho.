@@ -377,6 +377,121 @@ async def run_rlm_agent(
     return trace
 
 
+async def run_rlm_agent_continue(
+    *,
+    prior_trace: AgentTrace,
+    question: str,
+    state_query: FactoryStateQuery,
+    llm: LLMCall,
+    max_steps: int = 6,
+    max_history_chars: int = 12000,
+) -> AgentTrace:
+    """Continue an existing RLM conversation with a new question.
+
+    Multi-turn UX: the operator asks a follow-up that depends on the
+    answer to the previous question. The LLM needs the prior turns
+    in its context but we must keep token budget under control.
+
+    The default ``max_history_chars=12000`` gives ~3-4 full turns of
+    history at typical NELO question length while staying well under
+    Gemma 4 8B's 8k-token (~24 k char PT) context window. Drop it to
+    a tighter value when running with a smaller model, raise it when
+    Sprint S brings vLLM with longer context.
+
+    Strategy
+    --------
+    * Reuse ``prior_trace.turns`` verbatim (system + user/assistant
+      pairs + tool observations) so the LLM has the full
+      conversational thread.
+    * Truncate the OLDEST non-system turns until the cumulative
+      character count fits under ``max_history_chars`` (rough proxy
+      for token budget — 1 char ≈ 0.3 token in PT, so 6000 chars ≈
+      1800 tokens, leaving plenty for the new question + thinking).
+    * Append the new user question and run the standard agent loop.
+
+    The returned trace is **independent** of ``prior_trace`` (no
+    mutation) and starts a fresh ``queries_run`` log so the caller
+    knows which sub-queries belong to this turn vs the previous.
+    """
+    trace = AgentTrace(question=question)
+    trace.turns = list(prior_trace.turns)  # shallow copy is fine; turns are dataclasses
+
+    # Drop the oldest non-system turn pairs while we're over budget.
+    # Always keep the system prompt (turn 0) and the most recent
+    # exchange so context stays coherent.
+    if max_history_chars > 0:
+        total = sum(len(t.content) for t in trace.turns)
+        # Keep at least: system + last user + last assistant. Anything
+        # beyond that is droppable. Three turns is the minimum
+        # coherent context the LLM can resume from.
+        min_keep = 3
+        while total > max_history_chars and len(trace.turns) > min_keep:
+            for i, t in enumerate(trace.turns):
+                if t.role == "system":
+                    continue
+                # Drop this turn — it's the oldest non-system one.
+                dropped = trace.turns.pop(i)
+                total -= len(dropped.content)
+                break
+            else:
+                break  # no droppable turn found
+
+    trace.turns.append(AgentTurn(role="user", content=question))
+
+    for step in range(max_steps):
+        raw = await llm(trace.turns)
+        trace.turns.append(AgentTurn(role="assistant", content=raw))
+        try:
+            action = parse_action(raw)
+        except (json.JSONDecodeError, ValidationError, ValueError) as exc:
+            trace.turns.append(AgentTurn(
+                role="user",
+                content=(
+                    "A tua resposta não é um JSON válido no formato esperado. "
+                    f"Erro: {exc}. Tenta de novo."
+                ),
+            ))
+            trace.steps_used += 1
+            continue
+
+        if isinstance(action, AnswerAction):
+            trace.answer = action.text
+            trace.steps_used += 1
+            trace.terminated_reason = "complete"
+            return trace
+
+        result = state_query.run(action.name, **action.params)
+        trace.queries_run.append({
+            "name": action.name,
+            "params": action.params,
+            "result": result,
+        })
+        observation = json.dumps(
+            {"query": action.name, "result": result},
+            default=str, ensure_ascii=False,
+        )
+        trace.turns.append(AgentTurn(role="tool", content=observation))
+        trace.steps_used += 1
+
+    trace.terminated_reason = "max_steps_reached"
+    trace.turns.append(AgentTurn(
+        role="user",
+        content=(
+            "Atingiste o limite de sub-queries. Responde agora com "
+            '{"action": "answer", "text": "..."}.'
+        ),
+    ))
+    final = await llm(trace.turns)
+    trace.turns.append(AgentTurn(role="assistant", content=final))
+    try:
+        final_action = parse_action(final)
+        if isinstance(final_action, AnswerAction):
+            trace.answer = final_action.text
+    except Exception as exc:  # pragma: no cover — LLM misbehaviour
+        trace.terminated_reason = f"forced_answer_parse_failed: {exc}"
+    return trace
+
+
 __all__ = [
     "AgentStep",
     "AgentTrace",
@@ -388,4 +503,5 @@ __all__ = [
     "build_system_prompt",
     "parse_action",
     "run_rlm_agent",
+    "run_rlm_agent_continue",
 ]

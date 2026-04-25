@@ -479,6 +479,103 @@ def test_dispatcher_returns_explicit_error_for_world_model_forecast_without_args
     assert "target" in result["error"]
 
 
+# ─── Sprint F++++ — multi-turn continuation ──────────────────────────────
+
+
+def test_continue_preserves_prior_turns_and_appends_new_question():
+    """A second-turn question runs on top of the first turn's trace.
+    The new trace must contain the prior system + user + assistant
+    + tool turns, plus the new user turn."""
+    from src.copilot.rlm.agent import run_rlm_agent_continue
+
+    q = FactoryStateQuery(state=_StubState(), queries=_StubSemantic())
+    llm1 = _canned_llm([
+        '{"action": "query", "name": "bottlenecks"}',
+        '{"action": "answer", "text": "Laminagem é o gargalo."}',
+    ])
+    first = asyncio.run(run_rlm_agent(
+        question="Qual é o gargalo?", state_query=q, llm=llm1, max_steps=4,
+    ))
+    assert first.answer == "Laminagem é o gargalo."
+
+    llm2 = _canned_llm([
+        '{"action": "answer", "text": "Como já vi, o gargalo é Laminagem."}',
+    ])
+    second = asyncio.run(run_rlm_agent_continue(
+        prior_trace=first,
+        question="E porquê?",
+        state_query=q, llm=llm2, max_steps=4,
+    ))
+    # The second trace inherits the first's turns plus the new user.
+    roles = [t.role for t in second.turns]
+    assert roles[0] == "system"
+    assert "user" in roles[1:]   # original user question still there
+    assert second.turns[-2].role == "user"  # the new follow-up
+    assert second.turns[-2].content == "E porquê?"
+    assert "Laminagem" in (second.answer or "")
+
+
+def test_continue_truncates_old_turns_when_history_exceeds_budget():
+    """With a tight ``max_history_chars``, the oldest non-system turns
+    are dropped to fit the budget — keeping system prompt + recent
+    exchange."""
+    from src.copilot.rlm.agent import AgentTrace, run_rlm_agent_continue
+
+    # Build a synthetic prior trace with bloated content.
+    big_filler = "X" * 2000
+    prior = AgentTrace(question="initial")
+    prior.turns = [
+        AgentTurn(role="system", content="SYS"),
+        AgentTurn(role="user", content="initial " + big_filler),
+        AgentTurn(role="assistant", content='{"action": "answer", "text": "ok"}'),
+        AgentTurn(role="tool", content=big_filler),
+        AgentTurn(role="user", content="middle"),
+        AgentTurn(role="assistant", content='{"action": "answer", "text": "ok2"}'),
+    ]
+    q = FactoryStateQuery()
+    llm = _canned_llm(['{"action": "answer", "text": "third"}'])
+    new_trace = asyncio.run(run_rlm_agent_continue(
+        prior_trace=prior,
+        question="latest",
+        state_query=q, llm=llm,
+        max_history_chars=300,  # very tight — must drop most old turns
+    ))
+    # System turn always preserved.
+    assert any(t.role == "system" and t.content == "SYS" for t in new_trace.turns)
+    # The big filler must have been dropped from old user/tool turns.
+    assert all("X" * 1000 not in t.content for t in new_trace.turns)
+    # The new question is in.
+    assert any(t.content == "latest" for t in new_trace.turns)
+
+
+def test_continue_starts_fresh_queries_run_per_turn():
+    """``queries_run`` belongs to THIS turn only — the caller knows
+    which sub-queries were issued in response to the new question."""
+    from src.copilot.rlm.agent import run_rlm_agent_continue
+
+    q = FactoryStateQuery()
+    llm1 = _canned_llm([
+        '{"action": "query", "name": "wip"}',
+        '{"action": "answer", "text": "a"}',
+    ])
+    first = asyncio.run(run_rlm_agent(
+        question="state?", state_query=q, llm=llm1, max_steps=4,
+    ))
+    assert len(first.queries_run) == 1
+
+    llm2 = _canned_llm([
+        '{"action": "query", "name": "bottlenecks"}',
+        '{"action": "answer", "text": "b"}',
+    ])
+    second = asyncio.run(run_rlm_agent_continue(
+        prior_trace=first, question="follow-up?",
+        state_query=q, llm=llm2, max_steps=4,
+    ))
+    # Fresh log — the prior wip call is NOT in the second turn's log.
+    assert len(second.queries_run) == 1
+    assert second.queries_run[0]["name"] == "bottlenecks"
+
+
 def test_agent_chains_world_model_forecast_then_answer_with_p50():
     """End-to-end: LLM picks world_model_forecast → tool result has
     a trajectory with quantiles → answer cites the p50/p95 from the

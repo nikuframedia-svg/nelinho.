@@ -117,6 +117,8 @@ class OllamaClient:
         format: Optional[str] = "json",
         history: Optional[List[Dict[str, str]]] = None,
         system_prompt: Optional[str] = None,
+        num_ctx: Optional[int] = None,
+        num_predict: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Chamar Ollama /api/chat.
@@ -127,6 +129,12 @@ class OllamaClient:
             format: "json" para resposta estruturada
             history: Previous conversation turns [{"role": "user"|"assistant", "content": "..."}]
             system_prompt: Optional system prompt prepended to messages
+            num_ctx: Override context window for this call. ``None`` →
+                uses ``settings.ollama_num_ctx``. Multi-turn callers
+                should pass a larger value when prior history is long
+                (see ``run_rlm_agent_continue``).
+            num_predict: Override max tokens to generate for this call.
+                ``None`` → uses ``settings.ollama_num_predict``.
 
         Returns:
             Dict com resposta do LLM
@@ -147,6 +155,9 @@ class OllamaClient:
             messages.extend(history)
         messages.append({"role": "user", "content": prompt})
 
+        effective_num_ctx = num_ctx if num_ctx is not None else getattr(settings, "ollama_num_ctx", 4096)
+        effective_num_predict = num_predict if num_predict is not None else getattr(settings, "ollama_num_predict", 512)
+
         payload = {
             "model": model,
             "messages": messages,
@@ -156,8 +167,8 @@ class OllamaClient:
                 "temperature": getattr(settings, "ollama_temperature", 0.1),
                 "top_p": 0.9,
                 "top_k": 40,
-                "num_predict": getattr(settings, "ollama_num_predict", 1024),
-                "num_ctx": getattr(settings, "ollama_num_ctx", 8192),
+                "num_predict": effective_num_predict,
+                "num_ctx": effective_num_ctx,
                 "repeat_penalty": 1.1,
                 "num_thread": 8,
             },

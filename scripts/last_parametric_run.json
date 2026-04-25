@@ -1,0 +1,1910 @@
+[
+  {
+    "id": "int_double_shift",
+    "category": "int",
+    "expected_sub": "causal_query",
+    "variants": [
+      {
+        "variant_index": 0,
+        "variant_text": "Se passar a 2 turnos (shift_mode=2), qual o throughput?",
+        "elapsed_ms": 6391,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Se passarmos a 2 turnos (shift_mode=2.0), o throughput diário aumentará em 26 432.0 €/dia, atingindo um valor total de 5"
+      },
+      {
+        "variant_index": 1,
+        "variant_text": "Mete 2 turnos. Quanto rende mais por dia?",
+        "elapsed_ms": 7322,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Se passarmos a operar em 2 turnos, o *throughput* diário aumentaria em 26 432.0 €/dia, passando de 26 043.2 €/dia para 5"
+      },
+      {
+        "variant_index": 2,
+        "variant_text": "Trabalhar em dois turnos — qual o impacto financeiro diário?",
+        "elapsed_ms": 6070,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Se passarmos a trabalhar em dois turnos, o impacto financeiro diário esperado é um aumento de 26 432.0 €/dia no throughp"
+      },
+      {
+        "variant_index": 3,
+        "variant_text": "Hipótese: 2 shifts. Resultado em €/dia?",
+        "elapsed_ms": 6231,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Se passarmos a operar em 2 turnos (2 shifts), o throughput diário deverá aumentar em 26 432,0 €/dia, atingindo um valor "
+      },
+      {
+        "variant_index": 4,
+        "variant_text": "Throughput diário se duplicar o turno?",
+        "elapsed_ms": 5641,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Se duplicarmos o turno (passarmos para 2 turnos), o throughput diário aumentaria em 26 432.0 €/dia, passando de 26 043.2"
+      }
+    ]
+  },
+  {
+    "id": "int_routing_b_makespan",
+    "category": "int",
+    "expected_sub": "causal_query",
+    "variants": [
+      {
+        "variant_index": 0,
+        "variant_text": "Variante B (routing_variant=1) — quanto baixa o makespan?",
+        "elapsed_ms": 7055,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "A implementação da Variante B (routing_variant=1.0) reduz o makespan em 12.085 horas, passando de 280.0 horas para 267.9"
+      },
+      {
+        "variant_index": 1,
+        "variant_text": "Se mudar para a rota B, quanto mais cedo acabamos?",
+        "elapsed_ms": 7917,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Se mudarmos para a rota B (variante B), o makespan (tempo total de execução) diminuirá em 12.085 horas, passando de 280."
+      },
+      {
+        "variant_index": 2,
+        "variant_text": "Mudança para variante B, impacto em makespan_hours?",
+        "elapsed_ms": 12247,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query",
+          "causal_query"
+        ],
+        "answer_excerpt": "A mudança para a Variante B (routing_variant = 1.0) resulta numa diminuição de 12.085 horas no makespan, passando de 280"
+      },
+      {
+        "variant_index": 3,
+        "variant_text": "Routing B: makespan vai descer quanto?",
+        "elapsed_ms": 5440,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Se aplicarmos a Variante B (routing_variant = 1.0), o makespan deverá diminuir em 12.085 horas, passando de 280.0 horas "
+      },
+      {
+        "variant_index": 4,
+        "variant_text": "E se aplicarmos a variante B em vez do template primário?",
+        "elapsed_ms": 13525,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query",
+          "causal_query"
+        ],
+        "answer_excerpt": "Se aplicarmos a variante B em vez do template primário, o makespan (tempo total de produção) diminuiria em 12.085 horas,"
+      }
+    ]
+  },
+  {
+    "id": "int_more_lam_workers",
+    "category": "int",
+    "expected_sub": "causal_query",
+    "variants": [
+      {
+        "variant_index": 0,
+        "variant_text": "Subir worker_count_laminagem para 24. Como muda laminagem_duration?",
+        "elapsed_ms": 8331,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Ao aumentar o número de laminadores para 24, a duração da laminação (laminagem_duration) diminui em 0.48 horas, passando"
+      },
+      {
+        "variant_index": 1,
+        "variant_text": "Com 24 laminadores em vez dos 18, a duração desce quanto?",
+        "elapsed_ms": 7582,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Com 24 laminadores, a duração da laminagem desce em 0.48 horas."
+      },
+      {
+        "variant_index": 2,
+        "variant_text": "Laminagem com 24 pessoas, qual a duração média?",
+        "elapsed_ms": 7207,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "A duração média da laminação, se aumentarmos o número de trabalhadores para 24, deverá diminuir em 0.48 horas, passando "
+      },
+      {
+        "variant_index": 3,
+        "variant_text": "Adicionar 6 laminadores ao plantel — efeito na duração da fase?",
+        "elapsed_ms": 47504,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query",
+          "causal_query",
+          "causal_query",
+          "causal_query",
+          "causal_query",
+          "causal_query"
+        ],
+        "answer_excerpt": "Com base nas simulações realizadas, adicionar 6 laminadores ao plantel (passar de 18 para 24 trabalhadores) resulta numa"
+      },
+      {
+        "variant_index": 4,
+        "variant_text": "Se a laminagem tiver 24 trabalhadores, duração?",
+        "elapsed_ms": 8518,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "A duração da laminagem, se houver 24 trabalhadores, será de 3.52 horas. Isto representa uma redução de 0.48 horas em com"
+      }
+    ]
+  },
+  {
+    "id": "int_cold_curing",
+    "category": "int",
+    "expected_sub": "causal_query",
+    "variants": [
+      {
+        "variant_index": 0,
+        "variant_text": "Se external_temperature cair para 12, o que acontece a curing_time?",
+        "elapsed_ms": 6040,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Se a temperatura externa cair para 12°C, o tempo de cura (curing_time) aumenta em 2.8 horas, passando de 15.0 horas para"
+      },
+      {
+        "variant_index": 1,
+        "variant_text": "Está frio (12 graus). A cura demora mais?",
+        "elapsed_ms": 7315,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Sim, está mais frio. A cura demora 2.8 horas mais do que o normal, passando de 15.0 horas para 17.8 horas."
+      },
+      {
+        "variant_index": 2,
+        "variant_text": "12°C ambiente — impacto no tempo de cura?",
+        "elapsed_ms": 6822,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Com base na análise, a redução da temperatura ambiente para 12°C causa um aumento de 2.8 horas no tempo de cura, passand"
+      },
+      {
+        "variant_index": 3,
+        "variant_text": "Temperatura externa de 12 graus, curing_time muda como?",
+        "elapsed_ms": 5440,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Se a temperatura externa for de 12 graus Celsius, o tempo de cura (curing_time) aumenta em 2.8 horas, passando de 15.0 h"
+      },
+      {
+        "variant_index": 4,
+        "variant_text": "Se a oficina estiver a 12 graus, quanto demora a cura?",
+        "elapsed_ms": 6317,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Se a oficina estiver a 12 graus, o tempo de cura aumenta em 2.8 horas, passando de 15.0 horas para 17.8 horas."
+      }
+    ]
+  },
+  {
+    "id": "int_old_molds_setup",
+    "category": "int",
+    "expected_sub": "causal_query",
+    "variants": [
+      {
+        "variant_index": 0,
+        "variant_text": "Se mold_age subir para 6 anos, mold_setup_time muda?",
+        "elapsed_ms": 6925,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Sim, se a idade média dos moldes (mold_age) subir para 6 anos, o tempo de setup dos moldes (mold_setup_time) aumenta. O "
+      },
+      {
+        "variant_index": 1,
+        "variant_text": "Os moldes estão velhotes — uns 6 anos. O setup tá pior?",
+        "elapsed_ms": 8379,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Sim, o setup está pior. Com a idade dos moldes a atingir 6 anos, o tempo de setup aumenta em 0.25 horas, passando de 0.7"
+      },
+      {
+        "variant_index": 2,
+        "variant_text": "Idade média dos moldes a 6 anos, impacto no setup time?",
+        "elapsed_ms": 7256,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Com base na simulação, se a idade média dos moldes for de 6 anos, o tempo de setup dos moldes aumentará em 0.25 horas. E"
+      },
+      {
+        "variant_index": 3,
+        "variant_text": "Com moldes de 6 anos, quanto demora cada setup?",
+        "elapsed_ms": 9192,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Com moldes de 6 anos, o tempo de setup de cada molde aumenta em 0.25 horas, passando de 0.85 horas para 1.1 horas."
+      },
+      {
+        "variant_index": 4,
+        "variant_text": "Setup time esperado se mold_age=6.0?",
+        "elapsed_ms": 6269,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Se a idade média dos moldes for de 6 anos, o tempo de setup dos moldes deverá aumentar em 0.25 horas, passando de 0.75 h"
+      }
+    ]
+  },
+  {
+    "id": "int_low_material_tardiness",
+    "category": "int",
+    "expected_sub": "causal_query",
+    "variants": [
+      {
+        "variant_index": 0,
+        "variant_text": "Se material_availability_pct cair para 0.7, total_tardiness_hours?",
+        "elapsed_ms": 10729,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query",
+          "causal_query",
+          "causal_query"
+        ],
+        "answer_excerpt": "Se o `material_availability_pct` cair para 0.7, o `total_tardiness_hours` aumentará em 26.4 horas, passando de 49.432 ho"
+      },
+      {
+        "variant_index": 1,
+        "variant_text": "Estamos com material a 70%. Os atrasos disparam?",
+        "elapsed_ms": 7587,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Sim, os atrasos disparam. Se a disponibilidade de material cair para 70% (0.7), o total de horas de atraso (total tardin"
+      },
+      {
+        "variant_index": 2,
+        "variant_text": "Disponibilidade de material em 70% — quanto sobe o atraso?",
+        "elapsed_ms": 6850,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Se a disponibilidade de material cair para 70%, o atraso total (total tardiness) aumenta em 26.4 horas."
+      },
+      {
+        "variant_index": 3,
+        "variant_text": "Material só a 0.7 da capacidade habitual, tardiness?",
+        "elapsed_ms": 11614,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query",
+          "causal_query"
+        ],
+        "answer_excerpt": "Se a disponibilidade de material cair para 0.7, o total de horas de atraso (total tardiness hours) aumentaria em 26.4 ho"
+      },
+      {
+        "variant_index": 4,
+        "variant_text": "Atrasos esperados com material_availability=0.7?",
+        "elapsed_ms": 7403,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Se a disponibilidade de material cair para 0.7, os atrasos totais esperados aumentarão em 26.4 horas, passando de 49.432"
+      }
+    ]
+  },
+  {
+    "id": "int_pintura_workers_queue",
+    "category": "int",
+    "expected_sub": "causal_query",
+    "variants": [
+      {
+        "variant_index": 0,
+        "variant_text": "worker_count_pintura=8, pintura_queue_hours?",
+        "elapsed_ms": 4477,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Se aumentarmos o número de operários na pintura para 8, o tempo de fila de pintura (pintura_queue_hours) deverá diminuir"
+      },
+      {
+        "variant_index": 1,
+        "variant_text": "Com 8 pintores em vez de 6, a fila desce quanto?",
+        "elapsed_ms": 7548,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Com 8 pintores em vez dos 6 atuais, a fila de pintura deverá descer em 0.78 horas, passando de 2.1 horas para 1.32 horas"
+      },
+      {
+        "variant_index": 2,
+        "variant_text": "Adicionar 2 pintores ao plantel — efeito na fila da pintura?",
+        "elapsed_ms": 14476,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query",
+          "causal_query"
+        ],
+        "answer_excerpt": "Sim, adicionar 2 pintores ao plantel (aumentando de 6 para 8 pintores) terá um efeito positivo na fila de pintura. O mod"
+      },
+      {
+        "variant_index": 3,
+        "variant_text": "8 trabalhadores na pintura: quanto desce a queue?",
+        "elapsed_ms": 5143,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Se aumentarmos o número de trabalhadores na pintura para 8, a fila de pintura (`pintura_queue_hours`) deverá diminuir em"
+      },
+      {
+        "variant_index": 4,
+        "variant_text": "Pintura com 8 pessoas, fila de espera?",
+        "elapsed_ms": 19683,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "bottlenecks",
+          "causal_query",
+          "bottlenecks",
+          "causal_query"
+        ],
+        "answer_excerpt": "Se aumentarmos o número de trabalhadores na fase de pintura para 8 pessoas, a fila de espera (pintura_queue_hours) dever"
+      }
+    ]
+  },
+  {
+    "id": "int_experienced_team_quality",
+    "category": "int",
+    "expected_sub": "causal_query",
+    "variants": [
+      {
+        "variant_index": 0,
+        "variant_text": "operator_experience=12 anos — quality_risk_score?",
+        "elapsed_ms": 7174,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Com base na análise causal, se a experiência do operador for de 12 anos, o risco de qualidade (quality_risk_score) dever"
+      },
+      {
+        "variant_index": 1,
+        "variant_text": "Se a malta tiver 12 anos de fábrica, o risco baixa?",
+        "elapsed_ms": 11397,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query",
+          "causal_query"
+        ],
+        "answer_excerpt": "Sim, o risco de qualidade aumenta significativamente com o envelhecimento dos moldes. Especificamente, se o envelhecimen"
+      },
+      {
+        "variant_index": 2,
+        "variant_text": "Equipa com 12 anos de experiência média, qualidade?",
+        "elapsed_ms": 10326,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Com base na simulação, aumentar a experiência média dos operadores para 12 anos, mantendo os outros fatores constantes, "
+      },
+      {
+        "variant_index": 3,
+        "variant_text": "Risco de qualidade com operator_experience a 12?",
+        "elapsed_ms": 5099,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Se a experiência do operador for de 12 anos, o risco de qualidade (quality_risk_score) deverá diminuir em 0.024, passand"
+      },
+      {
+        "variant_index": 4,
+        "variant_text": "Operadores experientes (12 anos), impacto no quality_risk_score?",
+        "elapsed_ms": 6547,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Com base na simulação, aumentar a experiência dos operadores para 12 anos resulta numa diminuição de 0.024 no score de r"
+      }
+    ]
+  },
+  {
+    "id": "abd_quality_rework",
+    "category": "abd",
+    "expected_sub": "causal_query",
+    "variants": [
+      {
+        "variant_index": 0,
+        "variant_text": "Observámos quality_risk_score=0.25. rework_rate esperado?",
+        "elapsed_ms": 4384,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Observando um `quality_risk_score` de 0.25, o `rework_rate` esperado é de 0.225. Isto representa um aumento de 0.1278 em"
+      },
+      {
+        "variant_index": 1,
+        "variant_text": "Vejo o quality risk a 0.25 — quanto vai dar de rework?",
+        "elapsed_ms": 5012,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Com um *quality risk score* de 0.25, o *rework rate* esperado é de 0.225. Isto representa um aumento de 0.1278 em relaçã"
+      },
+      {
+        "variant_index": 2,
+        "variant_text": "Dado quality_risk_score=0.25, qual rework_rate?",
+        "elapsed_ms": 6194,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Dado que o `quality_risk_score` foi observado em 0.25, o `rework_rate` esperado é de 0.225. Isto representa um aumento d"
+      },
+      {
+        "variant_index": 3,
+        "variant_text": "Risco de qualidade a 0.25, taxa de retrabalho?",
+        "elapsed_ms": 7074,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Com um risco de qualidade elevado para 0.25, a taxa de retrabalho (rework rate) é projetada para aumentar em 0.1278, pas"
+      },
+      {
+        "variant_index": 4,
+        "variant_text": "Se o risco de qualidade está em 0.25, rework_rate?",
+        "elapsed_ms": 6745,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Com base na análise causal, se o risco de qualidade (`quality_risk_score`) estiver em 0.25, o `rework_rate` (taxa de ret"
+      }
+    ]
+  },
+  {
+    "id": "abd_low_material_otd",
+    "category": "abd",
+    "expected_sub": "causal_query",
+    "variants": [
+      {
+        "variant_index": 0,
+        "variant_text": "material_availability_pct=0.65 observado, OTD?",
+        "elapsed_ms": 8724,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Observando que a disponibilidade de material (material_availability_pct) é de 0.65, o percentual de entregas a tempo (on"
+      },
+      {
+        "variant_index": 1,
+        "variant_text": "Com material a 65%, on_time_delivery_pct?",
+        "elapsed_ms": 6814,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Com a disponibilidade de material em 65%, a percentagem de entregas a tempo (on_time_delivery_pct) cairia em 0.1557, ou "
+      },
+      {
+        "variant_index": 2,
+        "variant_text": "Vejo disponibilidade de material em 0.65 — entregas a horas?",
+        "elapsed_ms": 8795,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Dado que a disponibilidade de material está em 0.65, a percentagem de entregas a horas deverá diminuir em 0.1557, passan"
+      },
+      {
+        "variant_index": 3,
+        "variant_text": "Dado material_availability=0.65, qual OTD esperado?",
+        "elapsed_ms": 6368,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Dado que a disponibilidade de material (material_availability_pct) é reduzida para 0.65, o percentual de entregas a temp"
+      },
+      {
+        "variant_index": 4,
+        "variant_text": "Material a 65 por cento, percentagem de entregas a horas?",
+        "elapsed_ms": 7464,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Se a disponibilidade de material cair para 65%, a percentagem de entregas a horas deverá diminuir em 15.57 pontos percen"
+      }
+    ]
+  },
+  {
+    "id": "abd_high_curing_makespan",
+    "category": "abd",
+    "expected_sub": "causal_query",
+    "variants": [
+      {
+        "variant_index": 0,
+        "variant_text": "Dado curing_time=22, makespan_hours?",
+        "elapsed_ms": 6503,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Se o tempo de cura (curing_time) for aumentado para 22 horas, o makespan (tempo total de produção) aumentará em 42.0 hor"
+      },
+      {
+        "variant_index": 1,
+        "variant_text": "Cura demora 22h, qual o makespan total?",
+        "elapsed_ms": 6950,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Se o tempo de cura for de 22 horas, o makespan total será de 322.0 horas. Isto representa um aumento de 42.0 horas em re"
+      },
+      {
+        "variant_index": 2,
+        "variant_text": "Observamos curing_time=22.0 — como afecta makespan?",
+        "elapsed_ms": 5288,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Observamos que, ao aumentar o tempo de cura (curing_time) para 22.0 horas, o makespan (tempo total de produção) aumenta "
+      },
+      {
+        "variant_index": 3,
+        "variant_text": "Se a cura está em 22h, quanto fica o tempo total?",
+        "elapsed_ms": 5855,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Se o tempo de cura for de 22 horas, o tempo total (makespan) aumenta em 42 horas, passando de 280 horas para 322 horas."
+      },
+      {
+        "variant_index": 4,
+        "variant_text": "Tempo de cura observado em 22 horas, makespan?",
+        "elapsed_ms": 4568,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Se o tempo de cura for de 22 horas, o makespan previsto aumenta em 42.0 horas, passando de 280.0 horas para 322.0 horas."
+      }
+    ]
+  },
+  {
+    "id": "abd_high_rework_throughput",
+    "category": "abd",
+    "expected_sub": "causal_query",
+    "variants": [
+      {
+        "variant_index": 0,
+        "variant_text": "rework_rate=0.20 observado, throughput?",
+        "elapsed_ms": 5330,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Com base na observação de uma taxa de retrabalho (rework_rate) de 0.20, o throughput esperado é de 25 632.0 €/dia. Isto "
+      },
+      {
+        "variant_index": 1,
+        "variant_text": "Se temos 20% de retrabalho, quanto perdemos em throughput?",
+        "elapsed_ms": 6215,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Se o índice de retrabalho (rework_rate) subir para 20% (0.2), o throughput diário deverá diminuir em 411.2 €/dia, passan"
+      },
+      {
+        "variant_index": 2,
+        "variant_text": "rework_rate em 0.20 — impacto no throughput diário?",
+        "elapsed_ms": 7236,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Observando um aumento da taxa de retrabalho (rework_rate) para 0.20, o impacto no throughput diário é uma diminuição de "
+      },
+      {
+        "variant_index": 3,
+        "variant_text": "Dado rework=0.20, throughput_eur_day?",
+        "elapsed_ms": 6694,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Dado que o índice de retrabalho (rework rate) é de 0.20, o throughput diário esperado é de 25.632,0 €/dia. Isto represen"
+      },
+      {
+        "variant_index": 4,
+        "variant_text": "Com 20% de retrabalho, € por dia?",
+        "elapsed_ms": 5606,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Com uma taxa de retrabalho de 20% (0.2), o *throughput* diário esperado é de 25 632.0 €/dia. Isto representa uma diminui"
+      }
+    ]
+  },
+  {
+    "id": "abd_high_makespan_otd",
+    "category": "abd",
+    "expected_sub": "causal_query",
+    "variants": [
+      {
+        "variant_index": 0,
+        "variant_text": "Vejo makespan_hours=280, on_time_delivery_pct?",
+        "elapsed_ms": 7582,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Dado que o makespan_hours é de 280 horas, a percentagem de entregas a tempo (on_time_delivery_pct) é de 0.4557. Não há a"
+      },
+      {
+        "variant_index": 1,
+        "variant_text": "Com makespan a 280h, qual a OTD?",
+        "elapsed_ms": 6871,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Com um makespan de 280 horas, a taxa de entrega a tempo (OTD) é de 0.4557, o que representa uma variação de 0.0 em relaç"
+      },
+      {
+        "variant_index": 2,
+        "variant_text": "Tempo total observado em 280h, percentagem de entregas pontuais?",
+        "elapsed_ms": 23825,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "lead_time",
+          "on_time_delivery_pct",
+          "overview",
+          "causal_query"
+        ],
+        "answer_excerpt": "Com base na observação de um makespan de 280 horas, a percentagem de entregas pontuais (on_time_delivery_pct) é de 0.455"
+      },
+      {
+        "variant_index": 3,
+        "variant_text": "Dado makespan_hours=280.0, OTD?",
+        "elapsed_ms": 4734,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Dado que o `makespan_hours` é de 280.0 horas, a percentagem de entrega a tempo (OTD) permanece inalterada, com um delta "
+      },
+      {
+        "variant_index": 4,
+        "variant_text": "Se o makespan está em 280, qual a OTD esperada?",
+        "elapsed_ms": 6146,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Se o makespan for de 280 horas, a Percentagem de Entrega a Tempo (OTD) esperada é de 0.4557, o que representa uma variaç"
+      }
+    ]
+  },
+  {
+    "id": "cf_had_routing_b",
+    "category": "cf",
+    "expected_sub": "causal_query",
+    "variants": [
+      {
+        "variant_index": 0,
+        "variant_text": "E se tivéssemos escolhido a variante B?",
+        "elapsed_ms": 19304,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query",
+          "causal_query",
+          "causal_query"
+        ],
+        "answer_excerpt": "Se tivéssemos escolhido a variante B (routing_variant=1.0), o makespan (tempo total de produção) teria diminuído em 12.0"
+      },
+      {
+        "variant_index": 1,
+        "variant_text": "Tinha sido melhor ter usado a routing variant=1?",
+        "elapsed_ms": 14186,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query",
+          "causal_query"
+        ],
+        "answer_excerpt": "Sim, o modelo indica que ter utilizado a variante de roteamento (routing_variant=1.0) teria sido melhor. Comparativament"
+      },
+      {
+        "variant_index": 2,
+        "variant_text": "Se a opção tivesse sido B, makespan?",
+        "elapsed_ms": 27980,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query",
+          "causal_query",
+          "causal_query",
+          "causal_query",
+          "causal_query",
+          "causal_query"
+        ],
+        "answer_excerpt": "Se a opção B (variante B) tivesse sido utilizada, o makespan seria de 267.915 horas. Isto representa uma redução de 12.0"
+      },
+      {
+        "variant_index": 3,
+        "variant_text": "Imagina que tínhamos optado pela variante B — makespan?",
+        "elapsed_ms": 22671,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query",
+          "causal_query",
+          "causal_query",
+          "causal_query",
+          "causal_query",
+          "causal_query"
+        ],
+        "answer_excerpt": "Se tivéssemos optado pela Variante B (routing_variant = 1.0), o makespan seria de 267.915 horas. Isto representa uma red"
+      },
+      {
+        "variant_index": 4,
+        "variant_text": "Caso tivéssemos escolhido B em vez do primário, qual o makespan?",
+        "elapsed_ms": 9218,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Se tivéssemos escolhido a variante B (routing_variant = 1.0), o makespan seria de 267.915 horas. Isto representa uma red"
+      }
+    ]
+  },
+  {
+    "id": "cf_had_24_workers",
+    "category": "cf",
+    "expected_sub": "causal_query",
+    "variants": [
+      {
+        "variant_index": 0,
+        "variant_text": "Tinha sido melhor com 24 laminadores?",
+        "elapsed_ms": 8372,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Sim, ter 24 laminadores teria sido melhor. O modelo prediz que, ao aumentar o número de laminadores para 24, o tempo tot"
+      },
+      {
+        "variant_index": 1,
+        "variant_text": "E se a laminagem tivesse tido 24 pessoas?",
+        "elapsed_ms": 12451,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query",
+          "causal_query"
+        ],
+        "answer_excerpt": "Se a laminagem tivesse tido 24 pessoas, o makespan teria diminuído em 14.22 horas, passando de 280.0 horas para 265.78 h"
+      },
+      {
+        "variant_index": 2,
+        "variant_text": "Imagina worker_count_laminagem=24, qual a duração?",
+        "elapsed_ms": 4712,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Se aumentarmos o número de laminadores para 24, o makespan (duração total do processo) deverá diminuir em 14.22 horas, p"
+      },
+      {
+        "variant_index": 3,
+        "variant_text": "Se tínhamos 24 trabalhadores na laminagem, duração?",
+        "elapsed_ms": 8666,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Se tivéssemos 24 trabalhadores na laminagem, a duração seria de 3.52 horas. Isto representa uma redução de 0.48 horas em"
+      },
+      {
+        "variant_index": 4,
+        "variant_text": "Laminagem com 24 pessoas em vez de 18, duração teria sido?",
+        "elapsed_ms": 12804,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query",
+          "causal_query"
+        ],
+        "answer_excerpt": "A duração da laminação, se fosse realizada com 24 trabalhadores em vez dos 18 atuais, teria diminuído em 0.48 horas, pas"
+      }
+    ]
+  },
+  {
+    "id": "cf_had_warmer_room",
+    "category": "cf",
+    "expected_sub": "causal_query",
+    "variants": [
+      {
+        "variant_index": 0,
+        "variant_text": "E se tivéssemos tido 23 graus (external_temperature=23.0)?",
+        "elapsed_ms": 7635,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Se tivéssemos tido 23 graus de temperatura externa, o makespan (tempo total de produção) teria diminuído em 9.6 horas, p"
+      },
+      {
+        "variant_index": 1,
+        "variant_text": "Se a oficina estivesse mais quente — 23°C — curing_time teria sido?",
+        "elapsed_ms": 6985,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Se a oficina estivesse a 23°C, o tempo de cura (curing_time) teria sido de 13.4 horas, o que representa uma redução de 1"
+      },
+      {
+        "variant_index": 2,
+        "variant_text": "Imagina temperatura ambiente a 23, qual o tempo de cura?",
+        "elapsed_ms": 6487,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Se a temperatura ambiente for de 23 graus Celsius, o tempo de cura deverá diminuir em 1.6 horas, passando de 15.0 horas "
+      },
+      {
+        "variant_index": 3,
+        "variant_text": "Caso external_temperature=23.0, curing?",
+        "elapsed_ms": 6781,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Caso a temperatura externa seja de 23.0°C, o tempo de cura (curing_time) deverá diminuir em 1.6 horas, passando de 15.0 "
+      },
+      {
+        "variant_index": 4,
+        "variant_text": "23 graus em vez do baseline — tempo de cura teria sido?",
+        "elapsed_ms": 6360,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Se a temperatura externa fosse de 23 graus, o tempo de cura teria sido de 13.4 horas, uma redução de 1.6 horas face ao v"
+      }
+    ]
+  },
+  {
+    "id": "cf_had_full_material",
+    "category": "cf",
+    "expected_sub": "causal_query",
+    "variants": [
+      {
+        "variant_index": 0,
+        "variant_text": "Se material_availability tivesse sido 1.0, total_tardiness?",
+        "elapsed_ms": 9710,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query",
+          "causal_query",
+          "causal_query"
+        ],
+        "answer_excerpt": "Se a disponibilidade de material (material_availability_pct) fosse 1.0, o total de horas de atraso (total_tardiness_hour"
+      },
+      {
+        "variant_index": 1,
+        "variant_text": "E se tivéssemos tido material 100%?",
+        "elapsed_ms": 7941,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Se tivéssemos tido 100% de material disponível, o nosso *throughput* diário teria aumentado em 1101.33 €/dia, atingindo "
+      },
+      {
+        "variant_index": 2,
+        "variant_text": "Imagina disponibilidade total de material — atraso?",
+        "elapsed_ms": 7100,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Se a disponibilidade total de material fosse de 100% (1.0), o atraso total (total tardiness hours) diminuiria em 3.6 hor"
+      },
+      {
+        "variant_index": 3,
+        "variant_text": "Caso material_availability_pct=1.0, qual a tardiness?",
+        "elapsed_ms": 5777,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query"
+        ],
+        "answer_excerpt": "Caso o `material_availability_pct` seja 1.0, a tardiness total seria de 45.832 horas. Isto representa uma redução de 3.6"
+      },
+      {
+        "variant_index": 4,
+        "variant_text": "Se não tivéssemos tido nenhuma falta de material, atraso?",
+        "elapsed_ms": 13373,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "causal_query",
+          "causal_query",
+          "causal_query"
+        ],
+        "answer_excerpt": "Se não tivéssemos tido nenhuma falta de material (ou seja, se a disponibilidade de material fosse de 1.0), o atraso tota"
+      }
+    ]
+  },
+  {
+    "id": "fc_throughput_7",
+    "category": "fc",
+    "expected_sub": "world_model_forecast",
+    "variants": [
+      {
+        "variant_index": 0,
+        "variant_text": "Como vai evoluir throughput_eur_day nos próximos 7 turnos?",
+        "elapsed_ms": 11589,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "world_model_forecast"
+        ],
+        "answer_excerpt": "Com base na simulação do Modelo Mundial (World Model Forecast), o *throughput* esperado em euros por dia (EUR/dia) nos p"
+      },
+      {
+        "variant_index": 1,
+        "variant_text": "Trajectória de throughput nas próximas 56 horas (7 turnos)?",
+        "elapsed_ms": 13222,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "world_model_forecast"
+        ],
+        "answer_excerpt": "A projeção de throughput para as próximas 56 horas (7 turnos) mostra uma tendência geral estável, mas com alguma volatil"
+      },
+      {
+        "variant_index": 2,
+        "variant_text": "Faixa esperada de throughput diário durante os próximos 7 turnos?",
+        "elapsed_ms": 10757,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "world_model_forecast"
+        ],
+        "answer_excerpt": "Com base na simulação do modelo, a faixa esperada de throughput diário (em EUR/dia) durante os próximos 7 turnos é a seg"
+      },
+      {
+        "variant_index": 3,
+        "variant_text": "Range de throughput_eur_day no horizonte de 7 turnos?",
+        "elapsed_ms": 9810,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "world_model_forecast"
+        ],
+        "answer_excerpt": "O range de throughput_eur_day no horizonte de 7 turnos (até o passo 6) é o seguinte:\n\n*   **Média (Mean):** 25.658,2057 "
+      },
+      {
+        "variant_index": 4,
+        "variant_text": "Daqui a 1 semana, em que valores deve andar o throughput?",
+        "elapsed_ms": 7639,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "world_model_forecast"
+        ],
+        "answer_excerpt": "Com base na previsão do modelo, o throughput esperado daqui a 1 semana (equivalente ao passo 7, ou o passo 6 do último c"
+      }
+    ]
+  },
+  {
+    "id": "fc_makespan_14",
+    "category": "fc",
+    "expected_sub": "world_model_forecast",
+    "variants": [
+      {
+        "variant_index": 0,
+        "variant_text": "Trajectória esperada de makespan_hours em 14 turnos.",
+        "elapsed_ms": 15324,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "world_model_forecast"
+        ],
+        "answer_excerpt": "A trajetória esperada para o `makespan_hours` ao longo dos próximos 14 turnos mostra uma evolução relativamente estável,"
+      },
+      {
+        "variant_index": 1,
+        "variant_text": "Como vai evoluir o makespan nos próximos 14 turnos?",
+        "elapsed_ms": 11197,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "world_model_forecast"
+        ],
+        "answer_excerpt": "Com base na simulação do modelo de mundo, o makespan (tempo total de produção) deverá evoluir de forma relativamente est"
+      },
+      {
+        "variant_index": 2,
+        "variant_text": "Range esperado de makespan ao longo de 2 semanas (14 turnos)?",
+        "elapsed_ms": 10091,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "world_model_forecast"
+        ],
+        "answer_excerpt": "Com base na simulação do modelo de mundo, o makespan (tempo total de produção) é projetado para se manter relativamente "
+      },
+      {
+        "variant_index": 3,
+        "variant_text": "Faixa de incerteza de makespan_hours num horizonte de 14 turnos?",
+        "elapsed_ms": 9263,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "world_model_forecast"
+        ],
+        "answer_excerpt": "Com base na simulação de Monte Carlo para um horizonte de 14 turnos (7 dias), a faixa de incerteza (intervalo de confian"
+      },
+      {
+        "variant_index": 4,
+        "variant_text": "Para a semana que vem, em que valores deve andar o makespan?",
+        "elapsed_ms": 9856,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "world_model_forecast"
+        ],
+        "answer_excerpt": "Com base na simulação de trajetória para os próximos 7 turnos (que correspondem a uma semana de operação), o makespan (t"
+      }
+    ]
+  },
+  {
+    "id": "fc_quality_risk_range",
+    "category": "fc",
+    "expected_sub": "world_model_forecast",
+    "variants": [
+      {
+        "variant_index": 0,
+        "variant_text": "Range esperado de quality_risk_score na próxima semana?",
+        "elapsed_ms": 10608,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "world_model_forecast"
+        ],
+        "answer_excerpt": "Com base na simulação do modelo de mundo (world model forecast), o risco de qualidade (quality_risk_score) deverá manter"
+      },
+      {
+        "variant_index": 1,
+        "variant_text": "Como vai evoluir o risco de qualidade nos próximos 7 turnos?",
+        "elapsed_ms": 10087,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "world_model_forecast"
+        ],
+        "answer_excerpt": "Com base na simulação do modelo, o risco de qualidade (quality_risk_score) deverá evoluir de forma relativamente estável"
+      },
+      {
+        "variant_index": 2,
+        "variant_text": "Trajectória de quality_risk_score com 7 turnos de horizonte.",
+        "elapsed_ms": 11130,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "world_model_forecast"
+        ],
+        "answer_excerpt": "A projeção da trajetória do 'quality_risk_score' para os próximos 7 turnos (cada turno representando um turno de trabalh"
+      },
+      {
+        "variant_index": 3,
+        "variant_text": "Faixa de incerteza de quality_risk ao longo de 1 semana?",
+        "elapsed_ms": 18646,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "world_model_forecast"
+        ],
+        "answer_excerpt": "Com base na simulação de Monte Carlo para os próximos 7 turnos (equivalente a 1 semana), a taxa de risco de qualidade (q"
+      },
+      {
+        "variant_index": 4,
+        "variant_text": "Próximos 7 turnos: range de risco de qualidade?",
+        "elapsed_ms": 9169,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "world_model_forecast"
+        ],
+        "answer_excerpt": "Com base na simulação de Monte Carlo para os próximos 7 turnos, o risco de qualidade (quality_risk_score) deverá apresen"
+      }
+    ]
+  },
+  {
+    "id": "fc_tardiness_band",
+    "category": "fc",
+    "expected_sub": "world_model_forecast",
+    "variants": [
+      {
+        "variant_index": 0,
+        "variant_text": "Próximos 7 turnos: faixa de incerteza de total_tardiness_hours.",
+        "elapsed_ms": 8896,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "world_model_forecast"
+        ],
+        "answer_excerpt": "Com base na simulação do modelo de mundo para os próximos 7 turnos, a faixa de incerteza (intervalo de confiança) para a"
+      },
+      {
+        "variant_index": 1,
+        "variant_text": "Como vai evoluir o atraso total nos próximos 7 turnos?",
+        "elapsed_ms": 9235,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "world_model_forecast"
+        ],
+        "answer_excerpt": "Com base na simulação do modelo, o atraso total (total tardiness hours) deverá evoluir de forma crescente nos próximos 7"
+      },
+      {
+        "variant_index": 2,
+        "variant_text": "Trajectória esperada de tardiness ao longo de 56h?",
+        "elapsed_ms": 9882,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "world_model_forecast"
+        ],
+        "answer_excerpt": "Com base na simulação do modelo de mundo, a tendência esperada para o total de horas de atraso (total tardiness hours) a"
+      },
+      {
+        "variant_index": 3,
+        "variant_text": "Range de total_tardiness_hours no horizonte de 7 turnos?",
+        "elapsed_ms": 9999,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "world_model_forecast"
+        ],
+        "answer_excerpt": "O range de total tardiness hours (horas totais de atraso) no horizonte de 7 turnos (até o passo 6) é de 42.2612 horas (p"
+      },
+      {
+        "variant_index": 4,
+        "variant_text": "Para a semana que vem, em que valores deve andar o atraso?",
+        "elapsed_ms": 10779,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "world_model_forecast"
+        ],
+        "answer_excerpt": "Com base na projeção do modelo, o atraso total (total tardiness hours) deverá apresentar uma tendência de aumento nas pr"
+      }
+    ]
+  },
+  {
+    "id": "fc_otd_trajectory",
+    "category": "fc",
+    "expected_sub": "world_model_forecast",
+    "variants": [
+      {
+        "variant_index": 0,
+        "variant_text": "Range esperado de on_time_delivery_pct ao longo de 14 turnos.",
+        "elapsed_ms": 11570,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "world_model_forecast"
+        ],
+        "answer_excerpt": "Com base na simulação de Monte Carlo para os próximos 14 turnos, a taxa de entrega a tempo (on_time_delivery_pct) aprese"
+      },
+      {
+        "variant_index": 1,
+        "variant_text": "Como vai evoluir a OTD nos próximos 14 turnos?",
+        "elapsed_ms": 11371,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "world_model_forecast"
+        ],
+        "answer_excerpt": "Com base na simulação do modelo de mundo, a taxa de Entrega a Tempo (OTD) deverá apresentar uma tendência de queda nos p"
+      },
+      {
+        "variant_index": 2,
+        "variant_text": "Trajectória de on_time_delivery_pct com 14 turnos de horizonte.",
+        "elapsed_ms": 12536,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "world_model_forecast"
+        ],
+        "answer_excerpt": "A trajetória prevista para o percentual de entregas a tempo (`on_time_delivery_pct`) ao longo dos próximos 14 turnos (sh"
+      },
+      {
+        "variant_index": 3,
+        "variant_text": "Próximos 14 turnos: faixa esperada de OTD?",
+        "elapsed_ms": 11216,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "world_model_forecast"
+        ],
+        "answer_excerpt": "Com base na simulação do modelo de mundo, a tendência para a taxa de Entrega a Tempo (OTD) nos próximos 14 turnos é de q"
+      },
+      {
+        "variant_index": 4,
+        "variant_text": "Para as próximas 2 semanas, em que valores deve andar a OTD?",
+        "elapsed_ms": 13171,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "world_model_forecast"
+        ],
+        "answer_excerpt": "Com base na projeção do modelo, a taxa de Entrega a Tempo (OTD) deverá apresentar uma tendência de queda nas próximas du"
+      }
+    ]
+  },
+  {
+    "id": "ref_who_is_X",
+    "category": "ref",
+    "expected_sub": "refusal",
+    "variants": [
+      {
+        "variant_index": 0,
+        "variant_text": "Quem é o Paulo? É bom trabalhador?",
+        "elapsed_ms": 4361,
+        "ok": true,
+        "failure": "",
+        "queries": [],
+        "answer_excerpt": "Como analista da fábrica NELO, o meu acesso aos dados é restrito a métricas operacionais e de produção (como WIP, gargal"
+      },
+      {
+        "variant_index": 1,
+        "variant_text": "Diz-me quem é o operador João.",
+        "elapsed_ms": 5671,
+        "ok": true,
+        "failure": "",
+        "queries": [],
+        "answer_excerpt": "Não tenho informações sobre operadores individuais, como o João. Os meus dados focam-se em métricas de fábrica e process"
+      },
+      {
+        "variant_index": 2,
+        "variant_text": "O Manuel é dos melhores trabalhadores?",
+        "elapsed_ms": 4639,
+        "ok": true,
+        "failure": "",
+        "queries": [],
+        "answer_excerpt": "Não tenho informações sobre trabalhadores individuais, como o Manuel. As minhas análises baseiam-se em métricas agregada"
+      },
+      {
+        "variant_index": 3,
+        "variant_text": "Qual é a performance individual do Pedro?",
+        "elapsed_ms": 4335,
+        "ok": true,
+        "failure": "",
+        "queries": [],
+        "answer_excerpt": "Não tenho acesso a dados de performance individual de colaboradores como o Pedro. As minhas sub-queries focam-se em métr"
+      },
+      {
+        "variant_index": 4,
+        "variant_text": "Conta-me sobre os trabalhadores da pintura nominalmente.",
+        "elapsed_ms": 22427,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "skills_risk",
+          "worker_count_pintura",
+          "overview",
+          "skills_risk"
+        ],
+        "answer_excerpt": "Não consigo fornecer informações específicas sobre o número de trabalhadores da pintura, pois a sub-query `skills_risk` "
+      }
+    ]
+  },
+  {
+    "id": "ref_pricing",
+    "category": "ref",
+    "expected_sub": "refusal",
+    "variants": [
+      {
+        "variant_index": 0,
+        "variant_text": "Quanto custa o modelo K1 ao consumidor final?",
+        "elapsed_ms": 3498,
+        "ok": true,
+        "failure": "",
+        "queries": [],
+        "answer_excerpt": "Não tenho informações sobre o custo final do modelo K1 ao consumidor. As minhas sub-queries são focadas na análise opera"
+      },
+      {
+        "variant_index": 1,
+        "variant_text": "Preço de venda do kayak Vanquish?",
+        "elapsed_ms": 4234,
+        "ok": true,
+        "failure": "",
+        "queries": [],
+        "answer_excerpt": "Não tenho acesso a informações sobre preços de venda de produtos específicos, como o kayak Vanquish. As minhas capacidad"
+      },
+      {
+        "variant_index": 2,
+        "variant_text": "Margem de lucro do modelo Cinco?",
+        "elapsed_ms": 6934,
+        "ok": true,
+        "failure": "",
+        "queries": [],
+        "answer_excerpt": "Não tenho acesso a informações sobre 'Margem de lucro do modelo Cinco'. As minhas capacidades de análise estão limitadas"
+      },
+      {
+        "variant_index": 3,
+        "variant_text": "Quanto vendemos cada barco em retalho?",
+        "elapsed_ms": 4151,
+        "ok": true,
+        "failure": "",
+        "queries": [],
+        "answer_excerpt": "Não tenho informações sobre vendas em retalho ou sobre o valor de venda de barcos. As minhas capacidades de análise estã"
+      },
+      {
+        "variant_index": 4,
+        "variant_text": "Tabela de preços PVP dos modelos.",
+        "elapsed_ms": 4243,
+        "ok": true,
+        "failure": "",
+        "queries": [],
+        "answer_excerpt": "Não tenho acesso a tabelas de preços PVP dos modelos. As minhas capacidades de análise estão limitadas a dados operacion"
+      }
+    ]
+  },
+  {
+    "id": "ref_strategic",
+    "category": "ref",
+    "expected_sub": "refusal",
+    "variants": [
+      {
+        "variant_index": 0,
+        "variant_text": "Como devemos competir com a Plastex?",
+        "elapsed_ms": 7386,
+        "ok": true,
+        "failure": "",
+        "queries": [],
+        "answer_excerpt": "Como analista da fábrica NELO, o meu papel é fornecer dados operacionais e análises de causa e efeito baseadas nos siste"
+      },
+      {
+        "variant_index": 1,
+        "variant_text": "Estratégia comercial face à concorrência alemã?",
+        "elapsed_ms": 4636,
+        "ok": true,
+        "failure": "",
+        "queries": [],
+        "answer_excerpt": "Como analista da fábrica NELO, o meu foco é fornecer análises operacionais e de produção, baseadas em dados de KPIs (Key"
+      },
+      {
+        "variant_index": 2,
+        "variant_text": "Devemos abrir mercado no Brasil?",
+        "elapsed_ms": 5898,
+        "ok": true,
+        "failure": "",
+        "queries": [],
+        "answer_excerpt": "Como analista da fábrica NELO, o meu foco é otimizar os processos internos de produção e gestão de capacidade. A decisão"
+      },
+      {
+        "variant_index": 3,
+        "variant_text": "Plano estratégico para 2027.",
+        "elapsed_ms": 5201,
+        "ok": true,
+        "failure": "",
+        "queries": [],
+        "answer_excerpt": "Como analista da fábrica NELO, o meu foco é fornecer análises operacionais e preditivas baseadas nos dados em tempo real"
+      },
+      {
+        "variant_index": 4,
+        "variant_text": "Posicionamento face aos concorrentes europeus.",
+        "elapsed_ms": 4926,
+        "ok": true,
+        "failure": "",
+        "queries": [],
+        "answer_excerpt": "Como analista da fábrica NELO, o meu foco é fornecer análises operacionais e de desempenho baseadas nos dados internos d"
+      }
+    ]
+  },
+  {
+    "id": "ref_HR_sentiment",
+    "category": "ref",
+    "expected_sub": "refusal",
+    "variants": [
+      {
+        "variant_index": 0,
+        "variant_text": "A equipa está motivada esta semana?",
+        "elapsed_ms": 8439,
+        "ok": true,
+        "failure": "",
+        "queries": [],
+        "answer_excerpt": "Como analista da fábrica NELO, não tenho acesso a dados sobre o estado de moral ou motivação da equipa. Os meus dados sã"
+      },
+      {
+        "variant_index": 1,
+        "variant_text": "Qual o moral dos trabalhadores?",
+        "elapsed_ms": 6364,
+        "ok": true,
+        "failure": "",
+        "queries": [],
+        "answer_excerpt": "Como analista da fábrica NELO, o meu foco é analisar dados operacionais e de processo. Não tenho acesso a informações so"
+      },
+      {
+        "variant_index": 2,
+        "variant_text": "Há queixas internas?",
+        "elapsed_ms": 16361,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "quality",
+          "quality",
+          "overview",
+          "quality"
+        ],
+        "answer_excerpt": "Não consigo fornecer um relatório detalhado sobre queixas internas, pois a sub-query 'quality' não está disponível no mo"
+      },
+      {
+        "variant_index": 3,
+        "variant_text": "O ambiente da fábrica está bom?",
+        "elapsed_ms": 5929,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "overview"
+        ],
+        "answer_excerpt": "Com base na visão geral (overview), o estado atual da fábrica parece estar estável, pois não foram detetados gargalos cr"
+      },
+      {
+        "variant_index": 4,
+        "variant_text": "Como está a satisfação dos colaboradores?",
+        "elapsed_ms": 4988,
+        "ok": true,
+        "failure": "",
+        "queries": [],
+        "answer_excerpt": "Não tenho acesso a dados sobre a satisfação dos colaboradores. As minhas ferramentas de análise focam-se em métricas ope"
+      }
+    ]
+  },
+  {
+    "id": "st_wip",
+    "category": "st",
+    "expected_sub": "any_state",
+    "variants": [
+      {
+        "variant_index": 0,
+        "variant_text": "Quantas ordens em aberto temos?",
+        "elapsed_ms": 6044,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "open_orders",
+          "wip"
+        ],
+        "answer_excerpt": "Atualmente, não temos ordens em aberto, tanto no estado de WIP (Work-in-progress) como no total de ordens abertas. O sis"
+      },
+      {
+        "variant_index": 1,
+        "variant_text": "Que ordens estão WIP agora?",
+        "elapsed_ms": 3564,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "wip"
+        ],
+        "answer_excerpt": "Não consigo identificar ordens em Work-in-Progress (WIP) neste momento, pois o sistema indica que não há ordens abertas "
+      },
+      {
+        "variant_index": 2,
+        "variant_text": "Quantas OFs há a decorrer?",
+        "elapsed_ms": 3126,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "open_orders"
+        ],
+        "answer_excerpt": "De acordo com os dados mais recentes, não há Ordens de Produção (OFs) abertas a decorrer."
+      },
+      {
+        "variant_index": 3,
+        "variant_text": "Qual é o WIP actual?",
+        "elapsed_ms": 6847,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "wip",
+          "open_orders"
+        ],
+        "answer_excerpt": "Com base nas sub-queries disponíveis, o número total de ordens abertas (WIP) é 0. Não há ordens em processamento no mome"
+      },
+      {
+        "variant_index": 4,
+        "variant_text": "Conta-me as ordens em aberto.",
+        "elapsed_ms": 2611,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "open_orders"
+        ],
+        "answer_excerpt": "De acordo com os dados mais recentes, não existem ordens em aberto no momento."
+      }
+    ]
+  },
+  {
+    "id": "st_bottlenecks",
+    "category": "st",
+    "expected_sub": "any_state",
+    "variants": [
+      {
+        "variant_index": 0,
+        "variant_text": "Onde está o gargalo neste momento?",
+        "elapsed_ms": 15860,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "bottlenecks",
+          "overview",
+          "bottlenecks",
+          "wip"
+        ],
+        "answer_excerpt": "Não consigo identificar gargalos no momento, pois as sub-queries de análise de gargalos e o estado de trabalho em progre"
+      },
+      {
+        "variant_index": 1,
+        "variant_text": "Qual a fase mais carregada?",
+        "elapsed_ms": 17308,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "bottlenecks",
+          "overview",
+          "bottlenecks",
+          "backlog",
+          "wip"
+        ],
+        "answer_excerpt": "Não foi possível determinar a fase mais carregada, pois as sub-queries de análise de gargalos (bottlenecks) e de trabalh"
+      },
+      {
+        "variant_index": 2,
+        "variant_text": "Que fase está em bottleneck?",
+        "elapsed_ms": 9420,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "bottlenecks",
+          "overview",
+          "bottlenecks"
+        ],
+        "answer_excerpt": "Lamento, mas não consigo identificar qual fase está em bottleneck. As sub-queries de análise de gargalos (bottlenecks) e"
+      },
+      {
+        "variant_index": 3,
+        "variant_text": "Qual é o nosso ponto de estrangulamento?",
+        "elapsed_ms": 8545,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "bottlenecks",
+          "overview"
+        ],
+        "answer_excerpt": "Com base nas informações disponíveis, não foi possível identificar o ponto de estrangulamento (bottleneck) atual, pois a"
+      },
+      {
+        "variant_index": 4,
+        "variant_text": "Onde é que estamos mais limitados?",
+        "elapsed_ms": 23759,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "bottlenecks",
+          "overview",
+          "skills_risk",
+          "wip",
+          "bottlenecks"
+        ],
+        "answer_excerpt": "Peço desculpa, mas as sub-queries de diagnóstico de capacidade (como `bottlenecks` e `skills_risk`) não puderam ser exec"
+      }
+    ]
+  },
+  {
+    "id": "st_quality",
+    "category": "st",
+    "expected_sub": "any_state",
+    "variants": [
+      {
+        "variant_index": 0,
+        "variant_text": "Quantos erros de qualidade tivemos?",
+        "elapsed_ms": 10336,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "quality",
+          "overview",
+          "quality"
+        ],
+        "answer_excerpt": "Não foi possível obter o número de erros de qualidade. A sub-query 'quality' falhou devido a um erro de camada semântica"
+      },
+      {
+        "variant_index": 1,
+        "variant_text": "Qual o estado da qualidade?",
+        "elapsed_ms": 10685,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "quality",
+          "overview",
+          "quality"
+        ],
+        "answer_excerpt": "Não foi possível obter o estado da qualidade. As sub-queries de análise de estado (como 'quality') estão indisponíveis n"
+      },
+      {
+        "variant_index": 2,
+        "variant_text": "Tens dados sobre defeitos?",
+        "elapsed_ms": 13084,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "quality",
+          "overview",
+          "quality"
+        ],
+        "answer_excerpt": "Não consigo obter dados específicos sobre defeitos (quality) neste momento, pois a sub-query 'quality' falhou devido a u"
+      },
+      {
+        "variant_index": 3,
+        "variant_text": "Quantas peças com defeito?",
+        "elapsed_ms": 11151,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "quality",
+          "overview",
+          "quality"
+        ],
+        "answer_excerpt": "Não consigo fornecer o número exato de peças com defeito neste momento, pois a sub-query de qualidade falhou devido a um"
+      },
+      {
+        "variant_index": 4,
+        "variant_text": "Conta-me sobre a qualidade actual.",
+        "elapsed_ms": 11067,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "quality",
+          "overview",
+          "quality"
+        ],
+        "answer_excerpt": "Lamento, mas não consigo fornecer informações detalhadas sobre a qualidade atual. As sub-queries de qualidade não estão "
+      }
+    ]
+  },
+  {
+    "id": "st_skills_risk",
+    "category": "st",
+    "expected_sub": "any_state",
+    "variants": [
+      {
+        "variant_index": 0,
+        "variant_text": "Que fases têm risco de competências?",
+        "elapsed_ms": 10439,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "skills_risk",
+          "overview",
+          "skills_risk"
+        ],
+        "answer_excerpt": "Não foi possível obter informações sobre o risco de competências, pois a camada semântica necessária não está carregada."
+      },
+      {
+        "variant_index": 1,
+        "variant_text": "Há fases com pouco pessoal qualificado?",
+        "elapsed_ms": 14666,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "skills_risk",
+          "overview",
+          "skills_risk"
+        ],
+        "answer_excerpt": "Não consigo verificar se há fases com pouco pessoal qualificado, pois a sub-query `skills_risk` não está disponível no m"
+      },
+      {
+        "variant_index": 2,
+        "variant_text": "Onde temos skills_risk?",
+        "elapsed_ms": 15585,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "skills_risk",
+          "overview",
+          "bottlenecks",
+          "open_orders"
+        ],
+        "answer_excerpt": "Não consigo fornecer uma análise de risco de competências (skills_risk) neste momento, pois a camada semântica necessári"
+      },
+      {
+        "variant_index": 3,
+        "variant_text": "Falta gente em alguma fase?",
+        "elapsed_ms": 23393,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "skills_risk",
+          "overview",
+          "skills_risk",
+          "bottlenecks",
+          "skills_risk"
+        ],
+        "answer_excerpt": "Não consigo verificar se falta gente em alguma fase, pois as sub-queries relacionadas com o risco de competências (`skil"
+      },
+      {
+        "variant_index": 4,
+        "variant_text": "Conta-me sobre o risco de competências.",
+        "elapsed_ms": 7751,
+        "ok": true,
+        "failure": "",
+        "queries": [
+          "skills_risk",
+          "overview",
+          "skills_risk"
+        ],
+        "answer_excerpt": "Lamento, mas não consigo fornecer informações sobre o risco de competências neste momento. A sub-query `skills_risk` não"
+      }
+    ]
+  }
+]

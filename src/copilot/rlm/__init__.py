@@ -16,6 +16,7 @@ from .agent import (
     build_system_prompt,
     parse_action,
     run_rlm_agent,
+    run_rlm_agent_continue,
 )
 from .factory_state_query import FactoryStateQuery
 
@@ -31,4 +32,5 @@ __all__ = [
     "build_system_prompt",
     "parse_action",
     "run_rlm_agent",
+    "run_rlm_agent_continue",
 ]
