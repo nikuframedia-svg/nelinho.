@@ -317,3 +317,115 @@ def test_agent_recovers_from_invalid_json():
     assert trace.answer == "recovered"
     # Both the bad attempt and the successful one consume steps.
     assert trace.steps_used == 2
+
+
+# ─── Sprint F+ — kernel tool-call (causal_query sub-query) ───────────────
+
+
+def test_causal_query_returns_kernel_delta_for_intervention():
+    """Ground-truth check: the wrapper returns a non-trivial delta
+    when we intervene on shift_mode (doubled shift roughly doubles
+    throughput per the NELO_DAG functional forms)."""
+    q = FactoryStateQuery()
+    result = q.causal_query("throughput_eur_day", do={"shift_mode": 2.0})
+    assert "error" not in result
+    assert result["target"] == "throughput_eur_day"
+    assert result["direction"] == "increase"
+    assert result["delta"] > 20_000  # comfortably above noise band
+    assert result["magnitude"] == result["delta"]  # delta > 0 → equal
+
+
+def test_causal_query_handles_unknown_target_cleanly():
+    q = FactoryStateQuery()
+    result = q.causal_query("does-not-exist")
+    assert "error" in result
+    assert "unknown DAG node" in result["error"]
+
+
+def test_causal_query_handles_unknown_intervention_node():
+    q = FactoryStateQuery()
+    result = q.causal_query(
+        "throughput_eur_day", do={"nonsense_knob": 1.0},
+    )
+    assert "error" in result
+
+
+def test_causal_query_rejects_non_numeric_intervention():
+    q = FactoryStateQuery()
+    result = q.causal_query("throughput_eur_day", do={"shift_mode": "two"})
+    assert "error" in result
+    assert "must be numeric" in result["error"]
+
+
+def test_causal_query_observation_propagates_through_dag():
+    """observe={curing_time: 30} should push makespan upward."""
+    q = FactoryStateQuery()
+    baseline = q.causal_query("makespan_hours")
+    elevated = q.causal_query("makespan_hours", observe={"curing_time": 30.0})
+    assert "error" not in baseline
+    assert "error" not in elevated
+    assert elevated["target_value"] > baseline["target_value"]
+
+
+def test_causal_query_appears_in_describe_catalogue():
+    catalogue = FactoryStateQuery.describe()
+    names = {row["name"] for row in catalogue}
+    assert "causal_query" in names
+    text = FactoryStateQuery.catalogue_text()
+    assert "causal_query" in text
+    assert "magnitudes" in text.lower()
+
+
+def test_dispatcher_returns_explicit_error_for_causal_query_without_args():
+    """The blanket ``except TypeError: return fn()`` fallback would
+    have made `run('causal_query')` re-explode — we override it so
+    the LLM gets a structured diagnostic instead of an exception in
+    the trace."""
+    q = FactoryStateQuery()
+    result = q.run("causal_query")  # missing required `target`
+    assert "error" in result
+    assert "target" in result["error"]
+    # Other sub-queries keep their permissive fallback.
+    overview = q.run("overview", spurious_kwarg=True)
+    assert "error" not in overview
+
+
+def test_agent_chains_causal_query_then_answer_with_exact_delta():
+    """End-to-end: LLM picks causal_query → tool result has delta →
+    LLM emits an answer that quotes the delta verbatim."""
+    q = FactoryStateQuery()
+    # Compute the kernel delta once so we can put it in the canned answer.
+    expected = q.causal_query("makespan_hours", do={"routing_variant": 1.0})
+    expected_delta = expected["delta"]
+
+    llm = _canned_llm([
+        '{"action": "query", "name": "causal_query", '
+        '"params": {"target": "makespan_hours", '
+        '"do": {"routing_variant": 1.0}}}',
+        '{"action": "answer", "text": '
+        f'"Variante B reduz makespan em {expected_delta} h."'
+        '}',
+    ])
+    trace = asyncio.run(run_rlm_agent(
+        question="Se mudarmos para a variante B, o makespan baixa quanto?",
+        state_query=q,
+        llm=llm,
+        max_steps=4,
+    ))
+    assert trace.terminated_reason == "complete"
+    assert trace.steps_used == 2
+    # The agent ran exactly one query and it was causal_query.
+    assert len(trace.queries_run) == 1
+    assert trace.queries_run[0]["name"] == "causal_query"
+    delta_in_tool = trace.queries_run[0]["result"]["delta"]
+    assert delta_in_tool == expected_delta
+    # The answer cites the delta verbatim.
+    assert str(expected_delta) in (trace.answer or "")
+
+
+def test_agent_default_max_steps_is_six():
+    """Bumped from 5 → 6 so a JSON cold-start retry plus a kernel
+    query plus an answer all fit without `max_steps_reached`."""
+    import inspect
+    sig = inspect.signature(run_rlm_agent)
+    assert sig.parameters["max_steps"].default == 6

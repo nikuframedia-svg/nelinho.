@@ -75,6 +75,11 @@ class FactoryStateQuery:
                 "Camada 1 confirmed rules currently enforced by the GA."},
             {"name": "overview", "description":
                 "One-shot global summary (WIP + bottlenecks + quality)."},
+            {"name": "causal_query", "description":
+                "Numerical kernel — exact magnitudes for hypothetical scenarios. "
+                "Use BEFORE answering 'what if' / 'se' / 'caso' questions with "
+                "numbers. Params: target (DAG node id), do (dict {node: value}), "
+                "observe (dict). Returns delta vs no-intervention baseline."},
         ]
 
     @classmethod
@@ -253,6 +258,81 @@ class FactoryStateQuery:
             "confirmed_rules": self.preference_rules().get("count"),
         })
 
+    def causal_query(
+        self,
+        target: str,
+        *,
+        do: Optional[Mapping[str, Any]] = None,
+        observe: Optional[Mapping[str, Any]] = None,
+    ) -> QueryResult:
+        """Numerical kernel sub-query — wraps :func:`nelo_dag.causal_query`.
+
+        Sprint F+ (kernel grounding): the LLM cannot reliably estimate
+        magnitudes for NELO's KPIs because the numbers live in the
+        DAG, not in pre-trained weights. This sub-query lets it fetch
+        the exact ``delta`` from the kernel before composing its
+        CausalChain answer.
+
+        Returns a flat, JSON-friendly dict — never raises. ``target``
+        unknown / nodes in ``do``/``observe`` unknown → structured
+        ``{"error": ...}``. The dispatcher's blanket TypeError fallback
+        is overridden here (see ``run``) so a malformed call returns
+        an explicit error instead of silently re-running with
+        baseline=baseline.
+        """
+        try:
+            from src.copilot.causal.nelo_dag import causal_query as _kernel
+        except Exception as exc:  # pragma: no cover — defensive
+            return {"error": f"causal kernel unavailable: {exc}"}
+
+        do_dict: Dict[str, float] = {}
+        for k, v in (do or {}).items():
+            try:
+                do_dict[str(k)] = float(v)
+            except (TypeError, ValueError):
+                return {
+                    "error": (
+                        f"do[{k!r}] must be numeric, got {type(v).__name__}"
+                    ),
+                }
+        observe_dict: Dict[str, float] = {}
+        for k, v in (observe or {}).items():
+            try:
+                observe_dict[str(k)] = float(v)
+            except (TypeError, ValueError):
+                return {
+                    "error": (
+                        f"observe[{k!r}] must be numeric, got {type(v).__name__}"
+                    ),
+                }
+
+        try:
+            result = _kernel(target, do=do_dict, observe=observe_dict)
+        except KeyError as exc:
+            return {"error": f"unknown DAG node: {exc}"}
+        except Exception as exc:  # pragma: no cover — defensive
+            return {"error": f"causal_query failed: {exc}"}
+
+        delta = float(result.delta)
+        if delta > 1e-9:
+            direction = "increase"
+        elif delta < -1e-9:
+            direction = "decrease"
+        else:
+            direction = "unchanged"
+
+        return _cap({
+            "target": result.target,
+            "target_value": round(float(result.target_value), 4),
+            "baseline_value": round(float(result.baseline_value), 4),
+            "delta": round(delta, 4),
+            "direction": direction,
+            "magnitude": round(abs(delta), 4),
+            "path": list(result.path)[:8],
+            "intervention": dict(do_dict) or None,
+            "observation": dict(observe_dict) or None,
+        })
+
     # ─── Dispatcher ──────────────────────────────────────────────────
 
     def run(self, name: str, **params: Any) -> QueryResult:
@@ -270,8 +350,22 @@ class FactoryStateQuery:
             }
         try:
             return fn(**params)
-        except TypeError:
-            # LLM passed a param the method doesn't accept — retry without.
+        except TypeError as exc:
+            # LLM passed a param the method doesn't accept — for most
+            # sub-queries the no-arg fallback gives a sane "default"
+            # answer (e.g. `wip()` ignores any spurious filter). For
+            # `causal_query` that is dangerous: a no-arg call would
+            # explode on the missing `target` and we'd lose the
+            # diagnostic. Surface the error verbatim instead.
+            if name == "causal_query":
+                return {
+                    "error": (
+                        "causal_query needs target (str) and optional "
+                        "do={node: value} / observe={node: value} dicts"
+                    ),
+                    "received_params": list(params.keys()),
+                    "underlying": str(exc),
+                }
             return fn()
         except Exception as exc:  # pragma: no cover — defensive
             logger.warning("FactoryStateQuery.%s failed: %s", name, exc)

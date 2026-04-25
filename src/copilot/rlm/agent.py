@@ -167,9 +167,20 @@ Em cada passo devolves EXACTAMENTE um objecto JSON numa de duas formas:
 
 Regras:
 - Nunca inventes números. Só usas valores vindos das sub-queries.
+- Se a pergunta envolve um cenário hipotético (se / e se / caso /
+  quando) com magnitude (€, horas, %, ratios), chama causal_query
+  PRIMEIRO. Não estimes — usa o delta retornado.
+  Exemplo: "se passar a 2 turnos, throughput?" →
+    {{"action": "query", "name": "causal_query",
+      "params": {{"target": "throughput_eur_day",
+                "do": {{"shift_mode": 2.0}}}}}}
+  Para perguntas factuais ("qual é o WIP hoje") usa a sub-query
+  apropriada (`wip`) directamente — não chames causal_query.
 - No máximo {max_steps} sub-queries por turno. A seguir, é obrigatório "answer".
 - A resposta final deve citar a sub-query de onde veio cada número
   (ex: "segundo `bottlenecks`, Pintura está a 82% da capacidade").
+- Cita o delta com a precisão exacta retornada pelo kernel
+  (ex: "+26 432 €/dia", não "+26 mil €" nem arredondamento).
 - Se não conseguires responder, devolves "answer" a explicar porquê.
 """
 
@@ -189,7 +200,7 @@ async def run_rlm_agent(
     question: str,
     state_query: FactoryStateQuery,
     llm: LLMCall,
-    max_steps: int = 5,
+    max_steps: int = 6,
 ) -> AgentTrace:
     """Drive the think→query→observe loop until ``max_steps`` or an
     ``answer`` step is emitted.
