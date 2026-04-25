@@ -44,6 +44,13 @@ from .nelo_dag import (
     is_valid_node,
     topological_order,
 )
+from .world_model import (
+    DRIFT_PROFILE,
+    ForecastReport,
+    STEP_UNIT,
+    StepStats,
+    forecast,
+)
 
 __all__ = [
     # DAG
@@ -74,4 +81,10 @@ __all__ = [
     "DivergenceStore",
     "detect_divergences",
     "render_dpo_triplet",
+    # World model (Sprint F+++)
+    "DRIFT_PROFILE",
+    "ForecastReport",
+    "STEP_UNIT",
+    "StepStats",
+    "forecast",
 ]

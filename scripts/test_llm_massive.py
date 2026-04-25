@@ -105,6 +105,24 @@ def _multistep(name: str, q: str, target: str, do: Dict[str, float]):
     }
 
 
+def _forecast(
+    name: str, q: str, target: str, *,
+    do: Optional[Dict[str, float]] = None,
+    observe: Optional[Dict[str, float]] = None,
+):
+    """Sprint F+++ — forecast scenarios. The expected sub-query is
+    ``world_model_forecast`` (not ``causal_query``). Wording is
+    deliberately temporal/probabilistic to disambiguate."""
+    return {
+        "name": name, "category": "forecast", "question": q,
+        "expected_target": target,
+        "expected_do": do or {},
+        "expected_observe": observe or {},
+        "needs_kernel": False,            # uses forecast, not causal_query
+        "expected_subquery": "world_model_forecast",
+    }
+
+
 SCENARIOS: List[Dict[str, Any]] = [
     # ─── Intervention (15) — every output node + several process_time ──
     _intervention("int_routing_b_makespan",
@@ -237,6 +255,32 @@ SCENARIOS: List[Dict[str, Any]] = [
     _multistep("ms_full_upgrade",
         "shift_mode=2, routing_variant=1, mold_availability_pct=0.95 — throughput_eur_day?",
         "throughput_eur_day", {"shift_mode": 2.0, "routing_variant": 1.0, "mold_availability_pct": 0.95}),
+
+    # ─── Forecast (8) — deliberately temporal/probabilistic phrasing ──
+    _forecast("fc_throughput_7_shifts",
+        "Como vai evoluir throughput_eur_day nos próximos 7 turnos?",
+        "throughput_eur_day"),
+    _forecast("fc_makespan_14_shifts",
+        "Trajectória esperada de makespan_hours num horizonte de 14 turnos.",
+        "makespan_hours"),
+    _forecast("fc_quality_risk_range",
+        "Qual o range esperado de quality_risk_score na próxima semana (7 turnos)?",
+        "quality_risk_score"),
+    _forecast("fc_tardiness_band",
+        "Próximos 7 turnos: faixa de incerteza de total_tardiness_hours.",
+        "total_tardiness_hours"),
+    _forecast("fc_throughput_double_shift",
+        "Se passarmos a 2 turnos (shift_mode=2), trajectória de throughput_eur_day nos próximos 7 turnos?",
+        "throughput_eur_day", do={"shift_mode": 2.0}),
+    _forecast("fc_otd_trajectory",
+        "Range esperado de on_time_delivery_pct ao longo de 14 turnos.",
+        "on_time_delivery_pct"),
+    _forecast("fc_rework_month",
+        "Como vai evoluir rework_rate ao longo do mês (30 turnos)?",
+        "rework_rate"),
+    _forecast("fc_pintura_queue_with_intervention",
+        "Trajectória de pintura_queue_hours nos próximos 7 turnos com mold_availability_pct=0.95.",
+        "pintura_queue_hours", do={"mold_availability_pct": 0.95}),
 ]
 
 
@@ -437,6 +481,60 @@ async def run_one(client: OllamaClient, scenario: Dict[str, Any]) -> Dict[str, A
     elapsed_ms = int((time.perf_counter() - started) * 1000)
     queries = [q.get("name") for q in trace.queries_run]
 
+    if scenario["category"] == "forecast":
+        # Forecast scenario — must call world_model_forecast and return
+        # an answer that mentions a quantile or trajectory keyword.
+        expected_sq = scenario.get("expected_subquery", "world_model_forecast")
+        called_forecast = expected_sq in queries
+        called_kernel = "causal_query" in queries
+
+        forecast_entry = next(
+            (q for q in trace.queries_run if q.get("name") == expected_sq),
+            None,
+        )
+        forecast_ok = bool(
+            forecast_entry
+            and isinstance(forecast_entry.get("result"), dict)
+            and "error" not in forecast_entry["result"]
+            and forecast_entry["result"].get("trajectory")
+        )
+        answer_lower = (trace.answer or "").lower()
+        cites_uncertainty = any(
+            tok in answer_lower
+            for tok in (
+                "p50", "p95", "p05", "trajectó", "trajetó",
+                "intervalo", "incerteza", "range", "faixa",
+                "evoluir", "previsão", "previsao", "horizonte",
+            )
+        )
+        ok = forecast_ok and bool(trace.answer) and cites_uncertainty
+        failure_class = ""
+        detail = ""
+        if not ok:
+            if called_kernel and not called_forecast:
+                failure_class = "wrong_world_model_choice"
+                detail = "called causal_query for a forecast question"
+            elif not called_forecast:
+                failure_class = "no_forecast_call"
+                detail = f"queries={queries}"
+            elif not forecast_ok:
+                err = (forecast_entry or {}).get("result", {}).get("error", "")
+                failure_class = "forecast_call_errored"
+                detail = err
+            elif not cites_uncertainty:
+                failure_class = "answer_lacks_uncertainty"
+                detail = (trace.answer or "")[:120]
+            else:
+                failure_class = "unclassified"
+                detail = ""
+        return {
+            "name": scenario["name"], "category": scenario["category"],
+            "ok": ok, "elapsed_ms": elapsed_ms,
+            "queries_run": queries, "terminated": trace.terminated_reason,
+            "failure_class": failure_class, "failure_detail": detail,
+            "answer_excerpt": (trace.answer or "")[:160],
+        }
+
     if not scenario["needs_kernel"]:
         # State query — pass if expected sub-query was called and answer non-empty.
         expected_sq = scenario.get("expected_subquery")
@@ -537,9 +635,20 @@ def _print_summary(results: List[Dict[str, Any]]) -> None:
 
     if failures:
         cls_counter: Counter[str] = Counter(r.get("failure_class", "?") for r in failures)
-        print("  Failure classes (top → bottom):")
+        print("  Failure classes (top -> bottom):")
         for cls, n in cls_counter.most_common():
-            print(f"    {cls:<22} {n:>3}")
+            print(f"    {cls:<28} {n:>3}")
+        print()
+
+    # Sub-query mix — detect prompt drift / wrong tool choice.
+    sq_counter: Counter[str] = Counter()
+    for r in results:
+        for q in r.get("queries_run") or []:
+            sq_counter[q] += 1
+    if sq_counter:
+        print("  Sub-query mix (calls across all scenarios):")
+        for sq, n in sq_counter.most_common():
+            print(f"    {sq:<28} {n:>3}")
         print()
 
     # Surface the bad node IDs Gemma keeps fabricating.
@@ -605,7 +714,7 @@ async def amain(args) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--only", choices=["intervention", "abduction", "counterfactual", "state", "multistep"])
+    parser.add_argument("--only", choices=["intervention", "abduction", "counterfactual", "state", "multistep", "forecast"])
     parser.add_argument("--limit", type=int, help="cap to N scenarios (debug)")
     parser.add_argument("--json", action="store_true", help="dump results to scripts/last_massive_run.json")
     args = parser.parse_args()

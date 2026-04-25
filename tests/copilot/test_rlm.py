@@ -429,3 +429,79 @@ def test_agent_default_max_steps_is_six():
     import inspect
     sig = inspect.signature(run_rlm_agent)
     assert sig.parameters["max_steps"].default == 6
+
+
+# ─── Sprint F+++ — world_model_forecast sub-query ────────────────────────
+
+
+def test_world_model_forecast_appears_in_catalogue():
+    names = {row["name"] for row in FactoryStateQuery.describe()}
+    assert "world_model_forecast" in names
+    text = FactoryStateQuery.catalogue_text()
+    assert "world_model_forecast" in text
+    assert "trajectória" in text.lower() or "horizonte" in text.lower()
+
+
+def test_world_model_forecast_returns_capped_trajectory():
+    """The sub-query returns trajectory rows trimmed for token budget
+    even when the underlying forecast ran for many steps."""
+    q = FactoryStateQuery()
+    result = q.world_model_forecast(
+        "throughput_eur_day", horizon_steps=14, samples=80,
+    )
+    assert "error" not in result
+    assert result["target"] == "throughput_eur_day"
+    assert result["step_unit"] == "shift"
+    assert result["horizon_steps"] == 14
+    # Cap: at most 8 rows shipped to the LLM regardless of horizon.
+    assert len(result["trajectory"]) <= 8
+    # Each row carries the headline quantiles.
+    row = result["trajectory"][0]
+    assert {"step", "mean", "std", "p05", "p50", "p95"} <= set(row.keys())
+    assert "summary" in result
+    assert "ci90_at_horizon" in result["summary"]
+
+
+def test_world_model_forecast_handles_unknown_target_with_did_you_mean():
+    q = FactoryStateQuery()
+    result = q.world_model_forecast(
+        "thru_per_day", horizon_steps=4, samples=80,
+    )
+    assert "error" in result
+    assert "did_you_mean" in result
+    assert isinstance(result["did_you_mean"], list)
+
+
+def test_dispatcher_returns_explicit_error_for_world_model_forecast_without_args():
+    q = FactoryStateQuery()
+    result = q.run("world_model_forecast")  # missing required `target`
+    assert "error" in result
+    assert "target" in result["error"]
+
+
+def test_agent_chains_world_model_forecast_then_answer_with_p50():
+    """End-to-end: LLM picks world_model_forecast → tool result has
+    a trajectory with quantiles → answer cites the p50/p95 from the
+    last step verbatim."""
+    q = FactoryStateQuery()
+    forecast_result = q.world_model_forecast(
+        "throughput_eur_day", horizon_steps=4, samples=80,
+    )
+    horizon_p50 = forecast_result["trajectory"][-1]["p50"]
+    horizon_p95 = forecast_result["trajectory"][-1]["p95"]
+
+    llm = _canned_llm([
+        '{"action": "query", "name": "world_model_forecast", '
+        '"params": {"target": "throughput_eur_day", "horizon_steps": 4}}',
+        '{"action": "answer", "text": '
+        f'"Trajectória de throughput: p50={horizon_p50}, p95={horizon_p95} "}}',
+    ])
+    trace = asyncio.run(run_rlm_agent(
+        question="Como vai evoluir o throughput nos próximos 4 turnos?",
+        state_query=q, llm=llm, max_steps=4,
+    ))
+    assert trace.terminated_reason == "complete"
+    assert trace.steps_used == 2
+    assert len(trace.queries_run) == 1
+    assert trace.queries_run[0]["name"] == "world_model_forecast"
+    assert str(horizon_p50) in (trace.answer or "")

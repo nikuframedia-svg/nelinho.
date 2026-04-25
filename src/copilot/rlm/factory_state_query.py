@@ -80,6 +80,14 @@ class FactoryStateQuery:
                 "Use BEFORE answering 'what if' / 'se' / 'caso' questions with "
                 "numbers. Params: target (DAG node id), do (dict {node: value}), "
                 "observe (dict). Returns delta vs no-intervention baseline."},
+            {"name": "world_model_forecast", "description":
+                "Monte Carlo rollout do DAG ao longo de N turnos (8h cada) "
+                "com banda de incerteza (p05/p25/p50/p75/p95). USA quando "
+                "a pergunta tem horizonte temporal ('próximos N turnos', "
+                "'trajectória', 'como vai evoluir') ou pede range/intervalo "
+                "de incerteza. Para um delta exacto num único cenário, usa "
+                "causal_query. Params: target (DAG node id), do (dict), "
+                "observe (dict), horizon_steps (1-30), samples (50-500)."},
         ]
 
     @classmethod
@@ -382,6 +390,90 @@ class FactoryStateQuery:
             "observation": dict(observe_dict) or None,
         })
 
+    def world_model_forecast(
+        self,
+        target: str,
+        *,
+        do: Optional[Mapping[str, Any]] = None,
+        observe: Optional[Mapping[str, Any]] = None,
+        horizon_steps: int = 7,
+        samples: int = 200,
+    ) -> QueryResult:
+        """Monte Carlo rollout sub-query — wraps :func:`world_model.forecast`.
+
+        Devolve um payload reduzido (≤8 rows da trajectória + summary)
+        para caber no orçamento de tokens. Ao contrário do
+        ``causal_query`` (single-step exacto), este sub-query existe
+        para perguntas com horizonte temporal e/ou pedido de
+        incerteza ("range esperado", "trajectória", "próximos N
+        turnos").
+        """
+        try:
+            from src.copilot.causal.world_model import forecast as _fc
+        except Exception as exc:  # pragma: no cover — defensive
+            return {"error": f"world_model unavailable: {exc}"}
+
+        # Validate target before calling — turns "unknown node" into
+        # the same did_you_mean diagnostic causal_query produces.
+        try:
+            from src.copilot.causal.nelo_dag import NODES_BY_ID as _NODES
+        except Exception as exc:  # pragma: no cover — defensive
+            return {"error": f"NELO_DAG unavailable: {exc}"}
+        if target not in _NODES:
+            return {
+                "error": f"unknown DAG node: {target!r}",
+                "did_you_mean": self._suggest_node_ids(target),
+                "field": "target",
+            }
+        for k in list((do or {}).keys()) + list((observe or {}).keys()):
+            if str(k) not in _NODES:
+                return {
+                    "error": f"unknown DAG node: {k!r}",
+                    "did_you_mean": self._suggest_node_ids(str(k)),
+                    "field": "do" if k in (do or {}) else "observe",
+                }
+
+        report = _fc(
+            target=target,
+            do=do or None,
+            observe=observe or None,
+            horizon_steps=horizon_steps,
+            samples=samples,
+        )
+        if report.status == "unavailable":
+            return {
+                "error": report.reason or "forecast unavailable",
+                "did_you_mean": self._suggest_node_ids(target),
+            }
+
+        # Trim trajectory to keep the LLM-facing payload small. We
+        # round numbers so the JSON dump stays compact.
+        trim_rows = min(len(report.trajectory), 8)
+        step_rows = [
+            {
+                "step": s.step,
+                "mean": round(s.mean, 4),
+                "std": round(s.std, 4),
+                "p05": round(s.p05, 4),
+                "p50": round(s.p50, 4),
+                "p95": round(s.p95, 4),
+            }
+            for s in report.trajectory[:trim_rows]
+        ]
+
+        return _cap({
+            "target": report.target,
+            "step_unit": report.step_unit,
+            "horizon_steps": report.horizon_steps,
+            "samples": report.samples,
+            "jitter": report.jitter,
+            "status": report.status,
+            "trajectory": step_rows,
+            "summary": report.summary,
+            "intervention": report.intervention,
+            "observation": report.observation,
+        })
+
     # ─── Dispatcher ──────────────────────────────────────────────────
 
     def run(self, name: str, **params: Any) -> QueryResult:
@@ -411,6 +503,16 @@ class FactoryStateQuery:
                     "error": (
                         "causal_query needs target (str) and optional "
                         "do={node: value} / observe={node: value} dicts"
+                    ),
+                    "received_params": list(params.keys()),
+                    "underlying": str(exc),
+                }
+            if name == "world_model_forecast":
+                return {
+                    "error": (
+                        "world_model_forecast needs target (str). "
+                        "Optional: do={node: value}, observe={node: value}, "
+                        "horizon_steps (1-30), samples (50-500)."
                     ),
                     "received_params": list(params.keys()),
                     "underlying": str(exc),

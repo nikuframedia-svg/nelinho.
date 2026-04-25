@@ -177,6 +177,28 @@ Não procures sub-queries "temáticas" (não há `quality_query` nem
 `temperature_query`). Para tudo o que envolva o impacto numérico de
 um KPI noutro, chamas `causal_query` com os IDs canónicos abaixo.
 
+DECISION TABLE — `causal_query` (ponto exacto) vs
+`world_model_forecast` (trajectória + incerteza):
+
+  gatilho                              | sub-query
+  -------------------------------------|----------------------
+  "se / caso / quando X..."            | causal_query
+  "observámos / dado X..."             | causal_query
+  "tinha sido melhor / e se X..."      | causal_query
+  "como vai evoluir X?"                | world_model_forecast
+  "trajectória / próximos N turnos"    | world_model_forecast
+  "range / faixa esperada / intervalo" | world_model_forecast
+  "qual é X hoje?" (factual)           | wip / bottlenecks / etc.
+
+Negative example: "Se subir o turno, qual o makespan?" →
+`causal_query` (cenário hipotético com magnitude exacta), NÃO
+`world_model_forecast`. Forecast só quando a pergunta tem
+dimensão temporal/incerteza explícita.
+
+Nunca chames `causal_query` E `world_model_forecast` no mesmo
+turno — escolhe uma. world_model_forecast já incorpora cenários
+(via `do`/`observe`), portanto cobre as duas dimensões num só call.
+
 NÓS DO NELO_DAG — usa EXACTAMENTE estes IDs em `target`, `do` e
 `observe` (não inventes variantes; `curing_time` NÃO é
 `curing_time_hours`; `mold_age` NÃO é `mold_age_avg`;
