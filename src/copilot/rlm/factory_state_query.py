@@ -258,6 +258,23 @@ class FactoryStateQuery:
             "confirmed_rules": self.preference_rules().get("count"),
         })
 
+    @staticmethod
+    def _suggest_node_ids(bad: str, max_suggestions: int = 3) -> List[str]:
+        """Return up to ``max_suggestions`` known node ids closest to
+        ``bad`` by string similarity. Used to turn unknown-node errors
+        into actionable hints — without this the LLM tends to retry
+        with another invented variant.
+        """
+        try:
+            from difflib import get_close_matches
+            from src.copilot.causal.nelo_dag import NODES_BY_ID
+        except Exception:
+            return []
+        return get_close_matches(
+            str(bad), list(NODES_BY_ID.keys()),
+            n=max_suggestions, cutoff=0.4,
+        )
+
     def causal_query(
         self,
         target: str,
@@ -290,9 +307,17 @@ class FactoryStateQuery:
             try:
                 do_dict[str(k)] = float(v)
             except (TypeError, ValueError):
+                # Common LLM trap: passing the categorical label
+                # ("B", "double") instead of the encoded number.
+                hint = ""
+                if str(k) == "routing_variant":
+                    hint = " — use 0.0 (primário) ou 1.0 (variante B)"
+                elif str(k) == "shift_mode":
+                    hint = " — use 1.0 (turno único) ou 2.0 (duplo)"
                 return {
                     "error": (
                         f"do[{k!r}] must be numeric, got {type(v).__name__}"
+                        f" ({v!r}){hint}"
                     ),
                 }
         observe_dict: Dict[str, float] = {}
@@ -306,10 +331,34 @@ class FactoryStateQuery:
                     ),
                 }
 
+        # Validate node ids before handing to the kernel so we can
+        # turn "unknown node" into actionable did_you_mean hints.
+        from src.copilot.causal.nelo_dag import NODES_BY_ID as _NODES
+
+        if target not in _NODES:
+            return {
+                "error": f"unknown DAG node: {target!r}",
+                "did_you_mean": self._suggest_node_ids(target),
+                "field": "target",
+            }
+        for k in list(do_dict.keys()) + list(observe_dict.keys()):
+            if k not in _NODES:
+                return {
+                    "error": f"unknown DAG node: {k!r}",
+                    "did_you_mean": self._suggest_node_ids(k),
+                    "field": "do" if k in do_dict else "observe",
+                }
+
         try:
             result = _kernel(target, do=do_dict, observe=observe_dict)
         except KeyError as exc:
-            return {"error": f"unknown DAG node: {exc}"}
+            # Defensive fallback — validation above should catch all,
+            # but if a kernel internal mapping changes we still hint.
+            bad = str(exc).strip("'\"")
+            return {
+                "error": f"unknown DAG node: {exc}",
+                "did_you_mean": self._suggest_node_ids(bad),
+            }
         except Exception as exc:  # pragma: no cover — defensive
             return {"error": f"causal_query failed: {exc}"}
 

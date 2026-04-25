@@ -1,0 +1,1567 @@
+[
+  {
+    "name": "int_routing_b_makespan",
+    "category": "intervention",
+    "ok": true,
+    "elapsed_ms": 7260,
+    "coherence": 1.0,
+    "kernel_delta": -12.085,
+    "expected_delta": -12.085,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Se mudarmos para a variante B (routing_variant=1.0), o makespan_hours diminui em 12.085 horas, passando de 280.0 horas para 267.915 horas."
+  },
+  {
+    "name": "int_double_shift_throughput",
+    "category": "intervention",
+    "ok": true,
+    "elapsed_ms": 5344,
+    "coherence": 1.0,
+    "kernel_delta": 26432.0,
+    "expected_delta": 26432.0,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Se passarmos a 2 turnos (shift_mode=2.0), o throughput_eur_day aumenta em 26 432.0 €/dia."
+  },
+  {
+    "name": "int_more_workers_lam_duration",
+    "category": "intervention",
+    "ok": true,
+    "elapsed_ms": 6358,
+    "coherence": 1.0,
+    "kernel_delta": -0.48,
+    "expected_delta": -0.48,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Se aumentarmos o número de laminadores para 24, a duração da laminação (laminagem_duration) diminuirá em 0.48 horas, passando de 4.0 horas para 3.52 horas."
+  },
+  {
+    "name": "int_cold_curing",
+    "category": "intervention",
+    "ok": true,
+    "elapsed_ms": 6177,
+    "coherence": 1.0,
+    "kernel_delta": 2.8,
+    "expected_delta": 2.8,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Se a temperatura externa cair para 12°C, o tempo de cura (curing_time) aumenta em 2.8 horas, passando de 15.0 horas para 17.8 horas."
+  },
+  {
+    "name": "int_hot_curing",
+    "category": "intervention",
+    "ok": true,
+    "elapsed_ms": 6482,
+    "coherence": 1.0,
+    "kernel_delta": -2.8,
+    "expected_delta": -2.8,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Se a temperatura externa subir para 26°C, o tempo de cura (curing_time) diminui em 2.8 horas, passando de 15.0 horas para 12.2 horas."
+  },
+  {
+    "name": "int_more_pintura_workers",
+    "category": "intervention",
+    "ok": true,
+    "elapsed_ms": 6045,
+    "coherence": 1.0,
+    "kernel_delta": -0.6,
+    "expected_delta": -0.6,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Se o número de trabalhadores de pintura subir para 10, a duração do processo de pintura deverá diminuir em 0.6 horas, passando de 3.5 horas para 2.9 horas."
+  },
+  {
+    "name": "int_old_molds_setup",
+    "category": "intervention",
+    "ok": true,
+    "elapsed_ms": 7108,
+    "coherence": 1.0,
+    "kernel_delta": 0.25,
+    "expected_delta": 0.25,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Se a idade média dos moldes (mold_age) subir para 6 anos, o tempo de preparação dos moldes (mold_setup_time) aumenta em 0.25 horas. Isto significa que o tempo d"
+  },
+  {
+    "name": "int_low_mold_avail",
+    "category": "intervention",
+    "ok": true,
+    "elapsed_ms": 6311,
+    "coherence": 1.0,
+    "kernel_delta": 2.5,
+    "expected_delta": 2.5,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Se a disponibilidade de moldes (mold_availability_pct) cair para 0.6, o número de setups (setup_count) deverá aumentar em 2.5, passando de um valor base de 14.0"
+  },
+  {
+    "name": "int_low_material_tardiness",
+    "category": "intervention",
+    "ok": true,
+    "elapsed_ms": 5404,
+    "coherence": 1.0,
+    "kernel_delta": 26.4,
+    "expected_delta": 26.4,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Se a disponibilidade de material (material_availability_pct) cair para 0.7, o total de horas de atraso (total_tardiness_hours) aumentará em 26.4 horas."
+  },
+  {
+    "name": "int_routing_throughput",
+    "category": "intervention",
+    "ok": true,
+    "elapsed_ms": 5978,
+    "coherence": 1.0,
+    "kernel_delta": 135.352,
+    "expected_delta": 135.352,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "A mudança para a variante B (routing_variant = 1.0) aumenta o throughput em 135.352 €/dia."
+  },
+  {
+    "name": "int_routing_setups",
+    "category": "intervention",
+    "ok": true,
+    "elapsed_ms": 5406,
+    "coherence": 1.0,
+    "kernel_delta": -2.0,
+    "expected_delta": -2.0,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "A Variante B (routing_variant = 1.0) reduz o número de setups em 2.0 setups em comparação com o baseline."
+  },
+  {
+    "name": "int_experienced_team_quality",
+    "category": "intervention",
+    "ok": true,
+    "elapsed_ms": 5451,
+    "coherence": 1.0,
+    "kernel_delta": -0.024,
+    "expected_delta": -0.024,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Se a experiência do operador subir para 12 anos, o risco de qualidade (quality_risk_score) deverá diminuir em 0.024, passando de um valor base de 0.108 para 0.0"
+  },
+  {
+    "name": "int_lam_workers_queue",
+    "category": "intervention",
+    "ok": true,
+    "elapsed_ms": 6983,
+    "coherence": 1.0,
+    "kernel_delta": -1.48,
+    "expected_delta": -1.48,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "O aumento do número de laminadores para 22 reduz o tempo de fila de laminagem em 1.48 horas, passando de 6.0 horas para 4.52 horas."
+  },
+  {
+    "name": "int_pintura_workers_queue",
+    "category": "intervention",
+    "ok": true,
+    "elapsed_ms": 7589,
+    "coherence": 1.0,
+    "kernel_delta": -0.78,
+    "expected_delta": -0.78,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Sim. Se o número de operários de pintura (worker_count_pintura) subir para 8, o tempo de fila de pintura (pintura_queue_hours) desce em 0.78 horas, passando de "
+  },
+  {
+    "name": "int_cold_quality",
+    "category": "intervention",
+    "ok": true,
+    "elapsed_ms": 6183,
+    "coherence": 1.0,
+    "kernel_delta": 0.135,
+    "expected_delta": 0.135,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Se a temperatura externa cair para 10°C, o risco de qualidade (quality_risk_score) aumenta em 0.135, passando de um valor base de 0.108 para 0.243."
+  },
+  {
+    "name": "abd_high_quality_risk_rework",
+    "category": "abduction",
+    "ok": true,
+    "elapsed_ms": 5195,
+    "coherence": 1.0,
+    "kernel_delta": 0.1278,
+    "expected_delta": 0.1278,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Observando um `quality_risk_score` de 0.25, o modelo prevê um aumento no `rework_rate` de 0.1278. Isto significa que o nosso índice de risco de qualidade elevad"
+  },
+  {
+    "name": "abd_low_material_otd",
+    "category": "abduction",
+    "ok": true,
+    "elapsed_ms": 6287,
+    "coherence": 1.0,
+    "kernel_delta": -0.1557,
+    "expected_delta": -0.1557,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Observando que a disponibilidade de material (material_availability_pct) caiu para 0.65, o impacto na percentagem de entregas a tempo (on_time_delivery_pct) é u"
+  },
+  {
+    "name": "abd_high_curing_makespan",
+    "category": "abduction",
+    "ok": true,
+    "elapsed_ms": 8050,
+    "coherence": 1.0,
+    "kernel_delta": 42.0,
+    "expected_delta": 42.0,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Se observarmos um tempo de cura (curing_time) de 22 horas, o makespan (tempo total de produção) aumentará em 42.0 horas. Este aumento é devido ao impacto direto"
+  },
+  {
+    "name": "abd_high_lam_duration_queue",
+    "category": "abduction",
+    "ok": true,
+    "elapsed_ms": 7205,
+    "coherence": 1.0,
+    "kernel_delta": 2.25,
+    "expected_delta": 2.25,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Observando que a duração da laminação aumentou para 5.5 horas, o tempo de fila de laminação (laminagem_queue_hours) deverá aumentar em 2.25 horas, passando de u"
+  },
+  {
+    "name": "abd_high_setup_makespan",
+    "category": "abduction",
+    "ok": true,
+    "elapsed_ms": 5197,
+    "coherence": 1.0,
+    "kernel_delta": 16.1,
+    "expected_delta": 16.1,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Se o tempo de setup do molde (mold_setup_time) for aumentado para 2 horas, o makespan_hours (tempo total de produção) aumentará em 16.1 horas, passando de 280.0"
+  },
+  {
+    "name": "abd_high_rework_throughput",
+    "category": "abduction",
+    "ok": true,
+    "elapsed_ms": 7491,
+    "coherence": 1.0,
+    "kernel_delta": -411.2,
+    "expected_delta": -411.2,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Observando uma taxa de retrabalho (rework_rate) de 0.20, o impacto previsto no throughput diário (throughput_eur_day) é uma diminuição de 411.2 €/dia. Este valo"
+  },
+  {
+    "name": "abd_high_tardiness_otd",
+    "category": "abduction",
+    "ok": true,
+    "elapsed_ms": 8127,
+    "coherence": 1.0,
+    "kernel_delta": -0.1557,
+    "expected_delta": -0.1557,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Observando um total de atrasos de 80 horas, a probabilidade de entrega a tempo (on-time delivery pct) cairia em 0.1557, passando de um valor base de 0.4557 para"
+  },
+  {
+    "name": "abd_high_makespan_throughput",
+    "category": "abduction",
+    "ok": true,
+    "elapsed_ms": 6968,
+    "coherence": 1.0,
+    "kernel_delta": -448.0,
+    "expected_delta": -448.0,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Dado que o `makespan_hours` é de 320 horas, o `throughput_eur_day` deverá descer em 448.0 €/dia."
+  },
+  {
+    "name": "abd_low_mold_avail_setup",
+    "category": "abduction",
+    "ok": true,
+    "elapsed_ms": 6921,
+    "coherence": 1.0,
+    "kernel_delta": 1.5,
+    "expected_delta": 1.5,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Com base na observação de que a disponibilidade de moldes (`mold_availability_pct`) é de 0.7, o número de setups (`setup_count`) é estimado em 15.5, representan"
+  },
+  {
+    "name": "abd_high_quality_throughput",
+    "category": "abduction",
+    "ok": true,
+    "elapsed_ms": 24883,
+    "coherence": 1.0,
+    "kernel_delta": -411.2,
+    "expected_delta": -691.2,
+    "queries_run": [
+      "causal_query",
+      "causal_query",
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "O impacto de aumentar o `quality_risk_score` para 0.30, mantendo o `rework_rate` em 0.06, resulta num aumento de 148.8 €/dia no `throughput_eur_day`. \n\nPor outr"
+  },
+  {
+    "name": "cf_had_routing_b",
+    "category": "counterfactual",
+    "ok": true,
+    "elapsed_ms": 9652,
+    "coherence": 1.0,
+    "kernel_delta": -12.085,
+    "expected_delta": -12.085,
+    "queries_run": [
+      "causal_query",
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Se tivéssemos escolhido a variante B (routing_variant=1.0), o makespan teria diminuído em 12.085 horas, passando de 280.0 horas para 267.915 horas."
+  },
+  {
+    "name": "cf_had_double_shift",
+    "category": "counterfactual",
+    "ok": true,
+    "elapsed_ms": 7781,
+    "coherence": 1.0,
+    "kernel_delta": 26432.0,
+    "expected_delta": 26432.0,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Sim, ter 2 turnos (shift_mode=2.0) teria sido melhor. O aumento no throughput_eur_day seria de 26 432.0 €/dia."
+  },
+  {
+    "name": "cf_had_24_workers",
+    "category": "counterfactual",
+    "ok": true,
+    "elapsed_ms": 6592,
+    "coherence": 1.0,
+    "kernel_delta": -0.48,
+    "expected_delta": -0.48,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Sim, o resultado da simulação confirma que ter usado 24 laminadores (aumentando o `worker_count_laminagem` de 18.0 para 24.0) teria sido melhor. O impacto seria"
+  },
+  {
+    "name": "cf_had_warmer_room",
+    "category": "counterfactual",
+    "ok": true,
+    "elapsed_ms": 6895,
+    "coherence": 1.0,
+    "kernel_delta": -1.6,
+    "expected_delta": -1.6,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Sim, se a temperatura tivesse sido de 23°C, o tempo de cura (curing_time) teria diminuído. O modelo prevê uma redução de 1.6 horas, passando de 15.0 horas para "
+  },
+  {
+    "name": "cf_had_more_molds",
+    "category": "counterfactual",
+    "ok": true,
+    "elapsed_ms": 5919,
+    "coherence": 1.0,
+    "kernel_delta": -1.0,
+    "expected_delta": -1.0,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Se tivéssemos tido 95% de disponibilidade de moldes (mold_availability_pct=0.95), o número de setups teria diminuído em 1.0, passando de 14.0 para 13.0."
+  },
+  {
+    "name": "cf_had_full_material",
+    "category": "counterfactual",
+    "ok": true,
+    "elapsed_ms": 5974,
+    "coherence": 1.0,
+    "kernel_delta": -3.6,
+    "expected_delta": -3.6,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Se o `material_availability_pct` tivesse sido 1.0, o `total_tardiness_hours` teria sido de 45.832 horas. Isto representa uma redução de 3.6 horas em comparação "
+  },
+  {
+    "name": "cf_had_8_pintura",
+    "category": "counterfactual",
+    "ok": true,
+    "elapsed_ms": 8274,
+    "coherence": 1.0,
+    "kernel_delta": -0.3,
+    "expected_delta": -0.3,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Se tivéssemos tido 8 pintores (worker_count_pintura=8), a duração da pintura (pintura_duration) teria diminuído em 0.3 horas, passando de 3.5 horas para 3.2 hor"
+  },
+  {
+    "name": "cf_had_new_molds",
+    "category": "counterfactual",
+    "ok": true,
+    "elapsed_ms": 6461,
+    "coherence": 1.0,
+    "kernel_delta": -0.02,
+    "expected_delta": -0.02,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Se a idade média dos moldes (mold_age) fosse de 1 ano, o score de risco de qualidade (quality_risk_score) seria de 0.088. Isto representa uma diminuição de 0.02"
+  },
+  {
+    "name": "st_wip",
+    "category": "state",
+    "ok": true,
+    "elapsed_ms": 5133,
+    "queries_run": [
+      "open_orders",
+      "wip"
+    ],
+    "terminated": "complete",
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Atualmente, não temos ordens em aberto, tanto no estado de trabalho em progresso (WIP) como no total de ordens abertas."
+  },
+  {
+    "name": "st_bottlenecks",
+    "category": "state",
+    "ok": true,
+    "elapsed_ms": 4815,
+    "queries_run": [
+      "bottlenecks",
+      "overview"
+    ],
+    "terminated": "complete",
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Não foi possível identificar gargalos no momento, pois a sub-query `bottlenecks` falhou e a `overview` não forneceu dados específicos sobre fases em risco ou ga"
+  },
+  {
+    "name": "st_skills_risk",
+    "category": "state",
+    "ok": true,
+    "elapsed_ms": 9614,
+    "queries_run": [
+      "skills_risk",
+      "overview",
+      "skills_risk",
+      "bottlenecks"
+    ],
+    "terminated": "complete",
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Não foi possível obter informações sobre fases com risco de competências, pois a sub-query `skills_risk` falhou devido a um erro de camada semântica. Por favor,"
+  },
+  {
+    "name": "st_quality",
+    "category": "state",
+    "ok": true,
+    "elapsed_ms": 10115,
+    "queries_run": [
+      "quality",
+      "overview",
+      "quality",
+      "bottlenecks"
+    ],
+    "terminated": "complete",
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Não foi possível obter o número de erros de qualidade. As sub-queries de análise de estado (como 'quality' e 'overview') estão indisponíveis no momento devido a"
+  },
+  {
+    "name": "st_open_orders",
+    "category": "state",
+    "ok": true,
+    "elapsed_ms": 2974,
+    "queries_run": [
+      "open_orders"
+    ],
+    "terminated": "complete",
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "De acordo com os dados mais recentes, não existem ordens abertas no momento."
+  },
+  {
+    "name": "st_overview",
+    "category": "state",
+    "ok": true,
+    "elapsed_ms": 11994,
+    "queries_run": [
+      "overview",
+      "wip",
+      "bottlenecks",
+      "quality"
+    ],
+    "terminated": "complete",
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Peço desculpa, mas não consigo fornecer um resumo geral da fábrica neste momento. As sub-queries de 'bottlenecks' e 'quality' falharam ao carregar a camada semâ"
+  },
+  {
+    "name": "st_preference_rules",
+    "category": "state",
+    "ok": true,
+    "elapsed_ms": 3071,
+    "queries_run": [
+      "preference_rules"
+    ],
+    "terminated": "complete",
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Atualmente, não existem regras de preferência confirmadas e ativas a serem aplicadas pelo Algoritmo Genético (GA)."
+  },
+  {
+    "name": "st_lead_time",
+    "category": "state",
+    "ok": true,
+    "elapsed_ms": 11391,
+    "queries_run": [
+      "lead_time",
+      "overview",
+      "lead_time",
+      "open_orders"
+    ],
+    "terminated": "complete",
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Não foi possível obter o lead time médio. A sub-query `lead_time` falhou devido a um erro de camada semântica, e não há dados de estado disponíveis para fornece"
+  },
+  {
+    "name": "ms_2shifts_and_routing_b",
+    "category": "multistep",
+    "ok": true,
+    "elapsed_ms": 7340,
+    "coherence": 1.0,
+    "kernel_delta": 26702.704,
+    "expected_delta": 26702.704,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Se passarmos a 2 turnos e mudarmos para a variante B, o throughput diário (throughput_eur_day) aumentaria em 26 702,704 €/dia, atingindo um valor de 52 745,904 "
+  },
+  {
+    "name": "ms_more_workers_and_routing",
+    "category": "multistep",
+    "ok": true,
+    "elapsed_ms": 7295,
+    "coherence": 1.0,
+    "kernel_delta": -25.2874,
+    "expected_delta": -25.2874,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Com 24 laminadores e a Variante B, o makespan esperado é de 254.7126 horas, o que representa uma redução de 25.2874 horas em comparação com o cenário base."
+  },
+  {
+    "name": "ms_cold_and_old_molds",
+    "category": "multistep",
+    "ok": true,
+    "elapsed_ms": 7350,
+    "coherence": 1.0,
+    "kernel_delta": 0.087,
+    "expected_delta": 0.087,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Se a temperatura externa for de 14°C e a idade do molde for de 5 anos, o score de risco de qualidade aumentaria em 0.087, passando de um valor base de 0.108 par"
+  },
+  {
+    "name": "ms_low_mat_high_quality",
+    "category": "multistep",
+    "ok": true,
+    "elapsed_ms": 6372,
+    "coherence": 1.0,
+    "kernel_delta": 20.864,
+    "expected_delta": 20.864,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Com base na análise causal, se a disponibilidade de material cair para 0.7 e, simultaneamente, a experiência dos operadores for de 12 anos, o total de horas de "
+  },
+  {
+    "name": "ms_full_upgrade",
+    "category": "multistep",
+    "ok": true,
+    "elapsed_ms": 6213,
+    "coherence": 1.0,
+    "kernel_delta": 26715.248,
+    "expected_delta": 26715.248,
+    "queries_run": [
+      "causal_query"
+    ],
+    "terminated": "complete",
+    "layers": {
+      "syntactic": {
+        "score": 1.0,
+        "passed": true
+      },
+      "dag_consistent": {
+        "score": 1.0,
+        "passed": true
+      },
+      "direction": {
+        "score": 1.0,
+        "passed": true
+      },
+      "nli": {
+        "score": 1.0,
+        "passed": true
+      },
+      "kernel": {
+        "score": 1.0,
+        "passed": true
+      }
+    },
+    "failure_class": "",
+    "failure_detail": "",
+    "answer_excerpt": "Com base na análise causal, se passarmos para o modo de dois turnos (shift_mode=2.0), utilizarmos a variante B (routing_variant=1.0) e aumentarmos a disponibili"
+  }
+]

@@ -162,32 +162,105 @@ Tens acesso às seguintes sub-queries (podes chamar uma por passo):
 
 Em cada passo devolves EXACTAMENTE um objecto JSON numa de duas formas:
 
-  {{"action": "query", "name": "<subquery>", "params": {{}}}}
+  {{"action": "query", "name": "<subquery>", "params": {{...}}}}
   {{"action": "answer", "text": "<resposta final em português>"}}
 
-Regras:
-- Nunca inventes números. Só usas valores vindos das sub-queries.
-- Se a pergunta envolve um cenário hipotético (se / e se / caso /
-  quando) com magnitude (€, horas, %, ratios), chama causal_query
-  PRIMEIRO. Não estimes — usa o delta retornado.
-  Exemplo: "se passar a 2 turnos, throughput?" →
+REGRA CENTRAL — `causal_query` é a tua ferramenta universal para
+QUALQUER pergunta numérica que envolve relações entre KPIs:
+
+  - "se / e se / caso / quando X..."  → INTERVENÇÃO (do)
+  - "observámos / vejo / dado que X..." → ABDUÇÃO (observe)
+  - "tinha sido melhor / e se tivéssemos..." → CONTRAFACTUAL (do)
+  - "se X e Y..." → MULTI-INTERVENÇÃO (do com vários nós)
+
+Não procures sub-queries "temáticas" (não há `quality_query` nem
+`temperature_query`). Para tudo o que envolva o impacto numérico de
+um KPI noutro, chamas `causal_query` com os IDs canónicos abaixo.
+
+NÓS DO NELO_DAG — usa EXACTAMENTE estes IDs em `target`, `do` e
+`observe` (não inventes variantes; `curing_time` NÃO é
+`curing_time_hours`; `mold_age` NÃO é `mold_age_avg`;
+`routing_variant` NÃO é `variant` nem "B"):
+
+{node_id_list}
+
+VALORES PARA `do` E `observe` — sempre numéricos:
+  - shift_mode: 1.0 (turno único) ou 2.0 (duplo)
+  - routing_variant: 0.0 (primário) ou 1.0 (variante B)
+  - mold_availability_pct, material_availability_pct: 0.0–1.0
+  - external_temperature: graus Celsius (ex: 12.0, 19.0, 26.0)
+  - quality_risk_score, rework_rate, on_time_delivery_pct: 0.0–1.0
+  - todos os outros: o valor numérico cru no unit do baseline
+
+EXEMPLOS CONCRETOS de `causal_query`:
+
+  "Se passar a 2 turnos, throughput?":
     {{"action": "query", "name": "causal_query",
       "params": {{"target": "throughput_eur_day",
                 "do": {{"shift_mode": 2.0}}}}}}
-  Para perguntas factuais ("qual é o WIP hoje") usa a sub-query
-  apropriada (`wip`) directamente — não chames causal_query.
-- No máximo {max_steps} sub-queries por turno. A seguir, é obrigatório "answer".
-- A resposta final deve citar a sub-query de onde veio cada número
-  (ex: "segundo `bottlenecks`, Pintura está a 82% da capacidade").
+
+  "Variante B + 24 laminadores, makespan?":
+    {{"action": "query", "name": "causal_query",
+      "params": {{"target": "makespan_hours",
+                "do": {{"routing_variant": 1.0,
+                      "worker_count_laminagem": 24.0}}}}}}
+
+  "Observamos rework_rate=0.20, throughput?":
+    {{"action": "query", "name": "causal_query",
+      "params": {{"target": "throughput_eur_day",
+                "observe": {{"rework_rate": 0.20}}}}}}
+
+QUANDO NÃO USAR `causal_query` (perguntas factuais sobre estado
+actual): chama directamente `wip`, `bottlenecks`, `skills_risk`,
+`quality`, `lead_time`, `mold_conflicts`, `preference_rules`,
+`overview`. Estas devolvem o estado real, não fazem causal reasoning.
+
+OUTRAS REGRAS:
+- Nunca inventes números. Só usas valores vindos das sub-queries.
+- No máximo {max_steps} sub-queries por turno. A seguir, "answer".
 - Cita o delta com a precisão exacta retornada pelo kernel
   (ex: "+26 432 €/dia", não "+26 mil €" nem arredondamento).
-- Se não conseguires responder, devolves "answer" a explicar porquê.
+- Se a sub-query devolve `error`, lê o campo `hint` ou
+  `did_you_mean` antes de tentar de novo — corrige o ID e re-tenta
+  UMA vez. Se ainda assim falhar, devolve "answer" a explicar.
 """
+
+
+def _node_id_list_text() -> str:
+    """Render every NELO_DAG node id with its category + unit, grouped
+    by category. Inserted into the system prompt so the LLM has the
+    canonical vocabulary in front of it at every turn."""
+    from src.copilot.causal.nelo_dag import ALL_NODES, NodeCategory
+
+    by_cat: Dict[str, List[Any]] = {}
+    for node in ALL_NODES:
+        by_cat.setdefault(node.category.value, []).append(node)
+
+    order = [
+        NodeCategory.INPUT.value,
+        NodeCategory.PROCESS_TIME.value,
+        NodeCategory.PROCESS_FLOW.value,
+        NodeCategory.QUALITY.value,
+        NodeCategory.OUTPUT.value,
+        NodeCategory.CONFOUNDER.value,
+    ]
+    lines: List[str] = []
+    for cat in order:
+        nodes = by_cat.get(cat, [])
+        if not nodes:
+            continue
+        lines.append(f"  [{cat}]")
+        for n in nodes:
+            lines.append(
+                f"    {n.id}  ({n.unit}, baseline={n.baseline})"
+            )
+    return "\n".join(lines)
 
 
 def build_system_prompt(max_steps: int) -> str:
     return SYSTEM_PROMPT_PT.format(
         catalogue=FactoryStateQuery.catalogue_text(),
+        node_id_list=_node_id_list_text(),
         max_steps=max_steps,
     )
 
