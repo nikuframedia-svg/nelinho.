@@ -529,6 +529,12 @@ def main() -> int:
     # …then the cross-level curve.
     _print_curve(curve)
 
+    # Always persist the run for diff'ing across runs (gitignored).
+    out = Path("scripts/last_concurrent_run.json")
+    out.write_text(json.dumps(curve, indent=2, ensure_ascii=False),
+                   encoding="utf-8")
+    print(f"JSON saved: {out}")
+
     if args.json:
         print("\n--- JSON ---")
         print(json.dumps(curve, indent=2, ensure_ascii=False))

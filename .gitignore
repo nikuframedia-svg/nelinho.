@@ -62,6 +62,9 @@ Desktop.ini
 # Logs
 *.log
 logs/
+
+# Run outputs (kept locally for diff'ing across runs, not version-controlled)
+scripts/last_*.json
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
