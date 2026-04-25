@@ -112,6 +112,42 @@ class TransportBatchService:
             out.setdefault(row.batch_id, []).append(row.order_id)
         return out
 
+    async def remove_order(
+        self,
+        *,
+        batch_id: UUID,
+        order_id: UUID,
+    ) -> bool:
+        """Detach an order from a batch. Returns True iff a link existed."""
+        stmt = select(TransportBatchAssignment).where(
+            and_(
+                TransportBatchAssignment.tenant_id == self.tenant_id,
+                TransportBatchAssignment.batch_id == batch_id,
+                TransportBatchAssignment.order_id == order_id,
+            )
+        )
+        link = (await self.session.execute(stmt)).scalar_one_or_none()
+        if link is None:
+            return False
+        await self.session.delete(link)
+        await self.session.flush()
+        return True
+
+    async def get_batch(self, batch_id: UUID) -> TransportBatch:
+        """Public read-only fetch. Raises TransportBatchNotFoundError if absent."""
+        return await self._get(batch_id)
+
+    async def assigned_count(self, batch_id: UUID) -> int:
+        """How many orders are currently linked to this batch."""
+        stmt = select(TransportBatchAssignment).where(
+            and_(
+                TransportBatchAssignment.tenant_id == self.tenant_id,
+                TransportBatchAssignment.batch_id == batch_id,
+            )
+        )
+        rows = (await self.session.execute(stmt)).scalars().all()
+        return len(list(rows))
+
     async def freeze(self, batch_id: UUID) -> TransportBatch:
         row = await self._get(batch_id)
         row.status = "FROZEN"

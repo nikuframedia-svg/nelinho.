@@ -180,6 +180,29 @@ async def quality_dashboard(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
+# ─── Sprint Q.5 — First-pass yield (CEO dashboard tile) ──────────────────
+
+@router.get("/first-pass-yield")
+async def first_pass_yield(
+    window_days: int = Query(30, ge=1, le=365),
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """% of completed orders with zero rework events in the window.
+
+    Plan v4 §9. Reuses `DashboardMetricsService` from the profit module
+    so the same definition is used by both /v1/profit/dashboard and
+    here — single source of truth.
+    """
+    from src.profit.services.dashboard_metrics_service import (
+        DashboardMetricsService,
+    )
+
+    svc = DashboardMetricsService(session, tenant_id)
+    result = await svc.first_pass_yield(window_days=window_days)
+    return result.to_dict()
+
+
 # ─── R.5 — Root-cause ─────────────────────────────────────────────────────
 
 @router.get("/root-cause")

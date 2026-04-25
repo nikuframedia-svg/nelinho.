@@ -141,6 +141,74 @@ async def export_snapshot(
     return await svc.export_snapshot()
 
 
+# ─── Sprint Q.6 — convenience endpoints ────────────────────────────────────
+
+@router.get("/categories")
+async def list_categories() -> dict:
+    """Enumerate every category that has at least one seeded default key.
+
+    Reads from `default_configs.DEFAULT_SEEDS` (the canonical source) so
+    the Settings UI can render the tab list without hardcoding.
+    """
+    from src.core.services.default_configs import iter_seeds
+
+    seen: dict[str, int] = {}
+    for category, _key, _value, _data_type, _note in iter_seeds():
+        seen[category] = seen.get(category, 0) + 1
+    return {
+        "categories": sorted(
+            (
+                {"category": cat, "default_keys": count}
+                for cat, count in seen.items()
+            ),
+            key=lambda r: r["category"],
+        ),
+        "total": sum(seen.values()),
+    }
+
+
+@router.post("/{category}/{key}/reset-to-default", response_model=ConfigEntryOut)
+async def reset_to_default(
+    category: str,
+    key: str,
+    tenant_id: UUID = Depends(get_tenant_id),
+    user_id: Optional[UUID] = Depends(get_user_id),
+    session: AsyncSession = Depends(get_session),
+) -> ConfigEntryOut:
+    """Reset a single key back to the seeded default value.
+
+    Looks up `default_configs.DEFAULT_SEEDS` for `(category, key)`. If
+    the key isn't in the catalogue, returns 404. Otherwise writes a new
+    audit row pointing at the default value, just like a normal `set`.
+    """
+    from src.core.services.default_configs import iter_seeds
+
+    default_match: Optional[tuple] = None
+    for cat, k, value, data_type, _note in iter_seeds():
+        if cat == category and k == key:
+            default_match = (value, data_type)
+            break
+    if default_match is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=f"No default seeded for {category}.{key}",
+        )
+
+    default_value, default_type = default_match
+    svc = TenantConfigService(session, tenant_id)
+    try:
+        row = await svc.set(
+            category=category,
+            key=key,
+            value=default_value,
+            user_id=user_id,
+            data_type=default_type,
+        )
+    except TenantConfigValidationError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return _to_out(row)
+
+
 @router.post("/snapshot/import", response_model=dict)
 async def import_snapshot(
     snapshot: dict,

@@ -614,6 +614,19 @@ class CommitDecisionRequest(BaseModel):
     reason: Optional[str] = Field(default=None, max_length=500)
     decided_by: str = Field(default="unknown", max_length=255)
 
+    # Sprint Q.5 — categorical rejection signal (mirrors
+    # `src.governance.models.RejectionCategory`). Required by the API
+    # validator below when `rejected_alt_idxs` is non-empty so the
+    # PreferenceRuleDetector has a tagged feature on every rejection.
+    rejection_category: Optional[str] = Field(
+        default=None,
+        description=(
+            "One of COST | QUALITY | CUSTOMER | CAPACITY | MOLD | "
+            "WORKFORCE | OTHER. Required when rejected_alt_idxs is non-empty."
+        ),
+        max_length=32,
+    )
+
 
 class CommitDecisionResponse(BaseModel):
     commit_sha256: str
@@ -640,8 +653,45 @@ async def decide_on_commit(
     PreferenceRuleDetector (Sprint C) walks these rows nightly and turns
     recurring rejection patterns into actionable rules.
     """
+    # Sprint Q.5 — categorical rejection signal mandatory when alts rejected
+    if body.rejected_alt_idxs and not body.rejection_category:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "rejection_category is required when rejected_alt_idxs is "
+                "non-empty (one of COST, QUALITY, CUSTOMER, CAPACITY, MOLD, "
+                "WORKFORCE, OTHER)"
+            ),
+        )
+    if body.rejection_category:
+        try:
+            from src.governance.models import RejectionCategory
+            RejectionCategory(body.rejection_category)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"unknown rejection_category={body.rejection_category!r}; "
+                    "allowed: COST, QUALITY, CUSTOMER, CAPACITY, MOLD, "
+                    "WORKFORCE, OTHER"
+                ),
+            )
+
     service = CommitsService(db, tenant_id)
     commit = await _resolve_commit_or_404(service, sha)
+
+    # Tag the categorical signal into `reason` so it survives in the
+    # commit row even before `record_decision` learns about the field
+    # natively. Format: "[CAT:COST] free text" — the detector can split
+    # on the prefix without ambiguity. This stays a temporary shim until
+    # `ScheduleCommit.user_preference_signal.rejection_category` is wired
+    # explicitly in a follow-up.
+    decision_reason = body.reason
+    if body.rejection_category:
+        prefix = f"[CAT:{body.rejection_category}]"
+        decision_reason = (
+            f"{prefix} {body.reason}" if body.reason else prefix
+        )
 
     try:
         updated = await service.record_decision(
@@ -649,7 +699,7 @@ async def decide_on_commit(
             chosen_alt_idx=body.chosen_alt_idx,
             rejected_alt_idxs=body.rejected_alt_idxs,
             decided_by=body.decided_by,
-            reason=body.reason,
+            reason=decision_reason,
         )
     except ValueError as exc:
         raise HTTPException(

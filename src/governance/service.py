@@ -286,8 +286,16 @@ class GovernanceService:
         reason: str,
         approver_role: Optional[str] = None,
         conditions: Optional[List[str]] = None,
+        rejection_category: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Approve or reject a decision with SoD enforcement."""
+        """Approve or reject a decision with SoD enforcement.
+
+        Sprint Q.2 — `rejection_category` is required when
+        `action == REJECT`. The API layer raises 400 before reaching here
+        if it's missing, but we keep the parameter optional at the service
+        level so internal callers (auto-rejection by gates) can supply
+        their own categorical signal.
+        """
         decision_run = await self._get_decision_run(decision_id)
         if not decision_run:
             raise ValueError(f"Decision {decision_id} not found")
@@ -322,6 +330,9 @@ class GovernanceService:
             reason=reason,
             approver_role=approver_role,
             conditions=conditions,
+            rejection_category=(
+                rejection_category if action == ApprovalAction.REJECT else None
+            ),
         )
         self.db.add(approval)
 
@@ -362,6 +373,10 @@ class GovernanceService:
                         "approver_role": approver_role,
                         "reason": reason,
                         "conditions": conditions,
+                        "rejection_category": (
+                            rejection_category
+                            if action == ApprovalAction.REJECT else None
+                        ),
                         "approvals_total": len(decision_run.approvals),
                     },
                 ),

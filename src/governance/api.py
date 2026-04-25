@@ -345,12 +345,27 @@ async def approve_decision(
 ):
     """
     Approve, reject, or request changes for a decision.
-    
+
     Enforces:
     - Separation of Duties (proposer cannot approve own decision)
     - Required number of approvers
     - No duplicate votes from same user
+    - Sprint Q.2 — `rejection_category` is mandatory when action=REJECT
+      (one of COST | QUALITY | CUSTOMER | CAPACITY | MOLD | WORKFORCE | OTHER).
     """
+    if (
+        request.action == ApprovalAction.REJECT
+        and request.rejection_category is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "rejection_category is required when action=reject "
+                "(one of COST, QUALITY, CUSTOMER, CAPACITY, MOLD, "
+                "WORKFORCE, OTHER)"
+            ),
+        )
+
     try:
         decision = await service.approve_decision(
             decision_id=decision_id,
@@ -358,6 +373,10 @@ async def approve_decision(
             approved_by=user,
             reason=request.reason,
             conditions=request.conditions,
+            rejection_category=(
+                request.rejection_category.value
+                if request.rejection_category is not None else None
+            ),
         )
         
         return {

@@ -75,6 +75,23 @@ class ApprovalAction(str, Enum):
     REQUEST_CHANGES = "request_changes"
 
 
+class RejectionCategory(str, Enum):
+    """Sprint Q.2 — categorical signal that must accompany every rejection.
+
+    The free-text `reason` keeps the operator's prose; this enum gives the
+    Camada 1 learner a machine-readable feature so it can detect "user
+    rejects on cost grounds 70% of the time" patterns automatically.
+    """
+
+    COST = "COST"
+    QUALITY = "QUALITY"
+    CUSTOMER = "CUSTOMER"
+    CAPACITY = "CAPACITY"
+    MOLD = "MOLD"
+    WORKFORCE = "WORKFORCE"
+    OTHER = "OTHER"
+
+
 # ============================================================================
 # PYDANTIC SCHEMAS
 # ============================================================================
@@ -92,10 +109,16 @@ class DecisionProposal(BaseModel):
 
 
 class ApprovalRequest(BaseModel):
-    """Request to approve/reject a decision."""
+    """Request to approve/reject a decision.
+
+    Sprint Q.2 — `rejection_category` is required when `action == REJECT`
+    (validated in `src.governance.api.approve_decision`); ignored for
+    APPROVE / REQUEST_CHANGES.
+    """
     action: ApprovalAction
     reason: str = Field(..., min_length=10)
     conditions: Optional[List[str]] = None
+    rejection_category: Optional[RejectionCategory] = None
 
 
 class DecisionRunResponse(BaseModel):
@@ -446,13 +469,22 @@ class Approval(TenantBase):
         Text,
         nullable=False
     )
-    
+
     conditions: Mapped[Optional[List]] = mapped_column(
         JSONB,
         nullable=True,
         doc="Conditions for conditional approval"
     )
-    
+
+    # Sprint Q.2 — categorical rejection signal (Camada 1 learner feature).
+    # Nullable: only populated when `action == REJECT`.
+    rejection_category: Mapped[Optional[str]] = mapped_column(
+        String(32),
+        nullable=True,
+        index=True,
+        doc="Required when action=REJECT — see RejectionCategory enum",
+    )
+
     # Role/authority
     approver_role: Mapped[Optional[str]] = mapped_column(
         String(100),
@@ -555,6 +587,11 @@ class PreferenceRuleType(str, Enum):
     TRADEOFF_PREFERENCE = "tradeoff_preference"  # "prefer less setup over +€/day"
     OPERATOR_AFFINITY = "operator_affinity"    # "Paulo always on K4 laminagem"
     PHASE_THRESHOLD = "phase_threshold"        # "never < 18 pintores"
+    # Sprint Q.3 — operator override on quality_score / skill toggle in the
+    # EmployeesPage UI. Predicate carries `{employee_id, field, ...}` so
+    # the adaptive-weights trainer can treat the human override as a hard
+    # signal next pass.
+    WORKFORCE_OVERRIDE = "workforce_override"
 
 
 class PreferenceRuleStatus(str, Enum):

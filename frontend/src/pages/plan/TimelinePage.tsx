@@ -156,6 +156,25 @@ function AlternativeCard({ alt, onChoose, submitting }: AlternativeCardProps) {
 
 // ─── Decide modal ────────────────────────────────────────────────────────
 
+type RejectionCategory =
+  | 'COST'
+  | 'QUALITY'
+  | 'CUSTOMER'
+  | 'CAPACITY'
+  | 'MOLD'
+  | 'WORKFORCE'
+  | 'OTHER';
+
+const REJECTION_CATEGORIES: Array<{ value: RejectionCategory; label: string }> = [
+  { value: 'COST', label: 'Custo' },
+  { value: 'QUALITY', label: 'Qualidade' },
+  { value: 'CUSTOMER', label: 'Cliente' },
+  { value: 'CAPACITY', label: 'Capacidade' },
+  { value: 'MOLD', label: 'Molde' },
+  { value: 'WORKFORCE', label: 'Operadores' },
+  { value: 'OTHER', label: 'Outro' },
+];
+
 interface DecideModalProps {
   commitSha: string;
   chosen: CpoAlternativeEnriched;
@@ -165,6 +184,7 @@ interface DecideModalProps {
     chosen_alt_idx: number;
     rejected_alt_idxs: number[];
     reason?: string;
+    rejection_category?: RejectionCategory;
   }) => void;
   submitting: boolean;
 }
@@ -179,6 +199,7 @@ function DecideModal({
 }: DecideModalProps) {
   const [reason, setReason] = useState('');
   const [rejectOthers, setRejectOthers] = useState(true);
+  const [category, setCategory] = useState<RejectionCategory | ''>('');
 
   // Every non-chosen alternative ends up as `rejected_alt_idx` so the
   // PreferenceRuleDetector has a full pair dataset. Operator can opt
@@ -190,11 +211,18 @@ function DecideModal({
       .filter((rank) => rank !== chosen.rank);
   }, [alternatives, chosen.rank, rejectOthers]);
 
+  // Sprint Q.5 — when alternatives are being rejected, the category
+  // becomes mandatory so the detector has a tagged feature to learn from.
+  const requiresCategory = rejectedIdxs.length > 0;
+  const canSubmit = !requiresCategory || category !== '';
+
   function handleSubmit() {
     onConfirm({
       chosen_alt_idx: chosen.rank,
       rejected_alt_idxs: rejectedIdxs,
       reason: reason.trim() || undefined,
+      rejection_category:
+        requiresCategory && category !== '' ? category : undefined,
     });
   }
 
@@ -249,6 +277,30 @@ function DecideModal({
             </span>
           </label>
 
+          {requiresCategory && (
+            <label className="block mb-3">
+              <span className="text-sm text-text-secondary">
+                Categoria de rejeição{' '}
+                <span className="text-red-400">*</span>
+                <span className="block text-xs text-text-tertiary mt-0.5">
+                  Obrigatória — alimenta a Camada 1 com um sinal categorial.
+                </span>
+              </span>
+              <select
+                value={category}
+                onChange={(e) => setCategory(e.target.value as RejectionCategory | '')}
+                className="mt-1 w-full rounded-lg bg-bg-elevated border border-border-subtle px-3 py-2 text-sm text-text-white focus:outline-none focus:border-accent"
+              >
+                <option value="">— escolher —</option>
+                {REJECTION_CATEGORIES.map((c) => (
+                  <option key={c.value} value={c.value}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
           <label className="block mb-4">
             <span className="text-sm text-text-secondary">
               Razão (opcional)
@@ -270,7 +322,8 @@ function DecideModal({
               variant="primary"
               size="sm"
               onClick={handleSubmit}
-              disabled={submitting}
+              disabled={submitting || !canSubmit}
+              title={!canSubmit ? 'Escolhe a categoria de rejeição primeiro' : undefined}
             >
               {submitting ? 'A gravar…' : 'Confirmar'}
             </DarkButton>
@@ -427,11 +480,13 @@ export function TimelinePage() {
       chosen_alt_idx: number;
       rejected_alt_idxs: number[];
       reason?: string;
+      rejection_category?: RejectionCategory;
     }) =>
       cpoCommitsApi.decide(body.sha, {
         chosen_alt_idx: body.chosen_alt_idx,
         rejected_alt_idxs: body.rejected_alt_idxs,
         reason: body.reason,
+        rejection_category: body.rejection_category ?? null,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['cpo-commits'] });
@@ -447,6 +502,7 @@ export function TimelinePage() {
     chosen_alt_idx: number;
     rejected_alt_idxs: number[];
     reason?: string;
+    rejection_category?: RejectionCategory;
   }) {
     if (!selectedSha) return;
     decideMut.mutate(

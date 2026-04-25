@@ -1718,6 +1718,110 @@ export const profitDashboardApi = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// SPRINT Q.5 — CEO dashboard tiles (OTD / Backlog / Alerts / FPY / Expeditions)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface OTDByClient {
+  client_name: string;
+  on_time: number;
+  late: number;
+  total: number;
+  otd_pct: number;
+}
+
+export interface OTDResponse {
+  window_days: number;
+  on_time: number;
+  late: number;
+  total: number;
+  otd_pct: number;
+  by_client: OTDByClient[];
+}
+
+export interface BacklogClientRow {
+  client_name: string;
+  pending_orders: number;
+  pending_value_eur: number;
+  earliest_deadline: string | null;
+}
+
+export interface BacklogResponse {
+  items: BacklogClientRow[];
+  count: number;
+}
+
+export interface ActiveAlert {
+  id: string;
+  code: string;
+  severity: 'INFO' | 'WARN' | 'CRITICAL';
+  title: string;
+  message_pt: string;
+  status: string;
+  created_at: string | null;
+  context: Record<string, unknown>;
+}
+
+export interface ActiveAlertsResponse {
+  items: ActiveAlert[];
+  count: number;
+  by_severity: Record<'INFO' | 'WARN' | 'CRITICAL', number>;
+}
+
+export interface FPYResponse {
+  window_days: number;
+  orders_total: number;
+  orders_with_rework: number;
+  first_pass_yield_pct: number;
+}
+
+export interface ExpeditionRow {
+  batch_id: string;
+  code: string;
+  transport_date: string;
+  truck_capacity_units: number;
+  assigned_orders: number;
+  status: string;
+  destination: string | null;
+  risk: 'ok' | 'near_capacity' | 'over_capacity';
+}
+
+export interface ExpeditionsResponse {
+  horizon_days: number;
+  items: ExpeditionRow[];
+  count: number;
+}
+
+export const ceoDashboardApi = {
+  otd: (params?: { window_days?: number }) => {
+    const qs = params?.window_days ? `?window_days=${params.window_days}` : '';
+    return request<OTDResponse>(`/v1/profit/otd${qs}`);
+  },
+
+  backlogByClient: (params?: { limit?: number }) => {
+    const qs = params?.limit ? `?limit=${params.limit}` : '';
+    return request<BacklogResponse>(`/v1/profit/backlog-by-client${qs}`);
+  },
+
+  activeAlerts: (params?: { severity?: string; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.severity) qs.set('severity', params.severity);
+    if (params?.limit !== undefined) qs.set('limit', String(params.limit));
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    return request<ActiveAlertsResponse>(`/v1/profit/dashboard/active-alerts${suffix}`);
+  },
+
+  firstPassYield: (params?: { window_days?: number }) => {
+    const qs = params?.window_days ? `?window_days=${params.window_days}` : '';
+    return request<FPYResponse>(`/v1/quality/first-pass-yield${qs}`);
+  },
+
+  expeditionsNextNDays: (params?: { horizon_days?: number }) => {
+    const qs = params?.horizon_days ? `?horizon_days=${params.horizon_days}` : '';
+    return request<ExpeditionsResponse>(`/v1/plan/transport/expeditions/next-n-days${qs}`);
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // WORKER OPERATIONS API (Sprint H.2) — operator tablet
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1806,11 +1910,22 @@ export interface CpoAlternativesResponse {
   alternatives: CpoAlternativeEnriched[];
 }
 
+export type CpoRejectionCategory =
+  | 'COST'
+  | 'QUALITY'
+  | 'CUSTOMER'
+  | 'CAPACITY'
+  | 'MOLD'
+  | 'WORKFORCE'
+  | 'OTHER';
+
 export interface CpoDecideRequest {
   chosen_alt_idx?: number | null;
   rejected_alt_idxs?: number[];
   reason?: string | null;
   decided_by?: string;
+  /** Sprint Q.5 — required by backend when rejected_alt_idxs is non-empty. */
+  rejection_category?: CpoRejectionCategory | null;
 }
 
 export interface CpoDecideResponse {
@@ -1890,5 +2005,421 @@ export const preferenceRulesApi = {
     request<PreferenceRule>(
       `/v1/governance/preference-rules/${ruleId}`,
       { method: 'PATCH', body: JSON.stringify(payload) },
+    ),
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SPRINT Q.1 — DQA Trust Index v2
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export type TrustScope = 'factory' | 'order' | 'phase';
+
+export interface TrustIndexV2Components {
+  completeness: number;
+  validity: number;
+  freshness: number;
+  consistency: number;
+  provenance: number;
+  anomaly: number;
+  evidence: number;
+  causal_coherence: number | null;
+  /** Legacy alias when the API returns include_legacy_keys=true. */
+  timeliness?: number;
+}
+
+export interface TrustIndexV2Weights {
+  completeness: number;
+  validity: number;
+  freshness: number;
+  consistency: number;
+  provenance: number;
+  anomaly: number;
+  evidence: number;
+}
+
+export interface TrustIndexV2EffectiveGates {
+  solver_suggestion_only: boolean;
+  use_p90_durations: boolean;
+  auto_reorder: boolean;
+  auto_commit: boolean;
+  quality_disposition: boolean;
+}
+
+export interface TrustIndexV2Response {
+  scope: TrustScope;
+  scope_id: string | null;
+  composite: number;
+  components: TrustIndexV2Components;
+  weights: TrustIndexV2Weights;
+  effective_gates: TrustIndexV2EffectiveGates;
+}
+
+export const dqaApi = {
+  trustIndex: (params?: {
+    scope?: TrustScope;
+    scope_id?: string;
+    order_id?: string;
+    phase_id?: string;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.scope) qs.set('scope', params.scope);
+    if (params?.scope_id) qs.set('scope_id', params.scope_id);
+    if (params?.order_id) qs.set('order_id', params.order_id);
+    if (params?.phase_id) qs.set('phase_id', params.phase_id);
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    return request<TrustIndexV2Response>(`/v1/dqa/trust-index${suffix}`);
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SPRINT Q.1 — Tenant Configuration (ConfigStore)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export type ConfigDataType =
+  | 'int'
+  | 'float'
+  | 'bool'
+  | 'string'
+  | 'json'
+  | 'duration'
+  | 'currency';
+
+export interface ConfigEntry {
+  id: string;
+  category: string;
+  key: string;
+  value: unknown;
+  data_type: ConfigDataType;
+  valid_from: string;
+  valid_to: string | null;
+  last_modified_by: string | null;
+  last_modified_at: string;
+}
+
+export interface ConfigCategoryValues {
+  category: string;
+  values: Record<string, unknown>;
+}
+
+export interface ConfigBulkEntry {
+  category: string;
+  key: string;
+  value: unknown;
+  data_type: ConfigDataType;
+}
+
+export const configApi = {
+  /** Latest active value for one key. 404 if never set. */
+  get: (category: string, key: string) =>
+    request<ConfigEntry>(`/v1/config/${encodeURIComponent(category)}/${encodeURIComponent(key)}`),
+
+  /** All active values in a category as `{key: value}`. */
+  listCategory: (category: string) =>
+    request<ConfigCategoryValues>(`/v1/config/${encodeURIComponent(category)}`),
+
+  /** Full audit history (oldest → newest, including soft-deleted). */
+  history: (category: string, key: string) =>
+    request<ConfigEntry[]>(
+      `/v1/config/${encodeURIComponent(category)}/${encodeURIComponent(key)}/history`,
+    ),
+
+  /** Set or override a single key. */
+  set: (
+    category: string,
+    key: string,
+    payload: { value: unknown; data_type: ConfigDataType },
+  ) =>
+    request<ConfigEntry>(
+      `/v1/config/${encodeURIComponent(category)}/${encodeURIComponent(key)}`,
+      { method: 'POST', body: JSON.stringify(payload) },
+    ),
+
+  /** Apply many overrides atomically (one audit row per entry). */
+  bulkSet: (entries: ConfigBulkEntry[]) =>
+    request<ConfigEntry[]>('/v1/config/bulk', {
+      method: 'PATCH',
+      body: JSON.stringify({ entries }),
+    }),
+
+  /** Revert a config row by id; creates a new audit row pointing at the reverted value. */
+  rollback: (configId: string) =>
+    request<ConfigEntry>(`/v1/config/rollback/${encodeURIComponent(configId)}`, {
+      method: 'POST',
+    }),
+
+  /** Sprint Q.6 — list every category that has at least one seeded default. */
+  listCategories: () =>
+    request<{ categories: Array<{ category: string; default_keys: number }>; total: number }>(
+      '/v1/config/categories',
+    ),
+
+  /** Sprint Q.6 — reset a key to its seeded default value. 404 if no seed exists. */
+  resetToDefault: (category: string, key: string) =>
+    request<ConfigEntry>(
+      `/v1/config/${encodeURIComponent(category)}/${encodeURIComponent(key)}/reset-to-default`,
+      { method: 'POST' },
+    ),
+
+  /** Snapshot the entire tenant config (read-only). */
+  exportSnapshot: () => request<Record<string, unknown>>('/v1/config/snapshot/export'),
+
+  /** Replace the tenant config with the supplied snapshot. */
+  importSnapshot: (snapshot: Record<string, unknown>) =>
+    request<{ written: number }>('/v1/config/snapshot/import', {
+      method: 'POST',
+      body: JSON.stringify(snapshot),
+    }),
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SPRINT Q.4 — Schedule Preview-Delta (drag-and-drop side-effect calc)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface PreviewIssue {
+  type: string;
+  severity: 'conflict' | 'warning';
+  message: string;
+  related_ids: string[];
+}
+
+export interface PreviewDeltaResult {
+  operation_id: string;
+  base_commit_sha: string | null;
+  fitness_before: number;
+  fitness_after: number;
+  fitness_delta: number;
+  throughput_eur_before: number;
+  throughput_eur_after: number;
+  throughput_eur_delta: number;
+  conflicts: PreviewIssue[];
+  warnings: PreviewIssue[];
+  pair_rule_violation: boolean;
+}
+
+export interface ApplyMoveResult {
+  commit_sha: string;
+  parent_sha: string | null;
+  operation_id: string;
+  applied_by: string;
+  reason: string;
+}
+
+export const schedulePreviewApi = {
+  /** Sub-second drag-and-drop side-effect preview. Never runs CPO. */
+  previewDelta: (payload: {
+    operation_id: string;
+    new_phase_id?: string;
+    new_worker_ids?: string[];
+  }) =>
+    request<PreviewDeltaResult>('/v1/plan/schedule/preview-delta', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  /** Persist the move as a new ScheduleCommit (child of latest). */
+  applyMove: (payload: {
+    operation_id: string;
+    new_phase_id?: string;
+    new_worker_ids?: string[];
+    reason: string;
+  }) =>
+    request<ApplyMoveResult>('/v1/plan/schedule/apply-move', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SPRINT Q.3 — Workforce Employees extras (GC01-GC10)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface QualityScoreResult {
+  employee_id: string;
+  score: number;
+  defects: number;
+  operations: number;
+  defect_rate: number;
+  method: 'laplace_smoothed' | 'default_no_history';
+}
+
+export interface QualityScoreOverrideResult {
+  employee_id: string;
+  ml_score: number;
+  override_score: number;
+  reason: string;
+  preference_rule_logged: boolean;
+}
+
+export interface SkillMatrixRow {
+  phase_id: string;
+  phase_name: string | null;
+  can_do: boolean;
+  nivel: number | null;
+  ops_count: number;
+  last_used_at: string | null;
+}
+
+export interface SkillMatrixResult {
+  employee_id: string;
+  phases: SkillMatrixRow[];
+  total: number;
+}
+
+export interface OperationHistoryRow {
+  schedule_id: string;
+  order_id: string;
+  scheduled_start_date: string;
+  scheduled_end_date: string;
+  status: string;
+  operation_sequence: number;
+  actual_duration_hours: number | null;
+}
+
+export interface OperationHistoryResult {
+  employee_id: string;
+  operations: OperationHistoryRow[];
+  limit: number;
+  offset: number;
+  returned: number;
+}
+
+export const workforceEmployeesApi = {
+  qualityScore: (employeeId: string) =>
+    request<QualityScoreResult>(
+      `/v1/workforce/employees/${encodeURIComponent(employeeId)}/quality-score`,
+    ),
+
+  overrideQualityScore: (
+    employeeId: string,
+    payload: { score: number; reason: string },
+  ) =>
+    request<QualityScoreOverrideResult>(
+      `/v1/workforce/employees/${encodeURIComponent(employeeId)}/quality-score`,
+      { method: 'PATCH', body: JSON.stringify(payload) },
+    ),
+
+  skillMatrix: (employeeId: string) =>
+    request<SkillMatrixResult>(
+      `/v1/workforce/employees/${encodeURIComponent(employeeId)}/skill-matrix`,
+    ),
+
+  toggleSkill: (
+    employeeId: string,
+    payload: {
+      phase_id: string;
+      can_do: boolean;
+      nivel?: number;
+      reason?: string;
+    },
+  ) =>
+    request<{ employee_id: string; phase_id: string; can_do: boolean }>(
+      `/v1/workforce/employees/${encodeURIComponent(employeeId)}/skills`,
+      { method: 'PATCH', body: JSON.stringify(payload) },
+    ),
+
+  history: (employeeId: string, params?: { limit?: number; offset?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.limit !== undefined) qs.set('limit', String(params.limit));
+    if (params?.offset !== undefined) qs.set('offset', String(params.offset));
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    return request<OperationHistoryResult>(
+      `/v1/workforce/employees/${encodeURIComponent(employeeId)}/history${suffix}`,
+    );
+  },
+
+  softDelete: (employeeId: string, payload: { reason?: string }) =>
+    request<{ employee_id: string; status: string; reason?: string }>(
+      `/v1/workforce/employees/${encodeURIComponent(employeeId)}/soft-delete`,
+      { method: 'POST', body: JSON.stringify(payload) },
+    ),
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SPRINT Q.1 — Transport / Despacho (stub — endpoints land in Q.2)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export type TransportBatchStatus = 'OPEN' | 'FROZEN' | 'DISPATCHED';
+
+export interface TransportBatch {
+  id: string;
+  code: string;
+  transport_date: string;
+  truck_capacity_units: number;
+  priority: number;
+  destination: string | null;
+  status: TransportBatchStatus;
+  assigned_orders_count?: number;
+}
+
+export interface TransportSuggestion {
+  type:
+    | 'advance_boat'
+    | 'delay_boat'
+    | 'swap_between_batches'
+    | 'complete_truck'
+    | 'regroup_by_client';
+  what: string;
+  why: string;
+  if_accept: string;
+  if_reject: string;
+  alternative?: string;
+  affected_order_ids?: string[];
+}
+
+/**
+ * Transport API stub — Sprint Q.2 fills these endpoints in. The shapes match
+ * the planned backend (see `src/plan/services/transport_batch_service.py`)
+ * so consumers can wire forms now and the actual fetches light up once Q.2
+ * lands the FastAPI router.
+ */
+export const transportApi = {
+  listBatches: (params?: { from_date?: string; to_date?: string; status?: TransportBatchStatus }) => {
+    const qs = new URLSearchParams();
+    if (params?.from_date) qs.set('from_date', params.from_date);
+    if (params?.to_date) qs.set('to_date', params.to_date);
+    if (params?.status) qs.set('status', params.status);
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    return request<TransportBatch[]>(`/v1/plan/transport/batches${suffix}`);
+  },
+
+  createBatch: (payload: {
+    code: string;
+    transport_date: string;
+    truck_capacity_units?: number;
+    destination?: string;
+    priority?: number;
+  }) =>
+    request<TransportBatch>('/v1/plan/transport/batches', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  assignOrder: (batchId: string, orderId: string) =>
+    request<TransportBatch>(
+      `/v1/plan/transport/batches/${encodeURIComponent(batchId)}/orders`,
+      { method: 'POST', body: JSON.stringify({ order_id: orderId }) },
+    ),
+
+  removeOrder: (batchId: string, orderId: string) =>
+    request<TransportBatch>(
+      `/v1/plan/transport/batches/${encodeURIComponent(batchId)}/orders/${encodeURIComponent(orderId)}`,
+      { method: 'DELETE' },
+    ),
+
+  freeze: (batchId: string) =>
+    request<TransportBatch>(
+      `/v1/plan/transport/batches/${encodeURIComponent(batchId)}/freeze`,
+      { method: 'POST' },
+    ),
+
+  dispatch: (batchId: string) =>
+    request<TransportBatch>(
+      `/v1/plan/transport/batches/${encodeURIComponent(batchId)}/dispatch`,
+      { method: 'POST' },
+    ),
+
+  suggestions: (batchId: string) =>
+    request<TransportSuggestion[]>(
+      `/v1/plan/transport/batches/${encodeURIComponent(batchId)}/suggestions`,
     ),
 };

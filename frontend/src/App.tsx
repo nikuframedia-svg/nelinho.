@@ -19,6 +19,8 @@ const RBACPage = lazy(() => import('./pages/admin/RBACPage').then(m => ({ defaul
 const LearnedRulesPage = lazy(() => import('./pages/admin/LearnedRulesPage').then(m => ({ default: m.LearnedRulesPage })));
 // Sprint E.1 — CPO Timeline + MAP-Elites alternatives
 const TimelinePage = lazy(() => import('./pages/plan/TimelinePage').then(m => ({ default: m.TimelinePage })));
+// Sprint Q.2 — Despacho/Expedição
+const DispatchPage = lazy(() => import('./pages/dispatch/DispatchPage'));
 // Sprint H — 3 Umwelts (Gestor / Operador tablet / CEO)
 const CEODashboardPage = lazy(() => import('./pages/CEODashboardPage').then(m => ({ default: m.CEODashboardPage })));
 const OperadorPage = lazy(() => import('./pages/OperadorPage').then(m => ({ default: m.OperadorPage })));
@@ -138,6 +140,11 @@ function App() {
                     <Route path="timeline" element={
                       <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
                         <TimelinePage />
+                      </Suspense>
+                    } />
+                    <Route path="dispatch" element={
+                      <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
+                        <DispatchPage />
                       </Suspense>
                     } />
                   </Route>

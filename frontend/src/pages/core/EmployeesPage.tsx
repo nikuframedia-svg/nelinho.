@@ -1,7 +1,8 @@
 import { useState, useMemo } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { 
-  Plus, 
+import { useQueries, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import Papa from 'papaparse';
+import {
+  Plus,
   Users,
   UserCheck,
   UserX,
@@ -10,11 +11,16 @@ import {
   AlertCircle,
   Edit,
   Trash2,
+  History,
+  Award,
+  Scale,
+  Download,
+  X,
 } from 'lucide-react';
 import { DarkPageLayout } from '../../layouts';
-import { 
-  DarkCard, 
-  DarkStatCard, 
+import {
+  DarkCard,
+  DarkStatCard,
   DarkButton,
   DarkPillButton,
   DarkBadge,
@@ -23,7 +29,7 @@ import {
   DarkIconButton,
 } from '../../components/dark';
 import { FormModal, DeleteConfirmDialog, type FormField } from '../../components/ui';
-import { employeesApi } from '../../lib/api';
+import { employeesApi, workforceEmployeesApi } from '../../lib/api';
 import { useToastContext } from '../../components/ToastProvider';
 
 interface Employee {
@@ -51,6 +57,12 @@ export function EmployeesPage() {
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [deletingEmployee, setDeletingEmployee] = useState<Employee | null>(null);
+
+  // Sprint Q.3 — modals + comparison
+  const [historyEmployee, setHistoryEmployee] = useState<Employee | null>(null);
+  const [qualityEmployee, setQualityEmployee] = useState<Employee | null>(null);
+  const [compareSet, setCompareSet] = useState<Set<string>>(new Set());
+  const [isCompareOpen, setIsCompareOpen] = useState(false);
 
   const { data: employeesList, isLoading, error } = useQuery({
     queryKey: ['employees', 'list'],
@@ -136,53 +148,117 @@ export function EmployeesPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: employeesApi.delete,
+    mutationFn: (id: string) =>
+      workforceEmployeesApi.softDelete(id, { reason: 'Soft-deleted via EmployeesPage' }),
     onSuccess: () => {
-      success('Employee deleted successfully');
+      success('Colaborador desactivado (histórico preservado)');
       queryClient.invalidateQueries({ queryKey: ['employees'] });
       setIsDeleteConfirmOpen(false);
       setDeletingEmployee(null);
     },
-    onError: (err: any) => toastError(err.message || 'Error deleting employee'),
+    onError: (err: any) => toastError(err.message || 'Erro ao desactivar'),
   });
 
+  // Sprint Q.3 — CSV export of currently filtered list (frontend-only).
+  const handleExportCSV = () => {
+    const rows = filteredEmployees.map((e) => ({
+      employee_code: e.employee_code,
+      name: e.name,
+      department: e.department,
+      status: e.status,
+      shift_pattern: e.shift_pattern ?? '',
+      skills: e.skills.join(' | '),
+    }));
+    const csv = Papa.unparse(rows);
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `employees-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const toggleCompare = (id: string) => {
+    setCompareSet((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else if (next.size < 3) {
+        next.add(id);
+      } else {
+        toastError('Compara no máximo 3 colaboradores em simultâneo.');
+      }
+      return next;
+    });
+  };
+
   const employeeFormFields: FormField[] = [
-    { name: 'employee_code', label: 'Employee Code', type: 'text', required: true },
-    { name: 'employee_name', label: 'Employee Name', type: 'text', required: true },
-    { name: 'department', label: 'Department', type: 'text', required: true },
+    { name: 'employee_code', label: 'Código', type: 'text', required: true },
+    { name: 'employee_name', label: 'Nome', type: 'text', required: true },
+    { name: 'department', label: 'Departamento', type: 'text', required: true },
     {
-      name: 'shift_pattern',
-      label: 'Shift Pattern',
+      name: 'base_monthly_salary',
+      label: 'Salário mensal base (€)',
+      type: 'number',
+    },
+    {
+      name: 'tier',
+      label: 'Tier de experiência (Plan v4 §11.1)',
       type: 'select',
       options: [
-        { value: 'DAY', label: 'Day Shift' },
-        { value: 'NIGHT', label: 'Night Shift' },
-        { value: 'ROTATING', label: 'Rotating' },
-        { value: 'FLEXIBLE', label: 'Flexible' },
+        { value: 'JUNIOR', label: '< 5 meses (junior)' },
+        { value: 'MID', label: '< 12 meses (mid)' },
+        { value: 'SENIOR', label: '> 12 meses (senior)' },
+        { value: 'CUSTOM', label: 'Custom' },
+      ],
+      defaultValue: 'MID',
+    },
+    {
+      name: 'shift_pattern',
+      label: 'Turno',
+      type: 'select',
+      options: [
+        { value: 'DAY', label: 'Manhã' },
+        { value: 'NIGHT', label: 'Noite' },
+        { value: 'ROTATING', label: 'Rotativo' },
+        { value: 'FLEXIBLE', label: 'Flexível' },
       ],
       defaultValue: 'DAY',
     },
     {
       name: 'status',
-      label: 'Status',
+      label: 'Estado',
       type: 'select',
       options: [
-        { value: 'ACTIVE', label: 'Active' },
-        { value: 'INACTIVE', label: 'Inactive' },
-        { value: 'ON_LEAVE', label: 'On Leave' },
+        { value: 'ACTIVE', label: 'Activo' },
+        { value: 'ON_LEAVE', label: 'De ausência' },
+        { value: 'TERMINATED', label: 'Desactivado (soft delete)' },
+        { value: 'SUSPENDED', label: 'Suspenso' },
       ],
       defaultValue: 'ACTIVE',
     },
   ];
 
   const handleFormSubmit = (data: Record<string, any>) => {
-    const payload = {
+    const payload: Record<string, any> = {
       employee_code: data.employee_code,
       employee_name: data.employee_name,
       department: data.department,
       shift_pattern: data.shift_pattern,
       status: data.status,
     };
+    if (data.base_monthly_salary != null && data.base_monthly_salary !== '') {
+      payload.base_monthly_salary = Number(data.base_monthly_salary);
+    }
+    // Tier is encoded into notes with a parsable tag until a dedicated
+    // column exists. Plan v4 §5 — tier is editable; auto-derivable from
+    // hire_date but the operator can override (CUSTOM).
+    if (data.tier) {
+      payload.notes = `[tier:${data.tier}]`;
+    }
 
     if (editingEmployee) {
       updateMutation.mutate({ id: editingEmployee.id, data: payload });
@@ -201,12 +277,22 @@ export function EmployeesPage() {
       subtitle={isLoading ? 'Loading...' : `${employees.length} workforce members`}
       icon={<Users size={20} />}
       actions={
-        <DarkButton
-          icon={<Plus size={18} />}
-          onClick={() => { setEditingEmployee(null); setIsFormModalOpen(true); }}
-        >
-          Add Employee
-        </DarkButton>
+        <div className="flex items-center gap-2">
+          <DarkButton
+            variant="secondary"
+            icon={<Download size={16} />}
+            onClick={handleExportCSV}
+            disabled={filteredEmployees.length === 0}
+          >
+            Exportar CSV
+          </DarkButton>
+          <DarkButton
+            icon={<Plus size={18} />}
+            onClick={() => { setEditingEmployee(null); setIsFormModalOpen(true); }}
+          >
+            Adicionar
+          </DarkButton>
+        </div>
       }
     >
       {/* Filters */}
@@ -238,6 +324,32 @@ export function EmployeesPage() {
           ))}
         </div>
       </div>
+
+      {compareSet.size > 0 && (
+        <div className="mb-4 px-4 py-2 bg-accent/10 border border-accent/30 rounded-lg flex items-center justify-between">
+          <span className="text-sm text-accent">
+            {compareSet.size} colaborador{compareSet.size > 1 ? 'es' : ''} seleccionado{compareSet.size > 1 ? 's' : ''} para comparação
+          </span>
+          <div className="flex items-center gap-2">
+            <DarkButton
+              variant="secondary"
+              size="sm"
+              onClick={() => setCompareSet(new Set())}
+              icon={<X size={14} />}
+            >
+              Limpar
+            </DarkButton>
+            <DarkButton
+              size="sm"
+              icon={<Scale size={14} />}
+              onClick={() => setIsCompareOpen(true)}
+              disabled={compareSet.size < 2}
+            >
+              Comparar
+            </DarkButton>
+          </div>
+        </div>
+      )}
 
       {/* Loading State */}
       {isLoading && (
@@ -321,6 +433,32 @@ export function EmployeesPage() {
                   </div>
                   <div className="flex items-center gap-1">
                     <DarkIconButton
+                      icon={<Award size={14} />}
+                      size="sm"
+                      variant="ghost"
+                      title="Quality score"
+                      onClick={() => setQualityEmployee(employee)}
+                    />
+                    <DarkIconButton
+                      icon={<History size={14} />}
+                      size="sm"
+                      variant="ghost"
+                      title="Histórico"
+                      onClick={() => setHistoryEmployee(employee)}
+                    />
+                    <DarkIconButton
+                      icon={<Scale size={14} />}
+                      size="sm"
+                      variant={compareSet.has(employee.id) ? 'default' : 'ghost'}
+                      className={
+                        compareSet.has(employee.id)
+                          ? '!bg-accent/30 text-accent'
+                          : ''
+                      }
+                      title={compareSet.has(employee.id) ? 'Remover comparação' : 'Comparar'}
+                      onClick={() => toggleCompare(employee.id)}
+                    />
+                    <DarkIconButton
                       icon={<Edit size={14} />}
                       size="sm"
                       variant="ghost"
@@ -330,6 +468,7 @@ export function EmployeesPage() {
                       icon={<Trash2 size={14} />}
                       size="sm"
                       variant="ghost"
+                      title="Soft delete (preserva histórico)"
                       onClick={() => { setDeletingEmployee(employee); setIsDeleteConfirmOpen(true); }}
                     />
                   </div>
@@ -426,10 +565,343 @@ export function EmployeesPage() {
         isOpen={isDeleteConfirmOpen}
         onClose={() => { setIsDeleteConfirmOpen(false); setDeletingEmployee(null); }}
         onConfirm={handleDeleteConfirm}
-        title={deletingEmployee ? `Employee ${deletingEmployee.name}` : 'Employee'}
-        message="Are you sure you want to delete this employee? This action cannot be undone."
+        title={deletingEmployee ? `Desactivar ${deletingEmployee.name}` : 'Desactivar colaborador'}
+        message="Soft delete: o colaborador fica TERMINATED e o histórico é preservado para ML/relatórios. Pode ser reactivado depois."
         isLoading={deleteMutation.isPending}
       />
+
+      {historyEmployee && (
+        <EmployeeHistoryModal
+          employee={historyEmployee}
+          onClose={() => setHistoryEmployee(null)}
+        />
+      )}
+      {qualityEmployee && (
+        <EmployeeQualityModal
+          employee={qualityEmployee}
+          onClose={() => setQualityEmployee(null)}
+          onSuccess={() => {
+            success('Override de qualidade gravado (Camada 1)');
+          }}
+          onError={(msg) => toastError(msg)}
+        />
+      )}
+      {isCompareOpen && (
+        <EmployeeCompareModal
+          employees={employees.filter((e) => compareSet.has(e.id))}
+          onClose={() => setIsCompareOpen(false)}
+        />
+      )}
     </DarkPageLayout>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Sprint Q.3 — Modals (HistoryModal, QualityModal, CompareModal)
+// ───────────────────────────────────────────────────────────────────────────
+
+const HISTORY_PAGE_SIZE = 25;
+
+function EmployeeHistoryModal({
+  employee,
+  onClose,
+}: {
+  employee: Employee;
+  onClose: () => void;
+}) {
+  const [offset, setOffset] = useState(0);
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['workforce', 'history', employee.id, offset],
+    queryFn: () =>
+      workforceEmployeesApi.history(employee.id, {
+        limit: HISTORY_PAGE_SIZE,
+        offset,
+      }),
+  });
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <DarkCard className="w-[800px] max-w-[95vw] max-h-[85vh] overflow-auto p-5">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h3 className="text-lg font-semibold text-white">{employee.name}</h3>
+            <p className="text-xs text-slate-400">Histórico de operações</p>
+          </div>
+          <DarkIconButton icon={<X size={16} />} size="sm" variant="ghost" onClick={onClose} />
+        </div>
+
+        {isLoading && <p className="text-sm text-slate-400 py-4">A carregar…</p>}
+        {error && (
+          <p className="text-sm text-red-400 py-4">
+            Falha: {(error as Error).message}
+          </p>
+        )}
+        {data && data.operations.length === 0 && (
+          <p className="text-sm text-slate-500 py-6 text-center">
+            Sem operações registadas para este colaborador.
+          </p>
+        )}
+        {data && data.operations.length > 0 && (
+          <table className="w-full text-sm text-left">
+            <thead className="text-xs text-slate-400 border-b border-slate-700">
+              <tr>
+                <th className="py-2 pr-2">OF</th>
+                <th className="py-2 pr-2">Início</th>
+                <th className="py-2 pr-2">Fim</th>
+                <th className="py-2 pr-2">Estado</th>
+                <th className="py-2 pr-2 text-right">Duração (h)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.operations.map((op) => (
+                <tr key={op.schedule_id} className="border-b border-slate-800/50">
+                  <td className="py-2 pr-2 font-mono text-slate-300">{op.order_id}</td>
+                  <td className="py-2 pr-2 text-slate-400">{op.scheduled_start_date}</td>
+                  <td className="py-2 pr-2 text-slate-400">{op.scheduled_end_date}</td>
+                  <td className="py-2 pr-2">
+                    <DarkBadge
+                      variant={
+                        op.status === 'COMPLETED'
+                          ? 'success'
+                          : op.status === 'IN_PROGRESS'
+                          ? 'warning'
+                          : 'neutral'
+                      }
+                      size="sm"
+                    >
+                      {op.status}
+                    </DarkBadge>
+                  </td>
+                  <td className="py-2 pr-2 text-right text-slate-300">
+                    {op.actual_duration_hours ?? '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        {data && (
+          <div className="flex justify-between items-center mt-4 text-xs text-slate-400">
+            <span>
+              {offset + 1}–{offset + data.returned}
+            </span>
+            <div className="flex gap-2">
+              <DarkButton
+                variant="secondary"
+                size="sm"
+                onClick={() => setOffset(Math.max(0, offset - HISTORY_PAGE_SIZE))}
+                disabled={offset === 0}
+              >
+                ← Anterior
+              </DarkButton>
+              <DarkButton
+                variant="secondary"
+                size="sm"
+                onClick={() => setOffset(offset + HISTORY_PAGE_SIZE)}
+                disabled={data.returned < HISTORY_PAGE_SIZE}
+              >
+                Seguinte →
+              </DarkButton>
+            </div>
+          </div>
+        )}
+      </DarkCard>
+    </div>
+  );
+}
+
+function EmployeeQualityModal({
+  employee,
+  onClose,
+  onSuccess,
+  onError,
+}: {
+  employee: Employee;
+  onClose: () => void;
+  onSuccess: () => void;
+  onError: (msg: string) => void;
+}) {
+  const queryClient = useQueryClient();
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['workforce', 'quality-score', employee.id],
+    queryFn: () => workforceEmployeesApi.qualityScore(employee.id),
+  });
+
+  const [override, setOverride] = useState<number | null>(null);
+  const [reason, setReason] = useState('');
+
+  const mutation = useMutation({
+    mutationFn: (payload: { score: number; reason: string }) =>
+      workforceEmployeesApi.overrideQualityScore(employee.id, payload),
+    onSuccess: () => {
+      onSuccess();
+      queryClient.invalidateQueries({ queryKey: ['workforce', 'quality-score', employee.id] });
+      onClose();
+    },
+    onError: (err: any) => onError(err.message || 'Erro ao guardar override'),
+  });
+
+  const currentScore = override ?? data?.score ?? 5;
+  const canSave = override != null && reason.trim().length >= 10;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <DarkCard className="w-[520px] max-w-[95vw] p-5">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h3 className="text-lg font-semibold text-white">Quality Score</h3>
+            <p className="text-xs text-slate-400">{employee.name}</p>
+          </div>
+          <DarkIconButton icon={<X size={16} />} size="sm" variant="ghost" onClick={onClose} />
+        </div>
+
+        {isLoading && <p className="text-sm text-slate-400 py-4">A calcular…</p>}
+        {error && <p className="text-sm text-red-400 py-4">{(error as Error).message}</p>}
+        {data && (
+          <>
+            <div className="bg-slate-800/40 rounded-lg p-3 mb-4">
+              <p className="text-xs text-slate-400">Score ML (Laplace-smoothed)</p>
+              <p className="text-3xl font-bold text-white">
+                {data.score.toFixed(1)}
+                <span className="text-base text-slate-500"> / 10</span>
+              </p>
+              <p className="text-xs text-slate-500 mt-1">
+                {data.operations} operações · {data.defects} retrabalhos · método:{' '}
+                {data.method}
+              </p>
+            </div>
+
+            <label className="block text-xs text-slate-400 mb-2">
+              Override manual: {currentScore.toFixed(1)}
+            </label>
+            <input
+              type="range"
+              min={1}
+              max={10}
+              step={0.1}
+              value={currentScore}
+              onChange={(e) => setOverride(Number(e.target.value))}
+              className="w-full mb-4"
+            />
+
+            <label className="block text-xs text-slate-400 mb-1">
+              Porquê? (mínimo 10 caracteres — alimenta a Camada 1 de aprendizagem)
+            </label>
+            <textarea
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              rows={3}
+              placeholder="Ex: trabalha bem em K1 mas o ML não viu retrabalho recente."
+              className="w-full mb-4 px-3 py-2 bg-slate-800 border border-slate-700 rounded text-sm text-white"
+            />
+
+            <div className="flex justify-end gap-2">
+              <DarkButton variant="secondary" size="sm" onClick={onClose}>
+                Cancelar
+              </DarkButton>
+              <DarkButton
+                size="sm"
+                onClick={() => override != null && mutation.mutate({ score: override, reason })}
+                disabled={!canSave || mutation.isPending}
+              >
+                {mutation.isPending ? 'A guardar…' : 'Guardar override'}
+              </DarkButton>
+            </div>
+          </>
+        )}
+      </DarkCard>
+    </div>
+  );
+}
+
+function EmployeeCompareModal({
+  employees,
+  onClose,
+}: {
+  employees: Employee[];
+  onClose: () => void;
+}) {
+  // useQueries — array-based hook keeps React's hooks-call ordering stable
+  // even when `employees.length` varies across renders.
+  const qualityQueries = useQueries({
+    queries: employees.map((e) => ({
+      queryKey: ['workforce', 'quality-score', e.id] as const,
+      queryFn: () => workforceEmployeesApi.qualityScore(e.id),
+    })),
+  });
+  const skillQueries = useQueries({
+    queries: employees.map((e) => ({
+      queryKey: ['workforce', 'skill-matrix', e.id] as const,
+      queryFn: () => workforceEmployeesApi.skillMatrix(e.id),
+    })),
+  });
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <DarkCard className="w-[1000px] max-w-[95vw] max-h-[85vh] overflow-auto p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-white">
+            Comparação de {employees.length} colaboradores
+          </h3>
+          <DarkIconButton icon={<X size={16} />} size="sm" variant="ghost" onClick={onClose} />
+        </div>
+
+        <div
+          className="grid gap-4"
+          style={{ gridTemplateColumns: `repeat(${employees.length}, minmax(0, 1fr))` }}
+        >
+          {employees.map((employee, idx) => {
+            const quality = qualityQueries[idx];
+            const skills = skillQueries[idx];
+            return (
+              <div key={employee.id} className="bg-slate-800/40 rounded-lg p-3">
+                <h4 className="text-base font-semibold text-white mb-1">{employee.name}</h4>
+                <p className="text-xs text-slate-500 mb-3">{employee.department}</p>
+
+                <div className="text-xs text-slate-400 mb-1">Quality score</div>
+                {quality.isLoading ? (
+                  <p className="text-slate-500">…</p>
+                ) : quality.error ? (
+                  <p className="text-red-400">erro</p>
+                ) : quality.data ? (
+                  <p className="text-2xl font-bold text-white">
+                    {quality.data.score.toFixed(1)}
+                    <span className="text-sm text-slate-500"> /10</span>
+                  </p>
+                ) : null}
+
+                <div className="text-xs text-slate-400 mt-3 mb-1">
+                  Operações | Retrabalhos
+                </div>
+                {quality.data && (
+                  <p className="text-sm text-slate-300">
+                    {quality.data.operations} | {quality.data.defects}
+                  </p>
+                )}
+
+                <div className="text-xs text-slate-400 mt-3 mb-1">
+                  Skills ({skills.data?.total ?? 0})
+                </div>
+                {skills.isLoading ? (
+                  <p className="text-slate-500">…</p>
+                ) : skills.data ? (
+                  <ul className="space-y-1 max-h-48 overflow-auto">
+                    {skills.data.phases.slice(0, 12).map((s) => (
+                      <li key={s.phase_id} className="flex justify-between text-xs">
+                        <span className={s.can_do ? 'text-emerald-400' : 'text-slate-500'}>
+                          {s.phase_name ?? s.phase_id}
+                        </span>
+                        <span className="text-slate-400">{s.ops_count}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      </DarkCard>
+    </div>
   );
 }

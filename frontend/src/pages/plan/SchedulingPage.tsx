@@ -1,14 +1,18 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Calendar, Play, Clock, AlertTriangle, Loader2, RefreshCw, Download } from 'lucide-react';
+import { Calendar, Play, Clock, AlertTriangle, Loader2, RefreshCw, Download, Move } from 'lucide-react';
 import { format } from 'date-fns';
 import { DarkPageLayout } from '../../layouts';
 import { DarkCard, DarkStatCard, DarkTable, DarkTableHead, DarkTableBody, DarkTableRow, DarkTableHeader, DarkTableCell, DarkButton, DarkPillButton, DarkBadge } from '../../components/dark';
 import { planApi, ordersApi } from '../../lib/api';
 import { useToastContext } from '../../components/ToastProvider';
 import { GanttChart } from '../../components/charts';
+import { DragDropPlanner } from '../../components/scheduling/DragDropPlanner';
+
+type SchedulingTab = 'gantt' | 'dnd';
 
 export function SchedulingPage() {
+  const [activeTab, setActiveTab] = useState<SchedulingTab>('gantt');
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
   const [isGenerating, setIsGenerating] = useState(false);
   const toast = useToastContext();
@@ -107,20 +111,52 @@ export function SchedulingPage() {
         </div>
       }
     >
-      {/* Filters */}
-      <div className="flex items-center gap-4 mb-6">
-        <div className="flex items-center gap-1 bg-bg-secondary rounded-full p-1">
-          {['ALL', 'SCHEDULED', 'IN_PROGRESS', 'COMPLETED', 'DELAYED'].map((status) => (
-            <DarkPillButton key={status} active={filterStatus === status} onClick={() => setFilterStatus(status)}>
-              {status.replace('_', ' ')}
-            </DarkPillButton>
-          ))}
-        </div>
-        <DarkButton variant="ghost" size="sm" icon={<RefreshCw size={14} />} onClick={() => queryClient.invalidateQueries({ queryKey: ['schedules'] })}>
-          Refresh
-        </DarkButton>
+      {/* View tabs */}
+      <div className="flex items-center gap-2 mb-4">
+        <button
+          onClick={() => setActiveTab('gantt')}
+          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition ${
+            activeTab === 'gantt'
+              ? 'bg-accent/15 text-accent border border-accent/30'
+              : 'bg-slate-800/40 text-slate-400 hover:bg-slate-700/40'
+          }`}
+        >
+          <Calendar size={14} />
+          Vista Gantt
+        </button>
+        <button
+          onClick={() => setActiveTab('dnd')}
+          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition ${
+            activeTab === 'dnd'
+              ? 'bg-accent/15 text-accent border border-accent/30'
+              : 'bg-slate-800/40 text-slate-400 hover:bg-slate-700/40'
+          }`}
+        >
+          <Move size={14} />
+          Drag &amp; drop (Q.4)
+        </button>
       </div>
 
+      {/* Filters (apenas na vista Gantt) */}
+      {activeTab === 'gantt' && (
+        <div className="flex items-center gap-4 mb-6">
+          <div className="flex items-center gap-1 bg-bg-secondary rounded-full p-1">
+            {['ALL', 'SCHEDULED', 'IN_PROGRESS', 'COMPLETED', 'DELAYED'].map((status) => (
+              <DarkPillButton key={status} active={filterStatus === status} onClick={() => setFilterStatus(status)}>
+                {status.replace('_', ' ')}
+              </DarkPillButton>
+            ))}
+          </div>
+          <DarkButton variant="ghost" size="sm" icon={<RefreshCw size={14} />} onClick={() => queryClient.invalidateQueries({ queryKey: ['schedules'] })}>
+            Refresh
+          </DarkButton>
+        </div>
+      )}
+
+      {activeTab === 'dnd' && <DragDropPlanner />}
+
+      {activeTab === 'gantt' && (
+      <>
       {/* Stats */}
       <div className="grid grid-cols-5 gap-4 mb-6">
         <DarkStatCard icon={<Calendar size={18} />} label="Total" value={stats.total} size="sm" />
@@ -196,6 +232,8 @@ export function SchedulingPage() {
             </DarkTable>
           </DarkCard>
         </>
+      )}
+      </>
       )}
     </DarkPageLayout>
   );

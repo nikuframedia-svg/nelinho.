@@ -5,6 +5,7 @@
  */
 
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import { Shield, Database, AlertTriangle, Lock, FileSpreadsheet, BarChart3 } from 'lucide-react';
 import {
@@ -17,6 +18,7 @@ import {
   ModuleErrorBoundary,
 } from '@/components/palantir';
 import { useTrustHeatmap, useSchemaDrift } from '@/hooks';
+import { dqaApi } from '@/lib/api';
 
 type Tab = 'overview' | 'heatmap' | 'quarantine' | 'blocked' | 'ingestions' | 'coverage';
 
@@ -24,6 +26,18 @@ export function DataQualityPage() {
   const [activeTab, setActiveTab] = useState<Tab>('overview');
   const { data: heatmapData } = useTrustHeatmap();
   const { drifts } = useSchemaDrift();
+  const { data: trustFactory } = useQuery({
+    queryKey: ['dqa', 'trust-index', 'factory'],
+    queryFn: () => dqaApi.trustIndex({ scope: 'factory' }),
+    staleTime: 60_000,
+    retry: 1,
+  });
+  const compositePct =
+    trustFactory != null ? `${Math.round(trustFactory.composite * 100)}%` : '—';
+  const blockedGatesCount =
+    trustFactory != null
+      ? Object.values(trustFactory.effective_gates).filter((open) => !open).length
+      : null;
 
   const tabs = [
     { id: 'overview', label: 'Overview', icon: BarChart3 },
@@ -84,27 +98,27 @@ export function DataQualityPage() {
             <div className="space-y-6">
               {/* Quick Stats */}
               <div className="grid grid-cols-4 gap-4">
-                <QuickStat 
+                <QuickStat
                   icon={<Database className="w-5 h-5 text-brand-400" />}
-                  label="Trust Index Médio"
-                  value="72%"
-                  trend="+3%"
-                  trendUp
+                  label="Trust Index (factory)"
+                  value={compositePct}
+                  trend={trustFactory ? 'live' : 'loading'}
+                  trendUp={Boolean(trustFactory)}
                 />
-                <QuickStat 
+                <QuickStat
                   icon={<Shield className="w-5 h-5 text-amber-400" />}
                   label="Em Quarentena"
                   value="12"
                   trend="-5"
                   trendUp
                 />
-                <QuickStat 
+                <QuickStat
                   icon={<Lock className="w-5 h-5 text-red-400" />}
-                  label="Métricas Bloqueadas"
-                  value="7"
-                  trend="0"
+                  label="Gates fechados"
+                  value={blockedGatesCount != null ? String(blockedGatesCount) : '—'}
+                  trend={blockedGatesCount === 0 ? 'todos abertos' : 'verifica DQA'}
                 />
-                <QuickStat 
+                <QuickStat
                   icon={<FileSpreadsheet className="w-5 h-5 text-emerald-400" />}
                   label="Última Ingestion"
                   value="2h"

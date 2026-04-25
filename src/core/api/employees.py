@@ -116,7 +116,9 @@ async def update_employee(
         updates["base_monthly_salary"] = data.base_monthly_salary
     if data.status is not None:
         updates["status"] = data.status
-    
+    if data.notes is not None:
+        updates["notes"] = data.notes
+
     employee = await service.update_employee(employee_id, **updates)
     
     if not employee:

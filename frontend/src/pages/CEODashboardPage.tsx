@@ -16,7 +16,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   LineChart,
   Line,
@@ -27,17 +27,23 @@ import {
   ReferenceArea,
 } from 'recharts';
 import {
+  AlertTriangle,
   BarChart3,
-  Euro,
-  TrendingUp,
-  Target,
+  Bell,
   CalendarRange,
+  CheckCircle2,
+  Euro,
+  Target,
+  TrendingUp,
+  Truck,
+  Users,
 } from 'lucide-react';
 import { DarkPageLayout } from '../layouts';
-import { DarkCard, DarkBadge } from '../components/dark';
+import { DarkBadge, DarkCard } from '../components/dark';
 import { LiveBadge } from '../components/dashboard/LiveBadge';
 import { useRealtime } from '../providers/RealtimeProvider';
 import {
+  ceoDashboardApi,
   profitDashboardApi,
   type ProfitDashboardResponse,
 } from '../lib/api';
@@ -190,6 +196,38 @@ export function CEODashboardPage() {
     staleTime: 60_000,
   });
 
+  // Sprint Q.5 — 5 secondary tiles fetched in parallel (single useQueries
+  // call so React's hooks order stays stable).
+  const [otdQ, fpyQ, backlogQ, expeditionsQ, alertsQ] = useQueries({
+    queries: [
+      {
+        queryKey: ['ceo', 'otd'],
+        queryFn: () => ceoDashboardApi.otd({ window_days: 30 }),
+        staleTime: 5 * 60_000,
+      },
+      {
+        queryKey: ['ceo', 'fpy'],
+        queryFn: () => ceoDashboardApi.firstPassYield({ window_days: 30 }),
+        staleTime: 5 * 60_000,
+      },
+      {
+        queryKey: ['ceo', 'backlog'],
+        queryFn: () => ceoDashboardApi.backlogByClient({ limit: 10 }),
+        staleTime: 5 * 60_000,
+      },
+      {
+        queryKey: ['ceo', 'expeditions'],
+        queryFn: () => ceoDashboardApi.expeditionsNextNDays({ horizon_days: 7 }),
+        staleTime: 60_000,
+      },
+      {
+        queryKey: ['ceo', 'alerts'],
+        queryFn: () => ceoDashboardApi.activeAlerts({ limit: 8 }),
+        staleTime: 60_000,
+      },
+    ],
+  });
+
   // SSE-driven invalidation — same debounce pattern as
   // useLiveDashboardRefresh but scoped to this single query.
   const processedLen = useRef(0);
@@ -309,6 +347,222 @@ export function CEODashboardPage() {
               Linha azul = throughput realizado.
             </p>
           </DarkCard>
+
+          {/* Sprint Q.5 — secondary KPI tiles */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+            <Tile
+              label="OTD (30d)"
+              value={otdQ.data ? `${otdQ.data.otd_pct.toFixed(1)}%` : '—'}
+              subtitle={
+                otdQ.data
+                  ? `${otdQ.data.on_time}/${otdQ.data.total} no prazo`
+                  : 'A calcular…'
+              }
+              icon={<CheckCircle2 size={16} />}
+              accent={
+                otdQ.data == null
+                  ? 'default'
+                  : otdQ.data.otd_pct >= 90
+                  ? 'good'
+                  : otdQ.data.otd_pct >= 75
+                  ? 'info'
+                  : 'warn'
+              }
+            />
+            <Tile
+              label="First-pass yield (30d)"
+              value={fpyQ.data ? `${fpyQ.data.first_pass_yield_pct.toFixed(1)}%` : '—'}
+              subtitle={
+                fpyQ.data
+                  ? `${fpyQ.data.orders_with_rework}/${fpyQ.data.orders_total} c/ retrabalho`
+                  : 'A calcular…'
+              }
+              icon={<Target size={16} />}
+              accent={
+                fpyQ.data == null
+                  ? 'default'
+                  : fpyQ.data.first_pass_yield_pct >= 80
+                  ? 'good'
+                  : fpyQ.data.first_pass_yield_pct >= 60
+                  ? 'info'
+                  : 'warn'
+              }
+            />
+            <Tile
+              label="Backlog (top cliente)"
+              value={
+                backlogQ.data && backlogQ.data.items[0]
+                  ? fmtEur(backlogQ.data.items[0].pending_value_eur, { compact: true })
+                  : '—'
+              }
+              subtitle={
+                backlogQ.data && backlogQ.data.items[0]
+                  ? `${backlogQ.data.items[0].client_name} · ${backlogQ.data.items[0].pending_orders} OFs`
+                  : 'A calcular…'
+              }
+              icon={<Users size={16} />}
+            />
+            <Tile
+              label="Expedições próx 7d"
+              value={expeditionsQ.data ? String(expeditionsQ.data.count) : '—'}
+              subtitle={
+                expeditionsQ.data
+                  ? `${
+                      expeditionsQ.data.items.filter((e) => e.risk !== 'ok').length
+                    } com risco`
+                  : 'A calcular…'
+              }
+              icon={<Truck size={16} />}
+              accent={
+                expeditionsQ.data &&
+                expeditionsQ.data.items.some((e) => e.risk === 'over_capacity')
+                  ? 'warn'
+                  : 'default'
+              }
+            />
+          </div>
+
+          {/* Backlog by client table + Active alerts feed (side by side) */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <DarkCard>
+              <div className="flex items-center gap-2 mb-3">
+                <Users size={16} className="text-blue-300" />
+                <span className="text-sm text-text-secondary font-medium">
+                  Backlog por cliente
+                </span>
+              </div>
+              {backlogQ.isLoading ? (
+                <p className="text-xs text-text-tertiary py-3">A carregar…</p>
+              ) : backlogQ.data && backlogQ.data.items.length > 0 ? (
+                <div className="space-y-1 max-h-64 overflow-auto">
+                  {backlogQ.data.items.slice(0, 10).map((row) => (
+                    <div
+                      key={row.client_name}
+                      className="flex items-center justify-between text-xs py-1.5 border-b border-slate-800 last:border-0"
+                    >
+                      <span className="text-slate-300 truncate flex-1" title={row.client_name}>
+                        {row.client_name}
+                      </span>
+                      <span className="text-slate-400 mx-2">{row.pending_orders}</span>
+                      <span className="text-slate-200 font-medium">
+                        {fmtEur(row.pending_value_eur, { compact: true })}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-text-tertiary py-3">Sem backlog pendente.</p>
+              )}
+            </DarkCard>
+
+            <DarkCard>
+              <div className="flex items-center gap-2 mb-3">
+                <Bell size={16} className="text-amber-300" />
+                <span className="text-sm text-text-secondary font-medium">
+                  Alertas activos
+                </span>
+                {alertsQ.data && (
+                  <DarkBadge
+                    variant={
+                      alertsQ.data.by_severity.CRITICAL > 0
+                        ? 'danger'
+                        : alertsQ.data.by_severity.WARN > 0
+                        ? 'warning'
+                        : 'success'
+                    }
+                    size="sm"
+                  >
+                    {alertsQ.data.count}
+                  </DarkBadge>
+                )}
+              </div>
+              {alertsQ.isLoading ? (
+                <p className="text-xs text-text-tertiary py-3">A carregar…</p>
+              ) : alertsQ.data && alertsQ.data.items.length > 0 ? (
+                <div className="space-y-2 max-h-64 overflow-auto">
+                  {alertsQ.data.items.map((a) => (
+                    <div key={a.id} className="text-xs flex items-start gap-2">
+                      <AlertTriangle
+                        size={12}
+                        className={
+                          a.severity === 'CRITICAL'
+                            ? 'text-red-400 mt-0.5 flex-shrink-0'
+                            : a.severity === 'WARN'
+                            ? 'text-amber-400 mt-0.5 flex-shrink-0'
+                            : 'text-blue-400 mt-0.5 flex-shrink-0'
+                        }
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-slate-200 truncate">{a.title}</p>
+                        <p className="text-slate-500 truncate">{a.message_pt}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-emerald-400 py-3">Sem alertas activos.</p>
+              )}
+            </DarkCard>
+          </div>
+
+          {/* Expeditions list */}
+          {expeditionsQ.data && expeditionsQ.data.items.length > 0 && (
+            <DarkCard className="mb-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Truck size={16} className="text-teal-300" />
+                <span className="text-sm text-text-secondary font-medium">
+                  Expedições próximos 7 dias
+                </span>
+              </div>
+              <table className="w-full text-xs">
+                <thead className="text-slate-500">
+                  <tr>
+                    <th className="text-left py-1">Data</th>
+                    <th className="text-left py-1">Código</th>
+                    <th className="text-left py-1">Estado</th>
+                    <th className="text-right py-1">Carga</th>
+                    <th className="text-left py-1 pl-2">Risco</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {expeditionsQ.data.items.map((e) => (
+                    <tr key={e.batch_id} className="border-t border-slate-800">
+                      <td className="py-1 text-slate-300">{e.transport_date}</td>
+                      <td className="py-1 text-slate-200">{e.code}</td>
+                      <td className="py-1">
+                        <DarkBadge
+                          variant={
+                            e.status === 'DISPATCHED'
+                              ? 'neutral'
+                              : e.status === 'FROZEN'
+                              ? 'warning'
+                              : 'success'
+                          }
+                          size="sm"
+                        >
+                          {e.status}
+                        </DarkBadge>
+                      </td>
+                      <td className="py-1 text-right text-slate-300">
+                        {e.assigned_orders}/{e.truck_capacity_units}
+                      </td>
+                      <td className="py-1 pl-2">
+                        {e.risk === 'over_capacity' && (
+                          <span className="text-red-400">⚠ acima</span>
+                        )}
+                        {e.risk === 'near_capacity' && (
+                          <span className="text-amber-400">∼ perto</span>
+                        )}
+                        {e.risk === 'ok' && (
+                          <span className="text-emerald-400">ok</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </DarkCard>
+          )}
 
           <p className="text-xs text-text-tertiary text-center">
             Fonte: {data.source}. Para detalhe operacional ver{' '}

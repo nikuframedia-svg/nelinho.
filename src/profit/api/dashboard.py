@@ -26,6 +26,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.profit.models.pricing import ProductPricing
+from src.profit.services.dashboard_metrics_service import DashboardMetricsService
 from src.profit.services.margin_calculator import MarginCalculator
 from src.profit.services.order_cost_service import OrderCostService
 from src.profit.services.throughput_service import ThroughputService
@@ -70,6 +71,84 @@ async def get_dashboard(
 ):
     svc = ThroughputService(session, tenant_id)
     return await svc.dashboard(as_of=as_of)
+
+
+# ─── Sprint Q.5 — CEO Dashboard tiles (§9) ────────────────────────────────
+
+@router.get("/otd")
+async def get_otd(
+    window_days: int = Query(30, ge=1, le=365),
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """On-Time Delivery % over a rolling window. Plan v4 §9."""
+    svc = DashboardMetricsService(session, tenant_id)
+    result = await svc.otd(window_days=window_days)
+    return result.to_dict()
+
+
+@router.get("/backlog-by-client")
+async def get_backlog_by_client(
+    limit: int = Query(20, ge=1, le=100),
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Pending orders × value × earliest deadline grouped by client.
+
+    Client is currently proxied by `produto_nome` until proper customer
+    wiring lands; the response key is `client_name` so the UI is
+    forward-compatible.
+    """
+    svc = DashboardMetricsService(session, tenant_id)
+    rows = await svc.backlog_by_client(limit=limit)
+    return {"items": [r.to_dict() for r in rows], "count": len(rows)}
+
+
+@router.get("/dashboard/active-alerts")
+async def get_active_alerts(
+    severity: Optional[str] = Query(None, description="INFO | WARN | CRITICAL"),
+    limit: int = Query(20, ge=1, le=200),
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Pass-through to `src.copilot.alerts.api` so the CEO dashboard can
+    embed the alert feed without a second backend hop. Returns the same
+    shape as `GET /v1/copilot/alerts`."""
+    from sqlalchemy import desc as _desc
+    from src.copilot.alerts.models import CopilotAlert
+
+    stmt = (
+        select(CopilotAlert)
+        .where(CopilotAlert.tenant_id == tenant_id)
+        .order_by(_desc(CopilotAlert.created_at))
+        .limit(limit)
+    )
+    if severity:
+        stmt = stmt.where(CopilotAlert.severity == severity.upper())
+    rows = list((await session.execute(stmt)).scalars().all())
+
+    by_severity = {"INFO": 0, "WARN": 0, "CRITICAL": 0}
+    for a in rows:
+        if a.severity in by_severity:
+            by_severity[a.severity] += 1
+
+    return {
+        "items": [
+            {
+                "id": str(a.id),
+                "code": a.code,
+                "severity": a.severity,
+                "title": a.title,
+                "message_pt": a.message_pt,
+                "status": a.status,
+                "created_at": a.created_at.isoformat() if a.created_at else None,
+                "context": a.context or {},
+            }
+            for a in rows
+        ],
+        "count": len(rows),
+        "by_severity": by_severity,
+    }
 
 
 # ─── /orders/{id}/cost + /margin (Q.2, Q.3) ──────────────────────────────

@@ -150,12 +150,18 @@ class EmployeeCreate(BaseModel):
 
 
 class EmployeeUpdate(BaseModel):
-    """Update employee request."""
+    """Update employee request.
+
+    Sprint Q.3 — `notes` accepts a free-text field. The EmployeesPage UI uses
+    it to encode the experience tier as `[tier:JUNIOR|MID|SENIOR|CUSTOM]`
+    until a dedicated `experience_tier` column is added.
+    """
     employee_name: Optional[str] = Field(None, max_length=255)
     department: Optional[str] = Field(None, max_length=100)
     job_title: Optional[str] = Field(None, max_length=100)
     base_monthly_salary: Optional[Decimal] = Field(None, ge=0)
     status: Optional[EmploymentStatus] = None
+    notes: Optional[str] = Field(None, max_length=2000)
 
 
 class EmployeeResponse(BaseModel):

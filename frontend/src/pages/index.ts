@@ -17,6 +17,9 @@ export { SchedulingPage } from './plan/SchedulingPage';
 export { MRPPage } from './plan/MRPPage';
 export { CapacityPage } from './plan/CapacityPage';
 
+// DISPATCH Module — Sprint Q.2
+export { default as DispatchPage } from './dispatch/DispatchPage';
+
 // PROFIT Module
 export { COGSPage } from './profit/COGSPage';
 export { PricingPage } from './profit/PricingPage';

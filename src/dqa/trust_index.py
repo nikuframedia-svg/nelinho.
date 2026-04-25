@@ -1,6 +1,21 @@
 """
-ProdPlan ONE - TrustIndex Calculator
-=====================================
+ProdPlan ONE - TrustIndex Calculator (DEPRECATED — Sprint Q.1)
+==============================================================
+
+⚠️  DEPRECATED: This v1 calculator (4 components: Completeness, Validity,
+Consistency, Timeliness) has been superseded by the v2 calculator in
+`src.dqa.trust_v2` (7+1 components: Completeness, Validity, Freshness,
+Consistency, Provenance, Anomaly, Evidence, +Causal Coherence reserved).
+
+New code MUST import from `src.dqa.trust_v2`. The Sprint Q.1 migration
+removed the only production consumer of this module (`quality_gates.py`)
+and rewired it to v2. This file is kept only as a fallback while we
+verify no third-party integrations still reference it; it will be deleted
+in a follow-up sprint once a grep confirms zero imports.
+
+Differences vs v2 (see `trust_v2.py` docstring for full table):
+- v1 evaluates a request payload's shape (is the dict complete + valid?)
+- v2 evaluates factory/order/phase database state (Blueprint v2.0 §4.5)
 
 Calculate TrustIndex (0-1 scale) with 4 components:
 - Completeness (30%): % of required fields filled

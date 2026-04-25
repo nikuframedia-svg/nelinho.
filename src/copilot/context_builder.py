@@ -204,31 +204,45 @@ async def _calculate_trust_index(
     tenant_id: UUID,
 ) -> Dict[str, Any]:
     """
-    Calculate trust index using the DQA TrustIndexCalculator when available,
-    otherwise use Factory Data Product config trust values.
+    Compute the factory-scope Trust Index v2 (Blueprint v2.0 §4.5).
+
+    Returns a dict with:
+      - value: composite TI in [0, 1]
+      - factors: per-component scores (7 components + optional CC) plus the
+        legacy `timeliness` alias mapping to `freshness` so older copilot
+        prompt templates that read 4 keys keep working.
+      - source: "trust_v2_factory" on success, "trust_v2_fallback" on error.
     """
     try:
-        from src.factory_data_product.config import TRUST_INDEX
-        if TRUST_INDEX:
-            values = [v for v in TRUST_INDEX.values() if isinstance(v, (int, float))]
-            if values:
-                avg_trust = sum(values) / len(values) / 100.0  # Normalize to 0-1
-                return {
-                    "value": round(avg_trust, 3),
-                    "factors": {k: v / 100.0 for k, v in TRUST_INDEX.items() if isinstance(v, (int, float))},
-                    "source": "factory_data_product_config",
-                }
-    except Exception as e:
-        logger.debug(f"Trust index from factory config failed: {e}")
+        from src.dqa.trust_signals import curated_signals_provider
+        from src.dqa.trust_v2 import SCOPE_FACTORY, TrustIndexV2Calculator
 
-    return {
-        "value": 0.65,
-        "factors": {
-            "data_freshness": 0.70,
-            "integrity": 0.65,
-            "completeness": 0.60,
-        },
-        "source": "default_estimate",
-    }
+        calc = TrustIndexV2Calculator(
+            session, tenant_id, signals_provider=curated_signals_provider,
+        )
+        result = await calc.compute_for_scope(SCOPE_FACTORY)
+        factors = {
+            k: (round(v, 4) if isinstance(v, float) else v)
+            for k, v in result.components.as_dict(include_legacy_keys=True).items()
+        }
+        return {
+            "value": round(result.composite, 4),
+            "factors": factors,
+            "source": "trust_v2_factory",
+        }
+    except Exception as exc:
+        logger.warning(
+            "Trust index v2 failed for tenant=%s, falling back to neutral: %s",
+            tenant_id, exc,
+        )
+        return {
+            "value": 0.65,
+            "factors": {
+                "data_freshness": 0.70,
+                "integrity": 0.65,
+                "completeness": 0.60,
+            },
+            "source": "trust_v2_fallback",
+        }
 
 
