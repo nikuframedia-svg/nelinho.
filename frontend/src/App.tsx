@@ -30,6 +30,9 @@ const DataQualityPage = lazy(() => import('./pages/admin/DataQualityPage').then(
 const ToolRegistryPage = lazy(() => import('./pages/admin/ToolRegistryPage').then(m => ({ default: m.ToolRegistryPage })));
 const DataIngestionPage = lazy(() => import('./pages/admin/DataIngestionPage').then(m => ({ default: m.DataIngestionPage })));
 
+// Sprint Q.7 Fase 1 — Audit / Health dashboard
+const HealthDashboardPage = lazy(() => import('./pages/admin/HealthDashboardPage').then(m => ({ default: m.HealthDashboardPage })));
+
 // Lazy load new module pages
 const ExplainPage = lazy(() => import('./pages/explain/ExplainPage').then(m => ({ default: m.ExplainPage })));
 const TwinPage = lazy(() => import('./pages/twin/TwinPage').then(m => ({ default: m.TwinPage })));
@@ -279,6 +282,11 @@ function App() {
                     <Route path="data-ingestion" element={
                       <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
                         <DataIngestionPage />
+                      </Suspense>
+                    } />
+                    <Route path="health" element={
+                      <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
+                        <HealthDashboardPage />
                       </Suspense>
                     } />
                   </Route>

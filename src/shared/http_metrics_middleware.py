@@ -112,9 +112,14 @@ class HTTPMetricsMiddleware(BaseHTTPMiddleware):
             try:
                 http_requests_total.labels(**labels).inc()
                 http_request_duration_seconds.labels(**labels).observe(elapsed)
-            except Exception:
-                # Never let metrics emission fail a real request.
-                pass
+            except Exception as exc:
+                # Sprint Q.7 Fase 4 — was bare `pass`. Never let metrics
+                # emission fail a real request, but log under DEBUG so
+                # broken Prometheus labels surface during diagnosis.
+                import logging as _l
+                _l.getLogger(__name__).debug(
+                    "http_metrics emit failed: %s", exc,
+                )
             http_requests_in_flight.dec()
 
 

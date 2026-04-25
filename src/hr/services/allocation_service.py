@@ -5,7 +5,7 @@ ProdPlan ONE - Allocation Service
 Business logic for employee allocation.
 """
 
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -250,9 +250,7 @@ class AllocationService:
         """Get employee availability considering existing allocations."""
         from_date = from_date or date.today()
         to_date = to_date or from_date + timedelta(weeks=4)
-        
-        from datetime import timedelta
-        
+
         # Get existing allocations
         allocations = await self.get_allocations(
             employee_id=employee_id,

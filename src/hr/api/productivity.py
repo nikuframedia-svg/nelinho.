@@ -153,9 +153,7 @@ async def get_productivity_report(
     session: AsyncSession = Depends(get_session),
 ):
     """Get aggregated productivity report for a date range."""
-    service = ProductivityService(session, tenant_id)
-    
-    # Get all records in date range
+    # Endpoint uses the ORM directly; the service instance was unused dead code.
     from sqlalchemy import select, and_
     from src.hr.models.productivity import EmployeeProductivity
     

@@ -133,7 +133,11 @@ def _best_pair(
                 continue
             try:
                 cost = cost_fn(a, b, op) + cost_fn(b, a, op)
-            except Exception:
+            except Exception as exc:
+                # Sprint Q.7 Fase 4 — was bare `continue`. Skip pair
+                # whose cost can't be computed; log under DEBUG so
+                # cost_fn bugs are visible during pair-assignment debug.
+                logger.debug("pair cost_fn(%s, %s) failed: %s", a, b, exc)
                 continue
             if cost < best_cost:
                 best_cost = cost

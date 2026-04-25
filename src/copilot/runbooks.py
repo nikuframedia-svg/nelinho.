@@ -15,14 +15,81 @@ Modes:
 - EXECUTE: Actually perform the actions (after approval)
 """
 
+import ast
 import hashlib
 import logging
+import operator as _op
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+
+
+# Sprint Q.7 Fase 3 — safe replacement for `eval()` in `_evaluate_condition`.
+# Whitelists only the AST nodes we use in runbook condition expressions:
+# constants, names (resolved from `context`), Compare, BoolOp, UnaryOp.
+# Any other node — calls, attribute access, subscripts, comprehensions — raises
+# `ValueError("unsafe expression")` and the condition fails closed.
+
+_SAFE_BINOPS = {
+    ast.Eq: _op.eq, ast.NotEq: _op.ne,
+    ast.Lt: _op.lt, ast.LtE: _op.le,
+    ast.Gt: _op.gt, ast.GtE: _op.ge,
+    ast.In: lambda a, b: a in b,
+    ast.NotIn: lambda a, b: a not in b,
+    ast.Is: _op.is_, ast.IsNot: _op.is_not,
+}
+_SAFE_UNARYOPS = {
+    ast.UAdd: _op.pos, ast.USub: _op.neg, ast.Not: _op.not_,
+}
+
+
+def _safe_eval_condition(expr: str, context: dict[str, Any]) -> bool:
+    """Evaluate a runbook condition string without executing arbitrary code.
+
+    Supports: int / float / str / bool / None literals, names looked up in
+    `context`, Compare (a < b < c), And/Or, Not / +x / -x. Returns the
+    boolean result; non-bool truthiness is coerced via Python's `bool()`.
+    """
+    tree = ast.parse(expr.strip(), mode="eval")
+
+    def _eval(node: ast.AST) -> Any:
+        if isinstance(node, ast.Expression):
+            return _eval(node.body)
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.Name):
+            if node.id not in context:
+                raise ValueError(f"unknown name: {node.id}")
+            return context[node.id]
+        if isinstance(node, ast.UnaryOp):
+            op_type = type(node.op)
+            if op_type not in _SAFE_UNARYOPS:
+                raise ValueError(f"unsafe unary op: {op_type.__name__}")
+            return _SAFE_UNARYOPS[op_type](_eval(node.operand))
+        if isinstance(node, ast.BoolOp):
+            values = [_eval(v) for v in node.values]
+            if isinstance(node.op, ast.And):
+                return all(values)
+            if isinstance(node.op, ast.Or):
+                return any(values)
+            raise ValueError(f"unsafe boolop: {type(node.op).__name__}")
+        if isinstance(node, ast.Compare):
+            left = _eval(node.left)
+            for op_node, cmp in zip(node.ops, node.comparators):
+                op_type = type(op_node)
+                if op_type not in _SAFE_BINOPS:
+                    raise ValueError(f"unsafe compare op: {op_type.__name__}")
+                right = _eval(cmp)
+                if not _SAFE_BINOPS[op_type](left, right):
+                    return False
+                left = right
+            return True
+        raise ValueError(f"unsafe expression node: {type(node).__name__}")
+
+    return bool(_eval(tree))
 from uuid import UUID, uuid4
 
 import yaml
@@ -443,14 +510,16 @@ class RunbookEngineV2:
         """Evaluate a condition string against context."""
         # Simple condition evaluation
         # Format: "variable operator value" e.g., "trust_index >= 0.7"
+        # Sprint Q.7 Fase 3 fix: was `eval(condition, {"__builtins__": {}}, context)`
+        # which is RCE-vulnerable via subclass-of-object escape tricks even with
+        # an empty `__builtins__`. Replaced with `ast`-based safe evaluator that
+        # whitelists only Compare / BoolOp / UnaryOp / constants and names from
+        # `context` — anything else raises and the condition fails closed.
         try:
-            # Replace variables with context values
             for key, value in context.items():
                 condition = condition.replace(f"${{{key}}}", str(value))
                 condition = condition.replace(f"${key}", str(value))
-            
-            # Safe eval (only comparisons)
-            return eval(condition, {"__builtins__": {}}, context)
+            return _safe_eval_condition(condition, context)
         except Exception as e:
             logger.warning(f"Condition evaluation failed: {condition}, error={e}")
             return False

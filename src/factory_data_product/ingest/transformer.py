@@ -89,12 +89,24 @@ class RawToCuratedTransformer:
         result = TransformResult()
         
         # Group rows by sheet
+        # Sprint Q.7 Fase 4 — skip rows without sheet_name; previously a
+        # missing key created a `None` bucket silently dropped by the
+        # SHEET_HANDLERS lookup downstream, hiding malformed input.
         rows_by_sheet: Dict[str, List[Dict]] = {}
+        skipped_no_sheet = 0
         for row in raw_rows:
             sheet = row.get("sheet_name")
+            if not sheet:
+                skipped_no_sheet += 1
+                continue
             if sheet not in rows_by_sheet:
                 rows_by_sheet[sheet] = []
             rows_by_sheet[sheet].append(row)
+        if skipped_no_sheet:
+            logger.warning(
+                "transform: skipped %d rows with empty sheet_name",
+                skipped_no_sheet,
+            )
         
         # Transform each sheet
         for sheet_name, sheet_rows in rows_by_sheet.items():
@@ -335,9 +347,12 @@ class RawToCuratedTransformer:
                     return datetime.strptime(s, fmt).date()
                 except ValueError:
                     continue
-        except Exception:
-            pass
-        
+        except Exception as exc:
+            # Sprint Q.7 Fase 4 — was bare `pass`. Unparseable date →
+            # caller treats as missing. Log under DEBUG so unusual
+            # inputs surface during ingest debugging.
+            logger.debug("date parse failed for %r: %s", value, exc)
+
         return None
 
 

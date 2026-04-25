@@ -170,8 +170,14 @@ def compute_fitness(schedule: Dict[str, Any], config: Optional[FitnessConfig] = 
         try:
             from src.plan.cpo.preference_adapter import compute_preference_penalty
             fitness += compute_preference_penalty(schedule, cfg.preference_rules)
-        except Exception:  # pragma: no cover — never let the hook crash fitness
-            pass
+        except Exception as exc:  # pragma: no cover — never let the hook crash fitness
+            # Sprint Q.7 Fase 4 — was bare `pass`. Hot path: keep
+            # graceful but log under DEBUG so silent learning rule bugs
+            # surface during diagnosis.
+            import logging as _l
+            _l.getLogger(__name__).debug(
+                "fitness preference_penalty failed: %s", exc,
+            )
 
     # Sprint I.5 — causal-entropy penalty. Cheap (single pass over ops)
     # so it lives in the hot path. Guarded so a zero weight is a true
@@ -180,8 +186,13 @@ def compute_fitness(schedule: Dict[str, Any], config: Optional[FitnessConfig] = 
         try:
             from src.plan.cpo.causal_entropy import causal_entropy_penalty
             fitness += cfg.w_causal_entropy * causal_entropy_penalty(schedule)
-        except Exception:  # pragma: no cover — defensive
-            pass
+        except Exception as exc:  # pragma: no cover — defensive
+            # Sprint Q.7 Fase 4 — was bare `pass`. Best-effort entropy
+            # term; log under DEBUG.
+            import logging as _l
+            _l.getLogger(__name__).debug(
+                "fitness causal_entropy_penalty failed: %s", exc,
+            )
 
     if schedule.get("safety_violated"):
         fitness += cfg.safety_penalty

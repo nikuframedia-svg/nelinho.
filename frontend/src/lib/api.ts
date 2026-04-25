@@ -2009,6 +2009,189 @@ export const preferenceRulesApi = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// SPRINT R.1 — Learning visibility (Aprendizagem panel)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface LearningPairStats {
+  total_commits_with_rejection: number;
+  total_pairs: number;
+  eligible_for_dpo: number;
+  by_category: Record<string, number>;
+  by_weekday: Record<string, number>;
+  last_30d: { commits: number; pairs: number; eligible: number };
+  last_90d: { commits: number; pairs: number; eligible: number };
+  abl_pairs_today: number;
+  min_reason_len: number;
+}
+
+export interface LearningRuleStats {
+  total: number;
+  by_status: Record<string, number>;
+  by_type: Record<string, number>;
+  last_detector_run_at: string | null;
+  rules_re_emitted_count: number;
+}
+
+export interface LearningWeightStats {
+  status: string;
+  current_weights: Record<string, number>;
+  default_weights: Record<string, number>;
+  multipliers: Record<string, number>;
+  pairs_used: number;
+  commits_scanned: number;
+  trained_at: string | null;
+  blend_learned_pct: number;
+  min_pairs_threshold: number;
+  reason: string | null;
+}
+
+// Sprint R.4 — weight history (Camada 2 audit modal)
+export interface LearningWeightExplanation {
+  kpi: string;
+  label: string;
+  delta_pct: number;
+  direction: 'up' | 'down' | 'stable' | string;
+  dominant_category: string | null;
+  pairs_used: number;
+  human_text: string;
+}
+
+export interface LearningWeightHistoryEntry {
+  trained_at: string | null;
+  valid_from: string | null;
+  status: string | null;
+  weights: Record<string, number>;
+  multipliers: Record<string, number>;
+  pairs_used: number;
+  explanations: LearningWeightExplanation[];
+  warnings: Array<Record<string, any>>;
+}
+
+export interface LearningWeightHistoryResponse {
+  entries: LearningWeightHistoryEntry[];
+}
+
+export const learningApi = {
+  pairs: (params?: { window_days?: number; min_reason_len?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.window_days !== undefined) qs.set('window_days', String(params.window_days));
+    if (params?.min_reason_len !== undefined) qs.set('min_reason_len', String(params.min_reason_len));
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    return request<LearningPairStats>(`/v1/governance/learning/pairs${suffix}`);
+  },
+  rules: () => request<LearningRuleStats>('/v1/governance/learning/rules'),
+  weights: () => request<LearningWeightStats>('/v1/governance/learning/weights'),
+  weightHistory: (limit: number = 12) =>
+    request<LearningWeightHistoryResponse>(
+      `/v1/governance/learning/weights/history?limit=${limit}`,
+    ),
+  // Sprint R.5.3 — adapter management
+  adapter: () =>
+    request<LearningAdapterState>('/v1/governance/learning/adapter'),
+  promoteAdapter: (
+    version: string,
+    payload: {
+      reason: string;
+      decided_by?: string;
+      intent_match_rate?: number;
+      safety_violations_count?: number;
+    },
+  ) =>
+    request<LearningAdapterState>(
+      `/v1/governance/learning/adapter/promote/${encodeURIComponent(version)}`,
+      { method: 'POST', body: JSON.stringify(payload) },
+    ),
+  rollbackAdapter: (payload: { reason: string; decided_by?: string }) =>
+    request<LearningAdapterState>(
+      '/v1/governance/learning/adapter/rollback',
+      { method: 'POST', body: JSON.stringify(payload) },
+    ),
+};
+
+export interface LearningAdapterState {
+  active_version: string | null;
+  promoted_at: string | null;
+  promoted_by: string | null;
+  reason: string | null;
+  intent_match_rate: number | null;
+  safety_violations_count: number | null;
+  has_previous: boolean;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SPRINT Q.7 — Diagnostics dashboard (per-module health + infra pings)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export type ModuleHealthStatus = 'green' | 'yellow' | 'red';
+
+export interface DiagnosticsModule {
+  module: string;
+  src_files: number;
+  test_files: number;
+  routes: number;
+  todo_count: number;
+  import_errors: string[];
+  import_error_count: number;
+  health: ModuleHealthStatus;
+}
+
+export interface DiagnosticsModulesResponse {
+  modules: DiagnosticsModule[];
+  summary: {
+    total: number;
+    green: number;
+    yellow: number;
+    red: number;
+    total_routes: number;
+    total_import_errors: number;
+    total_todos: number;
+  };
+  module_catalogue: string[];
+}
+
+export interface InfraComponent {
+  component: string;
+  healthy: boolean;
+  detail: string;
+  latency_ms: number | null;
+}
+
+export interface InfrastructureResponse {
+  items: InfraComponent[];
+  summary: {
+    total: number;
+    healthy: number;
+    unhealthy: number;
+  };
+}
+
+export interface DiagnosticsFullResponse {
+  modules: DiagnosticsModule[];
+  modules_summary: { total: number; green: number; yellow: number; red: number };
+  infrastructure: InfrastructureResponse;
+  trust_index: {
+    composite?: number;
+    components?: Record<string, number | null>;
+    effective_gates?: Record<string, boolean>;
+    error?: string;
+    source?: string;
+  };
+  commits: {
+    commits_last_7_days?: number;
+    latest_commit_sha?: string | null;
+    latest_commit_at?: string | null;
+    error?: string;
+    source?: string;
+  };
+}
+
+export const diagnosticsApi = {
+  modules: () => request<DiagnosticsModulesResponse>('/v1/diagnostics/modules'),
+  infrastructure: () => request<InfrastructureResponse>('/v1/diagnostics/infrastructure'),
+  full: () => request<DiagnosticsFullResponse>('/v1/diagnostics/full'),
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // SPRINT Q.1 — DQA Trust Index v2
 // ═══════════════════════════════════════════════════════════════════════════════
 

@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import String, Integer, Text, DateTime, func
+from sqlalchemy import Index, String, Integer, Text, DateTime, func
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -44,10 +44,17 @@ class EventOutbox(Base):
     )
     published_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     
+    # Sprint Q.7 Fase 1 — fix: was `{"postgresql_indexes": [...]}` which
+    # SQLAlchemy doesn't accept (raises ArgumentError on import). Migration
+    # 003 already creates the same partial index via `op.create_index()`,
+    # this declarative form just keeps the model in sync with the schema.
     __table_args__ = (
-        {"postgresql_indexes": [
-            {"name": "idx_event_outbox_pending", "postgresql_where": "status = 'pending'"}
-        ]},
+        Index(
+            "idx_event_outbox_pending",
+            "status",
+            "created_at",
+            postgresql_where="status = 'pending'",
+        ),
     )
 
 

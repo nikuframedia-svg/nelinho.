@@ -8,9 +8,12 @@ reusing the legacy `/api/copilot` prefix.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 from uuid import UUID
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel
@@ -240,8 +243,10 @@ async def shift_report(
                 r = getattr(sq, name)(**kw)
                 if r and r.get("status") != "BLOCKED":
                     return r
-            except Exception:
-                pass
+            except Exception as exc:
+                # Sprint Q.7 Fase 4 — was bare `pass`. Best-effort query;
+                # log under DEBUG so the failure is visible without spam.
+                logger.debug("alert _q(%s) failed: %s", name, exc)
             return None
 
         wip = _q("get_wip")

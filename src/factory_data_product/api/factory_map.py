@@ -102,9 +102,12 @@ async def get_snapshot(
         if cached:
             try:
                 return json.loads(cached)
-            except Exception:
-                pass
-    except Exception:
+            except Exception as exc:
+                # Sprint Q.7 Fase 4 — was bare `pass`. Corrupt cache
+                # entry → fallthrough to recompute. Log under DEBUG.
+                logger.debug("factory_map: corrupt cache for %s: %s", key, exc)
+    except Exception as exc:
+        logger.debug("factory_map: redis unavailable, computing fresh: %s", exc)
         redis = None
         key = None
 
@@ -115,8 +118,11 @@ async def get_snapshot(
         try:
             ttl = await _cache_ttl(session, tenant_id)
             await redis.setex(key, ttl, json.dumps(payload, default=str))
-        except Exception:
-            pass
+        except Exception as exc:
+            # Sprint Q.7 Fase 4 — best-effort cache write; never block
+            # the response on a Redis hiccup, but log so cache thrash
+            # is visible.
+            logger.debug("factory_map: cache write failed: %s", exc)
 
     return payload
 

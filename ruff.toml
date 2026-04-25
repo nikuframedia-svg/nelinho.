@@ -1,0 +1,60 @@
+# Ruff config — Sprint Q.7 Fase 2
+# ================================
+# Rule set focused on REAL BUGS only (zero cosmetic). Plan v4 §11
+# principle: "mudanças cirúrgicas".
+#
+# What we lint for:
+#   F   — pyflakes (undefined names, unused imports, syntax errors)
+#   E9  — pycodestyle E9 only (syntax errors)
+#   B   — flake8-bugbear (mutable default args, except-Exception, etc)
+#   PLE — pylint Errors (e.g. broken format strings)
+#   RUF — ruff's own real-bug detectors
+#   ASYNC — async/await misuses
+#
+# What we DO NOT lint for:
+#   E1xx-E7xx (whitespace, indentation, line length)
+#   W (warnings)
+#   I (import sorting)
+#   N (naming)
+#   D (docstrings)
+#   ANN (annotation hints)
+#   COM, Q, EM (trivial style)
+#
+# Run:
+#   ruff check src/{module} --no-fix
+#   ruff check src/ --no-fix --output-format=concise
+
+target-version = "py311"
+line-length = 200  # don't flag long lines — we want bugs only
+
+[lint]
+select = [
+    "F",     # pyflakes — REAL BUGS (undefined names, unused imports)
+    "E9",    # syntax errors only (skip E1xx-E7xx style)
+    "B",     # flake8-bugbear — REAL BUGS (mutable defaults, etc)
+    "PLE",   # pylint errors — REAL BUGS
+    "RUF",   # ruff specific — mostly real bugs
+    "ASYNC", # async misuses
+]
+
+# Allow common patterns that aren't real bugs in this codebase
+ignore = [
+    "B008",   # Function call in default arg — common in FastAPI Depends()
+    "B904",   # raise without `from` — too many existing instances, low value
+    "B028",   # warn missing stacklevel — cosmetic
+    "B905",   # zip without explicit strict — cosmetic
+    "RUF001", # ambiguous unicode chars — false positives from PT comments
+    "RUF002", # same as above for docstrings
+    "RUF003", # same as above for inline comments
+    "RUF012", # mutable class attribute should be ClassVar — too noisy
+    "RUF022", # __all__ unsorted — cosmetic
+    "RUF013", # implicit Optional — cosmetic, mypy catches the real issues
+    "F401",   # imported but unused — many __init__.py re-exports
+    "F403",   # star imports — pre-existing pattern in some places
+    "F405",   # undefined-from-star — same as above
+]
+
+[lint.per-file-ignores]
+"tests/**/*.py" = ["F841", "B011", "B017", "B018"]  # test fixtures often unused
+"alembic/versions/*.py" = ["E402", "F401"]  # migrations are special
+"scripts/**/*.py" = ["E402"]  # ad-hoc scripts

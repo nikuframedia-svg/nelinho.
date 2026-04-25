@@ -224,22 +224,30 @@ class ActionExecutor:
             # Execute action (this would call action-specific logic)
             after_state = await self._simulate_action_execution(action, plan_id)
             
-            # Create audit log (will be saved by caller)
+            # Create audit log row.
+            # Sprint Q.7 Fase 4 — was a `dict` left dangling with comment
+            # "will be saved by caller" but no caller ever wrote it. Result:
+            # both /actions/{id}/rollback and /actions list endpoints
+            # always returned 404 / empty. Fixed: persist the row here so
+            # the audit trail is real.
+            from src.copilot.models import CopilotActionLog
             transaction_id = uuid4()
             rollback_until = datetime.utcnow() + timedelta(hours=24)
-            
-            audit_log = {
-                "id": transaction_id,
-                "action_type": action.type,
-                "user_id": self.user_id,
-                "tenant_id": self.tenant_id,
-                "plan_id": plan_id,
-                "before_state": before_state,
-                "after_state": after_state,
-                "status": ActionStatus.EXECUTED.value,
-                "executed_at": datetime.utcnow(),
-                "rollback_until": rollback_until,
-            }
+
+            audit_log = CopilotActionLog(
+                id=transaction_id,
+                tenant_id=self.tenant_id,
+                action_type=action.type,
+                user_id=self.user_id,
+                plan_id=plan_id,
+                before_state=before_state,
+                after_state=after_state,
+                status=ActionStatus.EXECUTED.value,
+                executed_at=datetime.utcnow(),
+                rollback_until=rollback_until,
+            )
+            self.session.add(audit_log)
+            await self.session.flush()
             
             # Publish Kafka event
             if self.kafka_producer:

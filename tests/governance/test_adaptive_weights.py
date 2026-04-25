@@ -157,6 +157,8 @@ def test_retrain_with_insufficient_pairs_returns_defaults(monkeypatch):
     """Below the min-pairs threshold the retainer bails and the caller
     sees the hardcoded defaults — the persistence layer must not be
     touched so the previous snapshot (if any) stays in effect."""
+    # Q.7 Fase 3 fix: reset class-level state from prior tests in random order.
+    _FakeTenantConfigService.last_instance = None
     monkeypatch.setattr(
         "src.core.services.tenant_config_service.TenantConfigService",
         _FakeTenantConfigService,
@@ -347,3 +349,72 @@ def test_load_adaptive_weights_returns_persisted_weights_with_partial_fallback(
     assert weights["w_tardiness"] == 12.0
     assert weights["w_makespan"] == DEFAULT_WEIGHTS["w_makespan"]
     assert weights["w_quality_risk"] == DEFAULT_WEIGHTS["w_quality_risk"]
+
+
+# ─── Sprint R.2 — Camada 1↔2 cross-check ──────────────────────────────────
+
+
+class _RuleStub:
+    """Minimal stand-in for PreferenceRule used by the cross-check."""
+
+    def __init__(
+        self,
+        *,
+        predicate: Dict[str, Any],
+        rule_id: str = "test-rule",
+        description: str = "test rule",
+    ) -> None:
+        self.id = rule_id
+        self.predicate = predicate
+        self.description = description
+
+
+def test_cross_check_no_warnings_when_weights_align_with_rule():
+    from src.governance.preference_learning import detect_weight_rule_contradictions
+
+    rule = _RuleStub(predicate={"prefer": "setups", "sacrifice": "throughput_eur_day"})
+    blended = {
+        "w_makespan": 1.0,
+        "w_tardiness": 10.0,
+        "w_setups": 0.7,  # default 0.5 → 1.4× → aligns with "prefer setups low"
+        "w_quality_risk": 0.10,
+    }
+    warnings = detect_weight_rule_contradictions(
+        blended_weights=blended, confirmed_rules=[rule],
+    )
+    assert warnings == []
+
+
+def test_cross_check_emits_warning_when_weight_contradicts_confirmed_rule():
+    from src.governance.preference_learning import detect_weight_rule_contradictions
+
+    # Operator confirmed "prefer low tardiness" but the freshly trained
+    # weight came out at 0.5× the default. Camadas disagree → warning.
+    rule = _RuleStub(predicate={"prefer": "total_tardiness_hours"})
+    blended = {
+        "w_makespan": 1.0,
+        "w_tardiness": 5.0,  # default 10.0 → 0.5× → contradicts the rule
+        "w_setups": 0.5,
+        "w_quality_risk": 0.10,
+    }
+    warnings = detect_weight_rule_contradictions(
+        blended_weights=blended, confirmed_rules=[rule],
+    )
+    assert len(warnings) == 1
+    w = warnings[0]
+    assert w["weight_key"] == "w_tardiness"
+    assert w["kpi"] == "total_tardiness_hours"
+    assert w["observed_multiplier"] == 0.5
+    assert "tardiness" in w["message"].lower()
+
+
+def test_cross_check_ignores_rules_with_unknown_kpis():
+    """A rule that prefers a KPI we don't adapt must be silently skipped."""
+    from src.governance.preference_learning import detect_weight_rule_contradictions
+
+    rule = _RuleStub(predicate={"prefer": "avg_utilization"})  # not in the 4
+    blended = dict(DEFAULT_WEIGHTS)
+    warnings = detect_weight_rule_contradictions(
+        blended_weights=blended, confirmed_rules=[rule],
+    )
+    assert warnings == []

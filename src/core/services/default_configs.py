@@ -244,15 +244,23 @@ async def seed_tenant_defaults(
             "TenantConfigService.set() directly to override individual keys."
         )
 
+    import logging as _logging
+    _seed_logger = _logging.getLogger(__name__)
+
     written = 0
     for category, key, value, data_type, _note in DEFAULT_SEEDS:
         try:
             await service.get(category, key)
             # exists → skip
             continue
-        except Exception:
-            # missing → write below
-            pass
+        except Exception as exc:
+            # Sprint Q.7 Fase 4 — was bare `pass`. The intent is "key
+            # not yet seeded → write below". Log under DEBUG so DB-level
+            # failures (vs. real "not found") still surface.
+            _seed_logger.debug(
+                "seed_tenant_defaults: get(%s.%s) raised %s — assuming missing, will write",
+                category, key, exc,
+            )
         await service.set(
             category=category,
             key=key,

@@ -38,6 +38,7 @@ from src.copilot.api_endpoints.runbooks_api import router as runbooks_router
 from src.copilot.api_endpoints.tools_api import router as tools_router
 from src.governance.api import router as governance_router
 from src.governance.api_preference_rules import router as preference_rules_router
+from src.governance.api_learning_metrics import router as learning_metrics_router  # Sprint R.1
 from src.workforce.api import router as workforce_router
 from src.workforce.employee_extras_api import router as workforce_employees_router  # Sprint Q.3
 from src.copilot.alerts.api import router as copilot_alerts_router
@@ -218,9 +219,12 @@ async def db_connection_refused_handler(request: Request, exc: ConnectionRefused
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Global exception handler."""
-    # Skip DB connection errors (handled above)
+    # Skip DB connection errors (handled above) — re-raise so the
+    # `db_connection_refused_handler` registered earlier picks them up.
+    # Was a bare `raise` which in this scope (no active except block) would
+    # have raised `RuntimeError: No active exception to re-raise`.
     if isinstance(exc, (ConnectionRefusedError,)):
-        raise
+        raise exc
     
     # Check for SQLAlchemy/asyncpg DB errors
     error_str = str(exc).lower()
@@ -319,6 +323,10 @@ app.include_router(tenant_config_router)  # Sprint L.3 — /v1/config/*
 from src.dqa.api import router as dqa_router  # noqa: E402
 app.include_router(dqa_router)
 
+# Sprint Q.7 Fase 1 — Diagnostics dashboard (per-module health + infra pings)
+from src.diagnostics import router as diagnostics_router  # noqa: E402
+app.include_router(diagnostics_router)
+
 # Sprint N — Factory Map
 from src.factory_data_product.api.factory_map import router as factory_map_router  # noqa: E402
 app.include_router(factory_map_router)
@@ -344,6 +352,7 @@ app.include_router(runbooks_router) # Runbooks API (P2 Enterprise)
 app.include_router(tools_router)    # Tool Registry API (P2 Enterprise)
 app.include_router(governance_router)  # Governance API (Approvals, SoD)
 app.include_router(preference_rules_router)  # Sprint E.3 — learned rules review
+app.include_router(learning_metrics_router)  # Sprint R.1 — learning visibility (pairs/rules/weights)
 app.include_router(workforce_router)   # Workforce Operations API (NEW)
 app.include_router(workforce_employees_router)  # Sprint Q.3 — Employees extras (quality-score, skills, history)
 app.include_router(copilot_alerts_router)  # Proactive alerts (Sprint C — Fase 5)

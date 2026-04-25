@@ -374,8 +374,10 @@ class TwinService:
         try:
             from src.factory_data_product.services.semantic_queries_inmemory import SemanticQueriesInMemory
             sq = SemanticQueriesInMemory()
-        except Exception:
-            pass
+        except Exception as exc:
+            # Sprint Q.7 Fase 4 — was bare `pass`. SQ unavailable → fall
+            # back to None values; log so misconfiguration surfaces.
+            logger.debug("twin: SemanticQueriesInMemory unavailable: %s", exc)
 
         def _query_safe(method_name: str) -> Optional[Dict]:
             if sq is None:
@@ -384,8 +386,10 @@ class TwinService:
                 result = getattr(sq, method_name)()
                 if result and result.get("status") != "BLOCKED":
                     return result
-            except Exception:
-                pass
+            except Exception as exc:
+                # Sprint Q.7 Fase 4 — was bare `pass`. Best-effort
+                # query; log under DEBUG.
+                logger.debug("twin _query_safe(%s) failed: %s", method_name, exc)
             return None
 
         wip_data = _query_safe("wip")

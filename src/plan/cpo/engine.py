@@ -213,7 +213,6 @@ class CPOv4Engine:
         # 2. GA exploration
         best = baseline
         best_fit = baseline_fit
-        best_chromo = baseline_chromo
 
         # Seed MAP-Elites with the baseline so restart/injection always
         # has at least one viable elite to draw from.
@@ -284,9 +283,10 @@ class CPOv4Engine:
                     chromo._frrmab_parent_fit = None  # type: ignore[attr-defined]
 
                 # Track best + MAP-Elites + surrogate sample
+                # Note: best_chromo was tracked here but never read downstream
+                # (the decode result is in `best`); removed to avoid confusion.
                 if fit < best_fit:
                     best_fit = fit
-                    best_chromo = chromo
                     best = result
                 if self._mapelites is not None:
                     self._mapelites.insert(chromo, fit, result, generation=gen)

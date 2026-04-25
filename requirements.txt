@@ -1,11 +1,15 @@
 # ProdPlan ONE - Python Dependencies
 
 # Core FastAPI
-fastapi==0.109.0
+# Sprint Q.7 Fase 4 — CVE patches:
+#   fastapi 0.109.0 → 0.118+ (PYSEC-2024-38 + brings starlette ≥0.49 for
+#     CVE-2025-54121 + CVE-2025-62727)
+#   python-multipart 0.0.6 → 0.0.18 (PYSEC-2024-38 + CVE-2024-53981 + 2 newer)
+fastapi>=0.118.0,<0.137
 uvicorn[standard]==0.27.0
 pydantic==2.5.3
 pydantic-settings==2.1.0
-python-multipart==0.0.6
+python-multipart>=0.0.18,<1
 sse-starlette==2.1.0  # Sprint D.1 — Server-Sent Events for real-time UX
 
 # Database
@@ -21,7 +25,8 @@ redis[hiredis]==5.0.1
 aiokafka==0.10.0
 
 # Authentication
-python-jose[cryptography]==3.3.0
+# Sprint Q.7 Fase 4 — python-jose 3.3.0 → 3.4.0 (PYSEC-2024-232/233 algorithm-confusion + DoS)
+python-jose[cryptography]>=3.4.0,<4
 passlib[bcrypt]==1.7.4
 
 # Data Processing
@@ -48,7 +53,8 @@ ortools>=9.8.3296  # Google OR-Tools for CP-SAT constraint programming
 deap>=1.4.1  # Distributed Evolutionary Algorithms for Genetic Algorithm
 
 # Utilities
-python-dotenv==1.0.0
+# Sprint Q.7 Fase 4 — python-dotenv 1.0.0 → 1.2.2 (CVE-2026-28684 .env injection)
+python-dotenv>=1.2.2,<2
 httpx==0.26.0
 tenacity==8.2.3
 structlog==24.1.0  # Already included - used for structured logging
@@ -61,7 +67,7 @@ structlog==24.1.0  # Already included - used for structured logging
 # scipy==1.11.4 already included above for KS test (drift detection)
 
 # Supply Chain (LACUNA 4)
-prophet==1.1.5  # ARIMA forecasting with Prophet
+prophet>=1.1.6,<2  # Sprint Q.7 Fase 4 — bumped from 1.1.5 (broke on numpy 2.0 with np.float_ removed)
 # pandas==2.1.4 already included above
 # numpy==1.26.3 already included above
 
@@ -72,15 +78,19 @@ prometheus-client==0.19.0
 pyyaml>=6.0  # Load runbooks YAML
 
 # Testing
-pytest==7.4.4
-pytest-asyncio==0.23.3
-pytest-cov==4.1.0
+# Sprint Q.7 Fase 4 — pytest 9.0.3 (CVE-2025-71176 only fully fixed in 9.x).
+# Major bump validated by re-running the full 1024-test suite.
+pytest>=9.0.3,<10
+pytest-asyncio>=1.0,<2  # 1.x supports pytest 9
+pytest-cov>=6.0,<8  # bumped from 4.1 (4.x doesn't support pytest 9)
 httpx==0.26.0
 fakeredis>=2.20  # In-memory Redis stub for async tests
 aiosqlite>=0.19  # Async SQLite driver for tests that need a real DB
 
 # Development
-black==23.12.1
+# Sprint Q.7 Fase 4 — black 23.12.1 → 24.x (PYSEC-2024-48 + CVE-2026-32274 ReDoS).
+# Black is dev-only (no runtime impact) so a major bump is low-risk.
+black>=24.10.0,<27
 isort==5.13.2
 mypy==1.8.0
 

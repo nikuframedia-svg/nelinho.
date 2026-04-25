@@ -223,11 +223,21 @@ class RoutingResolver:
     # ------------------------------------------------------------------ #
 
     def _semantic_engine(self) -> Any:
+        """Return the live `IngestEngine` singleton — the in-memory store
+        whose `_curated_data` and `_active_ingestion_id` attributes
+        `_curated_phases` / `_curated_standards` consume.
+
+        Sprint Q.7 Fase 3 fix: the previous version called
+        `SemanticQueriesInMemory()` (which requires an `engine: IngestEngine`
+        positional argument), got TypeError, was silenced by the bare
+        `except Exception`, and routing always returned empty curated
+        data. Now we pull the same singleton the factory_data_product
+        endpoints use, so the fallback "no curated layer" only triggers
+        when the engine truly hasn't ingested anything yet.
+        """
         try:
-            from src.factory_data_product.services.semantic_queries_inmemory import (
-                SemanticQueriesInMemory,
-            )
-            return getattr(SemanticQueriesInMemory(), "engine", None)
+            from src.factory_data_product.api.endpoints import get_engine
+            return get_engine()
         except Exception:
             return None
 
