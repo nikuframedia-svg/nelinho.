@@ -216,10 +216,28 @@ class CPSATLRHO:
             if start_dt is None or end_dt is None:
                 continue
 
-            # Clamp into the window for interval creation.
-            earliest = max(0, _minute(start_dt))
-            # Frozen ops: pin via equality.
+            # FASE 3.4 (HIGH-20) — rolling-window safety. Three cases:
+            #   1. The op already finished before the window opens. We
+            #      skip it entirely; it's not part of this window's
+            #      problem.
+            #   2. The op is frozen (started before the rolling cutoff)
+            #      AND its baseline start is INSIDE this window. Pin
+            #      it at its baseline minute so it doesn't move.
+            #   3. The op is frozen but its baseline start is BEFORE
+            #      the window. Previously we did `max(0, _minute(...))`
+            #      which silently re-pinned the op to t=0 of the window
+            #      — an artificial delay. Now we skip it: the op is
+            #      already running and outside the rolling-horizon
+            #      problem.
+            #   4. Otherwise, free op — domain is the full window.
+            if end_dt <= window_start:
+                continue  # op already finished — out of scope
+
             is_frozen = start_dt < frozen_cutoff
+            if is_frozen and start_dt < window_start:
+                continue  # op started before window — keep its baseline
+
+            earliest = _minute(start_dt) if start_dt >= window_start else 0
             domain_start = cp_model.Domain.FromValues([earliest]) if is_frozen \
                 else cp_model.Domain.FromIntervals([[0, max(0, horizon_minutes - duration_min)]])
             start_var = model.NewIntVarFromDomain(domain_start, f"s:{op_id}")

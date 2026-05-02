@@ -65,17 +65,46 @@ class QualityRiskModel:
                 "QualityRiskModel needs at least one positive and one negative sample"
             )
 
-        X, vocab = encode_categoricals(rows, CATEGORICAL_COLS, NUMERIC_COLS)
-        self.vocabulary = vocab
-        self.n_samples_trained = len(rows)
-        self.positive_rate = float(y.mean())
-
-        X_train, X_val, y_train, y_val = train_test_split(
-            X, y,
-            test_size=0.2,
-            random_state=random_state,
-            stratify=y if y.sum() >= 2 and (len(y) - y.sum()) >= 2 else None,
+        # FASE 3.3 (HIGH-44) — temporal split when timestamps are
+        # available on every row. Quality patterns drift (new operators,
+        # new mold ages), so a random split mixes future rows into
+        # training and inflates AUC. With timestamps, train on the
+        # oldest 80% and validate on the newest 20%.
+        timestamps = [r.get("timestamp") for r in rows]
+        has_temporal = (
+            len(rows) >= 20
+            and all(t is not None for t in timestamps)
         )
+
+        if has_temporal:
+            order_idx = sorted(range(len(rows)), key=lambda i: timestamps[i])
+            split_at = int(round(len(order_idx) * 0.8))
+            train_idx = order_idx[:split_at]
+            val_idx = order_idx[split_at:]
+            sorted_rows = [rows[i] for i in train_idx + val_idx]
+            y = np.concatenate([y[train_idx], y[val_idx]])
+
+            X, vocab = encode_categoricals(sorted_rows, CATEGORICAL_COLS, NUMERIC_COLS)
+            self.vocabulary = vocab
+            self.n_samples_trained = len(sorted_rows)
+            self.positive_rate = float(y.mean())
+
+            X_train = X[: len(train_idx)]
+            X_val = X[len(train_idx):]
+            y_train = y[: len(train_idx)]
+            y_val = y[len(train_idx):]
+        else:
+            X, vocab = encode_categoricals(rows, CATEGORICAL_COLS, NUMERIC_COLS)
+            self.vocabulary = vocab
+            self.n_samples_trained = len(rows)
+            self.positive_rate = float(y.mean())
+
+            X_train, X_val, y_train, y_val = train_test_split(
+                X, y,
+                test_size=0.2,
+                random_state=random_state,
+                stratify=y if y.sum() >= 2 and (len(y) - y.sum()) >= 2 else None,
+            )
 
         clf = GradientBoostingClassifier(
             n_estimators=120,
@@ -259,6 +288,13 @@ def build_training_dataset(semantic_queries: Any) -> List[Dict[str, Any]]:
         errs = phase_errors.get(fase_id, 0)
         phase_error_rate = (errs / total) if total else 0.0
 
+        # FASE 3.3 (HIGH-44) — sortable timestamp for the temporal split.
+        ts = (
+            getattr(p, "data_fim_real", None)
+            or getattr(p, "data_inicio_real", None)
+            or getattr(p, "created_at", None)
+        )
+
         rows.append({
             "modelo_id": modelo_id,
             "fase_id": fase_id,
@@ -267,6 +303,7 @@ def build_training_dataset(semantic_queries: Any) -> List[Dict[str, Any]]:
             "phase_error_rate": round(phase_error_rate, 4),
             "queue_depth": total,
             "is_error": 1 if (of_id, fase_id) in error_keys else 0,
+            "timestamp": ts,
         })
 
     return rows

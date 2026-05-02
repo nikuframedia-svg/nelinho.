@@ -24,7 +24,7 @@ Deduplication: for each detector, scans the last
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
@@ -230,26 +230,69 @@ class AlertsEngine:
     # ------------------------------------------------------------------ #
 
     def _get_semantic_queries(self):
-        """Lazy import SemanticQueriesInMemory (avoid heavy import at module load)."""
+        """Lazy import SemanticQueriesInMemory (avoid heavy import at module load).
+
+        FASE 3.6 (HIGH-50) — the previous version called
+        ``SemanticQueriesInMemory()`` with no engine argument, hit the
+        TypeError silently inside ``except Exception``, and returned None
+        for every call. Net effect: every detector in this engine got an
+        empty result, so no alerts ever fired. We now resolve the global
+        IngestEngine singleton and pass it; if that fails (no factory
+        ingestion ever ran) we log loudly instead of debug-whispering.
+        """
         if self._sq is not None:
             return self._sq
         try:
+            from src.factory_data_product.api.endpoints import get_engine
             from src.factory_data_product.services.semantic_queries_inmemory import (
                 SemanticQueriesInMemory,
             )
-            self._sq = SemanticQueriesInMemory()
+            engine = get_engine()
+            if engine is None:
+                logger.warning(
+                    "AlertsEngine.tenant=%s: factory IngestEngine unavailable — "
+                    "alerts disabled until /v1/factory-data/ingest runs.",
+                    self.tenant_id,
+                )
+                return None
+            self._sq = SemanticQueriesInMemory(engine)
             return self._sq
         except Exception as e:
-            logger.debug(f"SemanticQueriesInMemory unavailable: {e}")
+            logger.warning(
+                "AlertsEngine.tenant=%s: SemanticQueriesInMemory unavailable (%s) — "
+                "no alerts will be emitted this scan.",
+                self.tenant_id, e,
+            )
             return None
 
     def _safe_query(self, method_name: str, **kwargs) -> Optional[Dict[str, Any]]:
+        # FASE 3.6 (HIGH-50) — pass tenant_id to the semantic helper so a
+        # future tenant-aware variant can scope the curated lookup.
+        # Today's in-memory engine still operates on a single global
+        # `_curated_data` dict (the curated layer doesn't yet partition
+        # by tenant). When multiple tenants share one process, an alert
+        # raised for tenant A could carry data from tenant B's last
+        # ingestion. We surface the risk in logs once per scan; the full
+        # fix lands when the curated layer becomes tenant-keyed.
         sq = self._get_semantic_queries()
         if sq is None:
             return None
+        kwargs.setdefault("tenant_id", self.tenant_id)
         try:
             fn = getattr(sq, method_name)
-            result = fn(**kwargs)
+            try:
+                result = fn(**kwargs)
+            except TypeError:
+                # Backwards compat: drop tenant_id when the method's
+                # current signature doesn't accept it. Log once so the
+                # tenant scope gap stays visible.
+                kwargs.pop("tenant_id", None)
+                logger.warning(
+                    "AlertsEngine.tenant=%s: %s does not accept tenant_id; "
+                    "result may include rows from other tenants.",
+                    self.tenant_id, method_name,
+                )
+                result = fn(**kwargs)
             if result and result.get("status") != "BLOCKED":
                 return result
         except Exception as e:
@@ -263,7 +306,7 @@ class AlertsEngine:
         """
         dedupe_key = candidate["entity_refs"][0] if candidate.get("entity_refs") else None
         if dedupe_key:
-            since = datetime.utcnow() - timedelta(minutes=ALERT_DEDUPE_WINDOW_MINUTES)
+            since = datetime.now(timezone.utc) - timedelta(minutes=ALERT_DEDUPE_WINDOW_MINUTES)
             stmt = select(CopilotAlert.id).where(
                 and_(
                     CopilotAlert.tenant_id == self.tenant_id,
