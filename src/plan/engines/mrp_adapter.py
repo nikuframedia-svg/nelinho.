@@ -214,9 +214,19 @@ class MRPAdapter:
         lead_time = self._lead_times.get(item_id, 7)
         lead_periods = max(1, lead_time // self.period_days)
         is_purchase = self._is_purchased.get(item_id, True)
-        
+
         # MRP calculation
-        prev_poh = inv.on_hand
+        # FASE 1A.5 (CRIT-12) — start from actually available stock, not raw
+        # on_hand. `inv.allocated` is qty already reserved for other demand
+        # (committed but not yet shipped); ignoring it caused MRP to think
+        # stock was free, skipping reorders for items already promised
+        # elsewhere (e.g. on_hand=100 allocated=80 safety=50 → MRP saw 100
+        # and never triggered a PO, even though only 20 are truly free).
+        # `inv.on_order` is intentionally NOT subtracted here: open POs
+        # already in transit feed `scheduled_receipts[t]` below at their
+        # ETA period, so summing them into the starting position would
+        # double-count. Mirrors `InventoryPosition.available` semantically.
+        prev_poh = inv.on_hand - inv.allocated
         
         for t in range(n_periods):
             # Project on-hand
