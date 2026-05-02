@@ -121,34 +121,81 @@ class SemanticQueries:
     # WIP (Work in Progress)
     # =========================================================================
     
+    # Sprint Q.8 (CEO confirmation 2026-04-26): excel analysis revealed
+    # 41% of "open" orders are zombies (created >6 months ago and never
+    # closed). Splitting open_orders into active/zombie buckets so the
+    # Dashboard stops inflating WIP by ~70%.
+    WIP_ZOMBIE_AGE_DAYS = 180
+
     async def wip(self) -> Dict[str, Any]:
         """
-        Get Work in Progress: open orders and their open phases.
-        
+        Get Work in Progress: open orders split into ACTIVE vs ZOMBIE.
+
+        - active: open and started within the last ``WIP_ZOMBIE_AGE_DAYS`` days
+        - zombie: open but ``data_entrada`` is older than that cutoff
+        - total: union of the two (legacy ``open_orders`` field)
+
         Returns:
             Structured response with WIP data and confidence
         """
         logger.info("Querying WIP")
-        
+
         ingestion_id = await self._get_active_ingestion_id()
         if not ingestion_id:
             return self._no_data_response("wip", "No active ingestion")
-        
-        # Count open orders
-        open_orders_query = select(func.count(CuratedOrder.id)).where(
+
+        cutoff_date = (datetime.utcnow() - timedelta(days=self.WIP_ZOMBIE_AGE_DAYS)).date()
+
+        # Count open orders bucketed by age. We use ``data_entrada`` (order
+        # entry date in the ERP) for the zombie cutoff because it's the
+        # only reliable "creation time" on CuratedOrder; ``created_at_utc``
+        # tracks ingestion time, not business start.
+        open_query = select(
+            func.count(CuratedOrder.id).label("total"),
+            func.sum(
+                case(
+                    (
+                        or_(
+                            CuratedOrder.data_entrada.is_(None),
+                            CuratedOrder.data_entrada >= cutoff_date,
+                        ),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ).label("active"),
+            func.sum(
+                case(
+                    (
+                        and_(
+                            CuratedOrder.data_entrada.is_not(None),
+                            CuratedOrder.data_entrada < cutoff_date,
+                        ),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ).label("zombie"),
+        ).where(
             and_(
                 CuratedOrder.ingestion_id == ingestion_id,
-                CuratedOrder.data_acabamento.is_(None)
+                CuratedOrder.data_conclusao.is_(None),
             )
         )
-        open_orders_result = await self.db.execute(open_orders_query)
-        open_orders_count = open_orders_result.scalar() or 0
-        
+        open_row = (await self.db.execute(open_query)).one()
+        open_orders_count = int(open_row.total or 0)
+        wip_active_count = int(open_row.active or 0)
+        wip_zombie_count = int(open_row.zombie or 0)
+        zombie_pct = (
+            (wip_zombie_count / open_orders_count * 100.0)
+            if open_orders_count > 0 else 0.0
+        )
+
         # Count open phases with hours
         open_phases_query = select(
             func.count(CuratedOrderPhase.id),
-            func.sum(CuratedOrderPhase.horas_previstas_final),
-            func.count(CuratedOrderPhase.horas_previstas_final)
+            func.sum(CuratedOrderPhase.horas_previstas),
+            func.count(CuratedOrderPhase.horas_previstas)
         ).where(
             and_(
                 CuratedOrderPhase.ingestion_id == ingestion_id,
@@ -160,20 +207,23 @@ class SemanticQueries:
         open_phases_count = phases_row[0] or 0
         total_horas = phases_row[1] or 0
         phases_with_hours = phases_row[2] or 0
-        
+
         # Calculate coverage
         hp_coverage = (phases_with_hours / open_phases_count * 100) if open_phases_count > 0 else 0
-        
+
         # Calculate confidence
         confidence = self._calculate_confidence(
             base_trust=TRUST_INDEX.get("FasesOrdemFabrico_structure", 80),
             coverage_pct=hp_coverage,
             sample_size=open_orders_count,
         )
-        
+
         return {
             "data": {
                 "open_orders": open_orders_count,
+                "wip_active": wip_active_count,
+                "wip_zombie": wip_zombie_count,
+                "zombie_pct": round(zombie_pct, 1),
                 "open_phases_total": open_phases_count,
                 "total_horas_previstas": round(float(total_horas), 1),
             },
@@ -184,6 +234,7 @@ class SemanticQueries:
                 "query_time": datetime.utcnow().isoformat(),
                 "ingestion_id": str(ingestion_id),
                 "horas_previstas_coverage_pct": round(hp_coverage, 1),
+                "zombie_cutoff_days": self.WIP_ZOMBIE_AGE_DAYS,
             },
         }
     
@@ -215,8 +266,8 @@ class SemanticQueries:
             CuratedOrderPhase.fase_id,
             CuratedOrderPhase.fase_nome,
             func.count(CuratedOrderPhase.id).label("fases_abertas"),
-            func.sum(CuratedOrderPhase.horas_previstas_final).label("backlog_horas"),
-            func.count(CuratedOrderPhase.horas_previstas_final).label("fases_com_horas"),
+            func.sum(CuratedOrderPhase.horas_previstas).label("backlog_horas"),
+            func.count(CuratedOrderPhase.horas_previstas).label("fases_com_horas"),
         ).where(
             and_(
                 CuratedOrderPhase.ingestion_id == ingestion_id,
@@ -227,7 +278,7 @@ class SemanticQueries:
             CuratedOrderPhase.fase_id,
             CuratedOrderPhase.fase_nome
         ).order_by(
-            func.sum(CuratedOrderPhase.horas_previstas_final).desc().nulls_last()
+            func.sum(CuratedOrderPhase.horas_previstas).desc().nulls_last()
         ).limit(top_n)
         
         result = await self.db.execute(backlog_query)
@@ -559,8 +610,8 @@ class SemanticQueries:
         ).where(
             and_(
                 CuratedOrder.ingestion_id == ingestion_id,
-                CuratedOrder.data_acabamento.isnot(None),
-                CuratedOrder.data_acabamento >= cutoff_date,
+                CuratedOrder.data_conclusao.isnot(None),
+                CuratedOrder.data_conclusao >= cutoff_date,
                 CuratedOrder.lead_time_days.isnot(None)
             )
         )
