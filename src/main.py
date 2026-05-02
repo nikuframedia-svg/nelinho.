@@ -121,12 +121,26 @@ async def lifespan(app: FastAPI):
             except Exception as watcher_error:
                 logger.warning(f"Factory watcher registration failed: {watcher_error}")
 
-            # ML retrain jobs — no-op until active tenants are registered.
-            # In production, call register_ml_retrain_jobs(scheduler, tenant_ids)
-            # after the tenant list is resolved from the DB.
+            # ML retrain jobs — load active tenant ids from DB so retrain
+            # jobs actually run in production (FASE 0.1, DEVA-03).
             try:
                 from src.ml.jobs.scheduling import register_ml_retrain_jobs
-                register_ml_retrain_jobs(scheduler_instance, tenants=None)
+                from src.shared.database import get_session_context
+                from src.core.services.tenant_service import TenantService
+                from src.core.models.tenant import TenantStatus
+
+                active_tenant_ids: list = []
+                try:
+                    async with get_session_context() as ml_session:
+                        ts = TenantService(ml_session)
+                        active = await ts.list_tenants(status=TenantStatus.ACTIVE, limit=1000)
+                        active_tenant_ids = [t.id for t in active]
+                except Exception as tenant_lookup_error:
+                    logger.warning(
+                        "ML retrain: could not load active tenants (%s) — jobs stay dormant",
+                        tenant_lookup_error,
+                    )
+                register_ml_retrain_jobs(scheduler_instance, tenants=active_tenant_ids)
             except Exception as ml_error:
                 logger.warning(f"ML retrain job registration failed: {ml_error}")
 
@@ -193,6 +207,29 @@ if DQA_ENABLED and not settings.is_development:
 # Histogram that alerts.yml gates on (High5xxRate, High4xxRate).
 from src.shared.http_metrics_middleware import register as _register_http_metrics
 _register_http_metrics(app)
+
+
+# Sprint Q.12 — normalize Pydantic 422 errors to a single readable string
+# so the frontend's `getErrorMessage(detail)` can show it directly. Antes
+# o `detail` vinha como lista `[{loc, msg, type}]` que o frontend
+# renderizava como "[object Object]".
+from fastapi.exceptions import RequestValidationError
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Flatten Pydantic validation errors into `{detail: <string>, errors: [...]}`."""
+    errs = exc.errors()
+    parts = []
+    for e in errs:
+        loc = ".".join(str(x) for x in e.get("loc", []) if x not in ("body", "query"))
+        msg = e.get("msg", "invalid")
+        parts.append(f"{loc}: {msg}" if loc else msg)
+    summary = "; ".join(parts) if parts else "validation error"
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": summary, "errors": errs},
+    )
 
 
 # Exception handlers
