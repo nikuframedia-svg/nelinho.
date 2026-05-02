@@ -5,6 +5,7 @@ ProdPlan ONE - Main Application
 FastAPI application entry point.
 """
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -68,6 +69,17 @@ async def lifespan(app: FastAPI):
     """Application lifespan management."""
     # Startup
     logger.info("Starting ProdPlan ONE...")
+
+    # Sprint Q.13.B (B1) — OpenTelemetry tracing setup. No-op when
+    # OTEL_TRACES_EXPORTER is unset OR opentelemetry packages aren't
+    # installed; logs the outcome either way. Must run BEFORE the rest
+    # of startup so the auto-instrumentor catches subsequent
+    # FastAPI route registration + DB connections.
+    try:
+        from src.shared.tracing import setup_tracing
+        setup_tracing(app)
+    except Exception as tracing_error:
+        logger.warning(f"OTel setup failed: {tracing_error}")
     
     try:
         # Initialize database (opcional - permite iniciar sem DB para testes)
@@ -163,22 +175,90 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
+    # Sprint Q.13.B (B5) — graceful shutdown contract.
+    #
+    # Was: shutdown ran sequentially with no upper bound. A hung Kafka
+    # producer or stalled DB connection could keep the process alive
+    # past systemd's TimeoutStopSec, leading to SIGKILL (which loses
+    # in-flight outbox events).
+    #
+    # Now:
+    #   1. Wraps the whole shutdown in `asyncio.wait_for(..., 30.0)`
+    #      so systemd's 60s grace is comfortably honoured.
+    #   2. Drains the outbox dispatcher ONCE before Kafka closes so
+    #      pending DECISION_EXECUTED / SCHEDULE_CREATED events that
+    #      land in the last second don't get stuck in the DB.
+    #   3. Each subsystem teardown is in its own try/except — one
+    #      failure (e.g. Redis already gone) never blocks the rest.
     logger.info("Shutting down ProdPlan ONE...")
 
-    # Stop realtime bridge first — subscribers get a clean "None" sentinel
-    # before the Kafka producer/consumer teardown races in.
+    async def _shutdown_sequence() -> None:
+        # Stop realtime bridge first — subscribers get a clean "None"
+        # sentinel before the Kafka producer/consumer teardown races in.
+        try:
+            from src.shared.realtime import RealtimeBridge
+            await RealtimeBridge.instance().stop()
+        except Exception as bridge_error:
+            logger.warning(f"RealtimeBridge shutdown failed: {bridge_error}")
+
+        # Sprint Q.13.B B5 — final outbox drain. Best effort: when
+        # Kafka or the DB is already wedged this just logs and moves
+        # on. The existing periodic dispatcher would have caught
+        # these on next boot anyway via the table; this just shortens
+        # the visibility window.
+        try:
+            from src.shared.kafka_client import get_producer
+            from src.shared.outbox_dispatcher import OutboxDispatcher
+            from src.shared.database import get_session_context
+            producer = await get_producer()
+            if producer is not None:
+                dispatcher = OutboxDispatcher(
+                    db_session_factory=get_session_context,
+                    kafka_producer=producer,
+                )
+                await dispatcher.run()
+                logger.info("Outbox final drain ok")
+        except Exception as outbox_error:
+            logger.warning(f"Outbox final drain failed: {outbox_error}")
+
+        try:
+            await shutdown_scheduler()
+        except Exception as sched_error:
+            logger.warning(f"Scheduler shutdown failed: {sched_error}")
+
+        try:
+            await close_db()
+        except Exception as db_error:
+            logger.warning(f"DB shutdown failed: {db_error}")
+
+        try:
+            await shutdown_redis()
+        except Exception as redis_error:
+            logger.warning(f"Redis shutdown failed: {redis_error}")
+
+        try:
+            await shutdown_kafka()
+        except Exception as kafka_error:
+            logger.warning(f"Kafka shutdown failed: {kafka_error}")
+
+        # Sprint Q.13.B (B1) — flush OTel spans LAST so the trace for
+        # this very shutdown sequence makes it to the collector before
+        # the process exits. No-op when tracing wasn't active.
+        try:
+            from src.shared.tracing import shutdown_tracing
+            shutdown_tracing()
+        except Exception as tracing_error:
+            logger.warning(f"OTel flush failed: {tracing_error}")
+
     try:
-        from src.shared.realtime import RealtimeBridge
-        await RealtimeBridge.instance().stop()
-    except Exception as bridge_error:
-        logger.warning(f"RealtimeBridge shutdown failed: {bridge_error}")
-
-    await shutdown_scheduler()
-    await close_db()
-    await shutdown_redis()
-    await shutdown_kafka()
-
-    logger.info("ProdPlan ONE shut down")
+        await asyncio.wait_for(_shutdown_sequence(), timeout=30.0)
+        logger.info("ProdPlan ONE shut down cleanly")
+    except asyncio.TimeoutError:
+        logger.error(
+            "Shutdown exceeded 30s grace period — systemd will SIGKILL. "
+            "Some pending events may not have flushed; check outbox table "
+            "on next boot."
+        )
 
 
 # Create FastAPI app
@@ -189,13 +269,26 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS middleware
+# CORS middleware. Sprint S6 / Φ5: was `allow_methods=["*"]` and
+# `allow_headers=["*"]` together with `allow_credentials=True`. That combo is
+# specifically forbidden by the CORS spec (browsers reject credentialed wildcard
+# preflights, and any server that allows it opens the door to credentialed
+# preflight abuse from any listed origin). Lock both lists down explicitly.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "X-Tenant-Id",
+        "X-User-Id",
+        "X-User-Role",
+        "X-Request-Id",
+        "X-Correlation-Id",
+    ],
+    expose_headers=["X-Request-Id", "X-Correlation-Id"],
 )
 
 # DQA Quality Gates middleware (optional)

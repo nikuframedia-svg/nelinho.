@@ -283,6 +283,10 @@ DEFAULT_SEEDS: list[ConfigSeed] = [
     ("system", "format.currency", "EUR", "string", "ISO currency code for prices and KPIs."),
     ("system", "report.daily_email_hour", 8, "int",
      "UTC hour the daily report is scheduled (0-23)."),
+    ("system", "audit.retention_days", 90, "int",
+     "Sprint Q.13.B — days before audit tables (CopilotActionLog, "
+     "ApprovalRequest, ScheduleCommit.cpo_meta) are purged. Set to "
+     "0/negative to disable. Regulated tenants may extend to 365+."),
 
     # ───────────────────────── transporte (Sprint Q.9 Onda 3.6) ─────────────
     # Plan §11.1 transport — capacity + buffer + customer priority. The

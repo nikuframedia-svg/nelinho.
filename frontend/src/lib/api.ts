@@ -8,6 +8,19 @@
 import { getErrorMessage } from './api-errors';
 import { logToEndpoint } from './logger';
 import { getCircuitBreaker } from './circuit-breaker';
+import type {
+  AllocationCreateResponse,
+  AllocationCreatedItem,
+  LabourCostSummaryResponse,
+  OrderAllocationsResponse,
+  PayrollCalculateResponse,
+} from '../types/operacoes';
+
+interface AllocationCreateRequest {
+  requirements: Array<Record<string, unknown>>;
+  employees: Array<Record<string, unknown>>;
+  strategy?: 'skill_first' | 'cost_first' | 'balanced';
+}
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -72,13 +85,26 @@ export function setToastContext(context: { info: (msg: string) => string } | nul
 }
 
 /**
- * Filter out undefined and null values from params object
- * Prevents URLSearchParams from converting undefined to string "undefined"
+ * Convert a camelCase key to snake_case (employeeId → employee_id).
+ *
+ * Sprint Q.12 — antes do helper, FastAPI ignorava silenciosamente
+ * params como `employeeId` porque esperava `employee_id`, e devolvia a
+ * lista completa em vez de filtrada. A conversão fica num único sítio.
  */
-const filterParams = (params: Record<string, any> | undefined): Record<string, string> => 
+const camelToSnake = (key: string): string =>
+  key.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+
+/**
+ * Filter out undefined/null values AND convert camelCase keys to
+ * snake_case. Single conversion point for both query strings and
+ * any other place that builds a backend-facing record.
+ */
+const filterParams = (params: Record<string, any> | undefined): Record<string, string> =>
   Object.fromEntries(
-    Object.entries(params || {}).filter(([_, v]) => v !== undefined && v !== null)
-  ) as Record<string, string>;
+    Object.entries(params || {})
+      .filter(([_, v]) => v !== undefined && v !== null)
+      .map(([k, v]) => [camelToSnake(k), String(v)])
+  );
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // HELPERS
@@ -238,7 +264,7 @@ async function request<T>(
 // Products
 export const productsApi = {
   list: (params?: { limit?: number; offset?: number; status?: string }) =>
-    request<any>(`/v1/core/products?${new URLSearchParams(params as any)}`),
+    request<any>(`/v1/core/products?${new URLSearchParams(filterParams(params))}`),
   
   get: (id: string) =>
     request<any>(`/v1/core/products/${id}`),
@@ -256,7 +282,7 @@ export const productsApi = {
 // Machines
 export const machinesApi = {
   list: (params?: { limit?: number; offset?: number; status?: string }) =>
-    request<any>(`/v1/core/machines?${new URLSearchParams(params as any)}`),
+    request<any>(`/v1/core/machines?${new URLSearchParams(filterParams(params))}`),
   
   get: (id: string) =>
     request<any>(`/v1/core/machines/${id}`),
@@ -274,7 +300,7 @@ export const machinesApi = {
 // Employees
 export const employeesApi = {
   list: (params?: { limit?: number; offset?: number; status?: string; department?: string }) =>
-    request<any>(`/v1/core/employees?${new URLSearchParams(params as any)}`),
+    request<any>(`/v1/core/employees?${new URLSearchParams(filterParams(params))}`),
   
   get: (id: string) =>
     request<any>(`/v1/core/employees/${id}`),
@@ -292,7 +318,7 @@ export const employeesApi = {
 // Operations
 export const operationsApi = {
   list: (params?: { limit?: number; offset?: number }) =>
-    request<any>(`/v1/core/operations?${new URLSearchParams(params as any)}`),
+    request<any>(`/v1/core/operations?${new URLSearchParams(filterParams(params))}`),
   
   get: (id: string) =>
     request<any>(`/v1/core/operations/${id}`),
@@ -328,7 +354,7 @@ export const bomApi = {
 // Customers
 export const customersApi = {
   list: (params?: { segment?: string; is_active?: boolean; price_tier?: string; limit?: number; offset?: number }) =>
-    request<any>(`/v1/core/customers?${new URLSearchParams(params as any)}`),
+    request<any>(`/v1/core/customers?${new URLSearchParams(filterParams(params))}`),
   
   get: (id: string) =>
     request<any>(`/v1/core/customers/${id}`),
@@ -346,7 +372,7 @@ export const customersApi = {
 // Suppliers
 export const suppliersApi = {
   list: (params?: { material_category?: string; is_active?: boolean; is_preferred?: boolean; limit?: number; offset?: number }) =>
-    request<any>(`/v1/core/suppliers?${new URLSearchParams(params as any)}`),
+    request<any>(`/v1/core/suppliers?${new URLSearchParams(filterParams(params))}`),
   
   get: (id: string) =>
     request<any>(`/v1/core/suppliers/${id}`),
@@ -479,7 +505,7 @@ export const capacityApi = {
   
   // Legacy methods for backward compatibility (may not exist in backend)
   getUtilization: (params?: { startDate?: string; endDate?: string }) =>
-    request<any>(`/v1/plan/capacity/utilization?${new URLSearchParams(params as any)}`),
+    request<any>(`/v1/plan/capacity/utilization?${new URLSearchParams(filterParams(params))}`),
   
   getBottlenecks: () =>
     request<any>('/v1/plan/capacity/bottlenecks'),
@@ -647,19 +673,30 @@ export const scenariosApi = {
 // Allocations
 export const allocationsApi = {
   list: (params?: { scheduleId?: string; employeeId?: string; limit?: number }) =>
-    request<any>(`/v1/hr/allocations?${new URLSearchParams(params as any)}`),
-  
-  create: (data: any) =>
-    request<any>('/v1/hr/allocations', { method: 'POST', body: JSON.stringify(data) }),
-  
-  update: (id: string, data: any) =>
-    request<any>(`/v1/hr/allocations/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
-  
+    request<OrderAllocationsResponse>(
+      `/v1/hr/allocations?${new URLSearchParams(filterParams(params))}`,
+    ),
+
+  create: (data: AllocationCreateRequest) =>
+    request<AllocationCreateResponse>('/v1/hr/allocations', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  update: (id: string, data: Partial<AllocationCreatedItem>) =>
+    request<AllocationCreatedItem>(`/v1/hr/allocations/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+
   delete: (id: string) =>
     request<void>(`/v1/hr/allocations/${id}`, { method: 'DELETE' }),
-  
+
   optimize: (scheduleId: string) =>
-    request<any>(`/v1/hr/allocations/optimize/${scheduleId}`, { method: 'POST' }),
+    request<AllocationCreateResponse>(
+      `/v1/hr/allocations/optimize/${scheduleId}`,
+      { method: 'POST' },
+    ),
 };
 
 // Payroll
@@ -670,14 +707,19 @@ export const payrollApi = {
     burden_rate?: number;
     overtime_multiplier?: number;
   }) =>
-    request<any>('/v1/hr/payroll/calculate', { method: 'POST', body: JSON.stringify(data) }),
-  
+    request<PayrollCalculateResponse>('/v1/hr/payroll/calculate', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
   getMonthlyCost: (params?: { from_date?: string; to_date?: string }) => {
     const queryParams = new URLSearchParams();
     if (params?.from_date) queryParams.set('from_date', params.from_date);
     if (params?.to_date) queryParams.set('to_date', params.to_date);
     const query = queryParams.toString();
-    return request<any>(`/v1/hr/payroll/monthly-cost${query ? `?${query}` : ''}`);
+    return request<LabourCostSummaryResponse>(
+      `/v1/hr/payroll/monthly-cost${query ? `?${query}` : ''}`,
+    );
   },
   
   getEmployeePayroll: (employeeId: string, month: string, year: number) =>
@@ -713,7 +755,7 @@ export const productivityApi = {
     request<any>('/v1/hr/productivity/record', { method: 'POST', body: JSON.stringify(data) }),
   
   getReport: (params: { startDate: string; endDate: string }) =>
-    request<any>(`/v1/hr/productivity/report?${new URLSearchParams(params)}`),
+    request<any>(`/v1/hr/productivity/report?${new URLSearchParams(filterParams(params))}`),
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1959,6 +2001,20 @@ export interface CpoDecideResponse {
   user_preference_signal: Record<string, any>;
 }
 
+// Sprint Q.13.A — Plan v4 §6.2 alternative worker pairs
+export interface CpoWorkerPairItem {
+  chefe_id: string;
+  partner_id: string | null;
+  score: number;  // 0-10, higher is better
+}
+
+export interface CpoWorkerPairsResponse {
+  operation_id: string;
+  phase_id: string | null;
+  needs_pair: boolean;
+  pairs: CpoWorkerPairItem[];
+}
+
 export const cpoCommitsApi = {
   list: (params?: { limit?: number }) => {
     const qs = params?.limit ? `?limit=${params.limit}` : '';
@@ -1982,6 +2038,18 @@ export const cpoCommitsApi = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+
+  /**
+   * Sprint Q.13.A — top-N alternative worker pairs for an op (§6.2).
+   * Returns `needs_pair=false` + empty pairs[] for non-pair phases —
+   * frontend renders single-worker UI in that case.
+   */
+  workerPairs: (operationId: string, opts?: { top_n?: number }) => {
+    const qs = opts?.top_n ? `?top_n=${opts.top_n}` : '';
+    return request<CpoWorkerPairsResponse>(
+      `/v1/plan/cpo/operations/${encodeURIComponent(operationId)}/worker-pairs${qs}`,
+    );
+  },
 };
 
 export const preferenceRulesApi = {
