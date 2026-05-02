@@ -44,7 +44,11 @@ logger = logging.getLogger(__name__)
 
 
 CODE_MOLD_MAINT_DUE = "MOLD_MAINT_DUE"
-DEFAULT_MAINT_THRESHOLD_CYCLES = 500
+# Sprint Q.8 (CEO confirmation 2026-04-26): NELO has no fixed cycle policy
+# for mold maintenance — it goes by visual inspection. Default to 0 to
+# disable the automatic alert; tenants who later adopt a numeric policy
+# can set the config to a positive integer.
+DEFAULT_MAINT_THRESHOLD_CYCLES = 0
 
 
 class MoldNotFoundError(Exception):

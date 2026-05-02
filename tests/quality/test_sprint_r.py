@@ -364,6 +364,17 @@ async def test_mold_service_increment_cycle_creates_counter_if_missing(fake_sess
 # Sprint A Day 5 — MOLD_MAINT_DUE disabled when threshold ≤ 0 (H2 placeholder)
 # ---------------------------------------------------------------------------
 
+def test_default_maint_threshold_is_zero_after_q8_ceo_confirmation():
+    """Sprint Q.8 (CEO confirmation 2026-04-26): NELO has no numeric
+    maintenance policy — molds go to maintenance after visual inspection.
+    The default `DEFAULT_MAINT_THRESHOLD_CYCLES` is therefore 0 so the
+    auto-alert stays off out of the box; tenants opt in by setting a
+    positive integer in `mold.maintenance_threshold_cycles`."""
+    from src.plan.services.mold_service import DEFAULT_MAINT_THRESHOLD_CYCLES
+
+    assert DEFAULT_MAINT_THRESHOLD_CYCLES == 0
+
+
 @pytest.mark.asyncio
 async def test_emit_maintenance_alerts_skipped_when_threshold_is_zero(
     fake_session, monkeypatch,

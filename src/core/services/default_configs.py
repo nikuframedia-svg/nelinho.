@@ -168,16 +168,15 @@ DEFAULT_SEEDS: list[ConfigSeed] = [
      "WF12 — fases com < N workers aptos flagged as skill bottleneck "
      "(Pintura=22, Colagem Golas=13, Desmolde=16)"),
 
-    # ⚠️ UNCONFIRMED HYPOTHESIS (H2 — Plan 22/04 §Part 7).
-    # The ERP table `Moldes` has ZERO maintenance columns. The value 500
-    # below is a placeholder pending CEO confirmation of NELO's real
-    # maintenance policy (time-based? visual inspection? fixed cycle
-    # count?). Set to 0 or any negative number to DISABLE the
-    # MOLD_MAINT_DUE alerts until confirmation — the scheduler and health
-    # calculator keep working, only the preventive alert is skipped.
-    ("mold", "maintenance_threshold_cycles", 500, "int",
-     "QA10/CG12/AL08 — cycles before MOLD_MAINT_DUE alert. ≤0 disables. "
-     "Value 500 is H2 placeholder; confirm with CEO."),
+    # Sprint Q.8 (CEO confirmation 2026-04-26): NELO has no numeric
+    # maintenance policy — molds go to maintenance after visual inspection.
+    # Default 0 disables the MOLD_MAINT_DUE auto-alert; the scheduler and
+    # health calculator keep working. Tenants can override to a positive
+    # integer if they later adopt a cycle-based policy. The manual fluxo
+    # is exposed via POST /v1/molds/{id}/maintenance.
+    ("mold", "maintenance_threshold_cycles", 0, "int",
+     "QA10/CG12/AL08 — cycles before MOLD_MAINT_DUE alert. ≤0 disables "
+     "(NELO default). Override per-tenant if a numeric policy exists."),
     ("mold", "health_weight.cycles", 0.40, "float", ""),
     ("mold", "health_weight.defects_90d", 0.20, "float", ""),
     ("mold", "health_weight.days_since_maint", 0.20, "float", ""),
@@ -193,6 +192,9 @@ DEFAULT_SEEDS: list[ConfigSeed] = [
     ("cost", "target.throughput_eur_day_max", 35000.0, "currency", ""),
     ("cost", "margin_default", 1.40, "float",
      "Fallback margin when ProductPricing.sale_value_default_eur is missing"),
+    ("cost", "target.unit_value_eur", 2350.0, "currency",
+     "Sprint Q.8 — €/order used for backlog estimates "
+     "(€35K/day ÷ 14.9 boats/day). Lift to ProductPricing in Q.9."),
 
     # ───────────────────────── copilot / llm ────────────────────────────────
     ("copilot", "rate_limit.per_hour", 60, "int", ""),
