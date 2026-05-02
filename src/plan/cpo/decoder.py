@@ -680,6 +680,15 @@ def decode(
     # scheduled, but flagged) so downstream callers can gate on it.
     success_flag = not infeasible
 
+    # FASE 1B.6 (CRIT-24) — populate otd_delivery so safety_net can
+    # actually use it as a guardrail. Without this, the OTD branch in
+    # safety_net.is_worse_than_baseline was dead code (33% of the safety
+    # net's intended scope). Definition: fraction of orders with a
+    # due_date that finished on or before due. Vacuously 1.0 when no
+    # order in the run carries a due_date (nothing to be late on).
+    n_with_due = len(due_by_order)
+    otd_delivery = 1.0 if n_with_due == 0 else 1.0 - (late_orders / n_with_due)
+
     return {
         "success": success_flag,
         "engine_used": "cpo_v4",
@@ -687,6 +696,7 @@ def decode(
         "makespan_hours": round(makespan_hours, 2),
         "total_tardiness_hours": round(tardy_hours, 2),
         "num_late_orders": late_orders,
+        "otd_delivery": round(otd_delivery, 4),
         "setups": setups,
         "routing_variants_applied": routing_variants_applied,
         "backwards_shifts": backwards_shifts,

@@ -92,6 +92,14 @@ class FactoryState:
     tenant_id: UUID
     active_ingestion_id: Optional[UUID] = None
 
+    # FASE 1B.1 (CRIT-15) — `True` when load() actually populated the
+    # state from the curated layer; `False` when load() fell back to an
+    # empty state because the semantic layer was unavailable. Callers
+    # that want strict behaviour (no schedule on missing data) should
+    # gate on this flag rather than silently emitting INSUFFICIENT_DATA.
+    loaded_ok: bool = True
+    load_error: Optional[str] = None
+
     # skill_matrix[fase_id] = set of funcionario_id able to do this phase
     skill_matrix: Dict[str, Set[str]] = field(default_factory=dict)
 
@@ -181,7 +189,11 @@ class FactoryState:
                     e,
                     tenant_id,
                 )
-                return cls(tenant_id=tenant_id)
+                return cls(
+                    tenant_id=tenant_id,
+                    loaded_ok=False,
+                    load_error=f"semantic_layer_unavailable: {e}",
+                )
 
         state = cls(tenant_id=tenant_id)
 

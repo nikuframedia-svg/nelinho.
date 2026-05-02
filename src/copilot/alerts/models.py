@@ -35,6 +35,12 @@ CODE_DELIVERY_RISK = "DELIVERY_RISK"  # currently blocked (no OTD data)
 CODE_MATERIAL_SHORTAGE_PROJECTED = "MATERIAL_SHORTAGE_PROJECTED"  # WARN — under min_stock
 CODE_MATERIAL_STOCKOUT_IMMINENT = "MATERIAL_STOCKOUT_IMMINENT"   # CRITICAL — within critical_days
 
+# FASE 1B.3 (CRIT-13) — emitted when RoutingResolver couldn't reach the
+# curated semantic engine and fell back to FasesStandardModelos with a
+# 2x buffer (NELO rule). Schedules built in this state can have
+# durations off by up to 25x reality, so the operator should know.
+CODE_ROUTING_ENGINE_UNAVAILABLE = "ROUTING_ENGINE_UNAVAILABLE"   # WARN
+
 
 class CopilotAlert(TenantBase):
     """A proactive alert surfaced by the Copilot AlertsEngine."""

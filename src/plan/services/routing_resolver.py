@@ -61,6 +61,12 @@ class RoutingResolver:
     ):
         self.state = state
         self.duration_predictor = duration_predictor
+        # FASE 1B.3 (CRIT-13) — set to True the first time `_semantic_engine`
+        # falls back to None during this resolver's lifetime. The caller
+        # (cpo.api) reads this and emits a CopilotAlert(
+        # code=ROUTING_ENGINE_UNAVAILABLE) so the operator knows the
+        # schedule was built on standard 2× templates instead of history.
+        self.engine_unavailable: bool = False
 
     def resolve(
         self,
@@ -304,8 +310,12 @@ class RoutingResolver:
         """
         try:
             from src.factory_data_product.api.endpoints import get_engine
-            return get_engine()
+            engine = get_engine()
+            if engine is None:
+                self.engine_unavailable = True
+            return engine
         except Exception:
+            self.engine_unavailable = True
             return None
 
     def _curated_phases(self) -> List[Any]:

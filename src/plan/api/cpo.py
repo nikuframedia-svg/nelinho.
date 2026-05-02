@@ -75,6 +75,13 @@ class CPOScheduleResponse(BaseModel):
     setups: int
     avg_utilization: float
     safety_net_triggered: bool = False
+    # FASE 1B.2 (CRIT-14) — `degraded=True` means the result came from a
+    # fallback path (e.g. CPO v4 raised internally and we returned a
+    # heuristic plan). Frontend should warn the user and admins should
+    # check the logs / alerts. `fallback_reason` carries a short tag
+    # describing what went wrong.
+    degraded: bool = False
+    fallback_reason: Optional[str] = None
     cpo_meta: Dict[str, Any] = Field(default_factory=dict)
     operations: List[Dict[str, Any]] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
@@ -192,6 +199,21 @@ async def schedule_cpo(
 
     state = await FactoryState.load(db, tenant_id)
 
+    # FASE 1B.1 (CRIT-15) — refuse to schedule when FactoryState load failed.
+    # An empty state means skill_matrix={} and molds_by_model={}: the
+    # scheduler would happily assign any worker to any phase, producing a
+    # plan that ignores domain constraints. Better to fail loud than to
+    # ship a "valid" but unsafe schedule.
+    if not state.loaded_ok:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                f"FactoryState unavailable for tenant {tenant_id}: "
+                f"{state.load_error or 'unknown error'}. Ingest curated "
+                "data via /v1/factory-data/ingest before scheduling."
+            ),
+        )
+
     orders = request.orders or state.open_orders
     if not orders:
         raise HTTPException(
@@ -213,6 +235,35 @@ async def schedule_cpo(
         logger.info("CPO schedule: DurationModel active — wired into RoutingResolver")
     resolver = RoutingResolver(state, duration_predictor=duration_predictor)
     operations = resolver.resolve_many(orders, horizon_start=horizon_start)
+
+    # FASE 1B.3 (CRIT-13) — when the resolver fell back to standards
+    # because the curated semantic engine was unavailable, emit an alert
+    # so the operator knows the schedule was built on 2× buffer estimates
+    # rather than real history. Best-effort: never block scheduling.
+    if resolver.engine_unavailable:
+        try:
+            from src.copilot.alerts.models import (
+                CODE_ROUTING_ENGINE_UNAVAILABLE,
+                CopilotAlert,
+            )
+            alert = CopilotAlert(
+                tenant_id=tenant_id,
+                severity="WARN",
+                code=CODE_ROUTING_ENGINE_UNAVAILABLE,
+                title="Routing engine unavailable — schedule built on 2× buffer templates",
+                message_pt=(
+                    "O motor de routing não conseguiu aceder à camada curada "
+                    "(factory_data_product). O scheduler caiu para os templates "
+                    "FasesStandardModelos com buffer 2× — durações podem divergir "
+                    "até 25× da realidade. Re-ingere os dados curados e volta a planear."
+                ),
+                context={"resolved_orders": len(orders)},
+                entity_refs=[],
+            )
+            db.add(alert)
+            await db.flush()
+        except Exception as alert_exc:  # pragma: no cover — defensive
+            logger.warning("CPO schedule: failed to emit routing alert: %s", alert_exc)
     if not operations:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -314,6 +365,8 @@ async def schedule_cpo(
         setups=int(result.get("setups", 0)),
         avg_utilization=float(result.get("avg_utilization", 0.0)),
         safety_net_triggered=bool(result.get("safety_net_triggered", False)),
+        degraded=bool(result.get("degraded", False)),
+        fallback_reason=result.get("fallback_reason"),
         cpo_meta=result.get("cpo_meta", {}),
         operations=result.get("operations", []),
         warnings=list(result.get("warnings", [])),

@@ -120,15 +120,23 @@ class SchedulingResult(BaseModel):
     rule_used: Optional[str] = None
     solve_time_sec: float = 0.0
     status: str = "optimal"
-    
+
     operations: List[Dict[str, Any]] = Field(default_factory=list)
-    
+
     makespan_hours: float = 0.0
     total_tardiness_hours: float = 0.0
     num_late_orders: int = 0
     avg_utilization: float = 0.0
-    
+
     warnings: List[str] = Field(default_factory=list)
+
+    # FASE 1B.2 (CRIT-14) — set to True when the originally requested
+    # engine failed and the adapter fell back to a simpler one (e.g.
+    # CPO v4 → heuristic). Callers can surface this in the API
+    # response so the frontend can warn the user the schedule is not
+    # the best one the system would normally produce.
+    degraded: bool = False
+    fallback_reason: Optional[str] = None
 
 
 class SchedulingAdapter:
@@ -269,6 +277,8 @@ class SchedulingAdapter:
             logger.error(f"CPO v4 scheduling failed: {e}", exc_info=True)
             fallback = self._schedule_heuristic(operations, machines, horizon_start, horizon_end)
             fallback.warnings.append(f"CPO v4 failed ({e}) - used heuristic fallback")
+            fallback.degraded = True
+            fallback.fallback_reason = f"cpo_v4_failed: {type(e).__name__}: {str(e)[:200]}"
             return fallback
 
     def set_cpo_state(self, state) -> None:
@@ -298,8 +308,10 @@ class SchedulingAdapter:
             logger.warning("CP-SAT unavailable, falling back to heuristic")
             result = self._schedule_heuristic(operations, machines, horizon_start, horizon_end)
             result.warnings.append("CP-SAT unavailable - used heuristic fallback")
+            result.degraded = True
+            result.fallback_reason = "cpsat_unavailable: ortools not installed or scheduler init failed"
             return result
-        
+
         try:
             result_dict = scheduler.schedule(operations, machines, horizon_start, horizon_end)
             return SchedulingResult(**result_dict)
@@ -307,6 +319,8 @@ class SchedulingAdapter:
             logger.error(f"CP-SAT scheduling failed: {e}")
             result = self._schedule_heuristic(operations, machines, horizon_start, horizon_end)
             result.warnings.append(f"CP-SAT failed ({e}) - used heuristic fallback")
+            result.degraded = True
+            result.fallback_reason = f"cpsat_failed: {type(e).__name__}: {str(e)[:200]}"
             return result
     
     def _schedule_genetic(
@@ -323,8 +337,10 @@ class SchedulingAdapter:
             logger.warning("Genetic unavailable, falling back to heuristic")
             result = self._schedule_heuristic(operations, machines, horizon_start, horizon_end)
             result.warnings.append("Genetic unavailable - used heuristic fallback")
+            result.degraded = True
+            result.fallback_reason = "genetic_unavailable: DEAP not installed or scheduler init failed"
             return result
-        
+
         try:
             result_dict = scheduler.schedule(operations, machines, horizon_start, horizon_end)
             return SchedulingResult(**result_dict)
@@ -332,6 +348,8 @@ class SchedulingAdapter:
             logger.error(f"Genetic scheduling failed: {e}")
             result = self._schedule_heuristic(operations, machines, horizon_start, horizon_end)
             result.warnings.append(f"Genetic failed ({e}) - used heuristic fallback")
+            result.degraded = True
+            result.fallback_reason = f"genetic_failed: {type(e).__name__}: {str(e)[:200]}"
             return result
     
     def _schedule_heuristic(

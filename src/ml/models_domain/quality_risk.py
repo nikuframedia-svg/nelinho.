@@ -195,12 +195,23 @@ def build_training_dataset(semantic_queries: Any) -> List[Dict[str, Any]]:
     Join `CuratedOrderPhase` ⋈ `CuratedQualityEvent` ⋈ `CuratedOrder` to
     produce one row per scheduled phase with a binary `is_error` label.
 
-    Best-effort: returns [] when curated data isn't available.
+    Returns ``[]`` when curated data isn't available. FASE 1B.7 adds a
+    WARN log on each empty path so operators can spot the silent fail
+    mode; the caller (`RetrainJob.run`) turns this into an explicit
+    `EmptyDatasetError`.
     """
     if semantic_queries is None:
+        logger.warning(
+            "quality_risk build_training_dataset: semantic_queries is None — "
+            "returning empty dataset."
+        )
         return []
     engine = getattr(semantic_queries, "engine", None)
     if engine is None:
+        logger.warning(
+            "quality_risk build_training_dataset: semantic engine missing — "
+            "returning empty dataset."
+        )
         return []
 
     active_id = getattr(engine, "_active_ingestion_id", None)

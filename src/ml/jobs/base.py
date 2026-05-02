@@ -41,6 +41,28 @@ from src.ml.observability.metrics import (
 logger = logging.getLogger(__name__)
 
 
+class EmptyDatasetError(RuntimeError):
+    """Raised when a RetrainJob's `extract_features` produced an empty
+    dataset. Surfaces loud (FASE 1B.7 / CRIT-04) instead of letting the
+    job train on nothing and silently mark the run as success.
+    """
+
+
+def _is_empty_features(features: Any) -> bool:
+    """Best-effort emptiness check across the formats subclasses use.
+
+    `extract_features` returns a list-of-dicts in the current code base
+    but DataFrames / numpy arrays are also common in ML, so we accept
+    anything with ``len()``. None always counts as empty.
+    """
+    if features is None:
+        return True
+    try:
+        return len(features) == 0
+    except TypeError:
+        return False  # non-sized: trust the subclass to validate
+
+
 class RetrainJob(ABC):
     """
     Base class for a periodic retrain. Subclasses fix `model_name` and
@@ -114,6 +136,19 @@ class RetrainJob(ABC):
 
         try:
             features = self.extract_features(tenant_id)
+            # FASE 1B.7 (CRIT-04) — refuse to train on an empty dataset.
+            # Without this guard, downstream `train()` would either crash
+            # with an opaque sklearn error or (worse) silently fit a
+            # degenerate model that gets persisted and proposed for
+            # promotion. Raise a typed exception so the surrounding try
+            # records the run as failure with a clear reason.
+            if _is_empty_features(features):
+                raise EmptyDatasetError(
+                    f"{self.model_name}: extract_features returned an empty "
+                    f"dataset for tenant={tenant_id} — likely a curated-layer "
+                    "outage or a tenant with no historical phase rows. "
+                    "Ingest data via /v1/factory-data/ingest before retrying."
+                )
             with ml_training_duration_seconds.labels(model_name=self.model_name).time():
                 model, n_samples = self.train(features)
             metrics = self.validate(model, features)
@@ -124,6 +159,7 @@ class RetrainJob(ABC):
                 "status": "failed",
                 "model_name": self.model_name,
                 "error": str(e),
+                "error_type": type(e).__name__,
                 "training_duration_sec": round(time.time() - started, 3),
             }
 
