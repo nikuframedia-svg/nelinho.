@@ -14,10 +14,15 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.shared.kafka_client import KafkaProducerClient, EventBase
+from src.copilot.models import CopilotActionLog
+from src.core.models.operation import Operation
+from src.core.models.product import Product
+from src.plan.models.schedule import ProductionSchedule, ScheduleStatus
 from src.shared.event_schemas import EventPayload
+from src.shared.kafka_client import EventBase, KafkaProducerClient
 
 logger = logging.getLogger(__name__)
 
@@ -230,7 +235,6 @@ class ActionExecutor:
             # both /actions/{id}/rollback and /actions list endpoints
             # always returned 404 / empty. Fixed: persist the row here so
             # the audit trail is real.
-            from src.copilot.models import CopilotActionLog
             transaction_id = uuid4()
             rollback_until = datetime.utcnow() + timedelta(hours=24)
 
@@ -304,11 +308,6 @@ class ActionExecutor:
         Returns snapshot of relevant state for rollback.
         Captures state based on action type to enable accurate impact calculation.
         """
-        from sqlalchemy import select, func, and_
-        from src.plan.models.schedule import ProductionSchedule, ScheduleStatus
-        from src.core.models.product import Product
-        from src.core.models.operation import Operation
-        
         state = {
             "captured_at": datetime.utcnow().isoformat(),
             "plan_id": str(plan_id) if plan_id else None,

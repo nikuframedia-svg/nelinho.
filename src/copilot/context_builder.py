@@ -13,6 +13,12 @@ from uuid import UUID
 from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.dqa.trust_signals import curated_signals_provider
+from src.dqa.trust_v2 import SCOPE_FACTORY, TrustIndexV2Calculator
+from src.factory_data_product.services.semantic_queries_inmemory import (
+    SemanticQueriesInMemory,
+)
+from src.plan.models.schedule import ProductionSchedule
 from src.shared.auth.rbac import Role
 
 logger = logging.getLogger(__name__)
@@ -133,7 +139,6 @@ async def _build_quality_snapshot(
 ) -> Dict[str, Any]:
     """Build quality snapshot from Factory Data Product error data."""
     try:
-        from src.factory_data_product.services.semantic_queries_inmemory import SemanticQueriesInMemory
         sq = SemanticQueriesInMemory()
         result = sq.quality_analysis()
 
@@ -170,9 +175,6 @@ async def _build_plan_history(
 ) -> Dict[str, Any]:
     """Build plan history from recent ProductionSchedule records."""
     try:
-        from src.plan.models.schedule import ProductionSchedule, ScheduleStatus
-        from sqlalchemy import select, func
-
         stmt = select(
             ProductionSchedule.status,
             func.count().label("count"),
@@ -214,8 +216,6 @@ async def _calculate_trust_index(
       - source: "trust_v2_factory" on success, "trust_v2_fallback" on error.
     """
     try:
-        from src.dqa.trust_signals import curated_signals_provider
-        from src.dqa.trust_v2 import SCOPE_FACTORY, TrustIndexV2Calculator
 
         calc = TrustIndexV2Calculator(
             session, tenant_id, signals_provider=curated_signals_provider,

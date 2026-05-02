@@ -11,7 +11,7 @@ import hashlib
 import json
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
 from sqlalchemy import select, and_, or_
@@ -19,9 +19,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import Scenario, ScenarioDelta, ScenarioComparison, ScenarioStatus
 from src.factory_data_product.config import BLOCKED_METRICS, TRUST_INDEX, SEMANTIC_LABELS
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 

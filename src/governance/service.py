@@ -16,7 +16,7 @@ import hashlib
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
 from sqlalchemy import select, and_, or_, func, desc
@@ -78,9 +78,6 @@ def _group_sort_key(key: str, group_by: str) -> tuple:
         # We flip the sign so higher risk comes first.
         return (-RISK_ORDER.get(key, -1),)
     return (key,)
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
