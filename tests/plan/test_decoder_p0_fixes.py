@@ -153,16 +153,25 @@ def test_f1_throughput_ignores_unscheduled_orders():
 
 
 def test_new1_requires_pair_matches_case_insensitive():
+    """Sprint Q.8 (CEO confirmation 2026-04-26): Laminagem moved from
+    PAIR_REQUIRED_PHASES (hard) to PAIR_PREFERRED_PHASES (soft), so
+    `requires_pair` now returns False. The case-insensitive matcher
+    still works — verified on `prefers_pair` instead.
+    """
+    from src.plan.cpo.pair_assignment import prefers_pair
+
     state = FactoryState(tenant_id=uuid4())
-    # PAIR_REQUIRED_PHASES defaults to ("LAMINAGEM",)
     op_low = _op("X", "OF1", 1, phase_id="laminagem")
     op_mix = _op("Y", "OF1", 1, phase_id="Laminagem")
-    op_acc = _op("Z", "OF1", 1, phase_id="Laminagem Infusão")  # not in required set
-    assert requires_pair(op_low, state) is True
-    assert requires_pair(op_mix, state) is True
-    # Laminagem Infusão (different phase) is NOT in the required tuple
-    # (Sprint A CX2 removed it — pair optional for infusion).
-    assert requires_pair(op_acc, state) is False
+    op_acc = _op("Z", "OF1", 1, phase_id="Laminagem Infusão")
+    # No phase is REQUIRED any more (set is empty post-Q.8).
+    assert requires_pair(op_low, state) is False
+    assert requires_pair(op_mix, state) is False
+    # …but Laminagem standard is PREFERRED.
+    assert prefers_pair(op_low, state) is True
+    assert prefers_pair(op_mix, state) is True
+    # Laminagem Infusão (different phase) is NOT in either set.
+    assert prefers_pair(op_acc, state) is False
 
 
 # ---------------------------------------------------------------------------
@@ -204,3 +213,56 @@ def test_new2_quiet_when_skill_matrix_is_empty():
         horizon_start, horizon_end,
     )
     assert not any("skill_matrix" in w.lower() for w in result["warnings"])
+
+
+# ---------------------------------------------------------------------------
+# Sprint Q.8 — Pair-preferred phases downgrade to solo when pool is thin
+# ---------------------------------------------------------------------------
+
+
+def test_q8_laminagem_downgrades_to_solo_when_only_one_worker_available():
+    """Laminagem standard wants 2 workers (preferred) but the decoder
+    accepts 1 when the eligible pool only has one — emits a warning
+    instead of marking the op infeasible.
+    """
+    state = FactoryState(tenant_id=uuid4())
+    state.skill_matrix = {"laminagem": {"w_solo"}}  # only 1 eligible worker
+    op = _op("A", "OF1", 1, phase_id="laminagem")
+    op.team_size = 2  # routing resolver assigns 2 for pair-preferred phases
+
+    horizon_start = datetime(2026, 4, 22, 8, 0)
+    horizon_end = horizon_start + timedelta(days=2)
+    result = decode(
+        Chromosome(permutation=[0]), [op], [_machine()], state,
+        horizon_start, horizon_end,
+    )
+    # Scheduled, not infeasible.
+    assert result["operations"], "PREFERRED-pair op should be placed solo"
+    # Warning surfaced for the downgrade.
+    assert any(
+        "pair-preferred" in w.lower() for w in result["warnings"]
+    ), f"expected pair-preferred warning, got: {result['warnings']}"
+
+
+def test_q8_solo_assignment_kept_when_pool_has_two_workers():
+    """When the pair pool is fully staffed (2+ eligible), the decoder
+    still places 2 workers — the downgrade only kicks in when pool < 2.
+    """
+    state = FactoryState(tenant_id=uuid4())
+    state.skill_matrix = {"laminagem": {"w1", "w2", "w3"}}
+    op = _op("A", "OF1", 1, phase_id="laminagem")
+    op.team_size = 2
+
+    horizon_start = datetime(2026, 4, 22, 8, 0)
+    horizon_end = horizon_start + timedelta(days=2)
+    result = decode(
+        Chromosome(permutation=[0]), [op], [_machine()], state,
+        horizon_start, horizon_end,
+    )
+    assert result["operations"], "should be placed"
+    workers = result["operations"][0]["workers"]
+    assert len(workers) == 2, f"expected pair, got {workers}"
+    # No downgrade warning because pool was sufficient.
+    assert not any(
+        "pair-preferred" in w.lower() for w in result["warnings"]
+    )

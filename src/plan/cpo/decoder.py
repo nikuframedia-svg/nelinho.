@@ -26,6 +26,7 @@ from decimal import Decimal
 from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
 from src.plan.cpo.chromosome import Chromosome
+from src.plan.cpo.pair_assignment import prefers_pair, requires_pair
 from src.plan.cpo.state import FactoryState
 from src.plan.engines.scheduling_adapter import SchedulingMachine, SchedulingOperation
 
@@ -402,10 +403,35 @@ def decode(
                     quality_weight=float(getattr(chromosome, "quality_weight", 0.0) or 0.0),
                 )
                 if len(picked) < total_workers_needed:
-                    # Cannot staff the full batch — infeasible for all peers
-                    for p in batch_peers:
-                        infeasible.append(p.operation_id)
-                    continue
+                    # Sprint Q.8 (CEO confirmation 2026-04-26): for PREFERRED-pair
+                    # phases (Laminagem post-rule-relax) we accept a solo
+                    # assignment when the pair pool is exhausted, instead of
+                    # failing the whole batch. The longer per-op duration that
+                    # comes from running with one fewer worker is the natural
+                    # fitness penalty — no extra weight needed.
+                    soft_pair = (
+                        team_size > 1
+                        and prefers_pair(op, state)
+                        and not requires_pair(op, state)
+                    )
+                    can_downgrade = (
+                        soft_pair
+                        and len(picked) >= len(batch_peers)
+                    )
+                    if can_downgrade:
+                        warnings.append(
+                            f"Pair-preferred phase {op.phase_id!r} "
+                            f"(op {op.operation_id}) staffed solo — "
+                            f"pool too thin for {total_workers_needed} workers."
+                        )
+                        team_size = 1
+                        total_workers_needed = team_size * len(batch_peers)
+                        picked = picked[:total_workers_needed]
+                    else:
+                        # Cannot staff the full batch — infeasible for all peers
+                        for p in batch_peers:
+                            infeasible.append(p.operation_id)
+                        continue
                 # Split flat pick into per-peer slots deterministically
                 batch_workers = [
                     picked[i * team_size : (i + 1) * team_size]

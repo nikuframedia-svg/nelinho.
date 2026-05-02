@@ -87,12 +87,16 @@ def test_factory_state_constructible_empty():
     assert state.molds_by_model == {}
 
 
-def test_factory_state_pair_required_phases_includes_laminagem():
+def test_factory_state_pair_preferred_phases_includes_laminagem():
     """The dual-resource phase list must contain LAMINAGEM (Plan v4 §3.4
-    — 88.5% historical pair). Removing this breaks the pair_assignment
-    optimisation."""
+    — 88.5% historical pair). Sprint Q.8 (CEO confirmation 2026-04-26)
+    moved Laminagem from REQUIRED (hard) to PREFERRED (soft) — solo runs
+    are real, not picking errors. Removing it from PREFERRED breaks the
+    pair_assignment optimisation."""
     state = FactoryState(tenant_id=uuid4())
-    assert "LAMINAGEM" in state.PAIR_REQUIRED_PHASES
+    assert "LAMINAGEM" in state.PAIR_PREFERRED_PHASES
+    # No phase is hard-REQUIRED any more.
+    assert state.PAIR_REQUIRED_PHASES == ()
 
 
 def test_factory_state_team_size_for_pair_phases():

@@ -39,9 +39,13 @@ from src.plan.cpo.state import normalize_phase_code
 logger = logging.getLogger(__name__)
 
 
-# Phases that require a chefe + partner (Plan v4 §3.4 / WF11 — 88.5%
-# historical pair). Mirrors `FactoryState.PAIR_REQUIRED_PHASES`.
-PAIR_REQUIRED_PHASES: tuple[str, ...] = ("LAMINAGEM",)
+# Phases where running with a single worker triggers a preview warning
+# (88.5% historical pair). Mirrors `FactoryState.PAIR_PREFERRED_PHASES`
+# after Sprint Q.8 — solo runs are allowed by the decoder but worth
+# flagging in the operator preview.
+PAIR_PREFERRED_PHASES: tuple[str, ...] = ("LAMINAGEM",)
+# Backwards-compat alias so existing tests keep importing the old name.
+PAIR_REQUIRED_PHASES: tuple[str, ...] = PAIR_PREFERRED_PHASES
 
 
 @dataclass
@@ -320,8 +324,9 @@ def _detect_warnings(
         op.get("phase_id") or op.get("phase_name") or ""
     )
 
-    # Pair rule (Plan v4 §3.4): 88.5% of Laminagem ops use 2 workers.
-    if any(p in phase for p in PAIR_REQUIRED_PHASES):
+    # Pair preference (Plan v4 §3.4 + Sprint Q.8): 88.5% of Laminagem ops
+    # historically use 2 workers; solo is allowed but flagged.
+    if any(p in phase for p in PAIR_PREFERRED_PHASES):
         worker_count = len(op.get("workers") or [])
         if worker_count < 2:
             out.append(

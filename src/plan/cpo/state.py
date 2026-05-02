@@ -129,14 +129,21 @@ class FactoryState:
 
     # ----- NELO domain rules ---------------------------------------
 
-    #: Phase codes that require a 2-person crew.
-    #: Criterion: phases where ≥80% of historical operations ran with 2+
-    #: workers (FuncionariosFaseOrdemFabrico, 2024 sample).
-    #: - Laminagem standard: 88.5% pair → INCLUDED
-    #: - Laminagem Infusão:  40% pair, 58% solo → EXCLUDED (pair optional)
+    #: Phase codes where the scheduler MUST place a 2-person crew (hard
+    #: constraint). Empty after Sprint Q.8 — see `PAIR_PREFERRED_PHASES`.
     #: NOTE: `CoeficienteX` in the ERP is a monetary bonus (€), NOT a
     #: time coefficient — do NOT derive pair requirement from it.
-    PAIR_REQUIRED_PHASES: Tuple[str, ...] = (
+    PAIR_REQUIRED_PHASES: Tuple[str, ...] = ()
+
+    #: Phase codes where the scheduler PREFERS a 2-person crew but a
+    #: solo assignment is still feasible (the decoder pays a soft fitness
+    #: penalty rather than treating it as infeasible).
+    #: - Laminagem standard: 88.5% historical pair, 11.5% solo → PREFERRED.
+    #:   CEO confirmed 2026-04-26 that the 11.5% solo runs are real
+    #:   ("é mesmo assim"), not punch-in errors, so this can no longer be
+    #:   a hard rule.
+    #: - Laminagem Infusão: 40% pair, 58% solo → never required at all.
+    PAIR_PREFERRED_PHASES: Tuple[str, ...] = (
         "LAMINAGEM",
     )
 
@@ -164,7 +171,16 @@ class FactoryState:
                 )
                 sq = SemanticQueriesInMemory()
             except Exception as e:
-                logger.warning(f"Semantic layer unavailable: {e}")
+                # Sprint Q.8 Fase 1 — booting empty means scheduler runs
+                # with skill_matrix={}, molds_by_model={}: any worker may
+                # do any phase, any mold may be used by any model.
+                # This MUST be loud, not a debug whisper.
+                logger.warning(
+                    "FactoryState booting EMPTY — curated layer unavailable "
+                    "(%s); scheduler will emit INSUFFICIENT_DATA. Tenant=%s",
+                    e,
+                    tenant_id,
+                )
                 return cls(tenant_id=tenant_id)
 
         state = cls(tenant_id=tenant_id)
@@ -270,7 +286,13 @@ class FactoryState:
 
     def team_size_for(self, fase_id: str, phase_name: str = "") -> int:
         normalized = phase_name.upper().replace(" ", "_")
-        if any(p in normalized for p in self.PAIR_REQUIRED_PHASES):
+        # Both REQUIRED and PREFERRED return 2 here so the routing/decoder
+        # plans for a pair by default. The decoder downgrades to a solo
+        # assignment only when the pair pool is exhausted (PREFERRED) or
+        # raises infeasibility (REQUIRED). See `pair_assignment.requires_pair`
+        # vs `prefers_pair`.
+        pair_phases = tuple(self.PAIR_REQUIRED_PHASES) + tuple(self.PAIR_PREFERRED_PHASES)
+        if any(p in normalized for p in pair_phases):
             return 2
         return 1
 

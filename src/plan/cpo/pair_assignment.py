@@ -40,6 +40,9 @@ PairCost = Callable[[str, str, SchedulingOperation], float]
 def requires_pair(op: SchedulingOperation, state: FactoryState) -> bool:
     """True iff the op's phase is in `state.PAIR_REQUIRED_PHASES`.
 
+    HARD constraint: when True, the decoder MUST place 2 workers; a solo
+    assignment is treated as infeasible.
+
     Uses `normalize_phase_code` on both sides so "Laminagem", "LAMINAGEM"
     and "laminagem" all match the canonical "LAMINAGEM" code in the
     required set. Accents are stripped too.
@@ -52,6 +55,29 @@ def requires_pair(op: SchedulingOperation, state: FactoryState) -> bool:
     }
     phase_key = normalize_phase_code(_phase_key(op))
     return phase_key in required
+
+
+def prefers_pair(op: SchedulingOperation, state: FactoryState) -> bool:
+    """True iff the op's phase is in `state.PAIR_PREFERRED_PHASES`.
+
+    SOFT preference: the decoder tries to place 2 workers but accepts a
+    solo assignment with a fitness penalty when the pair pool is
+    exhausted. Sprint Q.8 (CEO confirmation 2026-04-26) moved Laminagem
+    from REQUIRED to PREFERRED.
+    """
+    if not hasattr(state, "PAIR_PREFERRED_PHASES"):
+        return False
+    preferred: Set[str] = {
+        normalize_phase_code(r)
+        for r in (getattr(state, "PAIR_PREFERRED_PHASES", ()) or ())
+    }
+    phase_key = normalize_phase_code(_phase_key(op))
+    return phase_key in preferred
+
+
+def needs_pair_assignment(op: SchedulingOperation, state: FactoryState) -> bool:
+    """True iff the op should attempt pair assignment (REQUIRED or PREFERRED)."""
+    return requires_pair(op, state) or prefers_pair(op, state)
 
 
 def assign_pairs_for_ops(
@@ -78,11 +104,18 @@ def assign_pairs_for_ops(
     used: Set[Tuple[str, str]] = set()
 
     for op in operations:
-        if not requires_pair(op, state):
+        if not needs_pair_assignment(op, state):
             continue
         pool = _worker_pool(op, state)
         if len(pool) < 2:
-            out[op.operation_id] = (None, None)
+            # PREFERRED phases (e.g. Laminagem post-Sprint Q.8) can fall back
+            # to a solo assignment — pick the single available worker so the
+            # decoder still places the op (and pays the soft fitness penalty).
+            # REQUIRED phases stay infeasible.
+            if prefers_pair(op, state) and len(pool) == 1:
+                out[op.operation_id] = (next(iter(pool)), None)
+            else:
+                out[op.operation_id] = (None, None)
             continue
 
         candidates = sorted(pool)

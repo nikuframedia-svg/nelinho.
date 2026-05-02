@@ -127,7 +127,11 @@ class TestDecoderInvariants:
         result = decode(chromo, ops, _machines(1), state, HORIZON_START, HORIZON_END)
         assert len(result["operations"][0]["workers"]) == 2
 
-    def test_team_size_two_infeasible_when_pool_too_small(self):
+    def test_team_size_two_downgrades_to_solo_for_preferred_pair_phase(self):
+        """Sprint Q.8 (CEO confirmation 2026-04-26): LAMINAGEM is now
+        PAIR_PREFERRED (was REQUIRED). With pool=1 the decoder accepts
+        a solo placement and emits a warning instead of marking the op
+        infeasible. Hard-required phases would still be infeasible."""
         state = _state_with_workers({"LAMINAGEM": ["W1"]})
         ops = [
             _op("a", "O1", sequence=1, duration_min=60, machine="M1",
@@ -135,7 +139,15 @@ class TestDecoderInvariants:
         ]
         chromo = Chromosome(permutation=[0])
         result = decode(chromo, ops, _machines(1), state, HORIZON_START, HORIZON_END)
-        assert "a" in result["infeasible_op_ids"]
+        assert "a" not in result["infeasible_op_ids"]
+        # Op was placed solo.
+        op_out = result["operations"][0]
+        assert op_out["operation_id"] == "a"
+        assert len(op_out["workers"]) == 1
+        # Warning surfaced for the downgrade.
+        assert any(
+            "pair-preferred" in w.lower() for w in result["warnings"]
+        ), f"expected pair-preferred warning, got: {result['warnings']}"
 
     def test_mold_exclusivity(self):
         state = _state_with_workers({})
