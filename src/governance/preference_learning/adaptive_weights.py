@@ -198,6 +198,38 @@ class AdaptiveFitnessWeights:
         raw_learned = self._coefs_to_weights(coefs)
         blended = self._blend(raw_learned)
 
+        # Sprint Q.13.D D.5 — NaN / inf guard. The pairwise logistic
+        # regression converges in 99% of the cases, but a singular
+        # design matrix (all pairs identical) or a zero gradient
+        # produces NaN coefficients. Persisting NaN weights to
+        # ConfigStore would silently corrupt every subsequent CPO run
+        # for this tenant — fitness functions read NaN, propagate NaN,
+        # the safety net flips to baseline forever. Detect and skip
+        # WITHOUT touching the persisted weights so the previous good
+        # values stay live.
+        import math
+        invalid_keys = [
+            k for k, v in blended.items()
+            if not isinstance(v, (int, float))
+            or math.isnan(float(v))
+            or math.isinf(float(v))
+        ]
+        if invalid_keys:
+            logger.warning(
+                "adaptive_fitness_weights: tenant=%s produced invalid "
+                "weights (%s) — skipping persistence, keeping prior values",
+                self.tenant_id, invalid_keys,
+            )
+            return RetrainResult(
+                status="skipped",
+                reason=f"invalid_weights ({','.join(invalid_keys)})",
+                commits_scanned=len(commits),
+                pairs_used=len(pairs),
+                weights=dict(DEFAULT_WEIGHTS),
+                raw_learned=raw_learned,
+                coefficients=coefs,
+            )
+
         # Sprint R.2 — Camada 1↔2 contradiction check. Best effort: a
         # failure to load rules must NOT break the retrain (the weights
         # are already valid). Warnings are advisory.

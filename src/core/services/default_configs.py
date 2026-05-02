@@ -262,6 +262,16 @@ DEFAULT_SEEDS: list[ConfigSeed] = [
     ("learning_rules", "auto_revert_after_days", 90, "int",
      "Confirmed rules auto-deactivate after this many days without reinforcement."),
 
+    # ───────────────────────── learning (Sprint Q.13.D D.2) ─────────────────
+    # Plan v4 §22-§26 + §29 — toggles for the heavy learning pipelines.
+    # Both default OFF: fine-tune needs ≥500 pairs (Camada 3 unlock) and
+    # discovery needs real telemetry (Sprint G ERP wiring). Operators
+    # opt them in when the data side has caught up.
+    ("learning", "fine_tune.enabled", False, "bool",
+     "Camada 3 weekly DPO fine-tune builds candidate adapter (promote stays manual)."),
+    ("learning", "discovery.enabled", False, "bool",
+     "Camada 4 weekly PCMCI+ discovery proposes new SCM edges for review."),
+
     # ───────────────────────── rbac (Sprint Q.9 Onda 3.6) ───────────────────
     # Plan §11.1 last bullet — quem vê o quê. The full RBAC table lives
     # in the auth service; these defaults gate broad surfaces and let

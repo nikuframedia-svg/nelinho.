@@ -235,6 +235,40 @@ def register_tenant(
         coalesce=True,
         max_instances=1,
     )
+    # Sprint Q.13.D D.2 — PCMCI+ causal discovery (Camada 4 → DAG).
+    # Runs weekly on Sundays 05:00 UTC (after the Camada-2 retrain at
+    # 02:00 and the DPO fine-tune at 03:00). Gated by ConfigStore key
+    # ``learning.discovery.enabled`` (default False); when off the job
+    # logs and returns immediately. Discovery edges are stored in
+    # ``governance.causal_discovery_report`` for operator review — the
+    # SCM (NELO_DAG) is NEVER mutated automatically.
+    _scheduler.add_job(
+        _causal_discovery_job,
+        trigger=CronTrigger(day_of_week=6, hour=5, minute=0, timezone="UTC"),
+        args=[tenant_id],
+        id=f"causal_discovery:{tenant_id}",
+        name=f"causal_discovery[{tenant_id}]",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Sprint Q.13.D D.3 — improve adoption signal feedback loop.
+    # Runs daily 04:15 UTC, between abl_feedback (04:00) and audit
+    # retention purge (04:30). Reads yesterday's terminal DecisionRun
+    # rows (executed / executed_partial / rejected) and feeds each
+    # decision_type back into ImproveService.record_adoption_signal so
+    # the matching pending suggestions' confidence rises with adoption
+    # and falls with rejection (Bayesian Beta-Bernoulli, capped at N=50).
+    _scheduler.add_job(
+        _improve_adoption_signal_job,
+        trigger=CronTrigger(hour=4, minute=15, timezone="UTC"),
+        args=[tenant_id],
+        id=f"improve_adoption_signal:{tenant_id}",
+        name=f"improve_adoption_signal[{tenant_id}]",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
 
 
 async def shutdown_scheduler() -> None:
@@ -462,6 +496,193 @@ async def _dpo_finetune_job(tenant_id: UUID) -> None:
     except Exception as exc:
         logger.error(
             "dpo_finetune tenant=%s failed: %s",
+            tenant_id, exc, exc_info=True,
+        )
+
+
+async def _causal_discovery_job(tenant_id: UUID) -> None:
+    """Sprint Q.13.D D.2 — weekly PCMCI+ causal-discovery run.
+
+    Gated by ``learning.discovery.enabled`` (ConfigStore, default False).
+    When the flag is on, the job runs :func:`discover_edges` and
+    persists a `CausalDiscoveryReport` row in ``governance``. The SCM
+    (`NELO_DAG`) is NEVER mutated by the job — discovered edges go to
+    the operator review surface (frontend not wired yet).
+
+    Telemetry source: best-effort. Until the ERP shadow-mode (Sprint G)
+    feeds real time-series, the production path passes ``series=None
+    allow_synthetic=False``, and `discover_edges` correctly returns
+    ``status="unavailable"``. The row still gets persisted so operators
+    can see "the job ran, no telemetry, no candidates" in the audit
+    trail. In ``settings.environment != "production"``, the job uses
+    ``allow_synthetic=True`` so the wiring is exercised end-to-end.
+
+    Best-effort: any exception is swallowed and logged. The discovery
+    pipeline is a side-effect — never blocks the scheduler.
+    """
+    try:
+        from src.copilot.causal.discovery import (
+            discover_edges,
+            persist_discovery_report,
+        )
+    except ImportError:
+        logger.debug(
+            "causal_discovery: module missing — skipping tenant=%s", tenant_id,
+        )
+        return
+
+    from src.core.services.tenant_config_service import TenantConfigService
+    from src.shared.config import settings as _settings
+    from src.shared.database import get_session_context
+
+    started = datetime.utcnow()
+    try:
+        async with get_session_context() as session:
+            cfg_svc = TenantConfigService(session, tenant_id)
+            enabled = await cfg_svc.get(
+                "learning", "discovery.enabled", default=False,
+            )
+            if not enabled:
+                logger.info(
+                    "causal_discovery tenant=%s SKIPPED "
+                    "(learning.discovery.enabled=false)",
+                    tenant_id,
+                )
+                return
+
+            allow_synthetic = (
+                getattr(_settings, "environment", "production") != "production"
+            )
+            # `discover_edges` is sync (CPU-bound numerical); call directly.
+            report = discover_edges(
+                series=None,
+                allow_synthetic=allow_synthetic,
+            )
+            await persist_discovery_report(
+                session=session, tenant_id=tenant_id, report=report,
+            )
+            await session.commit()
+        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        logger.info(
+            "causal_discovery tenant=%s status=%s sample_size=%d "
+            "candidates=%d elapsed_ms=%d",
+            tenant_id, report.status, report.sample_size,
+            len(report.candidate_edges), elapsed_ms,
+        )
+    except Exception as exc:
+        logger.error(
+            "causal_discovery tenant=%s failed: %s",
+            tenant_id, exc, exc_info=True,
+        )
+
+
+async def _improve_adoption_signal_job(tenant_id: UUID) -> None:
+    """Sprint Q.13.D D.3 — feed yesterday's DecisionRun outcomes into
+    `ImproveService.record_adoption_signal`.
+
+    Closes Camada 1's confidence-calibrator loop: when an operator
+    executes a decision the system had been suggesting, every pending
+    suggestion with the matching ``action_type`` gets its confidence
+    nudged up; when an operator rejects a decision, the matching
+    suggestions' confidence drops. The Beta-Bernoulli math + cap at
+    N=50 lives inside `record_adoption_signal`; this job is just the
+    polling glue.
+
+    Why polling instead of a Kafka-style subscriber? The decision
+    pipeline already commits to Postgres before any side effects fire;
+    once-a-day polling avoids needing in-process events to be reliable
+    AND keeps a clean audit trail (the job log line records the
+    yesterday-window summary).
+
+    Best-effort: per-decision exceptions are swallowed so one bad row
+    can't block the rest. The job log captures the totals.
+    """
+    from datetime import timedelta
+
+    try:
+        from sqlalchemy import select
+        from src.governance.models import DecisionRun, DecisionStatus
+        from src.improve.service import ImproveService
+    except ImportError:
+        logger.debug(
+            "improve_adoption_signal: import missing — skipping tenant=%s",
+            tenant_id,
+        )
+        return
+
+    from src.shared.database import get_session_context
+
+    started = datetime.utcnow()
+    cutoff = started - timedelta(days=1)
+    accepted_statuses = {
+        DecisionStatus.EXECUTED.value,
+        DecisionStatus.EXECUTED_PARTIAL.value,
+    }
+    rejected_statuses = {DecisionStatus.REJECTED.value}
+
+    accepted_signals = 0
+    rejected_signals = 0
+    suggestions_updated = 0
+    failed = 0
+    try:
+        async with get_session_context() as session:
+            stmt = (
+                select(
+                    DecisionRun.decision_type,
+                    DecisionRun.status,
+                )
+                .where(DecisionRun.tenant_id == tenant_id)
+                .where(
+                    DecisionRun.status.in_(
+                        list(accepted_statuses | rejected_statuses)
+                    )
+                )
+                # Use executed_at when set; fall back to proposed_at for
+                # rejected rows that never got an execute timestamp.
+                .where(
+                    (DecisionRun.executed_at >= cutoff)
+                    | (
+                        (DecisionRun.executed_at.is_(None))
+                        & (DecisionRun.proposed_at >= cutoff)
+                    )
+                )
+            )
+            rows = (await session.execute(stmt)).all()
+
+            svc = ImproveService(session, tenant_id)
+            for decision_type, status in rows:
+                if not decision_type:
+                    continue
+                accepted = status in accepted_statuses
+                try:
+                    n = await svc.record_adoption_signal(
+                        action_type=decision_type,
+                        accepted=accepted,
+                    )
+                except Exception as exc:
+                    failed += 1
+                    logger.debug(
+                        "improve_adoption_signal: per-decision failure "
+                        "(%s) tenant=%s decision_type=%s",
+                        exc, tenant_id, decision_type,
+                    )
+                    continue
+                suggestions_updated += n
+                if accepted:
+                    accepted_signals += 1
+                else:
+                    rejected_signals += 1
+            await session.commit()
+        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        logger.info(
+            "improve_adoption_signal tenant=%s accepted=%d rejected=%d "
+            "suggestions_updated=%d failed=%d elapsed_ms=%d",
+            tenant_id, accepted_signals, rejected_signals,
+            suggestions_updated, failed, elapsed_ms,
+        )
+    except Exception as exc:
+        logger.error(
+            "improve_adoption_signal tenant=%s failed: %s",
             tenant_id, exc, exc_info=True,
         )
 

@@ -108,6 +108,7 @@ def discover_edges(
     restrict_to: Optional[List[str]] = None,
     sample_size: int = 200,
     seed: int = 17,
+    allow_synthetic: bool = False,
 ) -> DiscoveryReport:
     """Run PCMCI+ on a time series and return edge candidates.
 
@@ -116,7 +117,8 @@ def discover_edges(
     series:
         ``pandas.DataFrame`` with one column per NELO_DAG node and one
         row per time step. ``None`` → synthesise from the DAG's
-        functional forms (``status="degraded"``).
+        functional forms (only allowed when ``allow_synthetic=True``
+        and the runtime is not production; see Sprint Q.12 Onda 4.1).
     tau_max:
         Maximum lag to consider. ``2`` works for hourly / daily
         schedule data on the NELO scale.
@@ -131,6 +133,12 @@ def discover_edges(
     seed:
         RNG seed — applied both to the simulator and to tigramite's
         internal random state.
+    allow_synthetic:
+        Sprint Q.12 Onda 4.1 — explicit opt-in for the "no series →
+        simulate from the DAG, then discover" path. Lab / CI uses this
+        for regression tests; production code paths must always supply
+        real ``series``. Defaults to ``False`` so the previous silent
+        circular-validation behaviour can't sneak back in.
     """
     # Lazy imports — keep the rest of the package usable on boxes
     # without tigramite.
@@ -149,6 +157,32 @@ def discover_edges(
 
     # Materialise a frame.
     if series is None:
+        # Sprint Q.12 Onda 4.1 — refuse to "discover" edges from data
+        # we just simulated. The previous code fell back to
+        # ``_simulate_series`` whenever the caller didn't pass real
+        # telemetry, then ran PCMCI+ on those fabricated rows. The
+        # arrows it found were a property of our simulator, not the
+        # factory. Allow synthetic only when explicitly opted in
+        # (``allow_synthetic=True`` and not in production).
+        from src.shared.config import settings as _settings
+
+        if not allow_synthetic:
+            return DiscoveryReport(
+                status="unavailable",
+                reason=(
+                    "discover_edges called without telemetry; refusing "
+                    "to run PCMCI+ on simulated data. Pass series= or "
+                    "set allow_synthetic=True in lab/CI runs."
+                ),
+            )
+        if _settings.environment == "production":
+            return DiscoveryReport(
+                status="unavailable",
+                reason=(
+                    "synthetic discovery is disabled in production "
+                    "(self-validating against the simulator)."
+                ),
+            )
         df = _simulate_series(
             sample_size=sample_size, seed=seed, restrict_to=restrict_to,
         )
@@ -302,8 +336,46 @@ def _simulate_series(
     return pd.DataFrame(columns)
 
 
+async def persist_discovery_report(
+    *,
+    session: Any,
+    tenant_id: Any,
+    report: DiscoveryReport,
+) -> Any:
+    """Stage a `governance.causal_discovery_report` row from a `DiscoveryReport`.
+
+    Sprint Q.13.D D.2 — bridges the dataclass output of
+    :func:`discover_edges` and the SQLAlchemy model so the weekly job
+    can hand the row off to the operator review surface. The function
+    only stages (`session.add`); the caller controls the commit
+    boundary.
+
+    Returns the staged ORM instance so callers can attach extra
+    metadata (e.g. correlation IDs from a RemoteTrigger).
+    """
+    from src.governance.models import (
+        CausalDiscoveryReport,
+        CausalDiscoveryStatus,
+    )
+
+    row = CausalDiscoveryReport(
+        tenant_id=tenant_id,
+        engine=report.engine,
+        run_status=report.status,
+        reason=report.reason,
+        sample_size=report.sample_size,
+        tau_max=report.tau_max,
+        nodes_examined=report.nodes_examined,
+        candidate_edges=[e.to_json() for e in report.candidate_edges],
+        review_status=CausalDiscoveryStatus.PENDING.value,
+    )
+    session.add(row)
+    return row
+
+
 __all__ = [
     "DiscoveredEdge",
     "DiscoveryReport",
     "discover_edges",
+    "persist_discovery_report",
 ]
