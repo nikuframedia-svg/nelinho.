@@ -63,6 +63,13 @@ class DecisionStatus(str, Enum):
     REJECTED = "rejected"
     EXECUTING = "executing"
     EXECUTED = "executed"
+    # Sprint Q.12 Onda 2.1 — distinguishes "audit row written, domain
+    # mutation skipped" from a fully-applied EXECUTED. The previous
+    # advisory-mode fallback (handler returning ``no_session`` /
+    # ``missing_id``) was silently treated as success; auditors saw
+    # EXECUTED with no domain change and no warning. Reviewers can now
+    # filter for this status to find decisions that need a real apply.
+    EXECUTED_PARTIAL = "executed_partial"
     ROLLED_BACK = "rolled_back"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -361,6 +368,31 @@ class DecisionRun(TenantBase):
         nullable=False,
         doc="SHA256(decision_id || policy_version || input_hash || outcome_hash || prev_hash)"
     )
+
+    # Sprint Q.12 Onda 1.5 — when ``modify_payload`` rewrites an
+    # earlier decision's input_hash, every decision proposed AFTER it
+    # is left holding a ``prev_hash`` that no longer points at a
+    # source-of-truth row. We surface that explicitly here so audit
+    # tooling can filter by it. Default false; set true by
+    # :meth:`GovernanceService.modify_payload` for descendants.
+    chain_invalidated: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+        doc="True iff a later modify_payload broke this row's prev_hash link.",
+    )
+
+    chain_invalidated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    chain_invalidated_by_modify_id: Mapped[Optional[UUID]] = mapped_column(
+        PGUUID(as_uuid=True),
+        nullable=True,
+        doc="ID of the decision whose modify_payload broke this chain link.",
+    )
     
     # Timestamps
     proposed_at: Mapped[datetime] = mapped_column(
@@ -421,6 +453,58 @@ class DecisionRun(TenantBase):
         """Calculate audit hash for integrity verification."""
         data = f"{decision_id}|{policy_version}|{input_hash or ''}|{outcome_hash or ''}|{prev_hash or ''}"
         return hashlib.sha256(data.encode()).hexdigest()
+
+
+class KillSwitchActive(Base):
+    """Sprint Q.12 Onda 2.2 — durable kill-switch state.
+
+    One row per (tenant_id, scope) — activating an already-active scope
+    is idempotent (the existing row is updated, not duplicated). When
+    revoked we stamp ``deactivated_at`` instead of deleting so the
+    audit trail survives. Handlers in :mod:`src.governance.action_executor`
+    consult :func:`is_kill_switch_active` before mutating domain state.
+
+    Lives on :class:`Base` (not :class:`TenantBase`) because the table
+    is scoped per row (composite PK already includes tenant_id) and we
+    want explicit composite-key joins rather than the implicit tenant
+    filter ``TenantBase`` adds elsewhere.
+    """
+
+    __tablename__ = "kill_switch_active"
+    __table_args__ = (
+        {"schema": "governance"},
+    )
+
+    tenant_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        nullable=False,
+    )
+    scope: Mapped[str] = mapped_column(
+        String(255),
+        primary_key=True,
+        nullable=False,
+        doc="Free-form scope identifier (e.g. 'all', 'decision_type:reschedule_order').",
+    )
+    decision_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        nullable=False,
+        doc="DecisionRun.id that activated this scope (audit anchor).",
+    )
+    activated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    activated_by: Mapped[str] = mapped_column(String(100), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    deactivated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    deactivated_by: Mapped[Optional[str]] = mapped_column(
+        String(100), nullable=True,
+    )
 
 
 class Approval(TenantBase):
@@ -666,6 +750,83 @@ class PreferenceRule(TenantBase):
     )
 
 
+# ============================================================================
+# CAUSAL DISCOVERY (Sprint Q.13.D D.2)
+# ============================================================================
 
 
+class CausalDiscoveryStatus(str, Enum):
+    """Lifecycle of a discovery run row — same review pattern as PreferenceRule."""
+
+    PENDING = "pending"      # PCMCI+ produced candidates, awaiting human review
+    APPROVED = "approved"    # operator accepted at least one edge into NELO_DAG
+    REJECTED = "rejected"    # operator dismissed all candidates
+
+
+class CausalDiscoveryReport(TenantBase):
+    """One PCMCI+ run's output, persisted for human review.
+
+    Sprint Q.13.D D.2 — closes the discovery side of Camada 4. The job
+    that creates these rows is the weekly causal-discovery cron in
+    :mod:`src.shared.scheduler`. Each row carries the candidate edges
+    plus the metadata an operator needs to decide whether to fold them
+    into :data:`src.copilot.causal.nelo_dag.ALL_NODES` (the SCM is an
+    engineering artefact, not a stats lottery — see discovery module
+    docstring).
+    """
+
+    __tablename__ = "causal_discovery_report"
+    __table_args__ = (
+        Index(
+            "ix_causal_discovery_tenant_status",
+            "tenant_id", "review_status",
+        ),
+        Index(
+            "ix_causal_discovery_discovered_at",
+            "discovered_at",
+        ),
+        {"schema": "governance"},
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=uuid4,
+    )
+
+    discovered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    engine: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="tigramite-pcmci+",
+    )
+
+    # "ok" / "degraded" / "unavailable" — mirrors DiscoveryReport.status.
+    run_status: Mapped[str] = mapped_column(
+        String(32), nullable=False,
+    )
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    sample_size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    tau_max: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    nodes_examined: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # List of DiscoveredEdge.to_json() dicts.
+    candidate_edges: Mapped[List[Dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=list,
+    )
+
+    # Review state.
+    review_status: Mapped[str] = mapped_column(
+        String(32), nullable=False,
+        default=CausalDiscoveryStatus.PENDING.value,
+    )
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    reviewed_by: Mapped[Optional[str]] = mapped_column(
+        String(120), nullable=True,
+    )
+    review_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 

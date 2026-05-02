@@ -44,6 +44,7 @@ from .nelo_dag import (
     is_valid_node,
     topological_order,
 )
+from .runtime import record_causal_audit
 from .world_model import (
     DRIFT_PROFILE,
     ForecastReport,
@@ -53,6 +54,7 @@ from .world_model import (
 )
 
 __all__ = [
+    "record_causal_audit",
     # DAG
     "ALL_NODES",
     "CausalNode",
