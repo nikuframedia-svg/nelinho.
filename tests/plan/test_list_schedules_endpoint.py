@@ -69,10 +69,13 @@ def _build_app(seeded: List[ProductionSchedule]) -> FastAPI:
     async def _execute(stmt):
         # Inspect the compiled SQL params: tenant_id always there,
         # status / planning_run_id optionally.
-        try:
-            params = stmt.compile().params
-        except Exception:
-            params = {}
+        # FASE 5.4 (TEST-CRIT-04) — the previous version swallowed every
+        # exception from stmt.compile() and fell through to an empty
+        # params dict, which made the fake match every row regardless of
+        # filter. A real SQL bug in the endpoint then passed silently.
+        # Now compile errors propagate so the test ACTUALLY validates
+        # that the SQL is well-formed.
+        params = stmt.compile().params
 
         wanted_tenant = None
         wanted_status = None
