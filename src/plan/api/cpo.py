@@ -21,7 +21,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -129,10 +129,9 @@ class TimelineResponse(BaseModel):
 # Dependencies
 # =============================================================================
 
-def _tenant_id(
-    x_tenant_id: UUID = Header(default=UUID("00000000-0000-0000-0000-000000000000")),
-) -> UUID:
-    return x_tenant_id
+from src.shared.auth.headers import require_tenant_header
+
+_tenant_id = require_tenant_header
 
 
 # =============================================================================
@@ -204,7 +203,15 @@ async def schedule_cpo(
             ),
         )
 
-    resolver = RoutingResolver(state)
+    # FASE 0.3 (DEVA-02) — wire the active DurationModel into the routing
+    # resolver. When the model exists, the standard-template fallback uses
+    # `predict(...).p50_hours` instead of the legacy `horas_standard * 2.0`
+    # buffer. With no active artifact, behaviour is identical to before.
+    from src.ml.registry_loader import load_active_duration_predictor
+    duration_predictor = await load_active_duration_predictor(db, tenant_id)
+    if duration_predictor is not None:
+        logger.info("CPO schedule: DurationModel active — wired into RoutingResolver")
+    resolver = RoutingResolver(state, duration_predictor=duration_predictor)
     operations = resolver.resolve_many(orders, horizon_start=horizon_start)
     if not operations:
         raise HTTPException(
@@ -236,6 +243,15 @@ async def schedule_cpo(
     # `FitnessConfig()` — silent fallback by design.
     fitness_config = await FitnessConfig.from_tenant_config(db, tenant_id)
 
+    # FASE 0.2 (DEVA-01) — wire the active QualityRiskModel into the GA.
+    # Without this, Sprint H.1 trained but the predictor was always None
+    # and the 0.10 quality_risk weight resolved to 0 every generation.
+    from src.ml.registry_loader import load_active_quality_risk_predictor
+    quality_risk_predictor = await load_active_quality_risk_predictor(db, tenant_id)
+    if quality_risk_predictor is not None:
+        fitness_config.quality_risk_predictor = quality_risk_predictor
+        logger.info("CPO schedule: QualityRiskModel active — predictor wired into fitness")
+
     engine = CPOv4Engine(
         state=state,
         config=CPOConfig(
@@ -254,6 +270,11 @@ async def schedule_cpo(
     result = engine.schedule(
         operations, machines, horizon_start, horizon_end,
         product_price_eur=product_price_eur,
+    )
+
+    # FASE 0.3 — surface duration model wiring for observability/E2E asserts
+    result.setdefault("cpo_meta", {})["duration_model_used"] = (
+        duration_predictor is not None
     )
 
     # Sprint C 1.2 — real Trust Index for this schedule commit.

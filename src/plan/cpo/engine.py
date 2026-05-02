@@ -416,6 +416,11 @@ class CPOv4Engine:
             "use_cpsat_lrho": self.config.use_cpsat_lrho,
             "use_routing_variants": self.config.use_routing_variants,
         }
+        # FASE 0.2 (DEVA-01) — surface ML wiring so the API caller can
+        # tell whether the predictor was actually live this run.
+        cpo_meta["quality_risk_predictor_used"] = (
+            self.fitness_config.quality_risk_predictor is not None
+        )
         best_final["cpo_meta"] = cpo_meta
         return best_final
 
