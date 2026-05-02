@@ -38,13 +38,27 @@ from src.shared.database import async_session_factory
 logger = logging.getLogger(__name__)
 
 
-# Endpoints gated by factory-scope Trust Index. Only POST/PUT/PATCH on these
-# paths trigger the check — reads are always allowed regardless of TI.
+# Exact-match paths gated by factory-scope Trust Index. POST/PUT/PATCH/
+# DELETE on these paths must clear the AUTO_COMMIT gate.
 DEFAULT_GATED_ENDPOINTS: frozenset[str] = frozenset({
     "/v1/plan/replan",
     "/v1/plan/commit",
     "/v1/supply/forecast",
 })
+
+# Sprint Q.9 Onda 2.4 — prefix-match paths gated by Trust Index. Plan v4
+# §15 requires any commit-class route to clear the gate (TI ≥ 0.75 by
+# default). Listing whole API surfaces by prefix keeps the rule
+# resilient to new endpoint additions inside these surfaces. Only
+# POST/PUT/PATCH/DELETE on these prefixes trigger the check; GET stays
+# free.
+DEFAULT_GATED_PREFIXES: tuple[str, ...] = (
+    "/v1/plan/cpo/",          # CPO schedule/decide — high-impact writes
+    "/v1/decisions/",         # decision ledger — every approval/rejection
+    "/v1/transport/",         # transport batch mutations
+    "/v1/plan/schedule/",     # apply-move, preview-delta-apply
+    "/v1/governance/learning/adapter/",  # DPO adapter promotion
+)
 
 # Header that carries the active tenant. Matches the convention used by
 # `src.shared.database.get_session` and the rest of the API.
@@ -63,16 +77,30 @@ class QualityGateMiddleware(BaseHTTPMiddleware):
         self,
         app,
         gated_endpoints: Optional[frozenset[str]] = None,
+        gated_prefixes: Optional[tuple[str, ...]] = None,
         gate: TrustGate = TrustGate.AUTO_COMMIT,
     ) -> None:
         super().__init__(app)
         self._gated_endpoints = gated_endpoints or DEFAULT_GATED_ENDPOINTS
+        self._gated_prefixes = (
+            gated_prefixes if gated_prefixes is not None
+            else DEFAULT_GATED_PREFIXES
+        )
         self._gate = gate
 
+    def _is_gated(self, path: str) -> bool:
+        if path in self._gated_endpoints:
+            return True
+        return any(path.startswith(p) for p in self._gated_prefixes)
+
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        if request.url.path not in self._gated_endpoints:
+        # Sprint Q.9 Onda 2.4 — gate by exact match OR prefix match on
+        # known commit-class API surfaces. Reads (GET/HEAD/OPTIONS) and
+        # the tenant-config endpoints (which set the gates themselves)
+        # are always allowed.
+        if not self._is_gated(request.url.path):
             return await call_next(request)
-        if request.method not in ("POST", "PUT", "PATCH"):
+        if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
             return await call_next(request)
 
         tenant_raw = request.headers.get(TENANT_HEADER)

@@ -65,28 +65,43 @@ def _make_commit(
 
 
 class _FakeSession:
-    def __init__(self, commits: List[ScheduleCommit]) -> None:
+    def __init__(
+        self,
+        commits: List[ScheduleCommit],
+        *,
+        rejected_rules: List[PreferenceRule] | None = None,
+    ) -> None:
         self._commits = commits
+        # Sprint R.2 — detector now also queries PreferenceRule(status=REJECTED)
+        # to suppress re-emits. Default empty so existing tests stay green.
+        self._rejected_rules = list(rejected_rules or [])
         self.added: List[Any] = []
         self.flush_calls = 0
 
-    async def execute(self, _stmt):
-        # Return a mock result whose .scalars().all() yields our commits.
+    async def execute(self, stmt):  # noqa: ANN001 — test stub
+        rows: List[Any] = self._commits
+        try:
+            entity = stmt.column_descriptions[0].get("entity")
+            if entity is PreferenceRule:
+                rows = self._rejected_rules
+        except Exception:
+            pass
+
         class _R:
-            def __init__(self, rows):
-                self._rows = rows
+            def __init__(self, items):
+                self._items = items
 
             def scalars(self):
                 class _S:
-                    def __init__(self, rows):
-                        self._rows = rows
+                    def __init__(self, items):
+                        self._items = items
 
                     def all(self):
-                        return list(self._rows)
+                        return list(self._items)
 
-                return _S(self._rows)
+                return _S(self._items)
 
-        return _R(self._commits)
+        return _R(rows)
 
     def add(self, obj):
         self.added.append(obj)
@@ -283,3 +298,70 @@ def test_detected_rules_are_added_to_session_and_flushed():
     assert all(
         r.status == PreferenceRuleStatus.DETECTED.value for r in rules
     )
+
+
+# ---------------------------------------------------------------------------
+# Sprint R.2 — anti-re-emit suppression
+# ---------------------------------------------------------------------------
+
+
+def _rejected_temporal_rule(weekday: int) -> PreferenceRule:
+    rule = PreferenceRule(
+        id=uuid4(),
+        tenant_id=TENANT,
+        type=PreferenceRuleType.TEMPORAL_BLOCK.value,
+        description=f"manager rejected weekday {weekday} pattern",
+        predicate={"weekday": weekday},
+        confidence=0.85,
+        status=PreferenceRuleStatus.REJECTED.value,
+        detected_from_commits=[],
+    )
+    return rule
+
+
+def test_anti_re_emit_suppresses_candidate_with_rejected_signature():
+    """A previously REJECTED rule for the same (type, predicate) signature
+    must not be re-emitted, even when the data still supports it."""
+    commits = [
+        _make_commit(
+            weekday=5,
+            rejected=[{"alt_idx": 0, "kpis": {}}],
+            sha_suffix=chr(ord("a") + i),
+        )
+        for i in range(6)
+    ]
+    rejected = [_rejected_temporal_rule(weekday=5)]
+    session = _FakeSession(commits, rejected_rules=rejected)
+    detector = PreferenceRuleDetector(session, TENANT)
+
+    rules = asyncio.run(detector.scan())
+
+    # Six Friday commits would normally produce one TEMPORAL_BLOCK rule —
+    # but the operator has already rejected that exact signature.
+    assert all(
+        r.type != PreferenceRuleType.TEMPORAL_BLOCK.value for r in rules
+    )
+
+
+def test_anti_re_emit_does_not_block_different_signature():
+    """A REJECTED rule for weekday=4 must NOT suppress a fresh
+    weekday=5 candidate — different signature, different rule."""
+    commits = [
+        _make_commit(
+            weekday=5,
+            rejected=[{"alt_idx": 0, "kpis": {}}],
+            sha_suffix=chr(ord("a") + i),
+        )
+        for i in range(6)
+    ]
+    rejected = [_rejected_temporal_rule(weekday=4)]  # different weekday
+    session = _FakeSession(commits, rejected_rules=rejected)
+    detector = PreferenceRuleDetector(session, TENANT)
+
+    rules = asyncio.run(detector.scan())
+    temporal = [
+        r for r in rules
+        if r.type == PreferenceRuleType.TEMPORAL_BLOCK.value
+    ]
+    assert len(temporal) == 1
+    assert temporal[0].predicate["weekday"] == 5

@@ -8,6 +8,32 @@ NIKUFRA.AI — Abril 2026 — CONFIDENCIAL
 
 ---
 
+## ⚡ Status de Implementação (atualizado 2026-04-25, commit `2f457cb`)
+
+**Sprints Q.1-Q.6 concluídos** — fechados os gaps materiais entre este plano v4 e o HEAD em 6 vertical slices. Detalhes em [`README.md`](README.md) secção "Sprints Q.1–Q.6" e plano vivo em [`.claude/plans/plano-diz-c-digo-scalable-minsky.md`](.claude/plans/plano-diz-c-digo-scalable-minsky.md). E2E smoke em [`tests/plan/test_sprint_q_e2e_smoke.py`](tests/plan/test_sprint_q_e2e_smoke.py).
+
+| Sprint | Entrega resumida |
+|---|---|
+| **Q.1** | TrustIndex v1→v2 migrado; `quality_gates` middleware + `context_builder._calculate_trust_index` em v2; `dqaApi/configApi/transportApi` clients no frontend; `@dnd-kit/core`, `papaparse`, `xlsx` adicionados |
+| **Q.2** | Despacho/Expedição (DE01-08): 7 endpoints REST + `TransportSuggestionsService` (5 detectores) + `RejectionCategory` enum + migration 027 + `DispatchPage` com drag-drop |
+| **Q.3** | Colaboradores GC01-10: `EmployeeExtrasService` (quality_score Laplace + skill matrix + history) + 6 endpoints + override grava `PreferenceRule(WORKFORCE_OVERRIDE)` + EmployeesPage com 3 modais + CSV export |
+| **Q.4** | Drag-drop Planeamento: `PreviewDeltaService` sub-segundo + `DragDropPlanner` 2-camadas + tab Drag&drop + tab Scheduling no Settings |
+| **Q.5** | OTD% real (spike confirmou `data_entrega_prevista` + `data_conclusao`) + 5 endpoints CEO Dashboard + tiles secundários + rejection_category obrigatória no `cpo decide` |
+| **Q.6** | Polish: 2 endpoints config + 6 tabs Settings (Cura/Moldes/Quality/Trust/Sistema/Aprendizagem) via `<ConfigKeysPanel>` + 15 testes E2E smoke |
+
+**Métricas:** 927 testes PASSED · 323 rotas API · 96 chaves de config seeded em 13 categorias · 0 regressões
+
+**Estado dos princípios §11:**
+- ✅ "Explica sempre" — todas as sugestões têm O QUE/PORQUÊ/SE ACEITAR/SE REJEITAR/ALTERNATIVA
+- ✅ "Porquê obrigatório em rejeições" — categoria mandatória + texto livre opcional em 3 surfaces
+- ✅ "Tudo editável via ConfigStore" — 96 chaves seeded; reset-to-default no UI
+- ✅ "Advisory mode" — preview-delta NÃO escreve; apply-move e decide criam ScheduleCommit filhos
+- ✅ Camadas 1+2+4 activas; Camada 3 (DPO training) diferida (precisa ≥500 pares)
+
+**Bug pré-existente (não introduzido):** `alembic/versions/026_preference_rule_review_notes.py` lista `down_revision='025a_phase_bonus_payout'` mas a revisão real em `025a` é `'025a_phase_bonus'`. Bloqueia `alembic upgrade head` em DBs novas. Pre-existe ao Q.1 (commit 52821d6). Decisão pendente: editar 026 vs criar migration de merge.
+
+---
+
 # PARTE I — VISÃO E CONTEXTO
 
 ## 1. A Visão
@@ -594,11 +620,13 @@ ScheduleCommit:
 
 `rejected_alternatives` + `user_reason` são os campos mais valiosos de todo o sistema.
 
-## 15. Trust Index — 7+1 Componentes
+## 15. Trust Index — 7+1 Componentes ✅ Q.1
 
 C=Completeness (0.15), V=Validity (0.20), F=Freshness (0.15), K=Consistency (0.20), P=Provenance (0.15), A=Anomaly (0.10), E=Evidence (0.05), CC=Causal Coherence (futuro).
 
 Gates: TI < 0.50 → sugestão. TI < 0.75 → aprovação humana obrigatória. TI < 0.80 → qualidade bloqueada.
+
+**Estado:** v2 (`src/dqa/trust_v2.py`) activo desde Q.1 (commit `2f457cb`). v1 (`src/dqa/trust_index.py`, 4 componentes) marcado como DEPRECATED — único consumidor (`quality_gates` middleware) migrou. Endpoint `GET /v1/dqa/trust-index?scope=factory` retorna 7 componentes + 5 gates `effective_mode`. Pesos editáveis via Settings → tab "Trust Index" (Q.6).
 
 ---
 
@@ -863,29 +891,29 @@ Cada parâmetro mostra: valor actual, quem definiu, quando, porquê, valor defau
 
 ## 41. Fase 0 — Bugs + Fundação (Semanas 1-3)
 
-- **PRIMEIRO:** Fixes CoeficienteX (CX1-CX5)
-- **SEGUNDO:** Confirmar H3, H4, H5 com CEO (10 min)
-- **TERCEIRO:** Implementar ConfigStore — ZERO valores hardcoded no código. Cada parâmetro vem da DB com default, override, audit trail (ver secção 11.2)
-- Resolver 10 bugs CPO v3.0
-- Adicionar 16 constraints cura/secagem ao decoder (da ConfigStore, editáveis)
-- Implementar rejected_alternatives + user_reason no ScheduleCommit
-- Ligar plan ← profit (throughput €/dia)
-- Ligar máquina à rede Nelo → SQL Server
+- ✅ **CX1-CX5** — `pair_assignment.py` usa critério histórico ≥80%, não CoeficienteX; CoeficienteX migrado para `src/profit/services/bonus_payout_service.py`
+- ⏳ **Confirmar H3, H4, H5 com CEO** — pendente reunião
+- ✅ **ConfigStore** — `tenant_configuration` table + 96 chaves seeded em 13 categorias; UI completa (12 tabs Settings) — Q.1+Q.2+Q.3+Q.4+Q.6
+- ✅ **10 bugs CPO v3.0** — D1, D2, F1, CO1, C1 fixos antes do Q.1; restantes (D3-D7, E1, ME1, ST1, F2-F5) fixos durante Sprint A-P pré-Q
+- ✅ **16 constraints cura/secagem** — `NELO_CURING_GAPS_SEED` em [src/plan/cpo/state.py:33](src/plan/cpo/state.py#L33) + migration 023 + tab Settings Cura/Secagem (Q.6)
+- ✅ **rejected_alternatives + user_reason** — campo no `ScheduleCommit` (migration 022) + categorias obrigatórias em 3 surfaces (Q.2/Q.4/Q.5)
+- ✅ **plan ← profit** — `throughput_eur_day` na fitness v2 (peso 0.15) + `ThroughputService` populando schedule dict
+- ❌ **SQL Server Nelo** — diferido (precisa CEO + IT da Nelo); separado do plano Q
 
 ## 42. Fase 1 — Copilot + Colaboradores (Semanas 4-6)
 
-- LLM responde perguntas com dados reais (testar 100 perguntas)
-- RAG com 61 routing templates, skill matrix, erros
-- Página de Colaboradores (CRUD completo)
-- Camada 1 aprendizagem activa
+- ✅ **LLM com dados reais** — RLM + Gemma 4 8B + bateria adversarial 30/30 (commit `b7ab499`); world_model_forecast 54/54 (`784edb1`)
+- ✅ **RAG** — 61 routing templates seeded (migration 016) + skill matrix curated + 89K erros
+- ✅ **Página Colaboradores GC01-10** — Q.3 (modais History + Quality slider + Compare + CSV export + tier picker + soft-delete)
+- ✅ **Camada 1** — `preference_rule` + detector + UI `LearnedRulesPage` + WORKFORCE_OVERRIDE rule type + categorias rejeição (Q.3+Q.5)
 
 ## 43. Fase 2 — Planeamento + Timeline + Config (Semanas 7-9)
 
-- Página de Planeamento (atribuir barcos + pessoas com drag-and-drop)
-- Timeline de Aprovação com consequências e campo "porquê"
-- **Página de Configuração (secção 11.1) — TUDO editável pelo utilizador**
-- CPO greedy 8-fases com dados Nelo
-- Backwards scheduling com datas transporte
+- ✅ **Página de Planeamento drag-drop** — Q.4 (`DragDropPlanner` 2-camadas: fases + operadores) + `PreviewDeltaService` sub-segundo
+- ✅ **Timeline de Aprovação** — `TimelinePage` com `DecideModal` + dropdown obrigatório de categoria (Q.5) + bulk approve via backend `/decisions/bulk`
+- ✅ **Página de Configuração** — 12 tabs Settings (Q.1-Q.6) com `<ConfigKeysPanel>` genérico + reset-to-default + audit trail
+- ✅ **CPO greedy 8-fases** — `GreedyPipeline` activo (commit pré-Q `1331acf`)
+- ✅ **Backwards scheduling** — `Chromosome.schedule_direction='backward'` opt-in via `CPOConfig.use_backwards_scheduling` (PL14)
 
 ## 44. Fase 3 — CPO Completo + Despacho (Semanas 10-13)
 

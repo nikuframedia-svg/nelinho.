@@ -1,13 +1,20 @@
-import { useEffect, useState } from 'react';
-import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
+import { useEffect, useMemo, useState } from 'react';
+import { useQueries, useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import {
   Settings, Users, Key, Bell, Plug, Loader2, Save, RotateCcw, Truck, HardHat,
   CalendarClock, Hammer, Box, ShieldCheck, Globe, Brain, Beaker,
 } from 'lucide-react';
-import { configApi, tenantsApi } from '../../lib/api';
+import { configApi, tenantsApi, learningApi } from '../../lib/api';
 import { useToastContext } from '../../components/ToastProvider';
 import { DarkPageLayout } from '../../layouts';
-import { DarkCard, DarkButton, DarkSelect, DarkInput } from '../../components/dark';
+import {
+  AuditTrailRow,
+  DarkBadge,
+  DarkButton,
+  DarkCard,
+  DarkInput,
+  DarkSelect,
+} from '../../components/dark';
 
 type TabType =
   | 'general'
@@ -860,6 +867,37 @@ function ConfigKeysPanel({
     staleTime: 60_000,
   });
 
+  // Sprint Q.9 Onda 3.7 — fetch the per-key ConfigEntry so we can show
+  // who changed it / when / why. listCategory only returns the value;
+  // get() returns the full audit metadata (id, last_modified_by/at).
+  // Each panel has ≤ ~12 rows so the round-trips are cheap.
+  const entryQueries = useQueries({
+    queries: rows.map((row) => ({
+      queryKey: ['config', category, row.key, 'entry'],
+      queryFn: async () => {
+        try {
+          return await configApi.get(category, row.key);
+        } catch (err) {
+          // 404 = key never set on this tenant. Return null so the row
+          // can render the default + "por definir" affordance.
+          if (err instanceof Error && err.message.includes('404')) {
+            return null;
+          }
+          throw err;
+        }
+      },
+      staleTime: 60_000,
+    })),
+  });
+  const entriesByKey = useMemo(() => {
+    const m: Record<string, NonNullable<typeof entryQueries[number]['data']>> = {};
+    rows.forEach((row, idx) => {
+      const e = entryQueries[idx]?.data;
+      if (e) m[row.key] = e;
+    });
+    return m;
+  }, [rows, entryQueries]);
+
   const [edits, setEdits] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -953,37 +991,65 @@ function ConfigKeysPanel({
           Falha: {(error as Error).message}
         </p>
       ) : (
-        <div className="space-y-3 mt-2">
-          {rows.map((row) => (
-            <div key={row.key} className="flex items-end gap-2">
-              <div className="flex-1">
-                <DarkInput
-                  label={row.label}
-                  hint={row.hint}
-                  type={row.dataType === 'bool' || row.dataType === 'string' ? 'text' : 'number'}
-                  placeholder={
-                    row.dataType === 'bool'
-                      ? 'true | false'
-                      : row.dataType === 'string'
-                      ? '—'
-                      : ''
+        <div className="space-y-4 mt-2">
+          {rows.map((row) => {
+            const entry = entriesByKey[row.key] ?? null;
+            const currentValue = data?.values[row.key];
+            const editedValue = edits[row.key] ?? '';
+            // The displayed "default" value in the AuditTrailRow is the
+            // current backend value cast to string — that's the value
+            // a "reset" would target. (The seeded default ships in
+            // `default_configs.py` and the backend's
+            // `configApi.resetToDefault` knows the canonical default.)
+            const defaultRender =
+              currentValue === undefined || currentValue === null
+                ? null
+                : String(currentValue);
+            return (
+              <div key={row.key} className="space-y-1">
+                <div className="flex items-end gap-2">
+                  <div className="flex-1">
+                    <DarkInput
+                      label={row.label}
+                      hint={row.hint}
+                      type={
+                        row.dataType === 'bool' || row.dataType === 'string'
+                          ? 'text'
+                          : 'number'
+                      }
+                      placeholder={
+                        row.dataType === 'bool'
+                          ? 'true | false'
+                          : row.dataType === 'string'
+                          ? '—'
+                          : ''
+                      }
+                      value={editedValue}
+                      onChange={(e) =>
+                        setEdits((s) => ({ ...s, [row.key]: e.target.value }))
+                      }
+                    />
+                  </div>
+                </div>
+                {/* Sprint Q.9 Onda 3.7 — show last_changed_by/at + reset
+                    button via the shared AuditTrailRow component. The
+                    audit trail comes from configApi.get(category, key)
+                    fetched in entryQueries above. */}
+                <AuditTrailRow
+                  lastChangedBy={entry?.last_modified_by ?? null}
+                  lastChangedAt={entry?.last_modified_at ?? null}
+                  defaultValue={defaultRender}
+                  isOverridden={editedValue !== '' && editedValue !== defaultRender}
+                  onReset={
+                    entry
+                      ? () => resetMutation.mutate(row.key)
+                      : undefined
                   }
-                  value={edits[row.key] ?? ''}
-                  onChange={(e) =>
-                    setEdits((s) => ({ ...s, [row.key]: e.target.value }))
-                  }
+                  className="px-1"
                 />
               </div>
-              <button
-                onClick={() => resetMutation.mutate(row.key)}
-                disabled={resetMutation.isPending}
-                title="Reset to default"
-                className="mb-1 p-2 text-slate-500 hover:text-slate-200 disabled:opacity-40"
-              >
-                <RotateCcw size={14} />
-              </button>
-            </div>
-          ))}
+            );
+          })}
           <div className="flex justify-end gap-2 pt-2">
             <DarkButton
               variant="primary"
@@ -1167,18 +1233,143 @@ function SystemSettingsPanel() {
   );
 }
 
-// ── Aprendizagem panel ──────────────────────────────────────────────────
+// ── Aprendizagem panel (Sprint R.1 — números reais; R.4 — history modal) ─
 function LearningSettingsPanel() {
+  const STALE = 5 * 60 * 1000; // 5min
+  const [showHistory, setShowHistory] = useState(false);
+  const pairsQ = useQuery({
+    queryKey: ['learning', 'pairs'],
+    queryFn: () => learningApi.pairs({ window_days: 90, min_reason_len: 10 }),
+    staleTime: STALE,
+    retry: false,
+  });
+  const rulesQ = useQuery({
+    queryKey: ['learning', 'rules'],
+    queryFn: () => learningApi.rules(),
+    staleTime: STALE,
+    retry: false,
+  });
+  const weightsQ = useQuery({
+    queryKey: ['learning', 'weights'],
+    queryFn: () => learningApi.weights(),
+    staleTime: STALE,
+    retry: false,
+  });
+  const historyQ = useQuery({
+    queryKey: ['learning', 'weights', 'history'],
+    queryFn: () => learningApi.weightHistory(12),
+    staleTime: STALE,
+    retry: false,
+    enabled: showHistory,
+  });
+  const adapterQ = useQuery({
+    queryKey: ['learning', 'adapter'],
+    queryFn: () => learningApi.adapter(),
+    staleTime: STALE,
+    retry: false,
+  });
+  const queryClient = useQueryClient();
+  const [promoteOpen, setPromoteOpen] = useState(false);
+  const [promoteVersion, setPromoteVersion] = useState('');
+  const [promoteReason, setPromoteReason] = useState('');
+  const [promoteBy, setPromoteBy] = useState('');
+  const [rollbackOpen, setRollbackOpen] = useState(false);
+  const [rollbackReason, setRollbackReason] = useState('');
+  const [rollbackBy, setRollbackBy] = useState('');
+  const promoteMut = useMutation({
+    mutationFn: () =>
+      learningApi.promoteAdapter(promoteVersion.trim(), {
+        reason: promoteReason.trim(),
+        decided_by: promoteBy.trim() || 'unknown',
+      }),
+    onSuccess: () => {
+      setPromoteOpen(false);
+      setPromoteReason('');
+      setPromoteVersion('');
+      setPromoteBy('');
+      queryClient.invalidateQueries({ queryKey: ['learning', 'adapter'] });
+    },
+  });
+  const rollbackMut = useMutation({
+    mutationFn: () =>
+      learningApi.rollbackAdapter({
+        reason: rollbackReason.trim(),
+        decided_by: rollbackBy.trim() || 'unknown',
+      }),
+    onSuccess: () => {
+      setRollbackOpen(false);
+      setRollbackReason('');
+      setRollbackBy('');
+      queryClient.invalidateQueries({ queryKey: ['learning', 'adapter'] });
+    },
+  });
+  const adapter = adapterQ.data;
+
+  const pairs = pairsQ.data;
+  const rules = rulesQ.data;
+  const weights = weightsQ.data;
+
+  const ruleConfirmed = rules?.by_status?.confirmed ?? 0;
+  const ruleDetected = rules?.by_status?.detected ?? 0;
+  const ruleRejected = rules?.by_status?.rejected ?? 0;
+  const reEmit = rules?.rules_re_emitted_count ?? 0;
+
+  const eligible = pairs?.eligible_for_dpo ?? 0;
+  const ablToday = pairs?.abl_pairs_today ?? 0;
+  const dpoBadge: { variant: 'success' | 'warning' | 'neutral'; label: string } =
+    eligible >= 500
+      ? { variant: 'success', label: 'PRONTO' }
+      : eligible >= 100
+        ? { variant: 'warning', label: 'A ACUMULAR' }
+        : { variant: 'neutral', label: 'BOOTSTRAP' };
+
+  const weightsTrained = weights?.status === 'trained';
+  const weightsBadge: { variant: 'success' | 'warning' | 'neutral'; label: string } =
+    weightsTrained
+      ? { variant: 'success', label: 'TREINADOS' }
+      : weights?.status === 'never_trained'
+        ? { variant: 'neutral', label: 'DEFAULTS' }
+        : { variant: 'warning', label: weights?.status?.toUpperCase() ?? 'DESCONHECIDO' };
+
+  const trainedAt = weights?.trained_at
+    ? new Date(weights.trained_at).toLocaleString('pt-PT')
+    : '—';
+  const detectorAt = rules?.last_detector_run_at
+    ? new Date(rules.last_detector_run_at).toLocaleString('pt-PT')
+    : '—';
+
   return (
-    <DarkCard title="Aprendizagem" subtitle="Plan v4 §22-§27 · Camadas 1-4">
-      <div className="space-y-4 mt-4">
-        <div className="bg-slate-800/40 rounded-lg p-3">
-          <p className="text-sm text-slate-200 font-medium">Camada 1 — Regras explícitas</p>
-          <p className="text-xs text-slate-400 mt-1">
-            Detector activo. Cada commit com{' '}
-            <code>rejected_alternatives</code> alimenta o pattern miner.
-            Workforce overrides (Q.3) e categorias de rejeição (Q.5) entram
-            como features tagged.
+    <DarkCard title="Aprendizagem" subtitle="Plan v4 §22-§27 · Camadas 1-4 · Sprint R.1 (visibilidade)">
+      <div className="space-y-3 mt-4">
+
+        {/* Camada 1 */}
+        <div className="bg-slate-800/40 rounded-lg p-4">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-sm text-slate-200 font-medium">Camada 1 — Regras explícitas</p>
+            {rulesQ.isLoading ? (
+              <DarkBadge variant="neutral" size="sm">A carregar…</DarkBadge>
+            ) : reEmit > 0 ? (
+              <DarkBadge variant="warning" size="sm" dot>{reEmit} re-emitidas</DarkBadge>
+            ) : (
+              <DarkBadge variant="success" size="sm" dot>OK</DarkBadge>
+            )}
+          </div>
+          <div className="grid grid-cols-3 gap-3 mt-2">
+            <div>
+              <p className="text-2xl font-bold text-slate-100">{ruleConfirmed}</p>
+              <p className="text-xs text-slate-400">Confirmadas</p>
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-amber-400">{ruleDetected}</p>
+              <p className="text-xs text-slate-400">Em revisão</p>
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-slate-500">{ruleRejected}</p>
+              <p className="text-xs text-slate-400">Rejeitadas</p>
+            </div>
+          </div>
+          <p className="text-xs text-slate-500 mt-3">
+            Última passagem do detector: <span className="text-slate-300">{detectorAt}</span>
           </p>
           <a
             href="/admin/learned-rules"
@@ -1188,39 +1379,402 @@ function LearningSettingsPanel() {
           </a>
         </div>
 
-        <div className="bg-slate-800/40 rounded-lg p-3">
-          <p className="text-sm text-slate-200 font-medium">Camada 2 — Pesos adaptativos</p>
-          <p className="text-xs text-slate-400 mt-1">
-            <code>FitnessConfig.from_tenant_config()</code> mistura 70% pesos
-            aprendidos + 30% defaults. Activa-se após ~50 commits (Plan v4 §23).
+        {/* Camada 2 */}
+        <div className="bg-slate-800/40 rounded-lg p-4">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-sm text-slate-200 font-medium">Camada 2 — Pesos adaptativos</p>
+            {weightsQ.isLoading ? (
+              <DarkBadge variant="neutral" size="sm">A carregar…</DarkBadge>
+            ) : (
+              <DarkBadge variant={weightsBadge.variant} size="sm" dot>{weightsBadge.label}</DarkBadge>
+            )}
+          </div>
+          <div className="grid grid-cols-4 gap-2 mt-2 text-xs">
+            {weights && Object.entries(weights.current_weights).map(([key, value]) => {
+              const def = weights.default_weights[key] ?? 0;
+              const mult = weights.multipliers[key] ?? 1;
+              const arrow = mult > 1.05 ? '↑' : mult < 0.95 ? '↓' : '→';
+              const colour = mult > 1.05 ? 'text-emerald-400' : mult < 0.95 ? 'text-rose-400' : 'text-slate-300';
+              return (
+                <div key={key}>
+                  <p className="text-slate-400">{key.replace('w_', '')}</p>
+                  <p className={`font-mono ${colour}`}>
+                    {value.toFixed(2)} {arrow} ({mult.toFixed(2)}×)
+                  </p>
+                  <p className="text-slate-600">def {def.toFixed(2)}</p>
+                </div>
+              );
+            })}
+          </div>
+          <p className="text-xs text-slate-500 mt-3">
+            Treinado com <span className="text-slate-300">{weights?.pairs_used ?? 0}</span> pares ·
+            blend {((weights?.blend_learned_pct ?? 0.7) * 100).toFixed(0)}% aprendido /
+            {(100 - (weights?.blend_learned_pct ?? 0.7) * 100).toFixed(0)}% default ·
+            min pares: {weights?.min_pairs_threshold ?? 50} ·
+            último retrain: <span className="text-slate-300">{trainedAt}</span>
           </p>
+          <button
+            type="button"
+            className="text-xs text-accent underline mt-2"
+            onClick={() => setShowHistory(true)}
+          >
+            Ver histórico (12 retrains) →
+          </button>
         </div>
 
-        <div className="bg-slate-800/40 rounded-lg p-3">
-          <p className="text-sm text-slate-200 font-medium">Camada 3 — DPO no LLM</p>
-          <p className="text-xs text-slate-400 mt-1">
-            Dataset builder em <code>src/governance/preference_learning/dpo_dataset_builder.py</code>.
-            Pipeline de fine-tuning QLoRA <strong>diferido</strong> para Fase 5
-            (precisa ≥500 pares).
+        {/* Camada 3 */}
+        <div className="bg-slate-800/40 rounded-lg p-4">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-sm text-slate-200 font-medium">Camada 3 — DPO no LLM (fine-tune)</p>
+            {pairsQ.isLoading ? (
+              <DarkBadge variant="neutral" size="sm">A carregar…</DarkBadge>
+            ) : (
+              <DarkBadge variant={dpoBadge.variant} size="sm" dot>{dpoBadge.label}</DarkBadge>
+            )}
+          </div>
+          <div className="grid grid-cols-3 gap-3 mt-2">
+            <div>
+              <p className="text-2xl font-bold text-slate-100">{eligible}</p>
+              <p className="text-xs text-slate-400">Pares elegíveis (≥{pairs?.min_reason_len ?? 10} chars)</p>
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-slate-300">{pairs?.total_pairs ?? 0}</p>
+              <p className="text-xs text-slate-400">Total de pares</p>
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-slate-300">{pairs?.last_30d?.eligible ?? 0}</p>
+              <p className="text-xs text-slate-400">Elegíveis últimos 30d</p>
+            </div>
+          </div>
+          <p className="text-xs text-slate-500 mt-3">
+            Bootstrap: precisa de ≥500 pares elegíveis para fine-tune QLoRA on-prem (Sprint R.5).
+            Pares vêm de <code>rejected_alternatives</code> nos commits CPO + ABL (Sprint R.3).
           </p>
+          <div className="mt-3 pt-3 border-t border-slate-700 text-xs">
+            {adapter?.active_version ? (
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-slate-300">
+                    Adapter activo: <code className="text-accent">{adapter.active_version}</code>
+                  </p>
+                  <p className="text-slate-500 mt-1">
+                    Promovido por <span className="text-slate-300">{adapter.promoted_by ?? '—'}</span>
+                    {' '}em{' '}
+                    <span className="text-slate-300">
+                      {adapter.promoted_at ? new Date(adapter.promoted_at).toLocaleString('pt-PT') : '—'}
+                    </span>
+                  </p>
+                  {adapter.intent_match_rate !== null && (
+                    <p className="text-slate-500 mt-1">
+                      intent_match: <span className="text-slate-300">{((adapter.intent_match_rate ?? 0) * 100).toFixed(1)}%</span>
+                      {' · safety: '}
+                      <span className="text-slate-300">{adapter.safety_violations_count ?? 0}</span>
+                    </p>
+                  )}
+                </div>
+                <div className="flex flex-col gap-2">
+                  <button
+                    type="button"
+                    className="text-xs text-accent underline"
+                    onClick={() => setPromoteOpen(true)}
+                  >
+                    Promover novo →
+                  </button>
+                  {adapter.has_previous && (
+                    <button
+                      type="button"
+                      className="text-xs text-rose-400 underline"
+                      onClick={() => setRollbackOpen(true)}
+                    >
+                      Rollback ↩
+                    </button>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between">
+                <p className="text-slate-500">Sem adapter activo — base model em uso.</p>
+                <button
+                  type="button"
+                  className="text-xs text-accent underline"
+                  onClick={() => setPromoteOpen(true)}
+                >
+                  Promover candidato →
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
-        <div className="bg-slate-800/40 rounded-lg p-3">
-          <p className="text-sm text-slate-200 font-medium">Camada 4 — ABLkit (loop contínuo)</p>
-          <p className="text-xs text-slate-400 mt-1">
-            <code>src/copilot/causal/ablkit.py</code> activo. Cada erro do LLM
-            corrigido pelo kernel treina o LLM nesse erro específico.
+        {/* Camada 4 */}
+        <div className="bg-slate-800/40 rounded-lg p-4">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-sm text-slate-200 font-medium">Camada 4 — ABLkit (loop contínuo)</p>
+            {pairsQ.isLoading ? (
+              <DarkBadge variant="neutral" size="sm">A carregar…</DarkBadge>
+            ) : ablToday > 0 ? (
+              <DarkBadge variant="success" size="sm" dot>ACTIVA</DarkBadge>
+            ) : (
+              <DarkBadge variant="warning" size="sm" dot>STUB (R.3 pendente)</DarkBadge>
+            )}
+          </div>
+          <div className="grid grid-cols-2 gap-3 mt-2">
+            <div>
+              <p className="text-2xl font-bold text-slate-100">{ablToday}</p>
+              <p className="text-xs text-slate-400">Divergências hoje</p>
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-slate-300">—</p>
+              <p className="text-xs text-slate-400">Acumuladas (Sprint R.3)</p>
+            </div>
+          </div>
+          <p className="text-xs text-slate-500 mt-3">
+            Cada divergência kernel-vs-LLM produz um triplet <code>{`{prompt, chosen, rejected}`}</code>
+            alimentado à Camada 3. Activado pelo job <code>_abl_feedback_job</code> (Sprint R.3).
           </p>
         </div>
 
         <p className="text-xs text-slate-500 mt-2">
-          Pesos aprendidos e DPO pares são editáveis via{' '}
-          <a href="/admin/learned-rules" className="text-accent underline">
-            /admin/learned-rules
-          </a>
-          . Override do gestor SEMPRE ganha (Plan v4 §11.3).
+          Override do gestor SEMPRE ganha (Plan v4 §11.3).
+          Endpoints expostos: <code>/v1/governance/learning/{`{pairs,rules,weights}`}</code>.
         </p>
       </div>
+
+      {showHistory && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          onClick={() => setShowHistory(false)}
+        >
+          <div
+            className="bg-slate-900 border border-slate-700 rounded-xl max-w-5xl w-full max-h-[85vh] overflow-y-auto p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-100">
+                  Histórico de pesos adaptativos (Camada 2)
+                </h2>
+                <p className="text-xs text-slate-400 mt-1">
+                  Últimos 12 retrains com explicação determinística por KPI (Sprint R.4).
+                </p>
+              </div>
+              <button
+                type="button"
+                className="text-slate-400 hover:text-slate-100"
+                onClick={() => setShowHistory(false)}
+              >
+                Fechar ✕
+              </button>
+            </div>
+
+            {historyQ.isLoading && (
+              <p className="text-sm text-slate-400">A carregar histórico…</p>
+            )}
+            {historyQ.isError && (
+              <p className="text-sm text-rose-400">
+                Erro a carregar histórico. Tente outra vez.
+              </p>
+            )}
+            {historyQ.data && historyQ.data.entries.length === 0 && (
+              <p className="text-sm text-slate-400">
+                Sem retrains gravados ainda. O job corre domingos 02:00 UTC.
+              </p>
+            )}
+            {historyQ.data && historyQ.data.entries.length > 0 && (
+              <div className="space-y-3">
+                {historyQ.data.entries.map((entry, idx) => {
+                  const dt = entry.trained_at
+                    ? new Date(entry.trained_at).toLocaleString('pt-PT')
+                    : entry.valid_from
+                      ? new Date(entry.valid_from).toLocaleString('pt-PT')
+                      : '—';
+                  return (
+                    <div
+                      key={`${entry.trained_at}-${idx}`}
+                      className="bg-slate-800/40 rounded-lg p-3"
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-sm font-medium text-slate-200">
+                          {dt}
+                        </p>
+                        <DarkBadge
+                          variant={entry.status === 'trained' ? 'success' : 'neutral'}
+                          size="sm"
+                          dot
+                        >
+                          {entry.status ?? 'unknown'} · {entry.pairs_used} pares
+                        </DarkBadge>
+                      </div>
+                      {entry.explanations && entry.explanations.length > 0 ? (
+                        <ul className="space-y-1">
+                          {entry.explanations.map((ex) => (
+                            <li
+                              key={ex.kpi}
+                              className="text-xs text-slate-300"
+                              dangerouslySetInnerHTML={{
+                                __html: ex.human_text.replace(
+                                  /\*\*([^*]+)\*\*/g,
+                                  '<strong class="text-slate-100">$1</strong>',
+                                ),
+                              }}
+                            />
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="text-xs text-slate-500 italic">
+                          Sem explicações neste retrain (anterior a R.4).
+                        </p>
+                      )}
+                      {entry.warnings && entry.warnings.length > 0 && (
+                        <div className="mt-2 pt-2 border-t border-slate-700">
+                          <p className="text-xs text-amber-400 font-medium">
+                            ⚠ {entry.warnings.length} contradição{entry.warnings.length > 1 ? 'ões' : ''} com regras confirmadas
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {promoteOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          onClick={() => setPromoteOpen(false)}
+        >
+          <div
+            className="bg-slate-900 border border-slate-700 rounded-xl max-w-md w-full p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-semibold text-slate-100 mb-1">
+              Promover candidato LoRA
+            </h2>
+            <p className="text-xs text-slate-400 mb-4">
+              Sprint R.5.3 — promove um adapter como activo. Razão obrigatória ≥20 chars (audit).
+            </p>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-slate-300">Versão do candidato</label>
+                <DarkInput
+                  value={promoteVersion}
+                  onChange={(e) => setPromoteVersion(e.target.value)}
+                  placeholder="gemma4-8b-nelo-2026-04-25"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-slate-300">Decidido por</label>
+                <DarkInput
+                  value={promoteBy}
+                  onChange={(e) => setPromoteBy(e.target.value)}
+                  placeholder="luis"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-slate-300">Razão (≥20 chars)</label>
+                <DarkInput
+                  value={promoteReason}
+                  onChange={(e) => setPromoteReason(e.target.value)}
+                  placeholder="ex: candidato passou eval +5pp, sem violações"
+                />
+                <p className="text-xs text-slate-500 mt-1">
+                  {promoteReason.trim().length}/20 chars mínimos
+                </p>
+              </div>
+              {promoteMut.isError && (
+                <p className="text-xs text-rose-400">
+                  {(promoteMut.error as Error)?.message ?? 'Erro a promover.'}
+                </p>
+              )}
+              <div className="flex justify-end gap-2 pt-2">
+                <DarkButton
+                  variant="secondary"
+                  onClick={() => setPromoteOpen(false)}
+                >
+                  Cancelar
+                </DarkButton>
+                <DarkButton
+                  variant="primary"
+                  disabled={
+                    !promoteVersion.trim()
+                    || promoteReason.trim().length < 20
+                    || promoteMut.isPending
+                  }
+                  onClick={() => promoteMut.mutate()}
+                >
+                  {promoteMut.isPending ? 'A promover…' : 'Promover'}
+                </DarkButton>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {rollbackOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          onClick={() => setRollbackOpen(false)}
+        >
+          <div
+            className="bg-slate-900 border border-slate-700 rounded-xl max-w-md w-full p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-lg font-semibold text-slate-100 mb-1">
+              Rollback do adapter activo
+            </h2>
+            <p className="text-xs text-slate-400 mb-4">
+              Restaura a versão anterior. Razão obrigatória ≥20 chars.
+            </p>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-slate-300">Decidido por</label>
+                <DarkInput
+                  value={rollbackBy}
+                  onChange={(e) => setRollbackBy(e.target.value)}
+                  placeholder="luis"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-slate-300">Razão (≥20 chars)</label>
+                <DarkInput
+                  value={rollbackReason}
+                  onChange={(e) => setRollbackReason(e.target.value)}
+                  placeholder="ex: regressão de OTD após promote"
+                />
+                <p className="text-xs text-slate-500 mt-1">
+                  {rollbackReason.trim().length}/20 chars mínimos
+                </p>
+              </div>
+              {rollbackMut.isError && (
+                <p className="text-xs text-rose-400">
+                  {(rollbackMut.error as Error)?.message ?? 'Erro a fazer rollback.'}
+                </p>
+              )}
+              <div className="flex justify-end gap-2 pt-2">
+                <DarkButton
+                  variant="secondary"
+                  onClick={() => setRollbackOpen(false)}
+                >
+                  Cancelar
+                </DarkButton>
+                <DarkButton
+                  variant="primary"
+                  disabled={
+                    rollbackReason.trim().length < 20
+                    || rollbackMut.isPending
+                  }
+                  onClick={() => rollbackMut.mutate()}
+                >
+                  {rollbackMut.isPending ? 'A reverter…' : 'Rollback'}
+                </DarkButton>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </DarkCard>
   );
 }

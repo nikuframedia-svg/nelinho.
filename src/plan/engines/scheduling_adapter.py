@@ -251,9 +251,17 @@ class SchedulingAdapter:
                 # skill matrix / mold info / historical durations).
                 state = FactoryState(tenant_id=getattr(self, "_tenant_id", None))
 
+            # Sprint Q.9 Onda 1.2 — Camada 2 wire. Adapter is sync, so the
+            # async caller (FastAPI handler) is expected to pre-load a
+            # `FitnessConfig` via `await FitnessConfig.from_tenant_config(...)`
+            # and hand it in via `set_fitness_config`. When absent, the
+            # engine constructor falls back to default weights (existing
+            # behaviour) plus auto-copies `state.preference_rules` for
+            # Camada 1 enforcement.
             engine = CPOv4Engine(
                 state=state,
                 config=CPOConfig(time_limit_sec=self._time_limit_sec),
+                fitness_config=getattr(self, "_fitness_config", None),
             )
             result_dict = engine.schedule(operations, machines, horizon_start, horizon_end)
             return SchedulingResult(**{k: v for k, v in result_dict.items() if k in SchedulingResult.model_fields})
@@ -266,6 +274,12 @@ class SchedulingAdapter:
     def set_cpo_state(self, state) -> None:
         """Inject a pre-loaded FactoryState for the CPO v4 engine."""
         self._cpo_state = state
+
+    def set_fitness_config(self, fitness_config) -> None:
+        """Inject a pre-loaded FitnessConfig (typically built via
+        `await FitnessConfig.from_tenant_config(...)` so adaptive
+        Camada-2 weights are merged in). Sprint Q.9 Onda 1.2."""
+        self._fitness_config = fitness_config
 
     def set_tenant_id(self, tenant_id) -> None:
         self._tenant_id = tenant_id

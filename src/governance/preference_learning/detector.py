@@ -88,7 +88,14 @@ class PreferenceRuleDetector:
     # ─── Public entry ──────────────────────────────────────────────────
 
     async def scan(self, window_days: int = 30) -> List[PreferenceRule]:
-        """Fetch recent commits, run every sub-detector, persist rules."""
+        """Fetch recent commits, run every sub-detector, persist rules.
+
+        Sprint R.2 — anti-re-emit: candidates whose signature matches a
+        previously REJECTED rule are skipped (so the operator doesn't
+        keep dismissing the same noise every night). Skipped count is
+        logged and surfaces via ``LearningMetricsService.rule_stats``
+        as ``rules_re_emitted_count``.
+        """
         commits = await self._fetch_commits_with_rejections(window_days)
         if not commits:
             logger.info(
@@ -98,6 +105,8 @@ class PreferenceRuleDetector:
             )
             return []
 
+        rejected_signatures = await self._collect_rejected_signatures()
+
         candidates: List[Dict[str, Any]] = []
         candidates += self._detect_temporal_patterns(commits)
         candidates += self._detect_tradeoff_preferences(commits)
@@ -105,8 +114,13 @@ class PreferenceRuleDetector:
         candidates += self._detect_phase_threshold_rules(commits)
 
         persisted: List[PreferenceRule] = []
+        re_emitted_skipped = 0
         for candidate in candidates:
             if candidate["confidence"] < self.min_confidence:
+                continue
+            sig = _predicate_signature(candidate["type"], candidate["predicate"])
+            if sig in rejected_signatures:
+                re_emitted_skipped += 1
                 continue
             rule = PreferenceRule(
                 id=uuid4(),
@@ -124,10 +138,30 @@ class PreferenceRuleDetector:
         await self.session.flush()
         logger.info(
             "PreferenceRuleDetector: %d rules persisted for tenant %s "
-            "(scanned %d commits, window=%dd)",
+            "(scanned %d commits, window=%dd, re_emitted_skipped=%d)",
             len(persisted), self.tenant_id, len(commits), window_days,
+            re_emitted_skipped,
         )
         return persisted
+
+    async def _collect_rejected_signatures(self) -> set[str]:
+        """Return signatures of rules the operator has already rejected.
+
+        Tenant-scoped only — the same predicate can legitimately be
+        rejected in tenant A and detected fresh in tenant B (different
+        factory, different operator).
+        """
+        stmt = select(PreferenceRule).where(
+            and_(
+                PreferenceRule.tenant_id == self.tenant_id,
+                PreferenceRule.status == PreferenceRuleStatus.REJECTED.value,
+            )
+        )
+        rejected_rules = list((await self.session.execute(stmt)).scalars().all())
+        return {
+            _predicate_signature(rule.type, rule.predicate or {})
+            for rule in rejected_rules
+        }
 
     # ─── Data access ───────────────────────────────────────────────────
 
@@ -388,3 +422,39 @@ _WEEKDAY_NAMES: Dict[int, str] = {
     6: "Sábado",
     7: "Domingo",
 }
+
+
+# ─── Sprint R.2 — anti-re-emit signature helper ──────────────────────────
+
+
+# Per-type discriminating keys: only these participate in the signature
+# so two candidates that differ only in counts (sample_count, of_total)
+# still match a previously rejected rule.
+_SIGNATURE_KEYS_BY_TYPE: Dict[str, tuple[str, ...]] = {
+    PreferenceRuleType.TEMPORAL_BLOCK.value: ("weekday",),
+    PreferenceRuleType.TRADEOFF_PREFERENCE.value: ("prefer", "sacrifice"),
+    PreferenceRuleType.OPERATOR_AFFINITY.value: ("phase_id", "worker_id"),
+    PreferenceRuleType.PHASE_THRESHOLD.value: ("phase_id", "min_workers"),
+    PreferenceRuleType.WORKFORCE_OVERRIDE.value: ("employee_id", "field"),
+}
+
+
+def _predicate_signature(rule_type: str, predicate: Dict[str, Any]) -> str:
+    """Canonical string signature for ``(type, predicate)``.
+
+    Used to detect candidates the operator has already rejected. Two
+    rules with the same signature describe the same behaviour even if
+    auxiliary fields (counts, totals) drifted between scans.
+    """
+    import json
+
+    keys = _SIGNATURE_KEYS_BY_TYPE.get(rule_type)
+    if keys is None:
+        # Unknown type: fall back to the raw predicate so we never
+        # accidentally collapse two different rule types together.
+        payload = {"_type": rule_type, **(predicate or {})}
+    else:
+        payload = {"_type": rule_type}
+        for key in keys:
+            payload[key] = (predicate or {}).get(key)
+    return json.dumps(payload, sort_keys=True, default=str)

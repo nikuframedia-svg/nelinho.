@@ -191,6 +191,36 @@ def register_tenant(
         coalesce=True,
         max_instances=1,
     )
+    # Sprint R.3 — ABL feedback (Camada 4). Runs daily 04:00 UTC, after
+    # the preference rule detector (03:00) so the two never contend on
+    # DB locks. Reads yesterday's CausalChain + verification rows from
+    # CopilotMessage.content_structured and emits ABL JSONL triplets
+    # for the upcoming Camada 3 fine-tune.
+    _scheduler.add_job(
+        _abl_feedback_job,
+        trigger=CronTrigger(hour=4, minute=0, timezone="UTC"),
+        args=[tenant_id],
+        id=f"abl_feedback:{tenant_id}",
+        name=f"abl_feedback[{tenant_id}]",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Sprint R.5.4 — DPO fine-tune candidate (Camada 3, OPT-IN).
+    # Runs Sunday 03:00 UTC, but only when ConfigStore key
+    # learning.fine_tune.enabled is True. The job builds the candidate
+    # adapter; promote is always a separate human action via
+    # POST /v1/governance/learning/adapter/promote/{version}.
+    _scheduler.add_job(
+        _dpo_finetune_job,
+        trigger=CronTrigger(day_of_week=6, hour=3, minute=0, timezone="UTC"),
+        args=[tenant_id],
+        id=f"dpo_finetune:{tenant_id}",
+        name=f"dpo_finetune[{tenant_id}]",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
 
 
 async def shutdown_scheduler() -> None:
@@ -319,6 +349,150 @@ async def _preference_weights_retrain_job(tenant_id: UUID) -> None:
     except Exception as exc:
         logger.error(
             "preference_weights_retrain tenant=%s failed: %s",
+            tenant_id, exc, exc_info=True,
+        )
+
+
+async def _dpo_finetune_job(tenant_id: UUID) -> None:
+    """Sprint R.5.4 — weekly DPO fine-tune candidate (Camada 3).
+
+    Runs Sunday 03:00 UTC. Reads ConfigStore key
+    ``learning.fine_tune.enabled`` and bails if it's false (default).
+    The job NEVER promotes — it just builds a dataset, runs
+    ``run_finetune`` in smoke mode (or real, if the GPU stack is
+    present), and writes the report next to a versioned adapter
+    directory. The R.1 dashboard surfaces "candidate pending" and a
+    human carries out the promote via the API.
+    """
+    from datetime import timedelta
+
+    try:
+        from src.governance.preference_learning import DPODatasetBuilder
+        from src.governance.preference_learning.dataset_mixer import (
+            discover_abl_files,
+            mix_datasets,
+        )
+    except ImportError:
+        logger.debug(
+            "dpo_finetune module missing — skipping tenant=%s", tenant_id,
+        )
+        return
+
+    try:
+        from scripts.dpo_finetune import run_finetune  # type: ignore
+    except ImportError:
+        try:
+            import sys
+            from pathlib import Path as _P
+
+            scripts_dir = _P(__file__).resolve().parents[2] / "scripts"
+            if str(scripts_dir) not in sys.path:
+                sys.path.insert(0, str(scripts_dir))
+            from dpo_finetune import run_finetune  # type: ignore
+        except ImportError as exc:
+            logger.warning(
+                "dpo_finetune script unavailable — skipping tenant=%s (%s)",
+                tenant_id, exc,
+            )
+            return
+
+    from pathlib import Path
+    from src.core.services.tenant_config_service import TenantConfigService
+    from src.shared.database import get_session_context
+
+    started = datetime.utcnow()
+    today = started.date()
+    try:
+        async with get_session_context() as session:
+            cfg_svc = TenantConfigService(session, tenant_id)
+            enabled = await cfg_svc.get(
+                "learning", "fine_tune.enabled", default=False,
+            )
+            if not enabled:
+                logger.info(
+                    "dpo_finetune tenant=%s SKIPPED (learning.fine_tune.enabled=false)",
+                    tenant_id,
+                )
+                return
+
+            # Build DPO source from commits.
+            dpo_dir = Path("data/learning/datasets")
+            dpo_jsonl = dpo_dir / f"dpo_{tenant_id}_{today.isoformat()}.jsonl"
+            builder = DPODatasetBuilder(session, tenant_id)
+            await builder.build(window_days=90, output_path=dpo_jsonl)
+
+        # Mix DPO + ABL outside the DB session.
+        abl_files = discover_abl_files(Path("data/learning/abl_triplets"))
+        mixed_path = dpo_dir / f"dataset_{tenant_id}_{today.isoformat()}.jsonl"
+        manifest = mix_datasets(
+            dpo_paths=[dpo_jsonl] if dpo_jsonl.exists() else [],
+            abl_paths=abl_files,
+            output_path=mixed_path,
+            seed=42,
+        )
+
+        adapter_dir = Path("models/adapters") / f"gemma4-8b-nelo-{today.isoformat()}"
+        report = run_finetune(
+            dataset_path=mixed_path,
+            output_path=adapter_dir,
+            base_model="google/gemma-2-9b-it",
+            config={},
+            smoke=True,  # never auto-train on prod box without explicit opt-in
+        )
+        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        logger.info(
+            "dpo_finetune tenant=%s status=%s pairs=%d adapter=%s elapsed_ms=%s",
+            tenant_id, report.status, manifest.triplets_total,
+            adapter_dir, elapsed_ms,
+        )
+    except Exception as exc:
+        logger.error(
+            "dpo_finetune tenant=%s failed: %s",
+            tenant_id, exc, exc_info=True,
+        )
+
+
+async def _abl_feedback_job(tenant_id: UUID) -> None:
+    """Sprint R.3 — capture ABL divergences daily (Camada 4 → Camada 3).
+
+    Pulls yesterday's chain + verification pairs (from
+    ``CopilotMessage.content_structured`` once that wiring lands), runs
+    the divergence detector, and appends DPO-shaped triplets to
+    ``data/learning/abl_triplets/{date}.jsonl``. Until the chain
+    capture is wired, the job logs a clean skip — no triplets, no
+    crash, the daily window is just not productive yet.
+    """
+    from datetime import timedelta
+
+    try:
+        from src.copilot.jobs.abl_feedback import (
+            _load_chain_pairs_from_db,
+            run_abl_feedback,
+        )
+    except ImportError:
+        logger.debug(
+            "abl_feedback module missing — skipping tenant=%s", tenant_id,
+        )
+        return
+
+    target = (datetime.utcnow() - timedelta(days=1)).date()
+    started = datetime.utcnow()
+    try:
+        pairs = await _load_chain_pairs_from_db(tenant_id, target)
+        report = run_abl_feedback(
+            pairs, tenant_id=tenant_id, today=target,
+        )
+        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        logger.info(
+            "abl_feedback tenant=%s date=%s chains=%d divergences=%d "
+            "written=%d elapsed_ms=%s",
+            tenant_id, report.target_date,
+            report.chains_processed, report.divergences_detected,
+            report.triplets_written, elapsed_ms,
+        )
+    except Exception as exc:
+        logger.error(
+            "abl_feedback tenant=%s failed: %s",
             tenant_id, exc, exc_info=True,
         )
 

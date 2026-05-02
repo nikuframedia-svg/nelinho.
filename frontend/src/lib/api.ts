@@ -1437,6 +1437,31 @@ export const decisionsApi = {
       by: string;
       details: Record<string, any>;
     }>>(`/v1/decisions/${id}/audit`),
+
+  /**
+   * Sprint Q.9 Onda 3.4 — bulk approve / reject in one round trip.
+   * Per-item: SoD violation on one decision does NOT abort the rest;
+   * the response carries `{ok, failed, results}`. Plan v4 §8 WG04.
+   */
+  bulkAct: (
+    items: Array<{
+      decision_id: string;
+      action: 'approve' | 'reject' | 'request_changes';
+      reason?: string;
+    }>,
+  ) =>
+    request<{
+      ok: number;
+      failed: number;
+      results: Array<{
+        decision_id: string;
+        status: 'ok' | 'error';
+        error?: string;
+      }>;
+    }>(`/v1/governance/decisions/bulk`, {
+      method: 'POST',
+      body: JSON.stringify({ items }),
+    }),
 };
 
 export const apiInfo = () => request<any>('/');
@@ -2604,5 +2629,16 @@ export const transportApi = {
   suggestions: (batchId: string) =>
     request<TransportSuggestion[]>(
       `/v1/plan/transport/batches/${encodeURIComponent(batchId)}/suggestions`,
+    ),
+
+  /**
+   * Sprint Q.9 Onda 3.3 — list the order ids currently assigned to a
+   * batch so the DispatchPage can render real draggable cards instead
+   * of the previous placeholder. Empty array is a valid response
+   * (batch exists but has no assignments yet).
+   */
+  listOrders: (batchId: string) =>
+    request<{ batch_id: string; orders: string[] }>(
+      `/v1/plan/transport/batches/${encodeURIComponent(batchId)}/orders`,
     ),
 };

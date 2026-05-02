@@ -15,7 +15,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .service import WorkforceService
+from .service import WorkforceService, WorkforceDataUnavailableError
 from .models import (
     WorkforceDelta,
     DependencyGraphResponse,
@@ -50,8 +50,14 @@ async def get_db() -> AsyncSession:
 
 
 async def get_service(db: AsyncSession = Depends(get_db)) -> WorkforceService:
-    """Dependency injection for WorkforceService."""
-    return WorkforceService(db)
+    """Default DI for endpoints that don't gate the mock graph.
+
+    Sprint Q.8 Fase 6 — defaults to `allow_mock=False`. Endpoints that
+    expose `?demo=true` build their own service via `WorkforceService(db,
+    allow_mock=demo)` directly inside the handler so the flag flows
+    through cleanly.
+    """
+    return WorkforceService(db, allow_mock=False)
 
 
 # ============================================================================
@@ -60,21 +66,31 @@ async def get_service(db: AsyncSession = Depends(get_db)) -> WorkforceService:
 
 @router.get("/dependency-graph", response_model=DependencyGraphResponse)
 async def get_dependency_graph(
-    service: WorkforceService = Depends(get_service),
+    demo: bool = Query(
+        False,
+        description="If True, fall back to a synthetic demo graph when "
+        "curated data is unavailable. Default False — operators see 503 "
+        "(Workforce data indisponível) instead of fake nodes.",
+    ),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get the complete workforce dependency graph.
-    
+
     Returns nodes (phases, employees) and edges (aptitudes).
     This graph shows the relationships between:
     - Phases (production stages)
     - Employees (qualified workers)
     - Aptitudes (which employee can work in which phase)
     """
-    logger.info("Getting dependency graph")
+    logger.info("Getting dependency graph (demo=%s)", demo)
+    service = WorkforceService(db, allow_mock=demo)
     try:
-        result = await service.get_dependency_graph()
-        return result
+        return await service.get_dependency_graph()
+    except WorkforceDataUnavailableError as e:
+        # Sprint Q.8 Fase 6 — surface as 503 so the UI can render a
+        # banner ("Workforce data indisponível") instead of fake data.
+        raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         logger.error(f"Error getting dependency graph: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -83,21 +99,28 @@ async def get_dependency_graph(
 @router.get("/cascade-impact/{phase_id}", response_model=CascadeImpactResponse)
 async def get_cascade_impact(
     phase_id: str,
-    service: WorkforceService = Depends(get_service),
+    demo: bool = Query(
+        False,
+        description="If True, fall back to a synthetic demo cascade. "
+        "Default False — operators see 503 instead of fake numbers.",
+    ),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Calculate cascading impact if a phase becomes unavailable.
-    
+
     Shows impact across 4 levels:
     1. Workforce level - which employees are affected
     2. Production level - orders in that phase
     3. Downstream phases - phases that depend on output
     4. Economic impact (theoretical estimates)
     """
-    logger.info(f"Calculating cascade impact for phase {phase_id}")
+    logger.info("Calculating cascade impact for phase %s (demo=%s)", phase_id, demo)
+    service = WorkforceService(db, allow_mock=demo)
     try:
-        result = await service.calculate_cascade_impact(phase_id)
-        return result
+        return await service.calculate_cascade_impact(phase_id)
+    except WorkforceDataUnavailableError as e:
+        raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         logger.error(f"Error calculating cascade impact: {e}")
         raise HTTPException(status_code=500, detail=str(e))

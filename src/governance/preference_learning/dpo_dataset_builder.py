@@ -182,18 +182,22 @@ class DPODatasetBuilder:
     """Walk recent ``ScheduleCommit`` rows and emit DPO-ready
     triplets.
 
-    ``min_reason_len`` guards against noise: commits where the
-    operator typed nothing for *reason* are still included (the
-    preference signal is useful even without text), but callers can
-    raise the bar to e.g. 10 chars when curating a training set.
+    ``min_reason_len`` guards against noise. Sprint R.2 lifted the
+    default from 0 to 10: the cpo/decide endpoint now refuses
+    rejections without a ≥10-char rationale, so any commit produced
+    after R.2 has a real reason to train on. Callers that want to
+    inspect raw history (debugging, ad-hoc analytics) can drop the
+    bar back to 0 explicitly.
     """
+
+    DEFAULT_MIN_REASON_LEN = 10
 
     def __init__(
         self,
         session: AsyncSession,
         tenant_id: UUID,
         *,
-        min_reason_len: int = 0,
+        min_reason_len: int = DEFAULT_MIN_REASON_LEN,
     ) -> None:
         self.session = session
         self.tenant_id = tenant_id

@@ -149,34 +149,76 @@ def test_default_executor_ships_three_built_in_types():
     }
 
 
-def test_reschedule_order_handler_echoes_expected_fields():
+# Sprint Q.9 Onda 2.3 — handlers no longer "echo strings"; they perform
+# real DB writes via SchedulingService / MoldService / direct ReworkEntry
+# update. When `ctx.session` is None the handlers degrade to audit-shim
+# mode (the path Kafka consumers and offline retries can hit safely);
+# when a session is present they call the domain service.
+
+
+def test_reschedule_order_handler_audit_shim_when_no_session():
+    schedule_id = uuid4()
     ctx = _ctx("reschedule_order", action_data={
-        "order_id": "OF-42", "new_start_date": "2026-05-01",
+        "schedule_id": str(schedule_id),
+        "new_start_date": "2026-05-01T08:00:00",
+        "new_end_date": "2026-05-01T17:00:00",
     })
     result = asyncio.run(_handle_reschedule_order(ctx))
     assert result["intent"] == "reschedule_order"
-    assert result["order_id"] == "OF-42"
-    assert result["new_date"] == "2026-05-01"
+    assert result["status"] == "no_session"
+    assert result["schedule_id"] == str(schedule_id)
+    assert result["new_start"].startswith("2026-05-01")
 
 
-def test_mold_maintenance_handler_echoes_expected_fields():
+def test_reschedule_order_handler_missing_id_short_circuits():
+    ctx = _ctx("reschedule_order", action_data={"new_start_date": "2026-05-01"})
+    # Even with a session, missing schedule_id yields a clean error.
+    ctx.session = object()  # truthy but unused on the missing-id path
+    result = asyncio.run(_handle_reschedule_order(ctx))
+    assert result["status"] == "missing_id"
+
+
+def test_mold_maintenance_handler_audit_shim_when_no_session():
+    mold_uuid = uuid4()
     ctx = _ctx("mold_maintenance", action_data={
-        "mold_id": "M-K1-06", "reason": "scheduled deep clean",
+        "mold_id": str(mold_uuid),
+        "planned_date": "2026-05-15",
+        "reason": "scheduled deep clean",
     })
     result = asyncio.run(_handle_mold_maintenance(ctx))
     assert result["intent"] == "mold_maintenance"
-    assert result["mold_id"] == "M-K1-06"
-    assert result["reason"] == "scheduled deep clean"
+    assert result["status"] == "no_session"
+    assert result["mold_id"] == str(mold_uuid)
+    assert result["planned_date"] == "2026-05-15"
+    assert result["maintenance_type"] == "preventive"
 
 
-def test_rework_routing_handler_echoes_expected_fields():
+def test_mold_maintenance_handler_rejects_non_uuid_mold_id():
+    """Old shim accepted free-text codes ("M-K1-06"); the real handler
+    needs a UUID because it calls MoldService.plan_maintenance which
+    keys by `mold_id: UUID`. Free-text codes degrade to missing_mold_id.
+    """
+    ctx = _ctx("mold_maintenance", action_data={
+        "mold_id": "M-K1-06",  # not a UUID
+        "planned_date": "2026-05-15",
+    })
+    ctx.session = object()
+    result = asyncio.run(_handle_mold_maintenance(ctx))
+    assert result["status"] == "missing_mold_id"
+
+
+def test_rework_routing_handler_audit_shim_when_no_session():
+    rework_uuid = uuid4()
+    worker_uuid = uuid4()
     ctx = _ctx("rework_routing", action_data={
-        "rework_id": "RW-7", "assigned_to": "paulo",
+        "rework_id": str(rework_uuid),
+        "assigned_to": str(worker_uuid),
     })
     result = asyncio.run(_handle_rework_routing(ctx))
     assert result["intent"] == "rework_routing"
-    assert result["rework_id"] == "RW-7"
-    assert result["assigned_to"] == "paulo"
+    assert result["status"] == "no_session"
+    assert result["rework_id"] == str(rework_uuid)
+    assert result["assigned_to"] == str(worker_uuid)
 
 
 # ---------------------------------------------------------------------------

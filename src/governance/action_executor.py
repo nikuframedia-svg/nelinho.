@@ -21,17 +21,28 @@ Failures inside a registered handler DO bubble up so the caller can
 flip status to FAILED + rollback the hash chain (the caller in
 `execute_decision` already catches + retries that path).
 
-Three default handlers land here as thin audit shims until Sprint D
-wires the real domain services:
+Three default handlers ship here. Sprint Q.9 Onda 2.3 promoted them
+from "intent-only audit shims" to real writes:
 
-* `reschedule_order`   — records intent; a later release will call the
-  real SchedulingService once it exposes an idempotent apply method.
-* `mold_maintenance`   — records intent; will call
-  MoldService.register_maintenance_event when that exists.
-* `rework_routing`     — records intent; will call ReworkService.reassign.
+* `reschedule_order`   — calls `SchedulingService.update_dates(...)` to
+  move a `ProductionSchedule` row to new start/end dates.
+* `mold_maintenance`   — calls `MoldService.plan_maintenance(...)` to
+  register a maintenance event in the `mold_maintenance_event` table.
+* `rework_routing`     — updates the `ReworkEntry.context` with the
+  worker the rework is assigned to (no dedicated column existed; we
+  use the structured context field so the schema stays stable).
 
-Each stub logs the action + increments a per-type counter so tests
-can assert the right handler was invoked.
+Handlers degrade gracefully:
+* Missing session → log + return intent-only result (audit shim mode)
+  so background callers (Kafka consumers, batch retries) without a
+  live transaction don't blow up.
+* Lookup miss → log + return `{"status": "not_found", ...}` so the
+  executor reports it without raising.
+* Domain-service failure → propagates to the executor (which the
+  caller in `execute_decision` flips to FAILED).
+
+Each handler still increments the per-type counter so tests + R.1
+dashboard observability stays the same as before.
 """
 
 from __future__ import annotations
@@ -138,57 +149,236 @@ class ActionExecutor:
 # ─── Built-in handlers — thin audit shims ────────────────────────────
 
 
-async def _handle_reschedule_order(ctx: ActionContext) -> Dict[str, Any]:
-    """Record the intent to reschedule an order. Real apply-reschedule
-    lives in SchedulingService once it exposes an idempotent method —
-    until then we log + echo the action_data so the event listeners
-    downstream (Timeline UI, audit sinks) have something to display.
+def _parse_uuid(value: Any) -> Optional[UUID]:
+    """Best-effort cast of action_data values to UUID.
+
+    Returns None when the value is missing or unparsable. Callers that
+    need to short-circuit should check the return value before
+    proceeding to a DB call.
     """
-    order_id = ctx.action_data.get("order_id")
-    new_date = ctx.action_data.get("new_start_date") or ctx.action_data.get("new_date")
-    logger.info(
-        "reschedule_order INTENT — decision=%s order=%s new_date=%s by=%s",
-        ctx.decision_id, order_id, new_date, ctx.executed_by,
+    if value is None:
+        return None
+    if isinstance(value, UUID):
+        return value
+    try:
+        return UUID(str(value))
+    except (ValueError, TypeError):
+        return None
+
+
+def _parse_datetime_or_date(value: Any):
+    """Accept ISO datetime/date strings or already-parsed objects.
+
+    Returns datetime/date depending on input. Mold maintenance tracks
+    by date; scheduling rows track by datetime.
+    """
+    from datetime import date as _date, datetime as _dt
+
+    if value is None:
+        return None
+    if isinstance(value, (_dt, _date)):
+        return value
+    s = str(value)
+    try:
+        # Datetime first (carries time-of-day for scheduling rows).
+        return _dt.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            return _date.fromisoformat(s[:10])
+        except ValueError:
+            return None
+
+
+async def _handle_reschedule_order(ctx: ActionContext) -> Dict[str, Any]:
+    """Move a ProductionSchedule row to new start/end dates.
+
+    Sprint Q.9 Onda 2.3 — was a stub that only logged intent. Now
+    calls `SchedulingService.update_dates(...)` directly with the
+    schedule_id from action_data. The Timeline UI's apply path
+    populates `action_data` with `{schedule_id, new_start_date,
+    new_end_date}` (or `new_start`/`new_end` shorthand).
+
+    Returns `{"status": "rescheduled" | "not_found" | "no_session"}`
+    so the executor + audit log can report the actual outcome.
+    """
+    schedule_id = _parse_uuid(
+        ctx.action_data.get("schedule_id")
+        or ctx.action_data.get("production_schedule_id")
     )
-    return {
+    new_start = _parse_datetime_or_date(
+        ctx.action_data.get("new_start_date")
+        or ctx.action_data.get("new_start")
+        or ctx.action_data.get("new_date")
+    )
+    new_end = _parse_datetime_or_date(
+        ctx.action_data.get("new_end_date")
+        or ctx.action_data.get("new_end")
+    )
+
+    base = {
         "intent": "reschedule_order",
-        "order_id": order_id,
-        "new_date": str(new_date) if new_date else None,
+        "schedule_id": str(schedule_id) if schedule_id else None,
+        "new_start": new_start.isoformat() if new_start else None,
+        "new_end": new_end.isoformat() if new_end else None,
     }
+
+    if ctx.session is None or schedule_id is None:
+        # Audit-shim mode. No write attempted; caller decides whether
+        # to flag this as a precondition failure.
+        logger.info(
+            "reschedule_order AUDIT — decision=%s schedule_id=%s by=%s "
+            "(no session or missing id)",
+            ctx.decision_id, schedule_id, ctx.executed_by,
+        )
+        return {**base, "status": "no_session" if ctx.session is None else "missing_id"}
+
+    from src.plan.services.scheduling_service import SchedulingService
+
+    svc = SchedulingService(ctx.session, ctx.tenant_id)
+    row = await svc.update_dates(schedule_id, new_start=new_start, new_end=new_end)
+    if row is None:
+        logger.warning(
+            "reschedule_order NOT_FOUND — decision=%s schedule_id=%s tenant=%s",
+            ctx.decision_id, schedule_id, ctx.tenant_id,
+        )
+        return {**base, "status": "not_found"}
+
+    logger.info(
+        "reschedule_order OK — decision=%s schedule_id=%s by=%s",
+        ctx.decision_id, schedule_id, ctx.executed_by,
+    )
+    return {**base, "status": "rescheduled", "order_id": str(row.order_id) if row.order_id else None}
 
 
 async def _handle_mold_maintenance(ctx: ActionContext) -> Dict[str, Any]:
-    """Record the intent to enter a mould into maintenance. Real call
-    is `MoldService.register_maintenance_event` when that lands.
+    """Register a planned maintenance event for a mould.
+
+    Sprint Q.9 Onda 2.3 — calls `MoldService.plan_maintenance(...)`.
+    Expects `action_data["mold_id"]` (UUID) and either
+    `action_data["planned_date"]` (ISO date) or `new_date`. Optional:
+    `maintenance_type` (default "preventive"), `technician_id`,
+    `comments` / `reason`.
+
+    Returns `{"status": "planned" | "no_session" | "missing_id"}`.
     """
-    mold_id = ctx.action_data.get("mold_id") or ctx.action_data.get("mold_code")
-    reason = ctx.action_data.get("reason")
-    logger.info(
-        "mold_maintenance INTENT — decision=%s mold=%s reason=%s by=%s",
-        ctx.decision_id, mold_id, reason, ctx.executed_by,
+    mold_id = _parse_uuid(ctx.action_data.get("mold_id"))
+    planned_date_raw = (
+        ctx.action_data.get("planned_date")
+        or ctx.action_data.get("new_date")
     )
-    return {
+    planned = _parse_datetime_or_date(planned_date_raw)
+    # Accept datetime → coerce to its date component (the model column
+    # is `Date`). `_parse_datetime_or_date` returns datetime first
+    # because the scheduling row also calls it; for the mould table we
+    # only keep the date component.
+    from datetime import datetime as _dt
+    if isinstance(planned, _dt):
+        planned = planned.date()
+
+    maintenance_type = ctx.action_data.get("maintenance_type") or "preventive"
+    technician_id = _parse_uuid(ctx.action_data.get("technician_id"))
+    comments = ctx.action_data.get("comments") or ctx.action_data.get("reason")
+
+    base = {
         "intent": "mold_maintenance",
-        "mold_id": mold_id,
-        "reason": reason,
+        "mold_id": str(mold_id) if mold_id else None,
+        "planned_date": planned.isoformat() if planned else None,
+        "maintenance_type": maintenance_type,
     }
+
+    if ctx.session is None or mold_id is None or planned is None:
+        logger.info(
+            "mold_maintenance AUDIT — decision=%s mold_id=%s planned=%s by=%s "
+            "(missing session/id/date)",
+            ctx.decision_id, mold_id, planned, ctx.executed_by,
+        )
+        if ctx.session is None:
+            return {**base, "status": "no_session"}
+        if mold_id is None:
+            return {**base, "status": "missing_mold_id"}
+        return {**base, "status": "missing_planned_date"}
+
+    from src.plan.services.mold_service import MoldService
+
+    svc = MoldService(ctx.session, ctx.tenant_id)
+    event = await svc.plan_maintenance(
+        mold_id=mold_id,
+        planned_date=planned,
+        maintenance_type=maintenance_type,
+        technician_id=technician_id,
+        comments=comments,
+    )
+    logger.info(
+        "mold_maintenance OK — decision=%s event=%s mold=%s by=%s",
+        ctx.decision_id, event.id, mold_id, ctx.executed_by,
+    )
+    return {**base, "status": "planned", "event_id": str(event.id)}
 
 
 async def _handle_rework_routing(ctx: ActionContext) -> Dict[str, Any]:
-    """Record the intent to route a rework entry. Real call is
-    `ReworkService.reassign` when that lands.
+    """Assign an existing ReworkEntry to a specific worker.
+
+    Sprint Q.9 Onda 2.3 — looks up the ReworkEntry by id and writes
+    the assignment into its `context` jsonb (no dedicated column
+    existed). The QA02 auto-route-to-causer rule (`should_route_to_
+    causer`) covers the *suggestion* path; this handler covers the
+    explicit *assignment* path triggered by a manager approval.
+
+    Returns `{"status": "routed" | "not_found" | "no_session"}`.
     """
-    rework_id = ctx.action_data.get("rework_id")
-    assigned_to = ctx.action_data.get("assigned_to") or ctx.action_data.get("worker_id")
+    rework_id = _parse_uuid(ctx.action_data.get("rework_id"))
+    assigned_to = _parse_uuid(
+        ctx.action_data.get("assigned_to")
+        or ctx.action_data.get("worker_id")
+    )
+
+    base = {
+        "intent": "rework_routing",
+        "rework_id": str(rework_id) if rework_id else None,
+        "assigned_to": str(assigned_to) if assigned_to else None,
+    }
+
+    if ctx.session is None or rework_id is None:
+        logger.info(
+            "rework_routing AUDIT — decision=%s rework=%s assigned_to=%s by=%s "
+            "(no session or missing id)",
+            ctx.decision_id, rework_id, assigned_to, ctx.executed_by,
+        )
+        return {
+            **base,
+            "status": "no_session" if ctx.session is None else "missing_rework_id",
+        }
+
+    from sqlalchemy import select as _sel
+    from src.quality.models.rework import ReworkEntry
+
+    stmt = _sel(ReworkEntry).where(
+        ReworkEntry.id == rework_id,
+        ReworkEntry.tenant_id == ctx.tenant_id,
+    )
+    row = (await ctx.session.execute(stmt)).scalar_one_or_none()
+    if row is None:
+        logger.warning(
+            "rework_routing NOT_FOUND — decision=%s rework=%s tenant=%s",
+            ctx.decision_id, rework_id, ctx.tenant_id,
+        )
+        return {**base, "status": "not_found"}
+
+    # Update the structured context — non-destructive merge so any
+    # earlier annotations the operator added survive.
+    new_context = dict(row.context or {})
+    if assigned_to is not None:
+        new_context["assigned_to"] = str(assigned_to)
+    new_context["routed_decision_id"] = str(ctx.decision_id)
+    new_context["routed_by"] = ctx.executed_by
+    row.context = new_context
+
+    await ctx.session.flush()
     logger.info(
-        "rework_routing INTENT — decision=%s rework=%s assigned_to=%s by=%s",
+        "rework_routing OK — decision=%s rework=%s assigned_to=%s by=%s",
         ctx.decision_id, rework_id, assigned_to, ctx.executed_by,
     )
-    return {
-        "intent": "rework_routing",
-        "rework_id": rework_id,
-        "assigned_to": assigned_to,
-    }
+    return {**base, "status": "routed"}
 
 
 def _build_default_executor() -> ActionExecutor:
