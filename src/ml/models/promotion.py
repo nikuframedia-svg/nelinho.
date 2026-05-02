@@ -79,6 +79,19 @@ async def propose_promotion(
         f"Proposed model_promotion decision {decision.get('id')} for "
         f"{artifact.model_name} v{artifact.version}"
     )
+
+    # FASE 4.2 (HIGH-54) — counter bump for the promotion lifecycle.
+    # `outcome` mirrors the decision status so dashboards can split
+    # proposed vs auto-approved vs rejected over time.
+    try:
+        from src.ml.observability.metrics import ml_promotion_decisions_total
+        outcome = (decision.get("status") or "proposed").lower()
+        ml_promotion_decisions_total.labels(
+            model_name=artifact.model_name,
+            outcome=outcome,
+        ).inc()
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.debug("ml_promotion_decisions_total emit failed: %s", exc)
     return decision
 
 

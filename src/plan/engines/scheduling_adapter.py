@@ -275,6 +275,13 @@ class SchedulingAdapter:
             return SchedulingResult(**{k: v for k, v in result_dict.items() if k in SchedulingResult.model_fields})
         except Exception as e:
             logger.error(f"CPO v4 scheduling failed: {e}", exc_info=True)
+            try:
+                from src.shared.metrics import bump_silent_fallback
+                bump_silent_fallback(
+                    "scheduling_adapter", f"cpo_v4_failed:{type(e).__name__}",
+                )
+            except Exception:  # pragma: no cover — defensive
+                pass
             fallback = self._schedule_heuristic(operations, machines, horizon_start, horizon_end)
             fallback.warnings.append(f"CPO v4 failed ({e}) - used heuristic fallback")
             fallback.degraded = True

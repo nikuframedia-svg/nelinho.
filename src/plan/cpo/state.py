@@ -189,6 +189,13 @@ class FactoryState:
                     e,
                     tenant_id,
                 )
+                try:
+                    from src.shared.metrics import bump_silent_fallback
+                    bump_silent_fallback(
+                        "factory_state", "semantic_layer_unavailable",
+                    )
+                except Exception:  # pragma: no cover — defensive
+                    pass
                 return cls(
                     tenant_id=tenant_id,
                     loaded_ok=False,

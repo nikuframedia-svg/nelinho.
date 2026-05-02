@@ -168,6 +168,42 @@ http_requests_in_flight = Gauge(
 )
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Silent Fallbacks (FASE 4.1 — auditoria PLANO Decide)
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Every "best-effort" path in the codebase that swallows an error and
+# returns a default (empty list, fallback constant, baseline schedule)
+# bumps this counter. Operators can alert on rate>0 to surface paths
+# that are silently degrading without raising. Labels:
+#   * module — coarse area (cpo, routing_resolver, factory_state, ml...)
+#   * reason — short tag identifying which fallback path fired
+#
+# Example call sites:
+#   silent_fallback_total.labels(module="routing_resolver", reason="engine_unavailable").inc()
+#   silent_fallback_total.labels(module="cpo.fitness", reason="quality_risk_predictor_none").inc()
+
+silent_fallback_total = Counter(
+    "prodplan_silent_fallback_total",
+    "Number of times a silent fallback path was taken (best-effort defaults instead of raising).",
+    ["module", "reason"],
+    registry=registry,
+)
+
+
+def bump_silent_fallback(module: str, reason: str) -> None:
+    """Increment ``silent_fallback_total`` from any caller.
+
+    Defensive: callers in modules that get unit-tested without
+    prometheus_client installed shouldn't crash. We swallow any
+    increment error and log at debug.
+    """
+    try:
+        silent_fallback_total.labels(module=module, reason=reason).inc()
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.debug("bump_silent_fallback(%s, %s) failed: %s", module, reason, exc)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Utility Functions
 # ═══════════════════════════════════════════════════════════════════════════════
 
