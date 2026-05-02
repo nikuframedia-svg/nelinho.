@@ -222,12 +222,27 @@ def build_training_dataset(semantic_queries: Any) -> List[Dict[str, Any]]:
     is_rework, queue_depth, horas_reais} from the curated layer.
 
     The extraction is best-effort: missing joins produce zeros/defaults, not
-    exceptions. Returns [] when no curated data is available.
+    exceptions.
+
+    Returns ``[]`` when curated data has no usable phase rows; the caller
+    (`RetrainJob.run`) detects empty datasets and surfaces them via
+    ``EmptyDatasetError`` so silent training-on-nothing is no longer
+    possible. We log a WARN here too so the failure mode shows up in
+    operator logs even when this helper is invoked outside the job
+    lifecycle.
     """
     if semantic_queries is None:
+        logger.warning(
+            "build_training_dataset: semantic_queries is None — returning empty "
+            "dataset; caller should treat this as EmptyDatasetError."
+        )
         return []
     engine = getattr(semantic_queries, "engine", None)
     if engine is None:
+        logger.warning(
+            "build_training_dataset: semantic engine missing — returning empty "
+            "dataset; caller should treat this as EmptyDatasetError."
+        )
         return []
 
     active_id = getattr(engine, "_active_ingestion_id", None)

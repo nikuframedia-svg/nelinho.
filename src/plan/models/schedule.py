@@ -94,7 +94,23 @@ class ProductionSchedule(TenantBase):
     # Planning metadata
     planning_run_id: Mapped[Optional[str]] = mapped_column(String(50))
     engine_used: Mapped[Optional[str]] = mapped_column(String(50))
-    
+
+    # FASE 1B.4 (CRIT-23) — fields the CPO decoder produces per op that
+    # the service layer used to drop. Surfaced in the ORM so they
+    # actually persist and downstream queries (auditoria, copilot fact
+    # packs, twin scenarios) can read them.
+    rule_used: Mapped[Optional[str]] = mapped_column(String(32))
+    mold_batch_id: Mapped[Optional[str]] = mapped_column(String(64))
+    infeasible_reason: Mapped[Optional[str]] = mapped_column(String(255))
+
+    # Sprint R.2 — quality risk score (added in migration 019 but not in
+    # the ORM until FASE 1B.4 surfaced the drift). Range 0.0-1.0,
+    # rounded to 4 decimals matching Numeric(5, 4) in the DB.
+    quality_risk_score: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(5, 4),
+    )
+    quality_risk_scored_at: Mapped[Optional[datetime]] = mapped_column()
+
     def __repr__(self) -> str:
         return f"<Schedule {self.order_id} op={self.operation_sequence} @ {self.scheduled_start_date}>"
 
