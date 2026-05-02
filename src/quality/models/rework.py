@@ -51,6 +51,9 @@ class ErrorCatalog(TenantBase):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     typical_phase: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    # See factory_data_product/ingest/curated_transformer.GRAVIDADE_TO_SEVERITY
+    # for the source mapping (OFCH_GRAVIDADE 1/2/3 → low/medium/high);
+    # confirmed with NELO CEO 2026-04-26.
     severity_hint: Mapped[str] = mapped_column(String(16), nullable=False, default="medium")
     preventive_action_hint: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     mold_related: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

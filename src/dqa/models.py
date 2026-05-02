@@ -54,6 +54,9 @@ class DataQualityIssue(TenantBase):
     field_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     issue_description: Mapped[str] = mapped_column(Text, nullable=False)
     
+    # severity values are populated from OFCH_GRAVIDADE via the
+    # mapping in factory_data_product/ingest/curated_transformer.py
+    # (1→"low", 2→"medium", 3→"high"); confirmed with NELO CEO 2026-04-26.
     severity: Mapped[str] = mapped_column(String(20), nullable=False, default="medium")  # "low", "medium", "high"
     resolved: Mapped[bool] = mapped_column(None, nullable=False, default=False)
 

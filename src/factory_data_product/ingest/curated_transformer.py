@@ -45,6 +45,40 @@ class QuarantineCode:
     OUTLIER = "OUTLIER"                   # Statistical outlier
 
 
+# ============================================================================
+# OFCH_GRAVIDADE → severity mapping (Sprint Q.8 — CEO confirmation 2026-04-26)
+# ============================================================================
+#
+# The NELO ERP records error gravity as integer 1/2/3:
+#   1 (84.1% of rows) — operator-flagged issue, peça still progresses
+#   2 (14.0%)         — moderate defect, rework required
+#   3 (1.8%)          — critical defect (assumed; pending second-round CEO
+#                       confirmation, see Sprint Q.8b follow-up A)
+#
+# CEO confirmed all three count as defects ("é um defeito") for the
+# `quality_risk_score` calculation. The numeric label is preserved as
+# `gravidade_raw` so the UI can still surface the granularity.
+
+GRAVIDADE_TO_SEVERITY: Dict[int, str] = {
+    1: "low",
+    2: "medium",
+    3: "high",
+}
+
+
+def map_gravidade_to_severity(gravidade: Any) -> str:
+    """Map OFCH_GRAVIDADE → severity string ('low'/'medium'/'high').
+
+    Unknown / missing values default to 'medium' to avoid silently
+    discarding records.
+    """
+    try:
+        g = int(gravidade)
+    except (TypeError, ValueError):
+        return "medium"
+    return GRAVIDADE_TO_SEVERITY.get(g, "medium")
+
+
 def quarantine_row(
     row: Dict,
     code: str,
@@ -405,20 +439,35 @@ class CuratedTransformer:
     def _transform_erros(self, rows: List[Dict]) -> List[Dict]:
         """Transform OrdemFabricoErros table."""
         transformed = []
-        
+
         for row in rows:
             r = row.copy()
-            
+
             # Flag for missing fase culpada
             fase_culpada = r.get("Erro_FaseOfCulpada")
             r["has_fase_culpada"] = fase_culpada is not None and fase_culpada != ""
-            
+
+            # Sprint Q.8 — derive `severity` from OFCH_GRAVIDADE so downstream
+            # consumers (dqa.MoldDefectLog, quality.ReworkEntry) can use a
+            # consistent string label. Raw value preserved for UI granularity.
+            raw_grav = r.get("OFCH_GRAVIDADE", r.get("OrdemFabricoCabecErro_Gravidade"))
+            r["gravidade_raw"] = raw_grav
+            r["severity"] = map_gravidade_to_severity(raw_grav)
+
             transformed.append(r)
-        
+
         with_culpada = sum(1 for r in transformed if r["has_fase_culpada"])
         pct = with_culpada / len(transformed) * 100 if transformed else 0
-        
-        logger.info(f"Transformed OrdemFabricoErros: {len(transformed)} rows, {with_culpada} ({pct:.1f}%) with fase culpada")
+        sev_counts = {
+            s: sum(1 for r in transformed if r["severity"] == s)
+            for s in ("low", "medium", "high")
+        }
+
+        logger.info(
+            f"Transformed OrdemFabricoErros: {len(transformed)} rows, "
+            f"{with_culpada} ({pct:.1f}%) with fase culpada, "
+            f"severity={sev_counts}"
+        )
         return transformed
     
     def _transform_aptos(self, rows: List[Dict]) -> List[Dict]:
