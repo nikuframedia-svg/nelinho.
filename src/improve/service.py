@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
@@ -188,9 +188,9 @@ class ImproveService:
                 f"cannot approve suggestion in status {sug.status!r}"
             )
         sug.status = SuggestionStatus.APPROVED.value
-        sug.reviewed_at = datetime.utcnow()
+        sug.reviewed_at = datetime.now(timezone.utc)
         sug.reviewed_by = reviewer_id
-        sug.updated_at = datetime.utcnow()
+        sug.updated_at = datetime.now(timezone.utc)
         await self.session.commit()
         await self.session.refresh(sug)
         return sug
@@ -209,13 +209,88 @@ class ImproveService:
                 f"cannot reject suggestion in status {sug.status!r}"
             )
         sug.status = SuggestionStatus.REJECTED.value
-        sug.reviewed_at = datetime.utcnow()
+        sug.reviewed_at = datetime.now(timezone.utc)
         sug.reviewed_by = reviewer_id
         sug.rejection_reason = reason
-        sug.updated_at = datetime.utcnow()
+        sug.updated_at = datetime.now(timezone.utc)
         await self.session.commit()
         await self.session.refresh(sug)
         return sug
+
+    # ── Adoption-signal feedback loop (Sprint Q.13.D / D.3) ──────────
+
+    async def record_adoption_signal(
+        self,
+        *,
+        action_type: str,
+        accepted: bool,
+    ) -> int:
+        """Update confidence on suggestions whose `action_type` matches.
+
+        Plan v4 §22-§26 — improve module is the closing piece of the
+        learning loop: when a decision the operator EXECUTED matches
+        a suggestion the system had pending, we want the suggestion's
+        confidence to RISE; conversely when the operator REJECTED a
+        decision of the same shape, confidence FALLS.
+
+        Bayesian update via Beta-Bernoulli pseudo-counts
+        ------------------------------------------------
+        Treat `confidence` as the posterior mean of a Beta(α, β)
+        distribution with effective sample size N = 10 (so α + β = 10).
+        Each new signal moves α + 1 (accepted) or β + 1 (rejected)
+        and we cap N at 50 so eventual convergence is bounded — without
+        the cap, very early signals could dominate forever.
+
+        Returns the number of suggestion rows updated. 0 means the
+        action_type didn't match any suggestion (typical for free-text
+        action_types from external systems).
+        """
+        # Beta-Bernoulli with effective sample size 10 (initial), capped
+        # at 50 (so a single suggestion can't get pinned at confidence
+        # 1.0 from one accept).
+        prior_n = 10.0
+        cap_n = 50.0
+        delta_alpha = 1.0 if accepted else 0.0
+        delta_beta = 0.0 if accepted else 1.0
+
+        stmt = select(ImprovementSuggestion).where(
+            and_(
+                ImprovementSuggestion.tenant_id == self.tenant_id,
+                ImprovementSuggestion.action_type == action_type,
+            )
+        )
+        rows = list((await self.session.execute(stmt)).scalars().all())
+        for sug in rows:
+            # Recover (alpha, beta) from current confidence + sample
+            # size carried in `estimated_impact["_adoption_n"]` (default
+            # = prior_n on first signal).
+            existing = sug.estimated_impact.get("_adoption_n") if sug.estimated_impact else None
+            n = float(existing) if isinstance(existing, (int, float)) else prior_n
+            alpha = n * float(sug.confidence)
+            beta = n - alpha
+
+            new_alpha = alpha + delta_alpha
+            new_beta = beta + delta_beta
+            new_n = min(cap_n, new_alpha + new_beta)
+            new_conf = max(0.0, min(1.0, new_alpha / max(1e-9, new_alpha + new_beta)))
+
+            sug.confidence = round(new_conf, 4)
+            new_impact = dict(sug.estimated_impact or {})
+            new_impact["_adoption_n"] = new_n
+            new_impact["_last_signal"] = (
+                "accepted" if accepted else "rejected"
+            )
+            sug.estimated_impact = new_impact
+            sug.updated_at = datetime.now(timezone.utc)
+
+        if rows:
+            await self.session.flush()
+            logger.info(
+                "improve.record_adoption_signal: tenant=%s action_type=%s "
+                "accepted=%s rows_updated=%d",
+                self.tenant_id, action_type, accepted, len(rows),
+            )
+        return len(rows)
 
     # ── LLM generator ─────────────────────────────────────────────────
 
