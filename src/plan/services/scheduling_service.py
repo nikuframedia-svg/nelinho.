@@ -104,22 +104,62 @@ class SchedulingService:
             horizon_end=horizon_end,
         )
         
+        # FASE 1B.4 (CRIT-23) — set of op IDs flagged infeasible by the
+        # decoder, so we can attach a reason field on each row.
+        infeasible_ids = set(getattr(result, "infeasible_op_ids", []) or [])
+
         # Save to database
         for op_data in result.operations:
+            qrisk = op_data.get("quality_risk")
+            quality_risk_score = (
+                Decimal(str(qrisk)).quantize(Decimal("0.0001"))
+                if qrisk is not None else None
+            )
+            op_id_str = str(op_data.get("operation_id", ""))
+
+            # FASE 1B.5 (CRIT-16) — best-effort machine_id resolution.
+            # The CPO decoder may emit either a UUID-string (when callers
+            # pass real machine IDs) or a synthetic code like "MANUAL" /
+            # "LAM-01". The DB column is a UUID FK to core.machines, so
+            # we accept the value only when it parses as UUID. Synthetic
+            # codes are dropped with a WARN — better than a crashing FK.
+            machine_id_resolved: Optional[UUID] = None
+            raw_machine = op_data.get("machine_id")
+            if raw_machine:
+                try:
+                    machine_id_resolved = UUID(str(raw_machine))
+                except (ValueError, TypeError):
+                    logger.warning(
+                        "scheduling_service: op %s machine_id=%r is not a UUID — "
+                        "leaving FK NULL. Provide UUID-keyed machines in the "
+                        "request to populate this field.",
+                        op_id_str, raw_machine,
+                    )
+
             schedule = ProductionSchedule(
                 tenant_id=self.tenant_id,
                 order_id=op_data["order_id"],
                 product_id=UUID(op_data["product_id"]) if op_data.get("product_id") else None,
-                operation_id=UUID(op_data["operation_id"]) if op_data.get("operation_id") else None,
-                operation_sequence=0,
-                machine_id=None,  # Would need to resolve
-                quantity=Decimal("1"),  # Would come from order
+                operation_id=UUID(op_id_str) if op_id_str else None,
+                operation_sequence=int(op_data.get("sequence", 0)),
+                machine_id=machine_id_resolved,
+                quantity=Decimal("1"),  # CRIT-27 — still a TODO; tracked separately
                 scheduled_start_date=datetime.fromisoformat(op_data["start_time"]).date(),
                 scheduled_end_date=datetime.fromisoformat(op_data["end_time"]).date(),
                 scheduled_duration_hours=Decimal(str(op_data["duration_minutes"] / 60)),
                 status=ScheduleStatus.SCHEDULED,
                 planning_run_id=planning_run_id,
-                engine_used=engine.value,
+                engine_used=result.engine_used or engine.value,
+                # FASE 1B.4 (CRIT-23) — surface CPO decoder output to DB
+                rule_used=result.rule_used,
+                mold_batch_id=op_data.get("mold_batch_id"),
+                infeasible_reason=(
+                    "infeasible_per_decoder" if op_id_str in infeasible_ids else None
+                ),
+                quality_risk_score=quality_risk_score,
+                quality_risk_scored_at=(
+                    datetime.utcnow() if quality_risk_score is not None else None
+                ),
             )
             self.session.add(schedule)
         

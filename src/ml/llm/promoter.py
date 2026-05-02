@@ -60,11 +60,30 @@ class LLMAdapterPromoter:
             from src.ml.models.registry import ModelRegistry
 
             registry = ModelRegistry(self.session, self.tenant_id)
+            # FASE 1B.7 (CRIT-03) — call registry.save with the actual
+            # signature `(model_name, model, metrics, trained_by, ...)`.
+            # The previous version passed `model_obj=...` and `extra=...`,
+            # which raised TypeError on every call — silently caught
+            # below and returned `registered=False`. So no LoRA adapter
+            # had ever been registered. We now stash the adapter path
+            # plus a kind discriminator inside the `model` payload so the
+            # joblib pickle still round-trips through ArtifactStorage,
+            # and put the per-call metadata under `metrics["meta"]` so
+            # callers can inspect it without changing the registry API.
+            adapter_payload = {
+                "kind": "lora_adapter",
+                "adapter_path": str(adapter_path),
+            }
+            metrics_with_meta = dict(metrics)
+            metrics_with_meta.setdefault("meta", {}).update({
+                "kind": "lora_adapter",
+                "adapter_path": str(adapter_path),
+            })
             artifact = await registry.save(
                 model_name=model_name,
-                model_obj=str(adapter_path),  # store the path; adapter files live on disk
-                metrics=metrics,
-                extra={"kind": "lora_adapter"},
+                model=adapter_payload,
+                metrics=metrics_with_meta,
+                trained_by="qlora_trainer",
             )
             version = int(getattr(artifact, "version", 0))
             return PromotionOutcome(
