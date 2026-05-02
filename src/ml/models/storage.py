@@ -26,6 +26,11 @@ logger = logging.getLogger(__name__)
 FILE_SCHEME = "file://"
 
 
+class ArtifactStorageError(PermissionError):
+    """Raised when a storage operation would escape the artifact_dir
+    sandbox (FASE 2.3 / CRIT-18)."""
+
+
 class ArtifactStorage:
     """File-backed storage for trained model objects."""
 
@@ -70,9 +75,47 @@ class ArtifactStorage:
         return self.config.artifact_dir / safe_name / f"v{version}" / "model.joblib"
 
     def _resolve(self, storage_uri: str) -> Path:
+        """Resolve a ``storage_uri`` to a concrete filesystem Path.
+
+        FASE 2.3 (CRIT-18) — sandboxing. The previous implementation
+        accepted any path string and handed it straight to ``joblib.load``,
+        so anyone able to write to ``ml_model_artifact.storage_uri``
+        (the DB column) could trick the loader into reading or deleting
+        arbitrary files (``/etc/passwd``, ``C:\\Windows\\...``). Now we
+        resolve the path and reject anything outside ``config.artifact_dir``.
+
+        ``..`` segments and absolute paths that escape the root are both
+        caught by ``Path.resolve()`` + ``is_relative_to``.
+        """
         if storage_uri.startswith(FILE_SCHEME):
             parsed = urlparse(storage_uri)
             # urlparse keeps drive letters like 'c:' in `netloc` on Windows
             path_str = parsed.netloc + parsed.path if parsed.netloc else parsed.path
-            return Path(path_str)
-        return Path(storage_uri)
+            candidate = Path(path_str)
+        else:
+            candidate = Path(storage_uri)
+
+        try:
+            resolved = candidate.resolve()
+            artifact_root = self.config.artifact_dir.resolve()
+        except OSError as exc:  # pragma: no cover — defensive
+            raise ArtifactStorageError(
+                f"storage_uri {storage_uri!r} could not be resolved: {exc}"
+            ) from exc
+
+        # ``Path.is_relative_to`` is 3.9+; handle old runtimes safely.
+        try:
+            inside = resolved.is_relative_to(artifact_root)
+        except AttributeError:  # pragma: no cover — Python <3.9
+            try:
+                resolved.relative_to(artifact_root)
+                inside = True
+            except ValueError:
+                inside = False
+
+        if not inside:
+            raise ArtifactStorageError(
+                f"storage_uri {storage_uri!r} escapes artifact_dir "
+                f"({artifact_root}) — refusing to access {resolved}"
+            )
+        return resolved

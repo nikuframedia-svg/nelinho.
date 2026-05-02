@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import and_, desc, select, update
+from sqlalchemy import and_, desc, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.ml.config import get_config
@@ -174,10 +174,29 @@ class ModelRegistry:
         Callers that want governance enforcement should first create a
         DecisionRun with `decision_type='model_promotion'` and pass the
         resulting `decision_id` here.
+
+        FASE 2.2 (CRIT-17) — atomicity. The deactivate-then-activate pair
+        was previously two independent UPDATEs with no lock between them,
+        so two concurrent ``promote()`` calls could interleave and leave
+        the table with **0 or 2 active rows** for the same
+        ``(tenant_id, model_name)``. We now take a Postgres advisory
+        transaction lock keyed by ``hashtext("promote:<tenant>:<model>")``
+        so concurrent promotes serialise and the unique-active invariant
+        holds. Best-effort outside Postgres: SQLite/in-memory tests skip
+        the lock without changing semantics (single-threaded anyway).
         """
         target = await self.get(artifact_id)
         if target is None:
             raise ModelNotFoundError(f"Artifact {artifact_id} not found")
+
+        bind = self.session.get_bind() if hasattr(self.session, "get_bind") else None
+        dialect_name = getattr(getattr(bind, "dialect", None), "name", "")
+        if dialect_name == "postgresql":
+            lock_key = f"promote:{self.tenant_id}:{target.model_name}"
+            await self.session.execute(
+                text("SELECT pg_advisory_xact_lock(hashtext(:k))"),
+                {"k": lock_key},
+            )
 
         # Deactivate any existing active artifact for this model
         await self.session.execute(
