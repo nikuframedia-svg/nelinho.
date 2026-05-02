@@ -72,18 +72,51 @@ class DurationModel:
         filtered = [r for r, ok in zip(rows, valid_mask) if ok]
         y = targets[valid_mask]
 
-        X, vocab = encode_categoricals(filtered, CATEGORICAL_COLS, NUMERIC_COLS)
-        self.vocabulary = vocab
-        self.n_samples_trained = len(filtered)
+        # FASE 3.3 (HIGH-44) — temporal split when a timestamp is
+        # available on every row. The previous random `train_test_split`
+        # leaked future rows into training: in production durations
+        # drift (new molds, new operators), and a model validated on
+        # interleaved past+future rows over-estimated its WMAPE.
+        # Now we sort by timestamp and hold out the most recent 20%.
+        # Falls back to random split when timestamps are missing or the
+        # sample is too small to slice.
+        timestamps = [r.get("timestamp") for r in filtered]
+        has_temporal = (
+            len(filtered) >= 20
+            and all(t is not None for t in timestamps)
+        )
 
-        # Hold out 20% for validation to compute WMAPE & p90 residual.
-        if len(filtered) >= 20:
-            X_train, X_val, y_train, y_val = train_test_split(
-                X, y, test_size=0.2, random_state=random_state
+        if has_temporal:
+            order_idx = sorted(
+                range(len(filtered)),
+                key=lambda i: timestamps[i],
             )
+            split_at = int(round(len(order_idx) * 0.8))
+            train_idx = order_idx[:split_at]
+            val_idx = order_idx[split_at:]
+            filtered = [filtered[i] for i in train_idx + val_idx]
+            y = np.concatenate([y[train_idx], y[val_idx]])
+
+            X, vocab = encode_categoricals(filtered, CATEGORICAL_COLS, NUMERIC_COLS)
+            self.vocabulary = vocab
+            self.n_samples_trained = len(filtered)
+
+            X_train = X[: len(train_idx)]
+            X_val = X[len(train_idx):]
+            y_train = y[: len(train_idx)]
+            y_val = y[len(train_idx):]
         else:
-            X_train, X_val = X, X
-            y_train, y_val = y, y
+            X, vocab = encode_categoricals(filtered, CATEGORICAL_COLS, NUMERIC_COLS)
+            self.vocabulary = vocab
+            self.n_samples_trained = len(filtered)
+
+            if len(filtered) >= 20:
+                X_train, X_val, y_train, y_val = train_test_split(
+                    X, y, test_size=0.2, random_state=random_state
+                )
+            else:
+                X_train, X_val = X, X
+                y_train, y_val = y, y
 
         model = GradientBoostingRegressor(
             n_estimators=100,
@@ -284,6 +317,16 @@ def build_training_dataset(semantic_queries: Any) -> List[Dict[str, Any]]:
         modelo_id = order_model.get(of_id, "")
         mold_id = str(getattr(p, "molde_id", "") or "")
 
+        # FASE 3.3 (HIGH-44) — surface a sortable timestamp so the model
+        # can do a temporal train/val split. Falls back through
+        # data_fim_real → data_inicio_real → None; rows without any
+        # timestamp keep the legacy random split path.
+        ts = (
+            getattr(p, "data_fim_real", None)
+            or getattr(p, "data_inicio_real", None)
+            or getattr(p, "created_at", None)
+        )
+
         rows.append({
             "modelo_id": modelo_id,
             "fase_id": fase_id,
@@ -292,6 +335,7 @@ def build_training_dataset(semantic_queries: Any) -> List[Dict[str, Any]]:
             "is_rework": 1 if (of_id, fase_id) in rework_keys else 0,
             "queue_depth": queue_depth.get(fase_id, 0),
             "horas_reais": float(horas),
+            "timestamp": ts,
         })
 
     return rows

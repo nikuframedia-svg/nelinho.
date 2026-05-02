@@ -29,6 +29,13 @@ from src.shared.events import ScheduleCreatedEvent
 logger = logging.getLogger(__name__)
 
 
+class InvalidScheduleTransition(ValueError):
+    """Raised by ``SchedulingService.update_status`` when the requested
+    status is not reachable from the current row's status (FASE 3.5 /
+    HIGH-41). API callers should map this to HTTP 409 Conflict.
+    """
+
+
 class SchedulingService:
     """
     Service for production scheduling.
@@ -293,6 +300,30 @@ class SchedulingService:
 
         return schedule
 
+    # FASE 3.5 (HIGH-41) — schedule status state machine. Allowed
+    # transitions per the NELO domain: a row starts at SCHEDULED
+    # (created via generate_schedule), can be CANCELLED at any non-final
+    # state, and progresses linearly through IN_PROGRESS → COMPLETED.
+    # DRAFT is reserved for legacy/manual creations that haven't been
+    # scheduled yet. Without this, an operator could mark an op
+    # COMPLETED without ever having had IN_PROGRESS, and the historical
+    # actuals would be inconsistent.
+    _STATUS_TRANSITIONS: Dict[ScheduleStatus, set] = {
+        ScheduleStatus.DRAFT: {ScheduleStatus.SCHEDULED, ScheduleStatus.CANCELLED},
+        ScheduleStatus.SCHEDULED: {
+            ScheduleStatus.IN_PROGRESS,
+            ScheduleStatus.CANCELLED,
+            ScheduleStatus.SCHEDULED,  # idempotent re-schedule
+        },
+        ScheduleStatus.IN_PROGRESS: {
+            ScheduleStatus.COMPLETED,
+            ScheduleStatus.CANCELLED,
+            ScheduleStatus.IN_PROGRESS,  # idempotent updates of actuals
+        },
+        ScheduleStatus.COMPLETED: set(),  # terminal
+        ScheduleStatus.CANCELLED: set(),  # terminal
+    }
+
     async def update_status(
         self,
         schedule_id: UUID,
@@ -301,7 +332,12 @@ class SchedulingService:
         actual_end: datetime = None,
         actual_quantity: Decimal = None,
     ) -> Optional[ProductionSchedule]:
-        """Update schedule status with actuals."""
+        """Update schedule status with actuals.
+
+        Raises ``InvalidScheduleTransition`` (subclass of ``ValueError``)
+        when ``status`` is not reachable from the current row's status.
+        Callers in API layers should map this to HTTP 409 Conflict.
+        """
         result = await self.session.execute(
             select(ProductionSchedule).where(
                 and_(
@@ -311,10 +347,26 @@ class SchedulingService:
             )
         )
         schedule = result.scalar_one_or_none()
-        
+
         if not schedule:
             return None
-        
+
+        # FASE 3.5 (HIGH-41) — gate the transition.
+        current = schedule.status
+        if not isinstance(current, ScheduleStatus):
+            # Some legacy rows have status stored as plain string.
+            try:
+                current = ScheduleStatus(current)
+            except ValueError:
+                current = ScheduleStatus.SCHEDULED  # safe default
+        allowed = self._STATUS_TRANSITIONS.get(current, set())
+        if status != current and status not in allowed:
+            raise InvalidScheduleTransition(
+                f"Cannot transition schedule {schedule.id} from {current.value} "
+                f"to {status.value if hasattr(status, 'value') else status}; "
+                f"allowed: {sorted(s.value for s in allowed)}"
+            )
+
         schedule.status = status
         if actual_start:
             schedule.actual_start = actual_start
@@ -322,7 +374,7 @@ class SchedulingService:
             schedule.actual_end = actual_end
         if actual_quantity is not None:
             schedule.actual_quantity = actual_quantity
-        
+
         await self.session.flush()
 
         try:
