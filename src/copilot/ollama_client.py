@@ -219,6 +219,47 @@ class OllamaClient:
         self._record_failure()
         raise Exception(f"Ollama falhou após {self.max_retries + 1} tentativas: {last_error}")
     
+    async def chat_with_fallback(
+        self,
+        prompt: str,
+        model: str,
+        *,
+        format: Optional[str] = "json",
+        history: Optional[List[Dict[str, str]]] = None,
+        system_prompt: Optional[str] = None,
+        num_ctx: Optional[int] = None,
+        num_predict: Optional[int] = None,
+        fallback: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Sprint Q.9 (3.1) — convenience wrapper around :meth:`chat` that
+        never raises. Callers in API hot paths use this so the request
+        chain doesn't 500 when Ollama is down or the circuit breaker is
+        open.
+
+        On success returns ``{"ok": True, **response}``.
+        On failure returns ``{"ok": False, "error": "<reason>",
+        **(fallback or default)}`` — the default fallback declares
+        ``MODEL_OFFLINE`` so the frontend can render an explicit
+        unavailable state instead of a generic 500.
+        """
+        try:
+            payload = await self.chat(
+                prompt=prompt, model=model, format=format,
+                history=history, system_prompt=system_prompt,
+                num_ctx=num_ctx, num_predict=num_predict,
+            )
+            return {"ok": True, **payload}
+        except Exception as exc:
+            logger.warning("chat_with_fallback: Ollama unavailable: %s", exc)
+            base = fallback or {
+                "code": "MODEL_OFFLINE",
+                "message": (
+                    "Ollama temporariamente indisponível. Resposta "
+                    "estática enquanto o serviço recupera."
+                ),
+            }
+            return {"ok": False, "error": str(exc), **base}
+
     async def embeddings(
         self,
         text: str,

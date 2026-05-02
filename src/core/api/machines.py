@@ -54,6 +54,8 @@ async def list_machines(
     session: AsyncSession = Depends(get_session),
 ):
     """List machines with optional filtering."""
+    from src.shared.pagination import validate_pagination
+    validate_pagination(limit, offset)
     service = MasterDataService(session, tenant_id)
     machines = await service.list_machines(
         status=status,

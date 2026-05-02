@@ -108,7 +108,11 @@ prodplan-one/
 1. **Instalar dependências**:
 ```bash
 cd backend
-pip install -r requirements.txt
+# Production / repro: use o lock-file (versões testadas em CI)
+pip install -r requirements.lock
+# Development / upgrades: requirements.txt declara a *intenção* (ranges).
+# Após `pip install -U -r requirements.txt`, regrava o lock com
+# `pip freeze > requirements.lock` e commita.
 ```
 
 2. **Configurar variáveis de ambiente** (criar `.env` a partir de `.env.example`):

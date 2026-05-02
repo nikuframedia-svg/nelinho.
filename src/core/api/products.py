@@ -64,6 +64,8 @@ async def list_products(
     session: AsyncSession = Depends(get_session),
 ):
     """List products with optional filtering."""
+    from src.shared.pagination import validate_pagination
+    validate_pagination(limit, offset)
     try:
         service = MasterDataService(session, tenant_id)
         products = await service.list_products(

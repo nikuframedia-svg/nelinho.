@@ -53,6 +53,8 @@ async def list_operations(
     session: AsyncSession = Depends(get_session),
 ):
     """List operations with optional filtering."""
+    from src.shared.pagination import validate_pagination
+    validate_pagination(limit, offset)
     try:
         service = MasterDataService(session, tenant_id)
         operations = await service.list_operations(

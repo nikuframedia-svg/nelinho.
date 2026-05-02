@@ -66,6 +66,8 @@ async def list_customers(
     session: AsyncSession = Depends(get_session),
 ):
     """List customers with optional filtering."""
+    from src.shared.pagination import validate_pagination
+    validate_pagination(limit, offset)
     service = MasterDataService(session, tenant_id)
     customers = await service.list_customers(
         segment=segment.value if segment else None,
