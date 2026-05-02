@@ -101,6 +101,15 @@ async def handle_config_updated(
         payload.get("affected_entities"),
     )
     if scheduler_hook is None:
+        # FASE 0.4 (HIGH-35) — was a silent `return False`. The predicate
+        # said "yes, replan", but no hook means the replan never actually
+        # runs. Surface this loudly so an operator notices the dropped
+        # replan instead of debugging "why is the schedule stale?" later.
+        logger.warning(
+            "replan_hook: would replan tenant=%s but scheduler_hook is None — "
+            "no caller wired trigger_reschedule. Replan SKIPPED.",
+            tenant_id,
+        )
         return False
     try:
         await _maybe_await(

@@ -8,7 +8,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = '019_schedule_quality'
-down_revision = '018_quality_rework'
+down_revision = '018b_create_production_schedules'
 branch_labels = None
 depends_on = None
 

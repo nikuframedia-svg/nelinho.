@@ -32,6 +32,14 @@ from src.plan.models import routing_template as plan_routing_template_models  # 
 from src.profit.models import pricing as profit_pricing_models  # Sprint Q.0/Q.2
 from src.quality.models import rework as quality_rework_models  # Sprint R.1
 from src.plan.models import mold as plan_mold_models  # Sprint R.6
+# FASE -1.3 — imports em falta detectados na auditoria (CRIT-20)
+from src.plan.models import schedule as plan_schedule_models  # ProductionSchedule
+from src.plan.models import order as plan_order_models
+from src.plan.models import mrp as plan_mrp_models
+from src.plan.models import phase_gap as plan_phase_gap_models  # migration 023
+from src.factory_data_product.models import curated as factory_curated_models  # migrations 028, 029
+from src.sandbox import models as sandbox_models  # migration 030
+from src.improve import models as improve_models  # migration 031
 
 # this is the Alembic Config object
 config = context.config

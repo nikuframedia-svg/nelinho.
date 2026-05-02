@@ -36,7 +36,7 @@ class RoutingRow:
     fase_nome: str
     sequence: int
     duration_hours: float
-    source: str  # "history" | "standard"
+    source: str  # "history" | "standard" | "duration_model_p50"
     mold_required: bool = False
 
 
@@ -46,10 +46,21 @@ class RoutingResolver:
 
     Constructor takes a loaded `FactoryState` (kept as a thin wrapper so
     tests can inject a fixture state without a live session).
+
+    FASE 0.3 (DEVA-02): when `duration_predictor` is supplied (a trained
+    `DurationModel` from `src/ml/models_domain/duration.py`), the standard
+    template fallback uses `predictor.predict(...).p50_hours` instead of
+    the legacy `horas_standard * 2.0` buffer. Without the predictor the
+    behaviour is unchanged (silent fallback by design).
     """
 
-    def __init__(self, state: FactoryState):
+    def __init__(
+        self,
+        state: FactoryState,
+        duration_predictor: Optional[Any] = None,
+    ):
         self.state = state
+        self.duration_predictor = duration_predictor
 
     def resolve(
         self,
@@ -197,7 +208,13 @@ class RoutingResolver:
         return template_rows
 
     def _standard_template(self, modelo_id: str) -> List[RoutingRow]:
-        """Use FasesStandardModelos (standard template) with 2x buffer."""
+        """Use FasesStandardModelos (standard template).
+
+        FASE 0.3 (DEVA-02): when `self.duration_predictor` is wired the
+        per-phase duration comes from `DurationModel.predict(...).p50_hours`.
+        Otherwise the legacy `horas_standard * 2.0` buffer is used (NELO
+        rule: standard times diverge from real by up to 25×).
+        """
         standards = self._curated_standards()
         rows: List[RoutingRow] = []
         for s in standards:
@@ -207,16 +224,66 @@ class RoutingResolver:
             fase_nome = str(getattr(s, "fase_nome", "") or fase_id)
             sequence = int(getattr(s, "ordem", 0) or 0)
             std_h = float(getattr(s, "horas_standard", 1.0) or 1.0)
+
+            duration_h, source = self._predicted_or_fallback_duration(
+                fase_id=fase_id,
+                fase_nome=fase_nome,
+                modelo_id=modelo_id,
+                fallback_h=std_h * 2.0,
+                fallback_source="standard",
+            )
+
             rows.append(RoutingRow(
                 fase_id=fase_id,
                 fase_nome=fase_nome,
                 sequence=sequence,
-                duration_hours=std_h * 2.0,  # 2x buffer (NELO rule)
-                source="standard",
+                duration_hours=duration_h,
+                source=source,
                 mold_required=_phase_uses_mold(fase_nome),
             ))
         rows.sort(key=lambda r: r.sequence)
         return rows
+
+    def _predicted_or_fallback_duration(
+        self,
+        *,
+        fase_id: str,
+        fase_nome: str,
+        modelo_id: str,
+        fallback_h: float,
+        fallback_source: str,
+    ) -> tuple[float, str]:
+        """Use the active `DurationModel` if wired; else the fallback.
+
+        Returns ``(duration_hours, source_label)`` where the label is
+        ``"duration_model_p50"`` when the prediction succeeded, or the
+        passed-in ``fallback_source`` otherwise. Any predictor exception
+        is caught and downgraded to the fallback so a misconfigured ML
+        artifact never breaks scheduling.
+        """
+        if self.duration_predictor is None:
+            return max(fallback_h, 0.1), fallback_source
+        try:
+            team_size = self.state.team_size_for(fase_id, fase_nome)
+            features = {
+                "modelo_id": modelo_id or "",
+                "fase_id": fase_id or "",
+                "team_size": team_size,
+                "mold_pocket_count": 0,
+                "is_rework": 0,
+                "queue_depth": 0,
+            }
+            prediction = self.duration_predictor.predict(features)
+            p50 = float(prediction.get("p50_hours", 0.0) or 0.0)
+            if p50 <= 0.0:
+                return max(fallback_h, 0.1), fallback_source
+            return max(p50, 0.1), "duration_model_p50"
+        except Exception as exc:
+            logger.warning(
+                "DurationModel predict failed for fase=%s modelo=%s — using %s fallback (%s)",
+                fase_id, modelo_id, fallback_source, exc,
+            )
+            return max(fallback_h, 0.1), fallback_source
 
     # ------------------------------------------------------------------ #
     # Curated-data access (best-effort, tolerant to missing data)        #
