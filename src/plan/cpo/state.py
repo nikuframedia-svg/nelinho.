@@ -300,8 +300,20 @@ class FactoryState:
         key = (str(fase_id), str(modelo_id))
         if key in self.historical_durations:
             return self.historical_durations[key]
-        # Fallback: 2x buffer on standard time
-        return fallback_hours * 2.0
+        # FASE 6.4 — buffer multiplier was hardcoded 2.0 (NELO rule:
+        # standard times diverge from real by up to 25× in the worst
+        # cases, so 2× is a conservative-but-cheap default). Now
+        # overridable via `PRODPLAN_PLAN_STD_DURATION_BUFFER` so a
+        # tenant can tune it without a redeploy. Behaviour preserved
+        # when the env var is unset.
+        import os
+        try:
+            buffer_factor = float(
+                os.environ.get("PRODPLAN_PLAN_STD_DURATION_BUFFER", "2.0")
+            )
+        except (TypeError, ValueError):
+            buffer_factor = 2.0
+        return fallback_hours * buffer_factor
 
     def team_size_for(self, fase_id: str, phase_name: str = "") -> int:
         normalized = phase_name.upper().replace(" ", "_")

@@ -119,7 +119,15 @@ class CPOSurrogateLayer:
             n_orders=int(context.get("n_orders", 0) or 0),
             avg_duration_min=float(context.get("avg_duration_min", 0.0) or 0.0),
         )
-        assert self._model is not None  # is_trained checked above
+        # FASE 6.1 (HIGH-13) — assert was stripped under `python -O`,
+        # which would have crashed the GA when surrogate skipped a
+        # candidate after `is_trained` evaluated True but `_model`
+        # was somehow reset. Convert to a runtime guard.
+        if self._model is None:  # pragma: no cover — defensive (is_trained checked above)
+            raise RuntimeError(
+                "CPOSurrogateLayer.should_skip_candidate: _model is None "
+                "despite is_trained=True — internal state corruption."
+            )
         skip = self._model.should_skip_candidate(
             features, threshold_factor=self.threshold_factor
         )

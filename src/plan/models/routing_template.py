@@ -123,13 +123,18 @@ class ModelRoutingAssignment(TenantBase):
     )
 
     model_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    # FASE 6.2 (HIGH-40) — ondelete defaults previously left assignments
+    # orphaned when a template was deleted. Now we cascade primary
+    # (assignment is meaningless without the primary template it points
+    # to) and SET NULL on the alt (the variant just goes away — the
+    # assignment still works, falling back to primary).
     primary_template_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("plan.routing_template.id"),
+        ForeignKey("plan.routing_template.id", ondelete="CASCADE"),
         nullable=False,
     )
     alt_template_id: Mapped[Optional[UUID]] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("plan.routing_template.id"),
+        ForeignKey("plan.routing_template.id", ondelete="SET NULL"),
         nullable=True,
     )
