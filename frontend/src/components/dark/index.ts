@@ -36,3 +36,9 @@ export type { AuditTrailRowProps } from './AuditTrailRow';
 export { WorkerPairCard } from './WorkerPairCard';
 export type { WorkerPairCardProps } from './WorkerPairCard';
 
+// Sprint Q.13.C — Plan v4 §10 tablet kiosk + barcode scanner.
+export { KioskWrapper } from './KioskWrapper';
+export type { KioskWrapperProps } from './KioskWrapper';
+export { BarcodeScanButton } from './BarcodeScanButton';
+export type { BarcodeScanButtonProps } from './BarcodeScanButton';
+

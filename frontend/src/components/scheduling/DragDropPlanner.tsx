@@ -360,21 +360,102 @@ function PhaseColumn({ phaseId, ops }: { phaseId: string; ops: ScheduledOp[] }) 
   );
 }
 
-function WorkerSwimlane({ workerId, ops }: { workerId: string; ops: ScheduledOp[] }) {
+// Sprint Q.13.C C.3.1 — Plan v4 §6 Layer 2 enrichments. Each swimlane
+// now shows (when available): worker name, quality score, today's
+// capacity bar (filled by ops sum vs SHIFT_HOURS_PER_DAY). Defaults
+// keep the Layer-2 DragDropPlanner working when the parent doesn't
+// inject the resolver — fail-graceful on every prop.
+const _SHIFT_HOURS_PER_DAY = 8;
+
+function WorkerSwimlane({
+  workerId,
+  ops,
+  workerName,
+  qualityScore,
+}: {
+  workerId: string;
+  ops: ScheduledOp[];
+  workerName?: string;
+  qualityScore?: number;
+}) {
   const { setNodeRef, isOver } = useDroppable({ id: `worker:${workerId}` });
+
+  // Sum of duration across this worker's ops today (in hours). Used
+  // to draw a capacity meter so the operator sees overload at-a-glance.
+  const totalHoursToday = useMemo(() => {
+    return ops.reduce((acc, op) => {
+      const start = op.start ? new Date(op.start).getTime() : 0;
+      const end = op.end ? new Date(op.end).getTime() : 0;
+      if (!start || !end || end <= start) return acc;
+      return acc + (end - start) / (1000 * 60 * 60);
+    }, 0);
+  }, [ops]);
+
+  const utilPct = Math.min(
+    150,
+    Math.round((totalHoursToday / _SHIFT_HOURS_PER_DAY) * 100),
+  );
+  const utilTone =
+    utilPct > 100
+      ? 'bg-rose-500'
+      : utilPct >= 90
+      ? 'bg-amber-400'
+      : 'bg-emerald-400';
+
+  // Quality score chip colour. Higher score (1-10 scale, Laplace
+  // smoothed) = better; <5 is a yellow flag, ≥8 is the gold standard.
+  const qualityTone =
+    qualityScore == null
+      ? null
+      : qualityScore >= 8
+      ? 'bg-emerald-500/15 text-emerald-300'
+      : qualityScore >= 5
+      ? 'bg-amber-500/15 text-amber-300'
+      : 'bg-rose-500/15 text-rose-300';
+
   return (
     <div
       ref={setNodeRef}
       className={`p-2 rounded-lg border transition ${
-        isOver ? 'bg-emerald-500/10 border-emerald-500/40' : 'bg-slate-800/30 border-slate-700/40'
+        isOver
+          ? 'bg-emerald-500/10 border-emerald-500/40'
+          : 'bg-slate-800/30 border-slate-700/40'
       }`}
     >
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-xs text-slate-300 font-medium truncate" title={workerId}>
-          {workerId}
+      <div className="flex items-center justify-between gap-2 mb-1.5">
+        <span
+          className="text-xs text-slate-200 font-medium truncate"
+          title={workerName ? `${workerName} · ${workerId}` : workerId}
+        >
+          {workerName ?? workerId}
         </span>
-        <span className="text-xs text-slate-500">{ops.length}</span>
+        <div className="flex items-center gap-1 shrink-0">
+          {qualityTone && qualityScore != null ? (
+            <span
+              className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${qualityTone}`}
+              title="Quality score (1-10)"
+            >
+              {qualityScore.toFixed(1)}
+            </span>
+          ) : null}
+          <span className="text-xs text-slate-500" title="Ops hoje">
+            {ops.length}
+          </span>
+        </div>
       </div>
+
+      {/* Capacity bar — visible even with 0 ops so the swimlane has
+          a consistent visual rhythm down the rail. */}
+      <div
+        className="h-1 rounded-full bg-slate-700/50 mb-2 overflow-hidden"
+        title={`${totalHoursToday.toFixed(1)}h / ${_SHIFT_HOURS_PER_DAY}h (${utilPct}%)`}
+      >
+        <div
+          className={`h-full ${utilTone} transition-all`}
+          style={{ width: `${Math.min(100, utilPct)}%` }}
+        />
+      </div>
+
       <div className="flex gap-1 flex-wrap">
         {ops.map((op) => (
           <OpCard key={op.id} op={op} compact />
