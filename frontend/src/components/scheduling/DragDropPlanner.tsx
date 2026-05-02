@@ -39,6 +39,7 @@ import {
   cpoCommitsApi,
   schedulePreviewApi,
   type CpoCommit,
+  type CpoWorkerPairsResponse,
   type PreviewDeltaResult,
   type PreviewIssue,
 } from '../../lib/api';
@@ -48,6 +49,7 @@ import {
   DarkButton,
   DarkCard,
   GhostOverlay,
+  WorkerPairCard,
   type ConsequenceLine,
 } from '../dark';
 
@@ -459,6 +461,20 @@ function SuggestionPanel({
   const hasConflicts = preview.conflicts.length > 0;
   const canApply = !hasConflicts && reason.trim().length >= 10;
 
+  // Sprint Q.13.A — Plan v4 §6.2 alternative pairs. Only fetch when the
+  // drag target is a phase (Layer 1) AND the op was a real op_id; for
+  // worker drops (Layer 2) the manager already chose a specific worker
+  // so the alternatives view doesn't apply. The query is lazy + cached
+  // 30s so multiple drags on the same op don't re-fetch.
+  const isPhaseDrop = target.kind === 'phase';
+  const pairsQuery = useQuery<CpoWorkerPairsResponse>({
+    queryKey: ['cpo', 'worker-pairs', pending.operationId],
+    queryFn: () => cpoCommitsApi.workerPairs(pending.operationId, { top_n: 3 }),
+    enabled: isPhaseDrop,
+    staleTime: 30_000,
+    retry: false,
+  });
+
   // Build the 5-line consequence block from the preview-delta result.
   const consequenceLines: ConsequenceLine[] = [
     {
@@ -516,6 +532,19 @@ function SuggestionPanel({
     <div className="sticky top-4">
       <GhostOverlay mode="inline" badge="Sugestão · arrasto">
       <ConsequenceBlock title="Consequências" lines={consequenceLines} />
+
+      {/* Sprint Q.13.A — Plan v4 §6.2: alternative pairs (only on phase
+          drops). Loading state shows a skeleton; needs_pair=false hides
+          the card entirely (caller fell back to single-worker UI). */}
+      {isPhaseDrop && pairsQuery.data?.needs_pair ? (
+        <div className="mt-3">
+          <WorkerPairCard
+            pairs={pairsQuery.data.pairs}
+            loading={pairsQuery.isLoading}
+            title="Pares disponíveis (operador)"
+          />
+        </div>
+      ) : null}
 
       {preview.conflicts.length > 0 ? (
         <div className="mt-3">
