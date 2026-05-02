@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from src.ml.config import MLConfig
-from src.ml.models.storage import ArtifactStorage, FILE_SCHEME
+from src.ml.models.storage import ArtifactStorage, ArtifactStorageError, FILE_SCHEME
 
 
 @pytest.fixture
@@ -39,9 +39,21 @@ class TestArtifactStorage:
         assert storage.load(v1)["ver"] == 1
         assert storage.load(v2)["ver"] == 2
 
-    def test_load_missing_raises(self, storage):
+    def test_load_missing_raises(self, storage, tmp_path):
+        # Missing path INSIDE the sandbox raises FileNotFoundError.
+        missing_inside = f"{FILE_SCHEME}{(tmp_path / 'nonexistent.joblib').as_posix()}"
         with pytest.raises(FileNotFoundError):
-            storage.load("file:///nonexistent/path/model.joblib")
+            storage.load(missing_inside)
+
+    def test_load_outside_sandbox_raises(self, storage):
+        # FASE 2.3 (CRIT-18) — paths outside artifact_dir are rejected
+        # *before* any FS access, so an attacker who can craft a
+        # storage_uri can't escape the sandbox to read /etc/passwd
+        # or similar. Tested both with file:// scheme and bare path.
+        with pytest.raises(ArtifactStorageError):
+            storage.load("file:///etc/passwd")
+        with pytest.raises(ArtifactStorageError):
+            storage.load("/etc/passwd")
 
     def test_delete_removes_file(self, storage):
         uri = storage.save({"x": 1}, "clf", 1)
