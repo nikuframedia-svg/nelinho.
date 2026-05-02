@@ -86,6 +86,13 @@ export function DecisionsPage() {
   // Sprint Q.9 Onda 3.4 — multi-select + anti-fatigue toggles.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [antiFatigueOn, setAntiFatigueOn] = useState(true);
+  // Sprint Q.13.C C.3.2 — modify-before-approve scratch state. The
+  // detail modal exposes a JSON editor for `action_data`; on save it
+  // calls `modifyPayload(id, {patch, reason})`. Reset on modal open
+  // so old edits don't leak across decisions.
+  const [modifyDraft, setModifyDraft] = useState<string>('');
+  const [modifyReason, setModifyReason] = useState<string>('');
+  const [modifyOpen, setModifyOpen] = useState<boolean>(false);
   const itemsPerPage = 20;
 
   const queryClient = useQueryClient();
@@ -150,6 +157,26 @@ export function DecisionsPage() {
       toast.success(`Bulk approve: ${data.ok} ok, ${data.failed} falharam`);
     },
     onError: (err: any) => toast.error(err.message || 'Bulk approve failed'),
+  });
+
+  // Sprint Q.13.C C.3.2 — Plan v4 §8 WG05 "modificar antes de aprovar".
+  // The operator may edit `action_data` before flipping the decision
+  // to APPROVED — useful for catching small payload mistakes (wrong
+  // mold_id, off-by-one date) without forcing a full reject + repropose
+  // round-trip. Reason is mandatory ≥10 chars so the audit trail
+  // explains the diff.
+  const modifyMutation = useMutation({
+    mutationFn: ({
+      id,
+      patch,
+      reason,
+    }: { id: string; patch: Record<string, unknown>; reason: string }) =>
+      decisionsApi.modifyPayload(id, { patch, reason }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['decisions'] });
+      toast.success('Decision payload updated');
+    },
+    onError: (err: any) => toast.error(err.message || 'Modify failed'),
   });
 
   const decisions = decisionsData?.items || [];
@@ -641,6 +668,104 @@ export function DecisionsPage() {
                 </div>
               )}
               
+              {/* Sprint Q.13.C C.3.2 — Plan v4 §8 WG05 "modificar antes de
+                  aprovar". Only available on PROPOSED decisions; APPROVED/
+                  EXECUTED ones are immutable by design. Operator clicks
+                  "Editar payload", JSON editor opens with the current
+                  action_data, edits, gives a reason ≥10 chars, saves.
+                  The decision stays PROPOSED — operator can then approve
+                  in the same flow with the modified payload. */}
+              {selectedDecision.status === 'PROPOSED' ? (
+                <div className="border-t border-border-subtle pt-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="text-sm font-semibold text-text-secondary">
+                      Action Data
+                    </h4>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!modifyOpen) {
+                          setModifyDraft(
+                            JSON.stringify(selectedDecision.action_data ?? {}, null, 2),
+                          );
+                          setModifyReason('');
+                        }
+                        setModifyOpen((v) => !v);
+                      }}
+                      className="text-xs text-accent hover:text-accent-light underline-offset-2 hover:underline"
+                    >
+                      {modifyOpen ? 'Cancelar edição' : 'Editar payload (WG05)'}
+                    </button>
+                  </div>
+                  {modifyOpen ? (
+                    <div className="space-y-2">
+                      <textarea
+                        rows={8}
+                        value={modifyDraft}
+                        onChange={(e) => setModifyDraft(e.target.value)}
+                        className="w-full font-mono text-xs px-3 py-2 bg-bg-elevated border border-border-subtle rounded text-text-white focus:border-accent focus:outline-none"
+                        placeholder='{"new_start_date": "2026-05-01", ...}'
+                      />
+                      <input
+                        type="text"
+                        value={modifyReason}
+                        onChange={(e) => setModifyReason(e.target.value)}
+                        className="w-full text-xs px-3 py-2 bg-bg-elevated border border-border-subtle rounded text-text-white focus:border-accent focus:outline-none"
+                        placeholder="Porquê? (≥10 caracteres) — alimenta o audit trail"
+                      />
+                      <div className="flex items-center gap-2">
+                        <DarkButton
+                          variant="primary"
+                          size="sm"
+                          disabled={
+                            modifyMutation.isPending ||
+                            modifyReason.trim().length < 10
+                          }
+                          onClick={() => {
+                            try {
+                              const patch = JSON.parse(modifyDraft || '{}');
+                              if (!selectedDecision) return;
+                              modifyMutation.mutate(
+                                {
+                                  id: selectedDecision.id,
+                                  patch,
+                                  reason: modifyReason.trim(),
+                                },
+                                {
+                                  onSuccess: () => {
+                                    setModifyOpen(false);
+                                    setModifyDraft('');
+                                    setModifyReason('');
+                                  },
+                                },
+                              );
+                            } catch (parseErr) {
+                              toast.error(
+                                `JSON inválido: ${
+                                  parseErr instanceof Error
+                                    ? parseErr.message
+                                    : String(parseErr)
+                                }`,
+                              );
+                            }
+                          }}
+                        >
+                          Guardar
+                        </DarkButton>
+                        <span className="text-xs text-text-tertiary">
+                          {modifyReason.trim().length}/10 chars · cada edição
+                          fica registada no audit trail.
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <pre className="text-xs font-mono bg-bg-elevated p-3 rounded text-text-tertiary max-h-40 overflow-auto">
+                      {JSON.stringify(selectedDecision.action_data ?? {}, null, 2)}
+                    </pre>
+                  )}
+                </div>
+              ) : null}
+
               <div className="flex gap-2 pt-4 border-t border-border-subtle">
                 <DarkButton
                   variant="secondary"

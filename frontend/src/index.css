@@ -1709,3 +1709,128 @@ body {
   animation: shimmer 1.5s ease-in-out infinite;
   border-radius: var(--radius-md);
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Print stylesheet — Sprint Q.13.C / C.3.4
+   ═══════════════════════════════════════════════════════════════════════════
+   The CEO Dashboard's "Exportar PDF" button calls `window.print()`. The
+   browser's print-to-PDF then renders THIS stylesheet so the saved file is
+   clean (no sidebar, no chrome, dark→light inversion for ink saving).
+   This is a zero-dependency alternative to jspdf — every modern browser
+   has Save-as-PDF in the print dialog.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@media print {
+  /* Page size + margins — A4 portrait with 12mm margins fits the CEO
+     dashboard tiles + trend chart on one page. Override per-route by
+     adding `[data-print-orientation="landscape"]` to the page root. */
+  @page {
+    size: A4 portrait;
+    margin: 12mm;
+  }
+
+  /* Light theme for print — saves ink, increases legibility on paper. */
+  html, body {
+    background: #ffffff !important;
+    color: #111111 !important;
+  }
+
+  /* Remove app chrome: sidebar, top bar, floating actions, modals,
+     toast notifications. The page content is the report. */
+  [data-printable="false"],
+  nav[aria-label="Sidebar"],
+  nav[aria-label="Topbar"],
+  header[data-app-header],
+  aside[data-app-sidebar],
+  .alpha-sidebar,
+  .alpha-topbar,
+  .alpha-page-actions,
+  [role="dialog"]:not([data-print-keep="true"]),
+  [data-toast-container],
+  [data-print-hide="true"] {
+    display: none !important;
+  }
+
+  /* Cards: paper-like background, subtle border. Avoid breaking a card
+     across two pages where possible. */
+  .alpha-card,
+  [data-print-card] {
+    background: #ffffff !important;
+    border: 1px solid #d4d4d4 !important;
+    color: #111111 !important;
+    page-break-inside: avoid;
+    break-inside: avoid;
+    box-shadow: none !important;
+  }
+
+  /* Text colours: collapse the dark-theme palette to high-contrast
+     greys so headings stay readable on white paper. */
+  h1, h2, h3, h4, h5, h6,
+  .text-text-white {
+    color: #111111 !important;
+  }
+
+  .text-text-secondary,
+  .text-text-tertiary,
+  .text-slate-300,
+  .text-slate-400,
+  .text-slate-500 {
+    color: #4a4a4a !important;
+  }
+
+  /* Tabular nums + currency: keep them prominent. */
+  .tabular-nums,
+  [data-print-emphasis] {
+    color: #000000 !important;
+    font-weight: 600;
+  }
+
+  /* Charts: recharts renders SVG with currentColor — set base colour
+     so the trend line + bands stay visible on white paper. */
+  .recharts-line-curve,
+  .recharts-cartesian-axis line,
+  .recharts-cartesian-axis path {
+    stroke: #1f2937 !important;
+  }
+  .recharts-cartesian-axis text {
+    fill: #1f2937 !important;
+  }
+
+  /* Footer — every printed page gets a small "ProdPlan ONE — DD/MM/YYYY"
+     line at the bottom via :after pseudo-element on body. */
+  body::after {
+    content: "ProdPlan ONE — Relatório CEO · " attr(data-print-date);
+    position: fixed;
+    bottom: 4mm;
+    left: 12mm;
+    right: 12mm;
+    font-size: 10px;
+    color: #6b7280;
+    text-align: center;
+  }
+
+  /* Allow forms / tables to break naturally; avoid the "shrink to fit"
+     default that mangles wide content. */
+  table {
+    page-break-inside: auto;
+    break-inside: auto;
+  }
+  tr {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  thead {
+    display: table-header-group;
+  }
+
+  /* Force-show elements explicitly tagged for print (e.g. signature
+     line at the bottom of a CEO report). */
+  [data-print-only="true"] {
+    display: block !important;
+  }
+}
+
+/* Print-only elements stay hidden in screen view. */
+[data-print-only="true"] {
+  display: none;
+}

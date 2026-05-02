@@ -1504,6 +1504,20 @@ export const decisionsApi = {
       method: 'POST',
       body: JSON.stringify({ items }),
     }),
+
+  /**
+   * Sprint Q.13.C C.3.2 — modify the action_data payload BEFORE
+   * approving. Plan v4 §8 WG05: "modificar antes de aprovar". Reason
+   * is mandatory (≥10 chars) so the audit trail explains the edit.
+   */
+  modifyPayload: (
+    decisionId: string,
+    body: { patch: Record<string, unknown>; reason: string },
+  ) =>
+    request<DecisionRun>(
+      `/v1/governance/decisions/${encodeURIComponent(decisionId)}/payload`,
+      { method: 'PATCH', body: JSON.stringify(body) },
+    ),
 };
 
 export const apiInfo = () => request<any>('/');
