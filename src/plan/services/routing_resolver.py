@@ -29,6 +29,13 @@ from src.plan.engines.scheduling_adapter import SchedulingOperation
 logger = logging.getLogger(__name__)
 
 
+try:
+    from src.shared.metrics import bump_silent_fallback
+except Exception:  # pragma: no cover — prometheus_client missing in some tests
+    def bump_silent_fallback(module: str, reason: str) -> None:  # type: ignore[no-redef]
+        return None
+
+
 @dataclass
 class RoutingRow:
     """A single phase in an order's route."""
@@ -313,9 +320,11 @@ class RoutingResolver:
             engine = get_engine()
             if engine is None:
                 self.engine_unavailable = True
+                bump_silent_fallback("routing_resolver", "engine_none")
             return engine
         except Exception:
             self.engine_unavailable = True
+            bump_silent_fallback("routing_resolver", "engine_exception")
             return None
 
     def _curated_phases(self) -> List[Any]:

@@ -25,6 +25,46 @@ QualityRiskPredictor = Callable[[List[Dict[str, Any]]], List[float]]
 DurationPredictor = Callable[[List[Dict[str, Any]]], List[Dict[str, float]]]
 
 
+def _instrumented_predictor(fn: Callable, *, model_name: str) -> Callable:
+    """FASE 4.2 (HIGH-55/56) — wrap a predict callable with Prometheus
+    latency + error metrics. Defensive on import: tests that don't pull
+    in prometheus_client get the bare callable back.
+    """
+    try:
+        from src.ml.observability.metrics import (
+            ml_inference_errors_total,
+            ml_inference_latency_ms,
+        )
+    except Exception:  # pragma: no cover — defensive
+        return fn
+
+    import time
+
+    def wrapped(*args, **kwargs):
+        started = time.perf_counter()
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:
+            try:
+                ml_inference_errors_total.labels(
+                    model_name=model_name,
+                    error_type=type(exc).__name__,
+                ).inc()
+            except Exception:  # pragma: no cover — defensive
+                pass
+            raise
+        finally:
+            elapsed_ms = (time.perf_counter() - started) * 1000.0
+            try:
+                ml_inference_latency_ms.labels(model_name=model_name).observe(elapsed_ms)
+            except Exception:  # pragma: no cover — defensive
+                pass
+
+    wrapped.__name__ = getattr(fn, "__name__", "predict")
+    wrapped.__qualname__ = getattr(fn, "__qualname__", "predict")
+    return wrapped
+
+
 async def load_active_quality_risk_predictor(
     session: AsyncSession,
     tenant_id: UUID,
@@ -34,6 +74,12 @@ async def load_active_quality_risk_predictor(
     The callable adapts `QualityRiskModel.predict_proba_batch` so the CPO
     fitness loop can call ``predictor(feature_rows) -> List[float]``
     without touching ML internals.
+
+    FASE 4.2 (HIGH-55/56) — the returned callable is wrapped with
+    Prometheus instrumentation: each call emits
+    ``ml_inference_latency_ms`` (histogram) and exceptions bump
+    ``ml_inference_errors_total`` (counter). Dashboards that watch ML
+    inference health can finally see traffic.
     """
     registry = ModelRegistry(session, tenant_id)
     try:
@@ -57,7 +103,9 @@ async def load_active_quality_risk_predictor(
             active.version,
         )
         return None
-    return model.predict_proba_batch  # type: ignore[return-value]
+    return _instrumented_predictor(
+        model.predict_proba_batch, model_name="quality_risk",
+    )
 
 
 async def load_active_duration_predictor(
@@ -92,4 +140,12 @@ async def load_active_duration_predictor(
             active.version,
         )
         return None
+    # FASE 4.2 (HIGH-55/56) — instrument predict + predict_batch in
+    # place so callers (RoutingResolver) automatically feed Prometheus.
+    if hasattr(model, "predict"):
+        model.predict = _instrumented_predictor(model.predict, model_name="duration")
+    if hasattr(model, "predict_batch"):
+        model.predict_batch = _instrumented_predictor(
+            model.predict_batch, model_name="duration",
+        )
     return model
