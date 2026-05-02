@@ -253,6 +253,49 @@ def test_q5_cpo_decide_rejects_without_category():
     assert "unknown rejection_category" in r2.json()["detail"]
 
 
+def test_r2_cpo_decide_rejects_without_reason_or_short_reason():
+    """Sprint R.2 — reason ≥10 chars is mandatory when alts are rejected.
+
+    Camada 3 needs clean rationale to learn from; the dataset builder's
+    new default (min_reason_len=10) would silently drop these commits,
+    so the API must refuse them at write-time."""
+    import logging
+    logging.disable(logging.CRITICAL)
+    from src.main import app
+
+    client = TestClient(app)
+    headers = {"X-Tenant-Id": str(uuid4())}
+
+    # No reason at all → 400.
+    r = client.post(
+        "/v1/plan/cpo/commits/abcdef1234567890/decide",
+        json={
+            "chosen_alt_idx": 0,
+            "rejected_alt_idxs": [1],
+            "rejection_category": "QUALITY",
+            "decided_by": "luis",
+        },
+        headers=headers,
+    )
+    assert r.status_code == 400
+    assert "reason" in r.json()["detail"].lower()
+
+    # Reason too short → 400.
+    r2 = client.post(
+        "/v1/plan/cpo/commits/abcdef1234567890/decide",
+        json={
+            "chosen_alt_idx": 0,
+            "rejected_alt_idxs": [1],
+            "rejection_category": "QUALITY",
+            "reason": "no",  # 2 chars
+            "decided_by": "luis",
+        },
+        headers=headers,
+    )
+    assert r2.status_code == 400
+    assert "10 characters" in r2.json()["detail"]
+
+
 def test_q6_config_categories_endpoint():
     """Q.6 — GET /v1/config/categories enumerates seeded categories."""
     import logging
@@ -327,3 +370,36 @@ async def test_async_smoke_no_event_loop_leak():
     fpy = await svc.first_pass_yield(window_days=7)
     assert fpy.window_days == 7
     assert fpy.first_pass_yield_pct == 0.0  # zero data
+
+
+def test_r1_learning_metrics_endpoints_registered():
+    """Sprint R.1 — three GET endpoints power the Aprendizagem panel.
+
+    Imports the FastAPI app and confirms the router registered the three
+    paths the panel calls. A regression here would silently break the
+    visibility of Camadas 1-4 even with the service intact.
+    """
+    from src.main import app
+
+    paths = {
+        getattr(r, "path", None)
+        for r in app.routes
+        if hasattr(r, "methods")
+    }
+    assert "/v1/governance/learning/pairs" in paths
+    assert "/v1/governance/learning/rules" in paths
+    assert "/v1/governance/learning/weights" in paths
+
+
+def test_r1_learning_metrics_service_imports_clean():
+    """The service + dataclasses must import without touching the DB."""
+    from src.governance.preference_learning import (  # noqa: F401
+        DEFAULT_MIN_REASON_LEN,
+        LearningMetricsService,
+        PairStats,
+        RuleStats,
+        WeightStats,
+    )
+
+    # Default reason gate aligns with R.2 enforcement (≥10 chars).
+    assert DEFAULT_MIN_REASON_LEN == 10

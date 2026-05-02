@@ -148,6 +148,26 @@ class TransportBatchService:
         rows = (await self.session.execute(stmt)).scalars().all()
         return len(list(rows))
 
+    async def list_orders(self, batch_id: UUID) -> list[UUID]:
+        """Return the order_ids currently assigned to one batch.
+
+        Sprint Q.9 Onda 3.3 — backs `GET /batches/{id}/orders`. The
+        DispatchPage frontend uses this to render the assigned ord
+        cards as draggable items between batches.
+        """
+        stmt = (
+            select(TransportBatchAssignment.order_id)
+            .where(
+                and_(
+                    TransportBatchAssignment.tenant_id == self.tenant_id,
+                    TransportBatchAssignment.batch_id == batch_id,
+                )
+            )
+            .order_by(TransportBatchAssignment.created_at)
+        )
+        rows = (await self.session.execute(stmt)).scalars().all()
+        return list(rows)
+
     async def freeze(self, batch_id: UUID) -> TransportBatch:
         row = await self._get(batch_id)
         row.status = "FROZEN"

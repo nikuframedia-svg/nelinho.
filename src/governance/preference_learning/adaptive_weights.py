@@ -57,7 +57,7 @@ from __future__ import annotations
 
 import logging
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -113,6 +113,17 @@ class RetrainResult:
     weights: Dict[str, float]    # the blended weights actually in effect
     raw_learned: Dict[str, float]  # pre-blend, for audit
     coefficients: Dict[str, float]  # z-scored LR coefs per KPI
+    # Sprint R.2 — Camada 1↔2 cross-check. Each entry describes a
+    # contradiction between a confirmed PreferenceRule (Camada 1) and
+    # the freshly-trained weights (Camada 2). Doesn't block retrain;
+    # surfaces in the R.1 dashboard so a human can decide which side
+    # is right.
+    warnings: List[Dict[str, Any]] = field(default_factory=list)
+    # Sprint R.4 — one-line PT explanation per KPI ("Peso de Tardiness
+    # subiu 12% — categoria dominante: CUSTOMER (84 pares)"). Rendered
+    # by templates so the audit trail is reproducible. Empty when the
+    # retrain was skipped.
+    explanations: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -126,6 +137,8 @@ class RetrainResult:
             "trained_at": datetime.now(timezone.utc).isoformat(),
             "min_pairs": DEFAULT_MIN_PAIRS,
             "blend_learned_pct": BLEND_LEARNED_PCT,
+            "warnings": list(self.warnings),
+            "explanations": list(self.explanations),
         }
 
 
@@ -185,6 +198,47 @@ class AdaptiveFitnessWeights:
         raw_learned = self._coefs_to_weights(coefs)
         blended = self._blend(raw_learned)
 
+        # Sprint R.2 — Camada 1↔2 contradiction check. Best effort: a
+        # failure to load rules must NOT break the retrain (the weights
+        # are already valid). Warnings are advisory.
+        warnings: List[Dict[str, Any]] = []
+        try:
+            confirmed_rules = await self._fetch_confirmed_tradeoff_rules()
+            warnings = detect_weight_rule_contradictions(
+                blended_weights=blended, confirmed_rules=confirmed_rules,
+            )
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning(
+                "adaptive_fitness_weights: contradiction check failed for "
+                "tenant %s (%s) — proceeding without warnings",
+                self.tenant_id, exc,
+            )
+
+        # Sprint R.4 — Camada 2 explainability. Renders one PT-text
+        # explanation per KPI from previous-vs-current weight + which
+        # rejection category dominated this window. Best effort.
+        explanations: List[Dict[str, Any]] = []
+        try:
+            from src.governance.preference_learning.retrain_explanation import (
+                build_retrain_explanations,
+            )
+
+            previous_weights = await self._load_previous_weights()
+            by_category = self._collect_rejection_categories(commits)
+            built = build_retrain_explanations(
+                current_weights=blended,
+                previous_weights=previous_weights,
+                pairs_used=len(pairs),
+                by_category=by_category,
+            )
+            explanations = [e.to_dict() for e in built]
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning(
+                "adaptive_fitness_weights: explanation build failed for "
+                "tenant %s (%s) — proceeding without explanations",
+                self.tenant_id, exc,
+            )
+
         result = RetrainResult(
             status="trained",
             reason=None,
@@ -193,14 +247,101 @@ class AdaptiveFitnessWeights:
             weights=blended,
             raw_learned=raw_learned,
             coefficients=coefs,
+            warnings=warnings,
+            explanations=explanations,
         )
 
         await self._persist(result)
         logger.info(
-            "adaptive_fitness_weights: tenant=%s commits=%d pairs=%d weights=%s",
-            self.tenant_id, len(commits), len(pairs), blended,
+            "adaptive_fitness_weights: tenant=%s commits=%d pairs=%d "
+            "weights=%s warnings=%d",
+            self.tenant_id, len(commits), len(pairs), blended, len(warnings),
         )
         return result
+
+    async def _load_previous_weights(self) -> Optional[Dict[str, float]]:
+        """Read the prior persisted weights (if any) for delta calculation.
+
+        Returns ``None`` on the very first retrain — the caller treats
+        that as "no prior signal" and reports zero delta against
+        defaults. Any read failure is swallowed (retrain must not break
+        because the explanation read got noisy).
+        """
+        from src.core.services.tenant_config_service import TenantConfigService
+
+        try:
+            svc = TenantConfigService(self.session, self.tenant_id)
+            payload = await svc.get(
+                TENANT_CONFIG_CATEGORY,
+                TENANT_CONFIG_KEY,
+                default=None,
+            )
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.debug(
+                "adaptive_fitness_weights: previous weights read failed (%s)", exc,
+            )
+            return None
+        if not isinstance(payload, dict):
+            return None
+        weights = payload.get("weights")
+        if not isinstance(weights, dict):
+            return None
+        return {k: float(v) for k, v in weights.items() if isinstance(v, (int, float))}
+
+    @staticmethod
+    def _collect_rejection_categories(
+        commits: List[ScheduleCommit],
+    ) -> Dict[str, int]:
+        """Count rejection categories across the window.
+
+        Walks ``user_preference_signal.rejection_category`` first
+        (set by the cpo decide endpoint when a category was provided)
+        and then per-alternative categories where the commit didn't
+        carry one at the top level.
+        """
+        from collections import Counter
+
+        counts: Counter = Counter()
+        for commit in commits:
+            rejected = commit.rejected_alternatives or []
+            if not rejected:
+                continue
+            signal = commit.user_preference_signal or {}
+            top_category = (
+                signal.get("rejection_category")
+                if isinstance(signal, dict) else None
+            )
+            if isinstance(top_category, str) and top_category:
+                counts[top_category] += len(rejected)
+                continue
+            for alt in rejected:
+                if isinstance(alt, dict):
+                    cat = alt.get("rejection_category")
+                    if isinstance(cat, str) and cat:
+                        counts[cat] += 1
+        return dict(counts)
+
+    async def _fetch_confirmed_tradeoff_rules(self) -> List[Any]:
+        """Return CONFIRMED PreferenceRule rows of TRADEOFF type for this tenant.
+
+        Imported lazily so the read side (`load_adaptive_weights`) keeps
+        a small module surface and so unit tests can monkey-patch the
+        models module without dragging the rule layer in.
+        """
+        from src.governance.models import (
+            PreferenceRule,
+            PreferenceRuleStatus,
+            PreferenceRuleType,
+        )
+
+        stmt = select(PreferenceRule).where(
+            and_(
+                PreferenceRule.tenant_id == self.tenant_id,
+                PreferenceRule.status == PreferenceRuleStatus.CONFIRMED.value,
+                PreferenceRule.type == PreferenceRuleType.TRADEOFF_PREFERENCE.value,
+            )
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
 
     # ─── Data access ───────────────────────────────────────────────────
 
@@ -344,6 +485,68 @@ class AdaptiveFitnessWeights:
             user_id=None,
             data_type="json",
         )
+
+
+# ─── Sprint R.2 — Camada 1↔2 contradiction detector ─────────────────────
+
+
+# Maps a confirmed-rule "prefer/sacrifice" KPI to the adaptive weight
+# the GA uses for that KPI. If a rule says "prefer low setups" and the
+# learned multiplier on `w_setups` came out below 1.0, we flag it.
+_PREFER_KPI_TO_WEIGHT_KEY: Dict[str, str] = {
+    "makespan_hours": "w_makespan",
+    "total_tardiness_hours": "w_tardiness",
+    "setups": "w_setups",
+    "quality_risk_score": "w_quality_risk",
+}
+
+
+def detect_weight_rule_contradictions(
+    *,
+    blended_weights: Dict[str, float],
+    confirmed_rules: List[Any],
+) -> List[Dict[str, Any]]:
+    """Return advisory warnings where blended weights contradict
+    CONFIRMED ``TRADEOFF_PREFERENCE`` rules.
+
+    A confirmed rule of the form ``{prefer: setups, sacrifice: ...}``
+    encodes "operator wants low setups". The corresponding fitness
+    weight ``w_setups`` should therefore be at-or-above its default.
+    If the freshly-blended weight is below default, the two layers
+    disagree — surface a warning so the human can pick a winner.
+    """
+    warnings: List[Dict[str, Any]] = []
+    for rule in confirmed_rules:
+        predicate = getattr(rule, "predicate", None) or {}
+        prefer = predicate.get("prefer")
+        if not isinstance(prefer, str):
+            continue
+        weight_key = _PREFER_KPI_TO_WEIGHT_KEY.get(prefer)
+        if not weight_key or weight_key not in DEFAULT_WEIGHTS:
+            continue
+        default = DEFAULT_WEIGHTS[weight_key]
+        actual = blended_weights.get(weight_key)
+        if not isinstance(actual, (int, float)) or default == 0:
+            continue
+        ratio = actual / default
+        # Slight noise tolerance — anything down to 0.95× default is
+        # within the blend's natural drift. Below that the pairwise
+        # data and the explicit rule are saying different things.
+        if ratio < 0.95:
+            warnings.append({
+                "kpi": prefer,
+                "weight_key": weight_key,
+                "rule_id": str(getattr(rule, "id", "")),
+                "rule_description": getattr(rule, "description", ""),
+                "expected_direction": "up",
+                "observed_multiplier": round(ratio, 3),
+                "message": (
+                    f"Regra confirmada manda preferir {prefer} baixo, mas o "
+                    f"peso {weight_key} caiu para {ratio:.2f}× do default. "
+                    "Reveja a regra ou os dados de rejeição recentes."
+                ),
+            })
+    return warnings
 
 
 # ─── Read helper — used by FitnessConfig.from_tenant_config ──────────────

@@ -42,6 +42,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.copilot.conversation_store import ConversationStore
 from src.plan.cpo.commits import CommitsService
 from src.plan.cpo.engine import CPOConfig, CPOv4Engine
+from src.plan.cpo.fitness import FitnessConfig
 from src.plan.cpo.state import FactoryState
 from src.plan.engines.scheduling_adapter import SchedulingMachine
 from src.plan.services.routing_resolver import RoutingResolver
@@ -87,6 +88,13 @@ class POETIQProposeRequest(BaseModel):
     time_limit_sec: float = Field(default=15.0, ge=1.0, le=300.0)
     population_size: int = Field(default=50, ge=10, le=500)
     generations: int = Field(default=20, ge=1, le=500)
+    # Sprint Q.9 Onda 2.5 — opt-in iterative POETIQ loop. When True, runs
+    # the Propose→Optimize→Evaluate→Iterate→Qualify loop (max 3 rounds)
+    # instead of the one-shot path. Plan v4 §28 — "2-5 iterations with
+    # kernel feedback". Off by default so existing callers keep their
+    # latency budget.
+    iterative: bool = Field(default=False)
+    iterative_max_rounds: int = Field(default=3, ge=2, le=5)
 
 
 class POETIQScoreBreakdown(BaseModel):
@@ -172,6 +180,11 @@ async def propose(
     # through /v1/plan/cpo/schedule with explicit machines.
     machines = [SchedulingMachine(machine_id="MANUAL", name="Manual pool")]
 
+    # Sprint Q.9 Onda 1.2 — Camada 2 wire (mirror of plan/api/cpo.py).
+    # Adaptive weights merged in; the engine constructor will also copy
+    # `state.preference_rules` into the fitness config (Camada 1 wire).
+    fitness_config = await FitnessConfig.from_tenant_config(db, tenant_id)
+
     engine = CPOv4Engine(
         state=state,
         config=CPOConfig(
@@ -179,8 +192,52 @@ async def propose(
             generations=request.generations,
             time_limit_sec=request.time_limit_sec,
         ),
+        fitness_config=fitness_config,
     )
-    result = engine.schedule(operations, machines, horizon_start, horizon_end)
+
+    # Sprint Q.9 Onda 2.5 — opt-in iterative loop. When `iterative=True`,
+    # the proposed delta runs through `run_iterative_poetiq` which can
+    # request up to `iterative_max_rounds` re-optimisations (default 3),
+    # adjusting horizon/generations between rounds based on the
+    # critique. Each iteration shares the same engine instance so the
+    # GA's adaptive memory persists across rounds. The one-shot path
+    # remains the default to preserve latency for existing callers.
+    if request.iterative:
+        from src.copilot.poetiq_iterative import run_iterative_poetiq
+
+        # Per-round budget — split the original time_limit so the total
+        # stays within request budget. Floor at 5s so the GA always has
+        # enough generations to be meaningful.
+        per_round_budget = max(5.0, request.time_limit_sec / request.iterative_max_rounds)
+
+        def _optimizer(delta: Dict[str, Any]) -> Dict[str, Any]:
+            # Re-tune the engine config for this round based on hints
+            # the iterator may attach (extend_horizon_days, extra_
+            # generations, set_shift_mode, flip_routing_variant).
+            hints = delta.get("iteration_hints") or {}
+            extra_gens = int(hints.get("extra_generations", 0))
+            extra_days = int(hints.get("extend_horizon_days", 0))
+            engine.config.generations = request.generations + extra_gens
+            engine.config.time_limit_sec = per_round_budget
+            local_end = horizon_end + timedelta(days=extra_days)
+            return engine.schedule(operations, machines, horizon_start, local_end)
+
+        loop_result = run_iterative_poetiq(
+            proposed_delta=request.delta.model_dump(),
+            optimizer=_optimizer,
+            max_iterations=request.iterative_max_rounds,
+        )
+        result = loop_result.schedule or {}
+        # Stash loop-level metadata onto the schedule dict so the
+        # downstream commit + diff path is identical to the one-shot
+        # case. `iterations` and `qualified` show up on the ScheduleCommit
+        # via `delta` (already includes the proposed delta) so the
+        # operator can inspect.
+        result["poetiq_iterations"] = loop_result.iterations
+        result["poetiq_qualified"] = loop_result.qualified
+        result["poetiq_final_score"] = round(loop_result.final_score, 4)
+    else:
+        result = engine.schedule(operations, machines, horizon_start, horizon_end)
 
     # Persist a commit with the delta attached
     delta_dict = request.delta.model_dump()

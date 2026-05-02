@@ -11,6 +11,7 @@ from .adaptive_weights import (
     AdaptiveFitnessWeights,
     DEFAULT_WEIGHTS,
     RetrainResult,
+    detect_weight_rule_contradictions,
     load_adaptive_weights,
 )
 from .detector import PreferenceRuleDetector
@@ -20,15 +21,28 @@ from .dpo_dataset_builder import (
     DPOTriplet,
     build_prompt,
 )
+from .learning_metrics_service import (
+    DEFAULT_MIN_REASON_LEN,
+    LearningMetricsService,
+    PairStats,
+    RuleStats,
+    WeightStats,
+)
 
 __all__ = [
     "AdaptiveFitnessWeights",
+    "DEFAULT_MIN_REASON_LEN",
     "DEFAULT_WEIGHTS",
     "DPOBuildReport",
     "DPODatasetBuilder",
     "DPOTriplet",
+    "LearningMetricsService",
+    "PairStats",
     "PreferenceRuleDetector",
     "RetrainResult",
+    "RuleStats",
+    "WeightStats",
     "build_prompt",
+    "detect_weight_rule_contradictions",
     "load_adaptive_weights",
 ]

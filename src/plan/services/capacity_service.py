@@ -13,6 +13,7 @@ from uuid import UUID
 from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.factory_data_product.models.curated import CuratedPhaseCapacity
 from src.plan.models.schedule import ProductionSchedule, ScheduleStatus
 from src.shared.kafka_client import publish_event, Topics
 from src.shared.events import CapacityConstraintEvent
@@ -268,9 +269,45 @@ class CapacityService:
             "availability": daily_availability,
         }
 
+    async def phase_capacity_summary(
+        self,
+        *,
+        ingestion_id: Optional[UUID] = None,
+    ) -> List[Dict[str, Any]]:
+        """Per-phase available hours from `CuratedPhaseCapacity`.
 
+        Sprint Q.8 Fase 5 — was unused (the curated table was populated
+        but no consumer queried it). The CEO dashboard uses this to show
+        "what is theoretically possible per phase per period" alongside
+        the machine-centric metrics already exposed by `analyze_capacity`.
 
+        Returns one row per phase: `{fase_id, fase_nome, periodo_tipo,
+        capacidade_horas, funcionarios_count}`. Filters by
+        `ingestion_id` when provided so the dashboard pins to a specific
+        ERP snapshot rather than mixing scopes.
+        """
+        stmt = select(
+            CuratedPhaseCapacity.fase_id,
+            CuratedPhaseCapacity.fase_nome,
+            CuratedPhaseCapacity.periodo_tipo,
+            CuratedPhaseCapacity.capacidade_horas,
+            CuratedPhaseCapacity.funcionarios_count,
+        )
+        if ingestion_id is not None:
+            stmt = stmt.where(CuratedPhaseCapacity.ingestion_id == ingestion_id)
+        stmt = stmt.order_by(CuratedPhaseCapacity.fase_id)
 
+        rows = (await self.session.execute(stmt)).all()
+        return [
+            {
+                "fase_id": r[0],
+                "fase_nome": r[1],
+                "periodo_tipo": r[2],
+                "capacidade_horas": float(r[3]) if r[3] is not None else None,
+                "funcionarios_count": r[4],
+            }
+            for r in rows
+        ]
 
 
 

@@ -190,6 +190,69 @@ class SchedulingService:
         result = await self.session.execute(query)
         return list(result.scalars().all())
     
+    async def update_dates(
+        self,
+        schedule_id: UUID,
+        *,
+        new_start: Optional[datetime] = None,
+        new_end: Optional[datetime] = None,
+    ) -> Optional[ProductionSchedule]:
+        """Reschedule an existing ProductionSchedule row to new dates.
+
+        Sprint Q.9 Onda 2.3 — replaces the audit-only stub in
+        `ActionExecutor._handle_reschedule_order`. Caller (the action
+        executor) has already validated that the decision was approved;
+        this method just performs the write + emits SCHEDULE_UPDATED.
+
+        Returns the row with the new dates applied, or None when the
+        id doesn't match a row in the current tenant. Either side
+        (start, end) can be None to leave that bound unchanged.
+        """
+        result = await self.session.execute(
+            select(ProductionSchedule).where(
+                and_(
+                    ProductionSchedule.id == schedule_id,
+                    ProductionSchedule.tenant_id == self.tenant_id,
+                )
+            )
+        )
+        schedule = result.scalar_one_or_none()
+        if not schedule:
+            return None
+
+        if new_start is not None:
+            schedule.scheduled_start_date = new_start
+        if new_end is not None:
+            schedule.scheduled_end_date = new_end
+
+        await self.session.flush()
+
+        try:
+            await publish_event(
+                Topics.SCHEDULE_UPDATED,
+                EventBase(
+                    event_type="SCHEDULE_RESCHEDULED",
+                    tenant_id=self.tenant_id,
+                    source_module="plan",
+                    payload={
+                        "schedule_id": str(schedule.id),
+                        "order_id": str(schedule.order_id) if schedule.order_id else None,
+                        "scheduled_start_date": (
+                            schedule.scheduled_start_date.isoformat()
+                            if schedule.scheduled_start_date else None
+                        ),
+                        "scheduled_end_date": (
+                            schedule.scheduled_end_date.isoformat()
+                            if schedule.scheduled_end_date else None
+                        ),
+                    },
+                ),
+            )
+        except Exception as exc:  # pragma: no cover — bus outage non-fatal
+            logger.warning("SCHEDULE_RESCHEDULED publish failed for %s: %s", schedule.id, exc)
+
+        return schedule
+
     async def update_status(
         self,
         schedule_id: UUID,

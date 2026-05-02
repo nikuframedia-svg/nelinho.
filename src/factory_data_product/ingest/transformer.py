@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class TransformResult:
     """Result of transformation."""
-    
+
     success: bool = True
     orders: List[Dict] = field(default_factory=list)
     order_phases: List[Dict] = field(default_factory=list)
@@ -34,10 +34,13 @@ class TransformResult:
     quality_events: List[Dict] = field(default_factory=list)
     skill_matrix: List[Dict] = field(default_factory=list)
     cost_references: List[Dict] = field(default_factory=list)
-    
+    # Sprint Q.8 Fase 2/3 — newly materialised dimensions.
+    allocations: List[Dict] = field(default_factory=list)
+    models: List[Dict] = field(default_factory=list)
+
     warnings: List[str] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
-    
+
     @property
     def total_curated(self) -> int:
         return (
@@ -48,7 +51,9 @@ class TransformResult:
             len(self.mold_usages) +
             len(self.quality_events) +
             len(self.skill_matrix) +
-            len(self.cost_references)
+            len(self.cost_references) +
+            len(self.allocations) +
+            len(self.models)
         )
 
 
@@ -59,14 +64,23 @@ class RawToCuratedTransformer:
     Each sheet maps to specific curated table(s).
     """
     
-    # Sheet to transformer method mapping
+    # Sheet to transformer method mapping.
+    # Sprint Q.8 Fase 2/3 — added two missing sheets:
+    #   * FuncionariosFaseOrdemFabrico (423K rows) — worker × order-phase
+    #     allocations. Without this handler the workforce-utilisation
+    #     reports were running blind on synthetic data.
+    #   * Modelos (899 rows) — product/model catalogue dimension. Without
+    #     this handler, modelo_id stayed as a denormalised string on
+    #     CuratedOrder/Phase with no master row.
     SHEET_HANDLERS = {
         "OrdensFabrico": "_transform_orders",
         "FasesOrdemFabrico": "_transform_order_phases",
         "Funcionarios": "_transform_employees",
         "FuncionariosFasesAptos": "_transform_skill_matrix",
+        "FuncionariosFaseOrdemFabrico": "_transform_allocations",
         "Fases": "_transform_phases",
         "Moldes": "_transform_molds",
+        "Modelos": "_transform_models",
         "OrdemFabricoErros": "_transform_quality_events",
         "FasesStandardModelos": "_transform_standards",
     }
@@ -187,8 +201,26 @@ class RawToCuratedTransformer:
                 "ordem": self._safe_int(payload.get("FaseOf_Ordem")),
                 "molde_id": self._safe_str(payload.get("FaseOf_Molde_Id")),
             }
-            
+
             result.order_phases.append(phase)
+
+            # Sprint Q.8 Fase 4 — derive mold_usage from the order-phase
+            # payload when molde_id is present. The Excel has no separate
+            # mold-usage sheet; without this derivation, RoutingResolver
+            # had to fall back to a regex over phase names to guess
+            # whether a phase needed a mold. With this row the curated
+            # layer carries the real (molde_id, of_id, fase_id) tuple.
+            molde_id = phase["molde_id"]
+            if molde_id:
+                result.mold_usages.append(
+                    {
+                        "ingestion_id": ingestion_id,
+                        "molde_id": molde_id,
+                        "of_id": phase["of_id"],
+                        "fase_id": phase["fase_id"],
+                        "data_uso": phase["data_inicio"],
+                    }
+                )
     
     def _transform_employees(
         self,
@@ -300,7 +332,113 @@ class RawToCuratedTransformer:
         """Transform FasesStandardModelos (used for reference, merged into phases)."""
         # Standards are used to supplement horas_standard in order_phases
         pass
-    
+
+    def _transform_allocations(
+        self,
+        rows: List[Dict],
+        ingestion_id: UUID,
+        result: TransformResult,
+    ) -> None:
+        """Transform FuncionariosFaseOrdemFabrico → curated.allocation.
+
+        The Excel sheet only carries 3 columns (FaseOfId, FuncionarioId,
+        Chefe). We keep the curated row equally lean — hours are not on
+        this sheet; consumers join with `CuratedOrderPhase.horas_reais`
+        and divide by allocation count to derive per-worker hours.
+
+        `Chefe` arrives as 0/1 (int) or True/False; cast through bool().
+        """
+        seen_keys: set[tuple[str, str]] = set()
+        dup = 0
+        for row in rows:
+            payload = row.get("payload_json", {})
+
+            fase_of_id = self._safe_str(
+                payload.get("FuncionarioFaseOf_FaseOfId")
+            )
+            funcionario_id = self._safe_str(
+                payload.get("FuncionarioFaseOf_FuncionarioId")
+            )
+            if not fase_of_id or not funcionario_id:
+                # Composite key incomplete — drop silently into warnings;
+                # without both halves the row can't be joined back to
+                # CuratedOrderPhase.
+                continue
+
+            key = (fase_of_id, funcionario_id)
+            if key in seen_keys:
+                dup += 1
+                continue
+            seen_keys.add(key)
+
+            allocation = {
+                "ingestion_id": ingestion_id,
+                "fase_of_id": fase_of_id,
+                "funcionario_id": funcionario_id,
+                "is_chefe": bool(payload.get("FuncionarioFaseOf_Chefe")),
+            }
+            result.allocations.append(allocation)
+
+        if dup:
+            result.warnings.append(
+                f"_transform_allocations: {dup} duplicate (fase_of_id,"
+                " funcionario_id) keys collapsed"
+            )
+
+    def _transform_models(
+        self,
+        rows: List[Dict],
+        ingestion_id: UUID,
+        result: TransformResult,
+    ) -> None:
+        """Transform Modelos → curated.modelo.
+
+        The sheet's rows are products (`Produto_*` columns) but the
+        curated table is named `modelo` because that's the planning
+        concept. We persist all 9 source columns mapped to snake_case.
+        """
+        seen_keys: set[str] = set()
+        dup = 0
+        for row in rows:
+            payload = row.get("payload_json", {})
+
+            produto_id = self._safe_str(payload.get("Produto_Id"))
+            if not produto_id:
+                continue
+            if produto_id in seen_keys:
+                dup += 1
+                continue
+            seen_keys.add(produto_id)
+
+            model = {
+                "ingestion_id": ingestion_id,
+                "produto_id": produto_id,
+                "produto_nome": self._safe_str(payload.get("Produto_Nome")),
+                "modelo_id": self._safe_str(payload.get("Produto_ModeloId")),
+                "tamanho_id": self._safe_str(payload.get("Produto_TamanhoId")),
+                "peso_desmolde_kg": self._safe_decimal(
+                    payload.get("Produto_PesoDesmolde")
+                ),
+                "peso_acabamento_kg": self._safe_decimal(
+                    payload.get("Produto_PesoAcabamento")
+                ),
+                "qtd_gel_deck": self._safe_decimal(
+                    payload.get("Produto_QtdGelDeck")
+                ),
+                "qtd_gel_casco": self._safe_decimal(
+                    payload.get("Produto_QtdGelCasco")
+                ),
+                "numero_pocos_id": self._safe_str(
+                    payload.get("Produto_NumeroPocosId")
+                ),
+            }
+            result.models.append(model)
+
+        if dup:
+            result.warnings.append(
+                f"_transform_models: {dup} duplicate produto_id rows collapsed"
+            )
+
     # Helper methods
     
     def _safe_str(self, value: Any) -> Optional[str]:

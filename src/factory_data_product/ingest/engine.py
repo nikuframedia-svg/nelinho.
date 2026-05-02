@@ -455,15 +455,24 @@ class IngestEngine:
         result = self.transformer.transform(raw_rows, ingestion_id)
         
         # Store curated data
+        # Sprint Q.8 Fase 2/3 — added `allocations` and `models` so the
+        # semantic engine and downstream consumers (workforce ranking,
+        # employee history) can read the materialised dimensions.
         self._curated_data[str(ingestion_id)] = {
             "orders": result.orders,
             "order_phases": result.order_phases,
             "phase_capacities": result.phase_capacities,
             "molds": result.molds,
             "mold_usages": result.mold_usages,
+            # Singular alias — Sprint Q.8 Fase 4. The ML feature
+            # extractor (`MoldFeatures`) and other consumers look up
+            # `mold_usage` (singular). Same list, two keys, kept in sync.
+            "mold_usage": result.mold_usages,
             "quality_events": result.quality_events,
             "skill_matrix": result.skill_matrix,
             "cost_references": result.cost_references,
+            "allocations": result.allocations,
+            "models": result.models,
         }
         
         # Update run stats

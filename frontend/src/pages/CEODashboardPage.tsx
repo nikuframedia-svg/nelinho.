@@ -33,13 +33,14 @@ import {
   CalendarRange,
   CheckCircle2,
   Euro,
+  FileDown,
   Target,
   TrendingUp,
   Truck,
   Users,
 } from 'lucide-react';
 import { DarkPageLayout } from '../layouts';
-import { DarkBadge, DarkCard } from '../components/dark';
+import { DarkBadge, DarkButton, DarkCard } from '../components/dark';
 import { LiveBadge } from '../components/dashboard/LiveBadge';
 import { useRealtime } from '../providers/RealtimeProvider';
 import {
@@ -269,12 +270,35 @@ export function CEODashboardPage() {
   const throughput = data?.throughput_eur;
   const band = throughput ? bandBadge(throughput.on_target) : null;
 
+  // Sprint Q.9 Onda 3.5 — Export PDF via the browser's "save as PDF"
+  // print pipeline. Plan v4 §9 lists this as a requirement; we go with
+  // window.print() instead of jsPDF to avoid pulling another bundle dep.
+  // The print stylesheet (`@media print` in `index.css`) hides
+  // sidebar/topbar so the printed page is the dashboard alone.
+  const handleExportPdf = () => {
+    if (typeof window !== 'undefined' && typeof window.print === 'function') {
+      window.print();
+    }
+  };
+
   return (
     <DarkPageLayout
       title="CEO"
       subtitle="Throughput €/dia vs meta — leitura em 10 segundos"
       icon={<BarChart3 size={20} />}
-      actions={<LiveBadge lastEventAt={lastEventAt} />}
+      actions={
+        <div className="flex items-center gap-2">
+          <DarkButton
+            variant="secondary"
+            size="sm"
+            icon={<FileDown size={14} />}
+            onClick={handleExportPdf}
+          >
+            Exportar PDF
+          </DarkButton>
+          <LiveBadge lastEventAt={lastEventAt} />
+        </div>
+      }
     >
       {isLoading ? (
         <DarkCard>

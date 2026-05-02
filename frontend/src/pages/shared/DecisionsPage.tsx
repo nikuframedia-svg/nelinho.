@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { 
+import {
   CheckCircle2,
   RotateCcw,
   Clock,
@@ -11,6 +11,9 @@ import {
   Eye,
   Play,
   AlertTriangle,
+  Filter as FilterIcon,
+  Layers,
+  XCircle,
 } from 'lucide-react';
 import { decisionsApi, type DecisionRun, type ApprovalRequest } from '../../lib/api';
 import { format } from 'date-fns';
@@ -35,6 +38,44 @@ import { useToastContext } from '../../components/ToastProvider';
 
 type DecisionStatus = 'PROPOSED' | 'APPROVED' | 'EXECUTED' | 'ROLLED_BACK' | 'REJECTED';
 
+// ─── Sprint Q.9 Onda 3.4 — severity buckets + anti-fatigue ───────────────
+//
+// Plan v4 §8 calls out three behaviours we owed the manager:
+//   1. Bulk approve (WG04)  — multi-select + a single round trip
+//   2. Severity grouping (WG04) — red / amber / green badges so a quick
+//      scan tells you which decisions need attention now.
+//   3. Anti-fatigue (WG05) — when there are >ANTIFATIGUE_THRESHOLD
+//      pending decisions, default to showing the top N by impact so
+//      the operator isn't drowning. Toggle off to see all.
+const ANTIFATIGUE_THRESHOLD = 20;
+const ANTIFATIGUE_TOP_N = 5;
+
+type Severity = 'critical' | 'warning' | 'normal';
+
+function deriveSeverity(d: DecisionRun): Severity {
+  // Heuristic from action_type + status, with a safe default of "normal".
+  // Real severity should land via a dedicated `severity` field on the
+  // payload (Sprint Q.9 backend follow-up); until then we infer.
+  const t = (d.action_type || '').toLowerCase();
+  if (t.includes('emergency') || t.includes('critical') || t.includes('rollback')) {
+    return 'critical';
+  }
+  if (
+    d.status === 'PROPOSED' &&
+    (t.includes('reschedule') || t.includes('mold') || t.includes('rework'))
+  ) {
+    return 'warning';
+  }
+  return 'normal';
+}
+
+const SEVERITY_TONE: Record<Severity, { dot: string; label: string }> = {
+  critical: { dot: 'bg-rose-400', label: 'Crítico' },
+  warning: { dot: 'bg-amber-400', label: 'Atenção' },
+  normal: { dot: 'bg-emerald-400', label: 'Optimização' },
+};
+
+
 export function DecisionsPage() {
   const [filterStatus, setFilterStatus] = useState<DecisionStatus | 'ALL'>('ALL');
   const [search, setSearch] = useState('');
@@ -42,6 +83,9 @@ export function DecisionsPage() {
   const [selectedDecision, setSelectedDecision] = useState<DecisionRun | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
+  // Sprint Q.9 Onda 3.4 — multi-select + anti-fatigue toggles.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [antiFatigueOn, setAntiFatigueOn] = useState(true);
   const itemsPerPage = 20;
 
   const queryClient = useQueryClient();
@@ -88,18 +132,111 @@ export function DecisionsPage() {
     onError: (err: any) => toast.error(err.message || 'Failed to rollback'),
   });
 
+  // Sprint Q.9 Onda 3.4 — bulk approve mutation. Backend route accepts
+  // any mix of approve/reject/request_changes; we send `approve` here
+  // because the UI flow is "select pending decisions, OK them all".
+  const bulkApproveMutation = useMutation({
+    mutationFn: (ids: string[]) =>
+      decisionsApi.bulkAct(
+        ids.map((id) => ({
+          decision_id: id,
+          action: 'approve',
+          reason: 'Bulk approve via Timeline',
+        })),
+      ),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['decisions'] });
+      setSelectedIds(new Set());
+      toast.success(`Bulk approve: ${data.ok} ok, ${data.failed} falharam`);
+    },
+    onError: (err: any) => toast.error(err.message || 'Bulk approve failed'),
+  });
+
   const decisions = decisionsData?.items || [];
   const totalPages = decisionsData ? Math.ceil(decisionsData.total / itemsPerPage) : 0;
 
   // Filter decisions by search
-  const filteredDecisions = useMemo(() => {
+  const searchedDecisions = useMemo(() => {
     return decisions.filter(d => {
-      const matchesSearch = d.title.toLowerCase().includes(search.toLowerCase()) || 
+      const matchesSearch = d.title.toLowerCase().includes(search.toLowerCase()) ||
                             d.action_type.toLowerCase().includes(search.toLowerCase()) ||
                             d.target.toLowerCase().includes(search.toLowerCase());
       return matchesSearch;
     });
   }, [decisions, search]);
+
+  // Sprint Q.9 Onda 3.4 — group by severity + anti-fatigue downsample.
+  // Severity is derived locally (see deriveSeverity). When anti-fatigue
+  // is on AND total pending exceeds the threshold, only the top
+  // ANTIFATIGUE_TOP_N criticals/warnings are shown. The operator can
+  // toggle off to see everything.
+  const { filteredDecisions, antiFatigueActive, severityCounts } = useMemo(() => {
+    const annotated = searchedDecisions.map((d) => ({ ...d, _sev: deriveSeverity(d) }));
+    const counts: Record<Severity, number> = { critical: 0, warning: 0, normal: 0 };
+    for (const d of annotated) counts[d._sev as Severity]++;
+    const pending = annotated.filter((d) => d.status === 'PROPOSED');
+    const shouldFatigue = antiFatigueOn && pending.length > ANTIFATIGUE_THRESHOLD;
+    let visible: typeof annotated = annotated;
+    if (shouldFatigue) {
+      // Order by severity priority then by proposed_at (newest first).
+      const order: Record<Severity, number> = { critical: 0, warning: 1, normal: 2 };
+      const ranked = [...pending].sort((a, b) => {
+        const sa = order[a._sev as Severity] ?? 9;
+        const sb = order[b._sev as Severity] ?? 9;
+        if (sa !== sb) return sa - sb;
+        return new Date(b.proposed_at).getTime() - new Date(a.proposed_at).getTime();
+      });
+      visible = ranked.slice(0, ANTIFATIGUE_TOP_N);
+    }
+    return {
+      filteredDecisions: visible,
+      antiFatigueActive: shouldFatigue,
+      severityCounts: counts,
+    };
+  }, [searchedDecisions, antiFatigueOn]);
+
+  const proposedSelectableIds = filteredDecisions
+    .filter((d) => d.status === 'PROPOSED')
+    .map((d) => d.id);
+
+  const allSelectable =
+    proposedSelectableIds.length > 0 &&
+    proposedSelectableIds.every((id) => selectedIds.has(id));
+
+  const toggleId = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAllVisible = () => {
+    setSelectedIds((prev) => {
+      if (allSelectable) {
+        const next = new Set(prev);
+        proposedSelectableIds.forEach((id) => next.delete(id));
+        return next;
+      }
+      const next = new Set(prev);
+      proposedSelectableIds.forEach((id) => next.add(id));
+      return next;
+    });
+  };
+
+  const handleBulkApprove = () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    if (
+      !window.confirm(
+        `Aprovar ${ids.length} decisão(ões) em massa? Acção não reversível por linha; usa rollback se precisares de voltar atrás.`,
+      )
+    ) {
+      return;
+    }
+    bulkApproveMutation.mutate(ids);
+  };
 
   // Get status badge variant
   const getStatusVariant = (status: DecisionStatus): 'success' | 'warning' | 'danger' | 'info' | 'neutral' => {
@@ -190,7 +327,7 @@ export function DecisionsPage() {
       </div>
 
       {/* Filters */}
-      <div className="flex items-center gap-4 mb-6">
+      <div className="flex items-center gap-4 mb-3 flex-wrap">
         <DarkSearchInput
           placeholder="Search decisions..."
           value={search}
@@ -211,6 +348,65 @@ export function DecisionsPage() {
         </div>
       </div>
 
+      {/* Sprint Q.9 Onda 3.4 — severity legend + anti-fatigue toggle + bulk bar */}
+      <div className="flex items-center gap-3 mb-4 flex-wrap text-xs">
+        <span className="inline-flex items-center gap-1 text-text-tertiary">
+          <Layers size={12} /> Severidade:
+        </span>
+        {(['critical', 'warning', 'normal'] as Severity[]).map((sev) => (
+          <span key={sev} className="inline-flex items-center gap-1 text-text-secondary">
+            <span className={`w-2 h-2 rounded-full ${SEVERITY_TONE[sev].dot}`} />
+            {SEVERITY_TONE[sev].label}
+            <span className="text-text-tertiary">({severityCounts[sev]})</span>
+          </span>
+        ))}
+        <span className="text-text-tertiary mx-2">|</span>
+        <button
+          type="button"
+          onClick={() => setAntiFatigueOn((v) => !v)}
+          className={`inline-flex items-center gap-1 px-2 py-1 rounded border transition-colors ${
+            antiFatigueOn
+              ? 'border-amber-500/40 text-amber-200 bg-amber-500/10'
+              : 'border-slate-700 text-slate-300'
+          }`}
+          title={`Anti-fatigue: quando há mais de ${ANTIFATIGUE_THRESHOLD} decisões pendentes, mostra só ${ANTIFATIGUE_TOP_N} top por severidade.`}
+        >
+          <FilterIcon size={12} />
+          Anti-fatigue {antiFatigueOn ? 'ON' : 'OFF'}
+          {antiFatigueActive ? (
+            <span className="ml-1 text-amber-300 font-semibold">activo</span>
+          ) : null}
+        </button>
+        {selectedIds.size > 0 ? (
+          <div className="ml-auto flex items-center gap-2">
+            <span className="text-text-secondary">{selectedIds.size} seleccionada(s)</span>
+            <DarkButton
+              variant="primary"
+              size="sm"
+              icon={
+                bulkApproveMutation.isPending ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <CheckCircle2 size={14} />
+                )
+              }
+              onClick={handleBulkApprove}
+              disabled={bulkApproveMutation.isPending}
+            >
+              Aprovar em massa
+            </DarkButton>
+            <DarkButton
+              variant="ghost"
+              size="sm"
+              icon={<XCircle size={14} />}
+              onClick={() => setSelectedIds(new Set())}
+            >
+              Limpar
+            </DarkButton>
+          </div>
+        ) : null}
+      </div>
+
       {/* Table */}
       {isLoading ? (
         <DarkCard className="text-center py-12">
@@ -222,6 +418,19 @@ export function DecisionsPage() {
           <DarkTable>
             <DarkTableHead>
               <DarkTableRow>
+                <DarkTableHeader>
+                  {/* Sprint Q.9 Onda 3.4 — select-all toggle visible only
+                      when at least one row in view is PROPOSED. */}
+                  {proposedSelectableIds.length > 0 ? (
+                    <input
+                      type="checkbox"
+                      checked={allSelectable}
+                      onChange={toggleAllVisible}
+                      className="cursor-pointer"
+                      title="Seleccionar todas as propostas visíveis"
+                    />
+                  ) : null}
+                </DarkTableHeader>
                 <DarkTableHeader>Title</DarkTableHeader>
                 <DarkTableHeader>Action Type</DarkTableHeader>
                 <DarkTableHeader>Target</DarkTableHeader>
@@ -231,8 +440,27 @@ export function DecisionsPage() {
               </DarkTableRow>
             </DarkTableHead>
             <DarkTableBody>
-              {filteredDecisions.map((decision) => (
+              {filteredDecisions.map((decision) => {
+                const sev = (decision as any)._sev as Severity;
+                const checkable = decision.status === 'PROPOSED';
+                return (
                 <DarkTableRow key={decision.id}>
+                  <DarkTableCell>
+                    <div className="flex items-center gap-2">
+                      {checkable ? (
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(decision.id)}
+                          onChange={() => toggleId(decision.id)}
+                          className="cursor-pointer"
+                        />
+                      ) : null}
+                      <span
+                        className={`w-2 h-2 rounded-full ${SEVERITY_TONE[sev].dot}`}
+                        title={SEVERITY_TONE[sev].label}
+                      />
+                    </div>
+                  </DarkTableCell>
                   <DarkTableCell>
                     <button
                       onClick={() => { setSelectedDecision(decision); setIsDetailModalOpen(true); }}
@@ -296,10 +524,11 @@ export function DecisionsPage() {
                     </div>
                   </DarkTableCell>
                 </DarkTableRow>
-              ))}
+                );
+              })}
               {filteredDecisions.length === 0 && (
                 <DarkTableRow>
-                  <DarkTableCell colSpan={6} className="text-center py-12">
+                  <DarkTableCell colSpan={7} className="text-center py-12">
                     <FileText size={40} className="mx-auto mb-3 text-text-tertiary opacity-50" />
                     <p className="font-medium text-text-secondary">No decisions found</p>
                     <p className="text-sm text-text-tertiary">
