@@ -76,7 +76,21 @@ class SchedulingService:
         horizon_start = horizon_start or datetime.now()
         horizon_end = horizon_start + timedelta(weeks=planning_weeks)
         planning_run_id = f"plan-{uuid4().hex[:8]}"
-        
+
+        # Sprint Q.13.A — close CRIT-27. Quantity per order is now
+        # propagated to ProductionSchedule.quantity (was hardcoded
+        # Decimal("1") which broke margin calculation for any qty>1
+        # order). Caller hands `orders` with `{order_id, qty, due_date}`;
+        # we build a lookup once and read it inside the per-op loop.
+        order_quantities: Dict[str, Decimal] = {}
+        for o in orders:
+            oid = str(o.get("order_id") or o.get("id") or "")
+            qty = o.get("qty") or o.get("quantity") or 1
+            try:
+                order_quantities[oid] = Decimal(str(qty))
+            except (ValueError, TypeError):
+                order_quantities[oid] = Decimal("1")
+
         # Configure adapter
         self._adapter.configure(engine=engine, rule=rule)
         
@@ -143,6 +157,22 @@ class SchedulingService:
                         op_id_str, raw_machine,
                     )
 
+            # Sprint Q.13.A — CRIT-27 fixed. Quantity propagates from the
+            # caller's orders list via the lookup built at the top of
+            # generate_schedule. Defensive fallback Decimal("1") covers
+            # the partial-input case where an order is missing from the
+            # input dict (legacy callers); WARN logged so it doesn't go
+            # silent.
+            order_id_str = str(op_data["order_id"])
+            row_quantity = order_quantities.get(order_id_str)
+            if row_quantity is None:
+                logger.warning(
+                    "scheduling_service: order_id=%s missing in input orders dict — "
+                    "falling back to qty=1. Margin calculations may be wrong.",
+                    order_id_str,
+                )
+                row_quantity = Decimal("1")
+
             schedule = ProductionSchedule(
                 tenant_id=self.tenant_id,
                 order_id=op_data["order_id"],
@@ -150,7 +180,7 @@ class SchedulingService:
                 operation_id=UUID(op_id_str) if op_id_str else None,
                 operation_sequence=int(op_data.get("sequence", 0)),
                 machine_id=machine_id_resolved,
-                quantity=Decimal("1"),  # CRIT-27 — still a TODO; tracked separately
+                quantity=row_quantity,
                 scheduled_start_date=datetime.fromisoformat(op_data["start_time"]).date(),
                 scheduled_end_date=datetime.fromisoformat(op_data["end_time"]).date(),
                 scheduled_duration_hours=Decimal(str(op_data["duration_minutes"] / 60)),

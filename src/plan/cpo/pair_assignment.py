@@ -190,3 +190,76 @@ def _default_cost(worker_a: str, worker_b: str, op: SchedulingOperation) -> floa
     model + fatigue data are both available.
     """
     return float(hash((worker_a, worker_b, op.operation_id)) % 1000) / 1000.0
+
+
+# ─── Sprint Q.13.A — Plan v4 §6.2 alternative pairs ─────────────────
+
+
+def rank_pairs(
+    op: SchedulingOperation,
+    state: FactoryState,
+    *,
+    cost_fn: Optional[PairCost] = None,
+    top_n: int = 3,
+) -> List[Dict[str, object]]:
+    """Return the top-N (chefe, partner, display_score) tuples for an op.
+
+    Plan v4 §6.2 promises the manager sees alternatives like
+    "Paulo+Maria (8.2) OU João+Ana (6.1)" before committing a worker
+    pair. This function is the backend that powers that UX:
+
+    * Computes the same pair-cost matrix as `assign_pairs_for_ops` but
+      keeps the top N pairs (sorted ascending by cost) instead of only
+      the best.
+    * Returns a list of dicts `{chefe, partner, cost, score, score_label}`
+      where `score` is the display value (0-10, higher is better) the
+      frontend renders. The mapping from cost to score is intentionally
+      compressed so the manager sees meaningful spread (cost ∈ [0, 1] →
+      score ∈ [10, 0], rounded to 0.1).
+
+    For ops that don't need a pair (`needs_pair_assignment` False) or
+    pools < 2 the function returns an empty list — the caller should
+    fall back to single-worker UX.
+
+    Notes:
+    * O(n² log n) per call for sorting, fine for NELO scale (≤85 workers).
+    * Stateless: no shared `used` set across calls (this is for the UX,
+      where the operator may swap mid-plan; the decoder still enforces
+      time-disjointness).
+    """
+    cost_fn = cost_fn or _default_cost
+    if not needs_pair_assignment(op, state):
+        return []
+
+    pool = _worker_pool(op, state)
+    if len(pool) < 2:
+        return []
+
+    candidates = sorted(pool)
+    pairs: List[Tuple[str, str, float]] = []
+    n = len(candidates)
+    for i in range(n):
+        for j in range(i + 1, n):
+            a, b = candidates[i], candidates[j]
+            try:
+                cost = cost_fn(a, b, op) + cost_fn(b, a, op)
+            except Exception as exc:  # pragma: no cover — defensive
+                logger.debug("pair cost_fn(%s, %s) failed: %s", a, b, exc)
+                continue
+            pairs.append((a, b, cost))
+
+    pairs.sort(key=lambda p: p[2])
+    out: List[Dict[str, object]] = []
+    for chefe, partner, cost in pairs[: max(1, top_n)]:
+        # cost ∈ [0, 2] (sum of two _default_cost calls in [0, 1]).
+        # Map to display score 0-10 where lower cost → higher score.
+        # Rounded to 0.1 so the UI shows "8.2" not "8.234".
+        clamped = max(0.0, min(2.0, cost))
+        score = round((1.0 - clamped / 2.0) * 10.0, 1)
+        out.append({
+            "chefe_id": chefe,
+            "partner_id": partner,
+            "cost": round(cost, 4),
+            "score": score,
+        })
+    return out

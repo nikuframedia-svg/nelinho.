@@ -32,3 +32,7 @@ export type { GhostOverlayProps } from './GhostOverlay';
 export { AuditTrailRow } from './AuditTrailRow';
 export type { AuditTrailRowProps } from './AuditTrailRow';
 
+// Sprint Q.13.A — Plan v4 §6.2 alternative worker pairs visual.
+export { WorkerPairCard } from './WorkerPairCard';
+export type { WorkerPairCardProps } from './WorkerPairCard';
+

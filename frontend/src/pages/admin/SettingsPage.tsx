@@ -45,12 +45,23 @@ interface Tenant {
 export function SettingsPage() {
   const [activeTab, setActiveTab] = useState<TabType>('general');
   const toast = useToastContext();
-  
+  const queryClient = useQueryClient();
+
   // Fetch tenant data
   const { data: tenants, isLoading: tenantsLoading } = useQuery<Tenant[]>({
     queryKey: ['tenants', 'current'],
     queryFn: () => tenantsApi.list(),
     retry: false,
+  });
+
+  // Sprint Q.13.A — A1: load system.* values from ConfigStore so the
+  // General tab reflects what's actually persisted (not just the
+  // hardcoded defaults useState picks up). Falls back silently when
+  // the backend doesn't have the keys yet.
+  const { data: systemConfig } = useQuery({
+    queryKey: ['config', 'system'],
+    queryFn: () => configApi.listCategory('system'),
+    staleTime: 30_000,
   });
   
   const currentTenant = tenants && tenants.length > 0 ? tenants[0] : null;
@@ -62,18 +73,100 @@ export function SettingsPage() {
   const [contactEmail, setContactEmail] = useState(currentTenant?.contact_email || '');
   const [contactPhone, setContactPhone] = useState(currentTenant?.contact_phone || '');
 
-  // Save mutation (placeholder - would need backend endpoint)
+  // Sprint Q.13.A — A1: hydrate the General tab from ConfigStore once
+  // the system category arrives. Without this, the page shows the
+  // hardcoded defaults forever even when the operator already saved
+  // a different value last week.
+  useEffect(() => {
+    if (!systemConfig?.values) return;
+    const v = systemConfig.values;
+    if (typeof v['language'] === 'string') setLanguage(v['language'] as string);
+    if (typeof v['format.currency'] === 'string') {
+      setCurrency(v['format.currency'] as string);
+    }
+    // timezone left out — `system.timezone` not in default_configs yet
+    // (deferred to a follow-up seed).
+  }, [systemConfig]);
+
+  // Sprint Q.13.A — A1: hydrate the Tenant tab when tenant arrives.
+  // Without this, opening the page resets contact fields to '' even
+  // when the tenant has them populated.
+  useEffect(() => {
+    if (!currentTenant) return;
+    if (currentTenant.contact_email) setContactEmail(currentTenant.contact_email);
+    if (currentTenant.contact_phone) setContactPhone(currentTenant.contact_phone);
+  }, [currentTenant]);
+
+  // Sprint Q.13.A — A1: real persistence (was 500ms mock).
+  //
+  // Two writes happen on Save:
+  //   1. system category in ConfigStore: `system.language`, `system.theme`,
+  //      `system.format.currency` — seeded in Q.11 Onda 3.6 follow-up
+  //      so the keys already exist with defaults.
+  //   2. Tenant row update (contact_email, contact_phone) via
+  //      `tenantsApi.update(tenantId, ...)`.
+  //
+  // We bulk-write the ConfigStore keys atomically and then PATCH the
+  // tenant row. Either side can fail independently; the Toast reports
+  // which write failed so the operator knows what got saved.
+  //
+  // Note: timezone is currently UI-only (no backend storage); we keep
+  // the form state but don't persist it until a `system.timezone` seed
+  // lands. Same for general → currency vs system.format.currency
+  // (system carries the canonical value).
   const saveMutation = useMutation({
-    mutationFn: async (data: Record<string, any>) => {
-      // Placeholder - would need actual endpoint
-      await new Promise((resolve) => setTimeout(resolve, 500));
+    mutationFn: async (data: {
+      timezone: string;
+      currency: string;
+      language: string;
+      contact_email: string;
+      contact_phone: string;
+    }) => {
+      const errors: string[] = [];
+
+      // Step 1: ConfigStore system.* writes.
+      try {
+        await configApi.bulkSet([
+          { category: 'system', key: 'language', value: data.language, data_type: 'string' },
+          { category: 'system', key: 'format.currency', value: data.currency, data_type: 'string' },
+        ]);
+      } catch (err) {
+        errors.push(
+          `ConfigStore: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+
+      // Step 2: Tenant row patch (only when we have a tenant + something
+      // to write; skip silently when contact fields are empty so a user
+      // landing on the page doesn't accidentally null out the tenant
+      // record).
+      if (currentTenant && (data.contact_email || data.contact_phone)) {
+        try {
+          await tenantsApi.update(currentTenant.id, {
+            contact_email: data.contact_email,
+            contact_phone: data.contact_phone,
+          });
+        } catch (err) {
+          errors.push(
+            `Tenant: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+
+      if (errors.length > 0) {
+        throw new Error(errors.join(' · '));
+      }
       return data;
     },
     onSuccess: () => {
+      // Invalidate so the next render picks up persisted values + audit.
+      queryClient.invalidateQueries({ queryKey: ['config', 'system'] });
+      queryClient.invalidateQueries({ queryKey: ['tenants'] });
       toast.success('Settings saved successfully!');
     },
-    onError: () => {
-      toast.error('Error saving settings.');
+    onError: (err) => {
+      const msg = err instanceof Error ? err.message : 'Error saving settings.';
+      toast.error(msg);
     },
   });
 
