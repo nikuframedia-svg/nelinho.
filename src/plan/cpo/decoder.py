@@ -253,12 +253,37 @@ def decode(
     # Sort ops by chromosome-provided priority, but respect precedence via
     # a topological pass at decode time.
     op_by_index = list(operations)
-    priority_order = [op_by_index[i] for i in chromosome.permutation if 0 <= i < len(op_by_index)]
-    # Fallback: any op missing from chromosome perm gets appended at the end
-    seen = {id(op) for op in priority_order}
-    for op in op_by_index:
-        if id(op) not in seen:
-            priority_order.append(op)
+    n = len(op_by_index)
+
+    # FASE 1A.3 (CRIT-10) — validate the chromosome's permutation up front
+    # and surface any anomaly via WARN. The previous list comprehension
+    # silently dropped out-of-bounds indices (ops disappear) and accepted
+    # duplicates (same op processed twice). Both can mask GA operator bugs.
+    perm = list(chromosome.permutation)
+    out_of_range = [i for i in perm if not (0 <= i < n)]
+    duplicates = len(perm) - len(set(perm))
+    missing = n - len({i for i in perm if 0 <= i < n})
+    if out_of_range or duplicates or missing or len(perm) != n:
+        logger.warning(
+            "decoder: malformed chromosome permutation "
+            "(n=%d, perm_len=%d, out_of_range=%d, duplicates=%d, missing=%d) — "
+            "deduplicating and appending missing ops in natural order",
+            n, len(perm), len(out_of_range), duplicates, missing,
+        )
+
+    # Build priority_order: take each in-range index at most once, in chromosome
+    # order. Anything left over is appended in natural index order so every op
+    # is scheduled exactly once.
+    priority_order: List[SchedulingOperation] = []
+    seen_idx: set = set()
+    for i in perm:
+        if 0 <= i < n and i not in seen_idx:
+            priority_order.append(op_by_index[i])
+            seen_idx.add(i)
+    for i in range(n):
+        if i not in seen_idx:
+            priority_order.append(op_by_index[i])
+            seen_idx.add(i)
 
     # Resolve precedences: within same order, natural `sequence` order must hold
     order_to_ops: Dict[str, List[SchedulingOperation]] = defaultdict(list)
