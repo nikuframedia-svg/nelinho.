@@ -46,7 +46,13 @@ import {
 import { formatDistanceToNow } from 'date-fns';
 import { pt } from 'date-fns/locale';
 import { DarkPageLayout } from '../layouts';
-import { DarkCard, DarkBadge, DarkButton } from '../components/dark';
+import {
+  BarcodeScanButton,
+  DarkBadge,
+  DarkButton,
+  DarkCard,
+  KioskWrapper,
+} from '../components/dark';
 import { LiveBadge } from '../components/dashboard/LiveBadge';
 import { useRealtime } from '../providers/RealtimeProvider';
 import {
@@ -261,14 +267,24 @@ function IssueForm({ defaultOrderId, workerId, onSuccess }: IssueFormProps) {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <label className="block">
           <span className="text-sm text-text-secondary">Ordem</span>
-          <input
-            type="text"
-            value={orderId}
-            onChange={(e) => setOrderId(e.target.value.toUpperCase())}
-            placeholder="OF-12345"
-            className="mt-1 w-full h-14 rounded-xl bg-bg-elevated border border-border-subtle px-4 text-lg text-text-white focus:outline-none focus:border-accent"
-            required
-          />
+          <div className="mt-1 flex items-stretch gap-2">
+            <input
+              type="text"
+              value={orderId}
+              onChange={(e) => setOrderId(e.target.value.toUpperCase())}
+              placeholder="OF-12345"
+              className="flex-1 h-14 rounded-xl bg-bg-elevated border border-border-subtle px-4 text-lg text-text-white focus:outline-none focus:border-accent"
+              required
+            />
+            {/* Sprint Q.13.C C.3.5 — barcode scanner. Hides itself on
+                browsers without BarcodeDetector; on supported browsers
+                opens the camera + auto-fills the orderId on first match. */}
+            <BarcodeScanButton
+              label=""
+              onScan={(value) => setOrderId(value.trim().toUpperCase())}
+              formats={['code_128', 'qr_code']}
+            />
+          </div>
         </label>
         <label className="block">
           <span className="text-sm text-text-secondary">Tipo de defeito</span>
@@ -332,6 +348,16 @@ export function OperadorPage() {
   const [searchParams] = useSearchParams();
   const realtime = useRealtime();
   const queryClient = useQueryClient();
+
+  // Sprint Q.13.C C.3.5 — kiosk mode opt-in via `?kiosk=true`. The
+  // tablet bookmark (or QR sticker) carries this param so the operator
+  // lands on a chrome-less, fullscreen-ready surface. Without it the
+  // page still works inside the normal app shell — same component,
+  // two render paths.
+  const kioskMode = useMemo(
+    () => searchParams.get('kiosk') === 'true',
+    [searchParams],
+  );
 
   const workerId = useMemo(
     () =>
@@ -473,7 +499,11 @@ export function OperadorPage() {
     });
   };
 
+  // Sprint Q.13.C C.3.5 — kiosk mode wraps the main content without
+  // the app's chrome (sidebar/topbar). The `enabled=false` path is a
+  // pass-through so the normal embedded view stays untouched.
   return (
+    <KioskWrapper enabled={kioskMode} brandLabel="ProdPlan · Operador">
     <DarkPageLayout
       title="Operador"
       subtitle="A minha fila de trabalho · tablet"
@@ -541,6 +571,7 @@ export function OperadorPage() {
         </div>
       </DarkCard>
     </DarkPageLayout>
+    </KioskWrapper>
   );
 }
 

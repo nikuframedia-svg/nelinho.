@@ -270,14 +270,52 @@ export function CEODashboardPage() {
   const throughput = data?.throughput_eur;
   const band = throughput ? bandBadge(throughput.on_target) : null;
 
-  // Sprint Q.9 Onda 3.5 — Export PDF via the browser's "save as PDF"
-  // print pipeline. Plan v4 §9 lists this as a requirement; we go with
-  // window.print() instead of jsPDF to avoid pulling another bundle dep.
-  // The print stylesheet (`@media print` in `index.css`) hides
-  // sidebar/topbar so the printed page is the dashboard alone.
+  // Sprint Q.9 Onda 3.5 + Q.13.C C.3.4 — Export PDF via the browser's
+  // "save as PDF" print pipeline. Plan v4 §9 lists this as a hard
+  // requirement; we use window.print() instead of jsPDF so the bundle
+  // stays lean (no jspdf + html2canvas → ~400KB saved). The print
+  // stylesheet (`@media print` in `index.css`) renders a clean
+  // light-theme version of the dashboard with a dated footer.
+  //
+  // The browser's Save-as-PDF dialog suggests a filename based on
+  // `document.title`; we set it transiently here so the saved file is
+  // "ProdPlan-CEO-2026-05-02.pdf" (instead of "PP1 - CEO" or
+  // whatever the route last set). We restore the original title after
+  // the print dispatch returns.
   const handleExportPdf = () => {
-    if (typeof window !== 'undefined' && typeof window.print === 'function') {
+    if (typeof window === 'undefined' || typeof window.print !== 'function') {
+      return;
+    }
+    const today = new Date();
+    const dd = String(today.getDate()).padStart(2, '0');
+    const mm = String(today.getMonth() + 1).padStart(2, '0');
+    const yyyy = today.getFullYear();
+    const dateStr = `${dd}/${mm}/${yyyy}`;
+    const fileDate = `${yyyy}-${mm}-${dd}`;
+
+    // Stamp the date on <body> so the @media print footer can read it
+    // via attr(data-print-date).
+    if (typeof document !== 'undefined' && document.body) {
+      document.body.setAttribute('data-print-date', dateStr);
+    }
+
+    const previousTitle = typeof document !== 'undefined' ? document.title : '';
+    if (typeof document !== 'undefined') {
+      document.title = `ProdPlan-CEO-${fileDate}`;
+    }
+
+    try {
       window.print();
+    } finally {
+      // Restore title shortly after — most browsers fire afterprint
+      // synchronously but a small timeout covers macOS Safari which
+      // is reportedly async.
+      setTimeout(() => {
+        if (typeof document !== 'undefined') {
+          document.title = previousTitle;
+          document.body?.removeAttribute('data-print-date');
+        }
+      }, 500);
     }
   };
 

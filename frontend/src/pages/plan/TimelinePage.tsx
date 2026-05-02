@@ -91,12 +91,74 @@ interface AlternativeCardProps {
   submitting: boolean;
 }
 
+// Sprint Q.13.C C.3.3 — KPIs where a positive Δ% is BAD news (the
+// candidate did MORE of an unwanted thing). The default assumption is
+// "+ = bad" (e.g. tardiness up = bad, setup_time up = bad), but a few
+// metrics invert: throughput_eur_day, otd_delivery, makespan_savings,
+// idle_avoided. We render those in green when positive, amber/rose
+// when negative — opposite of the default direction.
+const _LOWER_IS_BETTER: ReadonlySet<string> = new Set([
+  'makespan_hours',
+  'total_tardiness_hours',
+  'num_late_orders',
+  'avg_quality_risk',
+  'total_setup_time_h',
+  'idle_operators_h',
+  'tardiness_transport',
+]);
+const _HIGHER_IS_BETTER: ReadonlySet<string> = new Set([
+  'throughput_eur_day',
+  'otd_delivery',
+  'avg_utilization',
+  'lam_utilization',
+]);
+
+function _classifyDelta(
+  key: string,
+  delta: string,
+): 'improvement' | 'regression' | 'neutral' {
+  // Parse "+12.3%" / "-5.1%" / "0.0%" / "+0.0%" → numeric and sign.
+  const trimmed = delta.replace('%', '').trim();
+  if (!trimmed || trimmed === '0.0' || trimmed === '+0.0' || trimmed === '-0.0') {
+    return 'neutral';
+  }
+  const value = parseFloat(trimmed);
+  if (Number.isNaN(value)) return 'neutral';
+  if (Math.abs(value) < 0.1) return 'neutral';
+  const positive = value > 0;
+  if (_LOWER_IS_BETTER.has(key)) return positive ? 'regression' : 'improvement';
+  if (_HIGHER_IS_BETTER.has(key)) return positive ? 'improvement' : 'regression';
+  // Unknown key — fall back to "+ = regression" pessimistic default.
+  return positive ? 'regression' : 'improvement';
+}
+
+function _deltaMagnitude(delta: string): number {
+  const value = parseFloat(delta.replace('%', '').replace('+', '').trim());
+  return Number.isNaN(value) ? 0 : Math.abs(value);
+}
+
 function AlternativeCard({ alt, onChoose, submitting }: AlternativeCardProps) {
-  const mainDeltas = useMemo(() => {
-    return Object.entries(alt.vs_primary)
-      .filter(([, v]) => v !== null)
-      .slice(0, 3) as Array<[string, string]>;
+  // Sprint Q.13.C C.3.3 — rich trade-off rendering. Plan v4 §8 promises
+  // the manager sees alternatives with their full KPI delta vector
+  // sorted by impact, with each delta classified (improvement / neutral
+  // / regression) so a 30-second scan immediately conveys "what does
+  // this trade".
+  const sortedDeltas = useMemo(() => {
+    const entries = Object.entries(alt.vs_primary).filter(
+      ([, v]) => v !== null && v !== undefined,
+    ) as Array<[string, string]>;
+    return entries
+      .map(([key, delta]) => ({
+        key,
+        delta,
+        kind: _classifyDelta(key, delta),
+        magnitude: _deltaMagnitude(delta),
+      }))
+      .sort((a, b) => b.magnitude - a.magnitude);
   }, [alt.vs_primary]);
+
+  const improvements = sortedDeltas.filter((d) => d.kind === 'improvement');
+  const regressions = sortedDeltas.filter((d) => d.kind === 'regression');
 
   return (
     <DarkCard className="flex flex-col">
@@ -109,29 +171,62 @@ function AlternativeCard({ alt, onChoose, submitting }: AlternativeCardProps) {
             Gen {alt.generation} · fit {alt.fitness.toFixed(2)}
           </div>
         </div>
+        {/* Trade-off summary chips: at-a-glance count of improvements
+            and regressions so manager doesn't have to count rows. */}
+        <div className="flex items-center gap-1 text-[10px] font-semibold">
+          {improvements.length > 0 ? (
+            <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300">
+              ↑{improvements.length}
+            </span>
+          ) : null}
+          {regressions.length > 0 ? (
+            <span className="px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-300">
+              ↓{regressions.length}
+            </span>
+          ) : null}
+        </div>
       </div>
 
       <p className="text-sm text-text-secondary mb-3 leading-snug">
         {alt.trade_off_narrative}
       </p>
 
-      {mainDeltas.length > 0 && (
+      {sortedDeltas.length > 0 && (
         <div className="space-y-1 mb-4">
-          {mainDeltas.map(([key, delta]) => {
-            const positive = delta.startsWith('+');
-            const neutral = delta.startsWith('+0.0') || delta === '0.0%';
-            const colour = neutral
-              ? 'text-text-tertiary'
-              : positive
-              ? 'text-amber-300'
-              : 'text-emerald-300';
+          {sortedDeltas.map(({ key, delta, kind, magnitude }) => {
+            const tone =
+              kind === 'improvement'
+                ? 'text-emerald-300'
+                : kind === 'regression'
+                ? 'text-rose-300'
+                : 'text-text-tertiary';
+            // Visual mini-bar: width proportional to magnitude (clamped
+            // at 30% of the row to keep large outliers from breaking
+            // layout). Shows "this delta is bigger than that one"
+            // without forcing operator to compare numbers mentally.
+            const widthPct = Math.min(30, Math.max(2, magnitude));
+            const barTone =
+              kind === 'improvement'
+                ? 'bg-emerald-500/40'
+                : kind === 'regression'
+                ? 'bg-rose-500/40'
+                : 'bg-slate-600/40';
             return (
               <div
                 key={key}
-                className="flex items-center justify-between text-xs"
+                className="grid grid-cols-[1fr_auto_auto] gap-2 items-center text-xs"
               >
-                <span className="text-text-tertiary">{key}</span>
-                <span className={`tabular-nums ${colour}`}>{delta}</span>
+                <span className="text-text-tertiary truncate" title={key}>
+                  {key}
+                </span>
+                <div
+                  className={`h-1.5 rounded-full ${barTone}`}
+                  style={{ width: `${widthPct * 4}px` }}
+                  aria-hidden
+                />
+                <span className={`tabular-nums font-medium ${tone}`}>
+                  {delta}
+                </span>
               </div>
             );
           })}
