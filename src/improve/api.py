@@ -3,15 +3,29 @@ ProdPlan ONE - Improve (Suggestions) API
 =========================================
 
 Endpoints for AI-generated improvement suggestions.
+
+Sprint Q.10 Fase C — moved from in-memory ``suggestions_store`` /
+hardcoded ``PREDEFINED_SUGGESTIONS`` to DB-backed ``ImproveService``.
+``POST /generate`` now calls Copilot/Ollama via ``chat_with_fallback``
+with graceful fallback to per-tenant SEED rows.
 """
 
 import logging
-from datetime import datetime
 from typing import Any, Dict, List, Optional
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.improve.models import ImprovementSuggestion
+from src.improve.service import (
+    ImproveService,
+    SuggestionNotFoundError,
+    SuggestionStateError,
+)
+from src.shared.database import get_session
+from src.shared.pagination import validate_pagination
 
 logger = logging.getLogger(__name__)
 
@@ -22,14 +36,16 @@ router = APIRouter(prefix="/v1/improve", tags=["Improve"])
 # SCHEMAS
 # ============================================================================
 
+
 class SuggestionResponse(BaseModel):
     """Response for a suggestion."""
     id: str
     title: str
     description: str
-    domain: str  # "oee", "quality", "supply", etc.
-    action_type: str  # "reduce_standard_time", "add_machine", etc.
-    status: str  # "pending", "approved", "rejected", "implemented"
+    domain: str
+    action_type: str
+    status: str
+    source: str  # "seed" | "llm_generated" | "manual"
     estimated_impact: Dict[str, Any]
     confidence: float
     created_at: str
@@ -39,8 +55,9 @@ class SuggestionResponse(BaseModel):
 
 class GenerateSuggestionsRequest(BaseModel):
     """Request to generate new suggestions."""
-    scope: Optional[str] = None  # "oee", "quality", "supply", or None for all
+    scope: Optional[str] = None  # "oee" | "quality" | "supply" | "hr"
     limit: int = Field(default=5, ge=1, le=20)
+    factory_state_summary: Optional[Dict[str, Any]] = None
 
 
 class ActionCatalogEntry(BaseModel):
@@ -52,90 +69,15 @@ class ActionCatalogEntry(BaseModel):
     parameters: Dict[str, Any]
 
 
-# ============================================================================
-# PREDEFINED SUGGESTIONS (in production, these would be AI-generated)
-# ============================================================================
-
-PREDEFINED_SUGGESTIONS: List[Dict[str, Any]] = [
-    {
-        "id": "sug_001",
-        "title": "Reduce standard times for Laminagem phase",
-        "description": "Analysis shows that Laminagem phase standard times are 15% higher than actual production times. Reducing standard times will improve performance metrics.",
-        "domain": "oee",
-        "action_type": "reduce_standard_time",
-        "status": "pending",
-        "estimated_impact": {
-            "oee": {"delta": 3.5, "confidence": 0.85},
-            "performance": {"delta": 5.0, "confidence": 0.90},
-        },
-        "confidence": 0.87,
-        "created_at": "2026-01-28T10:00:00Z",
-    },
-    {
-        "id": "sug_002",
-        "title": "Add backup machine for bottleneck station",
-        "description": "Station P003 (Corte) is a bottleneck with 92% utilization. Adding a backup machine would reduce wait times and improve availability.",
-        "domain": "oee",
-        "action_type": "add_machine",
-        "status": "pending",
-        "estimated_impact": {
-            "oee": {"delta": 2.0, "confidence": 0.80},
-            "availability": {"delta": 3.0, "confidence": 0.85},
-        },
-        "confidence": 0.82,
-        "created_at": "2026-01-28T10:30:00Z",
-    },
-    {
-        "id": "sug_003",
-        "title": "Implement SPC for quality control",
-        "description": "Statistical Process Control at critical quality gates would reduce defects by catching issues earlier in the process.",
-        "domain": "quality",
-        "action_type": "improve_quality",
-        "status": "pending",
-        "estimated_impact": {
-            "quality": {"delta": 2.5, "confidence": 0.88},
-            "oee": {"delta": 1.8, "confidence": 0.85},
-        },
-        "confidence": 0.86,
-        "created_at": "2026-01-28T11:00:00Z",
-    },
-    {
-        "id": "sug_004",
-        "title": "Optimize production schedule for OTD improvement",
-        "description": "Rescheduling based on delivery deadlines rather than arrival order would improve on-time delivery by 8%.",
-        "domain": "supply",
-        "action_type": "optimize_schedule",
-        "status": "pending",
-        "estimated_impact": {
-            "otd": {"delta": 8.0, "confidence": 0.78},
-            "lead_time": {"delta": -0.5, "confidence": 0.75},
-        },
-        "confidence": 0.77,
-        "created_at": "2026-01-28T11:30:00Z",
-    },
-    {
-        "id": "sug_005",
-        "title": "Cross-train operators for multi-station flexibility",
-        "description": "Training operators on multiple stations would reduce idle time during absences and improve overall efficiency.",
-        "domain": "hr",
-        "action_type": "cross_training",
-        "status": "pending",
-        "estimated_impact": {
-            "availability": {"delta": 2.0, "confidence": 0.82},
-            "oee": {"delta": 1.5, "confidence": 0.80},
-        },
-        "confidence": 0.81,
-        "created_at": "2026-01-28T12:00:00Z",
-    },
-]
-
-# In-memory store for suggestions
-suggestions_store: Dict[str, Dict[str, Any]] = {s["id"]: s.copy() for s in PREDEFINED_SUGGESTIONS}
+class RejectRequest(BaseModel):
+    reason: Optional[str] = None
 
 
 # ============================================================================
-# ACTION TYPES CATALOG
+# ACTION TYPES CATALOG (static; describes the action_type values
+# the suggestions can take)
 # ============================================================================
+
 
 ACTION_CATALOG: List[Dict[str, Any]] = [
     {
@@ -165,7 +107,10 @@ ACTION_CATALOG: List[Dict[str, Any]] = [
         "domains": ["quality", "oee"],
         "parameters": {
             "process_id": {"type": "string", "required": True},
-            "improvement_type": {"type": "string", "enum": ["spc", "inspection", "training"]},
+            "improvement_type": {
+                "type": "string",
+                "enum": ["spc", "inspection", "training"],
+            },
         },
     },
     {
@@ -192,228 +137,153 @@ ACTION_CATALOG: List[Dict[str, Any]] = [
 
 
 # ============================================================================
-# HELPERS
+# DEPENDENCIES
 # ============================================================================
 
-def get_tenant_id(x_tenant_id: UUID = Header(default=UUID("00000000-0000-0000-0000-000000000000"))) -> UUID:
-    """Extract tenant ID from header."""
+
+def get_tenant_id(
+    x_tenant_id: UUID = Header(default=UUID("00000000-0000-0000-0000-000000000000")),
+) -> UUID:
     return x_tenant_id
+
+
+def get_reviewer_id(
+    x_user_id: Optional[UUID] = Header(default=None),
+) -> UUID:
+    return x_user_id or UUID("00000000-0000-0000-0000-000000000001")
+
+
+async def get_improve_service(
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+) -> ImproveService:
+    return ImproveService(session=session, tenant_id=tenant_id)
+
+
+def _to_response(sug: ImprovementSuggestion) -> SuggestionResponse:
+    return SuggestionResponse(
+        id=str(sug.id),
+        title=sug.title,
+        description=sug.description,
+        domain=sug.domain,
+        action_type=sug.action_type,
+        status=sug.status,
+        source=sug.source,
+        estimated_impact=sug.estimated_impact or {},
+        confidence=sug.confidence,
+        created_at=sug.created_at.isoformat() if sug.created_at else "",
+        reviewed_at=sug.reviewed_at.isoformat() if sug.reviewed_at else None,
+        reviewed_by=str(sug.reviewed_by) if sug.reviewed_by else None,
+    )
 
 
 # ============================================================================
 # ENDPOINTS
 # ============================================================================
 
+
 @router.get("/suggestions", response_model=List[SuggestionResponse])
 async def list_suggestions(
     status_filter: Optional[str] = Query(None, alias="status"),
     domain: Optional[str] = Query(None),
-    tenant_id: UUID = Depends(get_tenant_id),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    service: ImproveService = Depends(get_improve_service),
 ):
+    """List improvement suggestions for the current tenant.
+
+    On first call for a tenant, the service seeds the bucket with the
+    5 SEED_SUGGESTIONS so a fresh install isn't blank.
     """
-    List improvement suggestions.
-    
-    Can filter by status and domain.
-    """
-    suggestions = list(suggestions_store.values())
-    
-    if status_filter:
-        suggestions = [s for s in suggestions if s["status"] == status_filter]
-    
-    if domain:
-        suggestions = [s for s in suggestions if s["domain"] == domain]
-    
-    return [
-        SuggestionResponse(
-            id=s["id"],
-            title=s["title"],
-            description=s["description"],
-            domain=s["domain"],
-            action_type=s["action_type"],
-            status=s["status"],
-            estimated_impact=s["estimated_impact"],
-            confidence=s["confidence"],
-            created_at=s["created_at"],
-            reviewed_at=s.get("reviewed_at"),
-            reviewed_by=s.get("reviewed_by"),
-        )
-        for s in suggestions
-    ]
+    validate_pagination(limit, offset)
+    rows = await service.list_suggestions(
+        status=status_filter, domain=domain, limit=limit, offset=offset,
+    )
+    return [_to_response(s) for s in rows]
 
 
 @router.get("/suggestions/{suggestion_id}", response_model=SuggestionResponse)
 async def get_suggestion(
-    suggestion_id: str,
-    tenant_id: UUID = Depends(get_tenant_id),
+    suggestion_id: UUID,
+    service: ImproveService = Depends(get_improve_service),
 ):
     """Get details of a specific suggestion."""
-    suggestion = suggestions_store.get(suggestion_id)
-    
-    if not suggestion:
+    sug = await service.get_suggestion(suggestion_id)
+    if sug is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Suggestion '{suggestion_id}' not found.",
         )
-    
-    return SuggestionResponse(
-        id=suggestion["id"],
-        title=suggestion["title"],
-        description=suggestion["description"],
-        domain=suggestion["domain"],
-        action_type=suggestion["action_type"],
-        status=suggestion["status"],
-        estimated_impact=suggestion["estimated_impact"],
-        confidence=suggestion["confidence"],
-        created_at=suggestion["created_at"],
-        reviewed_at=suggestion.get("reviewed_at"),
-        reviewed_by=suggestion.get("reviewed_by"),
-    )
+    return _to_response(sug)
 
 
 @router.post("/suggestions/generate", response_model=List[SuggestionResponse])
 async def generate_suggestions(
     request: GenerateSuggestionsRequest,
-    tenant_id: UUID = Depends(get_tenant_id),
+    service: ImproveService = Depends(get_improve_service),
 ):
+    """Generate new suggestions via Copilot/Ollama with graceful fallback
+    to seed data when the LLM is unavailable.
+
+    Sprint Q.10 (C.3) — replaces the previous *fake* AI generator that
+    only copied ``PREDEFINED_SUGGESTIONS``.
     """
-    Generate new AI-powered suggestions.
-    
-    Analyzes current factory state and generates improvement recommendations.
-    """
-    # In production, this would call an AI model
-    # For now, return filtered predefined suggestions
-    
-    suggestions = list(PREDEFINED_SUGGESTIONS)
-    
-    if request.scope:
-        suggestions = [s for s in suggestions if s["domain"] == request.scope]
-    
-    suggestions = suggestions[:request.limit]
-    
-    # Add to store with new IDs
-    new_suggestions = []
-    for s in suggestions:
-        new_id = f"sug_{uuid4().hex[:8]}"
-        new_suggestion = s.copy()
-        new_suggestion["id"] = new_id
-        new_suggestion["created_at"] = datetime.utcnow().isoformat()
-        suggestions_store[new_id] = new_suggestion
-        new_suggestions.append(new_suggestion)
-    
-    logger.info(f"Generated {len(new_suggestions)} suggestions")
-    
-    return [
-        SuggestionResponse(
-            id=s["id"],
-            title=s["title"],
-            description=s["description"],
-            domain=s["domain"],
-            action_type=s["action_type"],
-            status=s["status"],
-            estimated_impact=s["estimated_impact"],
-            confidence=s["confidence"],
-            created_at=s["created_at"],
-        )
-        for s in new_suggestions
-    ]
+    rows = await service.generate_via_llm(
+        scope=request.scope,
+        limit=request.limit,
+        factory_state_summary=request.factory_state_summary,
+    )
+    return [_to_response(s) for s in rows]
 
 
-@router.post("/suggestions/{suggestion_id}/approve")
+@router.post("/suggestions/{suggestion_id}/approve", response_model=SuggestionResponse)
 async def approve_suggestion(
-    suggestion_id: str,
-    tenant_id: UUID = Depends(get_tenant_id),
+    suggestion_id: UUID,
+    reviewer_id: UUID = Depends(get_reviewer_id),
+    service: ImproveService = Depends(get_improve_service),
 ):
-    """
-    Approve a suggestion for implementation.
-    
-    Marks suggestion as approved and creates sandbox scenario.
-    """
-    suggestion = suggestions_store.get(suggestion_id)
-    
-    if not suggestion:
+    """Approve a pending suggestion."""
+    try:
+        sug = await service.approve(suggestion_id, reviewer_id)
+    except SuggestionNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Suggestion '{suggestion_id}' not found.",
         )
-    
-    if suggestion["status"] != "pending":
+    except SuggestionStateError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Suggestion cannot be approved. Current status: {suggestion['status']}",
+            detail=str(exc),
         )
-    
-    suggestion["status"] = "approved"
-    suggestion["reviewed_at"] = datetime.utcnow().isoformat()
-    suggestion["reviewed_by"] = str(tenant_id)
-    
-    logger.info(f"Approved suggestion: {suggestion_id}")
-    
-    return {
-        "suggestion_id": suggestion_id,
-        "status": "approved",
-        "message": "Suggestion approved. You can now create a sandbox scenario to test it.",
-    }
+    return _to_response(sug)
 
 
-@router.post("/suggestions/{suggestion_id}/reject")
+@router.post("/suggestions/{suggestion_id}/reject", response_model=SuggestionResponse)
 async def reject_suggestion(
-    suggestion_id: str,
-    reason: Optional[str] = None,
-    tenant_id: UUID = Depends(get_tenant_id),
+    suggestion_id: UUID,
+    request: Optional[RejectRequest] = None,
+    reviewer_id: UUID = Depends(get_reviewer_id),
+    service: ImproveService = Depends(get_improve_service),
 ):
-    """
-    Reject a suggestion.
-    
-    Marks suggestion as rejected with optional reason.
-    """
-    suggestion = suggestions_store.get(suggestion_id)
-    
-    if not suggestion:
+    """Reject a pending suggestion. Optional ``reason`` in the body is
+    stored in ``rejection_reason``."""
+    reason = request.reason if request else None
+    try:
+        sug = await service.reject(suggestion_id, reviewer_id, reason=reason)
+    except SuggestionNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Suggestion '{suggestion_id}' not found.",
         )
-    
-    if suggestion["status"] != "pending":
+    except SuggestionStateError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Suggestion cannot be rejected. Current status: {suggestion['status']}",
+            detail=str(exc),
         )
-    
-    suggestion["status"] = "rejected"
-    suggestion["reviewed_at"] = datetime.utcnow().isoformat()
-    suggestion["reviewed_by"] = str(tenant_id)
-    suggestion["rejection_reason"] = reason
-    
-    logger.info(f"Rejected suggestion: {suggestion_id}, reason: {reason}")
-    
-    return {
-        "suggestion_id": suggestion_id,
-        "status": "rejected",
-        "reason": reason,
-        "message": "Suggestion rejected.",
-    }
+    return _to_response(sug)
 
 
 @router.get("/actions", response_model=List[ActionCatalogEntry])
 async def get_actions_catalog():
-    """
-    Get catalog of available action types.
-    
-    Lists all action types that can be used in suggestions.
-    """
-    return [
-        ActionCatalogEntry(
-            type=a["type"],
-            name=a["name"],
-            description=a["description"],
-            domains=a["domains"],
-            parameters=a["parameters"],
-        )
-        for a in ACTION_CATALOG
-    ]
-
-
-
-
-
+    """Get catalog of available action types for the suggestions."""
+    return [ActionCatalogEntry(**a) for a in ACTION_CATALOG]
