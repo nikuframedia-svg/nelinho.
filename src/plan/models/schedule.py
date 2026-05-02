@@ -11,7 +11,17 @@ from enum import Enum
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import String, Numeric, Integer, Enum as SQLEnum, Text, ForeignKey, Date, Time
+from sqlalchemy import (
+    Date,
+    Enum as SQLEnum,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    Time,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -35,7 +45,15 @@ class ProductionSchedule(TenantBase):
     """
     
     __tablename__ = "production_schedules"
-    __table_args__ = {"schema": "plan"}
+    __table_args__ = (
+        # FASE 3.1 (HIGH-42) — idempotency: same input → same row instead
+        # of duplicating on every retry of generate_schedule().
+        UniqueConstraint(
+            "tenant_id", "order_id", "operation_id", "planning_run_id",
+            name="uq_production_schedules_planning",
+        ),
+        {"schema": "plan"},
+    )
     
     # Order reference
     order_id: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
