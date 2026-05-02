@@ -83,10 +83,13 @@ class SurrogateModel:
         rng.shuffle(idx)
         val_idx, train_idx = idx[:split], idx[split:]
 
+        # FASE 4.3 — hyperparams from MLConfig (env-overridable).
+        from src.ml.config import get_config
+        hp = get_config().hyperparams_for("surrogate")
         model = RandomForestRegressor(
-            n_estimators=120,
-            max_depth=8,
-            min_samples_leaf=3,
+            n_estimators=int(hp.get("n_estimators", 120)),
+            max_depth=int(hp.get("max_depth", 8)),
+            min_samples_leaf=int(hp.get("min_samples_leaf", 3)),
             random_state=random_state,
             n_jobs=1,  # stable determinism in tests
         )

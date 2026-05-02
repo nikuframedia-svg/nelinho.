@@ -118,10 +118,15 @@ class DurationModel:
                 X_train, X_val = X, X
                 y_train, y_val = y, y
 
+        # FASE 4.3 — hyperparams from MLConfig (env-overridable). Falls
+        # back to the same legacy values (100/4/0.08) when the env var
+        # is unset, so behaviour is unchanged out of the box.
+        from src.ml.config import get_config
+        hp = get_config().hyperparams_for("duration")
         model = GradientBoostingRegressor(
-            n_estimators=100,
-            max_depth=4,
-            learning_rate=0.08,
+            n_estimators=int(hp.get("n_estimators", 100)),
+            max_depth=int(hp.get("max_depth", 4)),
+            learning_rate=float(hp.get("learning_rate", 0.08)),
             random_state=random_state,
         )
         model.fit(X_train, y_train)

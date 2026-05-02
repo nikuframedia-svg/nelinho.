@@ -106,10 +106,13 @@ class QualityRiskModel:
                 stratify=y if y.sum() >= 2 and (len(y) - y.sum()) >= 2 else None,
             )
 
+        # FASE 4.3 — hyperparams from MLConfig (env-overridable).
+        from src.ml.config import get_config
+        hp = get_config().hyperparams_for("quality_risk")
         clf = GradientBoostingClassifier(
-            n_estimators=120,
-            max_depth=3,
-            learning_rate=0.1,
+            n_estimators=int(hp.get("n_estimators", 120)),
+            max_depth=int(hp.get("max_depth", 3)),
+            learning_rate=float(hp.get("learning_rate", 0.1)),
             random_state=random_state,
         )
         clf.fit(X_train, y_train)

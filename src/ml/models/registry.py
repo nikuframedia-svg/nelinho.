@@ -220,6 +220,16 @@ class ModelRegistry:
             f"Promoted {target.model_name} v{target.version} "
             f"(artifact_id={target.id}, decision={decision_id})"
         )
+        # FASE 4.2 (HIGH-53) — surface the active version on the gauge.
+        # Defensive: prometheus_client may be unavailable in unit tests.
+        try:
+            from src.ml.observability.metrics import ml_model_active_version
+            ml_model_active_version.labels(
+                tenant_id=str(self.tenant_id),
+                model_name=target.model_name,
+            ).set(target.version)
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.debug("ml_model_active_version emit failed: %s", exc)
         return target
 
     # ------------------------------------------------------------------ #
