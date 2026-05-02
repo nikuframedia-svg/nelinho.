@@ -204,14 +204,22 @@ class DashboardMetricsService:
         self,
         *,
         limit: int = 20,
-        unit_value_eur: float = BACKLOG_DEFAULT_VALUE_EUR,
+        unit_value_eur: Optional[float] = None,
     ) -> list[BacklogClientRow]:
         """Pending orders × value × earliest deadline, grouped by client.
 
         "Pending" = `data_conclusao IS NULL` (not yet closed). Value is
         an estimate using `unit_value_eur` because the curated layer
         doesn't carry per-order pricing — Q.6 will swap to ProductPricing.
+
+        Sprint Q.8 Fase 5 — `unit_value_eur` is now resolved from
+        TenantConfig (`cost.target.unit_value_eur`) when not provided
+        explicitly by the caller. The hardcoded module-level default is
+        kept as a last-resort fallback when the config store itself is
+        unreachable, so the route never fails closed on a config miss.
         """
+        if unit_value_eur is None:
+            unit_value_eur = await self._resolve_unit_value_eur()
         stmt = select(
             CuratedOrder.produto_nome,
             func.count(CuratedOrder.id).label("pending_orders"),
@@ -339,3 +347,29 @@ class DashboardMetricsService:
             orders_with_rework=min(with_rework, total),
             first_pass_yield_pct=fpy,
         )
+
+    # ── Helpers ───────────────────────────────────────────────────────
+    async def _resolve_unit_value_eur(self) -> float:
+        """Resolve `cost.target.unit_value_eur` from TenantConfig.
+
+        Sprint Q.8 Fase 5 — was a hardcoded `2350.0` in module scope.
+        Now read from the config store with the same module constant
+        as last-resort fallback (so config-store outages don't break
+        the dashboard endpoint, they just preserve the previous value).
+        """
+        try:
+            from src.core.services.tenant_config_service import TenantConfigService
+
+            svc = TenantConfigService(self.session, self.tenant_id)
+            cfg = await svc.get_category("cost")
+            value = cfg.get("target.unit_value_eur")
+            if value is not None:
+                return float(value)
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning(
+                "backlog_by_client: cost.target.unit_value_eur load failed (%s) "
+                "— using module default %.2f",
+                exc,
+                BACKLOG_DEFAULT_VALUE_EUR,
+            )
+        return BACKLOG_DEFAULT_VALUE_EUR

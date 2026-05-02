@@ -203,6 +203,24 @@ class PreviewDeltaService:
             delta=delta,
         )
 
+        # Sprint Q.9 Onda 1.4 — persist the operator's free-text reason
+        # plus temporal metadata in `user_preference_signal`. Plan v4 §14
+        # explicitly names "who decided, when, on which weekday/hour" as
+        # the most valuable signal for Camada-1 detector mining and §27
+        # ("O Que GRAVAR Desde o Dia 1"). The detector reads this field
+        # to spot temporal patterns ("never propose Friday Laminagem") —
+        # without it, the reason was lost inside `delta["reason"]` only,
+        # which the detector ignores.
+        applied_at = datetime.now(timezone.utc)
+        user_preference_signal = {
+            "reason": reason,
+            "author": author,
+            "applied_at": applied_at.isoformat(),
+            "weekday": applied_at.weekday(),  # 0=Mon..6=Sun
+            "hour": applied_at.hour,
+            "kind": "preview_apply",
+        }
+
         new_commit = ScheduleCommit(
             tenant_id=self.tenant_id,
             parent_id=commit.id,
@@ -214,6 +232,7 @@ class PreviewDeltaService:
             delta=delta,
             alternatives=[],
             cpo_meta={"source": "preview_delta_service"},
+            user_preference_signal=user_preference_signal,
             trust_index=float(commit.trust_index or 0.0),
             operations_count=len(ops_after),
         )

@@ -33,7 +33,6 @@ import {
   Ban,
   CheckCircle2,
   Move,
-  Sparkles,
   User,
 } from 'lucide-react';
 import {
@@ -43,7 +42,14 @@ import {
   type PreviewDeltaResult,
   type PreviewIssue,
 } from '../../lib/api';
-import { DarkBadge, DarkButton, DarkCard } from '../dark';
+import {
+  ConsequenceBlock,
+  DarkBadge,
+  DarkButton,
+  DarkCard,
+  GhostOverlay,
+  type ConsequenceLine,
+} from '../dark';
 
 // ───────────────────────────────────────────────────────────────────────────
 // Types
@@ -423,25 +429,28 @@ function SuggestionPanel({
   onApply: () => void;
   onCancel: () => void;
 }) {
+  // Sprint Q.9 Onda 3.2 — explica-sempre via GhostOverlay + ConsequenceBlock.
+  // The "loading" + "idle" + "active" states all flow through the same
+  // GhostOverlay shell so the visual anchor (cyan border, "preview · não
+  // escreve no plano" disclaimer) is consistent across states.
   if (previewing) {
     return (
-      <DarkCard className="p-4 sticky top-4">
-        <p className="text-sm text-slate-400">A calcular preview…</p>
-      </DarkCard>
+      <div className="sticky top-4">
+        <GhostOverlay mode="inline" loading badge="A calcular preview…" />
+      </div>
     );
   }
   if (!pending) {
     return (
-      <DarkCard className="p-4 sticky top-4">
-        <h3 className="text-sm font-semibold text-white flex items-center gap-2 mb-2">
-          <Sparkles size={14} className="text-teal-400" />
-          Sugestão
-        </h3>
-        <p className="text-xs text-slate-500">
-          Arrasta um barco para uma fase ou um operador. Ao soltar, calculamos
-          o impacto e mostramos aqui as consequências antes de tu aplicares.
-        </p>
-      </DarkCard>
+      <div className="sticky top-4">
+        <GhostOverlay mode="inline" badge="Sugestão">
+          <p className="text-xs text-slate-400">
+            Arrasta um barco para uma fase ou um operador. Ao soltar,
+            calculamos o impacto e mostramos as consequências antes de
+            tu aplicares.
+          </p>
+        </GhostOverlay>
+      </div>
     );
   }
 
@@ -450,54 +459,76 @@ function SuggestionPanel({
   const hasConflicts = preview.conflicts.length > 0;
   const canApply = !hasConflicts && reason.trim().length >= 10;
 
+  // Build the 5-line consequence block from the preview-delta result.
+  const consequenceLines: ConsequenceLine[] = [
+    {
+      label: 'Movimento',
+      value: (
+        <code>
+          {op?.order_id ?? pending.operationId.slice(0, 8)} →{' '}
+          {target.kind === 'phase' ? 'fase' : 'operador'} {target.id}
+        </code>
+      ),
+      severity: 'info',
+    },
+    {
+      label: 'Fitness',
+      value: `${preview.fitness_before.toFixed(2)} → ${preview.fitness_after.toFixed(2)}`,
+      detail: `Δ ${preview.fitness_delta >= 0 ? '+' : ''}${preview.fitness_delta.toFixed(2)} (menor é melhor)`,
+      severity: preview.fitness_delta <= 0 ? 'positive' : 'warning',
+    },
+    {
+      label: 'Throughput €/dia',
+      value: `€${preview.throughput_eur_after.toLocaleString('pt-PT', {
+        maximumFractionDigits: 0,
+      })}`,
+      detail: `Δ ${preview.throughput_eur_delta >= 0 ? '+' : ''}€${preview.throughput_eur_delta.toFixed(0)}`,
+      severity: preview.throughput_eur_delta >= 0 ? 'positive' : 'warning',
+    },
+  ];
+  if (preview.pair_rule_violation) {
+    consequenceLines.push({
+      label: 'Regra de pares',
+      value: 'Violação',
+      detail:
+        'Laminagem standard precisa de 2 operadores (88.5% histórico). Indica o porquê para forçar.',
+      severity: 'warning',
+    });
+  }
+  if (preview.conflicts.length > 0) {
+    consequenceLines.push({
+      label: 'Conflitos',
+      value: `${preview.conflicts.length} bloqueio(s)`,
+      detail: preview.conflicts[0]?.message ?? 'Resolver antes de aplicar.',
+      severity: 'critical',
+    });
+  }
+  if (preview.warnings.length > 0) {
+    consequenceLines.push({
+      label: 'Avisos',
+      value: `${preview.warnings.length}`,
+      detail: preview.warnings[0]?.message ?? '',
+      severity: 'warning',
+    });
+  }
+
   return (
-    <DarkCard className="p-4 sticky top-4">
-      <h3 className="text-sm font-semibold text-white flex items-center gap-2 mb-2">
-        <Sparkles size={14} className="text-teal-400" />
-        Sugestão
-      </h3>
+    <div className="sticky top-4">
+      <GhostOverlay mode="inline" badge="Sugestão · arrasto">
+      <ConsequenceBlock title="Consequências" lines={consequenceLines} />
 
-      <p className="text-xs text-slate-300 mb-1">
-        <strong>O que:</strong>{' '}
-        Mover <code>{op?.order_id ?? pending.operationId.slice(0, 8)}</code>{' '}
-        para {target.kind === 'phase' ? 'fase' : 'operador'} <code>{target.id}</code>.
-      </p>
-
-      <DeltaRow label="Fitness" before={preview.fitness_before} after={preview.fitness_after} delta={preview.fitness_delta} lowerIsBetter />
-      <DeltaRow
-        label="Throughput €/dia"
-        before={preview.throughput_eur_before}
-        after={preview.throughput_eur_after}
-        delta={preview.throughput_eur_delta}
-        unit="€"
-      />
-
-      {preview.pair_rule_violation && (
-        <div className="mt-2 p-2 bg-amber-500/10 border border-amber-500/40 rounded text-xs text-amber-300">
-          ⚠ Pair rule violation
-        </div>
-      )}
-
-      {preview.conflicts.length > 0 && (
+      {preview.conflicts.length > 0 ? (
         <div className="mt-3">
-          <p className="text-xs text-red-400 font-semibold mb-1">Conflitos (bloqueiam):</p>
+          <p className="text-xs text-red-400 font-semibold mb-1">
+            Detalhe dos conflitos:
+          </p>
           <ul className="space-y-1">
             {preview.conflicts.map((c, i) => (
               <IssueLi key={i} issue={c} />
             ))}
           </ul>
         </div>
-      )}
-      {preview.warnings.length > 0 && (
-        <div className="mt-3">
-          <p className="text-xs text-amber-300 font-semibold mb-1">Avisos:</p>
-          <ul className="space-y-1">
-            {preview.warnings.map((w, i) => (
-              <IssueLi key={i} issue={w} />
-            ))}
-          </ul>
-        </div>
-      )}
+      ) : null}
 
       <div className="mt-3">
         <label className="block text-xs text-slate-400 mb-1">
@@ -526,7 +557,8 @@ function SuggestionPanel({
           {applying ? 'A aplicar…' : hasConflicts ? 'Bloqueado' : 'Aplicar'}
         </DarkButton>
       </div>
-    </DarkCard>
+      </GhostOverlay>
+    </div>
   );
 }
 

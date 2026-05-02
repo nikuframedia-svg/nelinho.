@@ -73,22 +73,28 @@ class CPOConfig:
     restart_random_fraction: float = 0.50
 
     # -------------------- Sprint P v2.0 cascade flags ---------------- #
+    # Sprint Q.9 Onda 2.1+2.2 — flipped from False to True after each
+    # flag's regression suite went green. The 4 Spelke property tests
+    # in `tests/plan/test_preview_delta_property.py` are the primary
+    # gate; if a future change breaks one of those, revert the
+    # responsible flag here, don't disable the test.
     #: Explicit greedy 8-phase pipeline instead of the embedded decoder.
-    use_greedy_pipeline: bool = False
+    use_greedy_pipeline: bool = True
     #: Schedule backwards from `ProductionOrder.transport_date` (PL14).
-    use_backwards_scheduling: bool = False
+    use_backwards_scheduling: bool = True
     #: Honor dual-resource requirement in Laminagem (WF11).
-    use_hungarian_pair_assignment: bool = False
+    use_hungarian_pair_assignment: bool = True
     #: Queue time (5.2h median) between consecutive phases (PL22).
-    use_queue_time: bool = False
+    use_queue_time: bool = True
     #: Buffer pós-Desmolde (PL21 — 95% of errors detected at Desmolde).
-    use_post_desmolde_buffer: bool = False
+    use_post_desmolde_buffer: bool = True
     #: MAP-Elites v2.0 axes (lam_util / tardiness_transport / idle_pct).
-    use_v2_mapelites_axes: bool = False
-    #: CP-SAT Rolling Horizon L-RHO as the 5th cascade phase.
-    use_cpsat_lrho: bool = False
+    use_v2_mapelites_axes: bool = True
+    #: CP-SAT Rolling Horizon L-RHO as the 5th cascade phase. Aligned
+    #: with `default_configs.py` ("planning", "cpo.use_cpsat_lrho", True).
+    use_cpsat_lrho: bool = True
     #: Treat chromosome.routing_choices as an A/B selector per op.
-    use_routing_variants: bool = False
+    use_routing_variants: bool = True
 
     # -------------------- Sprint P.12 phase budgets ------------------ #
     #: Total cascade budget (seconds). Sub-budgets MUST sum to ≤ this value.
@@ -135,6 +141,20 @@ class CPOv4Engine:
         self.state = state
         self.config = config or CPOConfig()
         self.fitness_config = fitness_config or FitnessConfig()
+
+        # Sprint Q.9 Onda 1.1 — Camada 1 wire. `FactoryState.load()` populates
+        # `state.preference_rules` with the confirmed Camada-1 rules for this
+        # tenant; `fitness.compute_fitness` reads them off `FitnessConfig`. The
+        # two have lived next to each other since Sprint E.4 with no callable
+        # in between, so rules were detected → confirmed → ignored. Copy them
+        # in here when the caller didn't pre-load a fitness_config that
+        # already carries rules (the explicit-overrides case).
+        if (
+            getattr(state, "preference_rules", None)
+            and not self.fitness_config.preference_rules
+        ):
+            self.fitness_config.preference_rules = list(state.preference_rules)
+
         self._rng = random.Random(self.config.seed)
 
         # Adaptive layers — created lazily so Sprint E tests that don't

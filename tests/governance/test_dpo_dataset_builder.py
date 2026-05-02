@@ -62,7 +62,13 @@ def _commit(
         alternatives=[],
         cpo_meta={},
         rejected_alternatives=rejected or [],
-        user_preference_signal=signal or {"decided_by": "alice", "weekday": 3},
+        user_preference_signal=signal or {
+            # Sprint R.2 — default reason ≥10 chars so the new
+            # min_reason_len=10 default doesn't filter every fixture.
+            "decided_by": "alice",
+            "weekday": 3,
+            "reason": "default test rationale",
+        },
         evidence_refs=[],
         scenarios_tested=0,
         trust_index=0.9,

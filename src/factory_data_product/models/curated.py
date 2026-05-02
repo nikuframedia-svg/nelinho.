@@ -651,11 +651,19 @@ class CuratedSkillMatrix(QuarantineMixin, Base):
 class CuratedCostReference(QuarantineMixin, Base):
     """
     Cost per hour/center.
-    
+
     SENSITIVE: Cost data requires explicit authorization.
     Access restricted by RBAC.
-    
+
     Business key: (centro_custo, periodo)
+
+    DEPRECATED (Sprint Q.8 Fase 4): the source `Folha_IA_extra.xlsx`
+    has no cost-per-hour sheet, so this table is never populated. Cost
+    targets and per-hour values now live in `TenantConfig` under the
+    `cost.*` namespace (see `dashboard_metrics_service`). The ORM is
+    kept to avoid breaking existing migrations/imports — drop in a
+    future sprint after confirming no downstream consumers grew up
+    around it.
     """
     
     __tablename__ = "cost_reference"
@@ -703,11 +711,180 @@ class CuratedCostReference(QuarantineMixin, Base):
         nullable=False,
         default="EUR"
     )
-    
+
     created_at_utc: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         default=lambda: datetime.now(timezone.utc)
+    )
+
+
+# ============================================================================
+# ALLOCATION (Funcionarios × Fase Ordem Fabrico) — Sprint Q.8 Fase 2
+# ============================================================================
+# Source: Excel sheet `FuncionariosFaseOrdemFabrico` — 423,769 rows
+# representing the historical pairing of WHO worked on WHICH phase of WHICH
+# order. Required for: workforce utilization reports, per-worker phase
+# history (used by `EmployeeExtrasService` and `worker_ranking_service`),
+# and pair-rate analytics that drive `PAIR_REQUIRED_PHASES`.
+# Excel only carries 3 fields (FaseOfId, FuncionarioId, Chefe); hours are
+# derived downstream by joining with `CuratedOrderPhase.horas_reais` and
+# splitting across the workers allocated to the same fase_of_id.
+
+class CuratedAllocation(QuarantineMixin, Base):
+    """
+    Historical worker × order-phase allocation.
+
+    PII WARNING: contains employee identifier — RBAC restricted.
+    Business key: (fase_of_id, funcionario_id)
+    """
+
+    __tablename__ = "allocation"
+    __table_args__ = (
+        Index("ix_curated_allocation_ingestion", "ingestion_id"),
+        Index("ix_curated_allocation_fase_of", "fase_of_id"),
+        Index("ix_curated_allocation_funcionario", "funcionario_id"),
+        Index(
+            "ix_curated_allocation_composite",
+            "fase_of_id",
+            "funcionario_id",
+        ),
+        {"schema": "factory_curated"},
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+
+    ingestion_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("factory_meta.ingestion_run.id"),
+        nullable=False,
+    )
+
+    # FK → CuratedOrderPhase.fase_of_id (the row in the order-phase grid).
+    # NOT a hard FK because the loaders for the two tables are independent
+    # and we want partial ingest to still land allocation rows.
+    fase_of_id: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+
+    # PII: ERP employee code (string-cast for cross-sheet join consistency).
+    funcionario_id: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+
+    # True when this worker was the leader (`Chefe`) of the pair / crew.
+    # Single-worker phases still set this to True for the lone worker.
+    is_chefe: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+    )
+
+    created_at_utc: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+
+# ============================================================================
+# MODELO (Catálogo de Produtos) — Sprint Q.8 Fase 3
+# ============================================================================
+# Source: Excel sheet `Modelos` — 899 rows. Note: the sheet is named
+# "Modelos" but its rows are the product catalogue (with `Produto_*`
+# prefixes); each product row links to a `ModeloId` + `TamanhoId`. We
+# keep the curated table named `modelo` because that's the stable
+# planning concept (a model can have many products / sizes), and store
+# the per-product attributes as nullable columns so the dimension is
+# self-contained.
+
+class CuratedModelo(QuarantineMixin, Base):
+    """
+    Product / model dimension.
+
+    Business key: produto_id (the ERP `Produto_Id`).
+    """
+
+    __tablename__ = "modelo"
+    __table_args__ = (
+        Index("ix_curated_modelo_ingestion", "ingestion_id"),
+        Index("ix_curated_modelo_produto", "produto_id"),
+        Index("ix_curated_modelo_modelo_id", "modelo_id"),
+        {"schema": "factory_curated"},
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+
+    ingestion_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("factory_meta.ingestion_run.id"),
+        nullable=False,
+    )
+
+    # Business key: ERP Produto_Id (one row per product variant).
+    produto_id: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+
+    produto_nome: Mapped[Optional[str]] = mapped_column(
+        String(500),
+        nullable=True,
+    )
+
+    # Parent model + size dimensions (denormalised; no FK because the
+    # matching dimension tables don't exist yet — Sprint Q.8 only
+    # materialises the catalogue, not the model/size sub-dims).
+    modelo_id: Mapped[Optional[str]] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    tamanho_id: Mapped[Optional[str]] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    # Physical / process attributes used by planners and quality.
+    peso_desmolde_kg: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(8, 3),
+        nullable=True,
+    )
+
+    peso_acabamento_kg: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(8, 3),
+        nullable=True,
+    )
+
+    qtd_gel_deck: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(8, 3),
+        nullable=True,
+    )
+
+    qtd_gel_casco: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(8, 3),
+        nullable=True,
+    )
+
+    numero_pocos_id: Mapped[Optional[str]] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+
+    created_at_utc: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
     )
 
 

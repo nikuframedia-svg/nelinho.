@@ -31,7 +31,11 @@ from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.models.employee import Employee
-from src.factory_data_product.models.curated import CuratedSkillMatrix
+from src.factory_data_product.models.curated import (
+    CuratedAllocation,
+    CuratedOrderPhase,
+    CuratedSkillMatrix,
+)
 from src.plan.models.schedule import ProductionSchedule
 from src.quality.models.rework import ReworkEntry
 
@@ -184,6 +188,16 @@ class EmployeeExtrasService:
         curated_rows = await self._curated_skills_for(emp.employee_code)
         history_rows = await self._phase_history_for(employee_id)
 
+        # Sprint Q.8 Fase 2.4 — when ProductionSchedule has no rows for
+        # this worker (the synthetic schedule may not yet cover them),
+        # fall back to the real ERP history materialised in
+        # CuratedAllocation. This is the path that turns "0 ops" into
+        # the actual hundreds of operations the worker executed.
+        if not history_rows:
+            history_rows = await self._curated_allocation_history_for(
+                emp.employee_code
+            )
+
         history_by_phase = {row["phase_id"]: row for row in history_rows}
         out: list[SkillMatrixRow] = []
         seen_phases: set[str] = set()
@@ -328,7 +342,14 @@ class EmployeeExtrasService:
                 for r in rows
             ]
         except Exception as exc:  # pragma: no cover — defensive
-            logger.warning("curated skill matrix query failed: %s", exc)
+            # Sprint Q.8 Fase 1 — include the employee_code so the operator
+            # can reproduce the failing query directly from the log line
+            # (UI showed an employee with zero skills with no other signal).
+            logger.warning(
+                "skill_matrix query failed for employee_code=%s: %s",
+                employee_code,
+                exc,
+            )
             return []
 
     async def _phase_history_for(
@@ -378,4 +399,59 @@ class EmployeeExtrasService:
             return out
         except Exception as exc:  # pragma: no cover — defensive
             logger.warning("phase history aggregation failed: %s", exc)
+            return []
+
+    async def _curated_allocation_history_for(
+        self, employee_code: Optional[str],
+    ) -> list[dict[str, Any]]:
+        """Per-phase ops_count + last_used_at derived from CuratedAllocation.
+
+        Joins `CuratedAllocation` (the ERP allocation log) with
+        `CuratedOrderPhase` to recover the phase + completion date that
+        the bare allocation row doesn't carry. Returns the same shape as
+        `_phase_history_for` so the consumer can drop it in.
+
+        Sprint Q.8 Fase 2.4 — used as a fallback when ProductionSchedule
+        has no rows for this worker.
+        """
+        if not employee_code:
+            return []
+        try:
+            stmt = (
+                select(
+                    CuratedOrderPhase.fase_id.label("phase_id"),
+                    func.count(CuratedAllocation.id).label("ops_count"),
+                    func.max(CuratedOrderPhase.data_fim).label("last_used_at"),
+                )
+                .join(
+                    CuratedOrderPhase,
+                    CuratedOrderPhase.fase_of_id == CuratedAllocation.fase_of_id,
+                )
+                .where(CuratedAllocation.funcionario_id == employee_code)
+                .group_by(CuratedOrderPhase.fase_id)
+            )
+            rows = (await self.session.execute(stmt)).all()
+            out: list[dict[str, Any]] = []
+            for r in rows:
+                last = r[2]
+                last_dt: Optional[datetime] = None
+                if last is not None:
+                    last_dt = (
+                        datetime.combine(last, datetime.min.time())
+                        if isinstance(last, date) else last
+                    )
+                out.append(
+                    {
+                        "phase_id": r[0],
+                        "ops_count": int(r[1] or 0),
+                        "last_used_at": last_dt,
+                    }
+                )
+            return out
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning(
+                "curated allocation history failed for employee_code=%s: %s",
+                employee_code,
+                exc,
+            )
             return []

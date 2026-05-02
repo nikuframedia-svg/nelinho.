@@ -29,13 +29,34 @@ DEFAULT_TRUST_INDEX = 55
 MEDIAN_HOURLY_RATE = 5.54  # From Folha_IA_extra.xlsx analysis
 
 
+class WorkforceDataUnavailableError(RuntimeError):
+    """Raised when the curated workforce data is unavailable AND the
+    caller hasn't explicitly opted in to the demo mock graph.
+
+    The API layer converts this to HTTP 503 so the UI can show a clear
+    "data unavailable" banner instead of silently rendering synthetic
+    nodes that look real to a CEO.
+    """
+
+
 class WorkforceService:
     """Core service for workforce operations."""
-    
-    def __init__(self, db: AsyncSession, ingestion_id: Optional[str] = None):
+
+    def __init__(
+        self,
+        db: AsyncSession,
+        ingestion_id: Optional[str] = None,
+        *,
+        allow_mock: bool = False,
+    ):
+        # Sprint Q.8 Fase 6 — `allow_mock` gates the synthetic demo
+        # graph. Default False (production); the API exposes
+        # `?demo=true` for sales/onboarding flows that explicitly want
+        # the placeholder nodes.
         self.db = db
         self.ingestion_id = ingestion_id
         self.median_hourly_rate = MEDIAN_HOURLY_RATE
+        self.allow_mock = allow_mock
     
     async def get_dependency_graph(self) -> Dict[str, Any]:
         """
@@ -69,11 +90,32 @@ class WorkforceService:
             skills = result.all()
             
         except Exception as e:
-            logger.warning(f"Could not query CuratedSkillMatrix: {e}, using mock data")
+            # Sprint Q.8 Fase 1 — make this loud. The mock graph below is a
+            # demo placeholder; a silent fallback was hiding curated-layer
+            # outages from operators.
+            logger.warning(
+                "dependency graph: CuratedSkillMatrix query failed (%s)",
+                e,
+            )
+            if not self.allow_mock:
+                raise WorkforceDataUnavailableError(
+                    f"CuratedSkillMatrix unavailable: {e}"
+                )
+            logger.warning(
+                "[FALLBACK MOCK] returning synthetic demo nodes (allow_mock=True)",
+            )
             return self._get_mock_dependency_graph()
-        
+
         if not skills:
-            logger.info("No skills data found, using mock")
+            if not self.allow_mock:
+                raise WorkforceDataUnavailableError(
+                    "curated skill_matrix is empty — ingest a NELO Excel "
+                    "or pass demo=true for placeholder nodes"
+                )
+            logger.warning(
+                "[FALLBACK MOCK] dependency graph: curated skill_matrix is "
+                "empty — returning synthetic demo nodes (allow_mock=True)",
+            )
             return self._get_mock_dependency_graph()
         
         # Build nodes and edges
@@ -199,7 +241,16 @@ class WorkforceService:
             phase_name = employees[0].fase_nome if employees else f"Fase {phase_id}"
             
         except Exception as e:
-            logger.warning(f"Could not query cascade data: {e}, using mock")
+            logger.warning("cascade data query failed for phase=%s: %s", phase_id, e)
+            if not self.allow_mock:
+                raise WorkforceDataUnavailableError(
+                    f"cascade data unavailable for phase {phase_id}: {e}"
+                )
+            logger.warning(
+                "[FALLBACK MOCK] returning synthetic cascade for phase=%s "
+                "(allow_mock=True)",
+                phase_id,
+            )
             return self._get_mock_cascade_impact(phase_id)
         
         # Build cascade levels
@@ -593,8 +644,9 @@ class WorkforceService:
                 "critical_paths": [],
             },
             "trust_index": DEFAULT_TRUST_INDEX,
-            "semantic_label": "Grafo baseado em dados MOCK (DB não disponível)",
+            "semantic_label": "[FALLBACK MOCK] Grafo demo — curated layer indisponível",
             "source": "mock",
+            "fallback_mock": True,
         }
     
     def _get_mock_cascade_impact(self, phase_id: str) -> Dict[str, Any]:

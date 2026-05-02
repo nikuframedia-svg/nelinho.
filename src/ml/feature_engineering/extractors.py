@@ -55,10 +55,27 @@ class FeatureExtractor(ABC):
 
     def _curated(self, key: str) -> Any:
         """Fetch a bucket from the semantic engine's curated_data (best effort)."""
+        # Sprint Q.8 Fase 1 — was a silent empty list when semantic/engine
+        # missing. Make it visible so ML retrains can't quietly happen on
+        # zero features (the model would still "succeed" but learn nothing).
         if self.semantic is None:
+            logger.warning(
+                "ML feature extractor [%s]: semantic layer not injected — "
+                "returning empty features for key=%s tenant=%s",
+                getattr(self, "name", "?"),
+                key,
+                self.tenant_id,
+            )
             return []
         engine = getattr(self.semantic, "engine", None)
         if engine is None:
+            logger.warning(
+                "ML feature extractor [%s]: semantic.engine is None — "
+                "returning empty features for key=%s tenant=%s",
+                getattr(self, "name", "?"),
+                key,
+                self.tenant_id,
+            )
             return []
         active = getattr(engine, "_active_ingestion_id", None)
         curated = getattr(engine, "_curated_data", {}) or {}

@@ -51,6 +51,7 @@ import {
   DarkBadge,
   DarkButton,
   DarkCard,
+  SuggestionExplainer,
 } from '../../components/dark';
 import {
   transportApi,
@@ -464,9 +465,17 @@ function BatchOrdersList({
   onRemoveOrder: (orderId: string) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: batchId });
-  // Real fetch of assigned orders is wired in Q.4 (preview-delta endpoint).
-  // For Q.2 we render a placeholder + drop zone so the drag-drop end-to-end
-  // works with the basic TransportBatchAssignment service.
+  // Sprint Q.9 Onda 3.3 — real fetch of assigned orders. Replaces the
+  // previous Q.4-stub placeholder with a proper draggable card per
+  // assignment, backed by the new `GET /v1/plan/transport/batches/
+  // {id}/orders` endpoint. Empty list still shows the drop hint.
+  const { data, isLoading } = useQuery({
+    queryKey: ['transport', 'batch', batchId, 'orders'],
+    queryFn: () => transportApi.listOrders(batchId),
+    staleTime: 30_000,
+  });
+  const orders = data?.orders ?? [];
+
   return (
     <div
       ref={setNodeRef}
@@ -480,34 +489,76 @@ function BatchOrdersList({
         <span>Ordens atribuídas ({assignedCount})</span>
         {readOnly && <span className="text-amber-400">só leitura</span>}
       </div>
-      {assignedCount === 0 ? (
+
+      {isLoading ? (
+        <p className="text-xs text-slate-500 text-center py-6">A carregar…</p>
+      ) : orders.length === 0 ? (
         <p className="text-xs text-slate-500 text-center py-6">
           Arrasta aqui ordens de outros batches.
         </p>
       ) : (
-        <p className="text-xs text-slate-500 text-center py-6">
-          Lista detalhada chega no Sprint Q.4 (preview-delta endpoint). Por agora podes ver
-          o número total acima e remover via drag-drop entre batches.
-        </p>
+        <ul className="space-y-1">
+          {orders.map((orderId) => (
+            <DraggableOrderCard
+              key={orderId}
+              orderId={orderId}
+              batchId={batchId}
+              readOnly={readOnly}
+              onRemove={onRemoveOrder}
+            />
+          ))}
+        </ul>
       )}
-      {/* placeholder draggable so Q.2 can demo the drag chain end-to-end */}
-      <DraggableOrderStub batchId={batchId} onRemove={onRemoveOrder} />
     </div>
   );
 }
 
-function DraggableOrderStub({
+function DraggableOrderCard({
+  orderId,
   batchId,
+  readOnly,
   onRemove,
 }: {
+  orderId: string;
   batchId: string;
+  readOnly: boolean;
   onRemove: (orderId: string) => void;
 }) {
-  // Pure placeholder — when the orders endpoint is wired (Q.4), replace this
-  // with a real draggable ord card per assignment.
-  void batchId;
-  void onRemove;
-  return null;
+  // Sprint Q.9 Onda 3.3 — real draggable card. dnd-kit id is the
+  // order_id so the parent DispatchPage's `onDragEnd` can resolve
+  // `assignOrder(targetBatchId, draggedOrderId)`. The "X" button is
+  // the explicit remove path for batches that don't accept drag.
+  const { setNodeRef, listeners, attributes, isDragging } = useDraggable({
+    id: orderId,
+    disabled: readOnly,
+    data: { fromBatchId: batchId },
+  });
+  return (
+    <li
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
+      className={`flex items-center justify-between gap-2 px-2 py-1.5 rounded border bg-slate-900/60 border-slate-700/60 text-xs ${
+        isDragging ? 'opacity-50' : ''
+      } ${readOnly ? '' : 'cursor-grab active:cursor-grabbing'}`}
+    >
+      <code className="text-slate-200 truncate" title={orderId}>
+        {orderId.slice(0, 8)}…
+      </code>
+      {!readOnly ? (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove(orderId);
+          }}
+          className="text-slate-500 hover:text-rose-300"
+          title="Remover do batch"
+        >
+          ×
+        </button>
+      ) : null}
+    </li>
+  );
 }
 
 function SuggestionCard({
@@ -519,45 +570,61 @@ function SuggestionCard({
   onAccept: () => void;
   onReject: () => void;
 }) {
+  // Sprint Q.9 Onda 3.3 — replaces the previous collapsible <details>-
+  // style block with the canonical <SuggestionExplainer>: 5 boxes
+  // (O QUE / PORQUÊ / SE ACEITAR / SE REJEITAR / ALTERNATIVA) so the
+  // operator scans the impact in one glance, never having to expand.
+  // Plan v4 §7.3 / §8 — "explica sempre".
   const [expanded, setExpanded] = useState(false);
   const Icon = SUGGESTION_ICON[suggestion.type] ?? AlertTriangle;
   return (
     <li className="p-3 rounded-lg bg-slate-800/40 border border-slate-700/40">
-      <div className="flex items-start gap-2 mb-2">
+      <div className="flex items-start gap-2 mb-3">
         <Icon size={16} className="text-amber-400 mt-0.5 flex-shrink-0" />
         <div className="flex-1">
           <p className="text-sm text-white font-medium">{suggestion.what}</p>
-          <p className="text-xs text-slate-400 mt-1">{suggestion.why}</p>
-        </div>
-      </div>
-      {expanded && (
-        <div className="text-xs space-y-1 mb-3 pl-6">
-          <p>
-            <span className="text-emerald-400">se aceitar:</span> {suggestion.if_accept}
+          <p className="text-xs text-slate-400 mt-1">
+            {suggestion.why?.slice(0, 80)}
+            {suggestion.why && suggestion.why.length > 80 ? '…' : ''}
           </p>
-          <p>
-            <span className="text-red-400">se rejeitar:</span> {suggestion.if_reject}
-          </p>
-          {suggestion.alternative && (
-            <p>
-              <span className="text-blue-400">alternativa:</span> {suggestion.alternative}
-            </p>
-          )}
         </div>
-      )}
-      <div className="flex items-center gap-1">
-        <DarkButton variant="primary" size="sm" icon={<CheckCircle2 size={12} />} onClick={onAccept}>
-          Aceitar
-        </DarkButton>
-        <DarkButton variant="secondary" size="sm" icon={<Ban size={12} />} onClick={onReject}>
-          Rejeitar
-        </DarkButton>
         <button
           onClick={() => setExpanded((v) => !v)}
-          className="ml-auto text-xs text-slate-400 hover:text-white"
+          className="text-xs text-slate-400 hover:text-white shrink-0"
         >
-          {expanded ? 'Ocultar' : 'Porquê?'}
+          {expanded ? 'Ocultar' : 'Detalhe'}
         </button>
+      </div>
+
+      {expanded ? (
+        <div className="mb-3">
+          <SuggestionExplainer
+            what={suggestion.what}
+            why={suggestion.why ?? '—'}
+            ifAccept={suggestion.if_accept ?? '—'}
+            ifReject={suggestion.if_reject ?? '—'}
+            alternative={suggestion.alternative}
+          />
+        </div>
+      ) : null}
+
+      <div className="flex items-center gap-1">
+        <DarkButton
+          variant="primary"
+          size="sm"
+          icon={<CheckCircle2 size={12} />}
+          onClick={onAccept}
+        >
+          Aceitar
+        </DarkButton>
+        <DarkButton
+          variant="secondary"
+          size="sm"
+          icon={<Ban size={12} />}
+          onClick={onReject}
+        >
+          Rejeitar
+        </DarkButton>
       </div>
     </li>
   );

@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.plan.cpo.commits import CommitsService, ScheduleCommit
 from src.plan.cpo.engine import CPOConfig, CPOv4Engine
+from src.plan.cpo.fitness import FitnessConfig
 from src.plan.cpo.state import FactoryState
 from src.plan.engines.scheduling_adapter import SchedulingMachine
 from src.plan.services.routing_resolver import RoutingResolver
@@ -228,6 +229,13 @@ async def schedule_cpo(
     else:
         machines = [SchedulingMachine(machine_id="MANUAL", name="Manual pool")]
 
+    # Sprint Q.9 Onda 1.2 — Camada 2 wire. Build the fitness config via
+    # `from_tenant_config` so per-tenant adaptive weights (learned from
+    # ≥50 commits' rejected_alternatives) drive the GA. When the tenant
+    # has no learned weights yet, this returns the same defaults as
+    # `FitnessConfig()` — silent fallback by design.
+    fitness_config = await FitnessConfig.from_tenant_config(db, tenant_id)
+
     engine = CPOv4Engine(
         state=state,
         config=CPOConfig(
@@ -235,6 +243,7 @@ async def schedule_cpo(
             generations=request.generations,
             time_limit_sec=request.time_limit_sec,
         ),
+        fitness_config=fitness_config,
     )
 
     # Sprint C 1.1 — load current product prices so the decoder can compute
@@ -674,6 +683,22 @@ async def decide_on_commit(
                     f"unknown rejection_category={body.rejection_category!r}; "
                     "allowed: COST, QUALITY, CUSTOMER, CAPACITY, MOLD, "
                     "WORKFORCE, OTHER"
+                ),
+            )
+    # Sprint R.2 — free-text rationale mandatory (≥10 chars) when there
+    # are rejections, so the DPO/Camada-3 dataset has clean training
+    # signal. The category answers "why category", the reason answers
+    # "why this plan specifically". Validated AFTER category checks so
+    # the user gets the more obvious "fix your category" error first.
+    if body.rejected_alt_idxs:
+        reason_text = (body.reason or "").strip()
+        if len(reason_text) < 10:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "reason is required and must have ≥10 characters when "
+                    "rejected_alt_idxs is non-empty (Camada 3 needs clean "
+                    "rationale to learn from)"
                 ),
             )
 

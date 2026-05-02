@@ -230,6 +230,31 @@ async def assign_order(
     return _to_out(row, assigned_count=count)
 
 
+@router.get("/batches/{batch_id}/orders")
+async def list_batch_orders(
+    batch_id: UUID,
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """List the orders currently assigned to a batch.
+
+    Sprint Q.9 Onda 3.3 — backs the DispatchPage's draggable order
+    list. Returns `{batch_id, orders: [order_id, ...]}`. 404 when
+    the batch doesn't exist; an empty list is a valid response for
+    a batch nobody has assigned orders to yet.
+    """
+    svc = TransportBatchService(session, tenant_id)
+    try:
+        await svc.get_batch(batch_id)
+    except TransportBatchNotFoundError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="batch not found")
+    orders = await svc.list_orders(batch_id)
+    return {
+        "batch_id": str(batch_id),
+        "orders": [str(o) for o in orders],
+    }
+
+
 @router.delete(
     "/batches/{batch_id}/orders/{order_id}",
     response_model=TransportBatchOut,

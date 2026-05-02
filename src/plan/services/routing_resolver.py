@@ -244,11 +244,28 @@ class RoutingResolver:
     def _curated_phases(self) -> List[Any]:
         engine = self._semantic_engine()
         if engine is None:
+            # Sprint Q.8 Fase 1 — was a silent empty list. Now the operator
+            # SEES that routing has nothing to resolve from history (the
+            # caller will fall back to FasesStandardModelos templates with
+            # 2× buffers, which can produce wildly wrong durations).
+            logger.warning(
+                "RoutingResolver: curated semantic engine unavailable — "
+                "falling back to standards. Tenant=%s",
+                getattr(self.state, "tenant_id", "?"),
+            )
             return []
         active = getattr(engine, "_active_ingestion_id", None)
         curated = getattr(engine, "_curated_data", {}) or {}
         scope = curated.get(active, {}) if active else {}
-        return scope.get("order_phases") or scope.get("CuratedOrderPhase") or []
+        rows = scope.get("order_phases") or scope.get("CuratedOrderPhase") or []
+        if not rows:
+            logger.warning(
+                "RoutingResolver: curated order_phases empty for tenant=%s "
+                "ingestion=%s — falling back to standards",
+                getattr(self.state, "tenant_id", "?"),
+                active,
+            )
+        return rows
 
     def _curated_standards(self) -> List[Any]:
         engine = self._semantic_engine()

@@ -33,6 +33,32 @@ CATEGORY_COPILOT = "copilot"
 CATEGORY_FACTORY_MAP = "factory_map"
 CATEGORY_TRUST = "trust"
 CATEGORY_WORKFORCE = "workforce"
+# Sprint Q.9 Onda 3.6 — Plan v4 §11.1 categorias 12-17 of the 30+
+# target. Each new category lands here AND in `default_configs.py`
+# DEFAULT_SEEDS so the tenant gets defaults on bootstrap.
+CATEGORY_ROUTING = "routing"
+CATEGORY_ALERTAS = "alertas"
+CATEGORY_LEARNING_RULES = "learning_rules"
+CATEGORY_RBAC = "rbac"
+CATEGORY_SYSTEM = "system"
+CATEGORY_TRANSPORTE = "transporte"
+# Sprint Q.9 Onda 3 follow-up — close the §11.1 "30+ categorias"
+# gap. Each maps to a real subsystem already in src/ — adding a
+# config category gives the operator one editable surface per
+# subsystem instead of hunting for environment vars.
+CATEGORY_NOTIFICATIONS = "notifications"
+CATEGORY_REPORTS = "reports"
+CATEGORY_TABLET = "tablet"
+CATEGORY_SANDBOX = "sandbox"
+CATEGORY_TWIN = "twin"
+CATEGORY_ML = "ml"
+CATEGORY_KPI_TARGETS = "kpi_targets"
+CATEGORY_DQA = "dqa"
+CATEGORY_REALTIME = "realtime"
+CATEGORY_SESSION = "session"
+CATEGORY_DISPATCH = "dispatch"
+CATEGORY_EXPLAIN = "explain"
+CATEGORY_IMPROVE = "improve"
 
 ALLOWED_CATEGORIES = frozenset({
     CATEGORY_GOVERNANCE,
@@ -46,6 +72,25 @@ ALLOWED_CATEGORIES = frozenset({
     CATEGORY_FACTORY_MAP,
     CATEGORY_TRUST,
     CATEGORY_WORKFORCE,
+    CATEGORY_ROUTING,
+    CATEGORY_ALERTAS,
+    CATEGORY_LEARNING_RULES,
+    CATEGORY_RBAC,
+    CATEGORY_SYSTEM,
+    CATEGORY_TRANSPORTE,
+    CATEGORY_NOTIFICATIONS,
+    CATEGORY_REPORTS,
+    CATEGORY_TABLET,
+    CATEGORY_SANDBOX,
+    CATEGORY_TWIN,
+    CATEGORY_ML,
+    CATEGORY_KPI_TARGETS,
+    CATEGORY_DQA,
+    CATEGORY_REALTIME,
+    CATEGORY_SESSION,
+    CATEGORY_DISPATCH,
+    CATEGORY_EXPLAIN,
+    CATEGORY_IMPROVE,
 })
 
 DATA_TYPE_INT = "int"
