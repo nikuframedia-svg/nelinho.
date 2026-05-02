@@ -177,11 +177,45 @@ async def execute_action(
         }
     
     elif request.action_type == "RUN_RUNBOOK":
-        # Executar runbook (TODO: implementar executor)
+        # Sprint Q.9 (2.8) — minimal advisory executor.
+        # Loads the YAML definition, validates structure, returns the
+        # planned steps + interpolated parameters. Real DB execution
+        # lands when Sprint G (NELO ERP) is wired.
+        from src.copilot.runbook_executor import (
+            RunbookInvalid,
+            RunbookNotFound,
+            execute_runbook,
+            list_runbooks,
+        )
+
+        runbook_id = request.payload.get("runbook_id")
+        if not runbook_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "RUN_RUNBOOK requires payload.runbook_id. "
+                    f"Available: {list_runbooks()}"
+                ),
+            )
+        try:
+            trace = execute_runbook(runbook_id, payload=request.payload)
+        except RunbookNotFound:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=(
+                    f"runbook {runbook_id!r} not found. "
+                    f"Available: {list_runbooks()}"
+                ),
+            )
+        except RunbookInvalid as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"runbook {runbook_id!r} is malformed: {exc}",
+            )
         return {
             "action_type": "RUN_RUNBOOK",
-            "status": "not_implemented",
-            "message": "Runbook executor ainda não implementado",
+            "status": "planned",
+            "trace": trace,
         }
     
     else:
@@ -1024,8 +1058,9 @@ async def rollback_action(
         try:
             kafka_producer = await get_producer()
             if kafka_producer:
+                from uuid import uuid4
                 from src.shared.kafka_client import EventBase
-                
+
                 event = EventBase(
                     event_id=uuid4(),
                     event_type="copilot.action.rolled_back",

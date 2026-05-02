@@ -17,6 +17,9 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.shared.database import get_session
 
 from src.factory_data_product.config import (
     BLOCKED_METRICS, 
@@ -300,10 +303,58 @@ def get_tenant_id(x_tenant_id: UUID = Header(default=UUID("00000000-0000-0000-00
     return x_tenant_id
 
 
+async def _resolve_metric_value(
+    metric_id: str,
+    session: Optional[AsyncSession],
+) -> Optional[float]:
+    """Sprint Q.9 (2.5) — try to fetch the live value from SemanticQueries.
+
+    Returns ``None`` when no data is available (no DB, no active
+    ingestion, query raises). Callers fall back to the catalogue's
+    placeholder value in that case.
+    """
+    if session is None:
+        return None
+    try:
+        from src.factory_data_product.semantic.queries import SemanticQueries
+
+        sq = SemanticQueries(db=session)
+        if metric_id == "wip_theoretical":
+            r = await sq.wip()
+            return r["data"].get("open_orders")
+        if metric_id == "backlog_horas_theoretical":
+            r = await sq.backlog_by_phase(top_n=100)
+            data = r.get("data") or []
+            if isinstance(data, list):
+                return float(sum(d.get("backlog_horas", 0) or 0 for d in data))
+            return None
+        if metric_id == "lead_time_observed":
+            r = await sq.lead_time_analysis(days_back=90)
+            return r["data"].get("avg_lead_time_days")
+        if metric_id == "bottleneck_count":
+            r = await sq.bottlenecks(top_n=100)
+            data = r.get("data") or []
+            return float(len(data) if isinstance(data, list) else 0)
+        if metric_id == "skills_risk_count":
+            r = await sq.skills_risk(min_capable=3)
+            data = r.get("data") or []
+            return float(len(data) if isinstance(data, list) else 0)
+        if metric_id == "quality_errors_total":
+            r = await sq.quality_analysis()
+            return r["data"].get("total_errors")
+    except Exception as exc:  # pragma: no cover — DB / ingestion path
+        logger.debug(
+            "explain._resolve_metric_value(%s) fell back to catalogue: %s",
+            metric_id, exc,
+        )
+    return None
+
+
 @router.get("/metric/{metric_id}", response_model=ExplainedMetric)
 async def get_metric_explanation(
     metric_id: str,
     tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
 ):
     """
     Get detailed explanation for a specific metric.
@@ -360,9 +411,10 @@ async def get_metric_explanation(
             trust_index=0.0,
         )
     
-    # Mock values for AVAILABLE metrics
-    # TODO: Fetch from SemanticQueries when DB is connected
-    mock_values = {
+    # Sprint Q.9 (2.5) — try the semantic layer first; fall back to the
+    # catalogue's placeholder when there's no data (no ingestion, DB down,
+    # query unsupported).
+    fallback_values = {
         "wip_theoretical": 1523,
         "backlog_horas_theoretical": 12450.5,
         "lead_time_observed": 12.5,
@@ -370,19 +422,21 @@ async def get_metric_explanation(
         "skills_risk_count": 8,
         "quality_errors_total": 89836,
     }
-    
+    live_value = await _resolve_metric_value(metric_id, session)
+    metric_value = live_value if live_value is not None else fallback_values.get(metric_id)
+
     # Add status indicator to explanation
     trust_index = metric_def.get("trust_index", 0.5)
     semantic_label = metric_def.get("semantic_label", "")
-    
+
     explanation = metric_def.get("explanation", "")
     if status == "WARNING":
         explanation = f"⚠️ CONFIANÇA LIMITADA: {semantic_label}\n\n{explanation}"
-    
+
     return ExplainedMetric(
         metric_id=metric_id,
         metric_name=metric_def["name"],
-        value=mock_values.get(metric_id),
+        value=metric_value,
         unit=metric_def.get("unit", "%"),
         explanation=explanation,
         factors=[Factor(**f) for f in metric_def.get("factors", [])],
@@ -463,27 +517,35 @@ async def compute_metric_value(
     period_start: Optional[str] = None,
     period_end: Optional[str] = None,
     tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
 ):
     """
     Compute a metric value on-demand.
-    
+
     Allows computing metrics with custom scope and time period.
+
+    Sprint Q.9 (2.5) — pulls live values via the semantic layer when
+    available (same path as ``/metric/{id}``); falls back to a static
+    placeholder for catalogue entries the semantic layer doesn't yet
+    cover so the endpoint always answers.
     """
     metric_def = METRIC_CATALOG.get(metric_id)
-    
+
     if not metric_def:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Metric '{metric_id}' not found in catalog.",
         )
-    
-    # TODO: Implement actual metric computation
-    # This would call the appropriate calculation engine
-    
+
+    live_value = await _resolve_metric_value(metric_id, session)
+    metric_value = live_value if live_value is not None else 75.0
+    source = "semantic_queries" if live_value is not None else "catalogue_fallback"
+
     return {
         "metric_id": metric_id,
         "metric_name": metric_def["name"],
-        "value": 75.0,  # Mock computed value
+        "value": metric_value,
+        "source": source,
         "unit": metric_def.get("unit", "%"),
         "computed_at": datetime.utcnow().isoformat(),
         "scope": scope,

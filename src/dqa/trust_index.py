@@ -161,15 +161,60 @@ class TrustIndexCalculator:
     def _calculate_consistency(self, entity: Dict[str, Any]) -> float:
         """
         Consistency: check for cross-field conflicts.
-        
-        Example: machine_id should exist in machines table.
-        For now, simplified to assume consistent unless specific rules violated.
-        
+
+        Sprint Q.9 (2.4) — three concrete rules drawn from the NELO
+        domain:
+
+        1. **Date ordering** — `data_inicio` / `data_entrada` must not
+           be after `data_conclusao` / `data_fim`.
+        2. **Quantity sanity** — `quantidade_produzida` cannot exceed
+           `quantidade` ordered.
+        3. **Worker uniqueness** — when the row carries a list of
+           workers (e.g. an allocation peer), no worker should appear
+           twice (a person cannot be on the same op twice).
+
+        Each rule violated subtracts ``1/N`` from the score (N =
+        number of rules that *applied* — i.e. the relevant fields
+        were present). A row where no rule applies returns 1.0.
+
         Returns: 0.0 to 1.0
         """
-        # TODO: Implement specific consistency rules
-        # For now, assume all consistent
-        return 1.0
+        applied = 0
+        violations = 0
+
+        # Rule 1 — date ordering
+        start = entity.get("data_inicio") or entity.get("data_entrada")
+        end = entity.get("data_fim") or entity.get("data_conclusao")
+        if start is not None and end is not None:
+            applied += 1
+            try:
+                if start > end:
+                    violations += 1
+            except TypeError:
+                # Non-comparable types — count as violation rather than crash.
+                violations += 1
+
+        # Rule 2 — produced quantity cannot exceed ordered quantity
+        ordered_qty = entity.get("quantidade")
+        produced_qty = entity.get("quantidade_produzida")
+        if ordered_qty is not None and produced_qty is not None:
+            applied += 1
+            try:
+                if float(produced_qty) > float(ordered_qty):
+                    violations += 1
+            except (TypeError, ValueError):
+                violations += 1
+
+        # Rule 3 — worker uniqueness (when applicable)
+        workers = entity.get("workers")
+        if isinstance(workers, (list, tuple)):
+            applied += 1
+            if len(workers) != len(set(workers)):
+                violations += 1
+
+        if applied == 0:
+            return 1.0
+        return max(0.0, 1.0 - (violations / applied))
     
     def _calculate_timeliness(self, latency_ms: int) -> float:
         """

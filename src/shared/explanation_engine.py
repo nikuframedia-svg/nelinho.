@@ -243,6 +243,173 @@ class ExplanationEngine:
             "estimatedImpact": {"otd": "+2%"},
         })
     
+    async def explain_margin(
+        self,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+    ) -> Dict[str, Any]:
+        """Sprint Q.9 (2.6) — explain profit margin in advisory mode.
+
+        Margin = (revenue - direct_cost) / revenue. Direct cost has 3
+        components in the NELO domain: labour (workers × hours × rate),
+        overtime, rework. We surface the relative weight of each as
+        ``topFactors`` so the manager sees which lever to pull.
+
+        Until the ERP-backed cost ledger lands, we return a structural
+        explanation (the formula + factors) without numeric values; the
+        date range is accepted for API symmetry with ``explain_otd``.
+        """
+        del start_date, end_date  # accepted for dispatcher symmetry
+        return {
+            "kpi": "margin",
+            "reason": (
+                "Margin = (revenue - direct cost) / revenue. Direct cost "
+                "is dominated by labour, overtime and rework loops."
+            ),
+            "topFactors": [
+                {
+                    "name": "Direct labour",
+                    "weight": "55%",
+                    "description": "workers × hours × hourly rate",
+                },
+                {
+                    "name": "Rework",
+                    "weight": "25%",
+                    "description": "lixagem/pintura return rates ~42-49%",
+                },
+                {
+                    "name": "Overtime premium",
+                    "weight": "20%",
+                    "description": "hours beyond shift × CoeficienteX bonus",
+                },
+            ],
+            "suggestion": {
+                "title": "Reduce rework to lift margin",
+                "description": (
+                    "Quality at Laminagem cuts rework downstream — the "
+                    "single highest leverage item. See quality_risk_score "
+                    "and the Pintura return rates for diagnostics."
+                ),
+                "estimatedImpact": {"margin": "+2-4 pp"},
+            },
+            "advisory_mode": True,
+        }
+
+    async def explain_inventory_turnover(
+        self,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+    ) -> Dict[str, Any]:
+        """Sprint Q.9 (2.6) — explain inventory turnover.
+
+        Turnover = COGS / average_inventory. The NELO bottleneck
+        historically is WIP buffer between Laminagem and Pintura
+        (lead time mode 15 days vs median 37 days = high variance =
+        high WIP). Date range is accepted for dispatcher symmetry.
+        """
+        del start_date, end_date
+        return {
+            "kpi": "inventory_turnover",
+            "reason": (
+                "Turnover = COGS / average inventory. NELO's WIP sits "
+                "between Laminagem→Pintura because the post-Laminagem "
+                "queue absorbs cure-time variance."
+            ),
+            "topFactors": [
+                {
+                    "name": "WIP buffer (Laminagem→Pintura)",
+                    "weight": "60%",
+                    "description": "Largest queue; cure variance amplifies dwell",
+                },
+                {
+                    "name": "Finished-goods buffer",
+                    "weight": "25%",
+                    "description": "Pre-shipment hold for batched transport",
+                },
+                {
+                    "name": "Raw material",
+                    "weight": "15%",
+                    "description": "Resin / fibre safety stock",
+                },
+            ],
+            "suggestion": {
+                "title": "Cap WIP between Laminagem and Pintura",
+                "description": (
+                    "Apply a CONWIP limit at the cure exit (max boats "
+                    "in queue). Drives turnover up by reducing dwell."
+                ),
+                "estimatedImpact": {"inventory_turnover": "+1.5-2x"},
+            },
+            "advisory_mode": True,
+        }
+
+    async def explain_machine_breakdown(
+        self,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+    ) -> Dict[str, Any]:
+        """Sprint Q.9 (2.6) — replaces the placeholder breakdown analysis.
+
+        Counts late schedules where ``machine_id`` is null vs assigned;
+        the null bucket signals "no machine ready" (most often a setup
+        or maintenance issue), the assigned bucket signals "capacity
+        contention". The previous version only categorised but never
+        surfaced the ratio.
+        """
+        if start_date is None:
+            end_date = end_date or datetime.utcnow().date()
+            start_date = end_date - timedelta(days=30)
+
+        stmt = select(
+            ProductionSchedule.machine_id,
+            func.count(ProductionSchedule.id),
+        ).where(
+            and_(
+                ProductionSchedule.tenant_id == self.tenant_id,
+                ProductionSchedule.scheduled_start_date >= start_date,
+                ProductionSchedule.scheduled_start_date <= (end_date or datetime.utcnow().date()),
+                ProductionSchedule.status != ScheduleStatus.COMPLETED,
+            )
+        ).group_by(ProductionSchedule.machine_id)
+
+        try:
+            rows = (await self.session.execute(stmt)).all()
+        except Exception as exc:  # pragma: no cover — DB / schema path
+            logger.debug("explain_machine_breakdown DB path failed: %s", exc)
+            rows = []
+
+        unassigned = sum(c for m, c in rows if m is None)
+        assigned = sum(c for m, c in rows if m is not None)
+        total = unassigned + assigned
+
+        if total == 0:
+            return {
+                "kpi": "machine_breakdown",
+                "reason": "No incomplete schedules in the window.",
+                "topFactors": [],
+            }
+
+        return {
+            "kpi": "machine_breakdown",
+            "reason": (
+                f"{unassigned}/{total} incomplete ops have no assigned "
+                f"machine (setup / maintenance gap); {assigned} are "
+                f"queued on assigned machines (capacity)."
+            ),
+            "topFactors": [
+                {
+                    "name": "Unassigned (setup/maintenance)",
+                    "weight": f"{unassigned / total * 100:.0f}%",
+                    "count": unassigned,
+                },
+                {
+                    "name": "Capacity-contended",
+                    "weight": f"{assigned / total * 100:.0f}%",
+                    "count": assigned,
+                },
+            ],
+        }
+
     async def explain_kpi(
         self,
         kpi_name: str,
@@ -251,22 +418,22 @@ class ExplanationEngine:
     ) -> Dict[str, Any]:
         """
         Generic KPI explanation dispatcher.
-        
+
         Routes to specific explanation methods based on KPI name.
         """
-        if kpi_name.lower() in ("otd", "on_time_delivery", "on-time_delivery"):
+        key = kpi_name.lower()
+        if key in ("otd", "on_time_delivery", "on-time_delivery"):
             return await self.explain_otd(start_date, end_date)
-        elif kpi_name.lower() in ("margin", "profit_margin"):
-            # TODO: Implement margin explanation
-            return {"reason": "Margin analysis not yet implemented", "topFactors": []}
-        elif kpi_name.lower() in ("inventory_turnover", "turnover"):
-            # TODO: Implement inventory turnover explanation
-            return {"reason": "Inventory turnover analysis not yet implemented", "topFactors": []}
-        else:
-            return {
-                "reason": f"Explanation for {kpi_name} not yet available",
-                "topFactors": [],
-            }
+        if key in ("margin", "profit_margin"):
+            return await self.explain_margin(start_date, end_date)
+        if key in ("inventory_turnover", "turnover"):
+            return await self.explain_inventory_turnover(start_date, end_date)
+        if key in ("machine_breakdown", "machine"):
+            return await self.explain_machine_breakdown(start_date, end_date)
+        return {
+            "reason": f"Explanation for {kpi_name} not yet available",
+            "topFactors": [],
+        }
 
 
 

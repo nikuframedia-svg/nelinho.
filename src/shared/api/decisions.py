@@ -365,21 +365,52 @@ async def execute_decision(
             detail=f"Decision cannot be executed. Current status: {decision.status}",
         )
     
-    # TODO: Execute actual action (call ActionExecutor with EXECUTE mode)
-    # For now, just update status
-    
+    # Sprint Q.9 (2.2) — advisory mode by design until Sprint G (NELO ERP)
+    # is wired. We mark the decision EXECUTED in the audit trail and publish
+    # a DECISION_EXECUTED Kafka event so the realtime layer (SSE) reflects
+    # the change. No physical mutation of the ERP / schedule until the
+    # ActionExecutor handlers are wired against real systems — see
+    # `governance.action_executor` for the registry that takes over once
+    # Sprint G lands.
     decision.status = DecisionStatus.EXECUTED.value
     decision.executed_at = datetime.utcnow()
-    
+
     await session.commit()
-    
-    logger.info(f"Decision executed: id={decision_id}, executor={user_id}")
-    
+
+    # Best-effort event publish — advisory loop should still notify clients.
+    try:
+        from src.shared.kafka_client import publish_event, Topics, EventBase
+        await publish_event(
+            Topics.DECISION_EXECUTED,
+            EventBase(
+                event_type="DECISION_EXECUTED",
+                tenant_id=tenant_id,
+                source_module="shared.api.decisions",
+                payload={
+                    "decision_id": str(decision_id),
+                    "executor_id": str(user_id),
+                    "executed_at": decision.executed_at.isoformat(),
+                    "advisory_mode": True,
+                },
+            ),
+        )
+    except Exception as exc:
+        logger.warning(
+            "DECISION_EXECUTED publish failed for %s: %s — audit trail still set",
+            decision_id, exc,
+        )
+
+    logger.info(
+        "Decision executed (advisory): id=%s, executor=%s",
+        decision_id, user_id,
+    )
+
     return {
         "id": str(decision_id),
         "status": "executed",
         "executed_at": decision.executed_at.isoformat(),
-        "message": "Decision executed successfully",
+        "advisory_mode": True,
+        "message": "Decision marked EXECUTED (advisory; ERP integration in Sprint G)",
     }
 
 
@@ -419,21 +450,55 @@ async def rollback_decision(
                 detail=f"Rollback window expired. Deadline: {rollback_deadline.isoformat()}",
             )
     
-    # TODO: Revert state using before_state snapshot
-    # For now, just update status
-    
+    # Sprint Q.9 (2.3) — advisory rollback. The `before_state` snapshot is
+    # exposed to the caller for audit, but no physical revert is performed
+    # against the ERP / schedule until Sprint G. Surfacing the snapshot lets
+    # downstream consumers (Timeline UI, audit reports) show the operator
+    # what would have been reverted.
+    before_state_snapshot = (
+        decision.before_state if hasattr(decision, "before_state") else None
+    )
+
     decision.status = DecisionStatus.ROLLED_BACK.value
     decision.rolled_back_at = datetime.utcnow()
-    
+
     await session.commit()
-    
-    logger.info(f"Decision rolled back: id={decision_id}, user={user_id}")
-    
+
+    try:
+        from src.shared.kafka_client import publish_event, Topics, EventBase
+        await publish_event(
+            Topics.DECISION_ROLLED_BACK,
+            EventBase(
+                event_type="DECISION_ROLLED_BACK",
+                tenant_id=tenant_id,
+                source_module="shared.api.decisions",
+                payload={
+                    "decision_id": str(decision_id),
+                    "user_id": str(user_id),
+                    "rolled_back_at": decision.rolled_back_at.isoformat(),
+                    "advisory_mode": True,
+                    "before_state_present": before_state_snapshot is not None,
+                },
+            ),
+        )
+    except Exception as exc:
+        logger.warning(
+            "DECISION_ROLLED_BACK publish failed for %s: %s — audit trail still set",
+            decision_id, exc,
+        )
+
+    logger.info(
+        "Decision rolled back (advisory): id=%s, user=%s",
+        decision_id, user_id,
+    )
+
     return {
         "id": str(decision_id),
         "status": "rolled_back",
         "rolled_back_at": decision.rolled_back_at.isoformat(),
-        "message": "Decision rolled back successfully",
+        "before_state": before_state_snapshot,
+        "advisory_mode": True,
+        "message": "Decision marked ROLLED_BACK (advisory; ERP revert in Sprint G)",
     }
 
 

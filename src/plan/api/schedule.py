@@ -45,12 +45,87 @@ class ScheduleResponse(BaseModel):
 @router.get("/")
 async def list_schedules(
     status: Optional[str] = None,
+    planning_run_id: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
     tenant_id: UUID = Depends(get_tenant_id),
     session: AsyncSession = Depends(get_session),
 ):
-    """List all schedules."""
-    # Return empty list for now (placeholder for future implementation)
-    return {"data": [], "total": 0}
+    """List schedule rows with optional ``status`` / ``planning_run_id``
+    filters and pagination (``limit`` ≤ 100, ``offset`` ≥ 0).
+
+    Sprint Q.9 (2.1) — was a placeholder returning ``{"data": [], "total": 0}``;
+    now hits ProductionSchedule directly.
+    """
+    if limit < 1 or limit > 100:
+        raise HTTPException(
+            status_code=400,
+            detail="limit must be between 1 and 100",
+        )
+    if offset < 0:
+        raise HTTPException(status_code=400, detail="offset must be >= 0")
+
+    filters = [ProductionSchedule.tenant_id == tenant_id]
+    if status:
+        try:
+            filters.append(ProductionSchedule.status == ScheduleStatus(status))
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"invalid status {status!r}; must be one of "
+                    f"{[s.value for s in ScheduleStatus]}"
+                ),
+            )
+    if planning_run_id:
+        filters.append(ProductionSchedule.planning_run_id == planning_run_id)
+
+    # Total before pagination
+    from sqlalchemy import func
+    total_stmt = select(func.count(ProductionSchedule.id)).where(and_(*filters))
+    total = (await session.execute(total_stmt)).scalar() or 0
+
+    rows_stmt = (
+        select(ProductionSchedule)
+        .where(and_(*filters))
+        .order_by(
+            ProductionSchedule.scheduled_start_date.asc(),
+            ProductionSchedule.scheduled_start_time.asc().nulls_last(),
+        )
+        .limit(limit)
+        .offset(offset)
+    )
+    rows = (await session.execute(rows_stmt)).scalars().all()
+
+    data = [
+        {
+            "id": str(r.id),
+            "order_id": r.order_id,
+            "order_line": r.order_line,
+            "operation_sequence": r.operation_sequence,
+            "machine_id": str(r.machine_id) if r.machine_id else None,
+            "scheduled_start_date": r.scheduled_start_date.isoformat(),
+            "scheduled_end_date": r.scheduled_end_date.isoformat(),
+            "scheduled_duration_hours": (
+                float(r.scheduled_duration_hours)
+                if r.scheduled_duration_hours is not None else None
+            ),
+            "status": r.status.value if r.status else None,
+            "planning_run_id": r.planning_run_id,
+            "engine_used": r.engine_used,
+            "assigned_employee_id": (
+                str(r.assigned_employee_id)
+                if r.assigned_employee_id else None
+            ),
+        }
+        for r in rows
+    ]
+    return {
+        "data": data,
+        "total": int(total),
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @router.post("/generate", response_model=ScheduleResponse)
