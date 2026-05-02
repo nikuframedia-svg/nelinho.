@@ -261,7 +261,12 @@ class SemanticQueries:
         if not ingestion_id:
             return self._no_data_response("backlog", "No active ingestion")
         
-        # Aggregate backlog by phase
+        # Sprint Q.9 (1.3) — `is_production` is set on the row dict by
+        # curated_transformer (`Fase_Producao == 1`) but it never lands as
+        # a column on the model, so the previous filter raised
+        # AttributeError. Until the column is materialised, every open
+        # phase counts as production (administrative phases don't sit
+        # open in bulk).
         backlog_query = select(
             CuratedOrderPhase.fase_id,
             CuratedOrderPhase.fase_nome,
@@ -272,7 +277,6 @@ class SemanticQueries:
             and_(
                 CuratedOrderPhase.ingestion_id == ingestion_id,
                 CuratedOrderPhase.data_fim.is_(None),
-                CuratedOrderPhase.is_production == True
             )
         ).group_by(
             CuratedOrderPhase.fase_id,
@@ -600,19 +604,28 @@ class SemanticQueries:
             return self._no_data_response("lead_time", "No active ingestion")
         
         cutoff_date = datetime.utcnow() - timedelta(days=days_back)
-        
-        # Query completed orders with lead time
+
+        # Sprint Q.9 (1.1) — `CuratedOrder.lead_time_days` does NOT exist on
+        # the model; the raw transformer (`curated_transformer._transform_ordens`)
+        # computes it as a derived field on the dict but it never lands as a
+        # column. Compute it inline here as the integer day delta between
+        # `data_conclusao` and `data_entrada` — the same definition used in
+        # the plano v4 §2 ("lead time — moda 15 days"). Both must be set.
+        lead_time_days_expr = (
+            CuratedOrder.data_conclusao - CuratedOrder.data_entrada
+        )
+
         lead_time_query = select(
             func.count(CuratedOrder.id).label("total_orders"),
-            func.avg(CuratedOrder.lead_time_days).label("avg_lead_time"),
-            func.min(CuratedOrder.lead_time_days).label("min_lead_time"),
-            func.max(CuratedOrder.lead_time_days).label("max_lead_time"),
+            func.avg(lead_time_days_expr).label("avg_lead_time"),
+            func.min(lead_time_days_expr).label("min_lead_time"),
+            func.max(lead_time_days_expr).label("max_lead_time"),
         ).where(
             and_(
                 CuratedOrder.ingestion_id == ingestion_id,
                 CuratedOrder.data_conclusao.isnot(None),
                 CuratedOrder.data_conclusao >= cutoff_date,
-                CuratedOrder.lead_time_days.isnot(None)
+                CuratedOrder.data_entrada.isnot(None),
             )
         )
         

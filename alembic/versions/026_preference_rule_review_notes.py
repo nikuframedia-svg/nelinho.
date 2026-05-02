@@ -8,14 +8,21 @@ new `review_notes` field so the audit trail keeps the operator's words
 verbatim.
 
 Revision ID: 026_preference_rule_review_notes
-Revises: 025a_phase_bonus_payout
+Revises: 024_preference_rules
 Create Date: 2026-04-24
+
+NOTE (Sprint Q.9 1.2): the original ``down_revision`` was set to the
+filename ``'025a_phase_bonus_payout'`` instead of the actual revision id
+``'025a_phase_bonus'``, breaking the upgrade chain
+(``alembic heads`` raised ``KeyError``). Correct predecessor in the
+existing chain is ``024_preference_rules`` — the chain was
+019 → 020 → 025a → 023 → 022 → 024 → (here) → 027 → 028 → 029.
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = '026_preference_rule_review_notes'
-down_revision = '025a_phase_bonus_payout'
+down_revision = '024_preference_rules'
 branch_labels = None
 depends_on = None
 
