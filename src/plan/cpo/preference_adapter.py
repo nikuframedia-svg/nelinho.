@@ -49,19 +49,41 @@ logger = logging.getLogger(__name__)
 
 
 # ─── Tunables ────────────────────────────────────────────────────────────
+#
+# FASE 6.4 — every constant below is now env-overridable so a tenant
+# can rebalance the preference penalty without a code change. Defaults
+# preserve the existing scheduler behaviour exactly. Reads happen at
+# module import time; a worker restart is required to pick up changes.
 
-TEMPORAL_PER_OP: float = 50.0
+import os as _os
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = _os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "preference_adapter: %s=%r is not a float — using default %s",
+            name, raw, default,
+        )
+        return default
+
+
+TEMPORAL_PER_OP: float = _env_float("PRODPLAN_PREF_TEMPORAL_PER_OP", 50.0)
 """Penalty added for each op scheduled on a blocked weekday."""
 
-THRESHOLD_PER_SHORT_OP: float = 100.0
+THRESHOLD_PER_SHORT_OP: float = _env_float("PRODPLAN_PREF_THRESHOLD_PER_SHORT_OP", 100.0)
 """Penalty added for each op in a ``phase_threshold`` rule's phase that
 runs with fewer workers than the learned minimum."""
 
-AFFINITY_REWARD: float = -15.0
+AFFINITY_REWARD: float = _env_float("PRODPLAN_PREF_AFFINITY_REWARD", -15.0)
 """Bonus (negative → lowers fitness = better) when the preferred worker
 is on the rule's phase."""
 
-AFFINITY_MISS_PENALTY: float = 10.0
+AFFINITY_MISS_PENALTY: float = _env_float("PRODPLAN_PREF_AFFINITY_MISS_PENALTY", 10.0)
 """Smaller penalty when the preferred worker is absent — asymmetric so
 the optimizer doesn't thrash assigning the same person everywhere."""
 
