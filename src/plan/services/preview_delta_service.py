@@ -326,6 +326,56 @@ def _detect_conflicts(
                             ],
                         )
                     )
+
+    # Sprint Q.13.E E.3 — Spelke axiom 3 (1 poço ≠ 2 barcos) at the
+    # preview layer. The CP-SAT engine already enforces NoOverlap on
+    # mold intervals (cpsat_lrho.py:267); this conflict detector
+    # surfaces the same invariant for the operator drag-drop UX so they
+    # see the conflict immediately on hover, not after solving. Mold
+    # mutations don't go through `new_*` fields yet (only worker
+    # reassignments); the check uses the op's current `mold_id` for
+    # both before/after, so a time mutation that pushes an op into
+    # another op's window on the same mold still trips it.
+    mold_id = op.get("mold_id")
+    if mold_id:
+        start = _ts(op.get("start"))
+        end = _ts(op.get("end"))
+        op_id = op.get("id") or op.get("operation_id")
+        # Multi-pocket moulds: ops sharing a `mold_batch_id` share the
+        # mould slot by design, so they DON'T conflict (decoder.py:51).
+        op_batch = op.get("mold_batch_id")
+        if start is not None and end is not None:
+            for other in schedule.get("operations") or []:
+                if other is op:
+                    continue
+                if str(other.get("id") or other.get("operation_id") or "") == str(op_id or ""):
+                    continue
+                if other.get("mold_id") != mold_id:
+                    continue
+                # Multi-pocket batches share the slot (max(durations)) —
+                # not a conflict.
+                other_batch = other.get("mold_batch_id")
+                if op_batch and other_batch and op_batch == other_batch:
+                    continue
+                o_start = _ts(other.get("start"))
+                o_end = _ts(other.get("end"))
+                if o_start is None or o_end is None:
+                    continue
+                if start < o_end and end > o_start:
+                    out.append(
+                        PreviewIssue(
+                            type="mold_double_booking",
+                            severity="conflict",
+                            message=(
+                                f"Molde {mold_id} já está em uso por outra "
+                                "operação nesta janela (1 poço = 1 barco)."
+                            ),
+                            related_ids=[
+                                str(other.get("id") or other.get("operation_id") or "")
+                            ],
+                        )
+                    )
+
     return out
 
 
