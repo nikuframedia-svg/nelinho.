@@ -279,6 +279,25 @@ DEFAULT_SEEDS: list[ConfigSeed] = [
     ("learning", "discovery.enabled", False, "bool",
      "Camada 4 weekly PCMCI+ discovery proposes new SCM edges for review."),
 
+    # ───────────────────────── system rate limits (Sprint Q.13.F F.1) ──────
+    # Plan v4 §11.2 — heavier endpoints get tighter sliding-window
+    # limits than the conversational copilot quota. Window is in
+    # seconds; limit is requests per window per (tenant, actor).
+    # Values default to permissive (operators rarely hit them); SREs
+    # tune via ConfigStore when traffic patterns shift.
+    ("system", "rate_limit.copilot_respond.limit", 30, "int",
+     "Max requests/window for /v1/copilot/respond per (tenant, actor)."),
+    ("system", "rate_limit.copilot_respond.window_seconds", 60, "int",
+     "Sliding window length for /v1/copilot/respond rate limit."),
+    ("system", "rate_limit.cpo_schedule.limit", 10, "int",
+     "Max requests/window for /v1/plan/cpo/schedule per (tenant, actor)."),
+    ("system", "rate_limit.cpo_schedule.window_seconds", 60, "int",
+     "Sliding window length for /v1/plan/cpo/schedule rate limit."),
+    ("system", "rate_limit.preview_delta.limit", 60, "int",
+     "Max requests/window for /v1/plan/cpo/preview-delta per (tenant, actor)."),
+    ("system", "rate_limit.preview_delta.window_seconds", 60, "int",
+     "Sliding window length for /v1/plan/cpo/preview-delta rate limit."),
+
     # ───────────────────────── rbac (Sprint Q.9 Onda 3.6) ───────────────────
     # Plan §11.1 last bullet — quem vê o quê. The full RBAC table lives
     # in the auth service; these defaults gate broad surfaces and let

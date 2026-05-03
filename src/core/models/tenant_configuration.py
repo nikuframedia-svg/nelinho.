@@ -59,6 +59,10 @@ CATEGORY_SESSION = "session"
 CATEGORY_DISPATCH = "dispatch"
 CATEGORY_EXPLAIN = "explain"
 CATEGORY_IMPROVE = "improve"
+# Sprint Q.13.D D.2 — `learning` category for fine-tune + discovery
+# opt-in flags. Distinct from `learning_rules` (Camada 1 rule
+# detector knobs) to keep the surface readable.
+CATEGORY_LEARNING = "learning"
 
 ALLOWED_CATEGORIES = frozenset({
     CATEGORY_GOVERNANCE,
@@ -91,6 +95,7 @@ ALLOWED_CATEGORIES = frozenset({
     CATEGORY_DISPATCH,
     CATEGORY_EXPLAIN,
     CATEGORY_IMPROVE,
+    CATEGORY_LEARNING,
 })
 
 DATA_TYPE_INT = "int"
