@@ -16,7 +16,7 @@ Data Sources:
 - FasesOrdemFabrico - Backlog data
 """
 from typing import List, Optional, Dict, Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 import logging
 
 from sqlalchemy import select, func, and_
@@ -45,28 +45,103 @@ class WorkforceService:
     def __init__(
         self,
         db: AsyncSession,
+        tenant_id: UUID,
         ingestion_id: Optional[str] = None,
         *,
         allow_mock: bool = False,
     ):
-        # Sprint Q.8 Fase 6 — `allow_mock` gates the synthetic demo
-        # graph. Default False (production); the API exposes
-        # `?demo=true` for sales/onboarding flows that explicitly want
-        # the placeholder nodes.
+        # Sprint Q.12 Onda 1 — `tenant_id` agora obrigatório. A camada
+        # `factory_curated.skill_matrix` ainda não tem `tenant_id` (a
+        # deployment NELO actual é single-tenant), mas o serviço passa a
+        # registar tenant em logs e fica preparado para o filtro quando
+        # o curated layer for multi-tenant — defesa em profundidade.
         self.db = db
+        self.tenant_id = tenant_id
         self.ingestion_id = ingestion_id
         self.median_hourly_rate = MEDIAN_HOURLY_RATE
         self.allow_mock = allow_mock
-    
+
+    # ── Sprint Q.13.E E.5 — Skill recency filter ────────────────────────
+    #
+    # Plan v4 §3.4: someone qualified for Laminagem 5 years ago who hasn't
+    # touched it since is *technically* on the skill matrix but should NOT
+    # be picked up as a real candidate for scheduling. Pair-formation,
+    # cascade-impact analysis, and worker-pair-suggestion all over-report
+    # capacity if we treat aptitude as boolean and forget who's been
+    # actually doing the work.
+    #
+    # This helper returns the set of funcionario_ids that have at least
+    # one allocation row whose underlying order phase finished inside the
+    # last `months` months. Callers AND-join this with the aptitude
+    # query (or filter the python-side result) to keep only the
+    # actually-active workers.
+
+    async def recently_active_funcionarios(
+        self,
+        *,
+        months: int = 12,
+        phase_id: Optional[str] = None,
+    ) -> set[str]:
+        """Set of funcionario_ids active in the last `months` months.
+
+        Args:
+            months: lookback window. Default 12; pass 0 to disable
+                (returns empty set, caller should treat as "no filter").
+            phase_id: when provided, scope activity to this phase. None
+                returns workers active on ANY phase in the window.
+
+        Best-effort: a missing curated layer or a query failure yields
+        an empty set. The caller decides whether that means "filter
+        out everyone" (strict) or "skip the filter" (permissive); the
+        existing aptitude code paths default to permissive so a partial
+        deploy doesn't suddenly schedule on an empty workforce.
+        """
+        if months <= 0:
+            return set()
+        try:
+            from datetime import date, timedelta
+            from src.factory_data_product.models.curated import (
+                CuratedAllocation,
+                CuratedOrderPhase,
+            )
+        except ImportError:
+            logger.debug(
+                "recently_active_funcionarios: curated models unavailable",
+            )
+            return set()
+
+        cutoff = date.today() - timedelta(days=months * 30)
+        try:
+            stmt = (
+                select(CuratedAllocation.funcionario_id)
+                .join(
+                    CuratedOrderPhase,
+                    CuratedOrderPhase.fase_of_id == CuratedAllocation.fase_of_id,
+                )
+                .where(CuratedOrderPhase.data_fim.isnot(None))
+                .where(CuratedOrderPhase.data_fim >= cutoff)
+            )
+            if phase_id is not None:
+                stmt = stmt.where(CuratedOrderPhase.fase_id == phase_id)
+            result = await self.db.execute(stmt.distinct())
+            return {row[0] for row in result.all() if row[0]}
+        except Exception as exc:
+            logger.warning(
+                "recently_active_funcionarios query failed (%s) — "
+                "returning empty set; caller should treat as no filter",
+                exc,
+            )
+            return set()
+
     async def get_dependency_graph(self) -> Dict[str, Any]:
         """
         Build the dependency graph from real data.
-        
+
         Query: FuncionariosFasesAptos + Funcionarios + Fases
-        
+
         Returns nodes (phases, employees) and edges (aptitudes).
         """
-        logger.info("Building dependency graph")
+        logger.info("Building dependency graph (tenant=%s)", self.tenant_id)
         
         try:
             # Try to import curated models
@@ -152,7 +227,9 @@ class WorkforceService:
                     "data": {"employee_count": emp_count},
                 })
                 
-                if emp_count == 1:
+                if emp_count <= 1:
+                    # Sprint Q.12 — fase sem ninguém apto (emp_count==0)
+                    # é mais crítica que com 1 (SPOF), antes era ignorada.
                     spof_nodes.append(phase_id)
             
             # Add employee node if not exists
@@ -296,7 +373,7 @@ class WorkforceService:
             }
         ]
         
-        estimated_daily_cost = (total_hours / 8) * self.median_hourly_rate * 8 if total_hours > 0 else 0
+        estimated_daily_cost = total_hours * self.median_hourly_rate if total_hours > 0 else 0
         
         return {
             "source_phase": phase_id,

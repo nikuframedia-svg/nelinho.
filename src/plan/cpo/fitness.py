@@ -88,6 +88,27 @@ class FitnessConfig:
     # hit the DB per evaluation.
     preference_rules: List[Dict[str, Any]] = field(default_factory=list)
 
+    # ── Sprint Q.13.E E.1 — Capacity 1.5× factor for high-rework phases ──
+    # Plan v4 §3.3: NELO's Lixagem água, Pintura Acab and Lixagem polim
+    # phases run at 49.2% / 42.4% / 41.3% historical error rate. Without
+    # capacity-correction the GA over-promises throughput on these
+    # phases — a finished schedule that *physically* fits in 200h
+    # actually consumes ~300h once rework loops are factored in. We
+    # add an extra "rework capacity" term to fitness equal to
+    # ``(rework_capacity_factor - 1) × Σ duration_h`` for ops whose
+    # phase has ``error_rate >= rework_error_threshold``. Same units as
+    # makespan (hours), so the legacy ``w_makespan`` already weights it
+    # correctly; v2 mode normalises against ``_NORM_MAKESPAN_H``.
+    #
+    # Defaults are off (factor=1.0) so existing tests that hand-craft
+    # FitnessConfig don't shift. The engine constructor flips factor to
+    # 1.5 when the FactoryState carries any non-empty error_rate map,
+    # picking up the wiring automatically once Sprint Q.8's
+    # `historical_error_rates` populates.
+    phase_error_rates: Dict[str, float] = field(default_factory=dict)
+    rework_error_threshold: float = 0.40
+    rework_capacity_factor: float = 1.0
+
     # ── Sprint I.5 — Causal entropy (flexibility preservation) ────────
     # Shannon-entropy penalty over the load distribution across
     # machines / workers / moulds. A concentrated plan pays the
@@ -194,10 +215,53 @@ def compute_fitness(schedule: Dict[str, Any], config: Optional[FitnessConfig] = 
                 "fitness causal_entropy_penalty failed: %s", exc,
             )
 
+    # Sprint Q.13.E E.1 — capacity stolen by rework on high-error
+    # phases. Same units as makespan (hours), priced via
+    # `_NORM_MAKESPAN_H` in v2 mode and `cfg.w_makespan` in legacy mode.
+    rework_h = _rework_penalty_hours(schedule, cfg)
+    if rework_h > 0:
+        if cfg.use_v2_weights:
+            # Treat as additional normalised makespan with the same weight.
+            ref = _NORM_MAKESPAN_H
+            fitness += cfg.w_v2_makespan * max(0.0, min(1.0, rework_h / ref))
+        else:
+            fitness += cfg.w_makespan * rework_h
+
     if schedule.get("safety_violated"):
         fitness += cfg.safety_penalty
 
     return fitness
+
+
+def _rework_penalty_hours(schedule: Dict[str, Any], cfg: FitnessConfig) -> float:
+    """Sprint Q.13.E E.1 — capacity stolen by rework on high-error phases.
+
+    Returns 0.0 when the factor is at unity (default) or no phase
+    breaches the threshold. The cost is calibrated in hours so callers
+    can fold it directly into a makespan-weighted term without rescaling.
+    """
+    if cfg.rework_capacity_factor <= 1.0:
+        return 0.0
+    rates = cfg.phase_error_rates
+    if not rates:
+        return 0.0
+    threshold = cfg.rework_error_threshold
+    extra_factor = cfg.rework_capacity_factor - 1.0
+
+    ops = schedule.get("operations") or []
+    total_h = 0.0
+    for op in ops:
+        phase_id = op.get("phase_id")
+        if not phase_id:
+            continue
+        rate = rates.get(str(phase_id))
+        if rate is None or float(rate) < threshold:
+            continue
+        duration_min = float(op.get("duration_minutes") or 0)
+        if duration_min <= 0:
+            continue
+        total_h += extra_factor * (duration_min / 60.0)
+    return total_h
 
 
 def _legacy_fitness(schedule: Dict[str, Any], cfg: FitnessConfig) -> float:

@@ -155,6 +155,20 @@ class CPOv4Engine:
         ):
             self.fitness_config.preference_rules = list(state.preference_rules)
 
+        # Sprint Q.13.E E.1 — Capacity 1.5× factor for retrabalho-heavy
+        # phases (Plan v4 §3.3). FactoryState.load() populates
+        # `historical_error_rates`; we forward them onto the fitness
+        # config and bump the factor from 1.0 → 1.5 so the GA stops
+        # over-promising throughput on Lixagem água / Pintura Acab /
+        # Lixagem polim. Callers that hand-craft a FitnessConfig with
+        # explicit phase_error_rates / capacity factor keep their
+        # values (no overwrite).
+        rates = getattr(state, "historical_error_rates", None) or {}
+        if rates and not self.fitness_config.phase_error_rates:
+            self.fitness_config.phase_error_rates = dict(rates)
+            if self.fitness_config.rework_capacity_factor <= 1.0:
+                self.fitness_config.rework_capacity_factor = 1.5
+
         self._rng = random.Random(self.config.seed)
 
         # Adaptive layers — created lazily so Sprint E tests that don't
