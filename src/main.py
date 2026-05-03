@@ -80,6 +80,17 @@ async def lifespan(app: FastAPI):
         setup_tracing(app)
     except Exception as tracing_error:
         logger.warning(f"OTel setup failed: {tracing_error}")
+
+    # Sprint Q.13.F F.4 — Sentry error reporting. Same graceful no-op
+    # contract as tracing: when SENTRY_DSN is unset OR sentry-sdk
+    # isn't installed, the call returns False and nothing is reported.
+    # Pairs with OTel: tracing answers "where slowed", Sentry answers
+    # "what raised, who, how often, with which release".
+    try:
+        from src.shared.error_reporting import setup_error_reporting
+        setup_error_reporting()
+    except Exception as sentry_error:
+        logger.warning(f"Sentry setup failed: {sentry_error}")
     
     try:
         # Initialize database (opcional - permite iniciar sem DB para testes)

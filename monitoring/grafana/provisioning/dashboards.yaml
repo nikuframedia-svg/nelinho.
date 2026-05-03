@@ -1,0 +1,25 @@
+# Sprint Q.13.F F.5 — Grafana provisioning config.
+#
+# Drop this into Grafana's provisioning/dashboards/ directory (mounted
+# from this repo's monitoring/grafana/provisioning/ in the standard
+# docker-compose deploy). Grafana reads it on startup, watches for
+# file changes, and reloads dashboards without a restart.
+#
+# Path convention: every JSON in monitoring/grafana/dashboards/ is
+# auto-loaded into the "ProdPlan" folder. Adding a new dashboard
+# is just `git add monitoring/grafana/dashboards/<name>.json`; CI
+# picks it up next deploy.
+
+apiVersion: 1
+
+providers:
+  - name: prodplan-default
+    orgId: 1
+    folder: ProdPlan
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false
