@@ -221,6 +221,13 @@ DEFAULT_SEEDS: list[ConfigSeed] = [
      "WF05 — tier boundary: mid < 12 months"),
     ("workforce", "shift.default_hours_per_day", 8.0, "float",
      "95% turno único manhã per blueprint §2.8"),
+    # Sprint Q.13.E E.5 — skill recency filter window. Aptitude rows
+    # for funcionarios who haven't actually executed the phase in the
+    # last N months are filtered out of pair-formation + cascade
+    # analysis. 12 months chosen as the smallest window that still
+    # covers seasonal phases (sailing-season ramp-up, etc.).
+    ("workforce", "skill.recency_months", 12, "int",
+     "Skill aptitude is only counted if the worker did the phase in the last N months."),
 
     # ───────────────────────── routing (Sprint Q.9 Onda 3.6) ────────────────
     # Plan v4 §11.1 — routing templates editáveis. Phase-uses-mold and
@@ -302,6 +309,14 @@ DEFAULT_SEEDS: list[ConfigSeed] = [
     # Plan §11.1 transport — capacity + buffer + customer priority. The
     # transport_batch_service already reads tenant config; these are the
     # canonical keys it expects to find.
+    # Sprint Q.13.E E.2 — actual modal load (moda) per truck on the
+    # Vila do Conde lane is 26 boats (CEO baseline says 50 is the
+    # ceiling, but the real-world distribution clusters at 26). The
+    # `complete_truck` detector now tops batches up to this number,
+    # not to the ceiling — fewer "complete the truck" suggestions
+    # over-promising 50-boat loads that never actually ship.
+    ("transporte", "truck.capacity_moda", 26, "int",
+     "Modal real (boats/truck) — used by complete_truck detector to size suggestions."),
     ("transporte", "truck.capacity", 50, "int",
      "Boats per truck — CEO baseline. Moda histórica = 26."),
     ("transporte", "buffer.days_before_dispatch", 2, "int",

@@ -39,9 +39,15 @@ from src.plan.models.transport import TransportBatch, TransportBatchAssignment
 logger = logging.getLogger(__name__)
 
 
-# Capacity defaults — overridable via TenantConfig.planning.transport.* in
+# Capacity defaults — overridable via TenantConfig.transporte.* in
 # Q.2's caller (the API layer reads these via configApi).
 DEFAULT_TRUCK_CAPACITY = 50
+
+# Sprint Q.13.E E.2 — historical modal load on the Vila do Conde lane.
+# The truck *can* take 50 boats (CEO baseline) but the real distribution
+# clusters at 26 — that's the load `complete_truck` aims for.
+DEFAULT_TRUCK_CAPACITY_MODA = 26
+
 DEFAULT_DELIVERY_BUFFER_DAYS = 1
 
 # A batch is "half-empty" when assigned <= half of capacity.
@@ -94,11 +100,13 @@ class TransportSuggestionsService:
         tenant_id: UUID,
         *,
         truck_capacity: int = DEFAULT_TRUCK_CAPACITY,
+        truck_capacity_moda: int = DEFAULT_TRUCK_CAPACITY_MODA,
         buffer_days: int = DEFAULT_DELIVERY_BUFFER_DAYS,
     ) -> None:
         self.session = session
         self.tenant_id = tenant_id
         self.truck_capacity = truck_capacity
+        self.truck_capacity_moda = truck_capacity_moda
         self.buffer_days = buffer_days
 
     async def for_batch(self, batch_id: UUID) -> List[TransportSuggestion]:
@@ -258,11 +266,16 @@ class TransportSuggestionsService:
         unassigned: List[ProductionOrder],
     ) -> List[TransportSuggestion]:
         capacity = batch.truck_capacity_units or self.truck_capacity
-        if assigned == 0 or assigned >= capacity * HALF_EMPTY_RATIO:
+        # Sprint Q.13.E E.2 — target the *modal* load (real-world average,
+        # ~26 boats), not the truck's ceiling (50). Suggesting "fill to 50"
+        # over-promises trips that historically never run that full and
+        # creates a demand the production schedule can't keep up with.
+        target = min(self.truck_capacity_moda, capacity)
+        if assigned == 0 or assigned >= target:
             return []
         if not unassigned:
             return []
-        slack = capacity - assigned
+        slack = target - assigned
         candidates = unassigned[:slack]
         ids = [str(o.id) for o in candidates]
         return [
@@ -270,12 +283,12 @@ class TransportSuggestionsService:
                 type="complete_truck",
                 what=(
                     f"Adicionar {len(candidates)} barco(s) sem expedição a "
-                    "este batch para preencher o camião."
+                    f"este batch para chegar à carga típica ({target} barcos)."
                 ),
                 why=(
-                    f"Batch a meio camião ({assigned}/{capacity}); há "
-                    f"{len(unassigned)} barco(s) prontos sem expedição "
-                    "atribuída."
+                    f"Batch abaixo da moda ({assigned}/{target}, capacidade "
+                    f"máxima {capacity}); há {len(unassigned)} barco(s) "
+                    "prontos sem expedição atribuída."
                 ),
                 if_accept=(
                     "Camião completo — poupa um trip da semana seguinte "
