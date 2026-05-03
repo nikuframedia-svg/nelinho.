@@ -23,6 +23,9 @@ class Role(str, Enum):
     FINANCE_CONTROLLER = "finance_controller"
     HR_MANAGER = "hr_manager"
     OPERATOR = "operator"
+    # Sprint Q.13.F F.2 — CEO is read-only across the dashboard surface;
+    # distinct from VIEWER (which is broader / used for support staff).
+    CEO = "ceo"
     VIEWER = "viewer"
 
 
@@ -124,7 +127,19 @@ ROLE_PERMISSIONS: dict[Role, Set[Permission]] = {
         Permission.ALLOCATION_READ,
         Permission.PRODUCTIVITY_READ,
     },
-    
+
+    Role.CEO: {
+        # Read-only across the dashboard surface. CEO never writes.
+        Permission.SCHEDULE_READ,
+        Permission.MASTER_DATA_READ,
+        Permission.CAPACITY_READ,
+        Permission.COGS_READ,
+        Permission.PRICING_READ,
+        Permission.SCENARIO_READ,
+        Permission.ALLOCATION_READ,
+        Permission.PRODUCTIVITY_READ,
+    },
+
     Role.VIEWER: {
         Permission.MASTER_DATA_READ,
         Permission.SCHEDULE_READ,
@@ -133,6 +148,117 @@ ROLE_PERMISSIONS: dict[Role, Set[Permission]] = {
         Permission.ALLOCATION_READ,
     },
 }
+
+
+# ============================================================================
+# ROUTE PREFIX → REQUIRED PERMISSIONS (Sprint Q.13.F F.2)
+# ============================================================================
+#
+# Plan v4 §11.2: a defensible RBAC posture means EVERY route maps to a
+# permission, the matrix is enumerable, and the tests can lock the
+# table. The mapping below is precedence-ordered: longer / more
+# specific prefixes win over shorter ones.
+#
+# Routes not in the table fall through to the default
+# (`PermissionDependency` per-route decorator). Adding a new router
+# without a matrix entry is a defensible default — no escalation, but
+# operators see a 403 until the matrix is updated.
+#
+# Method scope: "*" applies to all methods; ("GET",) restricts to read.
+
+from collections import OrderedDict
+
+_RoutePolicy = Tuple[Tuple[str, ...], List[Permission]]
+"""(allowed_methods, required_permissions). Empty methods tuple = all."""
+
+ROUTE_PREFIX_REQUIREMENTS: "OrderedDict[str, _RoutePolicy]" = OrderedDict([
+    # ── Operator surface (tablet) — Sprint Q.13 §10 ────────────────────
+    ("/v1/operador",                ((), [Permission.SCHEDULE_READ])),
+    # ── Quality rework — operators record + resolve rework ────────────
+    ("/v1/quality/rework",          ((), [Permission.SCHEDULE_READ])),
+
+    # ── CEO dashboard surface (read-only) ──────────────────────────────
+    ("/v1/profit/dashboard",        (("GET",), [Permission.COGS_READ])),
+    ("/v1/profit/throughput",       (("GET",), [Permission.COGS_READ])),
+    ("/v1/profit/cogs",             (("GET",), [Permission.COGS_READ])),
+    ("/v1/profit/pricing",          (("GET",), [Permission.PRICING_READ])),
+    ("/v1/profit/scenarios",        ((), [Permission.SCENARIO_READ])),
+
+    # ── Plan / scheduling ──────────────────────────────────────────────
+    ("/v1/plan/cpo",                ((), [Permission.SCHEDULE_WRITE])),
+    ("/v1/plan/schedule",           ((), [Permission.SCHEDULE_WRITE])),
+    ("/v1/plan/preview-delta",      ((), [Permission.SCHEDULE_WRITE])),
+    ("/v1/plan/mrp",                ((), [Permission.MRP_WRITE])),
+    ("/v1/plan/capacity",           (("GET",), [Permission.CAPACITY_READ])),
+    ("/v1/plan/transport",          ((), [Permission.SCHEDULE_WRITE])),
+    ("/v1/plan/worker",             (("GET",), [Permission.SCHEDULE_READ])),
+
+    # ── Master data + config ───────────────────────────────────────────
+    ("/v1/core/customers",          ((), [Permission.MASTER_DATA_WRITE])),
+    ("/v1/core/suppliers",          ((), [Permission.MASTER_DATA_WRITE])),
+    ("/v1/core/machines",           ((), [Permission.MASTER_DATA_WRITE])),
+    ("/v1/core/products",           ((), [Permission.MASTER_DATA_WRITE])),
+    ("/v1/core/bom",                ((), [Permission.MASTER_DATA_WRITE])),
+    ("/v1/core/operations",         ((), [Permission.MASTER_DATA_WRITE])),
+    ("/v1/core/rates",              ((), [Permission.CONFIG_WRITE])),
+    ("/v1/core/tenants",            ((), [Permission.TENANT_WRITE])),
+    ("/v1/core/config",             ((), [Permission.CONFIG_WRITE])),
+    ("/v1/core/tenant-config",      ((), [Permission.CONFIG_WRITE])),
+
+    # ── HR / workforce ────────────────────────────────────────────────
+    ("/v1/hr/allocations",          ((), [Permission.ALLOCATION_WRITE])),
+    ("/v1/hr/payroll",              ((), [Permission.PAYROLL_WRITE])),
+    ("/v1/hr/productivity",         ((), [Permission.PRODUCTIVITY_WRITE])),
+    ("/v1/workforce",               (("GET",), [Permission.ALLOCATION_READ])),
+
+    # ── Governance / decisions / RBAC admin ───────────────────────────
+    ("/v1/governance",              ((), [Permission.SCHEDULE_WRITE])),
+    ("/v1/decisions",               ((), [Permission.SCHEDULE_WRITE])),
+    ("/v1/dqa",                     (("GET",), [Permission.SCHEDULE_READ])),
+    ("/v1/diagnostics",             (("GET",), [Permission.SCHEDULE_READ])),
+
+    # ── Copilot ───────────────────────────────────────────────────────
+    ("/v1/copilot",                 ((), [Permission.SCHEDULE_READ])),
+])
+
+
+def requirements_for_route(
+    path: str, method: str = "GET",
+) -> Optional[List[Permission]]:
+    """Return the required permissions for an HTTP path + method.
+
+    Picks the longest matching prefix (most specific wins). Returns
+    ``None`` when no prefix matches — callers default to "deny" when
+    they want fail-closed semantics, or "fall through to per-route
+    decorator" when they want gradual rollout.
+    """
+    method = method.upper()
+    best: Optional[Tuple[int, _RoutePolicy]] = None
+    for prefix, policy in ROUTE_PREFIX_REQUIREMENTS.items():
+        if not path.startswith(prefix):
+            continue
+        allowed_methods, _perms = policy
+        if allowed_methods and method not in allowed_methods:
+            continue
+        if best is None or len(prefix) > best[0]:
+            best = (len(prefix), policy)
+    if best is None:
+        return None
+    return list(best[1][1])
+
+
+def is_route_allowed_for_role(
+    path: str, method: str, role: str,
+) -> bool:
+    """One-call helper: does this role have at least one of the
+    permissions the route demands? Returns True when the route has no
+    matrix entry (gradual rollout — caller may still gate via the
+    legacy per-route decorator).
+    """
+    required = requirements_for_route(path, method)
+    if required is None:
+        return True
+    return has_any_permission(role, required)
 
 
 def has_permission(role: str, permission: Permission) -> bool:
@@ -215,12 +341,7 @@ def check_sod(
     if approver_role not in required_roles:
         roles_str = ", ".join([r.value for r in required_roles])
         return False, f"Approver role '{approver_role.value}' not authorized. Required roles: {roles_str}"
-    
-    # Rule 3: Proposer cannot have approver role for this action type
-    # (Additional layer: proposer should not be able to approve their own action type)
-    if proposer_role in required_roles and proposer_id == approver_id:
-        return False, "Proposer role is in approved roles list, but self-approval is blocked by SoD"
-    
+
     return True, None
 
 
