@@ -176,6 +176,17 @@ async def lifespan(app: FastAPI):
         except Exception as bridge_error:
             logger.warning(f"RealtimeBridge failed to start: {bridge_error}")
 
+        # Sprint Q.14.B — Postgres LISTEN/NOTIFY listener for the
+        # rule_firing channel. Pushes high-severity firings to SSE
+        # within ~5ms. Same graceful contract as the bridge: if asyncpg
+        # / Postgres is unreachable, push channel stays silent + Kafka
+        # events still flow.
+        try:
+            from src.shared.realtime.notify_listener import start_notify_listener
+            await start_notify_listener()
+        except Exception as notify_error:
+            logger.warning(f"NOTIFY listener failed to start: {notify_error}")
+
         logger.info("ProdPlan ONE started successfully")
 
     except Exception as e:
@@ -211,6 +222,14 @@ async def lifespan(app: FastAPI):
             await RealtimeBridge.instance().stop()
         except Exception as bridge_error:
             logger.warning(f"RealtimeBridge shutdown failed: {bridge_error}")
+
+        # Sprint Q.14.B — close the asyncpg LISTEN connection cleanly
+        # so Postgres releases the backend slot.
+        try:
+            from src.shared.realtime.notify_listener import stop_notify_listener
+            await stop_notify_listener()
+        except Exception as notify_error:
+            logger.warning(f"NOTIFY listener shutdown failed: {notify_error}")
 
         # Sprint Q.13.B B5 — final outbox drain. Best effort: when
         # Kafka or the DB is already wedged this just logs and moves

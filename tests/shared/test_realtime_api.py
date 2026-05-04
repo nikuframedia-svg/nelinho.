@@ -36,9 +36,14 @@ def test_channels_endpoint_lists_all_channels(client):
     resp = client.get("/v1/realtime/channels")
     assert resp.status_code == 200
     body = resp.json()
-    assert set(body.keys()) == {"alerts", "dashboard", "governance", "timeline"}
+    # Sprint Q.14.B added `rule_firing` (Postgres NOTIFY-sourced).
+    assert set(body.keys()) == {
+        "alerts", "dashboard", "governance", "rule_firing", "timeline",
+    }
     # Alerts should include MOLD_MAINT_DUE.
     assert "prodplan.mold.maint_due" in body["alerts"]
+    # rule_firing should expose the synthetic topic.
+    assert "prodplan.governance.rule_firing_proposed" in body["rule_firing"]
 
 
 def test_health_endpoint_reports_bridge_snapshot(client):
