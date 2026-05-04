@@ -793,6 +793,69 @@ async def update_rule_firing_outcome(
     return {"id": str(firing_id), "outcome": payload.outcome}
 
 
+# ============================================================================
+# A/B ADOPTION STATS (Sprint Q.14.C)
+# ============================================================================
+
+
+@router.get("/rule-firings/adoption")
+async def rule_firings_adoption(
+    rule_id: str = Query(..., description="rule_id to summarise"),
+    credible_interval: float = Query(
+        0.95, ge=0.5, lt=1.0,
+        description="Bayesian credible interval level (0.5-0.99)",
+    ),
+    min_sample: int = Query(
+        50, ge=1,
+        description="Minimum decided firings per variant before winner declared",
+    ),
+    tenant_id: UUID = Depends(get_tenant_id),
+    db: AsyncSession = Depends(get_session),
+):
+    """Per-variant adoption stats for an A/B'd rule.
+
+    Sprint Q.14.C — answers *"is variant A actually beating variant B?"*
+    Aggregates `rule_firing` rows by `(variant_id, outcome)` and returns
+    per-variant Bayesian Beta-Bernoulli posterior + 95% credible
+    interval. A "winner" is declared only when the top variant's CI
+    sits strictly above the runner-up's CI AND both have enough sample
+    (`min_sample`, default 50).
+
+    Returns the shape :class:`AdoptionReport` produces (see
+    src/governance/ab_framework.py). Frontend
+    `RuleFiringsAdoptionPage` (Q.15) consumes it.
+    """
+    from sqlalchemy import func, select
+
+    from src.governance.ab_framework import compute_adoption_stats
+    from src.governance.models import RuleFiring
+
+    stmt = (
+        select(
+            RuleFiring.variant_id,
+            RuleFiring.outcome,
+            func.count(RuleFiring.id).label("n"),
+        )
+        .where(RuleFiring.tenant_id == tenant_id)
+        .where(RuleFiring.rule_id == rule_id)
+        .where(RuleFiring.variant_id.is_not(None))
+        .group_by(RuleFiring.variant_id, RuleFiring.outcome)
+    )
+    result = await db.execute(stmt)
+    rows = [
+        (variant_id, outcome, int(n))
+        for variant_id, outcome, n in result.all()
+    ]
+
+    report = compute_adoption_stats(
+        rule_id=rule_id,
+        rows=rows,
+        credible_interval=credible_interval,
+        min_sample_for_winner=min_sample,
+    )
+    return report.to_dict()
+
+
 
 
 
