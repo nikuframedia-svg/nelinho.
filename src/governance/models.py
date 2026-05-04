@@ -830,3 +830,107 @@ class CausalDiscoveryReport(TenantBase):
     )
     review_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+
+# ============================================================================
+# RULE FIRING LOG (Sprint Q.14.A)
+# ============================================================================
+
+
+class RuleFiringOutcome(str, Enum):
+    """Lifecycle of a rule firing — operator decisions update this in place."""
+
+    PROPOSED = "proposed"          # detector fired; awaiting operator review
+    ACCEPTED = "accepted"          # operator approved the suggestion
+    REJECTED = "rejected"          # operator dismissed it
+    EXPIRED = "expired"            # window passed without action
+    SUPERSEDED = "superseded"      # newer firing replaced this one
+
+
+class RuleFiring(TenantBase):
+    """One row per rule trigger — the audit substrate for *why* a
+    suggestion / alert appeared.
+
+    Sprint Q.14.A — closes the *"why did the system suggest moving
+    the batch 3 weeks ago?"* gap. The 16 deterministic + LLM detectors
+    today fire silently; this table captures the trigger payload that
+    caused the fire and the rule output that was produced, so
+    forensics is a SQL query instead of `git blame` + reading detector
+    source.
+
+    ``dedupe_key`` collapses repeated firings of the same underlying
+    problem (e.g. "batch B-1 has 3 unassigned boats" reported every
+    15 min by the alerts engine) into a single row whose
+    ``fire_count`` + ``last_fired_at`` track recurrence. A new row is
+    only created when the dedupe lookup misses or the previous row's
+    ``outcome`` is terminal.
+
+    ``variant_id`` is forward-look for the A/B framework (Q.14.C);
+    today it stays NULL. ``correlation_id`` ties related decisions
+    (e.g. one CPO solve → 5 transport suggestions all sharing the
+    correlation_id of the parent commit).
+    """
+
+    __tablename__ = "rule_firing"
+    __table_args__ = (
+        Index(
+            "ix_rule_firing_tenant_rule_fired",
+            "tenant_id", "rule_id", "fired_at",
+        ),
+        Index(
+            "ix_rule_firing_tenant_dedupe_fired",
+            "tenant_id", "dedupe_key", "fired_at",
+        ),
+        Index(
+            "ix_rule_firing_outcome_fired",
+            "outcome", "fired_at",
+        ),
+        {"schema": "governance"},
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), primary_key=True, default=uuid4,
+    )
+
+    rule_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    variant_id: Mapped[Optional[str]] = mapped_column(
+        String(120), nullable=True,
+    )
+
+    fired_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    trigger_payload: Mapped[Dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict,
+    )
+    rule_output: Mapped[Dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict,
+    )
+
+    correlation_id: Mapped[Optional[UUID]] = mapped_column(
+        PGUUID(as_uuid=True), nullable=True,
+    )
+    dedupe_key: Mapped[Optional[str]] = mapped_column(
+        String(200), nullable=True,
+    )
+
+    outcome: Mapped[str] = mapped_column(
+        String(32), nullable=False,
+        default=RuleFiringOutcome.PROPOSED.value,
+    )
+    accepted_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    accepted_by: Mapped[Optional[UUID]] = mapped_column(
+        PGUUID(as_uuid=True), nullable=True,
+    )
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    fire_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1,
+    )
+    last_fired_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )

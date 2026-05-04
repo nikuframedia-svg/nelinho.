@@ -27,6 +27,7 @@ from src.improve.models import (
     SuggestionSource,
     SuggestionStatus,
 )
+from src.shared.decorators import record_rule_firing
 
 logger = logging.getLogger(__name__)
 
@@ -294,6 +295,22 @@ class ImproveService:
 
     # ── LLM generator ─────────────────────────────────────────────────
 
+    @record_rule_firing(
+        rule_id="improve.generate_via_llm",
+        extract_payload=lambda self, *, scope=None, limit=5,
+        factory_state_summary=None: {
+            "scope": scope,
+            "limit": limit,
+            "has_factory_state": factory_state_summary is not None,
+        },
+        serialise_output=lambda result: {
+            "suggestion_count": len(result),
+            "sources": list({getattr(s, "source", None) for s in result}),
+            "action_types": [getattr(s, "action_type", None) for s in result],
+        },
+        # No dedupe key — LLM gen is a deliberate operator action,
+        # every call should appear as its own row.
+    )
     async def generate_via_llm(
         self,
         *,
