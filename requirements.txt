@@ -103,3 +103,17 @@ apscheduler>=3.10,<4
 
 # ML infrastructure (Sprint G — model registry, feature store, retraining)
 joblib>=1.3  # model artifact serialization
+
+# Observability — OpenTelemetry + Sentry (Sprint Q.13.B / Q.13.F + Q.13.G).
+# Both shared modules (`src/shared/tracing.py` + `src/shared/error_reporting.py`)
+# graceful-no-op when these aren't installed AND when their env vars
+# (OTEL_TRACES_EXPORTER / SENTRY_DSN) are unset. So a dev box without a
+# collector still works — pinning here means production deploys can flip the
+# env var and have the SDKs ready. Comment out the block to keep boxes lean.
+opentelemetry-api>=1.30
+opentelemetry-sdk>=1.30
+opentelemetry-exporter-otlp-proto-grpc>=1.30
+opentelemetry-instrumentation-fastapi>=0.51b0
+opentelemetry-instrumentation-sqlalchemy>=0.51b0
+opentelemetry-instrumentation-httpx>=0.51b0
+sentry-sdk[fastapi]>=2.0,<3
