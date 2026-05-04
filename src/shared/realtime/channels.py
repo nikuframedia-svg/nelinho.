@@ -44,6 +44,13 @@ CHANNELS: Dict[str, FrozenSet[str]] = {
         Topics.DECISION_EXECUTED,
         Topics.DECISION_ROLLED_BACK,
     }),
+    # Sprint Q.14.B — push reactivo for rule firings the SQL allowlist
+    # marked as "spike-detectable". Source is Postgres NOTIFY, not Kafka,
+    # but the channel map shape stays uniform so SSE clients subscribe
+    # the same way: `?channels=rule_firing`.
+    "rule_firing": frozenset({
+        Topics.RULE_FIRING_PROPOSED,
+    }),
     "timeline": frozenset({
         Topics.DECISION_PROPOSED,
         Topics.DECISION_APPROVED,
@@ -81,10 +88,26 @@ def channel_for_topic(topic: str) -> List[str]:
     return [name for name, topics in CHANNELS.items() if topic in topics]
 
 
+# Sprint Q.14.B — synthetic topics aren't Kafka-backed; the
+# RealtimeBridge fan-out routes them via the listener path
+# (pg_notify → asyncpg listener → bridge.emit_for_tests-style call).
+# Excluded from `all_topics()` so the Kafka consumer doesn't try
+# to subscribe to a non-existent broker topic.
+_SYNTHETIC_TOPICS: FrozenSet[str] = frozenset({
+    Topics.RULE_FIRING_PROPOSED,
+})
+
+
 def all_topics() -> Set[str]:
     """Every Kafka topic the bridge needs to subscribe to on startup —
-    union across every channel."""
+    union across every channel, MINUS synthetic (non-Kafka) topics."""
     out: Set[str] = set()
     for topics in CHANNELS.values():
         out |= topics
-    return out
+    return out - _SYNTHETIC_TOPICS
+
+
+def is_synthetic_topic(topic: str) -> bool:
+    """True if ``topic`` is delivered via a non-Kafka source (e.g. pg_notify).
+    Callers that bypass the Kafka consumer use this to guard their feed."""
+    return topic in _SYNTHETIC_TOPICS

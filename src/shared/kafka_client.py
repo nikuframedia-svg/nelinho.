@@ -39,10 +39,12 @@ class Topics:
     MASTER_DATA_LOADED = "prodplan.core.master_data_loaded"
     CONFIG_UPDATED = "prodplan.core.config_updated"
     TENANT_CONFIGURED = "prodplan.core.tenant_configured"
-    
+    ORDER_RECEIVED = "prodplan.core.order_received"
+
     # PLAN events
     SCHEDULE_CREATED = "prodplan.plan.schedule_created"
     SCHEDULE_UPDATED = "prodplan.plan.schedule_updated"
+    SCHEDULE_RESCHEDULED = "prodplan.plan.schedule_rescheduled"
     MRP_CALCULATED = "prodplan.plan.mrp_calculated"
     MATERIAL_REQUIREMENT_PLANNED = "prodplan.plan.material_planned"
     PURCHASE_ORDER_CREATED = "prodplan.plan.po_created"
@@ -73,6 +75,12 @@ class Topics:
     DECISION_EXECUTED = "prodplan.governance.decision_executed"
     DECISION_ROLLED_BACK = "prodplan.governance.decision_rolled_back"
 
+    # GOVERNANCE rule-firing push (Sprint Q.14.B). Synthetic topic name —
+    # the source is Postgres LISTEN/NOTIFY, NOT Kafka. The shared topic
+    # constant lets the existing realtime channel map fan-out work
+    # without a parallel pipeline.
+    RULE_FIRING_PROPOSED = "prodplan.governance.rule_firing_proposed"
+
     # HR events
     EMPLOYEE_ALLOCATED = "prodplan.hr.employee_allocated"
     LABOR_COST_COMMITTED = "prodplan.hr.labor_cost_committed"
@@ -87,7 +95,7 @@ class Topics:
 
 class EventBase(BaseModel):
     """Base class for all events."""
-    
+
     event_id: UUID = Field(default_factory=uuid4)
     event_type: str
     tenant_id: UUID
@@ -95,6 +103,13 @@ class EventBase(BaseModel):
     correlation_id: Optional[UUID] = None
     source_module: str
     payload: Dict[str, Any] = Field(default_factory=dict)
+    # Sprint S5 / Π6: explicit sandbox marker. Producers that originate from
+    # /v1/sandbox or any what-if path MUST set this to True so consumers can
+    # filter business-logic side-effects out of production data.
+    sandbox: bool = Field(
+        default=False,
+        description="True iff this event originated from a sandbox/what-if scenario.",
+    )
     
     class Config:
         json_encoders = {
@@ -105,7 +120,7 @@ class EventBase(BaseModel):
 
 class EventEnvelope(BaseModel):
     """Wrapper for event serialization."""
-    
+
     event_id: str
     event_type: str
     tenant_id: str
@@ -113,7 +128,10 @@ class EventEnvelope(BaseModel):
     correlation_id: Optional[str] = None
     source_module: str
     payload: Dict[str, Any]
-    
+    # Sprint S5 / Π6: propagate sandbox flag through the wire envelope so
+    # consumers can filter without inspecting payload internals.
+    sandbox: bool = False
+
     @classmethod
     def from_event(cls, event: EventBase) -> "EventEnvelope":
         """Create envelope from event."""
@@ -125,6 +143,7 @@ class EventEnvelope(BaseModel):
             correlation_id=str(event.correlation_id) if event.correlation_id else None,
             source_module=event.source_module,
             payload=event.payload,
+            sandbox=getattr(event, "sandbox", False),
         )
 
 
@@ -354,8 +373,10 @@ class KafkaProducerClient:
                 last_exception = e
                 
                 if attempt < self.max_retries:
-                    # Exponential backoff: wait_factor = 2^attempt
-                    wait_time = (self.backoff_factor ** attempt)
+                    # Sprint S5: exponential backoff capped at 60s. Without
+                    # the cap, attempt 10 with backoff_factor=2 burned 17
+                    # minutes per retry.
+                    wait_time = min(self.backoff_factor ** attempt, 60.0)
                     logger.warning(
                         f"Publish attempt {attempt + 1}/{self.max_retries + 1} failed for "
                         f"event {event.event_id}: {e}. Retrying in {wait_time:.2f}s..."
@@ -513,9 +534,31 @@ class KafkaConsumerClient:
                 logger.error(f"Handler error for {envelope.event_type}: {e}")
     
     async def _send_to_dlq(self, message: Dict, error: str) -> None:
-        """Send failed message to dead letter queue."""
-        # In a full implementation, this would publish to the DLQ topic
-        logger.error(f"DLQ message: {message}, error: {error}")
+        """Send failed message to the DLQ topic.
+
+        Sprint S5: was a logger-only stub. Now publishes to ``Topics.DLQ``
+        with the original message embedded in the payload so an operator
+        (or a re-drive job) can inspect or replay it.
+        """
+        try:
+            producer = await get_producer()
+            await producer._producer.send_and_wait(
+                Topics.DLQ,
+                value={
+                    "original_message": message,
+                    "error": error,
+                    "dlq_timestamp": datetime.utcnow().isoformat(),
+                },
+            )
+            logger.error(
+                "DLQ published (event_id=%s error=%s)",
+                message.get("event_id"), error,
+            )
+        except Exception as exc:  # pragma: no cover — DLQ failure is logged
+            logger.exception(
+                "DLQ publish failed (event_id=%s error=%s dlq_error=%s)",
+                message.get("event_id"), error, exc,
+            )
 
 
 # Global instances
