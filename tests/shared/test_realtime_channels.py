@@ -14,7 +14,10 @@ from src.shared.realtime.channels import (
 
 
 def test_channels_are_registered():
-    assert set(CHANNELS) == {"alerts", "dashboard", "governance", "timeline"}
+    # Sprint Q.14.B added `rule_firing` (Postgres NOTIFY-sourced).
+    assert set(CHANNELS) == {
+        "alerts", "dashboard", "governance", "rule_firing", "timeline",
+    }
 
 
 def test_resolve_single_channel_returns_its_topics():
@@ -52,8 +55,15 @@ def test_channel_for_unknown_topic_returns_empty():
     assert channel_for_topic("some.unregistered.topic") == []
 
 
-def test_all_topics_is_union_of_channels():
+def test_all_topics_is_union_of_channels_minus_synthetic():
+    # Sprint Q.14.B — synthetic topics (e.g. RULE_FIRING_PROPOSED) come
+    # from pg_notify, not Kafka. They live in the channel map (so SSE
+    # subscribers can ask for them) but are excluded from `all_topics()`
+    # so the Kafka consumer doesn't try to subscribe to a non-existent
+    # broker topic.
+    from src.shared.realtime.channels import _SYNTHETIC_TOPICS
+
     union = set()
     for topics in CHANNELS.values():
         union |= topics
-    assert all_topics() == union
+    assert all_topics() == union - _SYNTHETIC_TOPICS
