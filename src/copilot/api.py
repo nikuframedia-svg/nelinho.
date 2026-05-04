@@ -6,7 +6,7 @@ FastAPI router para endpoints do COPILOT.
 """
 
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Optional
 from uuid import UUID
 
@@ -24,7 +24,11 @@ from src.copilot.schemas import (
 )
 from src.copilot.service import CopilotService
 from src.copilot.models import CopilotSuggestion, CopilotDecisionPR, CopilotConversation, CopilotMessage, CopilotActionLog
-from src.copilot.actions import ActionExecutor, ActionMode
+from src.copilot.actions import (
+    ActionExecutor,
+    ActionHandlerNotImplementedError,
+    ActionMode,
+)
 from src.shared.kafka_client import get_producer
 from src.copilot.recommendations import generate_recommendations
 from sqlalchemy import select, and_
@@ -45,6 +49,23 @@ router = APIRouter(prefix="/api/copilot", tags=["COPILOT"])
 def get_tenant_id(x_tenant_id: UUID = Header(...)) -> UUID:
     """Extract tenant ID from header."""
     return x_tenant_id
+
+
+def dev_only() -> None:
+    """Dependency that 404s when ``settings.environment == "production"``.
+
+    Sprint Q.12 Onda 0.5 — the ``/*-dev`` endpoints (no auth, hardcoded
+    tenant) used to be reachable in any environment, leaking tenant-zero
+    data to anyone who knew the URL. Now they're hidden in prod. The
+    long-term answer is to remove them outright once each surface has a
+    proper auth path; until then this guard makes "shipped to prod by
+    accident" loud instead of quiet.
+    """
+    if settings.environment == "production":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Not Found",
+        )
 
 
 @router.post("/ask", response_model=CopilotResponse, status_code=status.HTTP_200_OK)
@@ -264,13 +285,20 @@ async def get_daily_feedback(
     return feedback
 
 
-@router.get("/daily-feedback-dev", response_model=DailyFeedbackResponse)
+@router.get(
+    "/daily-feedback-dev",
+    response_model=DailyFeedbackResponse,
+    include_in_schema=False,
+    dependencies=[Depends(dev_only)],
+)
 async def get_daily_feedback_dev(
     date_param: Optional[str] = None,
     session: AsyncSession = Depends(get_session),
 ):
     """
     Endpoint de desenvolvimento - SEM autenticação.
+
+    Sprint Q.12 Onda 0.5: gated to non-production via ``dev_only``.
     """
     from uuid import UUID
     
@@ -352,7 +380,7 @@ async def copilot_health():
         
         # Se circuit breaker está aberto, tentar resetar se já passou tempo suficiente
         if hasattr(ollama_client, '_circuit_open_until') and ollama_client._circuit_open_until:
-            remaining = (ollama_client._circuit_open_until - datetime.utcnow()).total_seconds()
+            remaining = (ollama_client._circuit_open_until - datetime.now(timezone.utc)).total_seconds()
             if remaining < 0:
                 # Circuit já deveria estar fechado, resetar manualmente
                 ollama_client.reset_circuit_breaker()
@@ -364,7 +392,7 @@ async def copilot_health():
         if not ollama_online:
             circuit_info = "fechado"
             if hasattr(ollama_client, '_circuit_open_until') and ollama_client._circuit_open_until:
-                remaining = (ollama_client._circuit_open_until - datetime.utcnow()).total_seconds()
+                remaining = (ollama_client._circuit_open_until - datetime.now(timezone.utc)).total_seconds()
                 circuit_info = f"aberto (fecha em {remaining:.1f}s)"
             
             logger.warning(
@@ -394,15 +422,21 @@ async def copilot_health():
         }
 
 
-@router.post("/ask-dev", response_model=CopilotResponse, status_code=status.HTTP_200_OK)
+@router.post(
+    "/ask-dev",
+    response_model=CopilotResponse,
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
+    dependencies=[Depends(dev_only)],
+)
 async def ask_copilot_dev(
     request: CopilotAskRequest,
     session: AsyncSession = Depends(get_session),
 ):
     """
     Endpoint de desenvolvimento - SEM autenticação.
-    
-    Usa tenant_id e user_id padrão para testes.
+
+    Sprint Q.12 Onda 0.5: gated to non-production via ``dev_only``.
     """
     from uuid import UUID
     
@@ -437,12 +471,20 @@ async def get_recommendations(
     return recommendations
 
 
-@router.get("/recommendations-dev", response_model=List[Dict[str, Any]], tags=["COPILOT"])
+@router.get(
+    "/recommendations-dev",
+    response_model=List[Dict[str, Any]],
+    tags=["COPILOT"],
+    include_in_schema=False,
+    dependencies=[Depends(dev_only)],
+)
 async def get_recommendations_dev(
     session: AsyncSession = Depends(get_session),
 ):
     """
     Endpoint de desenvolvimento - SEM autenticação.
+
+    Sprint Q.12 Onda 0.5: gated to non-production via ``dev_only``.
     """
     dev_tenant_id = UUID("00000000-0000-0000-0000-000000000001")
     recommendations = await generate_recommendations(session, dev_tenant_id)
@@ -500,13 +542,21 @@ async def explain_recommendations(
     return response
 
 
-@router.post("/recommendations/explain-dev", response_model=CopilotResponse, tags=["COPILOT"])
+@router.post(
+    "/recommendations/explain-dev",
+    response_model=CopilotResponse,
+    tags=["COPILOT"],
+    include_in_schema=False,
+    dependencies=[Depends(dev_only)],
+)
 async def explain_recommendations_dev(
     request: Dict[str, Any] = Body(...),
     session: AsyncSession = Depends(get_session),
 ):
     """
     Endpoint de desenvolvimento - SEM autenticação.
+
+    Sprint Q.12 Onda 0.5: gated to non-production via ``dev_only``.
     """
     dev_tenant_id = UUID("00000000-0000-0000-0000-000000000001")
     dev_user_id = UUID("00000000-0000-0000-0000-000000000001")
@@ -563,7 +613,7 @@ async def get_insights(
     if date:
         target_date = date
     else:
-        target_date = datetime.utcnow().date().isoformat()
+        target_date = datetime.now(timezone.utc).date().isoformat()
     
     # 1. Obter daily feedback
     daily_feedback = await generate_daily_feedback(session, tenant_id, target_date)
@@ -636,19 +686,27 @@ async def get_insights(
         "now": now_items,
         "next": next_items,
         "meta": {
-            "generated_at": datetime.utcnow().isoformat(),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
             "sources": ["daily_feedback_cache", "recommendations_runtime"],
         },
     }
 
 
-@router.get("/insights-dev", response_model=Dict[str, Any], tags=["COPILOT"])
+@router.get(
+    "/insights-dev",
+    response_model=Dict[str, Any],
+    tags=["COPILOT"],
+    include_in_schema=False,
+    dependencies=[Depends(dev_only)],
+)
 async def get_insights_dev(
     date: Optional[str] = None,
     session: AsyncSession = Depends(get_session),
 ):
     """
     Endpoint de desenvolvimento - SEM autenticação.
+
+    Sprint Q.12 Onda 0.5: gated to non-production via ``dev_only``.
     """
     dev_tenant_id = UUID("00000000-0000-0000-0000-000000000001")
     
@@ -657,7 +715,7 @@ async def get_insights_dev(
     if date:
         target_date = date
     else:
-        target_date = datetime.utcnow().date().isoformat()
+        target_date = datetime.now(timezone.utc).date().isoformat()
     
     # Mesma lógica do endpoint normal
     daily_feedback = await generate_daily_feedback(session, dev_tenant_id, target_date)
@@ -723,7 +781,7 @@ async def get_insights_dev(
         "now": now_items,
         "next": next_items,
         "meta": {
-            "generated_at": datetime.utcnow().isoformat(),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
             "sources": ["daily_feedback_cache", "recommendations_runtime"],
         },
     }
@@ -871,7 +929,7 @@ async def send_message(
     session.add(copilot_message)
     
     # Atualizar last_message_at da conversa
-    conversation.last_message_at = datetime.utcnow()
+    conversation.last_message_at = datetime.now(timezone.utc)
     
     await session.commit()
     
@@ -946,7 +1004,12 @@ async def execute_sandbox(
         "message": "..."
     }
     """
-    from src.copilot.actions import Action, ActionExecutor, ActionMode
+    from src.copilot.actions import (
+        Action,
+        ActionExecutor,
+        ActionHandlerNotImplementedError,
+        ActionMode,
+    )
     from uuid import uuid4
     
     # Create Action object from request
@@ -977,10 +1040,10 @@ async def execute_sandbox(
             mode=ActionMode.SANDBOX,
             plan_id=None,
         )
-        
+
         # Extract deltas from actual_impact
         deltas = result.get("actual_impact", {})
-        
+
         return SandboxResponse(
             success=True,
             before_state=result.get("before_state", {}),
@@ -989,7 +1052,18 @@ async def execute_sandbox(
             actual_impact=result.get("actual_impact", {}),
             message=result.get("message", "Sandbox execution completed"),
         )
-    
+
+    except ActionHandlerNotImplementedError as exc:
+        # Sprint Q.12 Onda 0.4 — sandbox previously fabricated an
+        # ``after_state`` from a stub. Surface 501 so the UI can show
+        # "not yet wired" instead of bogus deltas.
+        logger.warning(
+            "Sandbox 501 — no handler for action_type=%s", exc.action_type,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail=str(exc),
+        )
     except Exception as e:
         logger.error(f"Sandbox execution failed: {e}")
         raise HTTPException(
@@ -1036,7 +1110,7 @@ async def rollback_action(
     
     # Verify rollback window (24h)
     if action_log.rollback_until:
-        if datetime.utcnow() > action_log.rollback_until:
+        if datetime.now(timezone.utc) > action_log.rollback_until:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Rollback window expired. Rollback available until: {action_log.rollback_until.isoformat()}",
@@ -1152,3 +1226,124 @@ async def list_actions(
         }
         for log in action_logs
     ]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Camada 4 ABL — causal audit endpoint (Sprint Q.13.G)
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# `record_causal_audit` (Q.13.D) verifies + persists a CausalChain for
+# the nightly ABL feedback job. The function shipped without callsites
+# because no copilot codepath today emits a structured chain. This
+# endpoint exposes the helper so:
+#
+#   * Frontend ExplainPanel can post chains it constructs from copilot
+#     responses + counterfactual queries.
+#   * Integration tests can seed the ABL pipeline without touching
+#     `copilot.service.process_ask`.
+#   * Operators can re-feed historical chains after an outage.
+#
+# When the LLM evolves to emit chains directly inside `process_ask`,
+# the function `record_causal_audit` stays the canonical entry — this
+# endpoint will continue working, and a direct call from the service
+# stays a one-liner.
+
+
+@router.post(
+    "/causal/audit",
+    status_code=status.HTTP_201_CREATED,
+)
+async def post_causal_audit(
+    payload: Dict[str, Any] = Body(...),
+    _user: UserContext = Depends(get_current_user),
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Persist a verified CausalChain for the Camada-4 ABL job.
+
+    Body shape::
+
+        {
+          "conversation_id": "<uuid>",
+          "chain": { ...CausalChain dict... },
+          "kernel_delta": <float, optional>,
+          "correlation_id": "<uuid, optional>"
+        }
+
+    Returns ``201`` with the staged audit message id, ``400`` when the
+    payload is missing required fields or fails verification, ``500``
+    when the persist step itself crashes.
+    """
+    from src.copilot.causal.runtime import record_causal_audit
+
+    conversation_id_raw = payload.get("conversation_id")
+    chain_dict = payload.get("chain")
+    if not conversation_id_raw or not isinstance(chain_dict, dict):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing required fields: conversation_id, chain",
+        )
+    try:
+        conversation_id = UUID(str(conversation_id_raw))
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid conversation_id: {exc}",
+        )
+
+    kernel_delta_raw = payload.get("kernel_delta")
+    kernel_delta: Optional[float] = None
+    if kernel_delta_raw is not None:
+        try:
+            kernel_delta = float(kernel_delta_raw)
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="kernel_delta must be a number",
+            )
+
+    correlation_id_raw = payload.get("correlation_id")
+    correlation_id: Optional[UUID] = None
+    if correlation_id_raw is not None:
+        try:
+            correlation_id = UUID(str(correlation_id_raw))
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="correlation_id must be a UUID",
+            )
+
+    msg = await record_causal_audit(
+        session=session,
+        tenant_id=tenant_id,
+        conversation_id=conversation_id,
+        chain_dict=chain_dict,
+        kernel_delta=kernel_delta,
+        correlation_id=correlation_id,
+    )
+    if msg is None:
+        # `record_causal_audit` returns None when verify_chain_dict
+        # rejects the body OR persist crashes. Map both to 400 since
+        # the operator-facing remediation is the same: fix the chain
+        # body and retry.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Causal chain verification failed or persist could not stage "
+                "the row. Check chain shape (mechanism, claims, evidence) and "
+                "the server log for the verification reason."
+            ),
+        )
+
+    await session.commit()
+    audit_payload = (msg.content_structured or {}).get("causal_audit") or {}
+    verification = audit_payload.get("verification") or {}
+    return {
+        "audit_message_id": str(msg.id),
+        "conversation_id": str(msg.conversation_id),
+        "validation_passed": bool(msg.validation_passed),
+        "verification": {
+            "passed": bool(verification.get("passed", False)),
+            "reasons": verification.get("reasons") or [],
+        },
+    }

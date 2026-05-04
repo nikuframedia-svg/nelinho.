@@ -150,11 +150,23 @@ async def test_auto_approval_allowed_when_trust_index_at_or_above_075(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_auto_approval_skips_trust_check_when_trust_index_none(monkeypatch):
-    """Legacy callers that don't know about TI must keep their pre-Sprint-C
-    behaviour — the gate is opt-in via explicit `trust_index=` kwarg.
+async def test_auto_approval_blocked_when_trust_index_unresolvable(monkeypatch):
+    """Sprint Q.12 Onda 1.4 — the previous version of the gate skipped
+    the trust check when ``trust_index=None`` was passed, so legacy
+    callers that never knew about TI were silently auto-approved.
+    `propose_decision` was one of those, which made the whole gate a
+    no-op in production.
+
+    Now the gate resolves TI from the scenario's commit when the
+    caller didn't pass one explicitly. When neither path produces a
+    value, auto-approval is BLOCKED by design — better a row for human
+    review than a silent rubber-stamp. This test pins that contract.
     """
     svc = GovernanceService(db=AsyncMock(), tenant_id=TENANT)
+    # `_resolve_trust_index(None)` returns None — no scenario, no TI.
+    monkeypatch.setattr(
+        svc, "_resolve_trust_index", AsyncMock(return_value=None),
+    )
     monkeypatch.setattr(
         "src.core.services.tenant_config_service.TenantConfigService",
         lambda *_a, **_kw: _FakeCfg({
@@ -166,7 +178,32 @@ async def test_auto_approval_skips_trust_check_when_trust_index_none(monkeypatch
         decision_type="reschedule_order",
         risk_level="LOW",
     )
-    assert allowed is True  # no TI supplied → only config rules apply
+    assert allowed is False  # unresolvable TI → blocked, not silently allowed
+
+
+@pytest.mark.asyncio
+async def test_auto_approval_uses_resolved_trust_index_when_caller_omits(monkeypatch):
+    """Contrapositive of the test above: when `_resolve_trust_index`
+    DOES return a value (a scenario was attached to the decision),
+    the gate uses it. Verifies the resolution path is wired and not
+    just a permissive fall-through."""
+    svc = GovernanceService(db=AsyncMock(), tenant_id=TENANT)
+    monkeypatch.setattr(
+        svc, "_resolve_trust_index", AsyncMock(return_value=0.85),
+    )
+    monkeypatch.setattr(
+        "src.core.services.tenant_config_service.TenantConfigService",
+        lambda *_a, **_kw: _FakeCfg({
+            "governance.auto_approval.reschedule_order.enabled": True,
+            "governance.auto_approval.reschedule_order.risk_ceiling": "HIGH",
+        }),
+    )
+    allowed = await svc._auto_approval_allowed(
+        decision_type="reschedule_order",
+        risk_level="LOW",
+        scenario_id="some-scenario-id",
+    )
+    assert allowed is True  # resolved 0.85 ≥ 0.75 + risk LOW ≤ HIGH ceiling
 
 
 @pytest.mark.asyncio
