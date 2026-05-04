@@ -39,6 +39,7 @@ from src.copilot.alerts.models import (
     STATUS_ACTIVE,
     CopilotAlert,
 )
+from src.shared.decorators import record_rule_firing
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +113,14 @@ class AlertsEngine:
     # Detectors                                                          #
     # ------------------------------------------------------------------ #
 
+    @record_rule_firing(
+        rule_id="alerts.bottleneck_formation",
+        extract_payload=lambda self: {"threshold_days": BOTTLENECK_DAYS_THRESHOLD},
+        serialise_output=lambda candidates: {
+            "candidate_count": len(candidates),
+            "fase_ids": [c.get("context", {}).get("fase_id") for c in candidates],
+        },
+    )
     async def _detect_bottleneck_formation(self) -> List[Dict[str, Any]]:
         result = self._safe_query("get_bottlenecks")
         if not result or not result.get("rows"):
@@ -148,6 +157,14 @@ class AlertsEngine:
             })
         return candidates
 
+    @record_rule_firing(
+        rule_id="alerts.skills_concentration",
+        extract_payload=lambda self: {"min_capable": 2},
+        serialise_output=lambda candidates: {
+            "candidate_count": len(candidates),
+            "fase_ids": [c.get("context", {}).get("fase_id") for c in candidates],
+        },
+    )
     async def _detect_skills_concentration(self) -> List[Dict[str, Any]]:
         result = self._safe_query("get_skills_risk", min_capable=2)
         if not result or not result.get("rows"):
@@ -179,6 +196,16 @@ class AlertsEngine:
             })
         return candidates
 
+    @record_rule_firing(
+        rule_id="alerts.quality_degradation",
+        extract_payload=lambda self: {"threshold_events": QUALITY_EVENTS_THRESHOLD},
+        serialise_output=lambda candidates: {
+            "candidate_count": len(candidates),
+            "total_errors": (
+                candidates[0]["context"]["total_errors"] if candidates else 0
+            ),
+        },
+    )
     async def _detect_quality_degradation(self) -> List[Dict[str, Any]]:
         """
         Baseline version: no week-over-week comparison (requires persisted
