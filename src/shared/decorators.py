@@ -40,7 +40,7 @@ import inspect
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Dict, Optional, TypeVar
+from typing import Any, Awaitable, Callable, Dict, Optional, Sequence, TypeVar
 from uuid import UUID, uuid4
 
 logger = logging.getLogger(__name__)
@@ -64,6 +64,8 @@ def record_rule_firing(
     dedupe_key: Optional[Callable[..., Optional[str]]] = None,
     dedupe_window_seconds: int = _DEFAULT_DEDUPE_WINDOW_SECONDS,
     extract_tenant_id: Optional[Callable[..., Optional[UUID]]] = None,
+    variants: Optional[Sequence[str]] = None,
+    variant_kwarg: str = "variant",
 ) -> Callable[[Callable[..., Awaitable[T]]], Callable[..., Awaitable[T]]]:
     """Decorator factory: persist a ``rule_firing`` row per call.
 
@@ -129,6 +131,24 @@ def record_rule_firing(
 
         @functools.wraps(fn)
         async def wrapper(*args: Any, **kwargs: Any) -> T:
+            # Sprint Q.14.C — A/B variant resolution. When `variants`
+            # is set on the decorator, we resolve a variant for this
+            # (rule_id, tenant_id) BEFORE calling the wrapped function
+            # and inject it as a kwarg the producer can read. The
+            # `variant_id` persists on the audit row so adoption stats
+            # can group by it later.
+            resolved_variant: Optional[str] = None
+            if variants:
+                resolved_variant = _resolve_variant_for_call(
+                    rule_id=rule_id,
+                    args=args,
+                    kwargs=kwargs,
+                    candidates=variants,
+                    extract_tenant_id=extract_tenant_id,
+                )
+                if resolved_variant is not None and variant_kwarg not in kwargs:
+                    kwargs[variant_kwarg] = resolved_variant
+
             # Run the producer FIRST. Audit log is best-effort; if the
             # producer fails the exception propagates as-is.
             result = await fn(*args, **kwargs)
@@ -145,6 +165,7 @@ def record_rule_firing(
                     dedupe_key_fn=dedupe_key,
                     dedupe_window_seconds=dedupe_window_seconds,
                     extract_tenant_id=extract_tenant_id,
+                    variant_id=resolved_variant,
                 )
             except Exception as exc:
                 logger.warning(
@@ -158,6 +179,9 @@ def record_rule_firing(
         # (the audit dashboard lists known rules by walking decorated
         # functions in the producer modules).
         wrapper.__rule_firing_id__ = rule_id  # type: ignore[attr-defined]
+        wrapper.__rule_firing_variants__ = (  # type: ignore[attr-defined]
+            tuple(variants) if variants else ()
+        )
         return wrapper
 
     return decorator
@@ -174,6 +198,7 @@ async def _persist_firing(
     dedupe_key_fn: Optional[Callable[..., Optional[str]]],
     dedupe_window_seconds: int,
     extract_tenant_id: Optional[Callable[..., Optional[UUID]]],
+    variant_id: Optional[str] = None,
 ) -> None:
     """Internal: do the DB write. Raises on any path so the wrapper's
     try/except can log + swallow."""
@@ -246,6 +271,7 @@ async def _persist_firing(
                 id=uuid4(),
                 tenant_id=tenant_id,
                 rule_id=rule_id,
+                variant_id=variant_id,
                 fired_at=now,
                 trigger_payload=payload,
                 rule_output=output,
@@ -255,6 +281,38 @@ async def _persist_firing(
             )
             session.add(row)
         await session.commit()
+
+
+def _resolve_variant_for_call(
+    *,
+    rule_id: str,
+    args: tuple,
+    kwargs: dict,
+    candidates: Sequence[str],
+    extract_tenant_id: Optional[Callable[..., Optional[UUID]]],
+) -> Optional[str]:
+    """Resolve the A/B variant for a (rule_id, tenant_id) pair.
+
+    Sprint Q.14.C — pre-call variant resolution. Same hash semantics as
+    :func:`src.governance.ab_framework.resolve_variant`; defined here
+    so the decorator stays import-light. When the tenant can't be
+    resolved (defensive), returns ``None`` and the producer runs its
+    default branch — auditable as ``variant_id=NULL``.
+    """
+    if not candidates:
+        return None
+    tenant_id = _resolve_tenant_id(args, kwargs, extract_tenant_id)
+    if tenant_id is None:
+        return None
+    from src.governance.ab_framework import resolve_variant
+    try:
+        return resolve_variant(rule_id, tenant_id, candidates)
+    except Exception as exc:
+        logger.debug(
+            "_resolve_variant_for_call(%s): resolve_variant raised "
+            "(%s) — defaulting to None", rule_id, exc,
+        )
+        return None
 
 
 def _resolve_tenant_id(
