@@ -1035,3 +1035,83 @@ async def investigate_diagnostics(
             "evidence": list(h.evidence),
         }
     return body
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DIAGNOSTICS — Reichenbach (Sprint Q.15.D.2)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# When 2+ phases drift simultaneously, the LLM (or the
+# MultivariatePhaseMonitor scheduler hook) calls this endpoint instead
+# of asking ERRO-TREE per phase. Reichenbach finds the shared resource
+# (mold / workers / cascade) and returns a list of common-cause
+# Hypothesis objects. When no common cause is found, falls back to
+# per-phase ERRO-TREE results (verdict = "independent").
+
+
+class CommonCauseRequest(BaseModel):
+    """Body for `POST /v1/explain/diagnostics/common-cause`."""
+
+    deviating_phases: List[str] = Field(
+        ..., min_length=2,
+        description=(
+            "Phase ids that show simultaneous drift in the same window. "
+            "The MultivariatePhaseMonitor produces this list on its 30-min "
+            "schedule; the LLM may also pass it directly via tool-call."
+        ),
+    )
+    period_days: int = Field(
+        default=7, ge=1, le=90,
+        description="Lookback window for the common-cause search.",
+    )
+
+
+def _serialise_hypothesis(h) -> Dict[str, Any]:
+    """Convert a Hypothesis into the JSON shape the frontend renders."""
+    ci_low, ci_high = h.credible_interval(level=0.95)
+    return {
+        "type": h.type,
+        "entity": h.entity,
+        "confidence": round(h.confidence, 4),
+        "credible_interval_95": {
+            "low": round(ci_low, 4),
+            "high": round(ci_high, 4),
+        },
+        "evidence": list(h.evidence),
+    }
+
+
+@router.post("/diagnostics/common-cause")
+async def common_cause(
+    payload: CommonCauseRequest,
+    tenant_id: UUID = Depends(get_tenant_id),
+    db: AsyncSession = Depends(get_session),
+):
+    """Reichenbach common-cause analysis.
+
+    Returns:
+        ``{"verdict": "common_cause"|"independent"|"inconclusive",
+           "common_causes": [Hypothesis, ...],
+           "independent_causes": [Hypothesis, ...],
+           "checks_run": [...]}``
+
+    - ``common_cause`` → at least one shared-resource hypothesis tripped.
+    - ``independent`` → no shared cause found; per-phase ERRO-TREE
+      hypotheses are in `independent_causes` instead.
+    - ``inconclusive`` → input had < 2 phases or no detectors produced anything.
+    """
+    from src.explain.diagnostics.reichenbach import ReichenbachDetector
+
+    detector = ReichenbachDetector(session=db, tenant_id=tenant_id)
+    result = await detector.find_common_cause(
+        deviating_phases=payload.deviating_phases,
+        period_days=payload.period_days,
+    )
+    return {
+        "verdict": result.verdict,
+        "common_causes": [_serialise_hypothesis(h) for h in result.common_causes],
+        "independent_causes": [
+            _serialise_hypothesis(h) for h in result.independent_causes
+        ],
+        "checks_run": result.checks_run,
+    }
