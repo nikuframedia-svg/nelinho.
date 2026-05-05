@@ -451,6 +451,30 @@ class ReichenbachDetector:
             CascadeCheck(self._repo),
         ]
 
+    async def _emit_chain(
+        self, hypothesis: Hypothesis, conversation_id: UUID,
+    ) -> None:
+        """Build + verify + persist a CausalChain for the common cause."""
+        try:
+            from src.explain.diagnostics.chain_builder import (
+                build_chain_from_hypothesis,
+                record_diagnostic_chain,
+            )
+            chain = build_chain_from_hypothesis(
+                hypothesis, trigger=TriggerType.QUALITY_DROP,
+                handler="reichenbach",
+            )
+            await record_diagnostic_chain(
+                session=self.session,
+                tenant_id=self.tenant_id,
+                conversation_id=conversation_id,
+                chain=chain,
+            )
+        except Exception as exc:
+            logger.debug(
+                "ReichenbachDetector._emit_chain failed (%s)", exc,
+            )
+
     @record_rule_firing(
         rule_id="diagnostics.reichenbach",
         extract_payload=lambda self, *, deviating_phases, period_days=_DEFAULT_PERIOD_DAYS: {
@@ -471,6 +495,7 @@ class ReichenbachDetector:
         *,
         deviating_phases: List[str],
         period_days: int = _DEFAULT_PERIOD_DAYS,
+        conversation_id: Optional[UUID] = None,
     ) -> CommonCauseResult:
         """Run the 3 shared-resource checks. Falls back to per-phase
         ERRO-TREE when none trip."""
@@ -534,6 +559,10 @@ class ReichenbachDetector:
 
         if common:
             common.sort(key=lambda h: -h.confidence)
+            # Sprint Q.15.D.5 — emit CausalChain for the strongest
+            # common cause when the caller supplied a conversation_id.
+            if conversation_id is not None:
+                await self._emit_chain(common[0], conversation_id)
             return CommonCauseResult(
                 common_causes=common,
                 independent_causes=[],

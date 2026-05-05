@@ -980,6 +980,17 @@ class DiagnosticsInvestigateRequest(BaseModel):
         default=None,
         description="Optional — restrict to a single phase.",
     )
+    conversation_id: Optional[UUID] = Field(
+        default=None,
+        description=(
+            "Sprint Q.15.D.5 — when supplied AND a hypothesis trips, "
+            "the handler emits a verified CausalChain into the "
+            "Camada-4 ABL pipeline (CopilotMessage.content_structured. "
+            "causal_audit). Frontend passes the active conversation; "
+            "scheduler-driven calls leave this null and chain emission "
+            "is skipped (rule_firing audit still happens via Q.14.A)."
+        ),
+    )
 
 
 @router.post("/diagnostics/investigate")
@@ -1013,6 +1024,7 @@ async def investigate_diagnostics(
         trigger=trigger,
         period_days=payload.period_days,
         phase_id=payload.phase_id,
+        conversation_id=payload.conversation_id,
     )
 
     body: Dict[str, Any] = {
@@ -1064,6 +1076,13 @@ class CommonCauseRequest(BaseModel):
         default=7, ge=1, le=90,
         description="Lookback window for the common-cause search.",
     )
+    conversation_id: Optional[UUID] = Field(
+        default=None,
+        description=(
+            "Sprint Q.15.D.5 — when supplied AND a common cause trips, "
+            "emit a verified CausalChain into the Camada-4 ABL pipeline."
+        ),
+    )
 
 
 def _serialise_hypothesis(h) -> Dict[str, Any]:
@@ -1106,6 +1125,7 @@ async def common_cause(
     result = await detector.find_common_cause(
         deviating_phases=payload.deviating_phases,
         period_days=payload.period_days,
+        conversation_id=payload.conversation_id,
     )
     return {
         "verdict": result.verdict,
@@ -1148,6 +1168,14 @@ class WhatChangedRequest(BaseModel):
             "'large' effect; lower it to surface weaker signals."
         ),
     )
+    conversation_id: Optional[UUID] = Field(
+        default=None,
+        description=(
+            "Sprint Q.15.D.5 — when supplied AND a likely_cause Change "
+            "is found, emit a verified CausalChain into the Camada-4 "
+            "ABL pipeline."
+        ),
+    )
 
 
 @router.post("/diagnostics/what-changed")
@@ -1183,5 +1211,6 @@ async def what_changed(
         metric=payload.metric,
         phase_id=payload.phase_id,
         likely_threshold=payload.likely_threshold,
+        conversation_id=payload.conversation_id,
     )
     return report.to_dict()
