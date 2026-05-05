@@ -461,6 +461,79 @@ class DiagnosticsRepository:
     # TRANSPORT helpers (Sprint Q.15.D.3)
     # ──────────────────────────────────────────────────────────────────
 
+    async def daily_wip_samples(
+        self, start: date, end: date,
+    ) -> List[float]:
+        """One WIP sample per day in [start, end). Used by Mill's diff
+        to compute a Cohen's d shift between two periods.
+
+        Sample = count of CuratedOrderPhase rows that overlap that day
+        (data_inicio <= day < data_fim, treating data_fim NULL as open).
+        Returns ``[]`` when curated unavailable.
+        """
+        try:
+            from src.factory_data_product.models.curated import CuratedOrderPhase
+            samples: List[float] = []
+            cursor = start
+            one = timedelta(days=1)
+            while cursor < end:
+                next_day = cursor + one
+                stmt = (
+                    select(func.count(CuratedOrderPhase.id))
+                    .where(CuratedOrderPhase.data_inicio.isnot(None))
+                    .where(CuratedOrderPhase.data_inicio < next_day)
+                    .where(
+                        (CuratedOrderPhase.data_fim.is_(None))
+                        | (CuratedOrderPhase.data_fim >= cursor)
+                    )
+                )
+                row = await self.session.execute(stmt)
+                samples.append(float(row.scalar() or 0))
+                cursor = next_day
+            return samples
+        except Exception as exc:
+            logger.debug("daily_wip_samples failed (%s)", exc)
+            return []
+
+    async def transport_volume_during(
+        self, start: date, end: date,
+    ) -> int:
+        """Sum of truck_capacity_units for batches with transport_date
+        inside the window. Used by Mill's diff to compare transport
+        pressure between good vs bad periods."""
+        try:
+            from src.plan.models.transport import TransportBatch
+            stmt = (
+                select(func.coalesce(func.sum(TransportBatch.truck_capacity_units), 0))
+                .where(TransportBatch.tenant_id == self.tenant_id)
+                .where(TransportBatch.transport_date >= start)
+                .where(TransportBatch.transport_date < end)
+            )
+            return int((await self.session.execute(stmt)).scalar() or 0)
+        except Exception as exc:
+            logger.debug("transport_volume_during failed (%s)", exc)
+            return 0
+
+    async def daily_phase_error_rate_samples(
+        self, phase_id: str, start: date, end: date,
+    ) -> List[float]:
+        """One error_rate sample per day for a phase in window. Mill's
+        diff uses these to compute a Cohen's d shift on the metric the
+        caller asked for."""
+        samples: List[float] = []
+        cursor = start
+        one = timedelta(days=1)
+        while cursor < end:
+            next_day = cursor + one
+            total = await self.phase_total_count(phase_id, cursor, next_day)
+            if total > 0:
+                errors = await self.phase_error_count(
+                    phase_id, cursor, next_day,
+                )
+                samples.append(errors / total)
+            cursor = next_day
+        return samples
+
     async def upcoming_transport_volume(
         self, days_ahead: int = 7,
     ) -> int:

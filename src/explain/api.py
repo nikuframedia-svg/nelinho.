@@ -11,7 +11,7 @@ IMPORTANT: This module now integrates with Factory Data Product.
 """
 
 import logging
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
@@ -1115,3 +1115,73 @@ async def common_cause(
         ],
         "checks_run": result.checks_run,
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DIAGNOSTICS — Mill's method (Sprint Q.15.D.4)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# *"O que mudou entre antes e agora?"* — compare a "good" period with
+# a "bad" period, rank what's different by Cohen's d correlation, and
+# return a list of candidate causes ordered by likelihood.
+
+
+class WhatChangedRequest(BaseModel):
+    """Body for `POST /v1/explain/diagnostics/what-changed`."""
+
+    good_period_start: date = Field(..., description="ISO date — start of 'before' (inclusive)")
+    good_period_end: date = Field(..., description="ISO date — end of 'before' (exclusive)")
+    bad_period_start: date = Field(..., description="ISO date — start of 'after' (inclusive)")
+    bad_period_end: date = Field(..., description="ISO date — end of 'after' (exclusive)")
+    metric: str = Field(
+        default="error_rate",
+        description="Metric to compare. Today: 'error_rate' (only)."
+    )
+    phase_id: Optional[str] = Field(
+        default=None,
+        description="Optional — restrict the comparison to one phase.",
+    )
+    likely_threshold: float = Field(
+        default=0.7, ge=0.5, le=0.95,
+        description=(
+            "Correlation cutoff for `likely_cause=True`. 0.7 ≈ Cohen's "
+            "'large' effect; lower it to surface weaker signals."
+        ),
+    )
+
+
+@router.post("/diagnostics/what-changed")
+async def what_changed(
+    payload: WhatChangedRequest,
+    tenant_id: UUID = Depends(get_tenant_id),
+    db: AsyncSession = Depends(get_session),
+):
+    """Mill's method of difference — what changed between 2 periods.
+
+    Sprint Q.15.D.4 — closes §10.4 of the v2.2 prompt. Returns:
+      ``metric_comparison``: actual delta + Cohen's d on daily samples.
+      ``changes_found``: list of {category, change, correlation,
+        likely_cause, evidence}, ranked by correlation desc.
+      ``unchanged``: dimensions whose data isn't there or the shift is
+        below the noise floor.
+      ``verdict``: one-liner naming the strongest likely_cause.
+    """
+    from src.explain.diagnostics.mill_diff import MillDiffDetector
+
+    if payload.bad_period_end <= payload.good_period_start:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="bad_period must come after good_period.",
+        )
+
+    detector = MillDiffDetector(session=db, tenant_id=tenant_id)
+    report = await detector.what_changed(
+        good_start=payload.good_period_start,
+        good_end=payload.good_period_end,
+        bad_start=payload.bad_period_start,
+        bad_end=payload.bad_period_end,
+        metric=payload.metric,
+        phase_id=payload.phase_id,
+        likely_threshold=payload.likely_threshold,
+    )
+    return report.to_dict()
