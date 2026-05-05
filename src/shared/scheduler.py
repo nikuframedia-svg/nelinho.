@@ -176,6 +176,23 @@ def register_tenant(
         coalesce=True,
         max_instances=1,
     )
+    # Sprint Q.15.D.3 — multivariate phase drift monitor (every 30 min).
+    # When >= 2 phases drift simultaneously, fires the Reichenbach
+    # common-cause detector and writes a row to governance.rule_firing
+    # via the @record_rule_firing decorator on `find_common_cause`.
+    # Gated by ConfigStore key `copilot.diagnostics.reichenbach.enabled`
+    # — the job runs the check unconditionally but only invokes the
+    # detector when the flag is True. Cheap enough to leave on always.
+    _scheduler.add_job(
+        _multivariate_drift_job,
+        trigger=IntervalTrigger(minutes=30),
+        args=[tenant_id],
+        id=f"multivariate_drift:{tenant_id}",
+        name=f"multivariate_drift[{tenant_id}]",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
     # Sprint C 2.3 — PreferenceRuleDetector (Camada 1 aprendizagem).
     # Runs once a day, at 03:00 UTC, when the ERP is quiet and the
     # previous day's commits are fully flushed. 30-day window scans
@@ -316,6 +333,102 @@ async def _quality_risk_scoring_job(tenant_id: UUID) -> None:
         "quality_risk_scoring tenant=%s (stub — wire scoring model when ready)",
         tenant_id,
     )
+
+
+async def _multivariate_drift_job(tenant_id: UUID) -> None:
+    """Sprint Q.15.D.3 — every 30 min, check whether ≥ 2 phases drift
+    simultaneously; if so, fire the Reichenbach common-cause detector.
+
+    Gated by ConfigStore key ``copilot.diagnostics.reichenbach.enabled``
+    (default False). The drift scan runs unconditionally — it's cheap
+    and the result is interesting in its own right (logs which phases
+    drift). Only the detector invocation is gated so we don't burn
+    Beta-Bernoulli math + audit rows for tenants who haven't opted in.
+
+    Best-effort: a failed run logs at warning + the next tick tries
+    again. Never raises into the scheduler.
+    """
+    try:
+        from src.core.services.tenant_config_service import TenantConfigService
+        from src.explain.diagnostics.multivariate_monitor import (
+            MultivariatePhaseMonitor,
+        )
+        from src.explain.diagnostics.reichenbach import ReichenbachDetector
+        from src.shared.database import get_session_context
+    except ImportError as exc:
+        logger.debug(
+            "multivariate_drift: imports missing (%s) — skipping tenant=%s",
+            exc, tenant_id,
+        )
+        return
+
+    started = datetime.utcnow()
+    try:
+        async with get_session_context() as session:
+            cfg_svc = TenantConfigService(session, tenant_id)
+            enabled = await cfg_svc.get(
+                "copilot",
+                "diagnostics.reichenbach.enabled",
+                default=False,
+            )
+
+            monitor = MultivariatePhaseMonitor(
+                session=session, tenant_id=tenant_id,
+            )
+            drifting = await monitor.check()
+
+            if not drifting:
+                # Common, healthy case — log and exit. No detector run,
+                # no audit row.
+                elapsed_ms = int(
+                    (datetime.utcnow() - started).total_seconds() * 1000
+                )
+                logger.debug(
+                    "multivariate_drift tenant=%s drifting=0 elapsed_ms=%d",
+                    tenant_id, elapsed_ms,
+                )
+                return
+
+            if len(drifting) < 2:
+                # Single-phase drift goes through the alerts scan, not
+                # Reichenbach. Log and exit.
+                logger.info(
+                    "multivariate_drift tenant=%s drifting=1 phase=%s "
+                    "(single — alerts scan handles)",
+                    tenant_id, drifting[0],
+                )
+                return
+
+            if not enabled:
+                logger.info(
+                    "multivariate_drift tenant=%s drifting=%d phases=%s "
+                    "(reichenbach disabled — flip "
+                    "copilot.diagnostics.reichenbach.enabled to activate)",
+                    tenant_id, len(drifting), drifting,
+                )
+                return
+
+            detector = ReichenbachDetector(
+                session=session, tenant_id=tenant_id,
+            )
+            result = await detector.find_common_cause(
+                deviating_phases=drifting,
+            )
+            await session.commit()
+            elapsed_ms = int(
+                (datetime.utcnow() - started).total_seconds() * 1000
+            )
+            logger.info(
+                "multivariate_drift tenant=%s drifting=%d verdict=%s "
+                "common_causes=%d elapsed_ms=%d",
+                tenant_id, len(drifting), result.verdict,
+                len(result.common_causes), elapsed_ms,
+            )
+    except Exception as exc:
+        logger.warning(
+            "multivariate_drift tenant=%s failed: %s",
+            tenant_id, exc, exc_info=True,
+        )
 
 
 async def _preference_rule_detector_job(tenant_id: UUID) -> None:
