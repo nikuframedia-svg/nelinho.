@@ -31,8 +31,8 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
-from datetime import date, datetime
-from typing import Counter as CounterT, Dict, List, Optional, Tuple
+from datetime import date
+from typing import Counter as CounterT, Dict, List, Tuple
 from uuid import UUID
 
 from sqlalchemy import and_, func, select
@@ -380,6 +380,82 @@ class DiagnosticsRepository:
         except Exception as exc:
             logger.debug("boats_through_phases failed (%s)", exc)
             return []
+
+    async def molds_used_by_boats(
+        self, of_ids: List[str], start: date, end: date,
+    ) -> Dict[str, int]:
+        """``{mold_id: count}`` — moldes usados pelos OFs em window.
+
+        Sprint Q.15.D.2 — Reichenbach `_check_shared_mold` precisa
+        identificar molde partilhado por barcos que passaram por TODAS
+        as fases que drift juntas. Retorna ``count`` para que o caller
+        privilegie moldes muito-usados sobre os que aparecem só uma vez.
+        """
+        if not of_ids:
+            return {}
+        try:
+            from src.factory_data_product.models.curated import CuratedOrderPhase
+            stmt = (
+                select(
+                    CuratedOrderPhase.molde_id,
+                    func.count(CuratedOrderPhase.id),
+                )
+                .where(CuratedOrderPhase.of_id.in_(of_ids))
+                .where(CuratedOrderPhase.molde_id.isnot(None))
+                .where(CuratedOrderPhase.data_inicio.isnot(None))
+                .where(CuratedOrderPhase.data_inicio >= start)
+                .where(CuratedOrderPhase.data_inicio < end)
+                .group_by(CuratedOrderPhase.molde_id)
+            )
+            rows = (await self.session.execute(stmt)).all()
+            return {str(r[0]): int(r[1]) for r in rows if r[0]}
+        except Exception as exc:
+            logger.debug("molds_used_by_boats failed (%s)", exc)
+            return {}
+
+    async def workers_in_phase_set(
+        self, phase_id: str, start: date, end: date,
+    ) -> set:
+        """Set of distinct funcionario_id active on a phase in window.
+
+        Convenience for Reichenbach `_check_shared_workers` set
+        intersection across deviating phases.
+        """
+        pairs = await self.workers_active_in_phase(phase_id, start, end)
+        return {wid for wid, _count in pairs}
+
+    async def worker_hours_during(
+        self, worker_id: str, start: date, end: date,
+    ) -> float:
+        """Approximate hours worked by a worker in window.
+
+        Approximation: count of allocations × average phase duration
+        (we don't have per-allocation hour stamps in CuratedAllocation).
+        Used by Reichenbach to flag workers exceeding their normal
+        weekly band.
+
+        Returns 0.0 when no data.
+        """
+        try:
+            from src.factory_data_product.models.curated import (
+                CuratedAllocation,
+                CuratedOrderPhase,
+            )
+            stmt = (
+                select(func.coalesce(func.sum(CuratedOrderPhase.horas_finais), 0))
+                .join(
+                    CuratedAllocation,
+                    CuratedAllocation.fase_of_id == CuratedOrderPhase.fase_of_id,
+                )
+                .where(CuratedAllocation.funcionario_id == worker_id)
+                .where(CuratedOrderPhase.data_inicio.isnot(None))
+                .where(CuratedOrderPhase.data_inicio >= start)
+                .where(CuratedOrderPhase.data_inicio < end)
+            )
+            return float((await self.session.execute(stmt)).scalar() or 0.0)
+        except Exception as exc:
+            logger.debug("worker_hours_during(%s) failed (%s)", worker_id, exc)
+            return 0.0
 
     async def phase_precedes(
         self, phase_a: str, phase_b: str,
