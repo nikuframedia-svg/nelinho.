@@ -298,9 +298,13 @@ METRIC_CATALOG: Dict[str, Dict[str, Any]] = {
 # ENDPOINTS
 # ============================================================================
 
-def get_tenant_id(x_tenant_id: UUID = Header(default=UUID("00000000-0000-0000-0000-000000000000"))) -> UUID:
-    """Extract tenant ID from header (optional for explain endpoints)."""
-    return x_tenant_id
+from src.shared.auth.headers import require_tenant_header
+
+# Sprint Q.12 Onda 0.1: replaced silent zero-UUID default. Explain
+# endpoints look up tenant-scoped KPIs via SemanticQueriesInMemory, so
+# tenant_id is mandatory — read-only catalogue browsing belongs in a
+# separate untenanted endpoint.
+get_tenant_id = require_tenant_header
 
 
 async def _resolve_metric_value(
@@ -941,3 +945,93 @@ async def causal_discover(
             for edge in report.candidate_edges
         ],
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DIAGNOSTICS — ERRO-TREE (Sprint Q.15.D.1)
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# Operator-facing endpoint for the ERRO-TREE handler. The frontend or
+# the LLM (via tool-calling, capability `diagnostics.erro_tree.enabled`)
+# POSTs the trigger + period + optional phase_id; the handler runs the
+# 3-detector cascade (mold → worker → overload) and returns either a
+# root_cause hypothesis or a "no isolated cause" verdict.
+#
+# Audit + push: the @record_rule_firing decorator on `investigate()`
+# persists every call to governance.rule_firing (Q.14.A) and triggers
+# pg_notify push to the SSE channel (Q.14.B) when the allowlist matches.
+
+
+class DiagnosticsInvestigateRequest(BaseModel):
+    """Body for `POST /v1/explain/diagnostics/investigate`."""
+
+    trigger: str = Field(
+        ...,
+        description=(
+            "What symptom prompted the investigation. "
+            "Allowed: quality_drop / throughput_drop / delay_spike."
+        ),
+    )
+    period_days: int = Field(
+        default=7, ge=1, le=90,
+        description="Lookback window. Default 7 — captures weekly drift.",
+    )
+    phase_id: Optional[str] = Field(
+        default=None,
+        description="Optional — restrict to a single phase.",
+    )
+
+
+@router.post("/diagnostics/investigate")
+async def investigate_diagnostics(
+    payload: DiagnosticsInvestigateRequest,
+    tenant_id: UUID = Depends(get_tenant_id),
+    db: AsyncSession = Depends(get_session),
+):
+    """Run the ERRO-TREE diagnostic cascade.
+
+    Sprint Q.15.D.1 — replaces LLM improvisation with a real handler
+    that reads governance.rule_firing-audited evidence + emits a
+    `Hypothesis` with Beta-Bernoulli confidence + 95% CI.
+    """
+    from src.explain.diagnostics.erro_tree import ErroTreeDetector
+    from src.explain.diagnostics.types import TriggerType
+
+    try:
+        trigger = TriggerType(payload.trigger)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Invalid trigger '{payload.trigger}'. "
+                f"Allowed: {[t.value for t in TriggerType]}"
+            ),
+        )
+
+    detector = ErroTreeDetector(session=db, tenant_id=tenant_id)
+    result = await detector.investigate(
+        trigger=trigger,
+        period_days=payload.period_days,
+        phase_id=payload.phase_id,
+    )
+
+    body: Dict[str, Any] = {
+        "root_cause": None,
+        "chain": result.chain,
+        "steps_checked": result.steps_checked,
+        "recommendation": result.recommendation,
+    }
+    if result.root_cause is not None:
+        h = result.root_cause
+        ci_low, ci_high = h.credible_interval(level=0.95)
+        body["root_cause"] = {
+            "type": h.type,
+            "entity": h.entity,
+            "confidence": round(h.confidence, 4),
+            "credible_interval_95": {
+                "low": round(ci_low, 4),
+                "high": round(ci_high, 4),
+            },
+            "evidence": list(h.evidence),
+        }
+    return body
