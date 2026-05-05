@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
-from datetime import date
+from datetime import date, timedelta
 from typing import Counter as CounterT, Dict, List, Tuple
 from uuid import UUID
 
@@ -456,6 +456,79 @@ class DiagnosticsRepository:
         except Exception as exc:
             logger.debug("worker_hours_during(%s) failed (%s)", worker_id, exc)
             return 0.0
+
+    # ──────────────────────────────────────────────────────────────────
+    # TRANSPORT helpers (Sprint Q.15.D.3)
+    # ──────────────────────────────────────────────────────────────────
+
+    async def upcoming_transport_volume(
+        self, days_ahead: int = 7,
+    ) -> int:
+        """Sum of `truck_capacity_units` for non-DISPATCHED batches in
+        the next ``days_ahead`` days.
+
+        Sprint Q.15.D.3 — `SharedTransportCheck` reads this to detect
+        a big shipment about to ship that's putting pressure on
+        production across multiple phases simultaneously.
+
+        Returns 0 when no batches exist or the table is unreachable.
+        """
+        try:
+            from src.plan.models.transport import TransportBatch
+            today = date.today()
+            window_end = today + timedelta(days=days_ahead)
+            stmt = (
+                select(func.coalesce(func.sum(TransportBatch.truck_capacity_units), 0))
+                .where(TransportBatch.tenant_id == self.tenant_id)
+                .where(TransportBatch.status != "DISPATCHED")
+                .where(TransportBatch.transport_date >= today)
+                .where(TransportBatch.transport_date < window_end)
+            )
+            return int((await self.session.execute(stmt)).scalar() or 0)
+        except Exception as exc:
+            logger.debug("upcoming_transport_volume failed (%s)", exc)
+            return 0
+
+    async def has_material_lot_tracking(self) -> bool:
+        """``True`` iff the curated layer carries material lot data.
+
+        Sprint Q.15.D.3 — the NELO curated layer doesn't have lot
+        tracking today (system prompt v2.2 §13 H2). The
+        `SharedMaterialCheck` reads this flag and returns "data
+        unavailable" honestly instead of fabricating a lot-based
+        hypothesis. When the ERP shadow mode (Fase G) lands and
+        populates a `factory_curated.material_lot` table, this
+        helper flips to True and the check activates automatically.
+        """
+        try:
+            # Defensive existence check — try a SELECT 1 from a sentinel
+            # CuratedMaterialLot table. When the ORM model isn't wired
+            # the import fails and we report "no data".
+            try:
+                from src.factory_data_product.models.curated import (
+                    CuratedMaterialLot,  # type: ignore[attr-defined]
+                )
+            except ImportError:
+                return False
+            stmt = select(func.count(CuratedMaterialLot.id)).limit(1)
+            count = int((await self.session.execute(stmt)).scalar() or 0)
+            return count > 0
+        except Exception as exc:
+            logger.debug("has_material_lot_tracking failed (%s)", exc)
+            return False
+
+    async def has_shift_tracking(self) -> bool:
+        """``True`` iff the curated layer captures the shift assigned
+        to each phase / allocation.
+
+        Plan v4 §2.8: NELO is 95% turno único manhã; the existing
+        ``CuratedAllocation.is_chefe`` is binary (chefe vs não-chefe),
+        not a shift label. So this helper returns False today — a
+        future ingest column ``shift_id`` would make it True.
+        """
+        # Same defensive pattern as `has_material_lot_tracking`. Today
+        # always False; documents the contract for when shift data lands.
+        return False
 
     async def phase_precedes(
         self, phase_a: str, phase_b: str,

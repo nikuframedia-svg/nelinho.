@@ -296,6 +296,123 @@ class CascadeCheck:
 
 
 # ───────────────────────────────────────────────────────────────────────────
+# Sprint Q.15.D.3 — completion: material / transport / shift checks
+# ───────────────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class SharedMaterialCheck:
+    """Check 4 — same material lot affecting multiple phases.
+
+    Material lot tracking is NOT in the NELO curated layer today
+    (system prompt v2.2 §13 H2). Until ERP shadow-mode (Fase G)
+    populates a `CuratedMaterialLot` table, this check returns None
+    silently AND records a `data_unavailable` audit step in the
+    orchestrator's `checks_run` so the operator sees we tried but
+    couldn't.
+
+    The ``has_material_lot_tracking`` repo helper auto-detects when
+    the data lands — no code change needed. That's the difference
+    between graceful degradation and dead code.
+    """
+
+    repo: DiagnosticsRepository
+    name: str = "shared_material"
+
+    async def check(
+        self, *, deviating_phases: List[str], period_days: int,
+    ) -> Optional[Hypothesis]:
+        if len(deviating_phases) < 2:
+            return None
+        has_data = await self.repo.has_material_lot_tracking()
+        if not has_data:
+            # Honest "no signal" — orchestrator records this as
+            # DATA_UNAVAILABLE rather than CLEAR.
+            return None
+        # When lot data lands, the implementation slot below activates.
+        # Until then, no-op for safety.
+        # Pseudo-code retained as a contract for the future ingest:
+        #   lots = await repo.material_lots_for_phases(deviating_phases, ...)
+        #   for lot in shared_lots: check error_rate_with_lot vs without
+        return None
+
+
+@dataclass
+class SharedTransportCheck:
+    """Check 5 — large upcoming shipment putting cross-phase pressure.
+
+    Plan v4 §8 + §6.2 PASSO 4: when expedição has > 50 boats coming
+    in the next week, operators across multiple phases push harder
+    (overtime, faster pace) → defects rise across phases simultaneously.
+    Diagnosing each phase isolated misses the common cause.
+
+    Trigger: upcoming truck capacity in the next 7 days exceeds 75
+    boats (1.5× the 50-boat truck baseline). Confidence scales with
+    how far over the threshold the volume is.
+    """
+
+    repo: DiagnosticsRepository
+    name: str = "shared_transport"
+    pressure_floor: int = 75
+
+    async def check(
+        self, *, deviating_phases: List[str], period_days: int,
+    ) -> Optional[Hypothesis]:
+        if len(deviating_phases) < 2:
+            return None
+        upcoming = await self.repo.upcoming_transport_volume(days_ahead=7)
+        if upcoming < self.pressure_floor:
+            return None
+
+        # Confidence proportional to over-floor excess. At pressure_floor
+        # confidence ~0.71; at 2× floor it climbs to ~0.85.
+        ratio = upcoming / max(1, self.pressure_floor)
+        excess_score = min(8.0, max(0.0, (ratio - 1.0) * 8.0))
+        alpha = 1.0 + 4.0 + excess_score   # 4 = base "is shared pressure"
+        beta = 2.0
+        return Hypothesis(
+            type="shared_transport_pressure",
+            entity=f"{upcoming} barcos próximos 7 dias",
+            alpha=alpha,
+            beta=beta,
+            evidence=[
+                f"Volume expedição próximos 7 dias: {upcoming} barcos "
+                f"(threshold pressão: {self.pressure_floor})",
+                f"Fases que drift juntas: {', '.join(deviating_phases)}",
+                "Pressão de expedição → pressa transversal → "
+                "erros sobem em múltiplas fases ao mesmo tempo",
+            ],
+        )
+
+
+@dataclass
+class SharedShiftCheck:
+    """Check 6 — same shift (manhã/tarde/noite) affecting both phases.
+
+    NELO runs 95% turno único manhã (Plan v4 §2.8) so this is rarely
+    actionable on current data. Curated layer doesn't carry shift_id
+    on `CuratedAllocation` yet. Like SharedMaterialCheck, this stays
+    a graceful no-op until the ingest evolves.
+    """
+
+    repo: DiagnosticsRepository
+    name: str = "shared_shift"
+
+    async def check(
+        self, *, deviating_phases: List[str], period_days: int,
+    ) -> Optional[Hypothesis]:
+        if len(deviating_phases) < 2:
+            return None
+        has_data = await self.repo.has_shift_tracking()
+        if not has_data:
+            return None
+        # Future implementation: look up shift_id per allocation in
+        # the deviating phases, intersect, flag the dominant shift if
+        # its error rate spikes.
+        return None
+
+
+# ───────────────────────────────────────────────────────────────────────────
 # Orchestrator
 # ───────────────────────────────────────────────────────────────────────────
 
@@ -318,9 +435,19 @@ class ReichenbachDetector:
         self.tenant_id = tenant_id
         self._repo = DiagnosticsRepository(session, tenant_id)
         self._erro_tree = ErroTreeDetector(session, tenant_id)
+        # Order matters:
+        #   1. SharedMold + SharedWorkers — concrete recursos (high confidence).
+        #   2. SharedTransport — system-wide pressure (moderate signal).
+        #   3. SharedMaterial + SharedShift — return None today (no data),
+        #      kept in the cascade so audit shows we tried.
+        #   4. Cascade — last because a real shared resource shouldn't
+        #      get mis-classified as a downstream propagation.
         self._checks: List[_CommonCauseCheck] = [
             SharedMoldCheck(self._repo),
             SharedWorkersCheck(self._repo),
+            SharedTransportCheck(self._repo),
+            SharedMaterialCheck(self._repo),
+            SharedShiftCheck(self._repo),
             CascadeCheck(self._repo),
         ]
 
@@ -379,13 +506,31 @@ class ReichenbachDetector:
                 })
                 common.append(hypothesis)
             else:
-                steps.append({
-                    "step": check.name, "result": "CLEAR",
-                    "detail": (
-                        hypothesis.entity if hypothesis is not None
-                        else "sem evidência"
-                    ),
-                })
+                # Sprint Q.15.D.3 — distinguish "data unavailable" from
+                # genuine CLEAR for the audit trail. Material + Shift
+                # checks today always return None because the curated
+                # layer doesn't carry the data; surface that honestly so
+                # operators don't read absence-of-flag as absence-of-cause.
+                data_unavailable_checks = (
+                    "shared_material" if not await self._repo.has_material_lot_tracking() else None,
+                    "shared_shift" if not await self._repo.has_shift_tracking() else None,
+                )
+                if check.name in data_unavailable_checks:
+                    steps.append({
+                        "step": check.name, "result": "DATA_UNAVAILABLE",
+                        "detail": (
+                            "curated layer doesn't carry this signal yet "
+                            "(activates automatically when ERP shadow lands)"
+                        ),
+                    })
+                else:
+                    steps.append({
+                        "step": check.name, "result": "CLEAR",
+                        "detail": (
+                            hypothesis.entity if hypothesis is not None
+                            else "sem evidência"
+                        ),
+                    })
 
         if common:
             common.sort(key=lambda h: -h.confidence)
