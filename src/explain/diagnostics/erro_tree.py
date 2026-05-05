@@ -336,6 +336,33 @@ class ErroTreeDetector:
             OverloadDetector(self._repo),
         ]
 
+    async def _emit_chain(
+        self,
+        hypothesis: Hypothesis,
+        trigger: TriggerType,
+        conversation_id: UUID,
+    ) -> None:
+        """Build + verify + persist a CausalChain. Best-effort."""
+        try:
+            from src.explain.diagnostics.chain_builder import (
+                build_chain_from_hypothesis,
+                record_diagnostic_chain,
+            )
+            chain = build_chain_from_hypothesis(
+                hypothesis, trigger=trigger, handler="erro_tree",
+            )
+            await record_diagnostic_chain(
+                session=self.session,
+                tenant_id=self.tenant_id,
+                conversation_id=conversation_id,
+                chain=chain,
+            )
+        except Exception as exc:
+            logger.debug(
+                "ErroTreeDetector._emit_chain failed (%s) — diagnosis "
+                "still flows to operator", exc,
+            )
+
     @record_rule_firing(
         rule_id="diagnostics.erro_tree",
         extract_payload=lambda self, *, trigger, period_days=_DEFAULT_PERIOD_DAYS,
@@ -362,12 +389,19 @@ class ErroTreeDetector:
         trigger: TriggerType,
         period_days: int = _DEFAULT_PERIOD_DAYS,
         phase_id: Optional[str] = None,
+        conversation_id: Optional[UUID] = None,
     ) -> DiagnosticResult:
         """Run the cascade. Returns a DiagnosticResult.
 
         Best-effort: if any detector raises, log + continue with the
         next. The cascade itself never raises — caller can rely on
         always getting a `DiagnosticResult`.
+
+        Sprint Q.15.D.5 — when ``conversation_id`` is supplied AND a
+        hypothesis trips, emit a verified ``CausalChain`` and persist
+        it via ``record_causal_audit`` so the Camada-4 ABL job picks
+        it up nightly. Best-effort: chain failures don't break the
+        diagnosis; they just skip the audit.
         """
         steps: List[Dict[str, Any]] = []
 
@@ -399,6 +433,9 @@ class ErroTreeDetector:
                         "result": "SKIPPED",
                         "detail": "causa já encontrada",
                     })
+                # Sprint Q.15.D.5 — emit + persist CausalChain.
+                if conversation_id is not None:
+                    await self._emit_chain(hypothesis, trigger, conversation_id)
                 return DiagnosticResult(
                     root_cause=hypothesis,
                     chain=_build_causal_chain(hypothesis, trigger),

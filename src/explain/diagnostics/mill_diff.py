@@ -165,6 +165,7 @@ class MillDiffDetector:
         metric: str = "error_rate",
         phase_id: Optional[str] = None,
         likely_threshold: float = _DEFAULT_LIKELY_THRESHOLD,
+        conversation_id: Optional[UUID] = None,
     ) -> WhatChangedReport:
         """End-to-end: confirm shift → diff each dimension → rank.
 
@@ -233,6 +234,16 @@ class MillDiffDetector:
         # 3. Rank by correlation desc.
         changes.sort(key=lambda c: -c.correlation)
 
+        # Sprint Q.15.D.5 — emit CausalChain for the strongest
+        # likely_cause when caller supplied a conversation_id.
+        if conversation_id is not None and changes:
+            top = changes[0]
+            if top.likely_cause:
+                await self._emit_chain(
+                    top, metric=metric, phase_id=phase_id,
+                    conversation_id=conversation_id,
+                )
+
         verdict = self._compose_verdict(changes)
         return WhatChangedReport(
             metric_comparison=comparison,
@@ -240,6 +251,34 @@ class MillDiffDetector:
             unchanged=unchanged,
             verdict=verdict,
         )
+
+    async def _emit_chain(
+        self,
+        change: Change,
+        *,
+        metric: str,
+        phase_id: Optional[str],
+        conversation_id: UUID,
+    ) -> None:
+        """Build + verify + persist a CausalChain for the top change."""
+        try:
+            from src.explain.diagnostics.chain_builder import (
+                build_chain_from_mill_change,
+                record_diagnostic_chain,
+            )
+            chain = build_chain_from_mill_change(
+                change, metric=metric, phase_id=phase_id,
+            )
+            await record_diagnostic_chain(
+                session=self.session,
+                tenant_id=self.tenant_id,
+                conversation_id=conversation_id,
+                chain=chain,
+            )
+        except Exception as exc:
+            logger.debug(
+                "MillDiffDetector._emit_chain failed (%s)", exc,
+            )
 
     # ────────────────────────────────────────────────────────────────
     # Dimension diffs
