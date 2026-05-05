@@ -600,12 +600,44 @@ class CopilotService:
     def _detect_intent(self, user_query: str) -> str:
         """
         Detetar intent da pergunta do utilizador.
-        
+
+        Sprint Q.15.0 — added "diagnostic" intent for causal questions
+        (porque caiu, porque atrasou, o que mudou, investigar). When
+        diagnostic, the service tries tool-calling first
+        (`investigate_quality_drop` / `find_common_cause` / `what_changed`)
+        and falls back to free-form LLM with an explicit "improvising"
+        warning when no diagnostic capability is Wired for the tenant.
+
         Returns:
-            "kpi_current", "quality_summary", "plan_summary", "hr_summary", ou "generic"
+            "kpi_current", "quality_summary", "plan_summary", "hr_summary",
+            "diagnostic", or "generic"
         """
         query_lower = user_query.lower().strip()
-        
+
+        # Sprint Q.15.0 — Diagnostic intent: causal / "why" questions.
+        # Checked BEFORE kpi_current because "porque caiu o OEE?"
+        # contains "oee" but is fundamentally a diagnostic question, not
+        # a fact lookup. The keyword list maps to the v2.2 prompt's
+        # §10 ERRO-TREE / Reichenbach / Mill's vocabulary.
+        diagnostic_triggers = (
+            "porque ", "porquê", "por que ", "investigar", "investiga",
+            "o que mudou", "que mudou", "what changed",
+            "causa", "raiz", "diagnosticar", "diagnostico", "diagnóstico",
+        )
+        diagnostic_kpi_drop = (
+            "caiu", "desceu", "baixou", "subiu", "aumentou", "atrasou",
+            "atrasaram", "drift", "spike",
+        )
+        if any(trigger in query_lower for trigger in diagnostic_triggers):
+            return "diagnostic"
+        # "Porque is implicit" patterns: "throughput desceu" / "OEE caiu"
+        # treat as diagnostic when paired with a drop verb + KPI noun.
+        kpi_nouns = ("oee", "fpy", "rework", "throughput", "qualidade",
+                     "lead time", "tempo", "barcos")
+        if any(verb in query_lower for verb in diagnostic_kpi_drop):
+            if any(noun in query_lower for noun in kpi_nouns):
+                return "diagnostic"
+
         # Fast detection: perguntas muito curtas sobre KPIs devem ser kpi_current
         query_words = query_lower.split()
         if len(query_words) <= 5:
@@ -642,29 +674,31 @@ class CopilotService:
         return "generic"
     
     async def _fetch_kpi_snapshot(self) -> Optional[Dict[str, Any]]:
-        """
-        Buscar snapshot de KPIs via HTTP interno.
-        
-        Returns:
-            Dict com snapshot de KPIs ou None se erro
+        """Compute the KPI snapshot for ``self.tenant_id``.
+
+        Sprint Q.12 Onda 0.5 — was an in-process HTTP roundtrip to
+        ``/v1/profit/kpis/snapshot-dev`` (the dev endpoint, hardcoded in
+        prod paths). That had two problems: (1) the dev endpoint returns
+        404 in production once ``settings.debug`` is off, silently
+        nulling the KPI fact pack; (2) the round-trip wasted a connection
+        and bypassed our own session/transaction. We now call
+        :func:`calculate_kpis` directly so the snapshot is real, scoped
+        to the actual tenant, and free.
         """
         try:
-            import httpx
-            from src.shared.config import settings
-            
-            # Usar URL base do próprio servidor
-            base_url = getattr(settings, "api_base_url", "http://localhost:8000")
-            url = f"{base_url}/v1/profit/kpis/snapshot-dev"  # Usar dev endpoint para evitar auth
-            
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(
-                    url,
-                    headers={
-                        "X-Tenant-Id": str(self.tenant_id),
-                    },
+            from src.profit.api.kpis import calculate_kpis
+
+            kpis = await calculate_kpis(self.session, self.tenant_id)
+            # ``calculate_kpis`` returns a dict of KPIMetric pydantic
+            # models; the prompt builder expects plain dicts (so the
+            # JSON dump in service.py:832 doesn't choke).
+            return {
+                key: (
+                    value.model_dump()
+                    if hasattr(value, "model_dump") else value
                 )
-                response.raise_for_status()
-                return response.json()
+                for key, value in kpis.items()
+            }
         except Exception as e:
             logger.warning(f"Erro ao buscar KPI snapshot: {e}")
             return None
@@ -827,6 +861,38 @@ class CopilotService:
         # Carregar system prompt
         prompt_path = Path(__file__).parent / "prompts" / "system_prompt.md"
         system_prompt = prompt_path.read_text(encoding="utf-8")
+
+        # Sprint Q.15.0 — inject the dynamic Capabilities block. This
+        # tells the LLM exactly which diagnostic tools are Wired vs
+        # aspirational on this tenant, so it doesn't pretend to follow
+        # the §10 framework without a real handler. Best-effort: if the
+        # config lookup fails the placeholder gets stripped and the LLM
+        # treats all capabilities as aspirational (the safe default).
+        try:
+            from src.copilot.prompts.capabilities import (
+                fetch_capability_flags,
+                render_capabilities_block,
+            )
+            flags = await fetch_capability_flags(self.session, self.tenant_id)
+            capabilities_block = render_capabilities_block(flags)
+        except Exception as exc:
+            logger.warning(
+                "capabilities injection failed (%s) — defaulting to "
+                "all-aspirational block", exc,
+            )
+            from src.copilot.prompts.capabilities import (
+                render_capabilities_block,
+            )
+            capabilities_block = render_capabilities_block({})
+
+        if "<!-- CAPABILITIES_PLACEHOLDER -->" in system_prompt:
+            system_prompt = system_prompt.replace(
+                "<!-- CAPABILITIES_PLACEHOLDER -->", capabilities_block,
+            )
+        else:
+            # Older prompt without the placeholder — prepend the block
+            # at the top so it's always visible to the model.
+            system_prompt = capabilities_block + "\n\n---\n\n" + system_prompt
         
         # Construir contexto estruturado
         context_str = json.dumps(context_facts, indent=2, ensure_ascii=False)
