@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
@@ -80,16 +81,28 @@ async def get_modules(request: Request) -> dict[str, Any]:
 async def get_infrastructure(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    """Ping every infrastructure component the app depends on. ~3-4s if
-    Kafka/Redis are slow; <500ms when everything is local + warm."""
+    """Ping every infrastructure component the app depends on.
+
+    Onda 1.6 — entire fan-out capped at 5s. Each individual check has its
+    own 2s budget, but a stuck client could otherwise hold a connection
+    open indefinitely; the global cap surfaces that as a clear failure.
+    """
     db_check = await check_database(session)
-    other = await asyncio.gather(
-        check_redis(),
-        check_kafka(),
-        check_ollama(),
-    )
-    items = [db_check.to_dict()] + [c.to_dict() for c in other]
+    try:
+        other = await asyncio.wait_for(
+            asyncio.gather(check_redis(), check_kafka(), check_ollama()),
+            timeout=5.0,
+        )
+        items = [db_check.to_dict()] + [c.to_dict() for c in other]
+    except asyncio.TimeoutError:
+        items = [
+            db_check.to_dict(),
+            {"component": "redis", "healthy": False, "detail": "global timeout (5s)"},
+            {"component": "kafka", "healthy": False, "detail": "global timeout (5s)"},
+            {"component": "ollama", "healthy": False, "detail": "global timeout (5s)"},
+        ]
     return {
+        "sampled_at": datetime.now(timezone.utc).isoformat(),
         "items": items,
         "summary": {
             "total": len(items),
@@ -123,17 +136,35 @@ async def get_full(
     trust_task = collect_trust_index(session, tenant_id)
     commits_task = collect_commit_cadence(session, tenant_id)
 
-    db_res, redis_res, kafka_res, ollama_res, trust_res, commits_res = await asyncio.gather(
-        db_task, redis_task, kafka_task, ollama_task, trust_task, commits_task,
-        return_exceptions=True,
-    )
+    # Onda 1.6 — 8s global cap. `return_exceptions=True` already prevents one
+    # failure from blanking the dashboard; wait_for prevents a hung client
+    # from holding the response open indefinitely.
+    try:
+        db_res, redis_res, kafka_res, ollama_res, trust_res, commits_res = await asyncio.wait_for(
+            asyncio.gather(
+                db_task, redis_task, kafka_task, ollama_task, trust_task, commits_task,
+                return_exceptions=True,
+            ),
+            timeout=8.0,
+        )
+    except asyncio.TimeoutError:
+        timeout_exc = TimeoutError("global /full timeout (8s)")
+        db_res = redis_res = kafka_res = ollama_res = trust_res = commits_res = timeout_exc
 
     def _safe(value, fallback_label: str) -> Any:
         if isinstance(value, Exception):
+            # Onda 2.2 — strip the exception message; raw stringification
+            # of SQLAlchemy/psycopg/etc. errors leaks role names, schema
+            # paths, and connection strings to the dashboard. The full
+            # detail is already in server logs (caller logs `value!r`
+            # there); the dashboard only needs the failure category.
+            logger.warning(
+                "diagnostics %s subcheck failed: %r", fallback_label, value,
+            )
             return {
                 "component": fallback_label,
                 "healthy": False,
-                "detail": f"{type(value).__name__}: {value!s}"[:200],
+                "detail": type(value).__name__,
             }
         if hasattr(value, "to_dict"):
             return value.to_dict()
@@ -146,12 +177,14 @@ async def get_full(
         _safe(ollama_res, "ollama"),
     ]
     return {
+        "sampled_at": datetime.now(timezone.utc).isoformat(),
         "modules": modules,
         "modules_summary": {
             "total": len(modules),
             "green": sum(1 for r in modules if r["health"] == "green"),
             "yellow": sum(1 for r in modules if r["health"] == "yellow"),
             "red": sum(1 for r in modules if r["health"] == "red"),
+            "unknown": sum(1 for r in modules if r["health"] == "unknown"),
         },
         "infrastructure": {
             "items": infra_items,

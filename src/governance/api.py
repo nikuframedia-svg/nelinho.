@@ -34,6 +34,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/governance", tags=["Governance"])
 
+# Q.17.C — yaml_policy sub-router (NL→YAML rule authoring + lifecycle)
+from src.governance.yaml_policy.api import router as _yaml_policy_router  # noqa: E402
+router.include_router(_yaml_policy_router)
+
 
 # ============================================================================
 # SCHEMAS
