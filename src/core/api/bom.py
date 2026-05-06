@@ -8,19 +8,17 @@ REST endpoints for Bill of Materials management.
 from typing import List
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Header, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.shared.auth.headers import require_tenant_header
 from src.shared.database import get_session
 from src.core.services.master_data_service import MasterDataService
 from .schemas import BOMItemCreate, BOMItemUpdate, BOMItemResponse
 
 router = APIRouter(prefix="/bom", tags=["BOM"])
 
-
-def get_tenant_id(x_tenant_id: UUID = Header(...)) -> UUID:
-    """Extract tenant ID from header."""
-    return x_tenant_id
+get_tenant_id = require_tenant_header
 
 
 @router.get("/products/{product_id}", response_model=List[BOMItemResponse])

@@ -24,10 +24,15 @@ from src.core.models.partner import CustomerSegment, PaymentTerms, PriceTier, Ma
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TenantCreate(BaseModel):
-    """Create tenant request."""
+    """Create tenant request.
+
+    Sprint S8 / Π10: ``subscription_level`` is no longer accepted from the
+    request body. Mass-assigning it would let any caller create themselves
+    an ENTERPRISE tenant on signup. Tier upgrades go through a separate
+    admin-only endpoint (``PATCH /tenants/{id}/subscription``).
+    """
     tenant_name: str = Field(..., min_length=1, max_length=255)
     tenant_code: str = Field(..., min_length=2, max_length=50)
-    subscription_level: SubscriptionLevel = SubscriptionLevel.STARTER
     contact_email: Optional[str] = None
     currency_code: str = Field(default="EUR", max_length=3)
     timezone: str = Field(default="UTC", max_length=50)

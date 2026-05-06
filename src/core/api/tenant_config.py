@@ -19,7 +19,7 @@ from datetime import datetime
 from typing import Any, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,18 +28,13 @@ from src.core.services.tenant_config_service import (
     TenantConfigService,
     TenantConfigValidationError,
 )
+from src.shared.auth.headers import require_tenant_header, require_user_uuid
 from src.shared.database import get_session
 
 router = APIRouter(prefix="/v1/config", tags=["Config"])
 
-
-def get_tenant_id(x_tenant_id: UUID = Header(..., alias="X-Tenant-Id")) -> UUID:
-    return x_tenant_id
-
-
-def get_user_id(x_user_id: Optional[UUID] = Header(None, alias="X-User-Id")) -> Optional[UUID]:
-    """Optional actor for audit. Real auth is wired in Sprint Y (Keycloak)."""
-    return x_user_id
+get_tenant_id = require_tenant_header
+get_user_id = require_user_uuid  # mandatory: audit needs a real actor
 
 
 # ---------------------------------------------------------------------------
@@ -101,7 +96,7 @@ def _to_out(row) -> ConfigEntryOut:
 async def bulk_set(
     body: ConfigBulkIn,
     tenant_id: UUID = Depends(get_tenant_id),
-    user_id: Optional[UUID] = Depends(get_user_id),
+    user_id: UUID = Depends(get_user_id),
     session: AsyncSession = Depends(get_session),
 ) -> list[ConfigEntryOut]:
     svc = TenantConfigService(session, tenant_id)
@@ -119,7 +114,7 @@ async def bulk_set(
 async def rollback(
     config_id: UUID,
     tenant_id: UUID = Depends(get_tenant_id),
-    user_id: Optional[UUID] = Depends(get_user_id),
+    user_id: UUID = Depends(get_user_id),
     session: AsyncSession = Depends(get_session),
 ) -> ConfigEntryOut:
     svc = TenantConfigService(session, tenant_id)
@@ -172,7 +167,7 @@ async def reset_to_default(
     category: str,
     key: str,
     tenant_id: UUID = Depends(get_tenant_id),
-    user_id: Optional[UUID] = Depends(get_user_id),
+    user_id: UUID = Depends(get_user_id),
     session: AsyncSession = Depends(get_session),
 ) -> ConfigEntryOut:
     """Reset a single key back to the seeded default value.
@@ -213,7 +208,7 @@ async def reset_to_default(
 async def import_snapshot(
     snapshot: dict,
     tenant_id: UUID = Depends(get_tenant_id),
-    user_id: Optional[UUID] = Depends(get_user_id),
+    user_id: UUID = Depends(get_user_id),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     svc = TenantConfigService(session, tenant_id)
@@ -274,7 +269,7 @@ async def set_key(
     key: str,
     body: ConfigSetIn,
     tenant_id: UUID = Depends(get_tenant_id),
-    user_id: Optional[UUID] = Depends(get_user_id),
+    user_id: UUID = Depends(get_user_id),
     session: AsyncSession = Depends(get_session),
 ) -> ConfigEntryOut:
     svc = TenantConfigService(session, tenant_id)

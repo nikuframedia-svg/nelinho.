@@ -11,12 +11,20 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.shared.auth.headers import require_admin
 from src.shared.database import get_session
 from src.core.models.tenant import TenantStatus, SubscriptionLevel
 from src.core.services.tenant_service import TenantService
 from .schemas import TenantCreate, TenantUpdate, TenantResponse
 
-router = APIRouter(prefix="/tenants", tags=["Tenants"])
+# Tenant management is platform-admin scope: every endpoint here mutates or
+# enumerates other tenants, so it must require ADMIN_PLATFORM via the
+# `require_admin` dependency.
+router = APIRouter(
+    prefix="/tenants",
+    tags=["Tenants"],
+    dependencies=[Depends(require_admin)],
+)
 
 
 @router.post("", response_model=TenantResponse, status_code=status.HTTP_201_CREATED)
@@ -35,10 +43,12 @@ async def create_tenant(
             detail=f"Tenant code '{data.tenant_code}' already exists",
         )
     
+    # Sprint S8 / Π10: subscription_level is set server-side (defaults to
+    # STARTER from tenant_service). Tier upgrades require the admin-only
+    # PATCH /tenants/{id}/subscription endpoint.
     tenant = await service.create_tenant(
         tenant_name=data.tenant_name,
         tenant_code=data.tenant_code,
-        subscription_level=data.subscription_level,
         contact_email=data.contact_email,
         currency_code=data.currency_code,
         timezone=data.timezone,
