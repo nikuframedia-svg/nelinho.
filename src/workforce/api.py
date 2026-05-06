@@ -11,9 +11,13 @@ REST endpoints for Workforce Operations System:
 """
 import logging
 from typing import List
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.shared.auth.headers import require_tenant_header
+from src.shared.database import get_session_safe
 
 from .service import WorkforceService, WorkforceDataUnavailableError
 from .models import (
@@ -31,36 +35,6 @@ router = APIRouter(prefix="/v1/workforce", tags=["workforce"])
 
 
 # ============================================================================
-# DEPENDENCY - Database Session
-# ============================================================================
-
-async def get_db() -> AsyncSession:
-    """
-    Get database session.
-    Falls back gracefully if database not available.
-    """
-    try:
-        from src.shared.database import get_async_session
-        async for session in get_async_session():
-            yield session
-    except Exception as e:
-        logger.warning(f"Database not available: {e}")
-        # Return a mock session that will trigger fallback behavior
-        yield None
-
-
-async def get_service(db: AsyncSession = Depends(get_db)) -> WorkforceService:
-    """Default DI for endpoints that don't gate the mock graph.
-
-    Sprint Q.8 Fase 6 — defaults to `allow_mock=False`. Endpoints that
-    expose `?demo=true` build their own service via `WorkforceService(db,
-    allow_mock=demo)` directly inside the handler so the flag flows
-    through cleanly.
-    """
-    return WorkforceService(db, allow_mock=False)
-
-
-# ============================================================================
 # ENDPOINTS
 # ============================================================================
 
@@ -72,7 +46,8 @@ async def get_dependency_graph(
         "curated data is unavailable. Default False — operators see 503 "
         "(Workforce data indisponível) instead of fake nodes.",
     ),
-    db: AsyncSession = Depends(get_db),
+    tenant_id: UUID = Depends(require_tenant_header),
+    db: AsyncSession = Depends(get_session_safe),
 ):
     """
     Get the complete workforce dependency graph.
@@ -83,8 +58,8 @@ async def get_dependency_graph(
     - Employees (qualified workers)
     - Aptitudes (which employee can work in which phase)
     """
-    logger.info("Getting dependency graph (demo=%s)", demo)
-    service = WorkforceService(db, allow_mock=demo)
+    logger.info("Getting dependency graph (tenant=%s, demo=%s)", tenant_id, demo)
+    service = WorkforceService(db, tenant_id=tenant_id, allow_mock=demo)
     try:
         return await service.get_dependency_graph()
     except WorkforceDataUnavailableError as e:
@@ -104,7 +79,8 @@ async def get_cascade_impact(
         description="If True, fall back to a synthetic demo cascade. "
         "Default False — operators see 503 instead of fake numbers.",
     ),
-    db: AsyncSession = Depends(get_db),
+    tenant_id: UUID = Depends(require_tenant_header),
+    db: AsyncSession = Depends(get_session_safe),
 ):
     """
     Calculate cascading impact if a phase becomes unavailable.
@@ -115,8 +91,9 @@ async def get_cascade_impact(
     3. Downstream phases - phases that depend on output
     4. Economic impact (theoretical estimates)
     """
-    logger.info("Calculating cascade impact for phase %s (demo=%s)", phase_id, demo)
-    service = WorkforceService(db, allow_mock=demo)
+    logger.info("Calculating cascade impact for phase %s (tenant=%s, demo=%s)",
+                phase_id, tenant_id, demo)
+    service = WorkforceService(db, tenant_id=tenant_id, allow_mock=demo)
     try:
         return await service.calculate_cascade_impact(phase_id)
     except WorkforceDataUnavailableError as e:
@@ -129,20 +106,23 @@ async def get_cascade_impact(
 @router.post("/simulate", response_model=SimulationResultResponse)
 async def simulate_workforce(
     deltas: List[WorkforceDelta],
-    service: WorkforceService = Depends(get_service),
+    tenant_id: UUID = Depends(require_tenant_header),
+    db: AsyncSession = Depends(get_session_safe),
 ):
     """
     Simulate workforce changes and calculate impact.
-    
+
     Accepts list of deltas (changes to simulate):
     - add_training: Train employee for new phase
     - remove_employee: Simulate employee unavailability
     - add_employee: Simulate hiring
     - modify_capacity: Change phase capacity
-    
+
     Returns before/after comparison with impact metrics.
     """
-    logger.info(f"Simulating workforce with {len(deltas)} deltas")
+    logger.info("Simulating workforce with %d deltas (tenant=%s)",
+                len(deltas), tenant_id)
+    service = WorkforceService(db, tenant_id=tenant_id, allow_mock=False)
     try:
         result = await service.simulate_workforce([d.dict() for d in deltas])
         return result
@@ -154,16 +134,17 @@ async def simulate_workforce(
 @router.get("/training-recommendations", response_model=List[TrainingRecommendationResponse])
 async def get_training_recommendations(
     limit: int = Query(default=10, ge=1, le=50, description="Maximum number of recommendations to return"),
-    service: WorkforceService = Depends(get_service),
+    tenant_id: UUID = Depends(require_tenant_header),
+    db: AsyncSession = Depends(get_session_safe),
 ):
     """
     Get training recommendations ordered by impact.
-    
+
     Algorithm prioritizes:
     1. SPOF elimination (phases with only 1 capable employee)
     2. Risk reduction (high-risk phases)
     3. Employee proximity to target phase (similar skills)
-    
+
     Each recommendation includes:
     - Employee to train
     - Target phase
@@ -171,7 +152,9 @@ async def get_training_recommendations(
     - Expected impact
     - Estimated cost
     """
-    logger.info(f"Getting training recommendations (limit={limit})")
+    logger.info("Getting training recommendations (tenant=%s, limit=%d)",
+                tenant_id, limit)
+    service = WorkforceService(db, tenant_id=tenant_id, allow_mock=False)
     try:
         result = await service.get_training_recommendations(limit)
         return result
@@ -183,21 +166,23 @@ async def get_training_recommendations(
 @router.post("/scenarios/compare", response_model=ScenarioComparisonResponse)
 async def compare_scenarios(
     scenario_ids: List[str],
-    service: WorkforceService = Depends(get_service),
+    tenant_id: UUID = Depends(require_tenant_header),
+    db: AsyncSession = Depends(get_session_safe),
 ):
     """
     Compare multiple workforce scenarios side by side.
-    
+
     Returns metrics for each scenario including:
     - SPOF count
     - Average risk score
     - Backlog at risk
     - Estimated cost
     - Payback period (days)
-    
+
     Also indicates which scenario is recommended (best ROI).
     """
-    logger.info(f"Comparing {len(scenario_ids)} scenarios")
+    logger.info("Comparing %d scenarios (tenant=%s)", len(scenario_ids), tenant_id)
+    service = WorkforceService(db, tenant_id=tenant_id, allow_mock=False)
     try:
         result = await service.compare_scenarios(scenario_ids)
         return result
