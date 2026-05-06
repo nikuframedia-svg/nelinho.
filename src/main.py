@@ -127,6 +127,19 @@ async def lifespan(app: FastAPI):
         except Exception as tr_error:
             logger.warning(f"Tool registry pre-warm failed: {tr_error}")
 
+        # Q.17.D — load active YAML policy rules into the runtime engine
+        # so they start firing on the first matching event without a
+        # cold-start refresh. Best-effort: failure here doesn't block
+        # startup (engine stays empty; rules can still be approved).
+        try:
+            from src.governance.yaml_policy.runtime import startup_refresh
+            from src.shared.database import async_session_factory
+            async with async_session_factory() as _session:
+                _count = await startup_refresh(_session)
+            logger.info(f"YAML policy engine warmed: {_count} active rules")
+        except Exception as engine_error:
+            logger.warning(f"YAML policy engine warmup failed: {engine_error}")
+
         # Start background scheduler (alerts scan + daily feedback).
         # In production, list active tenants here from the DB; for dev we start
         # empty and endpoints can register tenants via register_tenant().

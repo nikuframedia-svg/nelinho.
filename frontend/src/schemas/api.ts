@@ -344,3 +344,67 @@ export function isValid<T>(
   return schema.safeParse(data).success;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// OPERAÇÕES — Zod schemas (Sprint Q.12)
+// Espelham os response_model Pydantic em src/hr e src/supply.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export const AllocationStatusSchema = z.enum([
+  'PLANNED',
+  'CONFIRMED',
+  'IN_PROGRESS',
+  'COMPLETED',
+  'CANCELLED',
+]);
+
+export const PricingStrategySchema = z.enum([
+  'cost_plus',
+  'dynamic',
+  'target_margin',
+  'competitive',
+]);
+
+export const OrderAllocationItemSchema = z.object({
+  id: z.string(),
+  employee_id: z.string(),
+  operation_id: z.string(),
+  allocated_hours: z.number(),
+  status: AllocationStatusSchema,
+});
+
+export const OrderAllocationsResponseSchema = z.object({
+  order_id: z.string(),
+  allocations: z.array(OrderAllocationItemSchema),
+});
+
+export const EmployeePayrollSummarySchema = z.object({
+  employee_id: z.string(),
+  total_hours: z.number(),
+  regular_hours: z.number(),
+  overtime_hours: z.number(),
+  total_cost: z.number(),
+});
+
+export const PayrollCalculateResponseSchema = z.object({
+  year_month: z.string(),
+  employee_count: z.number().int(),
+  total_hours: z.number(),
+  regular_hours: z.number(),
+  overtime_hours: z.number(),
+  regular_cost: z.number(),
+  overtime_cost: z.number(),
+  burden_cost: z.number(),
+  total_cost: z.number(),
+  employee_summaries: z.array(EmployeePayrollSummarySchema),
+});
+
+export const ROPSkuResponseSchema = z.object({
+  sku_id: z.string(),
+  reorder_point: z.number(),
+  safety_stock: z.number(),
+  avg_daily_demand: z.number(),
+  lead_time_days: z.number().int().nonnegative(),
+  service_level: z.number(),
+  z_score: z.number(),
+});
+
