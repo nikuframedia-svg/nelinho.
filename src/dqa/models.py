@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import String, Integer, Text, DateTime, func
+from sqlalchemy import Boolean, Float, String, Integer, Text, DateTime, func
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -29,12 +29,12 @@ class TrustIndexSnapshot(TenantBase):
     entity_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
     entity_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     
-    trust_index: Mapped[float] = mapped_column(None, nullable=False)
+    trust_index: Mapped[float] = mapped_column(Float, nullable=False)
     components: Mapped[dict] = mapped_column(JSONB, nullable=False)
-    
+
     # Metadata
     issues_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    repair_applied: Mapped[bool] = mapped_column(None, nullable=False, default=False)
+    repair_applied: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
 class DataQualityIssue(TenantBase):
@@ -55,10 +55,11 @@ class DataQualityIssue(TenantBase):
     issue_description: Mapped[str] = mapped_column(Text, nullable=False)
     
     # severity values are populated from OFCH_GRAVIDADE via the
-    # mapping in factory_data_product/ingest/curated_transformer.py
+    # mapping in factory_data_product/ingest/gravidade.py
     # (1→"low", 2→"medium", 3→"high"); confirmed with NELO CEO 2026-04-26.
+    # (Comment refresh — Onda 3.4: file moved out of curated_transformer.py.)
     severity: Mapped[str] = mapped_column(String(20), nullable=False, default="medium")  # "low", "medium", "high"
-    resolved: Mapped[bool] = mapped_column(None, nullable=False, default=False)
+    resolved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
 class AutoRepairLog(TenantBase):
@@ -74,8 +75,8 @@ class AutoRepairLog(TenantBase):
     entity_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
     entity_type: Mapped[str] = mapped_column(String(50), nullable=False)
     
-    trust_index_before: Mapped[float] = mapped_column(None, nullable=False)
-    trust_index_after: Mapped[float] = mapped_column(None, nullable=False)
+    trust_index_before: Mapped[float] = mapped_column(Float, nullable=False)
+    trust_index_after: Mapped[float] = mapped_column(Float, nullable=False)
     
     repair_actions: Mapped[dict] = mapped_column(JSONB, nullable=False)  # List of repair actions
     

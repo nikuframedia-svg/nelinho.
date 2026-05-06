@@ -77,8 +77,45 @@ async def _load_freshness_params(session: AsyncSession, tenant_id: UUID) -> tupl
         kappa = float(values.get("consistency.kappa", DEFAULT_KAPPA))
         return tau, kappa
     except Exception as exc:  # pragma: no cover — defensive
-        logger.warning("trust config load failed, using defaults: %s", exc)
+        # Onda 2.1 — surface as error so ops sees that consistency/freshness
+        # are running on hardcoded defaults rather than tenant config.
+        logger.error(
+            "trust config load failed for tenant=%s, using defaults: %s",
+            tenant_id, exc, exc_info=True,
+        )
         return DEFAULT_TAU_SECONDS, DEFAULT_KAPPA
+
+
+async def _load_consistency_window(
+    session: AsyncSession, tenant_id: UUID,
+) -> tuple[int, int]:
+    """Onda 3.6 — read consistency window/sample-cap from TenantConfig.
+
+    Returns (window_days, sample_cap) with defaults preserved when keys
+    are missing or the config service errors out. Tenant overrides matter
+    for factories whose duration distributions shift on weekly cycles
+    (window=7) vs monthly cycles (window=60).
+    """
+    try:
+        from src.core.services.tenant_config_service import TenantConfigService
+
+        svc = TenantConfigService(session, tenant_id)
+        values = await svc.get_category("trust")
+        window = int(values.get(
+            "consistency.window_days_curated",
+            DEFAULT_CONSISTENCY_WINDOW_DAYS,
+        ))
+        cap = int(values.get(
+            "consistency.sample_cap",
+            DEFAULT_CONSISTENCY_SAMPLE_CAP,
+        ))
+        return window, cap
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.error(
+            "consistency window load failed for tenant=%s, using defaults: %s",
+            tenant_id, exc, exc_info=True,
+        )
+        return DEFAULT_CONSISTENCY_WINDOW_DAYS, DEFAULT_CONSISTENCY_SAMPLE_CAP
 
 
 def _now_utc() -> datetime:
@@ -104,22 +141,39 @@ def _rows_to_z_scores(rows: list[tuple[float, float]]) -> list[float]:
     `rows` are `(horas_reais, horas_previstas)` pairs where both are non-null.
     Returns an empty list when the sample is too small (< 3 points) — the
     consistency scorer then reads "no z-scores" as optimistic 1.0.
+
+    Onda 4.2 bug: `statistics.pstdev` raises `AttributeError` (not the
+    expected `StatisticsError`) when fed NaN or infinity. Postgres
+    NUMERIC overflows and legacy sentinel values can both produce these,
+    so we filter before computing rather than relying on the exception
+    path. Any non-finite input is dropped silently.
     """
+    import math
+
     diffs: list[float] = []
     for real, predicted in rows:
         if real is None or predicted is None:
             continue
-        diffs.append(float(real) - float(predicted))
+        try:
+            d = float(real) - float(predicted)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if not math.isfinite(d):
+            continue
+        diffs.append(d)
 
     if len(diffs) < 3:
         return []
 
     try:
         stdev = statistics.pstdev(diffs)
-    except statistics.StatisticsError:
+    except (statistics.StatisticsError, AttributeError, ValueError):
+        # AttributeError can leak from pstdev when intermediate values
+        # are non-finite; fall back to "insufficient signal".
         return []
-    if stdev <= 0:
-        # All differences identical → no variance → everything is "consistent".
+    if not math.isfinite(stdev) or stdev <= 0:
+        # All differences identical OR pstdev returned non-finite
+        # (Decimal/float interop edge case) → no variance signal.
         return [0.0] * len(diffs)
 
     mean = statistics.mean(diffs)
@@ -173,6 +227,10 @@ async def _query_duration_samples(
     from src.factory_data_product.models.curated import CuratedOrderPhase
 
     since = _now_utc() - timedelta(days=window_days)
+    # Onda 1.3: explicit order_by — without it Postgres returns rows in an
+    # unspecified order, so `.limit(sample_cap)` could return any subset of
+    # the window. Most-recent-first means the z-score reflects the latest
+    # behaviour, not a random snapshot.
     stmt = (
         select(CuratedOrderPhase.horas_reais, CuratedOrderPhase.horas_previstas)
         .where(
@@ -180,6 +238,7 @@ async def _query_duration_samples(
             CuratedOrderPhase.horas_reais.is_not(None),
             CuratedOrderPhase.horas_previstas.is_not(None),
         )
+        .order_by(CuratedOrderPhase.created_at_utc.desc())
         .limit(sample_cap)
     )
     if scope == SCOPE_ORDER and order_id_str is not None:
@@ -214,6 +273,13 @@ async def curated_signals_provider(
     directly to the curated table's business key.
     """
     tau, kappa = await _load_freshness_params(session, tenant_id)
+    # Onda 3.6 — caller-supplied `window_days` wins (tests still need
+    # determinism); otherwise fall back to TenantConfig.
+    cfg_window, cfg_cap = await _load_consistency_window(session, tenant_id)
+    effective_window = (
+        window_days if window_days != DEFAULT_CONSISTENCY_WINDOW_DAYS
+        else cfg_window
+    )
 
     most_recent = await _query_most_recent_curated(
         session, scope, scope_id,
@@ -221,7 +287,8 @@ async def curated_signals_provider(
     )
     samples = await _query_duration_samples(
         session, scope, scope_id,
-        window_days=window_days,
+        window_days=effective_window,
+        sample_cap=cfg_cap,
         order_id_str=order_id_str, phase_id_str=phase_id_str,
     )
     z_scores = _rows_to_z_scores(samples)

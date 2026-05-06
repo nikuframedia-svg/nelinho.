@@ -107,7 +107,14 @@ async def get_trust_index(
             entity_id=str(scope_id) if scope_id else "global",
         ).set(result.composite)
     except Exception as exc:  # pragma: no cover — metrics best-effort
-        logger.warning("Failed to emit trust_index_score gauge: %s", exc)
+        # Onda 2.1 — observability must not silently degrade. Dashboards
+        # depending on this gauge would otherwise show stale values without
+        # any signal that emission is broken (mis-labelled metric, registry
+        # collision, etc.).
+        logger.error(
+            "Failed to emit trust_index_score gauge (scope=%s scope_id=%s): %s",
+            scope, scope_id, exc, exc_info=True,
+        )
 
     payload = result.to_dict()
     payload["effective_gates"] = gates

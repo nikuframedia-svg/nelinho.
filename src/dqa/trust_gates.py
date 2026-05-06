@@ -90,8 +90,12 @@ async def load_gate_config(session: AsyncSession, tenant_id: UUID) -> TrustGateC
             mapping[gate] = float(raw)
         return TrustGateConfig(thresholds=mapping)
     except Exception as exc:  # pragma: no cover — defensive
-        logger.warning(
-            "TrustGate thresholds load failed, using defaults: %s", exc,
+        # Onda 2.1 — defaults can be more conservative than tenant overrides
+        # (or vice-versa); ops must see when the load fails so the gates'
+        # actual thresholds aren't a mystery.
+        logger.error(
+            "TrustGate thresholds load failed for tenant=%s, using defaults: %s",
+            tenant_id, exc, exc_info=True,
         )
         return TrustGateConfig.default()
 

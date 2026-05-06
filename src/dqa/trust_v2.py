@@ -296,7 +296,13 @@ class TrustIndexV2Calculator:
                 evidence=float(values.get("weights.evidence", 0.05)),
             )
         except Exception as exc:  # pragma: no cover — defensive
-            logger.warning("TrustWeights load failed, using defaults: %s", exc)
+            # Onda 2.1 — keep this loud. Defaults silently being used means
+            # the tenant's customised weights aren't applied; ops needs to
+            # know via logs even when the calculation itself succeeds.
+            logger.error(
+                "TrustWeights load failed for tenant=%s, using defaults: %s",
+                self.tenant_id, exc, exc_info=True,
+            )
             return TrustWeights()
 
         if abs(weights.total() - 1.0) > 1e-6:
@@ -346,6 +352,18 @@ class TrustIndexV2Calculator:
                         f"got {type(raw).__name__}"
                     )
             if components is None:
+                # Onda 1.3 — surface the silent "no inputs" case. Without
+                # signals, signals_provider, or explicit components the
+                # composite collapses to 1.0 (TrustSignals defaults), which
+                # masks empty/broken data. Callers that legitimately want
+                # the optimistic default should pass `signals=TrustSignals()`
+                # explicitly so this warning doesn't fire.
+                if signals is None and self._signals_provider is None:
+                    logger.warning(
+                        "TrustIndexV2: scope=%s scope_id=%s computed without "
+                        "signals/provider — composite will be 1.0 (default)",
+                        scope, scope_id,
+                    )
                 components = components_from_signals(signals or TrustSignals())
 
         composite = components.composite(weights)

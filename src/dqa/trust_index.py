@@ -27,6 +27,7 @@ Calculate TrustIndex (0-1 scale) with 4 components:
 from enum import Enum
 from typing import Any, Dict, List, Tuple
 import logging
+import warnings
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,17 @@ class TrustIndexCalculator:
         valid_ranges: Dict[str, Tuple[float, float]],
         sla_latency_seconds: int = 60,
     ):
+        # Onda 3.2 — surface this class as deprecated. The v2 calculator in
+        # `src.dqa.trust_v2` evaluates factory/order/phase database state
+        # (Blueprint v2.0 §4.5), which is what every production caller now
+        # uses. This v1 (request-shape based) survives only as a fallback
+        # for legacy unit tests; new code MUST NOT import from here.
+        warnings.warn(
+            "TrustIndexCalculator (dqa.trust_index) is deprecated; use "
+            "TrustIndexV2Calculator from dqa.trust_v2 instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.required_fields = required_fields
         self.valid_ranges = valid_ranges
         self.sla_latency_seconds = sla_latency_seconds
@@ -100,7 +112,11 @@ class TrustIndexCalculator:
         )
         
         issues = self._detect_issues(entity, latency_ms)
-        repair_recommended = 0.65 <= trust_index < 0.70
+        # Onda 1.4 — repair_recommended fires whenever TI is below the
+        # AUTO_COMMIT gate (0.70). The earlier `0.65 <= trust_index < 0.70`
+        # window left the worst data (TI < 0.65) without a repair flag,
+        # which is the inverse of the intended behaviour.
+        repair_recommended = trust_index < 0.70
         
         result = {
             "trust_index": round(trust_index, 3),
