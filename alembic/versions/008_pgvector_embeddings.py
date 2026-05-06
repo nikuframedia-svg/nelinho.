@@ -24,6 +24,29 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Q.18.BOOTSTRAP — pgvector é optional em dev. Em produção a extension
+    # vem instalada (apt/yum/docker). Em dev local (scoop postgres) pode
+    # não estar disponível — skip graceful para o resto do upgrade head
+    # poder continuar. RAG search degrada para fallback text-search.
+    #
+    # Importante: NÃO usar try/except à volta de CREATE EXTENSION — assim que
+    # falha, a transaction Alembic fica em failed state e o resto do upgrade
+    # explode. Tem que ser pre-flight check via pg_available_extensions
+    # (query SELECT que NÃO aborta transaction se vazia).
+    bind = op.get_bind()
+    available = bind.execute(
+        sa.text("SELECT 1 FROM pg_available_extensions WHERE name = 'vector'")
+    ).first()
+    if not available:
+        import logging
+        logging.getLogger("alembic.008_pgvector").warning(
+            "pgvector extension not available on this PostgreSQL server. "
+            "Skipping vector column conversion + HNSW index. "
+            "RAG search will fall back to text matching. "
+            "Install pgvector and re-run this migration to enable vector search."
+        )
+        return
+
     op.execute("CREATE EXTENSION IF NOT EXISTS vector")
 
     # Convert existing embedding column (TEXT holding JSON arrays) to vector(768).
