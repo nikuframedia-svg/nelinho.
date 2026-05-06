@@ -12,13 +12,13 @@ so the watcher is cheap to run even when nothing changed.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
-from uuid import UUID
+from typing import Optional
 
 from src.factory_data_product.ingest import IngestEngine
 from src.factory_data_product.models.meta import SourceType
@@ -40,6 +40,12 @@ class WatcherState:
 
 
 _state = WatcherState()
+# Onda 2.3 — APScheduler is configured with `max_instances=1` + `coalesce`,
+# which prevents the registered tick from running concurrently. But callers
+# from outside the scheduler (tests, ops endpoints, future cron triggers)
+# can still race on `_state`. The lock keeps the hash check + ingest +
+# state mutation atomic with respect to the module-level `_state`.
+_state_lock = asyncio.Lock()
 
 
 def _hash_file(path: Path) -> str:
@@ -68,6 +74,13 @@ async def watcher_tick(engine: Optional[IngestEngine] = None) -> dict:
     One poll: if the configured file has a new hash, trigger an ingest.
 
     Returns a summary dict for observability / tests.
+
+    Onda 2.3 — entire body protected by ``_state_lock``: the hash check,
+    ingest call, and state mutation must be atomic. Without it, two
+    overlapping ticks could both read the same `last_hash`, both trigger
+    an ingest of the same file, and the second one would only succeed
+    because of the engine's separate dedupe (which itself is in-memory
+    and not safe across processes — see Onda 0 notes).
     """
     summary = {
         "file_found": False,
@@ -77,49 +90,58 @@ async def watcher_tick(engine: Optional[IngestEngine] = None) -> dict:
         "error": None,
     }
 
-    path = _resolve_watch_path()
-    if path is None:
-        summary["error"] = f"{DEFAULT_WATCH_PATH_ENV} not set or file missing"
+    async with _state_lock:
+        path = _resolve_watch_path()
+        if path is None:
+            summary["error"] = f"{DEFAULT_WATCH_PATH_ENV} not set or file missing"
+            return summary
+
+        summary["file_found"] = True
+
+        try:
+            new_hash = _hash_file(path)
+        except Exception as e:
+            summary["error"] = f"hash failed: {e}"
+            logger.warning(f"Watcher hash failed for {path}: {e}")
+            return summary
+
+        if new_hash == _state.last_hash:
+            return summary
+
+        summary["hash_changed"] = True
+        logger.info(f"Watcher: new hash for {path.name} (was {_state.last_hash!r})")
+
+        eng = engine or IngestEngine()
+        try:
+            result = eng.ingest(
+                file_path=path,
+                source_type=(
+                    SourceType.WATCHER if hasattr(SourceType, "WATCHER")
+                    else SourceType.UPLOAD
+                ),
+                created_by="watcher",
+                auto_activate=_auto_activate(),
+            )
+            summary["triggered_ingest"] = True
+            summary["ingestion_id"] = (
+                str(result.ingestion_id) if result.ingestion_id else None
+            )
+            _state.last_hash = new_hash
+            _state.last_ingestion_id = summary["ingestion_id"]
+            _state.last_error = None
+            logger.info(
+                f"Watcher ingested {path.name}: status={result.status.value} "
+                f"rows_raw={result.total_rows_raw} "
+                f"rows_curated={result.total_rows_curated}"
+            )
+        except Exception as e:
+            summary["error"] = str(e)
+            _state.last_error = str(e)
+            logger.error(
+                f"Watcher ingest failed for {path.name}: {e}", exc_info=True,
+            )
+
         return summary
-
-    summary["file_found"] = True
-
-    try:
-        new_hash = _hash_file(path)
-    except Exception as e:
-        summary["error"] = f"hash failed: {e}"
-        logger.warning(f"Watcher hash failed for {path}: {e}")
-        return summary
-
-    if new_hash == _state.last_hash:
-        return summary
-
-    summary["hash_changed"] = True
-    logger.info(f"Watcher: new hash for {path.name} (was {_state.last_hash!r})")
-
-    eng = engine or IngestEngine()
-    try:
-        result = eng.ingest(
-            file_path=path,
-            source_type=SourceType.WATCHER if hasattr(SourceType, "WATCHER") else SourceType.UPLOAD,
-            created_by="watcher",
-            auto_activate=_auto_activate(),
-        )
-        summary["triggered_ingest"] = True
-        summary["ingestion_id"] = str(result.ingestion_id) if result.ingestion_id else None
-        _state.last_hash = new_hash
-        _state.last_ingestion_id = summary["ingestion_id"]
-        _state.last_error = None
-        logger.info(
-            f"Watcher ingested {path.name}: status={result.status.value} "
-            f"rows_raw={result.total_rows_raw} rows_curated={result.total_rows_curated}"
-        )
-    except Exception as e:
-        summary["error"] = str(e)
-        _state.last_error = str(e)
-        logger.error(f"Watcher ingest failed for {path.name}: {e}", exc_info=True)
-
-    return summary
 
 
 def register_with_scheduler(

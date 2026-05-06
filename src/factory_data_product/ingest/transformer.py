@@ -142,25 +142,35 @@ class RawToCuratedTransformer:
         ingestion_id: UUID,
         result: TransformResult,
     ) -> None:
-        """Transform OrdensFabrico to curated.order."""
+        """Transform OrdensFabrico to curated.order.
+
+        Excel columns (Folha_IA_extra.xlsx):
+          Of_Id, Of_DataCriacao, Of_DataAcabamento, Of_ProdutoId,
+          Of_FaseId, Of_DataTransporte
+        """
         for row in rows:
             payload = row.get("payload_json", {})
-            
+
             order = {
                 "ingestion_id": ingestion_id,
-                "of_id": str(payload.get("OF_Id", "")),
-                "produto_id": self._safe_str(payload.get("OF_Produto_Id")),
-                "produto_nome": self._safe_str(payload.get("OF_Produto_Nome")),
-                "modelo_id": self._safe_str(payload.get("OF_Modelo_Id")),
-                "modelo_nome": self._safe_str(payload.get("OF_Modelo_Nome")),
-                "data_entrada": self._parse_date(payload.get("OF_DataEntrada")),
-                "data_entrega_prevista": self._parse_date(payload.get("OF_DataEntrega")),
-                "data_conclusao": self._parse_date(payload.get("OF_DataConclusao")),
-                "quantidade": self._safe_int(payload.get("OF_QtdPorFazer")),
-                "quantidade_produzida": self._safe_int(payload.get("OF_QtdFeita")),
-                "estado": self._safe_str(payload.get("OF_Estado")),
+                "of_id": str(payload.get("Of_Id", "")),
+                "produto_id": self._safe_str(payload.get("Of_ProdutoId")),
+                # Of_Produto_Nome / Of_Modelo_* não existem no Excel real;
+                # produto_nome resolve-se via join com Modelos.Produto_Nome
+                # downstream — deixar None aqui mantém a tabela consistente.
+                "produto_nome": None,
+                "modelo_id": None,
+                "modelo_nome": None,
+                "data_entrada": self._parse_date(payload.get("Of_DataCriacao")),
+                "data_entrega_prevista": self._parse_date(payload.get("Of_DataTransporte")),
+                "data_conclusao": self._parse_date(payload.get("Of_DataAcabamento")),
+                # Quantidade/estado: o Excel não traz estas colunas; ficam
+                # None até que uma fonte (ERP API, sheet adicional) seja wired.
+                "quantidade": None,
+                "quantidade_produzida": None,
+                "estado": None,
             }
-            
+
             result.orders.append(order)
     
     def _transform_order_phases(
@@ -169,37 +179,53 @@ class RawToCuratedTransformer:
         ingestion_id: UUID,
         result: TransformResult,
     ) -> None:
-        """Transform FasesOrdemFabrico to curated.order_phase."""
+        """Transform FasesOrdemFabrico to curated.order_phase.
+
+        Excel columns (Folha_IA_extra.xlsx):
+          FaseOf_Id, FaseOf_OfId, FaseOf_Inicio, FaseOf_Fim,
+          FaseOf_DataPrevista, FaseOf_Coeficiente, FaseOf_CoeficienteX,
+          FaseOf_FaseId, FaseOf_Peso, FaseOf_Retorno, FaseOf_Turno,
+          FaseOf_Sequencia, MoldeOfId, FaseOf_HorasPrevistas
+        """
         for row in rows:
             payload = row.get("payload_json", {})
-            
-            # Get hours fields
+
+            # Hours: HorasReais não existe no Excel — derivar de Inicio/Fim
+            # quando ambos disponíveis; horas_standard preenchido downstream
+            # via join com FasesStandardModelos.ProdutoFase_HorasPrevistas.
             horas_previstas = self._safe_decimal(payload.get("FaseOf_HorasPrevistas"))
-            horas_reais = self._safe_decimal(payload.get("FaseOf_HorasReais"))
-            horas_standard = self._safe_decimal(payload.get("StandardHoras"))
-            
-            # Calculate horas_finais: prioritize previstas > standard > None
+            horas_reais = None
+            horas_standard = None
+
+            # horas_finais: prioritize previstas > coeficiente > None
             horas_finais = None
             if horas_previstas and horas_previstas > 0:
                 horas_finais = horas_previstas
-            elif horas_standard and horas_standard > 0:
-                horas_finais = horas_standard
-            
+            else:
+                # Coeficiente é o "factor de horas" do ERP — usado como
+                # fallback quando HorasPrevistas vem a 0 (CEO confirmou
+                # 2026-04-26 que ~57% das phases têm HorasPrevistas zero).
+                coef = self._safe_decimal(payload.get("FaseOf_Coeficiente"))
+                if coef and coef > 0:
+                    horas_finais = coef
+
             phase = {
                 "ingestion_id": ingestion_id,
-                "of_id": str(payload.get("FaseOf_OrdemFabrico_Id", "")),
-                "fase_id": str(payload.get("FaseOf_Fase_Id", "")),
+                "of_id": str(payload.get("FaseOf_OfId", "")),
+                "fase_id": str(payload.get("FaseOf_FaseId", "")),
                 "fase_of_id": self._safe_str(payload.get("FaseOf_Id")),
-                "fase_nome": self._safe_str(payload.get("FaseOf_FaseNome")),
+                # fase_nome: vem da tabela Fases (Fase_Nome); resolução faz-se
+                # downstream por lookup. None aqui evita falso positivo.
+                "fase_nome": None,
                 "horas_previstas": horas_previstas,
                 "horas_reais": horas_reais,
                 "horas_standard": horas_standard,
                 "horas_finais": horas_finais,
-                "estado": self._safe_str(payload.get("FaseOf_Estado")),
-                "data_inicio": self._parse_date(payload.get("FaseOf_DataInicio")),
-                "data_fim": self._parse_date(payload.get("FaseOf_DataFim")),
-                "ordem": self._safe_int(payload.get("FaseOf_Ordem")),
-                "molde_id": self._safe_str(payload.get("FaseOf_Molde_Id")),
+                "estado": None,
+                "data_inicio": self._parse_date(payload.get("FaseOf_Inicio")),
+                "data_fim": self._parse_date(payload.get("FaseOf_Fim")),
+                "ordem": self._safe_int(payload.get("FaseOf_Sequencia")),
+                "molde_id": self._safe_str(payload.get("MoldeOfId")),
             }
 
             result.order_phases.append(phase)
@@ -239,20 +265,29 @@ class RawToCuratedTransformer:
         ingestion_id: UUID,
         result: TransformResult,
     ) -> None:
-        """Transform FuncionariosFasesAptos to curated.skill_matrix."""
+        """Transform FuncionariosFasesAptos to curated.skill_matrix.
+
+        Excel columns:
+          FuncionarioFase_FuncionarioId, FuncionarioFase_FaseId,
+          FuncionarioFase_Inicio
+        """
         for row in rows:
             payload = row.get("payload_json", {})
-            
+
             skill = {
                 "ingestion_id": ingestion_id,
-                "funcionario_id": str(payload.get("FuncionarioApto_FuncionarioId", "")),
+                "funcionario_id": str(payload.get("FuncionarioFase_FuncionarioId", "")),
                 "funcionario_nome": None,  # PII: Don't store name
-                "fase_id": str(payload.get("FuncionarioApto_FaseId", "")),
-                "fase_nome": self._safe_str(payload.get("FaseApto_Nome")),
-                "apto": True,  # Being in this list means they're qualified
+                "fase_id": str(payload.get("FuncionarioFase_FaseId", "")),
+                # fase_nome resolve-se via lookup à tabela Fases
+                "fase_nome": None,
+                # `apto = True` para todas as linhas: presença na sheet
+                # FuncionariosFasesAptos significa por convenção NELO que o
+                # funcionário está apto àquela fase.
+                "apto": True,
                 "nivel": None,
             }
-            
+
             result.skill_matrix.append(skill)
     
     def _transform_phases(
@@ -261,20 +296,30 @@ class RawToCuratedTransformer:
         ingestion_id: UUID,
         result: TransformResult,
     ) -> None:
-        """Transform Fases to curated.phase_capacity."""
+        """Transform Fases to curated.phase_capacity.
+
+        Excel columns:
+          Fase_Id, Fase_Nome, Fase_Sequencia, Fase_Producao,
+          Fase_Automatica, Fase_NumeroFuncionarios, Fase_CapacidadeHorasDia
+        """
         for row in rows:
             payload = row.get("payload_json", {})
-            
+
             capacity = {
                 "ingestion_id": ingestion_id,
                 "fase_id": str(payload.get("Fase_Id", "")),
                 "fase_nome": self._safe_str(payload.get("Fase_Nome")),
-                "periodo": None,  # No specific period in base data
+                "periodo": None,
                 "periodo_tipo": "static",
-                "capacidade_horas": self._safe_decimal(payload.get("Fase_CapacidadeHoras")) or Decimal("8.0"),
-                "funcionarios_count": self._safe_int(payload.get("Fase_NumFuncionarios")),
+                "capacidade_horas": (
+                    self._safe_decimal(payload.get("Fase_CapacidadeHorasDia"))
+                    or Decimal("8.0")
+                ),
+                "funcionarios_count": self._safe_int(
+                    payload.get("Fase_NumeroFuncionarios")
+                ),
             }
-            
+
             result.phase_capacities.append(capacity)
     
     def _transform_molds(
@@ -283,21 +328,34 @@ class RawToCuratedTransformer:
         ingestion_id: UUID,
         result: TransformResult,
     ) -> None:
-        """Transform Moldes to curated.mold."""
+        """Transform Moldes to curated.mold.
+
+        Excel columns:
+          MoldeId, MoldeNome, MoldeEstado, MoldeModelo,
+          MoldeNumeroPocosId, MoldeModeloId, MoldeTamanhoId
+        """
         for row in rows:
             payload = row.get("payload_json", {})
-            
+
+            estado = self._safe_str(payload.get("MoldeEstado"))
+            # em_manutencao é derivado: NELO usa estado=4 ("manutenção"). O
+            # dicionário completo de estados ainda não foi confirmado pelo
+            # CEO (TODO Sprint Q.8b); por agora só a string "4" / int 4.
+            em_manutencao = str(estado).strip() == "4" if estado is not None else False
+
             mold = {
                 "ingestion_id": ingestion_id,
-                "molde_id": str(payload.get("Molde_Id", "")),
-                "molde_nome": self._safe_str(payload.get("Molde_Nome")),
-                "modelo_id": self._safe_str(payload.get("Molde_Modelo_Id")),
-                "tamanho_id": self._safe_str(payload.get("Molde_Tamanho_Id")),
-                "tipo": self._safe_str(payload.get("Molde_Tipo")),
-                "estado": self._safe_str(payload.get("Molde_Estado")),
-                "em_manutencao": False,
+                "molde_id": str(payload.get("MoldeId", "")),
+                "molde_nome": self._safe_str(payload.get("MoldeNome")),
+                "modelo_id": self._safe_str(payload.get("MoldeModeloId")),
+                "tamanho_id": self._safe_str(payload.get("MoldeTamanhoId")),
+                # MoldeModelo é a string descritiva ("PRO 25", etc.) — usamos
+                # como `tipo` em falta de campo dedicado.
+                "tipo": self._safe_str(payload.get("MoldeModelo")),
+                "estado": estado,
+                "em_manutencao": em_manutencao,
             }
-            
+
             result.molds.append(mold)
     
     def _transform_quality_events(
@@ -306,21 +364,42 @@ class RawToCuratedTransformer:
         ingestion_id: UUID,
         result: TransformResult,
     ) -> None:
-        """Transform OrdemFabricoErros to curated.quality_event."""
+        """Transform OrdemFabricoErros to curated.quality_event.
+
+        Excel columns:
+          Erro_Descricao, Erro_OfId, Erro_FaseAvaliacao, OFCH_GRAVIDADE,
+          Erro_FaseOfAvaliacao, Erro_FaseOfCulpada
+        """
+        # OFCH_GRAVIDADE → erro_tipo string. Mapping owned by
+        # `factory_data_product.ingest.gravidade` (CEO confirmation
+        # 2026-04-26).
+        from src.factory_data_product.ingest.gravidade import (
+            map_gravidade_to_severity,
+        )
+
         for row in rows:
             payload = row.get("payload_json", {})
-            
+
+            grav_raw = payload.get("OFCH_GRAVIDADE")
+            erro_tipo = (
+                map_gravidade_to_severity(grav_raw) if grav_raw is not None
+                else "unknown"
+            )
+
             event = {
                 "ingestion_id": ingestion_id,
-                "of_id": str(payload.get("OrdemFabricoErro_OrdemFabrico_Id", "")),
-                "fase_id": self._safe_str(payload.get("OrdemFabricoErro_Fase_Id")),
-                "erro_tipo": self._safe_str(payload.get("OrdemFabricoErro_TipoErro")) or "unknown",
-                "erro_descricao": self._safe_str(payload.get("OrdemFabricoErro_Descricao")),
-                "quantidade": self._safe_int(payload.get("OrdemFabricoErro_Quantidade")) or 1,
-                "data_evento": self._parse_date(payload.get("OrdemFabricoErro_Data")),
-                "molde_id": self._safe_str(payload.get("OrdemFabricoErro_Molde_Id")),
+                "of_id": str(payload.get("Erro_OfId", "")),
+                # Erro_FaseOfCulpada aponta a fase responsável pelo defeito;
+                # 41.5% das linhas vêm vazias (data limitation conhecida).
+                "fase_id": self._safe_str(payload.get("Erro_FaseOfCulpada")),
+                "erro_tipo": erro_tipo,
+                "erro_descricao": self._safe_str(payload.get("Erro_Descricao")),
+                # Excel não traz quantidade nem data por evento individual.
+                "quantidade": 1,
+                "data_evento": None,
+                "molde_id": None,
             }
-            
+
             result.quality_events.append(event)
     
     def _transform_standards(

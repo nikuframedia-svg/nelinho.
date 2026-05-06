@@ -42,20 +42,11 @@ class ParsedExcel:
     warnings: List[str] = field(default_factory=list)
 
 
-# Known business keys per sheet
-# NOTE: Column names must match EXACTLY what's in the Excel file (case-sensitive)
-BUSINESS_KEY_MAP = {
-    "OrdensFabrico": ["Of_Id"],  # Excel uses Of_Id not OF_Id
-    "FasesOrdemFabrico": ["FaseOf_Id"],
-    "FuncionariosFaseOrdemFabrico": ["FuncionarioFaseOf_FaseOfId", "FuncionarioFaseOf_FuncionarioId"],  # Composite key
-    "OrdemFabricoErros": ["OrdemFabricoErro_Id"],
-    "Funcionarios": ["Funcionario_Id"],
-    "FuncionariosFasesAptos": ["FuncionarioFase_FuncionarioId", "FuncionarioFase_FaseId"],  # Composite key
-    "Fases": ["Fase_Id"],
-    "Moldes": ["Molde_Id"],
-    "Modelos": ["Modelo_Id"],
-    "FasesStandardModelos": ["FaseStandardModelo_Id"],
-}
+# Onda 3.5 — single source of truth for column names is now
+# `factory_data_product.excel_columns`. The parser exposes the legacy name
+# `BUSINESS_KEY_MAP` for backward-compat with imports that already exist;
+# new code should import `BUSINESS_KEYS` directly.
+from src.factory_data_product.excel_columns import BUSINESS_KEYS as BUSINESS_KEY_MAP
 
 
 class ExcelParser:

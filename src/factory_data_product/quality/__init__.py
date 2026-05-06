@@ -28,7 +28,10 @@ from src.factory_data_product.quality.runner import (
     QualityRunner,
     QualityResult,
 )
-from src.factory_data_product.quality.scorer import QualityScorer
+
+# Onda 5.1 — `QualityScorer` (scorer.py) was deleted as dead code: it
+# was exported here but no consumer imported it. The trust-heatmap
+# endpoint uses `TrustHeatmapGenerator` from `trust_heatmap.py` instead.
 
 __all__ = [
     "QualityCheck",
@@ -36,7 +39,6 @@ __all__ = [
     "QUALITY_CHECKS",
     "QualityRunner",
     "QualityResult",
-    "QualityScorer",
 ]
 
 

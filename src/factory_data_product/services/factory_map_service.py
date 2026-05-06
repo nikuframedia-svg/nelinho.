@@ -502,10 +502,16 @@ class FactoryMapService:
                 "on_target": band,
             }
         except Exception as exc:  # pragma: no cover — defensive
-            logger.warning("throughput_eur_day unavailable: %s", exc)
+            # Onda 2.2 — full detail in server logs only; the API response
+            # exposes just the exception type so we don't leak DB/role
+            # internals to the Factory Map dashboard.
+            logger.warning(
+                "throughput_eur_day unavailable for tenant=%s: %r",
+                self.tenant_id, exc,
+            )
             return {
                 "status": "unavailable",
-                "reason": f"{type(exc).__name__}: {exc}",
+                "reason": type(exc).__name__,
             }
 
     # ─── private helpers ──────────────────────────────────────────────────
@@ -577,9 +583,13 @@ class FactoryMapService:
     async def _trust_payload(self) -> dict[str, Any]:
         try:
             from src.dqa.trust_gates import effective_mode, load_gate_config
+            from src.dqa.trust_signals import curated_signals_provider
             from src.dqa.trust_v2 import SCOPE_FACTORY, TrustIndexV2Calculator
 
-            calc = TrustIndexV2Calculator(self.session, self.tenant_id)
+            calc = TrustIndexV2Calculator(
+                self.session, self.tenant_id,
+                signals_provider=curated_signals_provider,
+            )
             result = await calc.compute_for_scope(SCOPE_FACTORY)
             cfg = await load_gate_config(self.session, self.tenant_id)
             return {
@@ -591,5 +601,9 @@ class FactoryMapService:
                 "effective_gates": effective_mode(result.composite, cfg),
             }
         except Exception as exc:  # pragma: no cover — defensive
-            logger.warning("trust payload failed: %s", exc)
-            return {"composite": None, "error": str(exc)}
+            # Onda 2.2 — same rationale as _throughput_eur_day: keep raw
+            # exception detail server-side; expose only the type.
+            logger.warning(
+                "trust payload failed for tenant=%s: %r", self.tenant_id, exc,
+            )
+            return {"composite": None, "error": type(exc).__name__}
