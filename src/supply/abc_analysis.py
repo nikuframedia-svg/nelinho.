@@ -23,29 +23,6 @@ class ABCAnalysis:
     Classifies SKUs by turnover value using Pareto principle.
     """
     
-    def classify_sku(self, value: float, turnover: float) -> str:
-        """
-        Classify a single SKU (simplified - requires distribution context).
-        
-        This is a placeholder. Real classification requires full distribution.
-        Use calculate_abc_distribution() for accurate classification.
-        
-        Args:
-            value: SKU value
-            turnover: SKU turnover
-        
-        Returns:
-            "A", "B", or "C"
-        """
-        # This is simplified - real classification needs full distribution
-        # Return based on turnover threshold (placeholder)
-        if turnover > 0.8:
-            return "A"
-        elif turnover > 0.5:
-            return "B"
-        else:
-            return "C"
-    
     def calculate_abc_distribution(
         self,
         skus_list: List[Dict[str, Any]],
