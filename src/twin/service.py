@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
@@ -261,7 +261,7 @@ class TwinService:
                 "before": scenario.baseline_state,
                 "after": current_state,
                 "delta_summary": delta_summary,
-                "simulated_at": datetime.utcnow().isoformat(),
+                "simulated_at": datetime.now(timezone.utc).isoformat(),
             }
             
             # Calculate scenario hash for reproducibility
@@ -269,7 +269,7 @@ class TwinService:
             
             # Update scenario
             scenario.simulation_result = simulation_result
-            scenario.simulated_at = datetime.utcnow()
+            scenario.simulated_at = datetime.now(timezone.utc)
             scenario.scenario_hash = scenario_hash
             scenario.status = ScenarioStatus.SIMULATED.value
             
@@ -355,7 +355,7 @@ class TwinService:
             "scenario_id": str(scenario_id),
             "baseline_id": str(baseline_scenario_id) if baseline_scenario_id else "factory_baseline",
             "comparison": comparison_result,
-            "compared_at": datetime.utcnow().isoformat(),
+            "compared_at": datetime.now(timezone.utc).isoformat(),
         }
     
     # =========================================================================
@@ -475,7 +475,7 @@ class TwinService:
             "_metadata": {
                 "source": "factory_data_product",
                 "data_version": data_source,
-                "generated_at": datetime.utcnow().isoformat(),
+                "generated_at": datetime.now(timezone.utc).isoformat(),
             },
         }
     
@@ -658,7 +658,7 @@ class TwinService:
                     "engine_used": "cpsat",
                     "schedule": schedule_result,
                     "projected_kpis": projected_state,
-                    "solved_at": datetime.utcnow().isoformat(),
+                    "solved_at": datetime.now(timezone.utc).isoformat(),
                 }
             except asyncio.TimeoutError:
                 logger.warning(f"CP-SAT timed out for scenario {scenario_id}")
@@ -668,7 +668,7 @@ class TwinService:
                     "status": "SOLVER_TIMEOUT",
                     "time_limit_sec": time_limit_sec,
                     "projected_kpis": projected_state,
-                    "solved_at": datetime.utcnow().isoformat(),
+                    "solved_at": datetime.now(timezone.utc).isoformat(),
                 }
             except Exception as e:
                 logger.error(f"Solver error for scenario {scenario_id}: {e}", exc_info=True)
@@ -678,7 +678,7 @@ class TwinService:
                     "status": "SOLVER_ERROR",
                     "error": str(e),
                     "projected_kpis": projected_state,
-                    "solved_at": datetime.utcnow().isoformat(),
+                    "solved_at": datetime.now(timezone.utc).isoformat(),
                 }
 
         # Case 2: No scheduling input → return delta-projection only
@@ -692,7 +692,7 @@ class TwinService:
                 "supply structured scheduling input or rely on delta-only projection."
             ),
             "projected_kpis": projected_state,
-            "solved_at": datetime.utcnow().isoformat(),
+            "solved_at": datetime.now(timezone.utc).isoformat(),
         }
 
     @staticmethod
@@ -745,7 +745,7 @@ class TwinService:
             )
             for m in machines
         ]
-        horizon_start = datetime.utcnow()
+        horizon_start = datetime.now(timezone.utc)
         horizon_end = horizon_start + timedelta(weeks=4)
 
         adapter = SchedulingAdapter()

@@ -16,15 +16,13 @@ import logging
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.factory_data_product.config import (
     ALLOWED_METRICS,
     BLOCKED_METRICS,
-    SEMANTIC_LABELS,
-    TRUST_INDEX,
 )
 from src.sandbox.service import (
     SandboxNotFoundError,
@@ -97,16 +95,11 @@ class ExecPackResponse(BaseModel):
 # ============================================================================
 
 
-def get_tenant_id(
-    x_tenant_id: UUID = Header(default=UUID("00000000-0000-0000-0000-000000000000")),
-) -> UUID:
-    return x_tenant_id
+from src.shared.auth.headers import require_tenant_header, require_user_header
 
-
-def get_current_user(
-    x_user_id: str = Header(default="api_user"),
-) -> str:
-    return x_user_id
+# Sprint Q.12 Onda 0.1: replaced silent zero-UUID/'api_user' defaults.
+get_tenant_id = require_tenant_header
+get_current_user = require_user_header
 
 
 async def get_sandbox_service(
@@ -135,9 +128,18 @@ def create_baseline_state() -> Dict[str, Any]:
     """Build the baseline factory state dict used as ``before_state`` when
     the caller doesn't provide one. Mirrors the BLOCKED vs AVAILABLE
     contract from the Factory Data Product so we never simulate metrics
-    we can't measure."""
+    we can't measure.
+
+    Sprint S7 / Π8: every metric defaults to BLOCKED. The previous "OK"
+    values for ``wip_theoretical=1523``, ``lead_time_observed_days=55.5``
+    and ``quality_errors_count=89836`` were sample numbers from
+    ``Folha_IA_extra.xlsx`` (data discovery), not real factory state. Each
+    new tenant inherited those literals as their baseline, which made
+    every sandbox impact calculation nonsensical. Callers that have a real
+    baseline must pass ``initial_state`` explicitly; the rest get a
+    BLOCKED skeleton instead of fake numbers.
+    """
     return {
-        # ── BLOCKED ─────────────────────────────────────────────────────
         "oee": MetricValue(
             value=None, status="BLOCKED",
             reason=BLOCKED_METRICS["oee_real"]["reason"],
@@ -153,21 +155,20 @@ def create_baseline_state() -> Dict[str, Any]:
             reason=BLOCKED_METRICS["otd_official"]["reason"],
             how_to_enable="Requer: promised_delivery_date",
         ).model_dump(),
-        # ── AVAILABLE ───────────────────────────────────────────────────
         "wip_theoretical": MetricValue(
-            value=1523, status="OK",
-            semantic_label=SEMANTIC_LABELS["wip"],
-            trust_index=TRUST_INDEX.get("OrdensFabrico", 82) / 100,
+            value=None, status="BLOCKED",
+            reason="Pass `initial_state.wip_theoretical` explicitly, or wait for the factory data product to ingest current WIP.",
+            how_to_enable="Send the current value in the create-scenario request body, or run the factory data product ingest first.",
         ).model_dump(),
         "lead_time_observed_days": MetricValue(
-            value=55.5, status="OK",
-            semantic_label=SEMANTIC_LABELS["lead_time"],
-            trust_index=TRUST_INDEX.get("OrdensFabrico", 82) / 100,
+            value=None, status="BLOCKED",
+            reason="Pass `initial_state.lead_time_observed_days` explicitly.",
+            how_to_enable="Send the current value in the create-scenario request body.",
         ).model_dump(),
         "quality_errors_count": MetricValue(
-            value=89836, status="OK",
-            semantic_label=SEMANTIC_LABELS["quality"],
-            trust_index=TRUST_INDEX.get("OrdemFabricoErros", 67) / 100,
+            value=None, status="BLOCKED",
+            reason="Pass `initial_state.quality_errors_count` explicitly.",
+            how_to_enable="Send the current value in the create-scenario request body.",
         ).model_dump(),
     }
 

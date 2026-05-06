@@ -328,6 +328,57 @@ async def schedule_cpo(
         duration_predictor is not None
     )
 
+    # Q.17.F.2 — yaml_policy SCHEDULE_PROPOSE hook. Fire any tenant rules
+    # that subscribe to this event; if any ``block`` action triggers,
+    # refuse to commit the schedule and surface the rule's reason as 409.
+    # Other actions (alert/modify_fitness/notify) are best-effort and
+    # don't block the response. Failure of the engine itself is
+    # swallowed — never let yaml_policy break the scheduler.
+    try:
+        from src.governance.yaml_policy import EventType as _YPEventType
+        from src.governance.yaml_policy.engine import RuleEngine as _RuleEngine
+        from src.governance.yaml_policy.runtime import get_engine as _get_yp_engine
+        _yp_payload = {
+            "tenant_id": str(tenant_id),
+            "horizon_days": int(request.horizon_days),
+            "operations_count": int(len(result.get("operations", []))),
+            "fitness_score": float(result.get("fitness_score", 0.0)),
+            "makespan_hours": float(result.get("makespan_hours", 0.0)),
+            "tardiness_hours": float(result.get("total_tardiness_hours", 0.0)),
+        }
+        _yp_fired = await _get_yp_engine().on_event(
+            _YPEventType.SCHEDULE_PROPOSE,
+            _yp_payload,
+            tenant_id=tenant_id,
+            session=db,
+        )
+        _yp_blocks = _RuleEngine.block_results(_yp_fired)
+        if _yp_blocks:
+            _block = _yp_blocks[0]
+            _rule_id = next(
+                (r.id for r, results in _yp_fired
+                 if any(rs.action == "block" for rs in results)),
+                "?",
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": "blocked_by_yaml_policy",
+                    "rule_id": _rule_id,
+                    "scope": _block.payload.get("scope"),
+                    "reason_pt": _block.payload.get("reason_pt", ""),
+                },
+            )
+        if _yp_fired:
+            logger.info(
+                "yaml_policy: schedule_propose fired %d rules (no blocks)",
+                len(_yp_fired),
+            )
+    except HTTPException:
+        raise  # propagate the 409 we just raised
+    except Exception as _yp_exc:
+        logger.warning(f"yaml_policy SCHEDULE_PROPOSE hook failed: {_yp_exc}")
+
     # Sprint C 1.2 — real Trust Index for this schedule commit.
     # Uses the v2 Calculator in factory scope, which reads tenant weights
     # and falls back to neutral components when no signals provider is

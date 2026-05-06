@@ -12,11 +12,11 @@ these are still marked BLOCKED, not simulated.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -77,16 +77,11 @@ class SolveRequest(BaseModel):
 # DEPENDENCIES
 # ============================================================================
 
-def get_tenant_id(
-    x_tenant_id: UUID = Header(default=UUID("00000000-0000-0000-0000-000000000000")),
-) -> UUID:
-    return x_tenant_id
+from src.shared.auth.headers import require_tenant_header, require_user_header
 
-
-def get_current_user(
-    x_user_id: str = Header(default="api_user"),
-) -> str:
-    return x_user_id
+# Sprint Q.12 Onda 0.1: replaced silent zero-UUID/'api_user' defaults.
+get_tenant_id = require_tenant_header
+get_current_user = require_user_header
 
 
 async def get_twin_service(
@@ -273,7 +268,7 @@ async def simulate_scenario(
         status="simulated",
         kpis=result.get("after", {}),
         comparison=result.get("delta_summary"),
-        simulated_at=result.get("simulated_at", datetime.utcnow().isoformat()),
+        simulated_at=result.get("simulated_at", datetime.now(timezone.utc).isoformat()),
     )
 
 
@@ -391,7 +386,7 @@ async def verify_scenario_hash(
             "current_hash": hashes["scenario_hash"],
             "current_hash_full": current_hash,
             "matches": is_match,
-            "verified_at": datetime.utcnow().isoformat(),
+            "verified_at": datetime.now(timezone.utc).isoformat(),
         },
         "status": "VERIFIED" if is_match else "MISMATCH",
         "message": (
