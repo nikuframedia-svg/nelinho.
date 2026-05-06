@@ -43,15 +43,53 @@ class AllocationService:
     ) -> List[Dict[str, Any]]:
         """
         Allocate employees to operations.
-        
+
+        Sprint Q.12 — corre dentro de transação aninhada que faz lock
+        explícito sobre as alocações existentes dos employees envolvidos.
+        Sem isto, dois alocadores concorrentes podiam atribuir o mesmo
+        funcionário 8h+8h ao mesmo dia (16h impossíveis).
+
         Args:
             requirements: List of operation requirements
             employees: List of available employees with skills and availability
             strategy: Allocation strategy
-        
+
         Returns:
             List of allocations
         """
+        # Lock existing allocations for involved employees to prevent
+        # double-booking under concurrent calls. Keep the lock for the
+        # whole transaction so the read used by the adapter and the
+        # subsequent INSERTs see a consistent view.
+        emp_uuids: List[UUID] = []
+        for emp in employees:
+            raw = str(emp.get("employee_id", ""))
+            if self._is_uuid(raw):
+                emp_uuids.append(UUID(raw))
+
+        async with self.session.begin_nested():
+            if emp_uuids:
+                lock_stmt = (
+                    select(HRAllocation.id)
+                    .where(
+                        and_(
+                            HRAllocation.tenant_id == self.tenant_id,
+                            HRAllocation.employee_id.in_(emp_uuids),
+                            HRAllocation.allocation_date == date.today(),
+                        )
+                    )
+                    .with_for_update()
+                )
+                await self.session.execute(lock_stmt)
+
+            return await self._do_allocate(requirements, employees, strategy)
+
+    async def _do_allocate(
+        self,
+        requirements: List[Dict[str, Any]],
+        employees: List[Dict[str, Any]],
+        strategy: str,
+    ) -> List[Dict[str, Any]]:
         # Setup adapter
         for emp in employees:
             emp_id = str(emp.get("employee_id", ""))
@@ -114,11 +152,18 @@ class AllocationService:
         total_cost = Decimal("0")
         
         for result in results:
+            emp_uuid = self._safe_uuid(result.employee_id)
+            op_uuid = self._safe_uuid(result.operation_id)
+            if emp_uuid is None or op_uuid is None:
+                # Linha do adapter sem identificador válido — skip em vez
+                # de gravar `null` na tabela (FK constraint estoiraria
+                # de qualquer maneira no flush).
+                continue
             allocation = HRAllocation(
                 tenant_id=self.tenant_id,
-                employee_id=UUID(result.employee_id) if self._is_uuid(result.employee_id) else None,
+                employee_id=emp_uuid,
                 order_id=result.order_id,
-                operation_id=UUID(result.operation_id) if self._is_uuid(result.operation_id) else None,
+                operation_id=op_uuid,
                 allocation_date=date.today(),
                 allocated_hours=result.allocated_hours,
                 hourly_rate=result.hourly_rate,
@@ -283,6 +328,16 @@ class AllocationService:
             return True
         except (ValueError, TypeError):
             return False
+
+    @staticmethod
+    def _safe_uuid(value) -> Optional[UUID]:
+        """Convert to UUID or return None — no exception leaks."""
+        if value is None:
+            return None
+        try:
+            return UUID(str(value))
+        except (ValueError, TypeError, AttributeError):
+            return None
 
 
 
