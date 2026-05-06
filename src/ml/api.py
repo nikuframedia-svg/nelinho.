@@ -23,10 +23,13 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.requests import Request
 
 from src.governance.service import GovernanceService
 from src.ml.models.promotion import propose_promotion
 from src.ml.models.registry import ModelRegistry
+from src.shared.auth.headers import AdminContext
+from src.shared.config import settings
 from src.shared.database import get_session
 
 logger = logging.getLogger(__name__)
@@ -70,14 +73,10 @@ class PromoteRequest(BaseModel):
 # Dependencies
 # ---------------------------------------------------------------------------
 
-def _tenant_id(
-    x_tenant_id: UUID = Header(default=UUID("00000000-0000-0000-0000-000000000000")),
-) -> UUID:
-    return x_tenant_id
+from src.shared.auth.headers import require_tenant_header, require_user_header
 
-
-def _user_id(x_user_id: str = Header(default="api_user")) -> str:
-    return x_user_id
+_tenant_id = require_tenant_header
+_user_id = require_user_header
 
 
 async def _registry(
@@ -120,6 +119,35 @@ async def get_active_version(
     return ArtifactResponse(**ModelRegistry.to_dict(active))
 
 
+def _optional_admin(
+    request: Request,
+    x_user_role: Optional[str] = Header(default=None, alias="X-User-Role"),
+) -> Optional[AdminContext]:
+    """Like ``require_admin`` but returns None instead of raising when
+    the caller isn't admin. Lets a single endpoint accept anonymous
+    callers on its safe path while gating its admin-only path
+    (FASE 2.1 / CRIT-02 — `via_governance=false` requires admin).
+    """
+    from src.shared.auth.headers import (
+        AdminContext,
+        _ADMIN_ROLES,
+        _try_jwt,
+    )
+    payload = _try_jwt(request)
+    if payload is not None and payload.role.lower() in _ADMIN_ROLES:
+        return AdminContext(user_id=payload.sub, role=payload.role, source="jwt")
+    if settings.environment == "production":
+        return None
+    if x_user_role and x_user_role.lower() in _ADMIN_ROLES:
+        x_user_id = request.headers.get("x-user-id") or request.headers.get("X-User-Id")
+        return AdminContext(
+            user_id=(x_user_id or "").strip() or "admin",
+            role=x_user_role.lower(),
+            source="legacy_header",
+        )
+    return None
+
+
 @router.post("/models/{model_name}/versions/{artifact_id}/promote", response_model=Dict[str, Any])
 async def promote_version(
     model_name: str,
@@ -127,6 +155,7 @@ async def promote_version(
     request: PromoteRequest,
     tenant_id: UUID = Depends(_tenant_id),
     user: str = Depends(_user_id),
+    admin: Optional[AdminContext] = Depends(_optional_admin),
     db: AsyncSession = Depends(get_session),
 ):
     """
@@ -137,6 +166,11 @@ async def promote_version(
     (WMAPE improved, delta within bounds) and requires human approval
     otherwise. When auto-approved, the artifact is promoted in the same
     request; otherwise, promotion waits for the approval workflow.
+
+    With `via_governance=false`, the artifact is promoted immediately
+    without going through governance — this bypasses the audit trail and
+    is reserved for **admins only** (FASE 2.1 / CRIT-02). Non-admin
+    callers are rejected with 403.
     """
     registry = ModelRegistry(session=db, tenant_id=tenant_id)
     artifact = await registry.get(artifact_id)
@@ -144,10 +178,21 @@ async def promote_version(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Artifact not found")
 
     if not request.via_governance:
+        # FASE 2.1 (CRIT-02) — admin gate. Only admins may bypass governance.
+        if admin is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "via_governance=false requires an admin role. "
+                    "Either set via_governance=true to flow through governance, "
+                    "or call this endpoint as admin (Bearer JWT in production, "
+                    "X-User-Role: admin in dev)."
+                ),
+            )
         promoted = await registry.promote(
             artifact_id=artifact_id,
             decision_id=None,
-            promoted_by=user,
+            promoted_by=admin.user_id,
         )
         return {
             "status": "promoted",

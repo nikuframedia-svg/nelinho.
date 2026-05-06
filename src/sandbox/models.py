@@ -16,7 +16,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 from uuid import UUID
 
-from sqlalchemy import DateTime, Index, String, Text
+from sqlalchemy import DateTime, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -80,5 +80,14 @@ class SandboxScenario(TenantBase):
         comment="SharedDecisionRun.id created on publish",
     )
 
+    # Sprint Q.12 Onda 3.1 — optimistic-lock counter. The service's
+    # state-machine writes (DRAFT→SIMULATING, SIMULATING→SIMULATED)
+    # use this as a CAS so two concurrent ``simulate`` calls can't
+    # both progress past the status check. Bumped on every state
+    # transition.
+    version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0",
+    )
+
     def __repr__(self) -> str:  # pragma: no cover — repr aid
-        return f"<SandboxScenario id={self.id} status={self.status}>"
+        return f"<SandboxScenario id={self.id} status={self.status} v={self.version}>"
