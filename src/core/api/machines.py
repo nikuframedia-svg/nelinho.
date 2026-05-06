@@ -8,9 +8,10 @@ REST endpoints for machine management.
 from typing import List
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Header, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.shared.auth.headers import require_tenant_header
 from src.shared.database import get_session
 from src.core.models.machine import MachineStatus
 from src.core.services.master_data_service import MasterDataService
@@ -18,10 +19,7 @@ from .schemas import MachineCreate, MachineUpdate, MachineResponse
 
 router = APIRouter(prefix="/machines", tags=["Machines"])
 
-
-def get_tenant_id(x_tenant_id: UUID = Header(...)) -> UUID:
-    """Extract tenant ID from header."""
-    return x_tenant_id
+get_tenant_id = require_tenant_header
 
 
 @router.post("", response_model=MachineResponse, status_code=status.HTTP_201_CREATED)

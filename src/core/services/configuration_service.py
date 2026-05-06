@@ -61,10 +61,12 @@ class ConfigurationService:
         self.session.add(labor_rate)
         await self.session.flush()
         
-        # Update cache
+        # Update cache. Sprint S8 / Π9: store as string to preserve Decimal
+        # precision. Was `float(loaded_rate)` which silently truncated 18-digit
+        # rates to ~15-digit float precision and read back lossy.
         redis = await get_redis()
-        await redis.set_labor_rate(self.tenant_id, employee_id, float(loaded_rate))
-        
+        await redis.set_labor_rate(self.tenant_id, employee_id, str(loaded_rate))
+
         # Publish event
         await publish_event(
             Topics.CONFIG_UPDATED,
@@ -121,8 +123,8 @@ class ConfigurationService:
         # Get from DB
         rate = await self.get_labor_rate(employee_id, as_of_date)
         if rate:
-            # Update cache
-            await redis.set_labor_rate(self.tenant_id, employee_id, float(rate.loaded_rate))
+            # Update cache (Decimal-as-string; see set_labor_rate).
+            await redis.set_labor_rate(self.tenant_id, employee_id, str(rate.loaded_rate))
             return rate.loaded_rate
         
         return Decimal("0")
@@ -177,9 +179,9 @@ class ConfigurationService:
         self.session.add(machine_rate)
         await self.session.flush()
         
-        # Update cache
+        # Update cache (Decimal-as-string; preserves precision).
         redis = await get_redis()
-        await redis.set_machine_rate(self.tenant_id, machine_id, float(total_rate))
+        await redis.set_machine_rate(self.tenant_id, machine_id, str(total_rate))
         
         # Publish event
         await publish_event(
@@ -234,7 +236,7 @@ class ConfigurationService:
         
         rate = await self.get_machine_rate(machine_id, as_of_date)
         if rate:
-            await redis.set_machine_rate(self.tenant_id, machine_id, float(rate.total_rate))
+            await redis.set_machine_rate(self.tenant_id, machine_id, str(rate.total_rate))
             return rate.total_rate
         
         return Decimal("0")

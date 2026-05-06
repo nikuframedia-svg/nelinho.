@@ -9,9 +9,10 @@ from datetime import date
 from typing import List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Header, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.shared.auth.headers import require_tenant_header
 from src.shared.database import get_session
 from src.core.services.configuration_service import ConfigurationService
 from .schemas import (
@@ -22,10 +23,7 @@ from .schemas import (
 
 router = APIRouter(prefix="/rates", tags=["Rates"])
 
-
-def get_tenant_id(x_tenant_id: UUID = Header(...)) -> UUID:
-    """Extract tenant ID from header."""
-    return x_tenant_id
+get_tenant_id = require_tenant_header
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

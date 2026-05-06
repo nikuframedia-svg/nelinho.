@@ -8,9 +8,10 @@ REST endpoints for employee management.
 from typing import List
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Header, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.shared.auth.headers import require_tenant_header
 from src.shared.database import get_session
 from src.core.models.employee import EmploymentStatus
 from src.core.services.master_data_service import MasterDataService
@@ -18,10 +19,7 @@ from .schemas import EmployeeCreate, EmployeeUpdate, EmployeeResponse
 
 router = APIRouter(prefix="/employees", tags=["Employees"])
 
-
-def get_tenant_id(x_tenant_id: UUID = Header(...)) -> UUID:
-    """Extract tenant ID from header."""
-    return x_tenant_id
+get_tenant_id = require_tenant_header
 
 
 @router.post("", response_model=EmployeeResponse, status_code=status.HTTP_201_CREATED)
@@ -67,13 +65,16 @@ async def list_employees(
         )
         return employees
     except (ConnectionRefusedError, Exception) as e:
-        # DB unavailable - return fallback data
+        # Sprint S8 / Π7: 503 instead of silent empty list.
         import logging
         logger = logging.getLogger(__name__)
         error_str = str(e).lower()
         if "connection refused" in error_str or "operationalerror" in error_str or "interfaceerror" in error_str:
-            logger.warning(f"DB unavailable in list_employees, returning fallback: {e}")
-            return []
+            logger.error(f"DB unavailable in list_employees: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database unavailable; please retry shortly.",
+            )
         # Re-raise other exceptions (they'll be handled by global handler)
         raise
 

@@ -8,9 +8,10 @@ REST endpoints for supplier management.
 from typing import List
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Header, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.shared.auth.headers import require_tenant_header
 from src.shared.database import get_session
 from src.core.models.partner import MaterialCategory
 from src.core.services.master_data_service import MasterDataService
@@ -18,10 +19,7 @@ from .schemas import SupplierCreate, SupplierUpdate, SupplierResponse
 
 router = APIRouter(prefix="/suppliers", tags=["Suppliers"])
 
-
-def get_tenant_id(x_tenant_id: UUID = Header(...)) -> UUID:
-    """Extract tenant ID from header."""
-    return x_tenant_id
+get_tenant_id = require_tenant_header
 
 
 @router.post("", response_model=SupplierResponse, status_code=status.HTTP_201_CREATED)
