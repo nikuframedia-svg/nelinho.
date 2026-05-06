@@ -112,7 +112,13 @@ def test_sign_mismatch_writes_triplet_with_ablkit_source(tmp_path: Path):
     lines = output.read_text(encoding="utf-8").splitlines()
     assert len(lines) >= 1
     payload = json.loads(lines[0])
-    assert set(payload.keys()) == {"prompt", "chosen", "rejected", "meta"}
+    # Sprint Q.12 Onda 5.3 — tenant_id is now stamped at the top
+    # level of the triplet (and folded into the dedup signature) so
+    # cross-tenant collisions are no longer dropped silently. The
+    # legacy ``meta.tenant_id`` value still carries the same UUID for
+    # consumers that haven't migrated to the new field.
+    assert set(payload.keys()) == {"prompt", "chosen", "rejected", "meta", "tenant_id"}
+    assert payload["tenant_id"] == str(TENANT)
     assert payload["meta"]["source"] == "ablkit"
     assert payload["meta"]["tenant_id"] == str(TENANT)
 

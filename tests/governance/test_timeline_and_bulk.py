@@ -318,6 +318,15 @@ def _cfg_row(tenant_id: UUID, key: str, value, data_type: str):
 
 
 class TestAutoApproval:
+    # Sprint Q.12 Onda 1.4 — every auto_approval test now passes
+    # ``trust_index`` explicitly. The previous default of ``None``
+    # silently skipped the trust gate, which was exactly the security
+    # hole this wave is closing. ``HIGH_TRUST`` is the canonical "this
+    # decision passes the §4.5 trust threshold" value; ``LOW_TRUST`` is
+    # the matching "blocked" value used by ``test_low_trust_blocks``.
+    HIGH_TRUST = 0.85
+    LOW_TRUST = 0.50
+
     @pytest.mark.asyncio
     async def test_respects_enabled_flag(self, fake_session, tenant_id):
         fake_session.queue_scalars([
@@ -326,7 +335,9 @@ class TestAutoApproval:
         ])
         svc = GovernanceService(fake_session, tenant_id)
         allowed = await svc._auto_approval_allowed(
-            decision_type="scenario_publish", risk_level="low",
+            decision_type="scenario_publish",
+            risk_level="low",
+            trust_index=self.HIGH_TRUST,
         )
         assert allowed is True
 
@@ -338,13 +349,43 @@ class TestAutoApproval:
         ])
         svc = GovernanceService(fake_session, tenant_id)
         allowed = await svc._auto_approval_allowed(
-            decision_type="scenario_publish", risk_level="high",
+            decision_type="scenario_publish",
+            risk_level="high",
+            trust_index=self.HIGH_TRUST,
         )
         assert allowed is False
 
     @pytest.mark.asyncio
     async def test_missing_config_defaults_to_no(self, fake_session, tenant_id):
         fake_session.queue_scalars([])  # empty governance category
+        svc = GovernanceService(fake_session, tenant_id)
+        allowed = await svc._auto_approval_allowed(
+            decision_type="scenario_publish",
+            risk_level="low",
+            trust_index=self.HIGH_TRUST,
+        )
+        assert allowed is False
+
+    @pytest.mark.asyncio
+    async def test_low_trust_blocks(self, fake_session, tenant_id):
+        """Sprint Q.12 Onda 1.4 — trust below threshold blocks even with
+        config enabled. Regression guard for the silent-skip bug."""
+        fake_session.queue_scalars([
+            _cfg_row(tenant_id, "auto_approval.scenario_publish.enabled", True, "bool"),
+            _cfg_row(tenant_id, "auto_approval.scenario_publish.risk_ceiling", "low", "string"),
+        ])
+        svc = GovernanceService(fake_session, tenant_id)
+        allowed = await svc._auto_approval_allowed(
+            decision_type="scenario_publish",
+            risk_level="low",
+            trust_index=self.LOW_TRUST,
+        )
+        assert allowed is False
+
+    @pytest.mark.asyncio
+    async def test_missing_trust_index_blocks(self, fake_session, tenant_id):
+        """Sprint Q.12 Onda 1.4 — without trust_index *and* without a
+        scenario_id to resolve one from, auto-approval is denied."""
         svc = GovernanceService(fake_session, tenant_id)
         allowed = await svc._auto_approval_allowed(
             decision_type="scenario_publish", risk_level="low",

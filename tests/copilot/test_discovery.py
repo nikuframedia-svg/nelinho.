@@ -18,7 +18,9 @@ from src.copilot.causal.nelo_dag import edge_exists
 
 
 def test_discovery_runs_on_simulated_series():
-    report = discover_edges(tau_max=2, sample_size=120, seed=3)
+    # Sprint Q.12 Onda 4.1 — synthetic discovery is opt-in to keep
+    # circular validation out of production code paths.
+    report = discover_edges(tau_max=2, sample_size=120, seed=3, allow_synthetic=True)
     assert isinstance(report, DiscoveryReport)
     assert report.status in {"ok", "degraded"}
     assert report.nodes_examined >= 10
@@ -48,14 +50,14 @@ def test_discovery_needs_at_least_two_columns():
 
 
 def test_is_new_flag_matches_existing_dag():
-    report = discover_edges(tau_max=2, sample_size=150, seed=7)
+    report = discover_edges(tau_max=2, sample_size=150, seed=7, allow_synthetic=True)
     for edge in report.candidate_edges:
         direct_existing = edge_exists(edge.src, edge.dst, transitive=False)
         assert edge.is_new == (not direct_existing)
 
 
 def test_candidate_edges_sorted_new_first_then_by_strength():
-    report = discover_edges(tau_max=2, sample_size=120, seed=9)
+    report = discover_edges(tau_max=2, sample_size=120, seed=9, allow_synthetic=True)
     if len(report.candidate_edges) < 2:
         pytest.skip("too few edges to check sort order")
     # New edges appear before confirmations.
@@ -80,6 +82,7 @@ def test_restrict_to_limits_the_variable_set():
             "makespan_hours",
         ],
         seed=11,
+        allow_synthetic=True,
     )
     assert report.nodes_examined == 5
     vars_in_edges = set()

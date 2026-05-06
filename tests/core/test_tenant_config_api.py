@@ -79,7 +79,10 @@ def _row(
     )
 
 
-_HEADERS = {"X-Tenant-Id": str(TEST_TENANT_ID)}
+_HEADERS = {
+    "X-Tenant-Id": str(TEST_TENANT_ID),
+    "X-User-Id": "00000000-0000-0000-0000-0000000000aa",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +114,9 @@ def test_list_category_unknown(fake_session_and_client):
 def test_requires_tenant_header(fake_session_and_client):
     _, client = fake_session_and_client
     resp = client.get("/v1/config/planning")
-    assert resp.status_code == 422  # missing required header
+    # Sprint S2: missing tenant header now returns 401 from auth layer
+    # (semantically correct — header was Required(...) returning 422 before).
+    assert resp.status_code == 401
 
 
 # ---------------------------------------------------------------------------

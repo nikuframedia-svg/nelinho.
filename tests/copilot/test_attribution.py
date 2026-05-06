@@ -31,8 +31,10 @@ def test_unknown_target_is_handled_cleanly():
 
 
 def test_attribution_ranks_upstream_nodes_for_throughput():
+    # Sprint Q.12 Onda 4.2 — synthetic attribution is opt-in to keep
+    # circular validation out of production code paths.
     report = attribution_analysis(
-        "throughput_eur_day", sample_size=120, seed=11,
+        "throughput_eur_day", sample_size=120, seed=11, allow_synthetic=True,
     )
     # Either 'ok' (future: real data) or 'degraded' (now: simulated).
     assert report.status in {"ok", "degraded"}
@@ -53,7 +55,7 @@ def test_attribution_ranks_upstream_nodes_for_throughput():
 
 def test_attribution_works_for_makespan():
     report = attribution_analysis(
-        "makespan_hours", sample_size=100, seed=23,
+        "makespan_hours", sample_size=100, seed=23, allow_synthetic=True,
     )
     assert report.status in {"ok", "degraded"}
     assert len(report.ranked) >= 3
@@ -64,7 +66,7 @@ def test_attribution_works_for_makespan():
 def test_attribution_handles_leaf_with_no_ancestors():
     """Picking a root node (shift_mode) yields an empty graph for
     DoWhy — we expect an ``unavailable`` status, not a traceback."""
-    report = attribution_analysis("shift_mode", sample_size=80)
+    report = attribution_analysis("shift_mode", sample_size=80, allow_synthetic=True)
     # Either reported as unavailable (no ancestors) or degraded with
     # an empty ranking — both are acceptable, just never a crash.
     if report.status == "unavailable":

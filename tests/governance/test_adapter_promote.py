@@ -44,8 +44,13 @@ def test_promote_requires_admin_role():
 
 
 def test_promote_reason_below_20_chars_is_422():
-    """Pydantic's ``min_length=20`` triggers an unprocessable response
-    before the admin guard runs."""
+    """Pydantic's ``min_length=20`` triggers an unprocessable response.
+
+    Note: with the Sprint Q.12 Onda 0.2 admin gate (:func:`require_admin`)
+    the test now passes a valid admin pair (``X-User-Id`` +
+    ``X-User-Role``) so the request reaches the body validator instead of
+    being short-circuited at the auth layer.
+    """
     import logging
     logging.disable(logging.CRITICAL)
     from src.main import app
@@ -56,6 +61,7 @@ def test_promote_reason_below_20_chars_is_422():
         json={"reason": "curto", "decided_by": "luis"},
         headers={
             "X-Tenant-Id": str(uuid4()),
+            "X-User-Id": str(uuid4()),
             "X-User-Role": "admin",
         },
     )
