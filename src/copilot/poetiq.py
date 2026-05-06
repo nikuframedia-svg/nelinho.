@@ -31,11 +31,11 @@ doesn't carry a copilot score (deterministic proposals).
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -118,14 +118,11 @@ class POETIQProposeResponse(BaseModel):
 # Dependencies
 # =============================================================================
 
-def _tenant_id(
-    x_tenant_id: UUID = Header(default=UUID("00000000-0000-0000-0000-000000000000")),
-) -> UUID:
-    return x_tenant_id
+from src.shared.auth.headers import require_tenant_header, require_user_header
 
-
-def _user_id(x_user_id: str = Header(default="copilot")) -> str:
-    return x_user_id
+# Sprint Q.12 Onda 0.1: replaced silent zero-UUID/'copilot' defaults.
+_tenant_id = require_tenant_header
+_user_id = require_user_header
 
 
 # =============================================================================
@@ -145,7 +142,7 @@ async def propose(
     Never raises for "no data" — returns a structured `status=no_data`
     instead, so the copilot can present a friendly message.
     """
-    horizon_start = datetime.utcnow()
+    horizon_start = datetime.now(timezone.utc)
     horizon_end = horizon_start + timedelta(days=request.horizon_days)
 
     state = await FactoryState.load(db, tenant_id)

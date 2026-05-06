@@ -7,7 +7,7 @@ Gera recomendações baseadas em análise de dados OEE, qualidade e performance.
 
 import logging
 from typing import Dict, List, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,7 +42,7 @@ class Recommendation:
         self.affected_phases = affected_phases or []
         self.suggested_actions = suggested_actions or []
         self.data_evidence = data_evidence or {}
-        self.generated_at = datetime.utcnow()
+        self.generated_at = datetime.now(timezone.utc)
 
 
 async def generate_recommendations(

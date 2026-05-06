@@ -7,7 +7,7 @@ Cliente robusto para Ollama com timeout, retry, circuit breaker.
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional
 
 import httpx
@@ -15,6 +15,21 @@ import httpx
 from src.shared.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _backoff_with_jitter(attempt: int, *, base: float = 1.0, cap: float = 30.0) -> float:
+    """Decorrelated jittered exponential backoff.
+
+    Sprint Q.12 Onda 4.4 — used by the Ollama retry loop. Returns a
+    sleep duration in seconds that has the same expected value as
+    classic ``base * 2**attempt`` but is randomly distributed around
+    it, so 100 retrying clients don't all hit the server at the same
+    millisecond. ``cap`` keeps the upper bound bounded for very
+    aggressive retry counts.
+    """
+    import random as _random
+    expo = base * (2 ** attempt)
+    return min(cap, _random.uniform(base, expo + base))
 
 
 class OllamaClient:
@@ -73,9 +88,9 @@ class OllamaClient:
         if self._circuit_open_until is None:
             return True  # Circuit fechado
         
-        if datetime.utcnow() < self._circuit_open_until:
+        if datetime.now(timezone.utc) < self._circuit_open_until:
             # Circuit ainda aberto, mas logar para debugging
-            remaining = (self._circuit_open_until - datetime.utcnow()).total_seconds()
+            remaining = (self._circuit_open_until - datetime.now(timezone.utc)).total_seconds()
             logger.debug(f"Circuit breaker aberto. Fecha em {remaining:.1f}s")
             return False  # Circuit aberto
         
@@ -95,10 +110,10 @@ class OllamaClient:
     def _record_failure(self):
         """Registar falha e abrir circuit se necessário."""
         self._failure_count += 1
-        self._last_failure_time = datetime.utcnow()
+        self._last_failure_time = datetime.now(timezone.utc)
         
         if self._failure_count >= 3:
-            self._circuit_open_until = datetime.utcnow() + self._circuit_breaker_window
+            self._circuit_open_until = datetime.now(timezone.utc) + self._circuit_breaker_window
             logger.warning(
                 f"Circuit breaker aberto após {self._failure_count} falhas. "
                 f"Fechado até {self._circuit_open_until}"
@@ -177,16 +192,22 @@ class OllamaClient:
         if format == "json":
             payload["format"] = "json"
         
-        # Retry com backoff exponencial
+        # Sprint Q.12 Onda 4.4 — exponential backoff WITH jitter to
+        # avoid the thundering-herd pattern where every client retried
+        # at exactly ``2^attempt`` seconds. With 100 simultaneous
+        # callers all retrying at t=1s/2s/4s the Ollama server saw
+        # synchronised spikes that kept it from recovering.
+        import random as _random
+
         last_error = None
         for attempt in range(self.max_retries + 1):
             try:
                 response = await client.post("/api/chat", json=payload)
                 response.raise_for_status()
-                
+
                 data = response.json()
                 self._record_success()
-                
+
                 # Extrair resposta do formato Ollama
                 if "message" in data and "content" in data["message"]:
                     content = data["message"]["content"]
@@ -194,27 +215,27 @@ class OllamaClient:
                         import json
                         return json.loads(content)
                     return {"content": content}
-                
+
                 return data
-                
+
             except httpx.TimeoutException as e:
                 last_error = e
                 logger.warning(f"Ollama timeout (tentativa {attempt + 1}/{self.max_retries + 1})")
                 if attempt < self.max_retries:
-                    await asyncio.sleep(2 ** attempt)  # Backoff exponencial
-                    
+                    await asyncio.sleep(_backoff_with_jitter(attempt))
+
             except httpx.HTTPStatusError as e:
                 last_error = e
                 logger.error(f"Ollama HTTP error: {e}")
                 self._record_failure()
                 raise
-                
+
             except Exception as e:
                 last_error = e
                 logger.error(f"Ollama error (tentativa {attempt + 1}): {e}")
                 if attempt < self.max_retries:
-                    await asyncio.sleep(2 ** attempt)
-        
+                    await asyncio.sleep(_backoff_with_jitter(attempt))
+
         # Todas as tentativas falharam
         self._record_failure()
         raise Exception(f"Ollama falhou após {self.max_retries + 1} tentativas: {last_error}")

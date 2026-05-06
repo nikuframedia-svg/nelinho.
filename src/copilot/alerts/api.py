@@ -9,13 +9,13 @@ reusing the legacy `/api/copilot` prefix.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -61,14 +61,11 @@ class ScanResponse(BaseModel):
 # Dependencies
 # ---------------------------------------------------------------------------
 
-def _tenant_id(
-    x_tenant_id: UUID = Header(default=UUID("00000000-0000-0000-0000-000000000000")),
-) -> UUID:
-    return x_tenant_id
+from src.shared.auth.headers import require_tenant_header, require_user_header
 
-
-def _user_id(x_user_id: str = Header(default="api_user")) -> str:
-    return x_user_id
+# Sprint Q.12 Onda 0.1: replaced silent zero-UUID/'api_user' defaults.
+_tenant_id = require_tenant_header
+_user_id = require_user_header
 
 
 def _serialize(alert: CopilotAlert) -> AlertResponse:
@@ -142,7 +139,7 @@ async def acknowledge_alert(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alert not found")
 
     alert.status = STATUS_ACKNOWLEDGED
-    alert.acknowledged_at = datetime.utcnow()
+    alert.acknowledged_at = datetime.now(timezone.utc)
     alert.acknowledged_by = user
     await db.flush()
     return _serialize(alert)
@@ -164,10 +161,10 @@ async def resolve_alert(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alert not found")
 
     alert.status = STATUS_RESOLVED
-    alert.resolved_at = datetime.utcnow()
+    alert.resolved_at = datetime.now(timezone.utc)
     if not alert.acknowledged_by:
         alert.acknowledged_by = user
-        alert.acknowledged_at = datetime.utcnow()
+        alert.acknowledged_at = datetime.now(timezone.utc)
     await db.flush()
     return _serialize(alert)
 
@@ -204,7 +201,7 @@ async def shift_report(
     No LLM synthesis — kept deterministic for auditability and so it works
     offline. Can be wrapped in LLM-sumarisation later.
     """
-    since = datetime.utcnow() - timedelta(hours=window_hours)
+    since = datetime.now(timezone.utc) - timedelta(hours=window_hours)
 
     # New alerts in the window
     alerts_stmt = (
@@ -290,7 +287,7 @@ async def shift_report(
     return ShiftReportResponse(
         tenant_id=str(tenant_id),
         window_hours=window_hours,
-        generated_at=datetime.utcnow().isoformat(),
+        generated_at=datetime.now(timezone.utc).isoformat(),
         summary={
             "alerts_by_severity": severity_counts,
             "alerts_by_status": status_counts,

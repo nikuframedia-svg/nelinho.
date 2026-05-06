@@ -15,7 +15,7 @@ are interpolated when present.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -83,7 +83,7 @@ def _resolve_inputs(payload: Dict[str, Any]) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
 
     raw_range = payload.get("date_range") or "24h"
-    end = datetime.utcnow()
+    end = datetime.now(timezone.utc)
     if isinstance(raw_range, str) and raw_range.endswith("h"):
         try:
             hours = int(raw_range[:-1])
@@ -146,5 +146,5 @@ def execute_runbook(
         "steps": steps,
         "status": "planned",
         "advisory_mode": True,
-        "executed_at": datetime.utcnow().isoformat(),
+        "executed_at": datetime.now(timezone.utc).isoformat(),
     }

@@ -6,7 +6,7 @@ Constrói context_facts estruturado a partir da base de dados.
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional
 from uuid import UUID
 
@@ -47,7 +47,7 @@ async def build_context_facts(
     has_hr_role = user_role in (Role.HR_MANAGER.value, Role.ADMIN_PLATFORM.value)
     
     # Calcular data de início
-    window_start = datetime.utcnow() - timedelta(hours=context_window_hours)
+    window_start = datetime.now(timezone.utc) - timedelta(hours=context_window_hours)
     
     context = {
         "operational_snapshot": await _build_operational_snapshot(
