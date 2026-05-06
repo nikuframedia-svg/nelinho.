@@ -239,15 +239,29 @@ class COGSCalculatedHandler:
 
 
 def register_handlers(consumer: KafkaConsumerClient) -> None:
-    """Register all event handlers."""
+    """Register all event handlers.
 
-    consumer.register_handler("ORDER_RECEIVED", OrderReceivedHandler().handle)
-    consumer.register_handler("SCHEDULE_CREATED", ScheduleCreatedHandler().handle)
-    consumer.register_handler("EMPLOYEE_ALLOCATED", AllocationCreatedHandler().handle)
-    consumer.register_handler("LABOR_COST_COMMITTED", LaborCostCommittedHandler().handle)
-    consumer.register_handler("COGS_CALCULATED", COGSCalculatedHandler().handle)
+    Sprint S4: every event_type registered here MUST resolve to a topic via
+    :func:`src.shared.event_contracts.resolve_topic`. The boot-time check
+    raises early if a typo or rename leaves a handler routing to a topic the
+    producer never publishes to.
+    """
+    from src.shared.event_contracts import resolve_topic
 
-    logger.info("All event handlers registered")
+    registrations = [
+        ("ORDER_RECEIVED", OrderReceivedHandler().handle),
+        ("SCHEDULE_CREATED", ScheduleCreatedHandler().handle),
+        ("EMPLOYEE_ALLOCATED", AllocationCreatedHandler().handle),
+        ("LABOR_COST_COMMITTED", LaborCostCommittedHandler().handle),
+        ("COGS_CALCULATED", COGSCalculatedHandler().handle),
+    ]
+
+    for event_type, handler in registrations:
+        # Fail fast at boot if the event_type can't be routed.
+        resolve_topic(event_type)
+        consumer.register_handler(event_type, handler)
+
+    logger.info("All event handlers registered (%d)", len(registrations))
 
 
 async def start_event_consumer() -> KafkaConsumerClient:

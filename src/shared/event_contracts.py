@@ -2,12 +2,92 @@
 ProdPlan ONE - Event Contracts
 ===============================
 
-Event contract definitions and validation.
-Interfaces for event contracts (TypeScript-like).
+Event contract definitions and validation. Single source of truth for
+``event_type → topic`` mapping (closes Sprint S4 / Φ1).
+
+Convention (Sprint S4):
+    * **event_type** is the short UPPERCASE name (e.g. ``SCHEDULE_CREATED``)
+      stamped by publishers and matched by consumer handler registration.
+    * **topic** is the dot-notation Kafka topic (e.g.
+      ``prodplan.plan.schedule_created``) defined in
+      :class:`src.shared.kafka_client.Topics`.
+
+Before S4, three layers used three different conventions and events never
+reached handlers. ``resolve_topic`` is the chokepoint that aligns them.
 """
 
-from typing import Dict, Any, Optional
-from .event_schemas import EventPayload, EVENT_PAYLOAD_MAP, validate_event_payload
+from typing import Any, Dict, Optional
+
+from .event_schemas import (
+    EventPayload,
+    EVENT_PAYLOAD_MAP,
+    validate_event_payload,
+)
+
+
+# --- event_type → topic mapping ---------------------------------------------
+
+def _build_topic_map() -> Dict[str, str]:
+    """Derive the canonical mapping from the ``Topics`` class.
+
+    Uses ``Topics.SCHEDULE_CREATED = "prodplan.plan.schedule_created"`` as the
+    source of truth — the attribute *name* becomes the event_type and the
+    attribute *value* becomes the topic.
+    """
+    # Imported here to avoid an import cycle with the Kafka client at startup.
+    from .kafka_client import Topics
+
+    mapping: Dict[str, str] = {}
+    for attr in dir(Topics):
+        if attr.startswith("_"):
+            continue
+        value = getattr(Topics, attr)
+        if isinstance(value, str) and value.startswith("prodplan."):
+            mapping[attr] = value
+    return mapping
+
+
+_TOPIC_BY_EVENT_TYPE: Optional[Dict[str, str]] = None
+
+
+def event_type_to_topic_map() -> Dict[str, str]:
+    """Return (and lazily build) the ``event_type → topic`` mapping."""
+    global _TOPIC_BY_EVENT_TYPE
+    if _TOPIC_BY_EVENT_TYPE is None:
+        _TOPIC_BY_EVENT_TYPE = _build_topic_map()
+    return _TOPIC_BY_EVENT_TYPE
+
+
+def resolve_topic(event_type: str) -> str:
+    """Return the Kafka topic for ``event_type``.
+
+    Two paths:
+    * UPPERCASE short names → looked up in :class:`Topics` enum.
+    * Already-canonical dot-notation (``copilot.action.executed``) → prefixed
+      with ``prodplan.`` for backward compatibility with legacy emitters.
+
+    Raises ``ValueError`` when neither path applies, so a typo or an unmapped
+    new event_type fails loudly at publish time instead of routing into the
+    void.
+    """
+    if not isinstance(event_type, str) or not event_type:
+        raise ValueError(f"event_type must be a non-empty string, got {event_type!r}")
+
+    mapping = event_type_to_topic_map()
+    if event_type in mapping:
+        return mapping[event_type]
+
+    if "." in event_type:
+        return f"prodplan.{event_type}"
+
+    raise ValueError(
+        f"Unknown event_type {event_type!r}: not in Topics enum and not "
+        f"dot-notation. Add it to src.shared.kafka_client.Topics or rename "
+        f"the publisher."
+    )
+
+
+# --- contract registry -------------------------------------------------------
 
 
 class EventContract:
