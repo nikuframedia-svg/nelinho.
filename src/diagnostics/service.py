@@ -16,6 +16,7 @@ Designed to answer "is the factory safe to operate right now?" in <1s.
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import logging
 import re
@@ -163,7 +164,10 @@ def collect_module_health(routes_by_module: dict[str, int]) -> list[ModuleHealth
         if m.import_errors:
             m.health = "red"
         elif m.src_files == 0:
-            m.health = "green"  # nothing to test
+            # Onda 1.5 — module without source is unknown, not green.
+            # Marking green hid accidentally-deleted modules from the
+            # dashboard. "unknown" surfaces them without inflating red.
+            m.health = "unknown"
         elif m.test_files == 0:
             m.health = "yellow"
         else:
@@ -241,20 +245,44 @@ async def check_redis() -> InfraCheck:
 
 
 async def check_kafka() -> InfraCheck:
+    """Real broker ping (Onda 1.5).
+
+    The previous version returned `healthy=True` whenever `get_producer()`
+    yielded a non-None client — even with brokers down. We now hit the
+    broker for metadata of `__consumer_offsets` (an internal Kafka topic
+    that always exists on any cluster), capped at 2s. Failure to reach
+    the broker propagates as `healthy=False`.
+    """
     t0 = time.monotonic()
     try:
         from src.shared.kafka_client import get_producer
-        producer = await get_producer()
-        if producer is None:
+        client = await get_producer()
+        producer = getattr(client, "_producer", None)
+        if client is None or producer is None:
             return InfraCheck(
                 component="kafka",
                 healthy=False,
-                detail="get_producer() returned None",
+                detail="producer not initialised",
+                latency_ms=(time.monotonic() - t0) * 1000.0,
             )
+        partitions = await asyncio.wait_for(
+            producer.partitions_for("__consumer_offsets"),
+            timeout=2.0,
+        )
         return InfraCheck(
             component="kafka",
-            healthy=True,
-            detail="producer ready",
+            healthy=bool(partitions),
+            detail=(
+                f"metadata OK ({len(partitions)} partitions)"
+                if partitions else "no partitions returned"
+            ),
+            latency_ms=(time.monotonic() - t0) * 1000.0,
+        )
+    except asyncio.TimeoutError:
+        return InfraCheck(
+            component="kafka",
+            healthy=False,
+            detail="metadata fetch timed out (2s)",
             latency_ms=(time.monotonic() - t0) * 1000.0,
         )
     except Exception as exc:
@@ -267,12 +295,24 @@ async def check_kafka() -> InfraCheck:
 
 
 async def check_ollama() -> InfraCheck:
-    """Hit Ollama's /api/version. Cheap and doesn't burn GPU."""
+    """Hit Ollama's /api/version. Cheap and doesn't burn GPU.
+
+    Onda 3.6 — URL and timeout configurable via env so deployments outside
+    the local-dev box can point the check at a remote daemon. Defaults
+    match the historical hardcoded values for backwards compatibility.
+    """
+    import os
+    ollama_url = os.environ.get("PRODPLAN_OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
+    try:
+        ollama_timeout = float(os.environ.get("PRODPLAN_OLLAMA_TIMEOUT_S", "2.0"))
+    except ValueError:
+        ollama_timeout = 2.0
+
     t0 = time.monotonic()
     try:
         import httpx
-        async with httpx.AsyncClient(timeout=2.0) as client:
-            r = await client.get("http://127.0.0.1:11434/api/version")
+        async with httpx.AsyncClient(timeout=ollama_timeout) as client:
+            r = await client.get(f"{ollama_url}/api/version")
             r.raise_for_status()
             ver = r.json().get("version", "unknown")
         return InfraCheck(
@@ -298,8 +338,11 @@ async def collect_trust_index(session, tenant_id: UUID) -> dict[str, Any]:
     try:
         from src.dqa.trust_v2 import SCOPE_FACTORY, TrustIndexV2Calculator
         from src.dqa.trust_gates import effective_mode, load_gate_config
+        from src.dqa.trust_signals import curated_signals_provider
 
-        calc = TrustIndexV2Calculator(session, tenant_id)
+        calc = TrustIndexV2Calculator(
+            session, tenant_id, signals_provider=curated_signals_provider,
+        )
         result = await calc.compute_for_scope(SCOPE_FACTORY)
         gate_cfg = await load_gate_config(session, tenant_id)
         gates = effective_mode(result.composite, gate_cfg)
@@ -313,7 +356,13 @@ async def collect_trust_index(session, tenant_id: UUID) -> dict[str, Any]:
             "source": "live",
         }
     except Exception as exc:
-        return {"error": f"{type(exc).__name__}: {str(exc)[:200]}", "source": "fallback"}
+        # Onda 1.5 / 2.2 — fail-loud + sanitised: full detail goes to logs;
+        # the API response only exposes the exception type to avoid
+        # leaking DB/role internals to the dashboard.
+        logger.warning(
+            "collect_trust_index fallback for tenant=%s: %r", tenant_id, exc,
+        )
+        return {"error": type(exc).__name__, "source": "fallback"}
 
 
 async def collect_commit_cadence(session, tenant_id: UUID) -> dict[str, Any]:
@@ -351,4 +400,8 @@ async def collect_commit_cadence(session, tenant_id: UUID) -> dict[str, Any]:
             "source": "live",
         }
     except Exception as exc:
-        return {"error": f"{type(exc).__name__}: {str(exc)[:200]}", "source": "fallback"}
+        # Onda 1.5 / 2.2 — fail-loud + sanitised (same rationale).
+        logger.warning(
+            "collect_commit_cadence fallback for tenant=%s: %r", tenant_id, exc,
+        )
+        return {"error": type(exc).__name__, "source": "fallback"}
