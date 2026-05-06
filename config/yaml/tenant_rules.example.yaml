@@ -1,0 +1,84 @@
+# ProdPlan ONE — tenant_rules.example.yaml
+# Sprint Q.17.B reference. Real tenant_rules.yaml is per-tenant and
+# populated via the /regras page (Q.17.C). This example shows the DSL
+# shape so devs/admins can hand-write rules in emergencies.
+#
+# Schema: src/governance/yaml_policy/rule_schema.py (TenantRulesYaml)
+
+version: 1
+schema_name: tenant_rules.v1
+
+rules:
+  # 1. Single-condition trigger + 1 action (alert).
+  - id: mold-k1-7ml-03-near-cycle-cap
+    description: >
+      Quando o molde K1 7 ML (03) atingir 850 usos, alertar manutenção.
+      Threshold derivado do ciclo médio observado (800-900 usos antes
+      de degradar visivelmente).
+    when:
+      event: mold_usage_threshold
+      conditions:
+        - { field: mold_code, op: eq, value: "K1 7 ML (03)" }
+        - { field: uses_count, op: gte, value: 850 }
+    then:
+      - action: alert
+        params:
+          severity: high
+          title: "Molde K1 7 ML (03) próximo do limite de ciclo"
+          message_pt: "Atingiu 850 usos. Avaliar manutenção preventiva."
+          entity_refs: ["mold:K1-7ML-03"]
+    constraints:
+      axioms_required: [mold_exclusive]
+    safety:
+      max_fires_per_day: 1
+
+  # 2. Multi-condition + reassign action (scheduling intervention).
+  - id: paulo-friday-replacement-2026
+    description: >
+      Se o Paulo Gomes faltar à 6ªf de manhã, alocar Laminagem ao
+      Carlos Santos. Padrão observado em 8 ausências em 2026.
+    when:
+      event: worker_absent
+      conditions:
+        - { field: worker_name, op: eq, value: "Paulo Gomes" }
+        - { field: day_of_week, op: eq, value: friday }
+        - { field: shift, op: eq, value: morning }
+    then:
+      - action: reassign_worker
+        params:
+          phase_id: laminagem
+          replacement_worker_id: "carlos-santos-uuid"
+          reason_pt: "Substituição automática por padrão histórico"
+    constraints:
+      axioms_required: [skill_match, capacity_non_negative]
+    safety:
+      max_fires_per_day: 2
+      expires: 2026-12-31
+
+  # 3. KPI-driven block + notify (multi-action).
+  - id: throughput-collapse-block-friday-changes
+    description: >
+      Quando o throughput cai abaixo de €25K/dia à 6ªf, bloquear novas
+      alterações de schedule e notificar o gestor. Evita pânico
+      operacional num dia já difícil.
+    when:
+      event: kpi_threshold_crossed
+      conditions:
+        - { field: kpi_name, op: eq, value: throughput_eur_day }
+        - { field: kpi_value, op: lt, value: 25000 }
+    then:
+      - action: block
+        params:
+          reason_pt: "Throughput abaixo de €25K — bloqueio de alterações até reunião"
+          scope: schedule
+      - action: notify
+        params:
+          channel: alerts
+          topic: throughput_collapse
+          payload:
+            severity: critical
+            kpi: throughput_eur_day
+    constraints:
+      axioms_required: [safety_net_baseline]
+    safety:
+      max_fires_per_day: 1

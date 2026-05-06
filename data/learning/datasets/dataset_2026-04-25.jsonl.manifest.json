@@ -1,0 +1,33 @@
+{
+  "output_path": "data\\learning\\datasets\\dataset_2026-04-25.jsonl",
+  "triplets_total": 233,
+  "by_kind": {
+    "synthetic_seed": 50,
+    "excel_derived": 183
+  },
+  "by_category": {
+    "QUALITY": 19,
+    "CAPACITY": 85,
+    "WORKFORCE": 50,
+    "CUSTOMER": 55,
+    "OTHER": 19,
+    "COST": 2,
+    "MOLD": 3
+  },
+  "sources": [
+    {
+      "path": "data\\learning\\datasets\\excel_derived_v1.jsonl",
+      "kind": "dpo",
+      "sha256": "0f9d89a0b621348adb0b091f23f075864108b707151225159edec5dc6364c533",
+      "triplets": 183
+    },
+    {
+      "path": "data\\learning\\datasets\\synthetic_seeds_v1.jsonl",
+      "kind": "dpo",
+      "sha256": "d75bc419d13dc9a1a5fff60ddca10e40d964fe60c5810d11e7cd519d2d2fcc66",
+      "triplets": 50
+    }
+  ],
+  "seed": 42,
+  "created_at": "2026-04-25T21:22:16.305313+00:00"
+}
