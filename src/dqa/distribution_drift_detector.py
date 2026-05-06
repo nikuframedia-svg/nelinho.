@@ -1,8 +1,14 @@
 """
-ProdPlan ONE - Drift Detection
-===============================
+ProdPlan ONE - Distribution Drift Detection
+============================================
 
 Detect statistical drift in data distributions using Kolmogorov-Smirnov test.
+
+Onda 3.3 — renamed from `drift_detector.py` to disambiguate from
+`src/factory_data_product/ingest/drift_detector.py`, which detects
+**schema** drift (added/removed/renamed columns), not distribution drift.
+The two responsibilities are independent and the shared name made grep
+and imports ambiguous.
 """
 
 import logging

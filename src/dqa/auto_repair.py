@@ -21,15 +21,33 @@ logger = logging.getLogger(__name__)
 class AutoRepairEngine:
     """
     Repair low-quality data automatically.
-    
-    Triggered when 0.65 <= TrustIndex < 0.70.
-    
+
+    Triggered when TrustIndex < REPAIR_UPPER_BOUND (default 0.70).
+
     Strategies:
     - Forward-fill: Missing values → last historical value
     - Mean imputation: If no history → mean of historical values
     - Outlier clamping: Z-score > 3σ → clamp to ±3σ
     """
-    
+
+    # Onda 1.4 — auto-repair triggers below the AUTO_COMMIT gate (0.70 by
+    # default). Above the gate, the data is already trusted enough to commit;
+    # below, repair-then-recompute is preferable to rejecting outright.
+    REPAIR_UPPER_BOUND = 0.70
+
+    def __init__(
+        self,
+        min_sample_size: int = 10,
+        outlier_z_threshold: float = 3.0,
+    ) -> None:
+        # Onda 3.6 — minimum samples before clamp_outliers will engage. 10
+        # is a reasonable z-score floor; tenants with sparse data can drop
+        # to 5 (with reduced confidence in the resulting bounds). Wired
+        # via TenantConfig at the calling layer; the engine itself stays
+        # session-free.
+        self.min_sample_size = min_sample_size
+        self.outlier_z_threshold = outlier_z_threshold
+
     def repair(
         self,
         entity: Dict[str, Any],
@@ -37,20 +55,20 @@ class AutoRepairEngine:
         historical_data: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
         """
-        Repair entity if TrustIndex 0.65-0.70.
-        
+        Repair entity when TrustIndex < REPAIR_UPPER_BOUND (0.70).
+
         Args:
             entity: Entity dictionary to repair
-            trust_index: Current TrustIndex (must be 0.65 <= TI < 0.70)
+            trust_index: Current TrustIndex (any value in [0, 1])
             historical_data: List of historical entity dictionaries
-        
+
         Returns:
             {
                 entity: Dict (repaired entity),
                 repairs: List[Dict] (list of repair actions),
             }
         """
-        if trust_index < 0.65 or trust_index >= 0.70:
+        if trust_index >= self.REPAIR_UPPER_BOUND:
             return {"entity": entity, "repairs": []}
         
         repaired = entity.copy()
@@ -140,20 +158,21 @@ class AutoRepairEngine:
                 if isinstance(d.get(key), (int, float))
             ]
             
-            if len(historical_values) < 10:
+            if len(historical_values) < self.min_sample_size:
                 continue  # Not enough data
-            
+
             mu = np.mean(historical_values)
             sigma = np.std(historical_values)
-            
+
             if sigma == 0:
                 continue  # No variance
-            
+
             z_score = abs((value - mu) / sigma)
-            
-            if z_score > 3:
-                # Clamp to ±3σ
-                clamped_value = np.clip(value, mu - 3*sigma, mu + 3*sigma)
+
+            if z_score > self.outlier_z_threshold:
+                # Clamp to ±N·σ where N == self.outlier_z_threshold
+                z = self.outlier_z_threshold
+                clamped_value = np.clip(value, mu - z * sigma, mu + z * sigma)
                 repaired[key] = clamped_value
                 repairs.append({
                     "field": key,
