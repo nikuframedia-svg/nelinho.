@@ -274,6 +274,14 @@ export function WorkforceDashboard() {
   const dependencyGraph = useMemo(() => generateDependencyGraphFromData(phaseRisks, employeesCount), [phaseRisks, employeesCount]);
   const trainingRecommendations = useMemo(() => generateTrainingRecommendationsFromRisks(phaseRisks), [phaseRisks]);
 
+  // Sprint Q.12 — Detect synthetic fallback (sem `phases_with_risk`
+  // estamos a gerar fases com Math.random()). Sinalizar ao operador
+  // em vez de apresentar dados inventados como reais.
+  const isSyntheticData = useMemo(() => {
+    if (isLoadingSkillsRisk) return false;
+    return !skillsRiskData?.data?.phases_with_risk && phaseRisks.length > 0;
+  }, [skillsRiskData, phaseRisks.length, isLoadingSkillsRisk]);
+
   // Calculate summary stats
   const summary = useMemo(() => {
     const totalPhases = phaseRisks.length;
@@ -425,6 +433,25 @@ export function WorkforceDashboard() {
         </div>
       }
     >
+      {/* Synthetic-data banner — só aparece quando o endpoint não retorna `phases_with_risk` */}
+      {isSyntheticData && (
+        <div className="mb-6 bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
+            <div>
+              <h3 className="font-semibold text-amber-400 text-sm mb-1">
+                Dados sintéticos — API workforce não retornou risco real
+              </h3>
+              <p className="text-xs text-slate-400">
+                As fases mostradas abaixo são geradas a partir do total de skills/fases conhecido,
+                mas os <strong>nomes, números e níveis de risco são placeholder</strong>.
+                Ingestir o Excel NELO ou verificar o endpoint <code className="bg-slate-800 px-1 rounded">/factory/skills-risk</code>.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Summary Stats */}
       <div className="grid grid-cols-5 gap-4 mb-6">
         <DarkStatCard

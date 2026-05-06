@@ -132,6 +132,13 @@ export function ABCPage() {
               {filteredABC.length === 0 && (
                 <DarkTableRow><DarkTableCell colSpan={7} className="text-center py-12"><Package size={40} className="mx-auto mb-3 text-text-tertiary opacity-50" /><p className="text-text-secondary">No ABC data</p></DarkTableCell></DarkTableRow>
               )}
+              {filteredABC.length > 50 && (
+                <DarkTableRow>
+                  <DarkTableCell colSpan={7} className="text-center text-xs text-text-secondary py-2">
+                    A mostrar 50 de {filteredABC.length} SKUs. Refina a pesquisa para ver mais.
+                  </DarkTableCell>
+                </DarkTableRow>
+              )}
             </DarkTableBody>
           </DarkTable>
         </DarkCard>

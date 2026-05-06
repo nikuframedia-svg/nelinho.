@@ -45,39 +45,29 @@ import { TrustBadge } from '../../components/capabilities/TrustGate';
 // Trust index for allocation data
 const ALLOCATIONS_TRUST_INDEX = 55;
 
-// Mock allocation data based on FuncionariosFaseOrdemFabrico
-function generateAllocationData() {
-  const phases = [
-    'Laminagem', 'Acabamento', 'Pintura', 'Montagem', 'Rotomoldagem',
-    'Infusão', 'Prep. Molde', 'Polimento', 'Controlo Qualidade'
-  ];
-  
-  const employees = [
-    'João Silva', 'Maria Santos', 'Pedro Ferreira', 'Ana Costa', 'Carlos Lima',
-    'Sofia Oliveira', 'Miguel Rodrigues', 'Inês Martins', 'Ricardo Alves', 'Helena Sousa'
-  ];
-
-  return phases.map((phase, i) => ({
-    id: `phase-${i}`,
-    phaseName: phase,
-    assignedCount: Math.floor(Math.random() * 15) + 1,
-    chiefId: `emp-${i}`,
-    chiefName: employees[i % employees.length],
-    isChief: true,
-    lastUpdated: new Date(Date.now() - Math.random() * 30 * 24 * 60 * 60 * 1000).toISOString(),
-  }));
+interface PhaseAllocation {
+  id: string;
+  phaseName: string;
+  assignedCount: number;
+  chiefId: string;
+  chiefName: string;
+  isChief: boolean;
+  lastUpdated: string;
 }
 
 export function AllocationsPage() {
   const [search, setSearch] = useState('');
   const [showWarning, setShowWarning] = useState(true);
 
-  // Generate allocation data
-  const allocations = useMemo(() => generateAllocationData(), []);
+  // Sprint Q.12 — antes de existir endpoint real para
+  // FuncionariosFaseOrdemFabrico, devolvemos lista vazia em vez de
+  // gerar nomes ("João Silva", "Maria Santos") com Math.random() que
+  // pareciam reais à frente do CEO.
+  const allocations: PhaseAllocation[] = useMemo(() => [], []);
 
   const filteredAllocations = useMemo(() => {
     if (!search) return allocations;
-    return allocations.filter(a => 
+    return allocations.filter(a =>
       a.phaseName.toLowerCase().includes(search.toLowerCase()) ||
       a.chiefName.toLowerCase().includes(search.toLowerCase())
     );
@@ -87,7 +77,7 @@ export function AllocationsPage() {
     totalPhases: allocations.length,
     totalAssigned: allocations.reduce((sum, a) => sum + a.assignedCount, 0),
     withChief: allocations.filter(a => a.isChief).length,
-    coverage: 58.5, // % from FuncionariosFaseOrdemFabrico
+    coverage: 0, // sem ligação ao endpoint
   }), [allocations]);
 
   return (
@@ -250,30 +240,44 @@ export function AllocationsPage() {
             </DarkTableRow>
           </DarkTableHead>
           <DarkTableBody>
-            {filteredAllocations.map((alloc) => (
-              <DarkTableRow key={alloc.id}>
-                <DarkTableCell className="text-text-white font-medium">
-                  {alloc.phaseName}
-                </DarkTableCell>
-                <DarkTableCell>
-                  <div className="flex items-center gap-2">
-                    <span className="text-slate-300">{alloc.chiefName}</span>
-                    {alloc.isChief && (
-                      <DarkBadge variant="info" size="sm">Chefe</DarkBadge>
-                    )}
-                  </div>
-                </DarkTableCell>
-                <DarkTableCell>
-                  <span className="text-slate-300">{alloc.assignedCount} pessoas</span>
-                </DarkTableCell>
-                <DarkTableCell>
-                  <DarkBadge variant="neutral" size="sm">Estrutural</DarkBadge>
-                </DarkTableCell>
-                <DarkTableCell>
-                  <TrustBadge trustIndex={ALLOCATIONS_TRUST_INDEX} size="sm" showLabel={false} />
+            {filteredAllocations.length === 0 ? (
+              <DarkTableRow>
+                <DarkTableCell colSpan={5} className="text-center py-12">
+                  <Users size={40} className="mx-auto mb-3 text-text-tertiary opacity-50" />
+                  <p className="text-text-secondary mb-1">
+                    Endpoint de alocações ainda não disponível
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    Aguarda integração com <code className="bg-slate-700 px-1 rounded">FuncionariosFaseOrdemFabrico</code>
+                  </p>
                 </DarkTableCell>
               </DarkTableRow>
-            ))}
+            ) : (
+              filteredAllocations.map((alloc) => (
+                <DarkTableRow key={alloc.id}>
+                  <DarkTableCell className="text-text-white font-medium">
+                    {alloc.phaseName}
+                  </DarkTableCell>
+                  <DarkTableCell>
+                    <div className="flex items-center gap-2">
+                      <span className="text-slate-300">{alloc.chiefName}</span>
+                      {alloc.isChief && (
+                        <DarkBadge variant="info" size="sm">Chefe</DarkBadge>
+                      )}
+                    </div>
+                  </DarkTableCell>
+                  <DarkTableCell>
+                    <span className="text-slate-300">{alloc.assignedCount} pessoas</span>
+                  </DarkTableCell>
+                  <DarkTableCell>
+                    <DarkBadge variant="neutral" size="sm">Estrutural</DarkBadge>
+                  </DarkTableCell>
+                  <DarkTableCell>
+                    <TrustBadge trustIndex={ALLOCATIONS_TRUST_INDEX} size="sm" showLabel={false} />
+                  </DarkTableCell>
+                </DarkTableRow>
+              ))
+            )}
           </DarkTableBody>
         </DarkTable>
       </DarkCard>
