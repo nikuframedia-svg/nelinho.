@@ -7,6 +7,16 @@ import { cogsApi, productsApi } from '../../lib/api';
 import { BarChart } from '../../components/charts';
 import { useToastContext } from '../../components/ToastProvider';
 
+// Sprint Q.12 — formatador único pt-PT. Antes `toLocaleString()` sem args
+// herdava o locale do browser e em EN-US mostrava "€1,234.56" em vez de
+// "€1.234,56".
+const eurFmt = new Intl.NumberFormat('pt-PT', {
+  style: 'currency',
+  currency: 'EUR',
+  maximumFractionDigits: 2,
+});
+const formatEur = (value: number): string => eurFmt.format(value);
+
 export function COGSPage() {
   const [filterCategory, setFilterCategory] = useState<string>('ALL');
   const [search, setSearch] = useState('');
@@ -97,10 +107,10 @@ export function COGSPage() {
 
       <div className="grid grid-cols-5 gap-4 mb-6">
         <DarkStatCard icon={<DollarSign size={18} />} label="Products" value={stats.count} size="sm" />
-        <DarkStatCard icon={<DollarSign size={18} />} iconBg="bg-accent/20" label="Total COGS" value={`€${stats.totalCOGS.toLocaleString()}`} size="sm" />
-        <DarkStatCard icon={<TrendingUp size={18} />} iconBg="bg-blue/20" label="Avg COGS" value={`€${stats.avgCOGS.toFixed(2)}`} size="sm" />
-        <DarkStatCard icon={<DollarSign size={18} />} iconBg="bg-purple/20" label="Materials" value={`€${stats.totalMaterials.toLocaleString()}`} size="sm" />
-        <DarkStatCard icon={<DollarSign size={18} />} iconBg="bg-amber/20" label="Labor" value={`€${stats.totalLabor.toLocaleString()}`} size="sm" />
+        <DarkStatCard icon={<DollarSign size={18} />} iconBg="bg-accent/20" label="Total COGS" value={formatEur(stats.totalCOGS)} size="sm" />
+        <DarkStatCard icon={<TrendingUp size={18} />} iconBg="bg-blue/20" label="Avg COGS" value={formatEur(stats.avgCOGS)} size="sm" />
+        <DarkStatCard icon={<DollarSign size={18} />} iconBg="bg-purple/20" label="Materials" value={formatEur(stats.totalMaterials)} size="sm" />
+        <DarkStatCard icon={<DollarSign size={18} />} iconBg="bg-amber/20" label="Labor" value={formatEur(stats.totalLabor)} size="sm" />
       </div>
 
       {isLoading ? (
@@ -132,14 +142,21 @@ export function COGSPage() {
                   <DarkTableRow key={cogs.id || i}>
                     <DarkTableCell className="text-text-white">{cogs.product_name || '-'}</DarkTableCell>
                     <DarkTableCell mono className="text-text-tertiary">{cogs.product_code || '-'}</DarkTableCell>
-                    <DarkTableCell mono>€{(cogs.material_cost || 0).toFixed(2)}</DarkTableCell>
-                    <DarkTableCell mono>€{(cogs.labor_cost || 0).toFixed(2)}</DarkTableCell>
-                    <DarkTableCell mono>€{(cogs.overhead_cost || 0).toFixed(2)}</DarkTableCell>
-                    <DarkTableCell mono className="text-accent font-semibold">€{(cogs.total_cogs || 0).toFixed(2)}</DarkTableCell>
+                    <DarkTableCell mono>{formatEur(cogs.material_cost || 0)}</DarkTableCell>
+                    <DarkTableCell mono>{formatEur(cogs.labor_cost || 0)}</DarkTableCell>
+                    <DarkTableCell mono>{formatEur(cogs.overhead_cost || 0)}</DarkTableCell>
+                    <DarkTableCell mono className="text-accent font-semibold">{formatEur(cogs.total_cogs || 0)}</DarkTableCell>
                   </DarkTableRow>
                 ))}
                 {filteredCOGS.length === 0 && (
                   <DarkTableRow><DarkTableCell colSpan={6} className="text-center py-12"><DollarSign size={40} className="mx-auto mb-3 text-text-tertiary opacity-50" /><p className="text-text-secondary">No COGS data</p></DarkTableCell></DarkTableRow>
+                )}
+                {filteredCOGS.length > 50 && (
+                  <DarkTableRow>
+                    <DarkTableCell colSpan={6} className="text-center text-xs text-text-secondary py-2">
+                      A mostrar 50 de {filteredCOGS.length} produtos. Refina a pesquisa para ver mais.
+                    </DarkTableCell>
+                  </DarkTableRow>
                 )}
               </DarkTableBody>
             </DarkTable>
