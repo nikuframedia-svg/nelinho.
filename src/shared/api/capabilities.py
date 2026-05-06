@@ -15,12 +15,13 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
 
+from src.shared.auth.headers import require_tenant_header
 from src.shared.database import get_session
 from src.factory_data_product.config import (
     BLOCKED_METRICS,
@@ -494,9 +495,7 @@ class CapabilityEvaluator:
 # API ENDPOINTS
 # =============================================================================
 
-def get_tenant_id(x_tenant_id: UUID = Header(default=UUID("00000000-0000-0000-0000-000000000000"))) -> UUID:
-    """Extract tenant ID from header."""
-    return x_tenant_id
+get_tenant_id = require_tenant_header
 
 
 @router.get("/", response_model=CapabilitiesResponse)

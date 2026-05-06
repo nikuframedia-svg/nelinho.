@@ -16,15 +16,14 @@ import logging
 from contextlib import AbstractAsyncContextManager
 from datetime import datetime
 from typing import Callable, Optional
-from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .database import async_session_factory
 from .outbox_models import EventOutbox, EventDLQ
-from .kafka_client import KafkaProducerClient, EventBase, EventEnvelope
+from .kafka_client import KafkaProducerClient, EventBase
 from .event_schemas import validate_event_payload
+from .event_contracts import resolve_topic
 
 logger = logging.getLogger(__name__)
 
@@ -67,12 +66,16 @@ class OutboxDispatcher:
         Args:
             session: Database session
         """
-        # Get pending events (limited to batch size, ordered by created_at)
+        # Sprint S5 / Π5: row-level lock (FOR UPDATE SKIP LOCKED) so multiple
+        # dispatcher instances can run in parallel without publishing the same
+        # event twice. Postgres-only; the test suite uses fakes that ignore
+        # `with_for_update`, so this is a no-op there.
         stmt = (
             select(EventOutbox)
             .where(EventOutbox.status == "pending")
             .order_by(EventOutbox.created_at.asc())
             .limit(self.batch_size)
+            .with_for_update(skip_locked=True)
         )
         
         result = await session.execute(stmt)
@@ -113,8 +116,10 @@ class OutboxDispatcher:
                     payload=payload_dict,
                 )
                 
-                # Determine topic from event_type (e.g., "plan.schedule.committed" -> "prodplan.plan.schedule.committed")
-                topic = f"prodplan.{event.event_type}"
+                # Sprint S4 / Φ1: route via the canonical event_type→topic
+                # mapping. The previous ad-hoc concatenation produced topics
+                # consumers never subscribed to — events went into the void.
+                topic = resolve_topic(event.event_type)
                 
                 # Publish to Kafka
                 pub_result = await self.kafka_producer.publish(

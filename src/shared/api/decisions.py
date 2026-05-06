@@ -10,11 +10,12 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Header, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select, and_, or_, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.shared.auth.headers import require_tenant_header, require_user_uuid
 from src.shared.database import get_session
 from src.shared.models.governance import SharedDecisionRun, DecisionApproval, DecisionStatus, ApprovalStatus
 
@@ -22,18 +23,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/decisions", tags=["Decisions"])
 
-# Default user ID for development (when no auth system is in place)
-DEFAULT_USER_ID = UUID("00000000-0000-0000-0000-000000000001")
-
-
-def get_tenant_id(x_tenant_id: UUID = Header(...)) -> UUID:
-    """Extract tenant ID from header."""
-    return x_tenant_id
-
-
-def get_user_id(x_user_id: Optional[UUID] = Header(None)) -> UUID:
-    """Extract user ID from header (optional, defaults to placeholder)."""
-    return x_user_id or DEFAULT_USER_ID
+get_tenant_id = require_tenant_header
+get_user_id = require_user_uuid
 
 
 # ============================================================================

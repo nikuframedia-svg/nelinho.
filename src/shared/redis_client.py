@@ -41,10 +41,14 @@ class RedisClient:
         if self._pool is not None:
             return
         
+        # Sprint S6: explicit timeouts so a stalled Redis cannot block the
+        # async event loop forever. Was unbounded.
         self._pool = redis.ConnectionPool.from_url(
             settings.redis_url,
             max_connections=settings.redis_pool_size,
             decode_responses=True,
+            socket_timeout=5.0,
+            socket_connect_timeout=2.0,
         )
         self._client = redis.Redis(connection_pool=self._pool)
         
