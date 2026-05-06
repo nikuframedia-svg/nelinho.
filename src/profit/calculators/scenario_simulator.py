@@ -169,7 +169,17 @@ class ScenarioSimulator:
         
         # If volume changes, fixed costs spread differently
         new_quantity = base_result.quantity * volume_multiplier
-        
+
+        # Sprint Q.12 — guarda explícita; volume_multiplier=0 (cenário
+        # "produção zero") e quantity_base=0 antes davam ZeroDivisionError
+        # com 500 ao chamador.
+        if new_quantity <= 0:
+            raise ValueError(
+                "scenario new_quantity must be > 0; "
+                f"got volume_multiplier={volume_multiplier}, "
+                f"base_quantity={base_result.quantity}"
+            )
+
         # Recalculate per-unit
         new_total = (
             new_material + new_labor + new_machine +

@@ -27,22 +27,26 @@ class OrderMargin:
     cogs_eur: Decimal
     shipping_eur: Decimal
     margin_eur: Decimal = field(init=False)
-    margin_pct: Optional[float] = field(init=False, default=None)
+    # Sprint Q.12 — manter Decimal até à serialização final. O cast para
+    # float perdia precisão em agregações de milhares de ordens.
+    margin_pct: Optional[Decimal] = field(init=False, default=None)
 
     def __post_init__(self) -> None:
         self.margin_eur = self.revenue_eur - self.cogs_eur - self.shipping_eur
         if self.revenue_eur > 0:
-            self.margin_pct = float(self.margin_eur / self.revenue_eur)
+            self.margin_pct = (self.margin_eur / self.revenue_eur).quantize(
+                Decimal("0.0001")
+            )
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "order_id": self.order_id,
-            "revenue_eur": float(self.revenue_eur),
-            "cogs_eur": float(self.cogs_eur),
-            "shipping_eur": float(self.shipping_eur),
-            "margin_eur": float(self.margin_eur),
+            "revenue_eur": str(self.revenue_eur),
+            "cogs_eur": str(self.cogs_eur),
+            "shipping_eur": str(self.shipping_eur),
+            "margin_eur": str(self.margin_eur),
             "margin_pct": (
-                round(self.margin_pct, 4) if self.margin_pct is not None else None
+                str(self.margin_pct) if self.margin_pct is not None else None
             ),
         }
 

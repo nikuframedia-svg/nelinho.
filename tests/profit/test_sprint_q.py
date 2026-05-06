@@ -167,7 +167,9 @@ class TestMarginCalculator:
             shipping_eur=Decimal("100"),
         )
         assert m.margin_eur == Decimal("300")
-        assert m.margin_pct == 0.3
+        # Sprint Q.12 — margin_pct passou a Decimal para preservar precisão
+        # em agregações; comparar por igualdade em Decimal.
+        assert m.margin_pct == Decimal("0.3000")
 
     def test_margin_pct_none_when_revenue_zero(self):
         m = OrderMargin(
