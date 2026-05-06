@@ -812,7 +812,7 @@ export function CopilotDrawer({ isOpen, onClose, initialQuery, openedViaFab = fa
               onChange={(e) => setInput(e.target.value)}
               onKeyPress={handleKeyPress}
               placeholder="Faz uma pergunta ao COPILOT…"
-              className="flex-1 px-5 py-3 border border-slate-300/60 rounded-full focus:outline-none focus:ring-2 focus:ring-[#1a2744]/20 focus:border-[#1a2744] transition-all duration-200 bg-white shadow-sm text-sm min-w-0"
+              className="flex-1 px-5 py-3 border border-slate-300/60 rounded-full focus:outline-none focus:ring-2 focus:ring-[#1a2744]/20 focus:border-[#1a2744] transition-all duration-200 bg-white text-slate-900 placeholder:text-slate-400 shadow-sm text-sm min-w-0"
               disabled={askMutation.isPending || createConversationMutation.isPending}
             />
             <button
