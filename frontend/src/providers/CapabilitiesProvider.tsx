@@ -118,7 +118,8 @@ const CapabilitiesContext = createContext<CapabilitiesContextValue | null>(null)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 async function fetchCapabilities(): Promise<CapabilitiesResponse> {
-  const tenantId = localStorage.getItem('tenant_id') || '00000000-0000-0000-0000-000000000000';
+  // Q.18.AUTH — dev tenant default (não-zero UUID, aceite por require_tenant_header).
+  const tenantId = localStorage.getItem('tenant_id') || '00000000-0000-0000-0000-000000000001';
   
   const response = await fetch(`${API_BASE}/v1/capabilities/`, {
     headers: {
