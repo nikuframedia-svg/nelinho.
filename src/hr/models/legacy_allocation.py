@@ -2,7 +2,14 @@
 ProdPlan ONE - Legacy Allocation Model
 ======================================
 
-Model for legacy allocations (from SQLite).
+Model for legacy allocations (from SQLite migration).
+
+DEPRECATED (Sprint Q.12): only the SQLAlchemy class is kept so Alembic
+autogenerate doesn't propose dropping the table. No service code reads
+from it anymore — `HRAllocation` em ``src.hr.models.allocation`` is the
+canonical model. Remove together with the corresponding table in a
+future sprint after confirming nothing in `factory_data_product`
+ingestion still backfills it.
 """
 
 from datetime import date, datetime
