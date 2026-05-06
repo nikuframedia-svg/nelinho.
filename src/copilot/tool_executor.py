@@ -105,6 +105,15 @@ class ToolExecutor:
         current_prompt = user_query
         current_history = list(history) if history else []
 
+        # Sprint Q.12 Onda 4.5 — abort the tool loop when the LLM keeps
+        # requesting the same broken thing. Without this we spent the
+        # entire ``MAX_TOOL_CALLS_PER_TURN`` budget feeding the same
+        # error back at the model only to watch it ask for the same
+        # tool again. Track the last-seen "error fingerprint" and
+        # break on repeat.
+        last_error_signature: Optional[str] = None
+        repeated_error_count = 0
+
         for iteration in range(MAX_TOOL_CALLS_PER_TURN + 1):
             response = await client.chat(
                 prompt=current_prompt,
@@ -156,6 +165,25 @@ class ToolExecutor:
                     "result_preview": str(tool_result)[:500],
                     "elapsed_ms": elapsed_ms,
                 })
+
+            # Sprint Q.12 Onda 4.5 — track repeated errors from the
+            # same tool with the same params. Two iterations into the
+            # same hole = stop digging.
+            if isinstance(tool_result, dict) and "error" in tool_result:
+                signature = f"{tool_id}|{json.dumps(params, sort_keys=True, default=str)}|{tool_result.get('error')}"
+                if signature == last_error_signature:
+                    repeated_error_count += 1
+                    if repeated_error_count >= 1:
+                        logger.warning(
+                            "tool_executor: aborting after repeated identical "
+                            "error (tool=%s, error=%s) — returning current "
+                            "response instead of looping.",
+                            tool_id, tool_result.get("error"),
+                        )
+                        return response, tool_log
+                else:
+                    last_error_signature = signature
+                    repeated_error_count = 0
 
             # Feed tool result back to LLM
             result_text = json.dumps(tool_result, default=str)

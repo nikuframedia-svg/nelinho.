@@ -39,27 +39,49 @@ def chunk_text(
     # Aproximação: 4 chars = 1 token
     char_size = chunk_size * 4
     char_overlap = overlap * 4
-    
+
+    # Sprint Q.12 Onda 4.3 — never split mid-word. The previous
+    # implementation looked for a sentence break in the chunk window
+    # but, when none existed, copied ``char_size`` characters
+    # verbatim — which routinely cut entities like part numbers and
+    # operator names in half (one half landed in chunk N, the other
+    # in chunk N+1, and neither matched a query for the full token).
+    # We now prefer a sentence break, then fall back to a word
+    # boundary, and only as a last resort do we hard-cut.
     chunks = []
     start = 0
-    
+
     while start < len(text):
-        end = start + char_size
+        end = min(start + char_size, len(text))
         chunk = text[start:end]
-        
-        # Tentar quebrar em frase/ponto final
+
         if end < len(text):
-            last_period = chunk.rfind(".")
-            last_newline = chunk.rfind("\n")
-            break_point = max(last_period, last_newline)
-            
-            if break_point > char_size * 0.5:  # Se encontrou ponto razoável
-                chunk = chunk[:break_point + 1]
-                end = start + break_point + 1
-        
-        chunks.append(chunk.strip())
-        start = end - char_overlap  # Overlap
-    
+            # Prefer a sentence boundary (period / newline / exclamation
+            # / question mark) in the back half of the window.
+            soft_break = -1
+            for marker in (". ", ".\n", "\n\n", "?\n", "!\n", "\n"):
+                idx = chunk.rfind(marker)
+                if idx > char_size * 0.5:
+                    soft_break = idx + len(marker)
+                    break
+            if soft_break == -1:
+                # No sentence break — fall back to the last whitespace
+                # in the back half of the window so we never cut a word.
+                idx = chunk.rfind(" ", int(char_size * 0.5))
+                if idx > 0:
+                    soft_break = idx + 1
+            if soft_break > 0:
+                chunk = chunk[:soft_break]
+                end = start + soft_break
+
+        chunk = chunk.strip()
+        if chunk:
+            chunks.append(chunk)
+        # Advance with overlap, but never go backwards (would happen
+        # if a tiny chunk + large overlap made ``end - char_overlap``
+        # less than ``start``).
+        start = max(start + 1, end - char_overlap)
+
     return chunks
 
 

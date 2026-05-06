@@ -108,6 +108,7 @@ def attribution_analysis(
     observations: Optional[Any] = None,    # pandas.DataFrame or None
     sample_size: int = 200,
     seed: int = 42,
+    allow_synthetic: bool = False,
 ) -> AttributionReport:
     """Return per-node shares of the explained variance in ``target``.
 
@@ -149,6 +150,32 @@ def attribution_analysis(
 
     # Build the sample.
     if observations is None:
+        # Sprint Q.12 Onda 4.2 — refuse to attribute over data we just
+        # simulated from the DAG. Without ``allow_synthetic`` we'd be
+        # asking gcm to "explain" causation in numbers our own
+        # simulator generated — the contributions returned were a
+        # property of ``_simulate_dataset``, not the factory.
+        from src.shared.config import settings as _settings
+
+        if not allow_synthetic:
+            return AttributionReport(
+                target=target,
+                status="unavailable",
+                reason=(
+                    "attribution_analysis called without observations; "
+                    "refusing to fit GCM on simulated data. Pass "
+                    "observations= or set allow_synthetic=True in lab/CI."
+                ),
+            )
+        if _settings.environment == "production":
+            return AttributionReport(
+                target=target,
+                status="unavailable",
+                reason=(
+                    "synthetic attribution is disabled in production "
+                    "(self-validating against the simulator)."
+                ),
+            )
         df = _simulate_dataset(sample_size=sample_size, seed=seed)
         report_status = "degraded"
         report_reason = "simulated data — live observations not yet wired"
