@@ -31,18 +31,20 @@ WORKING_HOURS_PER_DAY = 8
 # Expected Volumetry (for sanity checks) - From Folha_IA_extra.xlsx
 # =============================================================================
 
+# Onda 3.1 — values verified directly against Folha_IA_extra.xlsx (see
+# `python -c "import openpyxl; …"` audit, 2026-05-02). Previous correction
+# notes that lived inline have been moved to the changelog.
 EXPECTED_VOLUMES = {
-    # From Folha_IA_extra.xlsx analysis (Context Pack data)
     "OrdensFabrico": {"min": 25000, "max": 30000, "expected": 27911},
     "FasesOrdemFabrico": {"min": 500000, "max": 560000, "expected": 529450},
     "FuncionariosFaseOrdemFabrico": {"min": 400000, "max": 450000, "expected": 423769},
     "OrdemFabricoErros": {"min": 80000, "max": 95000, "expected": 89836},
     "Funcionarios": {"min": 280, "max": 350, "expected": 301},
     "Moldes": {"min": 450, "max": 550, "expected": 510},
-    "Fases": {"min": 60, "max": 80, "expected": 71},  # CORRECTED (was 35)
-    "Modelos": {"min": 800, "max": 1000, "expected": 899},  # CORRECTED (was 150)
-    "FasesStandardModelos": {"min": 14000, "max": 17000, "expected": 15445},  # CORRECTED (was 2000)
-    "FuncionariosFasesAptos": {"min": 800, "max": 1000, "expected": 902},  # CORRECTED (was 3000)
+    "Fases": {"min": 60, "max": 80, "expected": 71},
+    "Modelos": {"min": 800, "max": 1000, "expected": 899},
+    "FasesStandardModelos": {"min": 14000, "max": 17000, "expected": 15445},
+    "FuncionariosFasesAptos": {"min": 800, "max": 1000, "expected": 902},
 }
 
 # =============================================================================

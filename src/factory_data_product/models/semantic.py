@@ -256,7 +256,7 @@ def get_view_sql(view_id: SemanticViewId) -> str:
             0.7 as trust_score
         FROM factory_curated."order" o
         LEFT JOIN factory_curated.order_phase op ON o.of_id = op.of_id AND o.ingestion_id = op.ingestion_id
-        WHERE o.ingestion_id = (SELECT active_ingestion_id FROM factory_meta.active_run WHERE id = 1)
+        WHERE o.ingestion_id = (SELECT active_ingestion_id FROM factory_meta.active_run ORDER BY activated_at_utc DESC LIMIT 1)
         GROUP BY o.of_id, o.produto_id, o.modelo_id, o.data_entrada, o.data_conclusao;
         """,
         
@@ -276,7 +276,7 @@ def get_view_sql(view_id: SemanticViewId) -> str:
             0.5 as trust_score
         FROM factory_curated.order_phase op
         LEFT JOIN factory_curated.phase_capacity pc ON op.fase_id = pc.fase_id AND op.ingestion_id = pc.ingestion_id
-        WHERE op.ingestion_id = (SELECT active_ingestion_id FROM factory_meta.active_run WHERE id = 1)
+        WHERE op.ingestion_id = (SELECT active_ingestion_id FROM factory_meta.active_run ORDER BY activated_at_utc DESC LIMIT 1)
           AND op.estado NOT IN ('Concluido', 'Fechado')
         GROUP BY op.fase_id, op.fase_nome, pc.capacidade_horas;
         """,
@@ -301,7 +301,7 @@ def get_view_sql(view_id: SemanticViewId) -> str:
             0.4 as trust_score
         FROM factory_curated.order_phase op
         LEFT JOIN factory_curated.phase_capacity pc ON op.fase_id = pc.fase_id AND op.ingestion_id = pc.ingestion_id
-        WHERE op.ingestion_id = (SELECT active_ingestion_id FROM factory_meta.active_run WHERE id = 1)
+        WHERE op.ingestion_id = (SELECT active_ingestion_id FROM factory_meta.active_run ORDER BY activated_at_utc DESC LIMIT 1)
         GROUP BY op.fase_id, op.fase_nome, pc.capacidade_horas;
         """,
         
@@ -321,7 +321,7 @@ def get_view_sql(view_id: SemanticViewId) -> str:
             0.6 as trust_score
         FROM factory_curated.mold_usage mu
         JOIN factory_curated.mold m ON mu.molde_id = m.molde_id AND mu.ingestion_id = m.ingestion_id
-        WHERE mu.ingestion_id = (SELECT active_ingestion_id FROM factory_meta.active_run WHERE id = 1)
+        WHERE mu.ingestion_id = (SELECT active_ingestion_id FROM factory_meta.active_run ORDER BY activated_at_utc DESC LIMIT 1)
         GROUP BY mu.molde_id, m.molde_nome
         HAVING COUNT(DISTINCT mu.of_id) > 1;
         """,
@@ -336,11 +336,13 @@ def get_view_sql(view_id: SemanticViewId) -> str:
             SUM(qe.quantidade) as total_erros,
             COUNT(DISTINCT qe.of_id) as total_ofs,
             ROUND(SUM(qe.quantidade)::numeric / NULLIF(COUNT(DISTINCT qe.of_id), 0) * 100, 1) as taxa_erro_pct,
-            100.0 - ROUND(SUM(qe.quantidade)::numeric / NULLIF(COUNT(DISTINCT qe.of_id), 0) * 100, 1) as fpy_pct,
+            -- Onda 1.7: clamp FPY to [0, 100]. Without this, OFs with
+            -- multiple errors per order push fpy_pct negative.
+            GREATEST(0, LEAST(100, 100.0 - ROUND(SUM(qe.quantidade)::numeric / NULLIF(COUNT(DISTINCT qe.of_id), 0) * 100, 1))) as fpy_pct,
             0.6 as trust_score
         FROM factory_curated.quality_event qe
         LEFT JOIN factory_curated.order_phase op ON qe.of_id = op.of_id AND qe.fase_id = op.fase_id AND qe.ingestion_id = op.ingestion_id
-        WHERE qe.ingestion_id = (SELECT active_ingestion_id FROM factory_meta.active_run WHERE id = 1)
+        WHERE qe.ingestion_id = (SELECT active_ingestion_id FROM factory_meta.active_run ORDER BY activated_at_utc DESC LIMIT 1)
         GROUP BY qe.fase_id, op.fase_nome, qe.molde_id, qe.erro_tipo;
         """,
         
@@ -361,7 +363,7 @@ def get_view_sql(view_id: SemanticViewId) -> str:
             COUNT(CASE WHEN sm.apto THEN 1 END) = 1 as single_point_of_failure,
             0.7 as trust_score
         FROM factory_curated.skill_matrix sm
-        WHERE sm.ingestion_id = (SELECT active_ingestion_id FROM factory_meta.active_run WHERE id = 1)
+        WHERE sm.ingestion_id = (SELECT active_ingestion_id FROM factory_meta.active_run ORDER BY activated_at_utc DESC LIMIT 1)
         GROUP BY sm.fase_id, sm.fase_nome;
         """,
         
@@ -379,7 +381,7 @@ def get_view_sql(view_id: SemanticViewId) -> str:
         FROM factory_curated."order" o
         LEFT JOIN factory_curated.order_phase op ON o.of_id = op.of_id AND o.ingestion_id = op.ingestion_id
         LEFT JOIN factory_curated.cost_reference cr ON op.fase_id = cr.fase_id AND op.ingestion_id = cr.ingestion_id
-        WHERE o.ingestion_id = (SELECT active_ingestion_id FROM factory_meta.active_run WHERE id = 1)
+        WHERE o.ingestion_id = (SELECT active_ingestion_id FROM factory_meta.active_run ORDER BY activated_at_utc DESC LIMIT 1)
         GROUP BY o.of_id, o.produto_id;
         """,
     }

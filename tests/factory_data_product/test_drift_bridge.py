@@ -33,9 +33,13 @@ INGESTION = UUID("22222222-2222-2222-2222-222222222222")
 
 
 def _snapshot(sheets: dict, ingestion_id: str = "ing"):
+    """Build a snapshot in the shape produced by SchemaSnapshot.to_dict():
+    {sheet_name: list[column_name]} — not {sheet_name: {"columns": [...]}}.
+    Onda 1.9 fix: the previous wrapping caused drift_bridge to read columns
+    as `.get("columns")` on a list, raising AttributeError silently."""
     return {
         "ingestion_id": ingestion_id,
-        "sheets": {name: {"columns": cols} for name, cols in sheets.items()},
+        "sheets": {name: list(cols) for name, cols in sheets.items()},
     }
 
 

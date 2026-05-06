@@ -404,39 +404,11 @@ class IngestEngine:
         if run:
             run.quality_gate_status = status
     
-    def _extract_to_raw(self, file_path: Path, ingestion_id: UUID) -> int:
-        """Extract Excel data to RAW storage."""
-        count = 0
-        
-        for sheet_name, row_num, payload, bk_fields in self.parser.iter_rows(file_path):
-            # Calculate hashes
-            row_hash = RowHasher.hash_row(payload)
-            bk_hash = None
-            if bk_fields:
-                bk_hash = RowHasher.hash_business_key(bk_fields, payload)
-            
-            # Store raw row
-            raw_row = {
-                "id": uuid4(),
-                "ingestion_id": ingestion_id,
-                "sheet_name": sheet_name,
-                "row_number": row_num,
-                "row_sha256": row_hash,
-                "business_key_sha256": bk_hash,
-                "payload_json": payload,
-                "ingested_at_utc": datetime.now(timezone.utc),
-            }
-            
-            self._raw_rows.append(raw_row)
-            count += 1
-        
-        # Update run stats
-        run = self._ingestion_runs.get(ingestion_id)
-        if run:
-            run.total_rows_raw = count
-        
-        return count
-    
+    # Onda 5.2 — `_extract_to_raw(file_path, …)` was deleted as dead
+    # code. It re-parsed the Excel a second time per ingest (~57 MB read
+    # for nothing) and was superseded by `_extract_to_raw_from_parsed`,
+    # which works on the already-parsed `ParsedExcel` from step 4.
+
     def _get_raw_rows(self, ingestion_id: UUID) -> List[Dict]:
         """Get RAW rows for an ingestion."""
         return [r for r in self._raw_rows if r["ingestion_id"] == ingestion_id]

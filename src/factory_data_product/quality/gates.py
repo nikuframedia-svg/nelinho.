@@ -14,6 +14,13 @@ from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Set
 from uuid import UUID
 
+from src.factory_data_product.excel_columns import (
+    CRITICAL_SHEETS as _EXCEL_CRITICAL_SHEETS,
+    OrdensFabrico as _OF,
+    FasesOrdemFabrico as _FOF,
+    Fases as _F,
+    Funcionarios as _Func,
+)
 from src.factory_data_product.models.meta import CheckSeverity
 
 
@@ -41,26 +48,24 @@ class QualityCheck:
     check_fn: Optional[Callable] = None
 
 
-# Required sheets
-REQUIRED_SHEETS = {
-    "OrdensFabrico",
-    "FasesOrdemFabrico",
-    "Fases",
-}
+# Onda 3.5 — sheet/column lists derive from the central catalogue, not
+# from inline literals. CRITICAL_SHEETS is the wider blueprint ("any of
+# these missing is fatal"); REQUIRED_SHEETS is the narrower runtime gate
+# ("at minimum we need these to even attempt curation").
+REQUIRED_SHEETS = {"OrdensFabrico", "FasesOrdemFabrico", "Fases"}
+assert REQUIRED_SHEETS <= _EXCEL_CRITICAL_SHEETS  # invariant
 
-# Required columns per sheet
-# NOTE: Column names must match EXACTLY what's in the Excel file (case-sensitive)
 REQUIRED_COLUMNS = {
-    "OrdensFabrico": ["Of_Id"],  # Excel uses Of_Id not OF_Id
-    "FasesOrdemFabrico": ["FaseOf_Id", "FaseOf_OfId", "FaseOf_FaseId"],  # Excel column names
-    "Fases": ["Fase_Id"],
+    "OrdensFabrico": [_OF.OF_ID],
+    "FasesOrdemFabrico": [_FOF.FASE_OF_ID, _FOF.OF_ID, _FOF.FASE_ID],
+    "Fases": [_F.FASE_ID],
 }
 
-# Numeric ranges
+# Numeric ranges — only fields actually present in the Excel.
 NUMERIC_RANGES = {
-    "FaseOf_HorasPrevistas": (0, 10000),
-    "FaseOf_HorasReais": (0, 10000),
-    "OF_QtdPorFazer": (0, 1000000),
+    _FOF.HORAS_PREVISTAS: (0, 10000),
+    _FOF.COEFICIENTE: (0, 10000),
+    _Func.VALOR_HORA: (0, 1000),
 }
 
 # PII fields to detect
@@ -156,17 +161,27 @@ def check_no_duplicate_business_keys(
             else:
                 seen_keys[sheet][bk_hash] = 1
     
-    # NOTE: Changed from BLOCKING to WARNING to allow ingestion with duplicates
-    # Real-world data often has duplicates that need to be handled during transformation
+    # Sprint Q.4 (≈2026-03): downgraded BLOCKING → WARNING porque o
+    # ficheiro NELO original tem duplicados estruturais em
+    # FasesOrdemFabrico que a etapa de transformação deduplica via
+    # business key + ingestion_id. Bloquear paralisava todos os imports.
+    # Sprint Q.12: documentar a alteração e expor `severity` para
+    # configuração futura (ver TODO).
+    # TODO(Sprint Q.13+): mover para `tenant_config["quality.duplicates"]`
+    #   com default `WARNING` e opção `BLOCKING` para tenants com dados
+    #   já limpos, em vez de hardcoded.
     return CheckResult(
         check_id="no_duplicate_business_keys",
-        severity=CheckSeverity.WARNING,  # Changed from BLOCKING
+        severity=CheckSeverity.WARNING,
         passed=len(duplicates) == 0,
         details={
             "duplicates_by_sheet": duplicates,
             "duplicate_count": sum(len(v) for v in duplicates.values()),
         },
-        message=f"Found {sum(len(v) for v in duplicates.values())} duplicate business keys (will be deduplicated)" if duplicates else None,
+        message=(
+            f"Found {sum(len(v) for v in duplicates.values())} duplicate "
+            f"business keys (will be deduplicated by transform step)"
+        ) if duplicates else None,
     )
 
 
@@ -219,47 +234,51 @@ def check_referential_integrity(
     raw_rows: List[Dict],
     context: Dict,
 ) -> CheckResult:
-    """Check referential integrity between sheets."""
+    """Check referential integrity between sheets.
+
+    Column names match Folha_IA_extra.xlsx exactly (case-sensitive):
+      OrdensFabrico.Of_Id, Fases.Fase_Id,
+      FasesOrdemFabrico.FaseOf_OfId, FasesOrdemFabrico.FaseOf_FaseId
+    """
     violations = []
-    
+
     # Collect IDs from master tables
     order_ids = set()
     fase_ids = set()
-    
+
     for row in raw_rows:
         sheet = row["sheet_name"]
         payload = row["payload_json"]
-        
+
         if sheet == "OrdensFabrico":
-            of_id = payload.get("OF_Id")
+            of_id = payload.get(_OF.OF_ID)
             if of_id:
                 order_ids.add(str(of_id))
-        
+
         elif sheet == "Fases":
-            fase_id = payload.get("Fase_Id")
+            fase_id = payload.get(_F.FASE_ID)
             if fase_id:
                 fase_ids.add(str(fase_id))
-    
+
     # Check references in detail tables
     for row in raw_rows:
         sheet = row["sheet_name"]
         payload = row["payload_json"]
-        
+
         if sheet == "FasesOrdemFabrico":
-            of_ref = payload.get("FaseOf_OrdemFabrico_Id")
-            fase_ref = payload.get("FaseOf_Fase_Id")
-            
+            of_ref = payload.get(_FOF.OF_ID)
+            # FaseOf_FaseId reference check skipped intentionally — the
+            # Fases master may be incomplete in legacy data; a missing
+            # match is more often a data-quality finding than a corruption.
+
             if of_ref and str(of_ref) not in order_ids:
                 violations.append({
                     "sheet": sheet,
                     "row": row["row_number"],
-                    "field": "FaseOf_OrdemFabrico_Id",
+                    "field": _FOF.OF_ID,
                     "value": of_ref,
                     "error": "missing_order",
                 })
-            
-            # Note: fase_ref might be valid even if not in Fases sheet
-            # Some systems don't maintain full fase master data
     
     return CheckResult(
         check_id="referential_integrity_order_phase",
