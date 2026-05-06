@@ -185,6 +185,12 @@ class TestProposeDecision:
         assert result["status"] == DecisionStatus.PROPOSED.value
 
     async def test_chains_hash_when_prior_exists(self, fake_session, tenant_id):
+        # Sprint Q.12 Onda 2.2 — propose_decision now consults
+        # is_kill_switch_active before reading the previous audit hash,
+        # so the FakeSession needs an extra ``None`` queued for that
+        # lookup. (Real PG ignores the row count when there's no
+        # active scope.)
+        fake_session.queue_scalar(None)  # is_kill_switch_active -> None
         fake_session.queue_scalar("prevhash123")  # _get_last_decision_hash
         svc = GovernanceService(fake_session, tenant_id)
 
@@ -392,7 +398,17 @@ class TestExecuteDecision:
 
         result = await svc.execute_decision(str(run.id), executed_by="bob")
 
-        assert result["status"] == DecisionStatus.EXECUTED.value
+        # Sprint Q.12 Onda 2.1 — ``scenario_publish`` has no concrete
+        # handler in the default registry, so the dispatcher correctly
+        # downgrades to EXECUTED_PARTIAL (audit row real, domain
+        # mutation skipped) instead of pretending it's done. Either
+        # status is acceptable here: the contract this test exercises
+        # is "outcome_hash is recomputed and the audit chain advances",
+        # which holds in both cases.
+        assert result["status"] in {
+            DecisionStatus.EXECUTED.value,
+            DecisionStatus.EXECUTED_PARTIAL.value,
+        }
         assert result["executed_by"] == "bob"
         assert run.audit_hash != original_hash  # hash re-computed with outcome
         assert run.outcome_hash is not None
@@ -456,7 +472,14 @@ class TestExecuteDecision:
 
         result = await svc.execute_decision(str(run.id), executed_by="bob")
         # Execution still completes even though publish raised.
-        assert result["status"] == DecisionStatus.EXECUTED.value
+        # Sprint Q.12 Onda 2.1 — accept EXECUTED_PARTIAL too: the
+        # decision_type used here has no handler, so the dispatcher
+        # correctly marks the row as partial. The point of this test
+        # is that the *Kafka* outage doesn't unwind the local writes.
+        assert result["status"] in {
+            DecisionStatus.EXECUTED.value,
+            DecisionStatus.EXECUTED_PARTIAL.value,
+        }
         assert run.outcome_hash is not None
 
 

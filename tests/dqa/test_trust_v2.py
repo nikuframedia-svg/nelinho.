@@ -95,8 +95,30 @@ def test_components_as_dict_includes_legacy_timeliness_alias():
 
 
 def test_causal_coherence_is_optional_and_not_weighted():
-    c = TrustComponents(causal_coherence=0.5)
-    assert c.composite(TrustWeights()) == c.composite(TrustWeights())  # no effect
+    """Onda 4.1 — verify CC really is excluded by comparing the SAME
+    components with vs without causal_coherence set. The previous version
+    of this test compared `c.composite(w) == c.composite(w)` which is a
+    tautology (any composite equals itself). This rewrite reads the
+    composite from a CC-bearing instance against a plain instance with
+    identical other components and asserts they match.
+    """
+    weights = TrustWeights()
+    plain = TrustComponents(
+        completeness=0.8, validity=0.7, freshness=0.9,
+        consistency=0.85, provenance=0.7, anomaly=0.95, evidence=1.0,
+    )
+    with_cc = TrustComponents(
+        completeness=0.8, validity=0.7, freshness=0.9,
+        consistency=0.85, provenance=0.7, anomaly=0.95, evidence=1.0,
+        causal_coherence=0.5,  # set, but must not change the composite
+    )
+    assert plain.composite(weights) == with_cc.composite(weights)
+    # And as a sanity check, swapping a weighted component DOES change it.
+    different = TrustComponents(
+        completeness=0.5, validity=0.7, freshness=0.9,
+        consistency=0.85, provenance=0.7, anomaly=0.95, evidence=1.0,
+    )
+    assert different.composite(weights) != plain.composite(weights)
 
 
 # ---------------------------------------------------------------------------

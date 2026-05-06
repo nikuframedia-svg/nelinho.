@@ -91,7 +91,10 @@ def test_q2_governance_rejects_without_category():
     from src.main import app
 
     client = TestClient(app)
-    headers = {"X-Tenant-Id": str(uuid4())}
+    headers = {
+        "X-Tenant-Id": str(uuid4()),
+        "X-User-Id": str(uuid4()),
+    }
     r = client.post(
         "/v1/governance/decisions/some-id/approve",
         json={"action": "reject", "reason": "cost was too high here"},
@@ -324,7 +327,10 @@ def test_q6_reset_to_default_404_on_unknown_key():
     client = TestClient(app)
     r = client.post(
         "/v1/config/foo/bar.does.not.exist/reset-to-default",
-        headers={"X-Tenant-Id": str(uuid4())},
+        headers={
+            "X-Tenant-Id": str(uuid4()),
+            "X-User-Id": str(uuid4()),
+        },
     )
     assert r.status_code == 404
 
