@@ -11,11 +11,21 @@ from enum import Enum
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import String, Numeric, Integer, Enum as SQLEnum, Text, ForeignKey, Date, Time, Boolean
+from sqlalchemy import String, Numeric, Integer, Enum as SQLEnum, Text, ForeignKey, Date, Time, Boolean, event
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.shared.database import TenantBase
+
+# Sprint Q.12 — limite legal português (Lei 7/2009, art. 203):
+# 8h normal, 10h máximo com banco de horas / compensação. Acima de 10h
+# rejeitamos por defeito; turno noturno limitado a 8h.
+_MAX_DAILY_HOURS_NORMAL = 8.0
+_MAX_DAILY_HOURS_WITH_OVERTIME = 10.0
+
+
+class IllegalShiftDurationError(ValueError):
+    """Raised quando um turno excede o limite legal diário."""
 
 
 class AllocationStatus(str, Enum):
@@ -133,6 +143,46 @@ class ShiftSchedule(TenantBase):
     
     def __repr__(self) -> str:
         return f"<Shift {self.employee_id} @ {self.shift_date}: {self.shift_type.value}>"
+
+    @staticmethod
+    def _shift_duration_hours(start: time, end: time, break_minutes: int) -> float:
+        """Calcula horas líquidas, incluindo travessia de meia-noite."""
+        start_min = start.hour * 60 + start.minute
+        end_min = end.hour * 60 + end.minute
+        if end_min <= start_min:
+            # Turno que cruza meia-noite (ex: 22:00 → 06:00)
+            end_min += 24 * 60
+        gross_hours = (end_min - start_min) / 60.0
+        return max(0.0, gross_hours - (break_minutes / 60.0))
+
+
+def _validate_shift_legal_hours(mapper, _connection, target: "ShiftSchedule") -> None:
+    """SQLAlchemy listener — bloqueia turnos > 10h e calcula `net_hours`.
+
+    Sprint Q.12: a Lei portuguesa 7/2009 (art. 203) estabelece 8h
+    normal, 10h máximo. Antes era possível registar `08:00–20:00` (12h)
+    sem aviso. `net_hours` ficava `null` por nunca ser calculado.
+    """
+    if target.start_time is None or target.end_time is None:
+        return
+    net = ShiftSchedule._shift_duration_hours(
+        target.start_time, target.end_time, target.break_minutes or 0
+    )
+    target.net_hours = Decimal(str(round(net, 2)))
+    if net > _MAX_DAILY_HOURS_WITH_OVERTIME:
+        raise IllegalShiftDurationError(
+            f"Turno de {net:.2f}h excede o limite legal português "
+            f"(máx {_MAX_DAILY_HOURS_WITH_OVERTIME}h/dia com compensação)"
+        )
+    if net > _MAX_DAILY_HOURS_NORMAL and not target.is_overtime:
+        raise IllegalShiftDurationError(
+            f"Turno de {net:.2f}h excede {_MAX_DAILY_HOURS_NORMAL}h/dia "
+            "sem flag is_overtime — marcar como horas extra"
+        )
+
+
+event.listen(ShiftSchedule, "before_insert", _validate_shift_legal_hours)
+event.listen(ShiftSchedule, "before_update", _validate_shift_legal_hours)
 
 
 class Skill(TenantBase):
