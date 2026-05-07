@@ -125,7 +125,10 @@ async function request<T>(
   
   // Obter token de autenticação do localStorage
   const token = localStorage.getItem('auth_token') || localStorage.getItem('token');
-  const tenantId = localStorage.getItem('tenant_id') || '00000000-0000-0000-0000-000000000000';
+  // Q.18.AUTH — dev tenant default. Backend (Q.12 Onda 0.1) rejeita zero UUID
+  // explicitamente (`Invalid tenant: zero UUID is reserved`). 000…001 é a
+  // dev tenant seeded por scripts/bootstrap_dev_tenant.py. Ver plano Q.18.AUTH.
+  const tenantId = localStorage.getItem('tenant_id') || '00000000-0000-0000-0000-000000000001';
   
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -1403,6 +1406,9 @@ export interface DecisionRun {
   sandbox_result?: Record<string, any>;
   before_state: Record<string, any>;
   after_state?: Record<string, any>;
+  /** Sprint Q.13.C — payload that the decision will execute. Editable
+   *  via WG05 modify-payload flow. */
+  action_data?: Record<string, any>;
   proposed_by: string;
   proposed_at: string;
   executed_at?: string;
@@ -2654,6 +2660,9 @@ export interface TransportSuggestion {
   if_reject: string;
   alternative?: string;
   affected_order_ids?: string[];
+  /** Only set when type === 'swap_between_batches'. Identifies the
+   *  batch the affected orders should be swapped INTO. */
+  target_batch_id?: string;
 }
 
 /**
@@ -2722,5 +2731,96 @@ export const transportApi = {
   listOrders: (batchId: string) =>
     request<{ batch_id: string; orders: string[] }>(
       `/v1/plan/transport/batches/${encodeURIComponent(batchId)}/orders`,
+    ),
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Q.17.C — YAML POLICY (NL → tenant_rules + lifecycle)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Shape of a tenant rule as returned by the API.
+ * Mirrors `RuleProposalService.serialize_rule` (src/governance/yaml_policy/service.py).
+ */
+export interface YamlPolicyRule {
+  id: string;
+  rule_id: string;
+  description: string;
+  status: 'proposed' | 'approved' | 'active' | 'suspended' | 'rolled_back' | 'rejected';
+  event_type: string;
+  payload: {
+    id: string;
+    description: string;
+    when: { event: string; conditions: Array<{ field: string; op: string; value: unknown }> };
+    then: Array<{ action: string; params: Record<string, unknown> }>;
+    constraints?: { axioms_required?: string[] };
+    safety?: { max_fires_per_day?: number; expires?: string };
+    [key: string]: unknown;
+  };
+  proposed_by_user_id: string | null;
+  approved_by_user_id: string | null;
+  proposed_at: string | null;
+  approved_at: string | null;
+  activated_at: string | null;
+  suspended_at: string | null;
+  fire_count: number;
+  last_fired_at: string | null;
+  nl_source: string | null;
+}
+
+export interface YamlPolicyRevision {
+  id: string;
+  action: 'proposed' | 'approved' | 'rejected' | 'modified' | 'suspended' | 'rolled_back' | 'reactivated';
+  actor_user_id: string | null;
+  reason: string | null;
+  created_at: string | null;
+}
+
+export const yamlPolicyApi = {
+  /** NL → LLM → validated rule, persisted as status=proposed. */
+  propose: (nlText: string) =>
+    request<{ rule: YamlPolicyRule }>(
+      '/v1/governance/yaml-policy/rules/propose',
+      { method: 'POST', body: JSON.stringify({ nl_text: nlText }) },
+    ),
+
+  list: (params?: { status?: string; limit?: number; offset?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set('status_filter', params.status);
+    if (params?.limit) qs.set('limit', String(params.limit));
+    if (params?.offset) qs.set('offset', String(params.offset));
+    const tail = qs.toString();
+    return request<{ rules: YamlPolicyRule[]; total: number }>(
+      `/v1/governance/yaml-policy/rules${tail ? `?${tail}` : ''}`,
+    );
+  },
+
+  get: (ruleId: string) =>
+    request<{ rule: YamlPolicyRule; revisions: YamlPolicyRevision[] }>(
+      `/v1/governance/yaml-policy/rules/${encodeURIComponent(ruleId)}`,
+    ),
+
+  approve: (ruleId: string, reason?: string) =>
+    request<{ rule: YamlPolicyRule }>(
+      `/v1/governance/yaml-policy/rules/${encodeURIComponent(ruleId)}/approve`,
+      { method: 'POST', body: JSON.stringify({ reason: reason ?? null }) },
+    ),
+
+  reject: (ruleId: string, reason: string) =>
+    request<{ rule: YamlPolicyRule }>(
+      `/v1/governance/yaml-policy/rules/${encodeURIComponent(ruleId)}/reject`,
+      { method: 'POST', body: JSON.stringify({ reason }) },
+    ),
+
+  suspend: (ruleId: string, reason?: string) =>
+    request<{ rule: YamlPolicyRule }>(
+      `/v1/governance/yaml-policy/rules/${encodeURIComponent(ruleId)}/suspend`,
+      { method: 'POST', body: JSON.stringify({ reason: reason ?? null }) },
+    ),
+
+  rollback: (ruleId: string, reason: string) =>
+    request<{ rule: YamlPolicyRule }>(
+      `/v1/governance/yaml-policy/rules/${encodeURIComponent(ruleId)}/rollback`,
+      { method: 'POST', body: JSON.stringify({ reason }) },
     ),
 };

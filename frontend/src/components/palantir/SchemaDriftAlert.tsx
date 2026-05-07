@@ -27,10 +27,21 @@ const DRIFT_LABELS = {
 interface SchemaDriftAlertProps {
   position?: 'fixed' | 'inline';
   onDismiss?: () => void;
+  /** Optional: caller-provided drifts (overrides the internal hook). */
+  drifts?: SchemaDrift[];
+  /** Optional: caller-provided action handler (overrides the internal hook). */
+  onAction?: (drift: SchemaDrift, action: 'reject' | 'accept' | 'ignore') => Promise<boolean>;
 }
 
-export function SchemaDriftAlert({ position = 'fixed', onDismiss }: SchemaDriftAlertProps) {
-  const { drifts, handleAction } = useSchemaDrift();
+export function SchemaDriftAlert({
+  position = 'fixed',
+  onDismiss,
+  drifts: driftsOverride,
+  onAction: onActionOverride,
+}: SchemaDriftAlertProps) {
+  const hookData = useSchemaDrift();
+  const drifts = driftsOverride ?? hookData.drifts;
+  const handleAction = onActionOverride ?? hookData.handleAction;
 
   if (drifts.length === 0) return null;
 

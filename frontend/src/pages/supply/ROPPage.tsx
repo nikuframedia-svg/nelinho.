@@ -1,17 +1,13 @@
 import { useState, useMemo } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Package, Play, AlertTriangle, Loader2, ShoppingCart } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { Package, AlertTriangle, Loader2, ShoppingCart } from 'lucide-react';
 import { DarkPageLayout } from '../../layouts';
-import { DarkCard, DarkStatCard, DarkTable, DarkTableHead, DarkTableBody, DarkTableRow, DarkTableHeader, DarkTableCell, DarkButton, DarkPillButton, DarkBadge, DarkSearchInput } from '../../components/dark';
+import { DarkCard, DarkStatCard, DarkTable, DarkTableHead, DarkTableBody, DarkTableRow, DarkTableHeader, DarkTableCell, DarkPillButton, DarkBadge, DarkSearchInput } from '../../components/dark';
 import { supplyApi } from '../../lib/api';
-import { useToastContext } from '../../components/ToastProvider';
 
 export function ROPPage() {
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
   const [search, setSearch] = useState('');
-  const [isCalculating, setIsCalculating] = useState(false);
-  const toast = useToastContext();
-  const queryClient = useQueryClient();
 
   const { data: ropData = [], isLoading, error } = useQuery({
     queryKey: ['rop', 'list'],
@@ -37,14 +33,6 @@ export function ROPPage() {
     ok: ropData.filter((i: any) => i.quantity > i.reorder_point).length,
   }), [ropData]);
 
-  const calculateMutation = useMutation({
-    mutationFn: () => supplyApi.calculateROP('all', { avg_daily_demand: 0, lead_time_days: 0 }),
-    onMutate: () => setIsCalculating(true),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['rop'] }); toast.success('ROP calculated'); },
-    onError: (err: any) => toast.error(err.message || 'Calculation failed'),
-    onSettled: () => setIsCalculating(false),
-  });
-
   if (error) {
     return (
       <DarkPageLayout title="Reorder Point Analysis" icon={<Package size={20} />}>
@@ -63,11 +51,6 @@ export function ROPPage() {
       title="Reorder Point Analysis"
       subtitle={isLoading ? 'Loading...' : `${ropData.length} items analyzed`}
       icon={<Package size={20} />}
-      actions={
-        <DarkButton icon={<Play size={18} />} onClick={() => calculateMutation.mutate()} disabled={isCalculating}>
-          {isCalculating ? <><Loader2 size={18} className="animate-spin" /> Calculating...</> : 'Calculate ROP'}
-        </DarkButton>
-      }
     >
       <div className="flex items-center gap-4 mb-6">
         <DarkSearchInput placeholder="Search items..." value={search} onChange={(e) => setSearch(e.target.value)} onClear={() => setSearch('')} containerClassName="w-72" />

@@ -16,7 +16,7 @@ schedule-commit ledger to produce two feedback streams every day:
 
 import logging
 from collections import Counter
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Tuple
 from uuid import UUID
 
@@ -244,7 +244,7 @@ async def generate_daily_feedback(
                 )
             )
         
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         
         return DailyFeedbackResponse(
             date=feedback_date.isoformat(),
@@ -285,6 +285,6 @@ async def generate_daily_feedback(
                     suggested_actions=[],
                 ),
             ],
-            generated_at=datetime.utcnow().isoformat(),
-            last_updated=datetime.utcnow().isoformat(),
+            generated_at=datetime.now(timezone.utc).isoformat(),
+            last_updated=datetime.now(timezone.utc).isoformat(),
         )

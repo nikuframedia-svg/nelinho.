@@ -50,7 +50,6 @@ import { FocusModeModal } from '../components/focus/FocusModeModal';
 
 // PALANTIR-LEVEL COMPONENTS
 import {
-  LiveKPICard,
   SchemaDriftAlert,
   BlockedMetricsWall,
   ModuleErrorBoundary
@@ -435,7 +434,7 @@ export function Dashboard() {
   const actionItems: ActionItem[] = [];
 
   // Add bottleneck actions from REAL bottleneck data
-  if (bottlenecksData?.data?.bottlenecks?.length > 0) {
+  if ((bottlenecksData?.data?.bottlenecks?.length ?? 0) > 0 && bottlenecksData) {
     const topBottleneck = bottlenecksData.data.bottlenecks[0];
     if (topBottleneck.is_critical || topBottleneck.bottleneck_score > 50) {
       actionItems.push({
@@ -453,7 +452,7 @@ export function Dashboard() {
   }
 
   // Add quality actions from REAL quality data
-  if (qualityData?.data?.total_errors > 10) {
+  if (qualityData && (qualityData?.data?.total_errors ?? 0) > 10) {
     const topError = qualityData.data.by_type?.[0] || qualityData.data.top_items?.[0];
     actionItems.push({
       id: 'quality-1',
@@ -662,7 +661,7 @@ export function Dashboard() {
                 <div key={i} className="h-10 bg-slate-700/50 rounded" />
               ))}
             </div>
-          ) : bottlenecksData?.data?.bottlenecks?.length > 0 ? (
+          ) : (bottlenecksData?.data?.bottlenecks?.length ?? 0) > 0 && bottlenecksData ? (
             <DarkTable>
               <DarkTableHead>
                 <DarkTableRow>
@@ -725,7 +724,7 @@ export function Dashboard() {
                 <div key={i} className="h-10 bg-slate-700/50 rounded" />
               ))}
             </div>
-          ) : (qualityData?.data?.by_type?.length > 0 || qualityData?.data?.top_items?.length > 0) ? (
+          ) : qualityData && ((qualityData?.data?.by_type?.length ?? 0) > 0 || (qualityData?.data?.top_items?.length ?? 0) > 0) ? (
             <DarkTable>
               <DarkTableHead>
                 <DarkTableRow>

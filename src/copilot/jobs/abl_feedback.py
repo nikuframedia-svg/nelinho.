@@ -71,10 +71,23 @@ ChainPair = Tuple[CausalChain, CausalVerificationResult, Optional[float]]
 
 
 def _triplet_signature(triplet: dict) -> str:
-    """SHA-256 over the (prompt, chosen, rejected) tuple. Used to skip
-    duplicates when re-running on the same day."""
+    """SHA-256 over the (tenant_id, prompt, chosen, rejected) tuple.
+    Used to skip duplicates when re-running on the same day.
+
+    Sprint Q.12 Onda 5.3 — used to hash only ``(prompt, chosen,
+    rejected)``. That made two tenants asking the same question
+    collide on the same signature, so the second tenant's divergence
+    was silently dropped as a "duplicate" of the first. Including
+    ``tenant_id`` in the hash keeps the dedup window per-tenant where
+    it belongs.
+    """
     payload = json.dumps(
-        [triplet.get("prompt", ""), triplet.get("chosen", ""), triplet.get("rejected", "")],
+        [
+            str(triplet.get("tenant_id", "")),
+            triplet.get("prompt", ""),
+            triplet.get("chosen", ""),
+            triplet.get("rejected", ""),
+        ],
         sort_keys=True,
         ensure_ascii=False,
     )
@@ -153,6 +166,12 @@ def run_abl_feedback(
         divergences_total += len(divergences)
         for div in divergences:
             triplet = render_dpo_triplet(div)
+            # Sprint Q.12 Onda 5.3 — stamp tenant_id onto the triplet
+            # so the signature can include it (per-tenant dedup) and so
+            # downstream consumers of the JSONL can attribute training
+            # rows to a tenant without re-walking the divergence.
+            if tenant_id is not None and "tenant_id" not in triplet:
+                triplet["tenant_id"] = str(tenant_id)
             sig = _triplet_signature(triplet)
             if sig in existing_sigs:
                 triplets_skipped_duplicate += 1

@@ -14,7 +14,13 @@ from __future__ import annotations
 
 from fastapi import HTTPException, status
 
-MAX_LIMIT = 100
+# Q.18.BOOTSTRAP — bumped from 100 to 1000. NELO master data (510 moldes,
+# 122 operadores) routinely exceeded the old cap; CRUD admin pages
+# (Customers/Suppliers/Products/Machines/Employees/...) explicitly fetch
+# `limit: 1000` to render the full list without paging in v1. Endpoints
+# with heavy aggregation can still opt into a tighter cap via
+# ``max_limit=`` parameter.
+MAX_LIMIT = 1000
 
 
 def validate_pagination(

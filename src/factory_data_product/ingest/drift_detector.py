@@ -158,29 +158,16 @@ class DriftReport:
         }
 
 
-# Critical columns that MUST exist per sheet (removal = blocking)
-CRITICAL_COLUMNS = {
-    "OrdensFabrico": {"OF_Id", "OF_Referencia", "OF_ModeloId"},
-    "FasesOrdemFabrico": {"FaseOf_Id", "FaseOf_OrdemFabricoId", "FaseOf_FaseId"},
-    "Funcionarios": {"Funcionario_Id", "Funcionario_Nome"},
-    "Fases": {"Fase_Id", "Fase_Descricao"},
-    "Moldes": {"Molde_Id"},
-    "Modelos": {"Modelo_Id", "Modelo_Referencia"},
-    "FasesStandardModelos": {"FaseStandardModelo_Id", "FaseStandardModelo_ModeloId", "FaseStandardModelo_FaseId"},
-    "OrdemFabricoErros": {"OrdemFabricoErro_Id", "OrdemFabricoErro_OrdemFabricoId"},
-    "FuncionariosFaseOrdemFabrico": {"FuncionarioFaseOf_Id", "FuncionarioFaseOf_FaseOrdemFabricoId"},
-    "FuncionariosFasesAptos": {"FuncionarioApto_FuncionarioId", "FuncionarioApto_FaseId"},
-}
-
-# Expected sheets (critical)
-CRITICAL_SHEETS = {
-    "OrdensFabrico",
-    "FasesOrdemFabrico",
-    "Funcionarios",
-    "Fases",
-    "Moldes",
-    "Modelos",
-}
+# Onda 3.5 — column/sheet definitions sourced from the central catalogue.
+# The pre-existing literals here used names that don't exist in the real
+# Folha_IA_extra.xlsx (`OF_Id`, `OF_Referencia`, `Modelo_Referencia`,
+# `FaseStandardModelo_*`, etc.) — drift detection would fire BLOCKING on
+# every ingest because it was looking for ghost columns. The central
+# catalogue tracks the actual workbook headers.
+from src.factory_data_product.excel_columns import (
+    CRITICAL_COLUMNS,
+    CRITICAL_SHEETS,
+)
 
 
 @dataclass

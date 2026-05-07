@@ -135,19 +135,23 @@ class TestTransformation:
                 "sheet_name": "OrdensFabrico",
                 "row_number": 2,
                 "payload_json": {
-                    "OF_Id": "OF001",
-                    "OF_Produto_Id": "P001",
-                    "OF_Estado": "Em Producao",
+                    # Excel column names (Folha_IA_extra.xlsx)
+                    "Of_Id": "OF001",
+                    "Of_ProdutoId": "P001",
+                    "Of_DataCriacao": "2024-03-15",
+                    "Of_DataAcabamento": None,
                 },
             },
         ]
-        
+
         transformer = RawToCuratedTransformer()
         result = transformer.transform(raw_rows, ingestion_id)
-        
+
         assert len(result.orders) == 1
         assert result.orders[0]["of_id"] == "OF001"
         assert result.orders[0]["produto_id"] == "P001"
+        assert result.orders[0]["data_entrada"] is not None
+        assert result.orders[0]["data_conclusao"] is None
     
     def test_transform_order_phases_horas_finais(self):
         """
@@ -164,25 +168,25 @@ class TestTransformation:
                 "row_number": 2,
                 "payload_json": {
                     "FaseOf_Id": "FOF001",
-                    "FaseOf_OrdemFabrico_Id": "OF001",
-                    "FaseOf_Fase_Id": "F001",
+                    "FaseOf_OfId": "OF001",
+                    "FaseOf_FaseId": "F001",
                     "FaseOf_HorasPrevistas": 5.0,
-                    "StandardHoras": 3.0,
+                    "FaseOf_Coeficiente": 3.0,
                 },
             },
         ]
-        
+
         transformer = RawToCuratedTransformer()
         result = transformer.transform(raw_rows, ingestion_id)
-        
+
         assert len(result.order_phases) == 1
         assert result.order_phases[0]["horas_finais"] == Decimal("5.0")
-    
-    def test_transform_order_phases_fallback_to_standard(self):
+
+    def test_transform_order_phases_fallback_to_coeficiente(self):
         """
-        Given: horas_previstas is 0 or None
+        Given: horas_previstas is 0 (NELO ERP edge case — ~57% of phases)
         When: Transform
-        Then: horas_finais uses StandardHoras
+        Then: horas_finais falls back to FaseOf_Coeficiente
         """
         ingestion_id = uuid4()
         raw_rows = [
@@ -191,17 +195,17 @@ class TestTransformation:
                 "row_number": 2,
                 "payload_json": {
                     "FaseOf_Id": "FOF002",
-                    "FaseOf_OrdemFabrico_Id": "OF001",
-                    "FaseOf_Fase_Id": "F001",
+                    "FaseOf_OfId": "OF001",
+                    "FaseOf_FaseId": "F001",
                     "FaseOf_HorasPrevistas": 0,
-                    "StandardHoras": 3.0,
+                    "FaseOf_Coeficiente": 3.0,
                 },
             },
         ]
-        
+
         transformer = RawToCuratedTransformer()
         result = transformer.transform(raw_rows, ingestion_id)
-        
+
         assert result.order_phases[0]["horas_finais"] == Decimal("3.0")
 
 

@@ -16,11 +16,17 @@ from uuid import UUID, uuid4
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.twin.api import get_twin_service, router as twin_router
+from src.twin.api import (
+    get_current_user,
+    get_tenant_id,
+    get_twin_service,
+    router as twin_router,
+)
 from src.twin.models import ScenarioStatus
 
 
 TENANT = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+TEST_USER = "test_user"
 
 
 def _scenario_obj(*, status: str = ScenarioStatus.DRAFT.value):
@@ -49,7 +55,12 @@ def _build_app(service):
     async def _override():
         return service
 
+    # Sprint Q.12 Onda 0.1: tenant + user header guards now 401 on
+    # missing headers; tests inject them via dependency_overrides so we
+    # don't have to thread them through every request.
     app.dependency_overrides[get_twin_service] = _override
+    app.dependency_overrides[get_tenant_id] = lambda: TENANT
+    app.dependency_overrides[get_current_user] = lambda: TEST_USER
     return app
 
 

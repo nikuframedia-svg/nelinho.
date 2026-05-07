@@ -100,10 +100,29 @@ class FakeSession:
     async def refresh(self, obj: Any) -> None:
         self.refresh_calls.append(obj)
 
+    def begin_nested(self) -> "_FakeNestedTransaction":
+        """No-op savepoint — `async with session.begin_nested():` works.
+
+        Sprint Q.12 — added to support the inventory_ledger / allocation_service
+        / payroll_service savepoint usage without spinning up a real DB.
+        """
+        self.begin_nested_calls = getattr(self, "begin_nested_calls", 0) + 1
+        return _FakeNestedTransaction()
+
     async def execute(self, stmt: Any) -> "_FakeResult":
         scalar = self._scalar_queue.pop(0) if self._scalar_queue else None
         scalars = self._scalars_queue.pop(0) if self._scalars_queue else []
         return _FakeResult(scalar, scalars)
+
+
+class _FakeNestedTransaction:
+    """Async context manager that mimics SQLAlchemy savepoint."""
+
+    async def __aenter__(self) -> "_FakeNestedTransaction":
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        return None
 
 
 class _FakeResult:

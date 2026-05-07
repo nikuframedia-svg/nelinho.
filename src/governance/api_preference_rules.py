@@ -28,7 +28,7 @@ import logging
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -52,32 +52,18 @@ router = APIRouter(prefix="/v1/governance/preference-rules", tags=["Governance"]
 # ─── Dependencies ────────────────────────────────────────────────────────
 
 
-def _tenant_id(
-    x_tenant_id: UUID = Header(default=UUID("00000000-0000-0000-0000-000000000000")),
-) -> UUID:
-    return x_tenant_id
+from src.shared.auth.headers import (
+    AdminContext,
+    require_admin,
+    require_tenant_header,
+)
 
-
-def _user_id(x_user_id: str = Header(default="api_user")) -> str:
-    return x_user_id
-
-
-def _user_role(x_user_role: str = Header(default="user")) -> str:
-    """Admin gating — until JWT is wired every endpoint checks a
-    ``X-User-Role`` header. Not secure, documented in the README; the
-    guard exists so when a real middleware lands we only swap this
-    function, not every endpoint signature."""
-    return x_user_role
-
-
-def _assert_admin(role: str) -> None:
-    # Matches the admin vocabulary used in src/shared/auth/rbac.py
-    # (Role.ADMIN_PLATFORM + Role.ADMIN_TENANT). Case-insensitive.
-    if role.lower() not in {"admin", "admin_platform", "admin_tenant"}:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin role required to review learned rules",
-        )
+# Sprint Q.12 Onda 0.1: replaced silent zero-UUID/'api_user' defaults
+# with fail-closed dependencies that 401 when the header is absent.
+# Sprint Q.12 Onda 0.2: ``_assert_admin`` was an unsigned header check.
+# Replaced by ``require_admin`` which prefers JWT and only falls back
+# to legacy ``X-User-Role`` headers in non-production environments.
+_tenant_id = require_tenant_header
 
 
 async def _service(
@@ -188,12 +174,10 @@ async def get_preference_rule(
 async def confirm_preference_rule(
     rule_id: UUID,
     body: ConfirmRequest = Body(default_factory=ConfirmRequest),
-    user_id: str = Depends(_user_id),
-    role: str = Depends(_user_role),
+    admin: AdminContext = Depends(require_admin),
     service: PreferenceRuleService = Depends(_service),
 ) -> PreferenceRuleResponse:
-    _assert_admin(role)
-    user_uuid = _coerce_user_uuid(user_id)
+    user_uuid = _coerce_user_uuid(admin.user_id)
     try:
         rule = await service.confirm(
             rule_id,
@@ -211,12 +195,10 @@ async def confirm_preference_rule(
 async def reject_preference_rule(
     rule_id: UUID,
     body: RejectRequest,
-    user_id: str = Depends(_user_id),
-    role: str = Depends(_user_role),
+    admin: AdminContext = Depends(require_admin),
     service: PreferenceRuleService = Depends(_service),
 ) -> PreferenceRuleResponse:
-    _assert_admin(role)
-    user_uuid = _coerce_user_uuid(user_id)
+    user_uuid = _coerce_user_uuid(admin.user_id)
     try:
         rule = await service.reject(
             rule_id,
@@ -232,14 +214,16 @@ async def reject_preference_rule(
     return PreferenceRuleResponse.from_orm_row(rule)
 
 
-@router.patch("/{rule_id}", response_model=PreferenceRuleResponse)
+@router.patch(
+    "/{rule_id}",
+    response_model=PreferenceRuleResponse,
+    dependencies=[Depends(require_admin)],
+)
 async def patch_preference_rule(
     rule_id: UUID,
     body: PatchRequest,
-    role: str = Depends(_user_role),
     service: PreferenceRuleService = Depends(_service),
 ) -> PreferenceRuleResponse:
-    _assert_admin(role)
     try:
         rule = await service.update_metadata(
             rule_id,

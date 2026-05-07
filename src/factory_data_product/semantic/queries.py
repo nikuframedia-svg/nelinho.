@@ -13,7 +13,7 @@ Based on kayak_production/semantic/queries.py but adapted for SQL-based storage.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any, TYPE_CHECKING
 from uuid import UUID
 
@@ -69,8 +69,8 @@ class SemanticQueries:
             return self._ingestion_id
         
         result = await self.db.execute(
-            select(ActiveRun.ingestion_id)
-            .order_by(ActiveRun.activated_at.desc())
+            select(ActiveRun.active_ingestion_id)
+            .order_by(ActiveRun.activated_at_utc.desc())
             .limit(1)
         )
         row = result.scalar_one_or_none()
@@ -144,7 +144,7 @@ class SemanticQueries:
         if not ingestion_id:
             return self._no_data_response("wip", "No active ingestion")
 
-        cutoff_date = (datetime.utcnow() - timedelta(days=self.WIP_ZOMBIE_AGE_DAYS)).date()
+        cutoff_date = (datetime.now(timezone.utc) - timedelta(days=self.WIP_ZOMBIE_AGE_DAYS)).date()
 
         # Count open orders bucketed by age. We use ``data_entrada`` (order
         # entry date in the ERP) for the zombie cutoff because it's the
@@ -231,7 +231,7 @@ class SemanticQueries:
             "trust_status": self._get_trust_status(confidence),
             "semantic_label": SEMANTIC_LABELS["wip"],
             "metadata": {
-                "query_time": datetime.utcnow().isoformat(),
+                "query_time": datetime.now(timezone.utc).isoformat(),
                 "ingestion_id": str(ingestion_id),
                 "horas_previstas_coverage_pct": round(hp_coverage, 1),
                 "zombie_cutoff_days": self.WIP_ZOMBIE_AGE_DAYS,
@@ -261,12 +261,11 @@ class SemanticQueries:
         if not ingestion_id:
             return self._no_data_response("backlog", "No active ingestion")
         
-        # Sprint Q.9 (1.3) — `is_production` is set on the row dict by
-        # curated_transformer (`Fase_Producao == 1`) but it never lands as
-        # a column on the model, so the previous filter raised
-        # AttributeError. Until the column is materialised, every open
-        # phase counts as production (administrative phases don't sit
-        # open in bulk).
+        # Sprint Q.9 (1.3) — `is_production` was a derived field set on the
+        # row dict by the now-deleted curated_transformer (Onda 3.4); it
+        # never landed as a column on CuratedOrderPhase. Until that column
+        # is materialised, every open phase counts as production
+        # (administrative phases don't sit open in bulk).
         backlog_query = select(
             CuratedOrderPhase.fase_id,
             CuratedOrderPhase.fase_nome,
@@ -336,7 +335,7 @@ class SemanticQueries:
             "trust_status": self._get_trust_status(confidence),
             "semantic_label": SEMANTIC_LABELS["bottleneck"],
             "metadata": {
-                "query_time": datetime.utcnow().isoformat(),
+                "query_time": datetime.now(timezone.utc).isoformat(),
                 "ingestion_id": str(ingestion_id),
                 "top_n": top_n,
                 "horas_previstas_coverage_pct": round(total_coverage, 1),
@@ -440,7 +439,7 @@ class SemanticQueries:
             "trust_status": self._get_trust_status(confidence),
             "semantic_label": SEMANTIC_LABELS["quality"],
             "metadata": {
-                "query_time": datetime.utcnow().isoformat(),
+                "query_time": datetime.now(timezone.utc).isoformat(),
                 "ingestion_id": str(ingestion_id),
                 "top_n": top_errors,
                 "group_by": group_by,
@@ -486,7 +485,7 @@ class SemanticQueries:
             "trust_status": "WARNING",
             "semantic_label": SEMANTIC_LABELS["mold_conflict"],
             "metadata": {
-                "query_time": datetime.utcnow().isoformat(),
+                "query_time": datetime.now(timezone.utc).isoformat(),
                 "ingestion_id": str(ingestion_id),
                 "occupancy_hours_assumption": MOLD_OCCUPANCY_HOURS,
                 "data_prevista_coverage_pct": 4.8,
@@ -522,7 +521,7 @@ class SemanticQueries:
         ).where(
             and_(
                 CuratedSkillMatrix.ingestion_id == ingestion_id,
-                CuratedSkillMatrix.is_active == True
+                CuratedSkillMatrix.apto == True
             )
         ).group_by(
             CuratedSkillMatrix.fase_id,
@@ -577,7 +576,7 @@ class SemanticQueries:
             "trust_status": self._get_trust_status(confidence),
             "semantic_label": SEMANTIC_LABELS["skills"],
             "metadata": {
-                "query_time": datetime.utcnow().isoformat(),
+                "query_time": datetime.now(timezone.utc).isoformat(),
                 "ingestion_id": str(ingestion_id),
                 "min_capable_threshold": min_capable,
             },
@@ -603,12 +602,12 @@ class SemanticQueries:
         if not ingestion_id:
             return self._no_data_response("lead_time", "No active ingestion")
         
-        cutoff_date = datetime.utcnow() - timedelta(days=days_back)
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=days_back)
 
         # Sprint Q.9 (1.1) — `CuratedOrder.lead_time_days` does NOT exist on
-        # the model; the raw transformer (`curated_transformer._transform_ordens`)
-        # computes it as a derived field on the dict but it never lands as a
-        # column. Compute it inline here as the integer day delta between
+        # the model; the deleted curated_transformer (Onda 3.4) computed it
+        # as a derived field on the dict but it never landed as a column.
+        # Compute it inline here as the integer day delta between
         # `data_conclusao` and `data_entrada` — the same definition used in
         # the plano v4 §2 ("lead time — moda 15 days"). Both must be set.
         lead_time_days_expr = (
@@ -654,7 +653,7 @@ class SemanticQueries:
             "trust_status": self._get_trust_status(confidence),
             "semantic_label": SEMANTIC_LABELS["lead_time"],
             "metadata": {
-                "query_time": datetime.utcnow().isoformat(),
+                "query_time": datetime.now(timezone.utc).isoformat(),
                 "ingestion_id": str(ingestion_id),
                 "days_back": days_back,
                 "cutoff_date": cutoff_date.isoformat(),
@@ -673,7 +672,7 @@ class SemanticQueries:
             "trust_status": "BLOCKED",
             "semantic_label": f"No data available for {query_name}",
             "metadata": {
-                "query_time": datetime.utcnow().isoformat(),
+                "query_time": datetime.now(timezone.utc).isoformat(),
                 "error": reason,
             },
         }

@@ -33,6 +33,14 @@ class SandboxStateError(Exception):
     """Raised when an operation is invalid for the scenario's status."""
 
 
+class SandboxConcurrencyError(SandboxStateError):
+    """Sprint Q.12 Onda 3.1 — raised when two concurrent simulate/publish
+    calls race against the same scenario. The second writer's optimistic
+    lock CAS fails and we surface this distinct exception so the API
+    layer can map it to ``409 Conflict`` (rather than ``409`` for a
+    plain state mismatch, which the operator might retry blindly)."""
+
+
 class SandboxService:
     """CRUD + simulate + publish for sandbox scenarios."""
 
@@ -118,7 +126,18 @@ class SandboxService:
     async def simulate(self, scenario_id: UUID) -> SandboxScenario:
         """Compute the impact diff between ``before_state`` and
         ``after_state``. Doesn't run the CPO — the heavy simulation
-        lives in the Twin module; sandbox is a quick-look projection."""
+        lives in the Twin module; sandbox is a quick-look projection.
+
+        Sprint Q.12 Onda 3.1 — uses the ``version`` column as an
+        optimistic-lock CAS so two concurrent simulate calls can't
+        both flip the status. The previous implementation read the
+        scenario, mutated its status, committed, and then committed
+        again with the impact — between those two commits a second
+        caller could see SIMULATING (which is allowed by the status
+        check after my Onda 2 changes) and race the second commit.
+        """
+        from sqlalchemy import update
+
         scenario = await self.get_scenario(scenario_id)
         if scenario is None:
             raise SandboxNotFoundError(str(scenario_id))
@@ -130,9 +149,41 @@ class SandboxService:
                 f"cannot simulate scenario in status {scenario.status!r}"
             )
 
-        # Mark simulating
-        scenario.status = SandboxScenarioStatus.SIMULATING.value
+        # CAS: only flip to SIMULATING if version hasn't moved since
+        # we read it. ``rowcount == 0`` means another caller beat us.
+        # Pre-Q.12 rows in the wild may have NULL version; treat that
+        # as zero (the new ``server_default``) so the migration window
+        # doesn't lock everyone out.
+        expected_version = scenario.version if scenario.version is not None else 0
+        cas_stmt = (
+            update(SandboxScenario)
+            .where(
+                and_(
+                    SandboxScenario.id == scenario.id,
+                    SandboxScenario.tenant_id == self.tenant_id,
+                    SandboxScenario.version == expected_version,
+                )
+            )
+            .values(
+                status=SandboxScenarioStatus.SIMULATING.value,
+                version=expected_version + 1,
+                updated_at=datetime.utcnow(),
+            )
+        )
+        result = await self.session.execute(cas_stmt)
+        if result.rowcount == 0:
+            await self.session.rollback()
+            raise SandboxConcurrencyError(
+                f"scenario {scenario_id} was modified by another caller; "
+                "retry after refreshing its state."
+            )
         await self.session.commit()
+        # Keep the in-memory object in sync with the row we just CAS-updated.
+        # In real PG ``session.refresh`` re-reads; we mirror manually so unit
+        # tests with a stub session see the same view.
+        scenario.status = SandboxScenarioStatus.SIMULATING.value
+        scenario.version = expected_version + 1
+        await self.session.refresh(scenario)
 
         before = scenario.before_state or {}
         after = scenario.after_state or {}
@@ -149,10 +200,37 @@ class SandboxService:
                     "before": _extract_number(before.get(kpi)),
                 }
 
+        # Second CAS: commit the impact + flip to SIMULATED. We pin on
+        # the version we just bumped so any other writer that snuck
+        # in between still loses.
+        finalize_stmt = (
+            update(SandboxScenario)
+            .where(
+                and_(
+                    SandboxScenario.id == scenario.id,
+                    SandboxScenario.tenant_id == self.tenant_id,
+                    SandboxScenario.version == expected_version + 1,
+                )
+            )
+            .values(
+                impact=summary,
+                status=SandboxScenarioStatus.SIMULATED.value,
+                version=expected_version + 2,
+                updated_at=datetime.utcnow(),
+            )
+        )
+        result = await self.session.execute(finalize_stmt)
+        if result.rowcount == 0:
+            await self.session.rollback()
+            raise SandboxConcurrencyError(
+                f"scenario {scenario_id} was modified during simulation; "
+                "result was discarded."
+            )
+        await self.session.commit()
         scenario.impact = summary
         scenario.status = SandboxScenarioStatus.SIMULATED.value
+        scenario.version = expected_version + 2
         scenario.updated_at = datetime.utcnow()
-        await self.session.commit()
         await self.session.refresh(scenario)
         return scenario
 
@@ -169,6 +247,15 @@ class SandboxService:
         Sprint Q.10 — replaces the previous mock ``decision_id`` with
         a live record. Until Sprint G the decision runs in advisory
         mode so the ERP isn't touched.
+
+        Sprint Q.12 Onda 2.3 — the previous flow let
+        :meth:`GovernanceService.propose_decision` publish its
+        ``DECISION_PROPOSED`` Kafka event from inside its own ``flush``,
+        BEFORE this method's outer ``commit`` returned. If the commit
+        failed (FK violation, broken pipe, anything) Kafka listeners
+        had already received an event referencing a row that didn't
+        exist. We now defer the Kafka emit until after our commit, so
+        the bus only ever sees IDs that survived the transaction.
         """
         from src.governance.service import GovernanceService
 
@@ -182,7 +269,9 @@ class SandboxService:
             )
 
         gov = GovernanceService(self.session, self.tenant_id)
-        decision = await gov.propose_decision(
+        # ``defer_kafka=True`` returns the prepared event but DOES NOT
+        # publish — we publish it ourselves once the local commit lands.
+        decision, deferred_event = await gov.propose_decision_with_deferred_kafka(
             decision_type="sandbox_publish",
             title=f"Sandbox: {scenario.title}",
             description=scenario.description,
@@ -203,6 +292,18 @@ class SandboxService:
         scenario.updated_at = datetime.utcnow()
         await self.session.commit()
         await self.session.refresh(scenario)
+
+        # Commit succeeded — now it's safe to announce on the bus.
+        if deferred_event is not None:
+            try:
+                from src.shared.kafka_client import Topics, publish_event
+                await publish_event(Topics.DECISION_PROPOSED, deferred_event)
+            except Exception as exc:  # pragma: no cover — bus outage non-fatal
+                logger.warning(
+                    "DECISION_PROPOSED publish failed for sandbox %s: %s",
+                    scenario.id, exc,
+                )
+
         return scenario
 
     # ── Internals ─────────────────────────────────────────────────────

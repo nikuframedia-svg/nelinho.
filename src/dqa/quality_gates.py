@@ -105,13 +105,24 @@ class QualityGateMiddleware(BaseHTTPMiddleware):
 
         tenant_raw = request.headers.get(TENANT_HEADER)
         if not tenant_raw:
-            # No tenant context → let the route handler reject; we don't gate.
+            # No tenant context → log and let the route handler reject.
+            # The handler's own `Depends(get_tenant_id)` will return 422,
+            # so this isn't a bypass — but it must be visible in logs.
+            logger.warning(
+                "Quality gate: %s %s without %s header — gate skipped, "
+                "route handler will reject",
+                request.method, request.url.path, TENANT_HEADER,
+            )
             return await call_next(request)
 
         try:
             tenant_id = UUID(tenant_raw)
         except ValueError:
-            logger.warning("Quality gate: invalid X-Tenant-Id %r", tenant_raw)
+            logger.warning(
+                "Quality gate: invalid X-Tenant-Id %r on %s %s — gate "
+                "skipped, route handler will reject",
+                tenant_raw, request.method, request.url.path,
+            )
             return await call_next(request)
 
         try:
@@ -124,10 +135,23 @@ class QualityGateMiddleware(BaseHTTPMiddleware):
                 result = await calc.compute_for_scope(SCOPE_FACTORY)
                 gate_cfg = await load_gate_config(session, tenant_id)
         except Exception as exc:
-            # Never block on TI evaluation failure — better to allow than to
-            # break prod when the DQA stack is itself unhealthy.
+            # Fail-closed (Sprint Onda 1.2). When the DQA stack is unable to
+            # evaluate the Trust Index we MUST NOT silently approve the
+            # commit-class request — that's the exact scenario the gate
+            # exists to prevent. 503 surfaces the dependency outage; the
+            # caller can retry once the stack recovers.
             logger.error("Quality gate evaluation failed: %s", exc, exc_info=True)
-            return await call_next(request)
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "dqa_unavailable",
+                    "message": (
+                        "Trust Index could not be evaluated; quality gate "
+                        "blocked the request to avoid an unverified commit. "
+                        "Check the DQA stack (DB, tenant config) and retry."
+                    ),
+                },
+            )
 
         if not gate_allows(result.composite, self._gate, gate_cfg):
             threshold = gate_cfg.get(self._gate)

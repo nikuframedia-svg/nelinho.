@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,10 +39,10 @@ router = APIRouter(prefix="/v1/governance/learning", tags=["Governance"])
 # ─── Dependencies ────────────────────────────────────────────────────────
 
 
-def _tenant_id(
-    x_tenant_id: UUID = Header(default=UUID("00000000-0000-0000-0000-000000000000")),
-) -> UUID:
-    return x_tenant_id
+from src.shared.auth.headers import require_tenant_header
+
+# Sprint Q.12 Onda 0.1: replaced silent zero-UUID default.
+_tenant_id = require_tenant_header
 
 
 async def _service(
@@ -159,20 +159,11 @@ _ADAPTER_CONFIG_KEY = "active_lora_adapter"
 _ADAPTER_HISTORY_KEY = "active_lora_adapter_previous"
 
 
-def _user_role(x_user_role: str = Header(default="user")) -> str:
-    return x_user_role
+from src.shared.auth.headers import AdminContext, require_admin
 
-
-def _user_id(x_user_id: str = Header(default="api_user")) -> str:
-    return x_user_id
-
-
-def _assert_admin(role: str) -> None:
-    if role.lower() not in {"admin", "admin_platform", "admin_tenant"}:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin role required to manage active LoRA adapter",
-        )
+# Sprint Q.12 Onda 0.2: replaced unsigned ``X-User-Role`` admin gate
+# with ``require_admin``. Production now requires a Bearer JWT; dev
+# still accepts the legacy headers so existing tests pass.
 
 
 def _coerce_user_uuid(user_id: str):
@@ -245,8 +236,7 @@ async def promote_adapter(
     version: str,
     body: AdapterPromoteRequest,
     tenant_id: UUID = Depends(_tenant_id),
-    role: str = Depends(_user_role),
-    user_id: str = Depends(_user_id),
+    admin: AdminContext = Depends(require_admin),
     session: AsyncSession = Depends(get_session),
 ) -> AdapterStateResponse:
     """Sprint R.5.3 — promote a candidate LoRA adapter to active.
@@ -255,7 +245,6 @@ async def promote_adapter(
     rollback (next endpoint) is a one-call restore. Audit trail lives
     in TenantConfig history automatically.
     """
-    _assert_admin(role)
     if not version or not version.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -264,7 +253,7 @@ async def promote_adapter(
     from src.core.services.tenant_config_service import TenantConfigService
 
     svc = TenantConfigService(session, tenant_id)
-    user_uuid = _coerce_user_uuid(user_id)
+    user_uuid = _coerce_user_uuid(admin.user_id)
 
     # Snapshot the current active adapter as the rollback target.
     current = await svc.get(_ADAPTER_CONFIG_CATEGORY, _ADAPTER_CONFIG_KEY, default=None)
@@ -308,8 +297,7 @@ async def promote_adapter(
 async def rollback_adapter(
     body: AdapterRollbackRequest = Body(default_factory=AdapterRollbackRequest),
     tenant_id: UUID = Depends(_tenant_id),
-    role: str = Depends(_user_role),
-    user_id: str = Depends(_user_id),
+    admin: AdminContext = Depends(require_admin),
     session: AsyncSession = Depends(get_session),
 ) -> AdapterStateResponse:
     """Sprint R.5.3 — restore the previous adapter as active.
@@ -317,7 +305,6 @@ async def rollback_adapter(
     Errors with 409 if there is no previous version to roll back to
     (i.e. promote was never called twice).
     """
-    _assert_admin(role)
     from src.core.services.tenant_config_service import TenantConfigService
 
     svc = TenantConfigService(session, tenant_id)
@@ -330,7 +317,7 @@ async def rollback_adapter(
             detail="No previous adapter to roll back to",
         )
 
-    user_uuid = _coerce_user_uuid(user_id)
+    user_uuid = _coerce_user_uuid(admin.user_id)
     payload = {
         **previous,
         "rollback_reason": body.reason.strip(),

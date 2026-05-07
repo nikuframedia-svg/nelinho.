@@ -17,6 +17,8 @@ const AuditTrailPage = lazy(() => import('./pages/admin/AuditTrailPage').then(m 
 const RBACPage = lazy(() => import('./pages/admin/RBACPage').then(m => ({ default: m.RBACPage })));
 // Sprint E.2 — Camada 1 learned-rules review
 const LearnedRulesPage = lazy(() => import('./pages/admin/LearnedRulesPage').then(m => ({ default: m.LearnedRulesPage })));
+// Sprint Q.17.C — NL→YAML rule authoring (logic-as-data)
+const RegrasPage = lazy(() => import('./pages/admin/RegrasPage'));
 // Sprint E.1 — CPO Timeline + MAP-Elites alternatives
 const TimelinePage = lazy(() => import('./pages/plan/TimelinePage').then(m => ({ default: m.TimelinePage })));
 // Sprint Q.2 — Despacho/Expedição
@@ -267,6 +269,11 @@ function App() {
                     <Route path="learned-rules" element={
                       <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
                         <LearnedRulesPage />
+                      </Suspense>
+                    } />
+                    <Route path="regras" element={
+                      <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
+                        <RegrasPage />
                       </Suspense>
                     } />
                     <Route path="data-quality" element={

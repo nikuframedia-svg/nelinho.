@@ -20,6 +20,7 @@ import {
   Database,
   Shield,
   Brain,
+  BookOpen,
 } from 'lucide-react';
 import { useState } from 'react';
 import { useCapabilities } from '../../providers';
@@ -156,6 +157,11 @@ const dataNavItems: NavItem[] = [
     label: 'Regras Aprendidas',
     icon: <Brain size={20} />,
     path: '/admin/learned-rules',
+  },
+  {
+    label: 'Regras (NL→YAML)',
+    icon: <BookOpen size={20} />,
+    path: '/admin/regras',
   },
 ];
 

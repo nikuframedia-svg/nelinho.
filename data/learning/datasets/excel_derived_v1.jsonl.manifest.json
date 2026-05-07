@@ -1,0 +1,53 @@
+{
+  "output_path": "data\\learning\\datasets\\excel_derived_v1.jsonl",
+  "excel_path": "Folha_IA_extra.xlsx",
+  "excel_sha256": "385963418468c45aac9cdd68bff3865bfd16d797f12f8de1eee3f22dfdea3836",
+  "triplets_total": 183,
+  "by_extractor": {
+    "team_size": 24,
+    "real_vs_standard": 80,
+    "operator_affinity": 21,
+    "phase_rework": 8,
+    "lead_time": 50
+  },
+  "by_category": {
+    "WORKFORCE": 45,
+    "CAPACITY": 80,
+    "QUALITY": 8,
+    "CUSTOMER": 50
+  },
+  "extractor_reports": [
+    {
+      "extractor": "team_size",
+      "pairs_emitted": 24,
+      "skipped_low_support": 4,
+      "notes": "phases_seen=28 min_support=20"
+    },
+    {
+      "extractor": "real_vs_standard",
+      "pairs_emitted": 80,
+      "skipped_low_support": 3260,
+      "notes": "min_support=10 min_divergence=5.0× cap=80"
+    },
+    {
+      "extractor": "operator_affinity",
+      "pairs_emitted": 21,
+      "skipped_low_support": 4,
+      "notes": "min_support=30 cap=60"
+    },
+    {
+      "extractor": "phase_rework",
+      "pairs_emitted": 8,
+      "skipped_low_support": 8,
+      "notes": "min_errors=30 cap=50"
+    },
+    {
+      "extractor": "lead_time",
+      "pairs_emitted": 50,
+      "skipped_low_support": 18,
+      "notes": "min_support=10 min_tail_ratio=2.0× cap=50"
+    }
+  ],
+  "extractor_version": "v1.0",
+  "created_at": "2026-04-25T21:21:55.255151+00:00"
+}

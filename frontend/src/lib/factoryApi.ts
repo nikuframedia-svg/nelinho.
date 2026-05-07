@@ -26,6 +26,9 @@ export interface WIPData {
   open_orders: number;
   open_phases: number;
   total_hours_pending: number;
+  /** Optional: total phases in factory; some backend builds emit this
+   *  alongside `open_phases` (which is open_phases ⊆ phases_total). */
+  phases_total?: number;
 }
 
 export interface BacklogPhase {
@@ -62,17 +65,26 @@ export interface LeadTimeData {
   }>;
 }
 
+export interface QualityErrorItem {
+  error_type: string;
+  count: number;
+  percentage: number;
+  /** Optional: PT-PT description from some backend builds. */
+  descricao?: string;
+  /** Optional: phase culpability percentage. */
+  fase_culpada_pct?: number;
+}
+
 export interface QualityData {
   total_errors: number;
-  by_type: Array<{
-    error_type: string;
-    count: number;
-    percentage: number;
-  }>;
+  by_type: QualityErrorItem[];
   by_phase: Array<{
     fase_nome: string;
     count: number;
   }>;
+  /** Optional alias for `by_type` used by some Q.13+ payloads. The
+   *  Dashboard treats both identically. */
+  top_items?: QualityErrorItem[];
 }
 
 export interface CapabilityStatus {

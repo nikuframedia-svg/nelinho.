@@ -48,6 +48,14 @@ def _stub_session(seeded):
             params = stmt.compile().params
         except Exception:
             params = {}
+        # Sprint Q.12 Onda 3.1 — UPDATE statements come through here
+        # too (optimistic-lock CAS). Their compiled params mix SET
+        # values with WHERE clauses, so the old "any string is a
+        # status filter" heuristic was matching the SET status against
+        # the seeded row and reporting rowcount=0. We detect UPDATE
+        # via stmt class name and skip the status filter for those.
+        is_update = stmt.__class__.__name__.lower().startswith("update")
+
         wanted_tenant = None
         wanted_id = None
         wanted_status = None
@@ -57,7 +65,7 @@ def _stub_session(seeded):
                     wanted_tenant = v
                 else:
                     wanted_id = v
-            elif isinstance(v, str):
+            elif isinstance(v, str) and not is_update:
                 wanted_status = v
 
         ids = {s.id for s in seeded}
@@ -80,6 +88,13 @@ def _stub_session(seeded):
                 class _S:
                     def all(_self): return list(hits)
                 return _S()
+            # Sprint Q.12 Onda 3.1 — optimistic-lock CAS in
+            # ``SandboxService.simulate`` checks ``result.rowcount``.
+            # The fake reports the number of seeded hits which is a
+            # reasonable proxy for "would the UPDATE have matched".
+            @property
+            def rowcount(self_):
+                return len(hits)
         return _Result()
 
     session.execute = _execute
@@ -173,6 +188,13 @@ async def test_publish_creates_real_decision_id(monkeypatch):
         def __init__(self, *a, **kw): pass
         async def propose_decision(self, **kwargs):
             return {"id": str(fake_decision_id)}
+
+        async def propose_decision_with_deferred_kafka(self, **kwargs):
+            # Sprint Q.12 Onda 2.3 — sandbox now uses the deferred-Kafka
+            # variant so the bus only sees IDs that survived its outer
+            # commit. The test fake returns a None event since we don't
+            # exercise the bus here.
+            return {"id": str(fake_decision_id)}, None
 
     monkeypatch.setattr(
         "src.governance.service.GovernanceService", _FakeGov,

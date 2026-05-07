@@ -21,6 +21,11 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Sprint S3 Φ3: ensure the `shared` schema exists before tables target it.
+    # Idempotent: a no-op on environments where the schema was already created
+    # by an earlier migration.
+    op.execute("CREATE SCHEMA IF NOT EXISTS shared")
+
     # Decision Runs table
     op.create_table(
         'decision_runs',

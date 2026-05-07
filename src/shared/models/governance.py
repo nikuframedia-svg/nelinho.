@@ -48,7 +48,10 @@ class SharedDecisionRun(TenantBase):
     - Execution and rollback tracking
     """
     
-    __tablename__ = "shared_decision_runs"
+    # Sprint S3 Φ2: model tablename now matches migration 007 (`decision_runs`).
+    # The DB never had `shared_decision_runs`; the old name silently broke every
+    # ORM query against this model.
+    __tablename__ = "decision_runs"
     __table_args__ = {"schema": "shared"}
     
     title: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -103,7 +106,7 @@ class DecisionApproval(Base):
     )
     decision_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("shared.shared_decision_runs.id", ondelete="CASCADE"),
+        ForeignKey("shared.decision_runs.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )

@@ -8,9 +8,10 @@ REST endpoints for product management.
 from typing import List
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Header, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.shared.auth.headers import require_tenant_header
 from src.shared.database import get_session
 from src.core.models.product import ProductType, ProductStatus
 from src.core.services.master_data_service import MasterDataService
@@ -18,10 +19,9 @@ from .schemas import ProductCreate, ProductUpdate, ProductResponse
 
 router = APIRouter(prefix="/products", tags=["Products"])
 
-
-def get_tenant_id(x_tenant_id: UUID = Header(...)) -> UUID:
-    """Extract tenant ID from header."""
-    return x_tenant_id
+# Backwards-compatible alias: existing endpoints use ``Depends(get_tenant_id)``;
+# the resolver itself is now the JWT-first ``require_tenant_header``.
+get_tenant_id = require_tenant_header
 
 
 @router.post("", response_model=ProductResponse, status_code=status.HTTP_201_CREATED)
@@ -77,13 +77,19 @@ async def list_products(
         )
         return products
     except (ConnectionRefusedError, Exception) as e:
-        # DB unavailable - return fallback data
+        # Sprint S8 / Π7: DB unavailability now surfaces as 503 instead of
+        # silently returning `[]`. Returning an empty list let clients believe
+        # there were no products when the DB was actually down — masking a
+        # real outage.
         import logging
         logger = logging.getLogger(__name__)
         error_str = str(e).lower()
         if "connection refused" in error_str or "operationalerror" in error_str or "interfaceerror" in error_str:
-            logger.warning(f"DB unavailable in list_products, returning fallback: {e}")
-            return []
+            logger.error(f"DB unavailable in list_products: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database unavailable; please retry shortly.",
+            )
         # Re-raise other exceptions (they'll be handled by global handler)
         raise
 

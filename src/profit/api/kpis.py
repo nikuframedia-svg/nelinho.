@@ -188,8 +188,13 @@ async def calculate_kpis(
         perf_row = performance_result.first()
         
         performance = None
-        if perf_row and perf_row.avg_standard and perf_row.avg_actual and perf_row.avg_actual > 0:
-            performance = min(100.0, (float(perf_row.avg_standard) / float(perf_row.avg_actual)) * 100.0)
+        # Sprint Q.12 — converter para float ANTES da comparação fecha a
+        # janela de race onde `avg_actual` Decimal != 0 mas float == 0.0.
+        if perf_row and perf_row.avg_standard and perf_row.avg_actual:
+            avg_std = float(perf_row.avg_standard)
+            avg_act = float(perf_row.avg_actual)
+            if avg_act > 0 and avg_std > 0:
+                performance = min(100.0, (avg_std / avg_act) * 100.0)
         
         performance_query_hash = hashlib.sha256(f"performance_{tenant_id}".encode()).hexdigest()[:16]
         kpis["performance"] = KPIMetric(
@@ -203,26 +208,19 @@ async def calculate_kpis(
             reason="NO_SOURCE_DATA" if performance is None else None,
         )
         
-        # 4. Quality (FPY): orders sem erros / total orders
-        # Por enquanto, assumir que não há modelo de erros, usar orders completadas como proxy
-        # Se houver modelo de erros, ajustar aqui
+        # 4. Quality (FPY): orders SEM defeitos / total orders.
+        #
+        # Sprint Q.12 — antes calculávamos `orders_completed / orders_total`,
+        # mas isso não é FPY (uma ordem completada pode ter tido rework
+        # ou scrap). Sem tabela de defects, FPY genuíno não pode ser
+        # calculado, por isso devolvemos `None` com motivo claro em vez
+        # de uma métrica fabricada que entrava no Copilot.
         quality_fpy = None
-        if orders_total > 0:
-            # Assumir que orders completadas sem problemas = orders sem erros
-            # Se houver tabela de erros, fazer join aqui
-            orders_without_errors = orders_completed  # Simplificação
-            quality_fpy = (orders_without_errors / orders_total) * 100.0 if orders_total > 0 else None
-        
-        quality_query_hash = hashlib.sha256(f"quality_{tenant_id}".encode()).hexdigest()[:16]
         kpis["quality_fpy"] = KPIMetric(
-            value=round(quality_fpy, 1) if quality_fpy is not None else None,
+            value=None,
             updated_at=datetime.utcnow(),
-            citations=[create_calculation_citation(
-                "fpy",
-                {"orders_without_errors": orders_without_errors, "orders_total": orders_total},
-                f"FPY: {orders_without_errors}/{orders_total} ordens sem erros"
-            )] if quality_fpy is not None else [],
-            reason="NO_SOURCE_DATA" if quality_fpy is None else None,
+            citations=[],
+            reason="QUALITY_DEFECTS_TABLE_UNAVAILABLE",
         )
         
         # 5. Rework Rate: orders com erros / total orders
@@ -303,9 +301,20 @@ async def get_kpi_snapshot_dev(
 ):
     """
     Endpoint de desenvolvimento - SEM autenticação.
+
+    Sprint Q.12 — só responde quando ``settings.debug`` estiver ligado.
+    Antes vazava KPIs do tenant ``00000000-...0001`` para qualquer
+    cliente na internet.
     """
     from uuid import UUID
-    
+    from src.shared.config import settings
+
+    if not getattr(settings, "debug", False):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="dev endpoint disabled in production",
+        )
+
     dev_tenant_id = UUID("00000000-0000-0000-0000-000000000001")
     kpis = await calculate_kpis(session, dev_tenant_id)
     

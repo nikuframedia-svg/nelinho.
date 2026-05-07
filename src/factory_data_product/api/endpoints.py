@@ -28,6 +28,7 @@ from fastapi import (
     APIRouter,
     Depends,
     File,
+    Header,
     HTTPException,
     Query,
     UploadFile,
@@ -265,7 +266,7 @@ async def get_schema_drift(
     """
     # Get the most recent drift report from ingestion results
     history = engine.get_schema_history()
-    
+
     if len(history) < 2:
         return SchemaDriftResponse(
             has_drift=False,
@@ -280,39 +281,103 @@ async def get_schema_drift(
             },
             items=[],
             baseline_ingestion_id=history[0].get("ingestion_id") if history else None,
-            baseline_timestamp=datetime.fromisoformat(history[0]["timestamp"]) if history else None,
+            baseline_timestamp=(
+                datetime.fromisoformat(history[0]["timestamp"]) if history else None
+            ),
             current_timestamp=datetime.now(timezone.utc),
         )
-    
-    # Compare last two snapshots
+
+    # Onda 1.8 — actually run drift detection between the last two
+    # snapshots. The previous version built a SchemaDriftDetector and a
+    # SchemaSnapshot but never called detect_drift(), returning hardcoded
+    # `has_drift=False`. We now diff the snapshots directly and surface
+    # the real result.
+    from src.factory_data_product.ingest.drift_detector import (
+        DriftReport,
+        DriftItem,
+        DriftSeverity,
+        DriftType,
+        CRITICAL_COLUMNS,
+        CRITICAL_SHEETS,
+    )
+
     baseline = history[-2]
     current = history[-1]
-    
-    from src.factory_data_product.ingest.drift_detector import (
-        SchemaDriftDetector,
-        SchemaSnapshot,
-    )
-    
-    detector = SchemaDriftDetector()
-    detector.set_baseline_from_dict(baseline)
-    
-    # Create a mock current_data for comparison
-    current_snapshot = SchemaSnapshot.from_dict(current)
-    
+    base_sheets: Dict[str, set] = {
+        n: set(cols) for n, cols in baseline.get("sheets", {}).items()
+    }
+    curr_sheets: Dict[str, set] = {
+        n: set(cols) for n, cols in current.get("sheets", {}).items()
+    }
+
+    report = DriftReport()
+    # Sheets added / removed
+    for sheet in set(curr_sheets) - set(base_sheets):
+        report.add_item(DriftItem(
+            drift_type=DriftType.SHEET_ADDED,
+            severity=DriftSeverity.WARNING,
+            sheet_name=sheet,
+            message=f"New sheet '{sheet}' detected",
+        ))
+    for sheet in set(base_sheets) - set(curr_sheets):
+        report.add_item(DriftItem(
+            drift_type=DriftType.SHEET_REMOVED,
+            severity=(
+                DriftSeverity.BLOCKING if sheet in CRITICAL_SHEETS
+                else DriftSeverity.WARNING
+            ),
+            sheet_name=sheet,
+            message=f"Sheet '{sheet}' is missing",
+        ))
+    # Columns within common sheets
+    for sheet in set(base_sheets) & set(curr_sheets):
+        added = curr_sheets[sheet] - base_sheets[sheet]
+        removed = base_sheets[sheet] - curr_sheets[sheet]
+        critical_cols = CRITICAL_COLUMNS.get(sheet, set())
+        for col in added:
+            report.add_item(DriftItem(
+                drift_type=DriftType.COLUMN_ADDED,
+                severity=DriftSeverity.INFO,
+                sheet_name=sheet, column_name=col,
+                message=f"New column '{col}' in sheet '{sheet}'",
+            ))
+        for col in removed:
+            report.add_item(DriftItem(
+                drift_type=DriftType.COLUMN_REMOVED,
+                severity=(
+                    DriftSeverity.BLOCKING if col in critical_cols
+                    else DriftSeverity.WARNING
+                ),
+                sheet_name=sheet, column_name=col,
+                message=f"Column '{col}' missing from '{sheet}'",
+            ))
+
     return SchemaDriftResponse(
-        has_drift=False,  # Would need to store drift report per ingestion
-        has_blocking=False,
-        summary="Use ingestion endpoint for per-ingestion drift reports",
+        has_drift=report.has_drift,
+        has_blocking=report.has_blocking,
+        summary=report.generate_summary(),
         stats={
-            "columns_added": 0,
-            "columns_removed": 0,
-            "columns_renamed": 0,
-            "sheets_added": 0,
-            "sheets_removed": 0,
+            "columns_added": report.columns_added,
+            "columns_removed": report.columns_removed,
+            "columns_renamed": report.columns_renamed,
+            "sheets_added": report.sheets_added,
+            "sheets_removed": report.sheets_removed,
         },
-        items=[],
+        items=[
+            {
+                "drift_type": i.drift_type.value,
+                "severity": i.severity.value,
+                "sheet_name": i.sheet_name,
+                "column_name": i.column_name,
+                "message": i.message,
+            }
+            for i in report.items
+        ],
         baseline_ingestion_id=baseline.get("ingestion_id"),
-        baseline_timestamp=datetime.fromisoformat(baseline["timestamp"]) if baseline.get("timestamp") else None,
+        baseline_timestamp=(
+            datetime.fromisoformat(baseline["timestamp"])
+            if baseline.get("timestamp") else None
+        ),
         current_timestamp=datetime.now(timezone.utc),
     )
 
@@ -534,6 +599,26 @@ def _get_view_data(view_id: str, curated: Dict) -> List[Dict]:
 # INGEST ENDPOINTS
 # ============================================================================
 
+
+def _is_under(child, parent) -> bool:
+    """Onda 5.4 — return True iff `child` is `parent` or a descendant of it.
+
+    Both arguments must be already-resolved absolute Paths. Uses
+    `Path.is_relative_to` (Python 3.9+) and falls back to a string-prefix
+    check (with separator) when not available. The separator check is
+    needed so `/data` is NOT considered a parent of `/data_other`.
+    """
+    try:
+        return child.is_relative_to(parent)
+    except (AttributeError, ValueError):
+        # `is_relative_to` raises ValueError on Python <3.12 when the
+        # paths are siblings; fall through to string check.
+        import os
+        c = str(child)
+        p = str(parent).rstrip(os.sep)
+        return c == p or c.startswith(p + os.sep)
+
+
 @router.post(
     "/ingest",
     response_model=IngestResponse,
@@ -548,9 +633,9 @@ async def ingest_file(
 ):
     """
     Ingest an Excel file.
-    
+
     Steps:
-    1. Receive file
+    1. Receive file (cap at 100 MB to avoid DoS via giant uploads)
     2. Calculate hash (idempotency check)
     3. Extract to RAW
     4. Run quality gates
@@ -559,10 +644,21 @@ async def ingest_file(
     """
     import tempfile
     from pathlib import Path
-    
-    # Save uploaded file
+
+    # Onda 1.8 — DoS guard. The Folha_IA_extra.xlsx ships ~57 MB, so 100 MB
+    # is generous headroom; anything larger is almost certainly an attack
+    # or a misconfigured client. Cap is enforced after read because
+    # UploadFile.size is not always populated by clients.
+    MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB
+
+    content = await file.read()
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File exceeds {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit",
+        )
+
     with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
-        content = await file.read()
         tmp.write(content)
         tmp_path = Path(tmp.name)
     
@@ -616,14 +712,49 @@ async def ingest_by_path(
 
     Validates the path exists and is an XLSX. Calls the same IngestEngine
     pipeline as the upload endpoint — result shape is identical.
+
+    Onda 5.4 — path-traversal guard. The user-supplied path is restricted
+    to an allowlist of roots (env-configurable via PRODPLAN_INGEST_ROOTS,
+    comma-separated; defaults to the workspace root). Without this, an
+    attacker could read arbitrary disk paths by submitting e.g.
+    `/etc/passwd` (parser.py would still reject non-XLSX, but the file
+    would be opened to read the magic bytes — info leak via timing).
     """
+    import os
     from pathlib import Path
 
-    path = Path(request.path)
-    if not path.exists():
-        raise HTTPException(status_code=400, detail=f"File not found: {path}")
+    raw_path = Path(request.path)
+    if not raw_path.is_absolute():
+        raise HTTPException(
+            status_code=400, detail="path must be absolute",
+        )
+    # Resolve to canonical form before any check (defeats `..` traversal).
+    try:
+        path = raw_path.resolve(strict=True)
+    except (FileNotFoundError, OSError):
+        raise HTTPException(status_code=400, detail=f"File not found: {raw_path}")
+
     if path.suffix.lower() not in (".xlsx", ".xls"):
-        raise HTTPException(status_code=400, detail="Only .xlsx/.xls files are accepted")
+        raise HTTPException(
+            status_code=400, detail="Only .xlsx/.xls files are accepted",
+        )
+
+    # Allowlist: PRODPLAN_INGEST_ROOTS env var (comma-separated absolute
+    # paths). Default to the workspace's `data/` dir + the workspace root
+    # itself for dev convenience.
+    workspace = Path(__file__).resolve().parents[3]
+    default_roots = [str(workspace), str(workspace / "data")]
+    roots_env = os.environ.get("PRODPLAN_INGEST_ROOTS", "")
+    raw_roots = [r.strip() for r in roots_env.split(",") if r.strip()]
+    allowed_roots = [Path(r).resolve() for r in (raw_roots or default_roots)]
+    if not any(_is_under(path, root) for root in allowed_roots):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "path is outside the configured ingest roots; set "
+                "PRODPLAN_INGEST_ROOTS to permit additional locations"
+            ),
+        )
 
     result = engine.ingest(
         file_path=path,
@@ -654,6 +785,7 @@ async def ingest_by_path(
 async def activate_ingestion(
     ingestion_id: str,
     request: ActivateRequest,
+    x_tenant_id: Optional[UUID] = Header(None, alias="X-Tenant-Id"),
     engine: IngestEngine = Depends(get_engine),
 ):
     """Activate an ingestion (+ emit drift alert if schema changed)."""
@@ -663,7 +795,7 @@ async def activate_ingestion(
 
         alert_id: Optional[str] = None
         if success:
-            alert_id = await _emit_drift_alert_safe(engine, uid)
+            alert_id = await _emit_drift_alert_safe(engine, uid, x_tenant_id)
 
         return {
             "success": success,
@@ -677,25 +809,40 @@ async def activate_ingestion(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-async def _emit_drift_alert_safe(engine: IngestEngine, ingestion_id: UUID) -> Optional[str]:
+async def _emit_drift_alert_safe(
+    engine: IngestEngine,
+    ingestion_id: UUID,
+    tenant_id: Optional[UUID] = None,
+) -> Optional[str]:
     """
     Best-effort drift alert emission. Failure to create an alert must not
     break activation itself — we log and return None.
+
+    Onda 1.8 — `tenant_id` is now read from the X-Tenant-Id header instead
+    of the hardcoded zero UUID. Without a header we skip emission entirely
+    rather than route the alert to a phantom tenant.
     """
+    if tenant_id is None:
+        logger.warning(
+            "Drift alert skipped for ingestion %s: no X-Tenant-Id provided",
+            ingestion_id,
+        )
+        return None
     try:
         from src.factory_data_product.drift_bridge import emit_drift_alert_if_any
         from src.shared.database import get_session_context
 
         history = engine.get_schema_history()
-        # Use a default tenant id — a more complete solution pulls it from auth;
-        # for now, match the dev-default used by the alerts endpoints.
-        tenant_id = UUID("00000000-0000-0000-0000-000000000000")
         async with get_session_context() as session:
-            alert_id = await emit_drift_alert_if_any(session, tenant_id, ingestion_id, history)
+            alert_id = await emit_drift_alert_if_any(
+                session, tenant_id, ingestion_id, history,
+            )
             await session.commit()
             return alert_id
     except Exception as e:
-        logger.warning(f"Drift alert emission failed for ingestion {ingestion_id}: {e}")
+        logger.warning(
+            f"Drift alert emission failed for ingestion {ingestion_id}: {e}"
+        )
         return None
 
 
@@ -766,6 +913,26 @@ class SemanticQueryResponse(BaseModel):
     trust_status: str = Field(..., description="OK | WARNING | BLOCKED")
     semantic_label: str = Field(..., description="Human-readable disclaimer")
     metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class TrustHeatmapResponse(BaseModel):
+    """Permissive contract for `/quality/trust-heatmap` (Onda 3.7).
+
+    The heatmap payload is rich and evolves sprint-by-sprint; we lock the
+    top-level keys clients depend on and let the rest pass through with
+    `extra="allow"` so future additions don't require a coordinated
+    front-end + back-end ship.
+    """
+
+    model_config = {"extra": "allow"}
+
+    overall_trust: float
+    overall_status: str
+    domains: List[str]
+    segments: Dict[str, Any]
+    summary: Dict[str, Any]
+    generated_at: str
+    ingestion_id: Optional[str] = None
 
 
 @router.get(
@@ -969,7 +1136,7 @@ async def get_trust_heatmap(
     include_priorities: bool = Query(True, description="Include improvement priorities"),
     include_alerts: bool = Query(True, description="Include alerts"),
     engine: IngestEngine = Depends(get_engine),
-):
+) -> TrustHeatmapResponse:
     """
     Get trust heatmap for data quality visualization.
     
@@ -996,8 +1163,8 @@ async def get_trust_heatmap(
     # Add alerts if requested
     if include_alerts:
         result["alerts"] = generator.generate_alerts(heatmap)
-    
-    return result
+
+    return TrustHeatmapResponse(**result)
 
 
 # ============================================================================
@@ -1141,6 +1308,6 @@ async def resolve_quarantine(
         "action": action,
         "reason": reason,
         "resolved_by": user,
-        "resolved_at": datetime.utcnow().isoformat(),
+        "resolved_at": datetime.now(timezone.utc).isoformat(),
         "message": f"Row {row_id} resolved with action '{action}'",
     }

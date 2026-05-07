@@ -6,12 +6,26 @@ Action-first redesign for Copilot with 3 execution modes:
 - PREVIEW: Deterministic calculations, no DB writes
 - SANDBOX: Execute in nested transaction with auto-rollback
 - EXECUTE: Production execution with audit trail and Kafka events
+
+Sprint Q.12 Onda 0.4 — :func:`ActionExecutor._simulate_action_execution`
+used to be a placeholder that returned ``{executed_at, action_type,
+plan_id}`` and **nothing else**. Both SANDBOX and EXECUTE modes happily
+ran it: in SANDBOX the savepoint was rolled back so the lie was
+contained, but in EXECUTE the audit log was persisted with a real
+``before_state`` and a fabricated empty ``after_state``, the decision
+was marked EXECUTED, a Kafka event was emitted, and the rollback
+endpoint promised to revert a mutation that never happened.
+
+Until each ``action_type`` is wired to a real handler we explicitly
+raise :class:`ActionHandlerNotImplementedError`. The HTTP layer maps
+this to ``501 Not Implemented`` so callers can't mistake "no handler"
+for success.
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 from uuid import UUID, uuid4
 
 from sqlalchemy import and_, func, select
@@ -25,6 +39,59 @@ from src.shared.event_schemas import EventPayload
 from src.shared.kafka_client import EventBase, KafkaProducerClient
 
 logger = logging.getLogger(__name__)
+
+
+class ActionHandlerNotImplementedError(NotImplementedError):
+    """Raised when an action_type has no concrete handler wired up.
+
+    Subclass of :class:`NotImplementedError` so existing ``except
+    NotImplementedError`` branches still catch it; carries the
+    ``action_type`` so the HTTP layer can surface a useful message.
+    """
+
+    def __init__(self, action_type: str) -> None:
+        self.action_type = action_type
+        super().__init__(
+            f"No handler registered for action_type={action_type!r}. "
+            "EXECUTE/SANDBOX paths will not produce a real state change "
+            "until one is wired."
+        )
+
+
+# ── Per-action_type handlers ─────────────────────────────────────────
+#
+# Each entry is an async callable ``(executor, action, plan_id) -> dict``
+# that performs the actual mutation and returns the new state. The
+# registry stays empty until handlers land — at which point flipping
+# from advisory-mode to real execution is one register call per type
+# rather than another rewrite of the loop below.
+ActionHandler = Callable[
+    ["ActionExecutor", "Action", Optional[UUID]],
+    Awaitable[Dict[str, Any]],
+]
+_ACTION_HANDLERS: Dict[str, ActionHandler] = {}
+
+
+def register_action_handler(
+    action_type: str, handler: ActionHandler, *, overwrite: bool = False,
+) -> None:
+    """Plug a real handler in for ``action_type``.
+
+    Until this is called, SANDBOX/EXECUTE on that type returns 501.
+    Tests that need the executor wired can register a stub via this
+    helper.
+    """
+    if not overwrite and action_type in _ACTION_HANDLERS:
+        raise ValueError(
+            f"Handler for {action_type!r} already registered; "
+            "pass overwrite=True to replace."
+        )
+    _ACTION_HANDLERS[action_type] = handler
+
+
+def clear_action_handlers() -> None:
+    """Test helper — drop all registered handlers."""
+    _ACTION_HANDLERS.clear()
 
 
 class ActionMode(Enum):
@@ -169,32 +236,38 @@ class ActionExecutor:
     ) -> Dict[str, Any]:
         """
         Sandbox mode: Execute in nested transaction with auto-rollback.
-        
+
         Uses session.begin_nested() to create a savepoint.
         All changes are automatically rolled back when exiting.
+
+        Raises :class:`ActionHandlerNotImplementedError` (which the HTTP
+        layer maps to 501) when no handler is registered for
+        ``action.type`` — this prevents a "successful" sandbox run from
+        returning a fabricated ``actual_impact`` that compares the real
+        ``before_state`` against an empty stub ``after_state``.
         """
         logger.debug(f"Sandbox mode: action={action.id}")
-        
+
         # Create savepoint (nested transaction)
         nested = await self.session.begin_nested()
-        
+
         try:
             # Capture before state
             before_state = await self._capture_state(action, plan_id)
-            
+
             # Execute action (this would call action-specific logic)
             after_state = await self._simulate_action_execution(action, plan_id)
-            
+
             # Calculate actual impact (not estimated)
             actual_impact = await self._calculate_actual_impact(
                 before_state, after_state, action
             )
-            
+
             # Rollback automatically when exiting context
             await nested.rollback()
-            
+
             logger.info(f"Sandbox execution completed and rolled back: action={action.id}")
-            
+
             return {
                 "action_id": action.id,
                 "mode": "sandbox",
@@ -204,7 +277,14 @@ class ActionExecutor:
                 "before_state": before_state,
                 "after_state": after_state,
             }
-        
+
+        except ActionHandlerNotImplementedError:
+            await nested.rollback()
+            logger.warning(
+                "Sandbox aborted — no handler for action_type=%s (action=%s)",
+                action.type, action.id,
+            )
+            raise
         except Exception as e:
             await nested.rollback()
             logger.error(f"Sandbox execution failed: action={action.id}, error={e}")
@@ -217,14 +297,24 @@ class ActionExecutor:
     ) -> Dict[str, Any]:
         """
         Production mode: Execute with commit, audit log, and Kafka event.
-        
+
         Creates audit log entry and publishes Kafka event.
+
+        Sprint Q.12 Onda 0.4 — refuses to write the audit log when no
+        handler is registered for ``action.type``. Without this guard
+        the row would carry a real ``before_state`` and a stub
+        ``after_state``, plus emit a ``copilot.action.executed`` event
+        for an action that never executed.
         """
         logger.info(f"Production execution: action={action.id}")
-        
+
+        if action.type not in _ACTION_HANDLERS:
+            # Fail BEFORE we touch the DB or the event bus.
+            raise ActionHandlerNotImplementedError(action.type)
+
         # Capture before state
         before_state = await self._capture_state(action, plan_id)
-        
+
         try:
             # Execute action (this would call action-specific logic)
             after_state = await self._simulate_action_execution(action, plan_id)
@@ -236,7 +326,7 @@ class ActionExecutor:
             # always returned 404 / empty. Fixed: persist the row here so
             # the audit trail is real.
             transaction_id = uuid4()
-            rollback_until = datetime.utcnow() + timedelta(hours=24)
+            rollback_until = datetime.now(timezone.utc) + timedelta(hours=24)
 
             audit_log = CopilotActionLog(
                 id=transaction_id,
@@ -247,7 +337,7 @@ class ActionExecutor:
                 before_state=before_state,
                 after_state=after_state,
                 status=ActionStatus.EXECUTED.value,
-                executed_at=datetime.utcnow(),
+                executed_at=datetime.now(timezone.utc),
                 rollback_until=rollback_until,
             )
             self.session.add(audit_log)
@@ -309,7 +399,7 @@ class ActionExecutor:
         Captures state based on action type to enable accurate impact calculation.
         """
         state = {
-            "captured_at": datetime.utcnow().isoformat(),
+            "captured_at": datetime.now(timezone.utc).isoformat(),
             "plan_id": str(plan_id) if plan_id else None,
             "action_type": action.type,
             "target": action.payload.get("target") if action.payload else None,
@@ -408,17 +498,31 @@ class ActionExecutor:
         action: Action,
         plan_id: Optional[UUID],
     ) -> Dict[str, Any]:
+        """Dispatch to the registered handler for ``action.type``.
+
+        Sprint Q.12 Onda 0.4 — used to be a placeholder that returned
+        ``{executed_at, action_type, plan_id}``. That stub silently
+        ran in EXECUTE mode (writing a real audit log row + a Kafka
+        event for a mutation that never happened) and in SANDBOX mode
+        (returning an ``actual_impact`` computed against an empty
+        ``after_state``).
+
+        Now: if no handler is registered, raise
+        :class:`ActionHandlerNotImplementedError`. The HTTP layer maps
+        this to ``501 Not Implemented``. Real handlers register via
+        :func:`register_action_handler`.
         """
-        Simulate action execution.
-        
-        In real implementation, this would call action-specific handlers.
-        """
-        # Placeholder - real implementation would have action-specific logic
-        return {
-            "executed_at": datetime.utcnow().isoformat(),
-            "action_type": action.type,
-            "plan_id": str(plan_id) if plan_id else None,
-        }
+        handler = _ACTION_HANDLERS.get(action.type)
+        if handler is None:
+            raise ActionHandlerNotImplementedError(action.type)
+        result = await handler(self, action, plan_id)
+        # Stamp common metadata so callers always get a consistent shape.
+        result.setdefault(
+            "executed_at", datetime.now(tz=timezone.utc).isoformat(),
+        )
+        result.setdefault("action_type", action.type)
+        result.setdefault("plan_id", str(plan_id) if plan_id else None)
+        return result
     
     async def _calculate_actual_impact(
         self,
@@ -436,7 +540,7 @@ class ActionExecutor:
         - KPI deltas
         """
         impact = {
-            "calculated_at": datetime.utcnow().isoformat(),
+            "calculated_at": datetime.now(timezone.utc).isoformat(),
             "action_type": action.type,
             "metrics": {},
             "deltas": {},

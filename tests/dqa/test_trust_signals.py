@@ -115,6 +115,56 @@ def test_rows_to_z_scores_skips_null_entries():
     assert len(z) == 3
 
 
+# Onda 4.2 — adversarial inputs. The provider survives DB rows that
+# contain NaN/Infinity/oversized values (Postgres NUMERIC overflow,
+# legacy data with sentinel `inf` values, calculations that produced
+# NaN upstream). These cases used to be untested and would either
+# poison the z-score or raise out of nowhere.
+
+def test_rows_to_z_scores_propagates_nan_to_zero_variance_path():
+    """If every diff is NaN, pstdev raises StatisticsError → empty list.
+    The provider's own filter at the call-site is what keeps NaN out
+    in production; this exercises the fallback branch."""
+    import math
+    rows = [(math.nan, 1.0), (math.nan, 2.0), (math.nan, 3.0)]
+    # NaN - x is still NaN; pstdev([nan, nan, nan]) → StatisticsError.
+    z = _rows_to_z_scores(rows)
+    assert z == []
+
+
+def test_rows_to_z_scores_handles_infinity_diffs():
+    """A single infinity in the diff series is filtered out before
+    pstdev runs (Onda 4.2 fix). The remaining finite diffs produce
+    valid z-scores; one bad row doesn't poison the others."""
+    import math
+    rows = [(math.inf, 0.0), (1.0, 0.0), (2.0, 0.0), (3.0, 0.0)]
+    z = _rows_to_z_scores(rows)
+    # The inf row is dropped; 3 finite diffs remain → 3 z-scores.
+    assert len(z) == 3
+    assert all(math.isfinite(zi) for zi in z)
+    # Symmetric distribution around 2.0 → z-scores sum to ~0.
+    assert abs(sum(z)) < 1e-9
+
+
+def test_rows_to_z_scores_extremely_large_values_do_not_overflow():
+    """Verify that 1e100-scale values don't NaN-out the stdev path."""
+    rows = [(1e100, 0.0), (2e100, 0.0), (3e100, 0.0), (4e100, 0.0)]
+    z = _rows_to_z_scores(rows)
+    assert len(z) == 4
+    for zi in z:
+        # The diffs are deterministic (1e100, 2e100, 3e100, 4e100), so
+        # the standardised values should be finite numbers in [-2, 2].
+        assert zi == zi  # not NaN
+        assert abs(zi) < 5
+
+
+def test_rows_to_z_scores_below_minimum_sample_returns_empty():
+    """The current floor is 3 pairs; anything fewer collapses to []."""
+    assert _rows_to_z_scores([]) == []
+    assert _rows_to_z_scores([(1.0, 1.0)]) == []
+    assert _rows_to_z_scores([(1.0, 1.0), (2.0, 2.0)]) == []
+
+
 # ---------------------------------------------------------------------------
 # curated_signals_provider — integration via fake session
 # ---------------------------------------------------------------------------

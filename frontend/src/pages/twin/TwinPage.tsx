@@ -21,7 +21,7 @@ export function TwinPage() {
   const [simulatingId, setSimulatingId] = useState<string | null>(null);
   const [compareScenario, setCompareScenario] = useState<any | null>(null);
   const [showTemplates, setShowTemplates] = useState(false);
-  const [selectedTemplate, setSelectedTemplate] = useState<any | null>(null);
+  const [, setSelectedTemplate] = useState<any | null>(null);
   const toast = useToastContext();
   const queryClient = useQueryClient();
 

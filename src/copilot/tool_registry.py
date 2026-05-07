@@ -275,7 +275,9 @@ class ToolRegistry:
     
     async def _fetch_openapi(self) -> Dict[str, Any]:
         """Fetch OpenAPI spec from the API."""
-        async with httpx.AsyncClient() as client:
+        # Sprint S6: explicit timeout so a slow/dead OpenAPI endpoint cannot
+        # hang copilot init forever.
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as client:
             try:
                 response = await client.get(f"{self.base_url}/openapi.json")
                 response.raise_for_status()
@@ -564,8 +566,9 @@ class ToolRegistry:
             if body_params:
                 body = body_params
         
-        # Execute request
-        async with httpx.AsyncClient() as client:
+        # Execute request. Sprint S6: bounded timeout — a slow upstream
+        # tool must not hang the whole copilot request loop.
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=5.0)) as client:
             try:
                 if tool.method == "GET":
                     response = await client.get(url, params=query_params, headers=headers)

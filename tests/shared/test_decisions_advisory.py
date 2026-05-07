@@ -70,7 +70,10 @@ def test_execute_advisory_marks_executed_and_publishes():
     client = TestClient(_build_app(decision))
     resp = client.post(
         f"/v1/shared/decisions/{decision.id}/execute",
-        headers={"x-tenant-id": str(TENANT)},
+        headers={
+            "x-tenant-id": str(TENANT),
+            "x-user-id": "11111111-1111-1111-1111-111111111111",
+        },
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -85,7 +88,10 @@ def test_execute_rejects_when_not_approved():
     client = TestClient(_build_app(decision))
     resp = client.post(
         f"/v1/shared/decisions/{decision.id}/execute",
-        headers={"x-tenant-id": str(TENANT)},
+        headers={
+            "x-tenant-id": str(TENANT),
+            "x-user-id": "11111111-1111-1111-1111-111111111111",
+        },
     )
     assert resp.status_code == 400
 
@@ -98,7 +104,10 @@ def test_rollback_advisory_marks_rolled_back_and_returns_before_state():
     client = TestClient(_build_app(decision))
     resp = client.post(
         f"/v1/shared/decisions/{decision.id}/rollback",
-        headers={"x-tenant-id": str(TENANT)},
+        headers={
+            "x-tenant-id": str(TENANT),
+            "x-user-id": "11111111-1111-1111-1111-111111111111",
+        },
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -116,7 +125,10 @@ def test_rollback_rejects_after_24h_window():
     client = TestClient(_build_app(decision))
     resp = client.post(
         f"/v1/shared/decisions/{decision.id}/rollback",
-        headers={"x-tenant-id": str(TENANT)},
+        headers={
+            "x-tenant-id": str(TENANT),
+            "x-user-id": "11111111-1111-1111-1111-111111111111",
+        },
     )
     assert resp.status_code == 400
 
@@ -126,6 +138,9 @@ def test_rollback_rejects_when_not_executed():
     client = TestClient(_build_app(decision))
     resp = client.post(
         f"/v1/shared/decisions/{decision.id}/rollback",
-        headers={"x-tenant-id": str(TENANT)},
+        headers={
+            "x-tenant-id": str(TENANT),
+            "x-user-id": "11111111-1111-1111-1111-111111111111",
+        },
     )
     assert resp.status_code == 400

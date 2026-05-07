@@ -6,7 +6,7 @@
  */
 
 import { useState, useCallback, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import {
   Upload,
   FileSpreadsheet,
@@ -21,10 +21,8 @@ import {
   Shield,
   History,
   Play,
-  ChevronRight,
   AlertOctagon,
   Sparkles,
-  TrendingUp,
   Zap,
 } from 'lucide-react';
 import { DarkPageLayout } from '@/layouts/DarkPageLayout';
@@ -37,12 +35,6 @@ import type { IngestionResult, IngestionRun, ActiveRun } from '@/lib/factoryApi'
 // ============================================================================
 
 type UploadState = 'idle' | 'uploading' | 'processing' | 'success' | 'error';
-
-interface UploadProgress {
-  stage: string;
-  progress: number;
-  message: string;
-}
 
 // ============================================================================
 // COMPONENTS

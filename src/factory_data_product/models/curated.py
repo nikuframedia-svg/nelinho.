@@ -25,6 +25,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy import (
+    CheckConstraint,
     Column,
     String,
     Text,
@@ -35,6 +36,7 @@ from sqlalchemy import (
     Boolean,
     Index,
     ForeignKey,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID as PGUUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -99,6 +101,18 @@ class CuratedOrder(QuarantineMixin, Base):
         Index("ix_curated_order_ingestion", "ingestion_id"),
         Index("ix_curated_order_of_id", "of_id"),
         Index("ix_curated_order_produto", "produto_id"),
+        # Onda 5.5 — guard against CAT-1 leaking into the DB. The schema
+        # already says nullable=False but accepts "" silently. If a future
+        # transformer regression sends empty business keys, this CHECK
+        # turns the silent corruption into an integrity error at write.
+        CheckConstraint(
+            "of_id <> ''",
+            name="ck_curated_order_of_id_nonempty",
+        ),
+        UniqueConstraint(
+            "ingestion_id", "of_id",
+            name="uq_curated_order_ingestion_of_id",
+        ),
         {"schema": "factory_curated"},
     )
     
@@ -200,6 +214,22 @@ class CuratedOrderPhase(QuarantineMixin, Base):
         Index("ix_curated_order_phase_of", "of_id"),
         Index("ix_curated_order_phase_fase", "fase_id"),
         Index("ix_curated_order_phase_composite", "of_id", "fase_id"),
+        # Onda 5.5 — same business-key guard as CuratedOrder. The
+        # composite index was already in place; we now also enforce
+        # uniqueness so duplicate (of_id, fase_id) pairs per ingestion
+        # raise IntegrityError instead of being silently inserted.
+        CheckConstraint(
+            "of_id <> ''",
+            name="ck_curated_order_phase_of_id_nonempty",
+        ),
+        CheckConstraint(
+            "fase_id <> ''",
+            name="ck_curated_order_phase_fase_id_nonempty",
+        ),
+        UniqueConstraint(
+            "ingestion_id", "of_id", "fase_id",
+            name="uq_curated_order_phase_ingestion_of_fase",
+        ),
         {"schema": "factory_curated"},
     )
     

@@ -73,6 +73,24 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = Field(default=30, ge=5, le=1440)
     refresh_token_expire_days: int = Field(default=7, ge=1, le=30)
     algorithm: str = Field(default="HS256")
+    jwt_issuer: Optional[str] = Field(
+        default=None,
+        description="Expected `iss` claim. If set, tokens missing/mismatching are rejected.",
+    )
+    jwt_audience: Optional[str] = Field(
+        default=None,
+        description="Expected `aud` claim. If set, tokens missing/mismatching are rejected.",
+    )
+
+    @field_validator("algorithm")
+    @classmethod
+    def validate_algorithm(cls, v: str) -> str:
+        """Reject `none` algorithm — JWTs must be signed."""
+        if v.strip().lower() in ("none", ""):
+            raise ValueError(
+                "JWT algorithm 'none' is forbidden. Use HS256/RS256/ES256 etc."
+            )
+        return v
 
     @field_validator("secret_key")
     @classmethod

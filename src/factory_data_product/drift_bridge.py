@@ -45,9 +45,13 @@ def _summarise_drift(history: List[Dict[str, Any]]) -> Dict[str, Any]:
 
     cols_added: Dict[str, List[str]] = {}
     cols_removed: Dict[str, List[str]] = {}
+    # Onda 1.9 — SchemaSnapshot.to_dict() shape is {sheet_name: list[column]},
+    # not {sheet_name: {"columns": [...]}}. The previous .get("columns", [])
+    # was calling .get on a list, raising AttributeError on every common
+    # sheet (the very case we care about). Read the list directly.
     for sheet in base_sheets & curr_sheets:
-        base_cols = set(baseline.get("sheets", {}).get(sheet, {}).get("columns", []))
-        curr_cols = set(current.get("sheets", {}).get(sheet, {}).get("columns", []))
+        base_cols = set(baseline.get("sheets", {}).get(sheet, []) or [])
+        curr_cols = set(current.get("sheets", {}).get(sheet, []) or [])
         added = list(curr_cols - base_cols)
         removed = list(base_cols - curr_cols)
         if added:

@@ -25,10 +25,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .models import (
     DecisionRun,
     Approval,
-    DecisionPolicy,
     AutonomyLevel,
     DecisionStatus,
     ApprovalAction,
+    KillSwitchActive,
     DEFAULT_POLICIES,
 )
 
@@ -92,6 +92,21 @@ class ApprovalRequiredError(Exception):
     pass
 
 
+class KillSwitchActiveError(Exception):
+    """Sprint Q.12 Onda 2.2 — raised when a propose/execute attempt
+    targets a tenant scope with an active kill switch. Carries the
+    ``scope`` and ``decision_id`` so the API layer can map to 423
+    LOCKED with a useful message."""
+
+    def __init__(self, scope: str, decision_id: UUID, reason: str) -> None:
+        self.scope = scope
+        self.decision_id = decision_id
+        self.reason = reason
+        super().__init__(
+            f"Kill switch active for scope={scope!r} (decision_id={decision_id}): {reason}"
+        )
+
+
 class GovernanceService:
     """
     Service for managing decision governance.
@@ -133,6 +148,26 @@ class GovernanceService:
     # Decision Lifecycle
     # =========================================================================
     
+    async def propose_decision_with_deferred_kafka(
+        self, **kwargs,
+    ) -> tuple[Dict[str, Any], Optional[Any]]:
+        """Like :meth:`propose_decision` but returns the Kafka event
+        instead of publishing it.
+
+        Sprint Q.12 Onda 2.3 — callers that wrap multiple writes in a
+        single outer transaction (e.g. ``SandboxService.publish``) use
+        this so the bus only sees IDs that survived the commit. The
+        caller is responsible for publishing ``deferred_event`` AFTER
+        their commit succeeds.
+
+        Returns ``(decision_dict, deferred_event_or_None)`` — the event
+        is ``None`` when the build failed (caller should still log the
+        local commit but won't have anything to publish).
+        """
+        return await self._propose_decision_impl(
+            defer_kafka=True, **kwargs,
+        )
+
     async def propose_decision(
         self,
         decision_type: str,
@@ -145,6 +180,34 @@ class GovernanceService:
         scenario_id: Optional[str] = None,
         evidence_refs: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
+        """Public propose entry — publishes Kafka eagerly (current contract)."""
+        decision, _event = await self._propose_decision_impl(
+            decision_type=decision_type,
+            title=title,
+            action_data=action_data,
+            proposed_by=proposed_by,
+            description=description,
+            expected_impact=expected_impact,
+            risk_level=risk_level,
+            scenario_id=scenario_id,
+            evidence_refs=evidence_refs,
+            defer_kafka=False,
+        )
+        return decision
+
+    async def _propose_decision_impl(
+        self,
+        decision_type: str,
+        title: str,
+        action_data: Dict[str, Any],
+        proposed_by: str,
+        description: Optional[str] = None,
+        expected_impact: Optional[Dict[str, Any]] = None,
+        risk_level: str = "medium",
+        scenario_id: Optional[str] = None,
+        evidence_refs: Optional[List[str]] = None,
+        defer_kafka: bool = False,
+    ) -> tuple[Dict[str, Any], Optional[Any]]:
         """
         Propose a new decision.
         
@@ -162,6 +225,20 @@ class GovernanceService:
         Returns:
             Created decision record
         """
+        # Sprint Q.12 Onda 2.2 — refuse new decisions whose scope is
+        # currently kill-switched. We allow ``decision_type ==
+        # "kill_switch"`` itself through so an admin can stack a wider
+        # block on top of an existing one (or revoke via a follow-up
+        # rollback — the rollback path doesn't go through propose).
+        if decision_type != "kill_switch":
+            active = await self.is_kill_switch_active(decision_type=decision_type)
+            if active is not None:
+                raise KillSwitchActiveError(
+                    scope=active.scope,
+                    decision_id=active.decision_id,
+                    reason=active.reason,
+                )
+
         # Get policy
         policy = self.get_policy(decision_type)
         if not policy:
@@ -211,6 +288,7 @@ class GovernanceService:
             if await self._auto_approval_allowed(
                 decision_type=decision_type,
                 risk_level=risk_level,
+                scenario_id=scenario_id,
             ):
                 initial_status = DecisionStatus.APPROVED.value
                 logger.info(
@@ -245,35 +323,42 @@ class GovernanceService:
 
         logger.info(f"Decision proposed: {decision_id_uuid} ({decision_type})")
 
-        try:
-            from src.shared.kafka_client import EventBase, Topics, publish_event
+        # Build the event up-front so deferred and eager paths share the
+        # same payload — keeps the bus shape stable regardless of which
+        # caller is responsible for publishing.
+        from src.shared.kafka_client import EventBase, Topics, publish_event
 
-            await publish_event(
-                Topics.DECISION_PROPOSED,
-                EventBase(
-                    event_type="DECISION_PROPOSED",
-                    tenant_id=self.tenant_id,
-                    source_module="governance",
-                    payload={
-                        "decision_id": str(decision_run.id),
-                        "decision_type": decision_type,
-                        "title": title,
-                        "proposed_by": proposed_by,
-                        "risk_level": risk_level,
-                        "status": decision_run.status,
-                        "autonomy_level": decision_run.autonomy_level,
-                        "action_data": action_data,
-                        "expected_impact": expected_impact,
-                        "scenario_id": scenario_id,
-                    },
-                ),
-            )
+        event = EventBase(
+            event_type="DECISION_PROPOSED",
+            tenant_id=self.tenant_id,
+            source_module="governance",
+            payload={
+                "decision_id": str(decision_run.id),
+                "decision_type": decision_type,
+                "title": title,
+                "proposed_by": proposed_by,
+                "risk_level": risk_level,
+                "status": decision_run.status,
+                "autonomy_level": decision_run.autonomy_level,
+                "action_data": action_data,
+                "expected_impact": expected_impact,
+                "scenario_id": scenario_id,
+            },
+        )
+
+        if defer_kafka:
+            # Caller (e.g. SandboxService.publish) will emit after its
+            # outer commit lands. We don't touch the bus here.
+            return self._run_to_dict(decision_run), event
+
+        try:
+            await publish_event(Topics.DECISION_PROPOSED, event)
         except Exception as exc:  # pragma: no cover — best-effort
             logger.warning(
                 "DECISION_PROPOSED publish failed for %s: %s", decision_run.id, exc,
             )
 
-        return self._run_to_dict(decision_run)
+        return self._run_to_dict(decision_run), None
     
     async def approve_decision(
         self,
@@ -474,6 +559,14 @@ class GovernanceService:
         overrides via `self.action_executor` (dependency-injected for
         tests). A handler failure propagates — the calling
         `execute_decision` turns that into status=FAILED.
+
+        Sprint Q.12 Onda 2.1 — when the handler returns a known
+        "advisory shim" status (``no_session`` / ``missing_id`` /
+        ``not_found`` / ``no_handler``) we flip the decision to
+        :attr:`DecisionStatus.EXECUTED_PARTIAL` instead of leaving it
+        EXECUTED. The previous behaviour silently announced "EXECUTED"
+        for decisions that never touched the domain, which broke the
+        rollback path and misled compliance reviewers.
         """
         from src.governance.action_executor import (
             ActionContext,
@@ -491,7 +584,31 @@ class GovernanceService:
         )
         # dispatch is best-effort for "no_handler" (advisory mode) but
         # strict for handler failures — they propagate.
-        await executor.dispatch(ctx)
+        outcome = await executor.dispatch(ctx)
+
+        # ``outcome`` shape: {"status": "handled" | "no_handler",
+        # "decision_type": ..., "result": {...}}. The inner ``result``
+        # carries the handler's own status string. Anything that says
+        # "I didn't actually mutate the domain" downgrades the decision
+        # to EXECUTED_PARTIAL so reviewers can find it later.
+        if not isinstance(outcome, dict):
+            return
+        if outcome.get("status") == "no_handler":
+            decision_run.status = DecisionStatus.EXECUTED_PARTIAL.value
+            return
+        result = outcome.get("result")
+        if isinstance(result, dict):
+            inner = result.get("status")
+            if inner in {
+                "no_session", "missing_id", "missing_mold_id",
+                "missing_planned_date", "missing_rework_id", "not_found",
+            }:
+                logger.warning(
+                    "decision %s: handler returned %r — flipping to "
+                    "EXECUTED_PARTIAL (domain state unchanged)",
+                    decision_run.id, inner,
+                )
+                decision_run.status = DecisionStatus.EXECUTED_PARTIAL.value
 
     async def _publish_decision_executed(
         self,
@@ -904,6 +1021,7 @@ class GovernanceService:
 
         decision_run.action_data = new_data
         decision_run.input_snapshot_hash = after_hash
+        old_audit_hash = decision_run.audit_hash
         # Re-hash the audit chain so tamper detection stays consistent.
         decision_run.audit_hash = DecisionRun.calculate_audit_hash(
             decision_id=decision_run.id,
@@ -912,8 +1030,49 @@ class GovernanceService:
             outcome_hash=decision_run.outcome_hash,
             prev_hash=decision_run.prev_hash,
         )
+
+        # Sprint Q.12 Onda 1.5 — every later decision that pinned its
+        # ``prev_hash`` to ``old_audit_hash`` now references a row whose
+        # hash we just changed. Flag them so audit tooling can show the
+        # break instead of pretending the chain is intact.
+        await self._mark_chain_invalidated(decision_run.id, old_audit_hash)
+
         await self.db.flush()
         return self._run_to_dict(decision_run)
+
+    async def _mark_chain_invalidated(
+        self,
+        modifier_id: UUID,
+        old_audit_hash: str,
+    ) -> None:
+        """Tag descendants whose ``prev_hash`` we just orphaned.
+
+        Walks ``DecisionRun`` rows for the current tenant where
+        ``prev_hash == old_audit_hash`` and stamps the chain-invalidation
+        columns. The ``modifier_id`` is recorded so a forensic timeline
+        can reconstruct *which* edit broke each link.
+
+        No-op when no descendants exist (e.g. modifying the most recent
+        decision before any further proposals landed).
+        """
+        from sqlalchemy import update
+
+        stmt = (
+            update(DecisionRun)
+            .where(
+                and_(
+                    DecisionRun.tenant_id == self.tenant_id,
+                    DecisionRun.prev_hash == old_audit_hash,
+                    DecisionRun.id != modifier_id,
+                )
+            )
+            .values(
+                chain_invalidated=True,
+                chain_invalidated_at=datetime.now(timezone.utc),
+                chain_invalidated_by_modify_id=modifier_id,
+            )
+        )
+        await self.db.execute(stmt)
 
     # =========================================================================
     # Sprint M.6 — Cross-decision audit timeline
@@ -986,11 +1145,17 @@ class GovernanceService:
     # Sprint M.5 — Auto-approval rules configuráveis (TenantConfig)
     # =========================================================================
 
+    # Trust gate threshold (Blueprint v2.0 §4.5). Decisions with a
+    # trust index below this never auto-approve; missing trust = treat
+    # as below threshold so silence isn't consent.
+    _TRUST_GATE_THRESHOLD: float = 0.75
+
     async def _auto_approval_allowed(
         self,
         *,
         decision_type: str,
         risk_level: str,
+        scenario_id: Optional[str] = None,
         trust_index: Optional[float] = None,
     ) -> bool:
         """Check TenantConfig for `governance.auto_approval.{decision_type}.*`.
@@ -998,19 +1163,35 @@ class GovernanceService:
         Returns True iff ALL of:
           * `auto_approval.{decision_type}.enabled=True`
           * decision's risk level ≤ `auto_approval.{decision_type}.risk_ceiling`
-          * `trust_index >= 0.75` when a trust_index is supplied (Blueprint
-            v2.0 §4.5 gate — Sprint C 1.2). When `trust_index is None`
-            (legacy callers without a schedule commit) this check is
-            skipped so existing flows stay green.
+          * resolved trust_index ≥ ``_TRUST_GATE_THRESHOLD``
 
-        Falls back to False on any error — auto-approval is a power-user
-        feature, never the default.
+        Sprint Q.12 Onda 1.4 — the previous version skipped the trust
+        gate when ``trust_index`` was ``None`` "so legacy flows stay
+        green". In practice :meth:`propose_decision` *never* passed a
+        trust_index, so the gate never fired. Now we resolve a trust
+        index from the scenario commit (when available) and refuse to
+        auto-approve when it can't be resolved — better to surface a
+        decision for human review than to silently widen the gate.
+
+        Falls back to False on any error — auto-approval is a
+        power-user feature, never the default.
         """
-        # Trust gate comes BEFORE the config read so we short-circuit cheap.
-        if trust_index is not None and trust_index < 0.75:
+        if trust_index is None:
+            trust_index = await self._resolve_trust_index(scenario_id)
+
+        if trust_index is None:
             logger.info(
-                "Trust gate blocked auto-approval: tenant=%s type=%s TI=%.3f < 0.75",
+                "Trust gate blocked auto-approval: tenant=%s type=%s "
+                "trust_index unavailable (no scenario / commit)",
+                self.tenant_id, decision_type,
+            )
+            return False
+
+        if trust_index < self._TRUST_GATE_THRESHOLD:
+            logger.info(
+                "Trust gate blocked auto-approval: tenant=%s type=%s TI=%.3f < %.2f",
                 self.tenant_id, decision_type, trust_index,
+                self._TRUST_GATE_THRESHOLD,
             )
             return False
 
@@ -1028,6 +1209,34 @@ class GovernanceService:
         except Exception as exc:  # pragma: no cover — defensive
             logger.warning("auto-approval check failed: %s", exc)
             return False
+
+    async def _resolve_trust_index(
+        self, scenario_id: Optional[str],
+    ) -> Optional[float]:
+        """Return the trust_index of the schedule commit referenced by
+        ``scenario_id``, or ``None`` if it can't be resolved.
+
+        Lazy-imports the commits service so governance stays free of
+        plan dependencies at import time. Any failure (including the
+        plan module not being installed in this build) is logged and
+        treated as "no trust available" — never as "trust=high".
+        """
+        if not scenario_id:
+            return None
+        try:
+            from src.plan.cpo.commits import CommitsService
+
+            commits = CommitsService(self.db, self.tenant_id)
+            commit = await commits.get_by_scenario_id(scenario_id)
+            if commit is None or commit.trust_index is None:
+                return None
+            return float(commit.trust_index)
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.debug(
+                "trust_index resolution failed (scenario=%s): %s",
+                scenario_id, exc,
+            )
+            return None
 
     # =========================================================================
     # Existing methods continue below
@@ -1055,8 +1264,22 @@ class GovernanceService:
 
         return pending
 
+    # Hash-chain verification walks back this many decisions before
+    # giving up. 100 covers the audit window most reviewers care about
+    # (last week of decisions on a busy tenant) without making the
+    # audit-pack endpoint pathologically slow on first run.
+    _HASH_CHAIN_VERIFY_DEPTH: int = 100
+
     async def get_audit_pack(self, decision_id: str) -> Dict[str, Any]:
-        """Get complete audit pack for compliance."""
+        """Get complete audit pack for compliance.
+
+        Sprint Q.12 Onda 1.2 — ``hash_chain_valid`` used to be a
+        hardcoded ``True``. Now we walk back through the chain
+        recomputing each link's audit hash from its inputs. If any
+        ``calculate_audit_hash`` recomputation disagrees with the
+        stored value the chain is reported as broken with the
+        offending decision id surfaced for forensics.
+        """
         run = await self._get_decision_run(decision_id)
         if not run:
             raise ValueError(f"Decision {decision_id} not found")
@@ -1070,6 +1293,8 @@ class GovernanceService:
         if run.rolled_back_at:
             timeline.append({"event": "rolled_back", "at": str(run.rolled_back_at), "by": run.rolled_back_by, "reason": run.rollback_reason})
 
+        chain_status = await self._verify_hash_chain(run)
+
         return {
             "decision": d,
             "verification": {
@@ -1077,11 +1302,80 @@ class GovernanceService:
                 "input_hash": run.input_snapshot_hash,
                 "outcome_hash": run.outcome_hash,
                 "prev_hash": run.prev_hash,
-                "hash_chain_valid": True,
+                **chain_status,
             },
             "timeline": timeline,
             "evidence": run.evidence_refs or [],
         }
+
+    async def _verify_hash_chain(self, run: "DecisionRun") -> Dict[str, Any]:
+        """Recompute ``run`` and its predecessors' audit hashes.
+
+        Returns a dict with:
+          * ``hash_chain_valid``: True iff every recomputed audit_hash
+            matches the stored one within the verification window.
+          * ``hash_chain_depth``: how many links we actually walked.
+          * ``hash_chain_break_at``: the decision id where the
+            recomputation first disagreed (None when valid).
+          * ``hash_chain_truncated``: True when we stopped before
+            reaching the genesis (prev_hash=NULL); the chain *might*
+            still be valid further back, the caller just doesn't know.
+        """
+        depth = 0
+        broken_at: Optional[str] = None
+        current: Optional[DecisionRun] = run
+
+        while current is not None and depth < self._HASH_CHAIN_VERIFY_DEPTH:
+            recomputed = DecisionRun.calculate_audit_hash(
+                decision_id=current.id,
+                policy_version=current.policy_version,
+                input_hash=current.input_snapshot_hash,
+                outcome_hash=current.outcome_hash,
+                prev_hash=current.prev_hash,
+            )
+            if recomputed != current.audit_hash:
+                broken_at = str(current.id)
+                break
+            depth += 1
+            if current.prev_hash is None:
+                # Reached genesis — full verification complete.
+                current = None
+                break
+            current = await self._fetch_decision_by_audit_hash(current.prev_hash)
+            if current is None:
+                # Predecessor missing — that's also a chain break.
+                broken_at = run.prev_hash if depth == 0 else "missing-predecessor"
+                break
+
+        truncated = (
+            broken_at is None
+            and current is not None
+            and depth >= self._HASH_CHAIN_VERIFY_DEPTH
+        )
+        return {
+            "hash_chain_valid": broken_at is None,
+            "hash_chain_depth": depth,
+            "hash_chain_break_at": broken_at,
+            "hash_chain_truncated": truncated,
+        }
+
+    async def _fetch_decision_by_audit_hash(
+        self, audit_hash: str,
+    ) -> Optional["DecisionRun"]:
+        """Look up the decision whose ``audit_hash`` equals the argument.
+
+        Used by :meth:`_verify_hash_chain` to walk backward through the
+        ledger. Tenant-scoped so cross-tenant chain references can't be
+        used to spoof verification.
+        """
+        stmt = select(DecisionRun).where(
+            and_(
+                DecisionRun.tenant_id == self.tenant_id,
+                DecisionRun.audit_hash == audit_hash,
+            )
+        ).limit(1)
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
     
     # =========================================================================
     # Kill Switch
@@ -1093,7 +1387,15 @@ class GovernanceService:
         activated_by: str,
         reason: str,
     ) -> Dict[str, Any]:
-        """Activate kill switch (no approval required)."""
+        """Activate kill switch (no approval required).
+
+        Sprint Q.12 Onda 1.3 — recomputes ``audit_hash`` to honour the
+        chain integrity check. Sprint Q.12 Onda 2.2 — also persists a
+        ``KillSwitchActive`` row so subsequent decisions can be
+        rejected by :func:`assert_no_active_kill_switch`. The previous
+        version printed a warning log and called it done; nothing in
+        the pipeline actually consulted that warning.
+        """
         decision = await self.propose_decision(
             decision_type="kill_switch",
             title=f"KILL SWITCH: {scope}",
@@ -1105,14 +1407,121 @@ class GovernanceService:
         # Auto-execute (kill switch policy bypasses approval)
         run = await self._get_decision_run(decision["id"])
         if run:
+            outcome_data = {
+                "action_data": run.action_data,
+                "executed_at": datetime.now(timezone.utc).isoformat(),
+                "executed_by": activated_by,
+                "kill_switch_scope": scope,
+            }
+            outcome_hash = hashlib.sha256(
+                json.dumps(outcome_data, sort_keys=True, default=str).encode()
+            ).hexdigest()
+
             run.status = DecisionStatus.EXECUTED.value
             run.executed_at = datetime.now(timezone.utc)
             run.executed_by = activated_by
+            run.outcome_hash = outcome_hash
+            run.audit_hash = DecisionRun.calculate_audit_hash(
+                decision_id=run.id,
+                policy_version=run.policy_version,
+                input_hash=run.input_snapshot_hash,
+                outcome_hash=outcome_hash,
+                prev_hash=run.prev_hash,
+            )
+
+            # Sprint Q.12 Onda 2.2 — durable block. Idempotent: if the
+            # scope is already active we refresh the metadata rather
+            # than inserting a duplicate row.
+            await self._record_kill_switch_active(
+                scope=scope,
+                decision_id=run.id,
+                activated_by=activated_by,
+                reason=reason,
+            )
+
             await self.db.flush()
 
         logger.critical(f"KILL SWITCH ACTIVATED by {activated_by}: {scope} - {reason}")
 
         return await self.get_decision(decision["id"])
+
+    async def _record_kill_switch_active(
+        self,
+        *,
+        scope: str,
+        decision_id: UUID,
+        activated_by: str,
+        reason: str,
+    ) -> None:
+        """Insert/refresh the durable kill-switch row.
+
+        Composite PK is ``(tenant_id, scope)`` so re-activating the
+        same scope just updates the metadata (latest decision_id and
+        ``activated_at``) — there's no semantic to having two rows for
+        the same active scope.
+        """
+        existing = await self.db.execute(
+            select(KillSwitchActive).where(
+                and_(
+                    KillSwitchActive.tenant_id == self.tenant_id,
+                    KillSwitchActive.scope == scope,
+                )
+            )
+        )
+        row = existing.scalar_one_or_none()
+        now = datetime.now(timezone.utc)
+        if row is None:
+            self.db.add(KillSwitchActive(
+                tenant_id=self.tenant_id,
+                scope=scope,
+                decision_id=decision_id,
+                activated_at=now,
+                activated_by=activated_by,
+                reason=reason,
+            ))
+        else:
+            row.decision_id = decision_id
+            row.activated_at = now
+            row.activated_by = activated_by
+            row.reason = reason
+            row.deactivated_at = None
+            row.deactivated_by = None
+
+    async def is_kill_switch_active(
+        self,
+        *,
+        decision_type: Optional[str] = None,
+    ) -> Optional[KillSwitchActive]:
+        """Return the active kill-switch row that covers ``decision_type``.
+
+        Scope semantics:
+          * ``"all"``                  — blocks every decision_type.
+          * ``"decision_type:foo"``    — blocks only ``decision_type=foo``.
+          * any other free-form scope is matched literally.
+
+        Returns the first matching active row, or ``None``.
+        """
+        scopes = ["all"]
+        if decision_type:
+            scopes.append(f"decision_type:{decision_type}")
+
+        stmt = select(KillSwitchActive).where(
+            and_(
+                KillSwitchActive.tenant_id == self.tenant_id,
+                KillSwitchActive.scope.in_(scopes),
+                KillSwitchActive.deactivated_at.is_(None),
+            )
+        ).limit(1)
+        result = await self.db.execute(stmt)
+        row = result.scalar_one_or_none()
+        # Defensive — unit tests with FakeSession queue a single scalar
+        # per call site; if the test feeds something other than a
+        # ``KillSwitchActive`` row through this path treat it as "no
+        # active kill switch" rather than crashing on the attribute
+        # access.
+        if not isinstance(row, KillSwitchActive):
+            return None
+        return row
 
     # =========================================================================
     # Internal Helpers
@@ -1131,7 +1540,26 @@ class GovernanceService:
         return result.scalar_one_or_none()
 
     async def _get_last_decision_hash(self) -> Optional[str]:
-        """Get the hash of the most recent decision (for chain integrity)."""
+        """Get the hash of the most recent decision (for chain integrity).
+
+        Sprint Q.12 Onda 1.1 — takes a PostgreSQL transaction-level
+        advisory lock keyed on the tenant before reading. Without the
+        lock, two concurrent ``propose_decision`` calls would both read
+        the same ``last_hash``, both compute an ``audit_hash`` rooted at
+        the same ``prev_hash``, and both flush — turning the audit
+        chain into a tree (which silently breaks the C5 invariant that
+        every decision links to *the* prior one).
+
+        The lock is released automatically on commit/rollback. The key
+        is a stable 64-bit integer derived from the tenant UUID so two
+        proposals against different tenants don't serialise against
+        each other.
+        """
+        # Best-effort advisory lock. Skipped on backends that don't
+        # support pg_advisory_xact_lock (sqlite in tests) — those
+        # backends don't have real concurrency anyway.
+        await self._lock_chain_for_tenant()
+
         stmt = (
             select(DecisionRun.audit_hash)
             .where(DecisionRun.tenant_id == self.tenant_id)
@@ -1141,6 +1569,36 @@ class GovernanceService:
         result = await self.db.execute(stmt)
         row = result.scalar_one_or_none()
         return row
+
+    async def _lock_chain_for_tenant(self) -> None:
+        """Acquire a per-tenant advisory lock for the audit chain.
+
+        No-op on non-PostgreSQL backends — keeps the unit tests (which
+        use ``FakeSession``/sqlite) green without losing the production
+        guarantee. The lock auto-releases on transaction commit/abort.
+        """
+        from sqlalchemy import text
+
+        try:
+            dialect = self.db.bind.dialect.name if self.db.bind else None
+        except Exception:
+            dialect = None
+        if dialect != "postgresql":
+            return
+
+        # 64-bit signed key derived from the tenant uuid. We don't
+        # care about uniqueness across all advisory locks in the
+        # database — only that two callers for the same tenant land
+        # on the same key.
+        key = int.from_bytes(self.tenant_id.bytes[:8], "big", signed=True)
+        try:
+            await self.db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": key})
+        except Exception as exc:  # pragma: no cover — backend quirks
+            logger.warning(
+                "advisory_xact_lock failed for tenant=%s: %s — falling "
+                "back to lock-free path; chain integrity at risk.",
+                self.tenant_id, exc,
+            )
 
     @staticmethod
     def _run_to_dict(run: DecisionRun) -> Dict[str, Any]:

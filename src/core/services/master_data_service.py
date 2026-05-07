@@ -7,12 +7,13 @@ Business logic for master data management (products, machines, employees, operat
 
 from datetime import date
 from decimal import Decimal
-from typing import List, Optional, TypeVar, Generic, Type
+from typing import Any, Dict, List, Optional, TypeVar, Generic, Type
 from uuid import UUID
 
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.models.audit import AuditLog
 from src.core.models.product import Product, ProductType, ProductStatus
 from src.core.models.machine import Machine, MachineStatus
 from src.core.models.employee import Employee, EmploymentStatus
@@ -22,6 +23,30 @@ from src.core.models.partner import Customer, Supplier
 from src.shared.database import TenantBase
 from src.shared.kafka_client import publish_event, Topics
 from src.shared.events import MasterDataLoadedEvent
+
+
+def _entity_snapshot(entity: Any) -> Dict[str, Any]:
+    """Best-effort serialisation of an ORM row for the audit log.
+
+    Returns a dict of column-name → JSON-friendly value. UUIDs/Decimals/dates
+    become strings so the JSONB cast in AuditLog never trips up.
+    """
+    if entity is None:
+        return {}
+    table = getattr(entity, "__table__", None)
+    if table is None:
+        return {}
+    out: Dict[str, Any] = {}
+    for col in table.columns:
+        try:
+            v = getattr(entity, col.name)
+        except Exception:
+            continue
+        if v is None or isinstance(v, (str, int, float, bool)):
+            out[col.name] = v
+        else:
+            out[col.name] = str(v)
+    return out
 
 T = TypeVar("T", bound=TenantBase)
 
@@ -85,13 +110,52 @@ class BaseCRUDService(Generic[T]):
 class MasterDataService:
     """
     Service for all master data operations.
-    
+
     Provides typed accessors for each entity type.
+
+    Sprint S7 / Π11: ``actor_id`` is now passed in so every CRUD operation
+    can leave an audit row. None means "no human actor" (system seed/import).
     """
-    
-    def __init__(self, session: AsyncSession, tenant_id: UUID):
+
+    def __init__(
+        self,
+        session: AsyncSession,
+        tenant_id: UUID,
+        actor_id: Optional[UUID] = None,
+    ):
         self.session = session
         self.tenant_id = tenant_id
+        self.actor_id = actor_id
+
+    async def _audit(
+        self,
+        *,
+        action: str,
+        entity_type: str,
+        entity_id: UUID,
+        before: Optional[Dict[str, Any]] = None,
+        after: Optional[Dict[str, Any]] = None,
+        reason: Optional[str] = None,
+    ) -> None:
+        """Append a row to ``core.audit_log`` describing this CRUD op.
+
+        Best-effort: a failure here MUST NOT mask the underlying business
+        operation (audit row is added to the same transaction; if the
+        transaction commits, the audit lands; if it rolls back, the audit
+        is rolled back too — which is the right semantic).
+        """
+        self.session.add(
+            AuditLog(
+                tenant_id=self.tenant_id,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                action=action,
+                old_values=before,
+                new_values=after,
+                actor_id=self.actor_id,
+                reason=reason,
+            )
+        )
     
     # ═══════════════════════════════════════════════════════════════════════════════
     # PRODUCTS
@@ -117,9 +181,15 @@ class MasterDataService:
             standard_cost=standard_cost,
             status=ProductStatus.ACTIVE,
         )
-        
+
         self.session.add(product)
         await self.session.flush()
+        await self._audit(
+            action="CREATE",
+            entity_type="product",
+            entity_id=product.id,
+            after=_entity_snapshot(product),
+        )
         return product
     
     async def get_product(self, product_id: UUID) -> Optional[Product]:
@@ -657,20 +727,36 @@ class MasterDataService:
         product = await self.get_product(product_id)
         if not product:
             return None
-        
+
+        before = _entity_snapshot(product)
         for key, value in updates.items():
             if value is not None and hasattr(product, key):
                 setattr(product, key, value)
-        
+
         await self.session.flush()
+        await self._audit(
+            action="UPDATE",
+            entity_type="product",
+            entity_id=product.id,
+            before=before,
+            after=_entity_snapshot(product),
+        )
         return product
-    
+
     async def delete_product(self, product_id: UUID) -> bool:
         """Delete product."""
         product = await self.get_product(product_id)
         if product:
+            before = _entity_snapshot(product)
+            entity_id = product.id
             await self.session.delete(product)
             await self.session.flush()
+            await self._audit(
+                action="DELETE",
+                entity_type="product",
+                entity_id=entity_id,
+                before=before,
+            )
             return True
         return False
     

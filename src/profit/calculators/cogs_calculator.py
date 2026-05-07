@@ -154,8 +154,29 @@ class COGSCalculator:
         )
     """
     
-    def __init__(self, currency: str = "EUR"):
+    # Sprint Q.12 — defaults extraídos do código onde estavam
+    # hardcoded (50% recuperáveis, 10% rework time). Cada NELO BU pode
+    # passar valores específicos via `tenant_config["cogs.scrap.*"]`.
+    DEFAULT_SCRAP_RECOVERY_RATE = Decimal("0.5")
+    DEFAULT_SCRAP_REWORK_FACTOR = Decimal("0.1")
+
+    def __init__(
+        self,
+        currency: str = "EUR",
+        scrap_recovery_rate: Optional[Decimal] = None,
+        scrap_rework_factor: Optional[Decimal] = None,
+    ):
         self.currency = currency
+        self.scrap_recovery_rate = (
+            scrap_recovery_rate
+            if scrap_recovery_rate is not None
+            else self.DEFAULT_SCRAP_RECOVERY_RATE
+        )
+        self.scrap_rework_factor = (
+            scrap_rework_factor
+            if scrap_rework_factor is not None
+            else self.DEFAULT_SCRAP_REWORK_FACTOR
+        )
     
     def calculate(
         self,
@@ -410,25 +431,32 @@ class COGSCalculator:
         material_per_unit: Decimal,
         labor_per_unit: Decimal,
     ) -> CostComponent:
-        """Calculate scrap/rework cost."""
+        """Calculate scrap/rework cost.
+
+        Sprint Q.12 — `recovery_rate` e `rework_factor` agora vêm do
+        constructor (parametrizáveis por tenant) em vez de hardcoded
+        50% / 10%. COGS antes podia estar 5–20% errado conforme produto.
+        """
         expected_scrap_units = quantity * scrap_rate
-        
+
         # Material lost
         material_loss = expected_scrap_units * material_per_unit
-        
-        # Rework labor (assume 50% recoverable, 10% rework time)
-        recoverable_units = expected_scrap_units * Decimal("0.5")
-        rework_cost = recoverable_units * labor_per_unit * Decimal("0.1")
-        
+
+        # Rework labor — fracções configuráveis por tenant.
+        recoverable_units = expected_scrap_units * self.scrap_recovery_rate
+        rework_cost = recoverable_units * labor_per_unit * self.scrap_rework_factor
+
         total = material_loss + rework_cost
         per_unit = total / quantity if quantity > 0 else Decimal("0")
-        
+
         return CostComponent(
             name="Scrap/Rework",
             total=total,
             per_unit=per_unit,
             details={
                 "scrap_rate": float(scrap_rate),
+                "scrap_recovery_rate": float(self.scrap_recovery_rate),
+                "scrap_rework_factor": float(self.scrap_rework_factor),
                 "expected_scrap_units": float(expected_scrap_units),
                 "material_loss": float(material_loss),
                 "rework_cost": float(rework_cost),

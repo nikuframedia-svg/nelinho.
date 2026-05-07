@@ -153,7 +153,7 @@ class PricingEngine:
         
         # 2. Dynamic Pricing
         dynamic_price = self._calculate_dynamic(
-            cost_plus_price, dynamic_factors
+            cost_plus_price, dynamic_factors, cogs_per_unit
         )
         dynamic_margin = self._calculate_margin(cogs_per_unit, dynamic_price)
         dynamic_profit = dynamic_price - cogs_per_unit
@@ -197,6 +197,17 @@ class PricingEngine:
             valid_until=valid_until,
         )
     
+    # Sprint Q.12 — preço mínimo nunca abaixo do COGS + 1%. Antes o
+    # engine recomendava preços negativos / abaixo do custo silenciosamente.
+    MIN_MARKUP_OVER_COGS = Decimal("1.01")
+
+    def _enforce_min_price(self, cogs: Decimal, price: Decimal) -> Decimal:
+        """Refuse to sell below cost — clamp to ``cogs * 1.01`` minimum."""
+        floor = (cogs * self.MIN_MARKUP_OVER_COGS).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+        return max(price, floor)
+
     def _calculate_cost_plus(
         self,
         cogs: Decimal,
@@ -204,27 +215,30 @@ class PricingEngine:
     ) -> Decimal:
         """
         Cost-Plus pricing.
-        
+
         Price = COGS × (1 + Markup%)
         """
         markup = markup_percent / 100
         price = cogs * (1 + markup)
-        return price.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    
+        price = price.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        return self._enforce_min_price(cogs, price)
+
     def _calculate_dynamic(
         self,
         base_price: Decimal,
         factors: DynamicFactors,
+        cogs: Decimal,
     ) -> Decimal:
         """
         Dynamic pricing.
-        
+
         Price = Base × Combined Factors
         """
         combined = factors.combined_factor()
         price = base_price * combined
-        return price.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    
+        price = price.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        return self._enforce_min_price(cogs, price)
+
     def _calculate_target_margin(
         self,
         cogs: Decimal,
@@ -232,16 +246,25 @@ class PricingEngine:
     ) -> Decimal:
         """
         Target margin pricing.
-        
+
         Price = COGS / (1 - Margin%)
+
+        Margens >95% são rejeitadas (sprint Q.12) — antes faziam cap
+        silencioso a 99%, devolvendo preços absurdos sem o utilizador
+        perceber.
         """
+        if margin_percent < 0:
+            raise ValueError(f"target_margin_percent must be >= 0, got {margin_percent}")
+        if margin_percent > Decimal("95"):
+            raise ValueError(
+                f"target_margin_percent {margin_percent}% irrealista (máx 95%)"
+            )
+
         margin = margin_percent / 100
-        if margin >= 1:
-            margin = Decimal("0.99")  # Cap at 99%
-        
         price = cogs / (1 - margin)
-        return price.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    
+        price = price.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        return self._enforce_min_price(cogs, price)
+
     def _calculate_margin(
         self,
         cogs: Decimal,
@@ -249,12 +272,12 @@ class PricingEngine:
     ) -> Decimal:
         """
         Calculate gross margin percentage.
-        
+
         Margin = (Price - COGS) / Price × 100
         """
         if price <= 0:
             return Decimal("0")
-        
+
         margin = (price - cogs) / price * 100
         return margin.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
     

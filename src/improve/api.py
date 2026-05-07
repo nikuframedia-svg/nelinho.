@@ -141,16 +141,28 @@ ACTION_CATALOG: List[Dict[str, Any]] = [
 # ============================================================================
 
 
-def get_tenant_id(
-    x_tenant_id: UUID = Header(default=UUID("00000000-0000-0000-0000-000000000000")),
-) -> UUID:
-    return x_tenant_id
+from src.shared.auth.headers import require_tenant_header
+
+# Sprint Q.12 Onda 0.1: replaced silent zero-UUID default.
+get_tenant_id = require_tenant_header
 
 
 def get_reviewer_id(
-    x_user_id: Optional[UUID] = Header(default=None),
+    x_user_id: Optional[UUID] = Header(default=None, alias="X-User-Id"),
 ) -> UUID:
-    return x_user_id or UUID("00000000-0000-0000-0000-000000000001")
+    """Reviewer id for the improve workflow.
+
+    Sprint Q.12 Onda 0.1 — the previous fallback to a hardcoded one-up
+    UUID let any caller act as a generic reviewer. Now we 401 on
+    missing or zero-UUID; once JWT is plumbed through improve, this can
+    be replaced with ``Depends(get_current_user)``.
+    """
+    if x_user_id is None or x_user_id == UUID("00000000-0000-0000-0000-000000000000"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="X-User-Id header is required",
+        )
+    return x_user_id
 
 
 async def get_improve_service(

@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="pt-PT">
+<head>
+  <meta charset="utf-8">
+  <title>PP1 — NELO ProdPlan</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    /* ────────────────────────────────────────────────────────────── */
+    /*  PP1-NELO — Design tokens (dark, industrial, AAA contrast)     */
+    /* ────────────────────────────────────────────────────────────── */
+    :root {
+      --bg-0:   #0A0A0A;
+      --bg-1:   #111113;
+      --bg-2:   #16171A;
+      --bg-3:   #1E1F23;
+      --bg-4:   #2A2B30;
+      --bd-1:   #25262B;
+      --bd-2:   #34353B;
+      --bd-3:   #4A4C54;
+
+      --fg-0:   #FAFAFA;
+      --fg-1:   #D4D4D8;
+      --fg-2:   #A1A1AA;
+      --fg-3:   #71717A;
+
+      --green:  #22C55E;
+      --green-bg:  rgba(34,197,94,0.10);
+      --green-bd:  rgba(34,197,94,0.30);
+      --yellow: #EAB308;
+      --yellow-bg: rgba(234,179,8,0.10);
+      --yellow-bd: rgba(234,179,8,0.30);
+      --red:    #EF4444;
+      --red-bg:    rgba(239,68,68,0.10);
+      --red-bd:    rgba(239,68,68,0.30);
+      --blue:   #3B82F6;
+      --blue-bg:   rgba(59,130,246,0.10);
+      --blue-bd:   rgba(59,130,246,0.30);
+      --gray:   #6B7280;
+      --orange: #F97316;
+      --orange-bg: rgba(249,115,22,0.10);
+      --orange-bd: rgba(249,115,22,0.30);
+      --purple: #A855F7;
+      --purple-bg: rgba(168,85,247,0.10);
+      --purple-bd: rgba(168,85,247,0.30);
+
+      --r-sm: 6px;
+      --r-md: 8px;
+      --r-lg: 12px;
+      --r-xl: 16px;
+
+      --shadow-1: 0 1px 2px rgba(0,0,0,0.4);
+      --shadow-2: 0 4px 12px rgba(0,0,0,0.5);
+      --shadow-3: 0 12px 32px rgba(0,0,0,0.6);
+    }
+
+    * { box-sizing: border-box; }
+    html, body, #root { height: 100%; margin: 0; }
+    body {
+      background: var(--bg-0);
+      color: var(--fg-0);
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+    .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+    .tabular { font-variant-numeric: tabular-nums; }
+
+    button { font-family: inherit; cursor: pointer; }
+    input, select, textarea { font-family: inherit; font-size: inherit; color: inherit; }
+    a { color: inherit; text-decoration: none; }
+
+    /* scrollbars */
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--bd-2); border-radius: 6px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--bd-3); }
+
+    /* utility */
+    .hidden { display: none !important; }
+    .truncate { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    /* keyframes */
+    @keyframes pulse-soft { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes slide-in-r { from { transform: translateX(100%); } to { transform: translateX(0); } }
+    @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+    .pulse-dot { animation: pulse-soft 2s ease-in-out infinite; }
+    .spin { animation: spin 1s linear infinite; }
+  </style>
+  <!-- React + Babel -->
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel" data-presets="env,react" src="src/icons.jsx"></script>
+  <script type="text/babel" data-presets="env,react" src="src/data.jsx"></script>
+  <script type="text/babel" data-presets="env,react" src="src/atoms.jsx"></script>
+  <script type="text/babel" data-presets="env,react" src="src/copilot.jsx"></script>
+  <script type="text/babel" data-presets="env,react" src="src/page-painel.jsx"></script>
+  <script type="text/babel" data-presets="env,react" src="src/page-producao.jsx"></script>
+  <script type="text/babel" data-presets="env,react" src="src/page-planeamento.jsx"></script>
+  <script type="text/babel" data-presets="env,react" src="src/page-expedicao.jsx"></script>
+  <script type="text/babel" data-presets="env,react" src="src/page-equipa.jsx"></script>
+  <script type="text/babel" data-presets="env,react" src="src/page-qualidade.jsx"></script>
+  <script type="text/babel" data-presets="env,react" src="src/page-configuracao.jsx"></script>
+  <script type="text/babel" data-presets="env,react" src="src/page-relatorios.jsx"></script>
+  <script type="text/babel" data-presets="env,react" src="src/page-operador.jsx"></script>
+  <script type="text/babel" data-presets="env,react" src="src/shell.jsx"></script>
+  <script type="text/babel" data-presets="env,react" src="src/app.jsx"></script>
+</body>
+</html>

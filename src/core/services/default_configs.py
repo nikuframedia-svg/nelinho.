@@ -1,12 +1,17 @@
 """
-ProdPlan ONE - Default Tenant Configuration Seeds (Sprint L.4)
-===============================================================
+ProdPlan ONE - Default Tenant Configuration Seeds (Sprint L.4 + Q.17.A)
+========================================================================
 
-Canonical defaults that every tenant starts with. Values align with Blueprint
-v2.0 — CPO fitness weights, Trust Index gates, mold maintenance thresholds,
-throughput €/dia targets, queue time, etc. Edit this file when the blueprint
-changes; the seeder is idempotent and only writes keys that don't already
-exist for the tenant.
+Canonical defaults that every tenant starts with. As of Q.17.A the **source
+of truth is ``config/yaml/system_defaults.yaml``**; ``iter_seeds()`` reads
+that file via ``src.governance.yaml_policy.load_seeds`` and falls back to
+the embedded ``DEFAULT_SEEDS`` list below if the YAML cannot be read
+(missing file, schema invalid, etc.) so existing tests and tooling never
+break catastrophically.
+
+Edit the YAML when the blueprint changes. The embedded list is kept in sync
+by ``scripts/generate_system_defaults_yaml.py`` (one-off bootstrap; not run
+on every change).
 
 The `CATEGORY::KEY` identifiers are referenced throughout the code (Sprints
 AA, M, N, O, P, Q, R). Keep names stable.
@@ -14,7 +19,10 @@ AA, M, N, O, P, Q, R). Keep names stable.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Schema: list of tuples (category, key, value, data_type, note)
@@ -511,8 +519,29 @@ DEFAULT_SEEDS: list[ConfigSeed] = [
 
 
 def iter_seeds() -> list[ConfigSeed]:
-    """Return a shallow copy of the canonical seed list."""
-    return list(DEFAULT_SEEDS)
+    """Return the canonical seed list.
+
+    Reads ``config/yaml/system_defaults.yaml`` first (Q.17.A source of truth).
+    Falls back to the embedded ``DEFAULT_SEEDS`` if the YAML is unavailable so
+    tests, scripts, and bootstrap paths never crash on a missing/invalid file.
+    """
+    try:
+        # Local import avoids a hard dependency cycle and keeps this module
+        # importable in environments where the YAML path is intentionally
+        # not provisioned (e.g. minimal worker containers).
+        from src.governance.yaml_policy import load_seeds, YamlPolicyError  # noqa: WPS433
+    except Exception as exc:  # pragma: no cover - defensive only
+        _log.warning("yaml_policy import failed (%s); using embedded DEFAULT_SEEDS", exc)
+        return list(DEFAULT_SEEDS)
+
+    try:
+        return load_seeds()
+    except YamlPolicyError as exc:
+        _log.warning(
+            "system_defaults.yaml unavailable (%s); falling back to embedded DEFAULT_SEEDS",
+            exc,
+        )
+        return list(DEFAULT_SEEDS)
 
 
 async def seed_tenant_defaults(
@@ -535,8 +564,10 @@ async def seed_tenant_defaults(
     import logging as _logging
     _seed_logger = _logging.getLogger(__name__)
 
+    # Q.17.A — read from the YAML source of truth (with embedded fallback).
+    seeds = iter_seeds()
     written = 0
-    for category, key, value, data_type, _note in DEFAULT_SEEDS:
+    for category, key, value, data_type, _note in seeds:
         try:
             await service.get(category, key)
             # exists → skip

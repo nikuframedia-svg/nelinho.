@@ -296,4 +296,9 @@ async def test_execute_decision_with_unknown_type_succeeds_without_handler(
     )
 
     result = await svc.execute_decision(str(run.id), executed_by="bob")
-    assert result["status"] == DecisionStatus.EXECUTED.value
+    # Sprint Q.12 Onda 2.1 — the previous contract was "advisory mode
+    # leaves status at EXECUTED even with no handler". That hid silent
+    # no-ops from compliance reviewers; it's now EXECUTED_PARTIAL so
+    # the row is still announced (Kafka + audit_hash) but the status
+    # tells you the domain wasn't actually mutated.
+    assert result["status"] == DecisionStatus.EXECUTED_PARTIAL.value
