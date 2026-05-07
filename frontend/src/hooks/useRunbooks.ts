@@ -2,7 +2,7 @@
  * useRunbooks — Hook for runbook gallery
  * Part of TIER 3: ENTERPRISE EXCELLENCE
  *
- * ZERO MOCKS: hits the real `/v1/copilot/runbooks` endpoint. Empty/error
+ * ZERO MOCKS: hits the real `/v1/runbooks` endpoint. Empty/error
  * states explicit; never silently substituted with fake runbooks.
  */
 
@@ -19,7 +19,7 @@ export function useRunbooks() {
   const fetchRunbooks = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/v1/copilot/runbooks`);
+      const response = await fetch(`${API_BASE}/v1/runbooks`);
       if (!response.ok) {
         throw new Error(
           `Runbooks API returned ${response.status} ${response.statusText}`
@@ -42,7 +42,7 @@ export function useRunbooks() {
   }, []);
 
   const executeRunbook = useCallback(async (runbookId: string): Promise<boolean> => {
-    const response = await fetch(`${API_BASE}/v1/copilot/runbooks/${runbookId}/execute`, {
+    const response = await fetch(`${API_BASE}/v1/runbooks/${runbookId}/execute`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
     });
