@@ -1,0 +1,85 @@
+name: Nightly Karpathy Loop
+
+# Substitui o routine claude.ai (trig_011isdCFgbR3NfefE4RAmn84) que ficou
+# bloqueado pelo issue #13212 do claude-code (git proxy nao corre no
+# sandbox CCR remoto). GitHub Actions runner tem auth GitHub nativa via
+# GITHUB_TOKEN, logo `git push` funciona out-of-the-box.
+
+on:
+  schedule:
+    # 30 1 * * *  =  01:30 UTC  =  02:30 Lisbon WEST (Verao) / 01:30 WET (Inverno).
+    # Mudar manualmente para `30 2 * * *` no Outono para preservar 02:30 local.
+    - cron: '30 1 * * *'
+  workflow_dispatch:        # botao "Run workflow" no GitHub UI para teste manual
+    inputs:
+      duration_minutes:
+        description: 'Janela de trabalho em minutos (default 110, max 350)'
+        required: false
+        default: '110'
+        type: string
+
+permissions:
+  contents: write           # criar e push branches `nightly/*`
+  pull-requests: write      # abrir PRs automaticamente
+
+concurrency:
+  # Se a sessao de ontem ainda nao acabou (improvavel mas possivel), cancela
+  # a antiga em vez de duplicar. So uma sessao Karpathy a correr de cada vez.
+  group: nightly-karpathy
+  cancel-in-progress: false  # nao matamos uma corrida em curso
+
+jobs:
+  karpathy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120    # 2h hard cap (cabe no free tier do GitHub Actions)
+
+    steps:
+      - name: Checkout repo (full history for branch analysis)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # precisa da historia toda para `git diff main..branch`
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          # Best-effort install — tests podem precisar de mais; o agente
+          # decide se vale a pena pip install algo extra durante a sessao.
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Configure git author for nightly commits
+        run: |
+          git config user.email "noreply@anthropic.com"
+          git config user.name "Claude Opus 4.6 (nightly)"
+
+      - name: Run Claude Code Action
+        uses: anthropics/claude-code-action@v1
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        with:
+          prompt_file: .github/prompts/nightly-karpathy.md
+          # Hard cap de turns para evitar loops descontrolados (cada turn
+          # = uma resposta do modelo). 100 turns dao bastante folga para
+          # 2h de trabalho real.
+          max_turns: 100
+          # Modelo Opus 4.6 (escolhido na conversa). Se quiseres trocar,
+          # altera aqui sem editar o prompt.
+          model: claude-opus-4-6
+          # Permitir as ferramentas que o prompt usa.
+          allowed_tools: 'Bash,Read,Write,Edit,Glob,Grep,Task'
+
+      - name: Show created branches
+        if: always()
+        run: |
+          echo "=== Branches nightly criadas nesta sessao ==="
+          git for-each-ref --format='%(refname:short) %(committerdate:short)' \
+            refs/heads/nightly/ 2>&1 | head -20 || echo "(nenhuma)"
+          echo ""
+          echo "=== Branches no remote ==="
+          git ls-remote --heads origin 'nightly/*' 2>&1 | head -20 || echo "(nenhuma)"
