@@ -19,6 +19,7 @@ import {
   Inbox,
   CheckSquare,
   Truck,
+  Hammer,
   Database,
   Shield,
   Brain,
@@ -65,6 +66,11 @@ const navItems: NavItem[] = [
     label: 'Expedição',
     icon: <Truck size={20} />,
     path: '/expedicao',
+  },
+  {
+    label: 'Plano de Hoje',
+    icon: <Hammer size={20} />,
+    path: '/dispatch/today',
   },
   {
     label: 'CORE',

@@ -48,6 +48,7 @@ const AprendizagemPage = lazy(() => import('./pages/AprendizagemPage'));
 const OperadoresPage = lazy(() => import('./pages/OperadoresPage'));
 const OperadorDetailPage = lazy(() => import('./pages/OperadorDetailPage'));
 const ExpedicaoPage = lazy(() => import('./pages/ExpedicaoPage'));
+const DailyDispatchPage = lazy(() => import('./pages/dispatch/DailyDispatchPage'));
 
 // NEW: Workforce Operations System - The Killer Feature
 const WorkforceDashboard = lazy(() => import('./pages/workforce/WorkforceDashboard').then(m => ({ default: m.WorkforceDashboard })));
@@ -146,6 +147,13 @@ function App() {
                   <Route path="expedicao" element={
                     <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
                       <ExpedicaoPage />
+                    </Suspense>
+                  } />
+
+                  {/* Plan v4 §4.3 (Atribuição diária) — Plano de Hoje */}
+                  <Route path="dispatch/today" element={
+                    <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
+                      <DailyDispatchPage />
                     </Suspense>
                   } />
 
