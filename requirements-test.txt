@@ -15,6 +15,7 @@ pydantic==2.5.3
 pydantic-settings==2.1.0
 python-multipart==0.0.6
 starlette  # pulled by fastapi; no explicit pin needed
+sse-starlette==2.1.0  # Sprint D.1 — SSE; imported by src/shared/realtime/api.py at module load
 
 # Database (models declare pgvector types guarded by import; asyncpg is imported by database.py)
 sqlalchemy[asyncio]==2.0.25

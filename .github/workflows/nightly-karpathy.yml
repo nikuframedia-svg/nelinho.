@@ -34,11 +34,22 @@ jobs:
     timeout-minutes: 120    # 2h hard cap (cabe no free tier do GitHub Actions)
 
     steps:
+      - name: Generate GitHub App installation token
+        # Usa a App `nelinhogfsfbxcbxcbxcxcbcx` (App ID 3631645) em vez do
+        # GITHUB_TOKEN default. Razao: PRs criados pela App disparam workflows
+        # CI normalmente (GITHUB_TOKEN nao dispara workflows downstream para
+        # evitar loops infinitos), e a App tem identidade propria no audit log.
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
       - name: Checkout repo (full history for branch analysis)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0    # precisa da historia toda para `git diff main..branch`
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Setup Python 3.11
         uses: actions/setup-python@v5
@@ -54,14 +65,20 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
       - name: Configure git author for nightly commits
+        # Identidade do bot da App. O formato `<id>+<slug>[bot]@users.noreply.github.com`
+        # e a convencao GitHub para commits feitos via App installation token.
         run: |
-          git config user.email "noreply@anthropic.com"
-          git config user.name "Claude Opus 4.6 (nightly)"
+          git config user.email "${{ steps.app-token.outputs.app-slug }}[bot]@users.noreply.github.com"
+          git config user.name "${{ steps.app-token.outputs.app-slug }}[bot]"
 
       - name: Run Claude Code Action
         uses: anthropics/claude-code-action@v1
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Passar token da App ao agente para que `gh` e `git push`
+          # corram com a identidade da App, nao com GITHUB_TOKEN.
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         with:
           prompt_file: .github/prompts/nightly-karpathy.md
           # Hard cap de turns para evitar loops descontrolados (cada turn
