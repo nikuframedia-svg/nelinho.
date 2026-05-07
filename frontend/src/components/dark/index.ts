@@ -42,3 +42,8 @@ export type { KioskWrapperProps } from './KioskWrapper';
 export { BarcodeScanButton } from './BarcodeScanButton';
 export type { BarcodeScanButtonProps } from './BarcodeScanButton';
 
+// Sprint X.2 — Plan v4 §4.7 editable parameter row with provenance
+// badge + reset + accept-learned-rule.
+export { ConfigParam } from './ConfigParam';
+export type { ConfigParamProps, ConfigParamType } from './ConfigParam';
+
