@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.shared.auth.headers import require_tenant_header
+from src.shared.auth.headers import AdminContext, require_admin, require_tenant_header
 from src.shared.database import get_session
 from src.hr.services.payroll_service import PayrollService
 
@@ -79,9 +79,11 @@ class LabourCostSummaryResponse(BaseModel):
 async def calculate_payroll(
     request: PayrollCalculateRequest,
     tenant_id: UUID = Depends(require_tenant_header),
+    _admin: AdminContext = Depends(require_admin),
     session: AsyncSession = Depends(get_session),
 ):
-    """Calculate monthly payroll."""
+    """Calculate monthly payroll. Admin-only — payroll figures are
+    sensitive financial data."""
     service = PayrollService(session, tenant_id)
 
     result = await service.calculate_monthly_payroll(

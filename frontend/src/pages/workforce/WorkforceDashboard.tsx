@@ -108,38 +108,11 @@ function transformApiToPhaseRisks(apiData: any): PhaseRisk[] {
     });
   }
   
-  // If we have summary data, create phases from it
-  if (apiData?.data?.phases_count) {
-    const phasesCount = apiData.data.phases_count || 70;
-    const skillsRecords = apiData.data.skills_records || 902;
-    const avgAptosPerPhase = skillsRecords / phasesCount;
-    
-    // Generate phases based on real counts
-    const phases = [];
-    for (let i = 1; i <= Math.min(phasesCount, 10); i++) {
-      const aptos = Math.max(1, Math.floor(avgAptosPerPhase * (0.5 + Math.random())));
-      const backlog = Math.floor(1000 + Math.random() * 5000);
-      const riskScore = Math.max(0, Math.min(100, 100 - (aptos * 15) + (backlog / 50)));
-      const riskLevel: PhaseRisk['riskLevel'] = riskScore >= 80 ? 'critical' : riskScore >= 60 ? 'high' : riskScore >= 40 ? 'medium' : riskScore >= 20 ? 'low' : 'ok';
-
-      phases.push({
-        phaseId: String(i),
-        phaseName: `Fase ${i}`,
-        aptosCount: aptos,
-        aptosActive: Math.max(1, Math.floor(aptos * 0.8)),
-        backlogHours: backlog,
-        backlogDays: backlog / 8,
-        riskScore,
-        riskLevel,
-        isSPOF: aptos <= 1,
-        employees: [],
-        ordersAtRisk: Math.floor(backlog / 10),
-      });
-    }
-    return phases;
-  }
-  
-  // Fallback empty
+  // ZERO MOCKS: when the API returns only a summary (counts, no per-
+  // phase telemetry), we do NOT synthesize phases via Math.random().
+  // Inventing aptos/backlog values would render fake "risk scores"
+  // the operator would treat as real. Return empty so the consumer
+  // shows the "telemetry incomplete" banner.
   return [];
 }
 
