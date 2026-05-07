@@ -56,6 +56,11 @@ const navItems: NavItem[] = [
     path: '/aprendizagem',
   },
   {
+    label: 'Operadores',
+    icon: <Users size={20} />,
+    path: '/operadores',
+  },
+  {
     label: 'CORE',
     icon: <Package size={20} />,
     module: 'core',

@@ -2963,3 +2963,7 @@ export const suggestionsApi = {
 
 // (learningApi already declared above — exposes pairs/rules/weights/weightHistory.
 // AprendizagemPage consumes those existing methods directly.)
+
+// (workforceEmployeesApi already declared above with QualityScoreResult /
+// SkillMatrixResult / OperationHistoryResult types — OperadoresPage and
+// OperadorDetailPage consume those existing methods directly.)
