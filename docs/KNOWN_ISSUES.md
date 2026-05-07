@@ -38,7 +38,6 @@ Screenshot do Dashboard mostrou 3 erros em loop. Foram fixados:
 | `GET /v1/activity/recent` 404 — endpoint não existia | Criado `src/shared/realtime/activity_api.py` que lê de `event_outbox` (graceful fallback se table missing) | `curl /v1/activity/recent` → 200 `{"items":[]}` |
 | `GET /v1/factory/semantic/blocked-metrics` 400 — catch-all `/semantic/{view_id}` apanhava primeiro | Re-ordenado em `endpoints.py`: rota específica AGORA antes da catch-all | `curl .../blocked-metrics` → 200 com 7 blocked metrics |
 | `GET /v1/realtime/events` 503 — Kafka offline | Instalado **Kafka 4.2 KRaft** via scoop + JDK 26; `.env` aponta para `localhost:9092` | `RealtimeBridge.healthy=true`; 16 topics subscribed |
-- `GET /v1/factory/semantic/blocked-metrics` → 400: parâmetros opcionais não fornecidos
 
 ## 3. Bugs conhecidos não bloqueantes
 
