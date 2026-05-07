@@ -129,19 +129,27 @@ async function request<T>(
   // explicitamente (`Invalid tenant: zero UUID is reserved`). 000…001 é a
   // dev tenant seeded por scripts/bootstrap_dev_tenant.py. Ver plano Q.18.AUTH.
   const tenantId = localStorage.getItem('tenant_id') || '00000000-0000-0000-0000-000000000001';
-  
+  // Several backend endpoints (notably /v1/core/tenants and the governance
+  // lifecycle endpoints) call require_user_uuid / require_user_header which
+  // 401 when X-User-Id is missing. Use the dev seed user UUID until the
+  // JWT-cookie path lands; same fallback as tenant_id above.
+  const userId = localStorage.getItem('user_id') || '00000000-0000-0000-0000-000000000001';
+  const userRole = localStorage.getItem('user_role') || 'admin';
+
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(options.headers as Record<string, string> || {}),
   };
-  
+
   // Adicionar token se existir
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
-  
-  // Adicionar tenant ID (requerido pelo backend)
+
+  // Adicionar tenant + user identity (requeridos pelo backend)
   headers['X-Tenant-Id'] = tenantId;
+  headers['X-User-Id'] = userId;
+  headers['X-User-Role'] = userRole;
   
   try {
     // Use circuit breaker to prevent cascading failures

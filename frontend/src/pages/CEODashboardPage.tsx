@@ -141,8 +141,12 @@ function TrendChart({ data, targetMin, targetMax }: TrendChartProps) {
     );
   }
   return (
-    <div className="h-48">
-      <ResponsiveContainer width="100%" height="100%">
+    // `minWidth: 0` lets the flex parent collapse properly; explicit
+    // pixel `minHeight` prevents Recharts ResponsiveContainer from
+    // measuring the wrapper at width=-1/height=-1 on first paint
+    // (the warning floods the console otherwise).
+    <div className="h-48 w-full" style={{ minWidth: 0, minHeight: 1 }}>
+      <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
         <LineChart data={shaped} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
           <XAxis
             dataKey="date"

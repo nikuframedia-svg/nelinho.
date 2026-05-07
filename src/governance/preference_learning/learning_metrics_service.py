@@ -160,7 +160,12 @@ class LearningMetricsService:
         commit volume is small enough (~1-3k/tenant in the worst case)
         that a server-side aggregate doesn't pay for itself.
         """
-        now = datetime.now(timezone.utc)
+        # `plan_schedule_commits.created_at` is `TIMESTAMP WITHOUT TIME
+        # ZONE` (naive UTC). asyncpg refuses to coerce a tz-aware
+        # datetime into that column type, and the Python comparisons
+        # below would also raise on mixed naive/aware operands. Strip
+        # tzinfo to keep the whole computation in naive-UTC.
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         since = now - timedelta(days=max(1, window_days))
 
         commits = await self._fetch_commits_with_rejections(since)
