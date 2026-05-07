@@ -56,12 +56,18 @@ interface NotificationsPanelProps {
 // Map each backend event_type to the shape the panel renders. Keeping
 // this as a lookup table makes adding a new notification type a
 // one-liner: append to this object and the panel picks it up.
+// Payload comes from SSE events — at runtime it's whatever the backend
+// publisher emitted, so we type it as `Record<string, any>` rather than
+// `unknown` to allow the existing `?.slice` / `?.toFixed?.()` defensive
+// access patterns without per-call casts.
 const EVENT_TEMPLATES: Record<
   string,
   {
     type: Notification['type'];
-    title: (payload: Record<string, unknown>) => string;
-    message: (payload: Record<string, unknown>) => string;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    title: (payload: Record<string, any>) => string;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    message: (payload: Record<string, any>) => string;
     actionLabel?: string;
     actionPath?: string;
   }

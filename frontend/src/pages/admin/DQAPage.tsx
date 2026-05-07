@@ -44,6 +44,7 @@ const COMPONENT_LABELS: Record<keyof TrustIndexV2Response['components'], string>
   anomaly: 'Anomaly',
   evidence: 'Evidence',
   causal_coherence: 'Causal Coherence (reserved)',
+  timeliness: 'Timeliness (legacy)',
 };
 
 const GATE_LABELS: Record<keyof TrustIndexV2Response['effective_gates'], string> = {

@@ -9,8 +9,6 @@ import { useEffect, useState, useCallback } from 'react';
 import { ingestionApi } from '@/lib/factoryApi';
 import type { Ingestion, RollbackImpact } from '@/types';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-
 export function useIngestions() {
   const [ingestions, setIngestions] = useState<Ingestion[]>([]);
   const [activeIngestionId, setActiveIngestionId] = useState<string | null>(null);

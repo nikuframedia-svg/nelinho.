@@ -685,6 +685,7 @@ function IssueLi({ issue }: { issue: PreviewIssue }) {
   );
 }
 
+// @ts-expect-error — kept for future use; not currently rendered
 function DeltaRow({
   label,
   before,

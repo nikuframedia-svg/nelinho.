@@ -90,8 +90,8 @@ function transformApiToPhaseRisks(apiData: any): PhaseRisk[] {
       const aptosActive = p.active_workers || p.aptos_count || 1;
       const backlog = p.backlog_hours || 0;
       const riskScore = p.risk_score || Math.max(0, Math.min(100, 100 - (aptosActive * 15) + (backlog / 50)));
-      const riskLevel = riskScore >= 80 ? 'critical' : riskScore >= 60 ? 'high' : riskScore >= 40 ? 'medium' : riskScore >= 20 ? 'low' : 'ok';
-      
+      const riskLevel: PhaseRisk['riskLevel'] = riskScore >= 80 ? 'critical' : riskScore >= 60 ? 'high' : riskScore >= 40 ? 'medium' : riskScore >= 20 ? 'low' : 'ok';
+
       return {
         phaseId: String(p.fase_id || p.id),
         phaseName: p.fase_nome || p.name || `Fase ${p.fase_id}`,
@@ -120,8 +120,8 @@ function transformApiToPhaseRisks(apiData: any): PhaseRisk[] {
       const aptos = Math.max(1, Math.floor(avgAptosPerPhase * (0.5 + Math.random())));
       const backlog = Math.floor(1000 + Math.random() * 5000);
       const riskScore = Math.max(0, Math.min(100, 100 - (aptos * 15) + (backlog / 50)));
-      const riskLevel = riskScore >= 80 ? 'critical' : riskScore >= 60 ? 'high' : riskScore >= 40 ? 'medium' : riskScore >= 20 ? 'low' : 'ok';
-      
+      const riskLevel: PhaseRisk['riskLevel'] = riskScore >= 80 ? 'critical' : riskScore >= 60 ? 'high' : riskScore >= 40 ? 'medium' : riskScore >= 20 ? 'low' : 'ok';
+
       phases.push({
         phaseId: String(i),
         phaseName: `Fase ${i}`,
@@ -694,7 +694,7 @@ export function WorkforceDashboard() {
           className="mt-6"
         >
           <ScenarioTemplatesGallery 
-            onSelectTemplate={(template) => {
+            onSelectTemplate={() => {
               setShowTemplates(false);
               setShowSimulator(true);
               // Template will pre-populate the simulator

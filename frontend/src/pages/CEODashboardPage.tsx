@@ -161,7 +161,8 @@ function TrendChart({ data, targetMin, targetMax }: TrendChartProps) {
               borderRadius: 8,
               color: '#f9fafb',
             }}
-            formatter={(value: number) => fmtEur(value)}
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            formatter={((value: any) => fmtEur(typeof value === 'number' ? value : Number(value))) as never}
           />
           <ReferenceArea
             y1={targetMin}
