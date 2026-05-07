@@ -21,6 +21,7 @@ on:
 permissions:
   contents: write           # criar e push branches `nightly/*`
   pull-requests: write      # abrir PRs automaticamente
+  id-token: write           # OIDC para o claude-code-action v1
 
 concurrency:
   # Se a sessao de ontem ainda nao acabou (improvavel mas possivel), cancela
@@ -71,25 +72,31 @@ jobs:
           git config user.email "${{ steps.app-token.outputs.app-slug }}[bot]@users.noreply.github.com"
           git config user.name "${{ steps.app-token.outputs.app-slug }}[bot]"
 
+      - name: Load Karpathy prompt from file
+        # claude-code-action@v1 nao tem `prompt_file` (so `prompt`).
+        # Lemos o ficheiro para um output e passamos como string.
+        id: load-prompt
+        run: |
+          {
+            echo 'content<<KARPATHY_EOF'
+            cat .github/prompts/nightly-karpathy.md
+            echo 'KARPATHY_EOF'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Run Claude Code Action
         uses: anthropics/claude-code-action@v1
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           # Passar token da App ao agente para que `gh` e `git push`
           # corram com a identidade da App, nao com GITHUB_TOKEN.
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         with:
-          prompt_file: .github/prompts/nightly-karpathy.md
-          # Hard cap de turns para evitar loops descontrolados (cada turn
-          # = uma resposta do modelo). 100 turns dao bastante folga para
-          # 2h de trabalho real.
-          max_turns: 100
-          # Modelo Opus 4.6 (escolhido na conversa). Se quiseres trocar,
-          # altera aqui sem editar o prompt.
-          model: claude-opus-4-6
-          # Permitir as ferramentas que o prompt usa.
-          allowed_tools: 'Bash,Read,Write,Edit,Glob,Grep,Task'
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ steps.app-token.outputs.token }}
+          prompt: ${{ steps.load-prompt.outputs.content }}
+          # claude_args agrupa flags que costumavam ser inputs separados.
+          # --max-turns 100 da folga para 2h de trabalho real (cada turn
+          # = uma resposta do modelo). Modelo Opus 4.6 escolhido na conversa.
+          claude_args: '--max-turns 100 --model claude-opus-4-6 --allowed-tools Bash,Read,Write,Edit,Glob,Grep,Task'
 
       - name: Show created branches
         if: always()
