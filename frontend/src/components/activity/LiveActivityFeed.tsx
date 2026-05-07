@@ -5,7 +5,7 @@
  * Shows recent actions, updates, and alerts.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Activity,
@@ -44,63 +44,37 @@ interface LiveActivityFeedProps {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// MOCK DATA (would come from WebSocket in production)
+// API
 // ═══════════════════════════════════════════════════════════════════════════════
+//
+// ZERO MOCKS: hits the real `/v1/activity/recent` endpoint. Empty/error
+// states are explicit; nothing fakes activity that didn't happen.
+// (Earlier versions generated a static fake feed via generateMockActivity;
+// removed because dashboards consuming this would imply factory state
+// that does not exist.)
 
-const generateMockActivity = (): ActivityItem[] => [
-  {
-    id: '1',
-    type: 'ingest',
-    title: 'Ingestão concluída',
-    description: 'Folha_IA_extra.xlsx processado com sucesso',
-    timestamp: new Date(Date.now() - 5 * 60 * 1000),
-    status: 'success',
-    link: '/admin/data-quality',
-  },
-  {
-    id: '2',
-    type: 'alert',
-    title: 'Novo bottleneck detectado',
-    description: 'Laminação com backlog crítico',
-    timestamp: new Date(Date.now() - 12 * 60 * 1000),
-    status: 'warning',
-    link: '/inbox',
-  },
-  {
-    id: '3',
-    type: 'scenario',
-    title: 'Simulação completada',
-    description: '"Overtime +20%" pronto para revisão',
-    timestamp: new Date(Date.now() - 25 * 60 * 1000),
-    status: 'success',
-    link: '/twin',
-  },
-  {
-    id: '4',
-    type: 'quality',
-    title: 'Trust Index actualizado',
-    description: 'Backlog teórico: 58% → 60%',
-    timestamp: new Date(Date.now() - 45 * 60 * 1000),
-    status: 'success',
-  },
-  {
-    id: '5',
-    type: 'user',
-    title: 'Maria Silva aprovou cenário',
-    description: 'Cenário "Redistribuição Moldes" publicado',
-    timestamp: new Date(Date.now() - 90 * 60 * 1000),
-    status: 'success',
-    link: '/twin',
-  },
-  {
-    id: '6',
-    type: 'system',
-    title: 'Backup automático',
-    description: 'Snapshot criado com sucesso',
-    timestamp: new Date(Date.now() - 120 * 60 * 1000),
-    status: 'success',
-  },
-];
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+async function fetchRecentActivity(maxItems: number): Promise<ActivityItem[]> {
+  const url = new URL(`${API_BASE}/v1/activity/recent`);
+  url.searchParams.set('limit', String(maxItems));
+  const response = await fetch(url.toString());
+  if (!response.ok) {
+    throw new Error(
+      `Activity feed API returned ${response.status} ${response.statusText}`
+    );
+  }
+  const payload = await response.json();
+  const raw = Array.isArray(payload?.items)
+    ? payload.items
+    : Array.isArray(payload)
+    ? payload
+    : [];
+  return raw.map((it: any) => ({
+    ...it,
+    timestamp: new Date(it.timestamp),
+  })) as ActivityItem[];
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // COMPONENT
@@ -114,18 +88,29 @@ export function LiveActivityFeed({
 }: LiveActivityFeedProps) {
   const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
   const navigate = useNavigate();
 
-  useEffect(() => {
-    setActivities(generateMockActivity().slice(0, maxItems));
+  const load = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      const items = await fetchRecentActivity(maxItems);
+      setActivities(items);
+      setError(null);
+    } catch (e) {
+      setActivities([]);
+      setError(e instanceof Error ? e : new Error(String(e)));
+    } finally {
+      setIsRefreshing(false);
+    }
   }, [maxItems]);
 
+  useEffect(() => {
+    load();
+  }, [load]);
+
   const handleRefresh = () => {
-    setIsRefreshing(true);
-    setTimeout(() => {
-      setActivities(generateMockActivity().slice(0, maxItems));
-      setIsRefreshing(false);
-    }, 1000);
+    load();
   };
 
   const getIcon = (type: ActivityItem['type'], status?: ActivityItem['status']) => {
@@ -187,6 +172,16 @@ export function LiveActivityFeed({
       )}
 
       <div className={compact ? 'py-2' : 'py-3'}>
+        {error && (
+          <div className="px-4 py-3 text-xs text-amber-400">
+            Não foi possível carregar a actividade: {error.message}
+          </div>
+        )}
+        {!error && activities.length === 0 && !isRefreshing && (
+          <div className="px-4 py-3 text-xs text-text-tertiary">
+            Sem actividade recente.
+          </div>
+        )}
         {activities.map((activity, index) => (
           <div
             key={activity.id}

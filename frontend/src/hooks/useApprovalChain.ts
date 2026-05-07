@@ -1,6 +1,10 @@
 /**
  * useApprovalChain — Hook for multi-level approval chains
  * Part of TIER 3: ENTERPRISE EXCELLENCE
+ *
+ * ZERO MOCKS: real `/v1/governance/decisions/:id/approval-chain` endpoint.
+ * Empty/error states explicit. approve()/reject() POST to the backend
+ * and only mutate local state after the server confirms the change.
  */
 
 import { useEffect, useState, useCallback } from 'react';
@@ -14,100 +18,72 @@ export function useApprovalChain(decisionId: string) {
   const [error, setError] = useState<Error | null>(null);
 
   const fetchChain = useCallback(async () => {
-    if (!decisionId) return;
-    
+    if (!decisionId) {
+      setApprovalChain([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
     try {
-      setLoading(true);
-      
-      // Try API first
-      try {
-        const response = await fetch(`${API_BASE}/api/v1/governance/decisions/${decisionId}/approval-chain`);
-        if (response.ok) {
-          const data = await response.json();
-          if (data && data.chain) {
-            setApprovalChain(data.chain);
-            return;
-          }
-        }
-      } catch {
-        // Fall back to mock
+      const response = await fetch(
+        `${API_BASE}/v1/governance/decisions/${decisionId}/approval-chain`
+      );
+      if (!response.ok) {
+        throw new Error(
+          `Approval-chain API returned ${response.status} ${response.statusText}`
+        );
       }
-      
-      // Mock data
-      const mockChain: ApprovalStep[] = [
-        {
-          id: 'step-1',
-          approver: {
-            id: 'u1',
-            name: 'Ana Silva',
-            role: 'Chefe de Produção',
-            avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Ana',
-          },
-          status: 'approved',
-          comment: 'Aprovado. Impacto positivo na capacidade.',
-          decided_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
-          can_approve: false,
-        },
-        {
-          id: 'step-2',
-          approver: {
-            id: 'u2',
-            name: 'João Costa',
-            role: 'Director Industrial',
-            avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Joao',
-          },
-          status: 'pending',
-          can_approve: true,
-        },
-        {
-          id: 'step-3',
-          approver: {
-            id: 'u3',
-            name: 'Maria Santos',
-            role: 'CFO',
-            avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Maria',
-          },
-          status: 'pending',
-          can_approve: false,
-        },
-      ];
-      
-      setApprovalChain(mockChain);
+      const data = await response.json();
+      const chain: ApprovalStep[] = Array.isArray(data?.chain) ? data.chain : [];
+      setApprovalChain(chain);
       setError(null);
     } catch (e) {
-      setError(e as Error);
+      setApprovalChain([]);
+      setError(e instanceof Error ? e : new Error(String(e)));
     } finally {
       setLoading(false);
     }
   }, [decisionId]);
 
   const approve = useCallback(async (stepId: string, comment?: string): Promise<boolean> => {
-    try {
-      // In production: POST to API
-      setApprovalChain(prev => prev.map(step => 
-        step.id === stepId 
-          ? { ...step, status: 'approved' as const, comment, decided_at: new Date().toISOString() }
-          : step
-      ));
-      return true;
-    } catch {
-      return false;
+    const response = await fetch(
+      `${API_BASE}/v1/governance/decisions/${decisionId}/approval-chain/${stepId}/approve`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ comment }),
+      }
+    );
+    if (!response.ok) {
+      throw new Error(`Approve failed: ${response.status} ${response.statusText}`);
     }
-  }, []);
+    setApprovalChain(prev => prev.map(step =>
+      step.id === stepId
+        ? { ...step, status: 'approved' as const, comment, decided_at: new Date().toISOString() }
+        : step
+    ));
+    return true;
+  }, [decisionId]);
 
   const reject = useCallback(async (stepId: string, comment: string): Promise<boolean> => {
-    try {
-      // In production: POST to API
-      setApprovalChain(prev => prev.map(step => 
-        step.id === stepId 
-          ? { ...step, status: 'rejected' as const, comment, decided_at: new Date().toISOString() }
-          : step
-      ));
-      return true;
-    } catch {
-      return false;
+    const response = await fetch(
+      `${API_BASE}/v1/governance/decisions/${decisionId}/approval-chain/${stepId}/reject`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ comment }),
+      }
+    );
+    if (!response.ok) {
+      throw new Error(`Reject failed: ${response.status} ${response.statusText}`);
     }
-  }, []);
+    setApprovalChain(prev => prev.map(step =>
+      step.id === stepId
+        ? { ...step, status: 'rejected' as const, comment, decided_at: new Date().toISOString() }
+        : step
+    ));
+    return true;
+  }, [decisionId]);
 
   useEffect(() => {
     fetchChain();
@@ -117,4 +93,3 @@ export function useApprovalChain(decisionId: string) {
 }
 
 export default useApprovalChain;
-
