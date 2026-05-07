@@ -83,14 +83,12 @@ def _gather_violations(
             f"tardiness_h={cand_tardy_h:.2f} > baseline={base_tardy_h:.2f}",
         ))
 
-    cand_otd = candidate.get("otd_delivery")
-    base_otd = baseline.get("otd_delivery")
-    if cand_otd is not None and base_otd is not None:
-        if float(cand_otd) < float(base_otd) - 1e-6:
-            violations.append((
-                "otd_delivery",
-                f"OTD={cand_otd} < baseline={base_otd}",
-            ))
+    # `otd_delivery` was a hard guardrail in earlier versions, but the
+    # decoder never emits that key — only `num_late_orders` and
+    # `total_tardiness_hours` (both already enforced above). Removed
+    # because the two existing hard checks already cover the same
+    # regression: any candidate that ships orders later than baseline
+    # necessarily worsens at least one of them.
 
     # ── Makespan: 1.5× hard cap (Sprint C 4.2 SN1) ────────────────────
 
@@ -134,33 +132,33 @@ def _gather_violations(
                 f"{(1 + _QUALITY_RISK_TOLERANCE):.0%}×baseline={base_v:.4f}",
             ))
 
-    # Setup time: higher is worse. A candidate may rise 15% as it
-    # picks family-aware groupings; beyond that the GA is shuffling
-    # randomly and adding setups for no productive reason.
-    cand_setup = candidate.get("total_setup_time_h")
-    base_setup = baseline.get("total_setup_time_h")
+    # Setups (count): higher is worse. The decoder emits `setups` (int
+    # count, not hours). 15% tolerance accepts family-aware groupings;
+    # beyond that the GA is shuffling randomly.
+    cand_setup = candidate.get("setups")
+    base_setup = baseline.get("setups")
     if cand_setup is not None and base_setup is not None and float(base_setup) > 0:
         cand_v = float(cand_setup)
         base_v = float(base_setup)
         if cand_v > base_v * (1.0 + _SETUP_TIME_TOLERANCE):
             violations.append((
-                "total_setup_time_h",
-                f"setup_h={cand_v:.2f} > "
-                f"{(1 + _SETUP_TIME_TOLERANCE):.0%}×baseline={base_v:.2f}",
+                "setups",
+                f"setups={int(cand_v)} > "
+                f"{(1 + _SETUP_TIME_TOLERANCE):.0%}×baseline={int(base_v)}",
             ))
 
-    # Idle operators: higher is worse. Plan §5.5 weights idle at 0.15.
-    # 20% tolerance accepts shift-edge effects (someone idle while an
-    # op finishes) but blocks candidates that deliberately starve
-    # workforce to game makespan.
-    cand_idle = candidate.get("idle_operators_h")
-    base_idle = baseline.get("idle_operators_h")
+    # Idle operators (total_idle_hours): higher is worse. Plan §5.5
+    # weights idle at 0.15. 20% tolerance accepts shift-edge effects
+    # but blocks candidates that deliberately starve workforce to game
+    # makespan. Key matches decoder.compute_kpis output exactly.
+    cand_idle = candidate.get("total_idle_hours")
+    base_idle = baseline.get("total_idle_hours")
     if cand_idle is not None and base_idle is not None and float(base_idle) > 0:
         cand_v = float(cand_idle)
         base_v = float(base_idle)
         if cand_v > base_v * (1.0 + _IDLE_TOLERANCE):
             violations.append((
-                "idle_operators_h",
+                "total_idle_hours",
                 f"idle_h={cand_v:.2f} > "
                 f"{(1 + _IDLE_TOLERANCE):.0%}×baseline={base_v:.2f}",
             ))
