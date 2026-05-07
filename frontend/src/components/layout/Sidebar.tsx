@@ -18,6 +18,7 @@ import {
   Lightbulb,
   Inbox,
   CheckSquare,
+  Truck,
   Database,
   Shield,
   Brain,
@@ -59,6 +60,11 @@ const navItems: NavItem[] = [
     label: 'Operadores',
     icon: <Users size={20} />,
     path: '/operadores',
+  },
+  {
+    label: 'Expedição',
+    icon: <Truck size={20} />,
+    path: '/expedicao',
   },
   {
     label: 'CORE',

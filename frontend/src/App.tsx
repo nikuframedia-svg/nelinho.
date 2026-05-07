@@ -47,6 +47,7 @@ const DecisoesInboxPage = lazy(() => import('./pages/DecisoesInboxPage'));
 const AprendizagemPage = lazy(() => import('./pages/AprendizagemPage'));
 const OperadoresPage = lazy(() => import('./pages/OperadoresPage'));
 const OperadorDetailPage = lazy(() => import('./pages/OperadorDetailPage'));
+const ExpedicaoPage = lazy(() => import('./pages/ExpedicaoPage'));
 
 // NEW: Workforce Operations System - The Killer Feature
 const WorkforceDashboard = lazy(() => import('./pages/workforce/WorkforceDashboard').then(m => ({ default: m.WorkforceDashboard })));
@@ -138,6 +139,13 @@ function App() {
                   <Route path="operadores/:id" element={
                     <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
                       <OperadorDetailPage />
+                    </Suspense>
+                  } />
+
+                  {/* Plan v4 §4.4 (Despacho) — Expedição (camiões + sugestões CPO) */}
+                  <Route path="expedicao" element={
+                    <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
+                      <ExpedicaoPage />
                     </Suspense>
                   } />
 
