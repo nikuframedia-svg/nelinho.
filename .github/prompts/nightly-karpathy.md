@@ -89,7 +89,7 @@ Audita esta branch contra:
    não tratado, dados mock em produção, dead code wired-up.
 2. Invariantes CPO: aplica os 12 checks da skill `nelinho-invariants`
    (CX1, C1, F1-F4, E1, D2, ST1, WG1, CO1, ME1, H0).
-3. ZERO MOCKS frontend: rg "MOCK_" frontend/src/ — deve ser vazio.
+3. ZERO MOCKS frontend: rg -i "(\bmock[a-z_]*\b|generatemock|response\.ok\s*\|\|\s*true|fall back to mock)" frontend/src/ — deve ser vazio. (Versões anteriores usavam só "MOCK_" uppercase, que é falso negativo: os mocks reais usam camelCase como `mockChain`, `mockData`, `mockRunbooks`, etc. Apanhar também `if (response.ok || true)` que mascara falhas API e os comentários "Fall back to mock" que sinalizam fallback silencioso.)
 4. PT-PT vocab: rg "usuario|voce|caminhao|registro|gerenciar" —
    frontend/src/ src/copilot/, deve ser vazio.
 5. Audit trail em state-changing endpoints (governance, decisions, sandbox).
