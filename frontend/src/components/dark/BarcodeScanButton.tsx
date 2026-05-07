@@ -89,8 +89,24 @@ export function BarcodeScanButton({
   const streamRef = useRef<MediaStream | null>(null);
   const cancelRef = useRef(false);
 
+  // Cleanup on unmount: ensure no orphan camera tracks.
+  // Note: this useEffect MUST run before any conditional return below to
+  // satisfy react-hooks/rules-of-hooks. We use a ref-stable cleanup so
+  // the effect itself doesn't depend on the (unstable) stopCamera fn.
+  useEffect(() => {
+    return () => {
+      cancelRef.current = true;
+      if (streamRef.current) {
+        for (const track of streamRef.current.getTracks()) {
+          track.stop();
+        }
+        streamRef.current = null;
+      }
+    };
+  }, []);
+
   // Hide the button entirely on unsupported browsers — calling code
-  // doesn't have to feature-detect.
+  // doesn't have to feature-detect. Must come AFTER all hooks.
   if (!_isBarcodeDetectorAvailable()) {
     return null;
   }
@@ -106,11 +122,6 @@ export function BarcodeScanButton({
       streamRef.current = null;
     }
   };
-
-  // Cleanup on unmount: ensure no orphan camera tracks.
-  useEffect(() => {
-    return () => stopCamera();
-  }, []);
 
   const startScan = async () => {
     if (!_isBarcodeDetectorAvailable()) return;
