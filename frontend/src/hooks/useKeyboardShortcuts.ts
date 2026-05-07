@@ -5,7 +5,7 @@
  * Press ? to see all available shortcuts.
  */
 
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 interface ShortcutHandler {
@@ -43,9 +43,12 @@ export function useKeyboardShortcuts(onOpenHelp: () => void) {
     { key: '?', description: 'Mostrar atalhos', category: 'modal', handler: onOpenHelp },
   ];
 
-  // Track if we're in "G" mode (navigation prefix)
-  let gModeActive = false;
-  let gModeTimeout: ReturnType<typeof setTimeout> | null = null;
+  // Track if we're in "G" mode (navigation prefix). Stored in refs so
+  // assignments survive re-renders — using `let` here would reset the
+  // values on every render and the G-prefix navigation would silently
+  // never work (caught by react-hooks/exhaustive-deps).
+  const gModeActiveRef = useRef(false);
+  const gModeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     // Don't trigger shortcuts when typing in input/textarea
@@ -67,24 +70,24 @@ export function useKeyboardShortcuts(onOpenHelp: () => void) {
 
     // Handle G prefix for navigation
     if (e.key.toLowerCase() === 'g' && !e.ctrlKey && !e.metaKey && !e.altKey) {
-      gModeActive = true;
-      if (gModeTimeout) clearTimeout(gModeTimeout);
-      gModeTimeout = setTimeout(() => {
-        gModeActive = false;
+      gModeActiveRef.current = true;
+      if (gModeTimeoutRef.current) clearTimeout(gModeTimeoutRef.current);
+      gModeTimeoutRef.current = setTimeout(() => {
+        gModeActiveRef.current = false;
       }, 1500);
       return;
     }
 
     // If in G mode, check for navigation shortcuts
-    if (gModeActive) {
+    if (gModeActiveRef.current) {
       const navShortcut = shortcuts.find(
         s => s.category === 'navigation' && s.key === e.key.toLowerCase()
       );
       if (navShortcut) {
         e.preventDefault();
         navShortcut.handler();
-        gModeActive = false;
-        if (gModeTimeout) clearTimeout(gModeTimeout);
+        gModeActiveRef.current = false;
+        if (gModeTimeoutRef.current) clearTimeout(gModeTimeoutRef.current);
         return;
       }
     }
@@ -103,7 +106,7 @@ export function useKeyboardShortcuts(onOpenHelp: () => void) {
     window.addEventListener('keydown', handleKeyDown);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
-      if (gModeTimeout) clearTimeout(gModeTimeout);
+      if (gModeTimeoutRef.current) clearTimeout(gModeTimeoutRef.current);
     };
   }, [handleKeyDown]);
 

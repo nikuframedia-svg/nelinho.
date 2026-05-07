@@ -512,6 +512,24 @@ function SuggestionPanel({
   onApply: () => void;
   onCancel: () => void;
 }) {
+  // Sprint Q.13.A — Plan v4 §6.2 alternative pairs. Only fetch when the
+  // drag target is a phase (Layer 1) AND the op was a real op_id; for
+  // worker drops (Layer 2) the manager already chose a specific worker
+  // so the alternatives view doesn't apply. The query is lazy + cached
+  // 30s so multiple drags on the same op don't re-fetch.
+  //
+  // MUST be called before any conditional return so that React Hook
+  // ordering stays stable across renders (rules-of-hooks).
+  const operationId = pending?.operationId;
+  const isPhaseDrop = pending?.target?.kind === 'phase';
+  const pairsQuery = useQuery<CpoWorkerPairsResponse>({
+    queryKey: ['cpo', 'worker-pairs', operationId ?? 'idle'],
+    queryFn: () => cpoCommitsApi.workerPairs(operationId!, { top_n: 3 }),
+    enabled: !!operationId && !!isPhaseDrop && !previewing,
+    staleTime: 30_000,
+    retry: false,
+  });
+
   // Sprint Q.9 Onda 3.2 — explica-sempre via GhostOverlay + ConsequenceBlock.
   // The "loading" + "idle" + "active" states all flow through the same
   // GhostOverlay shell so the visual anchor (cyan border, "preview · não
@@ -541,20 +559,6 @@ function SuggestionPanel({
   const op = ops.find((o) => o.id === pending.operationId);
   const hasConflicts = preview.conflicts.length > 0;
   const canApply = !hasConflicts && reason.trim().length >= 10;
-
-  // Sprint Q.13.A — Plan v4 §6.2 alternative pairs. Only fetch when the
-  // drag target is a phase (Layer 1) AND the op was a real op_id; for
-  // worker drops (Layer 2) the manager already chose a specific worker
-  // so the alternatives view doesn't apply. The query is lazy + cached
-  // 30s so multiple drags on the same op don't re-fetch.
-  const isPhaseDrop = target.kind === 'phase';
-  const pairsQuery = useQuery<CpoWorkerPairsResponse>({
-    queryKey: ['cpo', 'worker-pairs', pending.operationId],
-    queryFn: () => cpoCommitsApi.workerPairs(pending.operationId, { top_n: 3 }),
-    enabled: isPhaseDrop,
-    staleTime: 30_000,
-    retry: false,
-  });
 
   // Build the 5-line consequence block from the preview-delta result.
   const consequenceLines: ConsequenceLine[] = [
