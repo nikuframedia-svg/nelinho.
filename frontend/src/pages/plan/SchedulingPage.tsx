@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Calendar, Play, Clock, AlertTriangle, Loader2, RefreshCw, Download, Move } from 'lucide-react';
+import { Calendar, Play, Clock, AlertTriangle, Loader2, RefreshCw, Download, Move, Users } from 'lucide-react';
 import { format } from 'date-fns';
 import { DarkPageLayout } from '../../layouts';
 import { DarkCard, DarkStatCard, DarkTable, DarkTableHead, DarkTableBody, DarkTableRow, DarkTableHeader, DarkTableCell, DarkButton, DarkPillButton, DarkBadge } from '../../components/dark';
@@ -8,8 +8,9 @@ import { planApi, ordersApi } from '../../lib/api';
 import { useToastContext } from '../../components/ToastProvider';
 import { GanttChart } from '../../components/charts';
 import { DragDropPlanner } from '../../components/scheduling/DragDropPlanner';
+import { AssignmentTable } from '../../components/scheduling/AssignmentTable';
 
-type SchedulingTab = 'gantt' | 'dnd';
+type SchedulingTab = 'gantt' | 'dnd' | 'atribuicao';
 
 export function SchedulingPage() {
   const [activeTab, setActiveTab] = useState<SchedulingTab>('gantt');
@@ -135,6 +136,17 @@ export function SchedulingPage() {
           <Move size={14} />
           Drag &amp; drop (Q.4)
         </button>
+        <button
+          onClick={() => setActiveTab('atribuicao')}
+          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition ${
+            activeTab === 'atribuicao'
+              ? 'bg-accent/15 text-accent border border-accent/30'
+              : 'bg-slate-800/40 text-slate-400 hover:bg-slate-700/40'
+          }`}
+        >
+          <Users size={14} />
+          Atribuição (hoje)
+        </button>
       </div>
 
       {/* Filters (apenas na vista Gantt) */}
@@ -154,6 +166,8 @@ export function SchedulingPage() {
       )}
 
       {activeTab === 'dnd' && <DragDropPlanner />}
+
+      {activeTab === 'atribuicao' && <AssignmentTable date={new Date()} />}
 
       {activeTab === 'gantt' && (
       <>
