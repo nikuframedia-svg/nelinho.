@@ -37,9 +37,19 @@ logger = logging.getLogger(__name__)
 # Soft guardrails (small tolerance to absorb GA noise):
 #   * makespan_hours: 1.5× cap (existing rule, kept as-is)
 #   * throughput_eur_day: 5% drop tolerated
-#   * avg_quality_risk: 10% rise tolerated
-#   * total_setup_time_h: 15% rise tolerated
-#   * idle_operators_h: 20% rise tolerated
+#   * avg_quality_risk: 10% rise tolerated  (DORMANT — see note below)
+#   * setups (count): 15% rise tolerated
+#   * total_idle_hours: 20% rise tolerated
+#
+# Nightly Karpathy fix (2026-05-07) — keys match decoder.compute_kpis()
+# output exactly. Previous version used `idle_operators_h` and
+# `total_setup_time_h` which the decoder never emits, so those two
+# guardrails were silent no-ops (`.get()` → None → comparison skipped).
+# `avg_quality_risk` remains dormant: the decoder doesn't emit it
+# (fitness.compute_fitness fills it later via `_predict_risks_safe` only
+# when a quality_risk_predictor is wired). Once that lands the guardrail
+# fires automatically; until then `.get()` returns None and the check is
+# skipped — same behaviour as before, but now the dormancy is documented.
 #
 # These percentages live here rather than ConfigStore because they are
 # correctness invariants, not tenant policy. A tenant changing them
@@ -134,33 +144,36 @@ def _gather_violations(
                 f"{(1 + _QUALITY_RISK_TOLERANCE):.0%}×baseline={base_v:.4f}",
             ))
 
-    # Setup time: higher is worse. A candidate may rise 15% as it
+    # Setups (count): higher is worse. A candidate may rise 15% as it
     # picks family-aware groupings; beyond that the GA is shuffling
-    # randomly and adding setups for no productive reason.
-    cand_setup = candidate.get("total_setup_time_h")
-    base_setup = baseline.get("total_setup_time_h")
+    # randomly and adding setups for no productive reason. The decoder
+    # emits `setups` as an integer count (decoder.compute_kpis line ~700);
+    # the percentage tolerance works the same on counts as on hours.
+    cand_setup = candidate.get("setups")
+    base_setup = baseline.get("setups")
     if cand_setup is not None and base_setup is not None and float(base_setup) > 0:
         cand_v = float(cand_setup)
         base_v = float(base_setup)
         if cand_v > base_v * (1.0 + _SETUP_TIME_TOLERANCE):
             violations.append((
-                "total_setup_time_h",
-                f"setup_h={cand_v:.2f} > "
-                f"{(1 + _SETUP_TIME_TOLERANCE):.0%}×baseline={base_v:.2f}",
+                "setups",
+                f"setups={int(cand_v)} > "
+                f"{(1 + _SETUP_TIME_TOLERANCE):.0%}×baseline={int(base_v)}",
             ))
 
-    # Idle operators: higher is worse. Plan §5.5 weights idle at 0.15.
-    # 20% tolerance accepts shift-edge effects (someone idle while an
-    # op finishes) but blocks candidates that deliberately starve
-    # workforce to game makespan.
-    cand_idle = candidate.get("idle_operators_h")
-    base_idle = baseline.get("idle_operators_h")
+    # Idle operators (total_idle_hours): higher is worse. Plan §5.5
+    # weights idle at 0.15. 20% tolerance accepts shift-edge effects
+    # (someone idle while an op finishes) but blocks candidates that
+    # deliberately starve workforce to game makespan. Key matches
+    # decoder.compute_kpis output (line ~703).
+    cand_idle = candidate.get("total_idle_hours")
+    base_idle = baseline.get("total_idle_hours")
     if cand_idle is not None and base_idle is not None and float(base_idle) > 0:
         cand_v = float(cand_idle)
         base_v = float(base_idle)
         if cand_v > base_v * (1.0 + _IDLE_TOLERANCE):
             violations.append((
-                "idle_operators_h",
+                "total_idle_hours",
                 f"idle_h={cand_v:.2f} > "
                 f"{(1 + _IDLE_TOLERANCE):.0%}×baseline={base_v:.2f}",
             ))
