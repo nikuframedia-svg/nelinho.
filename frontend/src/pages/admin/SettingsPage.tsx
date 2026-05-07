@@ -1701,16 +1701,13 @@ function LearningSettingsPanel() {
                       {entry.explanations && entry.explanations.length > 0 ? (
                         <ul className="space-y-1">
                           {entry.explanations.map((ex) => (
-                            <li
-                              key={ex.kpi}
-                              className="text-xs text-slate-300"
-                              dangerouslySetInnerHTML={{
-                                __html: ex.human_text.replace(
-                                  /\*\*([^*]+)\*\*/g,
-                                  '<strong class="text-slate-100">$1</strong>',
-                                ),
-                              }}
-                            />
+                            <li key={ex.kpi} className="text-xs text-slate-300">
+                              {/* ZERO XSS: render as plain text. The previous
+                                  implementation used dangerouslySetInnerHTML
+                                  with a regex that left ex.human_text exposed
+                                  to attacker-controlled HTML. */}
+                              {ex.human_text.replace(/\*\*([^*]+)\*\*/g, '$1')}
+                            </li>
                           ))}
                         </ul>
                       ) : (

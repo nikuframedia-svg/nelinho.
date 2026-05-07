@@ -36,7 +36,12 @@ from src.governance.yaml_policy.service import (
     RuleProposalService,
     serialize_rule,
 )
-from src.shared.auth.headers import require_tenant_header, require_user_uuid
+from src.shared.auth.headers import (
+    AdminContext,
+    require_admin,
+    require_tenant_header,
+    require_user_uuid,
+)
 from src.shared.database import get_session
 
 _log = logging.getLogger(__name__)
@@ -170,6 +175,7 @@ async def approve_rule(
     body: ApprovalRequest,
     tenant_id: UUID = Depends(require_tenant_header),
     user_id: UUID = Depends(require_user_uuid),
+    _admin: AdminContext = Depends(require_admin),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     svc = RuleProposalService(session, tenant_id)
@@ -204,6 +210,7 @@ async def reject_rule(
     body: RejectionRequest,
     tenant_id: UUID = Depends(require_tenant_header),
     user_id: UUID = Depends(require_user_uuid),
+    _admin: AdminContext = Depends(require_admin),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     svc = RuleProposalService(session, tenant_id)
@@ -221,6 +228,7 @@ async def suspend_rule(
     body: ApprovalRequest,
     tenant_id: UUID = Depends(require_tenant_header),
     user_id: UUID = Depends(require_user_uuid),
+    _admin: AdminContext = Depends(require_admin),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     svc = RuleProposalService(session, tenant_id)
@@ -238,6 +246,7 @@ async def rollback_rule(
     body: RollbackRequest,
     tenant_id: UUID = Depends(require_tenant_header),
     user_id: UUID = Depends(require_user_uuid),
+    _admin: AdminContext = Depends(require_admin),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
     svc = RuleProposalService(session, tenant_id)
