@@ -2960,3 +2960,6 @@ export const suggestionsApi = {
     return improveToDecision(row);
   },
 };
+
+// (learningApi already declared above — exposes pairs/rules/weights/weightHistory.
+// AprendizagemPage consumes those existing methods directly.)

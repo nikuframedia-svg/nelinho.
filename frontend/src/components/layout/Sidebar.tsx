@@ -51,6 +51,11 @@ const navItems: NavItem[] = [
     path: '/decisoes',
   },
   {
+    label: 'Aprendizagem',
+    icon: <Brain size={20} />,
+    path: '/aprendizagem',
+  },
+  {
     label: 'CORE',
     icon: <Package size={20} />,
     module: 'core',

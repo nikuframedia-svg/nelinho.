@@ -44,6 +44,7 @@ const SuggestionsPage = lazy(() => import('./pages/improve/SuggestionsPage').the
 // NEW: Operations Inbox - Action-oriented exceptions view
 const OpsInboxPage = lazy(() => import('./pages/OpsInboxPage').then(m => ({ default: m.OpsInboxPage })));
 const DecisoesInboxPage = lazy(() => import('./pages/DecisoesInboxPage'));
+const AprendizagemPage = lazy(() => import('./pages/AprendizagemPage'));
 
 // NEW: Workforce Operations System - The Killer Feature
 const WorkforceDashboard = lazy(() => import('./pages/workforce/WorkforceDashboard').then(m => ({ default: m.WorkforceDashboard })));
@@ -116,6 +117,13 @@ function App() {
                   <Route path="decisoes" element={
                     <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
                       <DecisoesInboxPage />
+                    </Suspense>
+                  } />
+
+                  {/* Plan v4 §11 (learning loop) — Aprendizagem */}
+                  <Route path="aprendizagem" element={
+                    <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
+                      <AprendizagemPage />
                     </Suspense>
                   } />
 
