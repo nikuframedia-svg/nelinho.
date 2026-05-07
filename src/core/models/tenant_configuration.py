@@ -116,6 +116,20 @@ ALLOWED_DATA_TYPES = frozenset({
     DATA_TYPE_CURRENCY,
 })
 
+# Sprint X.1 — Plan v4 §4.7 provenance vocabulary. Every config row
+# tracks where its current value came from so the UI can render a badge
+# ("system default" vs "manually overridden" vs "applied from a learned
+# rule"). The CHECK constraint mirrors this on the DB side.
+SOURCE_DEFAULT = "default"           # seeded value, never touched by a user
+SOURCE_MANUAL = "manual"             # operator edited via UI / API
+SOURCE_LEARNED_RULE = "learned_rule" # YAML policy `set_config` action applied
+
+ALLOWED_SOURCES = frozenset({
+    SOURCE_DEFAULT,
+    SOURCE_MANUAL,
+    SOURCE_LEARNED_RULE,
+})
+
 
 class TenantConfiguration(Base):
     """Per-tenant configuration entry, versioned by `valid_from`."""
@@ -170,6 +184,12 @@ class TenantConfiguration(Base):
         onupdate=datetime.utcnow,
         nullable=False,
     )
+
+    # Sprint X.1 — provenance of the current value (default/manual/
+    # learned_rule). Defaults to 'default' so seeded rows backfill
+    # cleanly; service layer flips it to 'manual' on UI writes and to
+    # 'learned_rule' when a YAML policy `set_config` dispatcher writes.
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default=SOURCE_DEFAULT)
 
     def __repr__(self) -> str:
         return (

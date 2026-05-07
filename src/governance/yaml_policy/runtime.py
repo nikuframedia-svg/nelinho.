@@ -87,11 +87,15 @@ def _build_dispatch_context(
         if session is None:
             return
         try:
+            from src.core.models.tenant_configuration import SOURCE_LEARNED_RULE
             from src.core.services.tenant_config_service import TenantConfigService
             svc = TenantConfigService(session, tenant_id)
             await svc.set(
                 category=category, key=key, value=value,
                 user_id=None, data_type="json",
+                # Sprint X.1 — flag the row as 'learned_rule' so the UI
+                # can render the right provenance badge (Plan v4 §4.7).
+                source=SOURCE_LEARNED_RULE,
             )
             # ``reason`` is captured in the rule's audit revision row and
             # in the dispatcher log; TenantConfigService.set has no

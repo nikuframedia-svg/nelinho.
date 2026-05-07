@@ -51,6 +51,8 @@ class ConfigEntryOut(BaseModel):
     valid_to: Optional[datetime]
     last_modified_by: Optional[UUID]
     last_modified_at: datetime
+    # Sprint X.1 — Plan v4 §4.7 provenance: 'default' | 'manual' | 'learned_rule'
+    source: str
 
 
 class ConfigSetIn(BaseModel):
@@ -75,6 +77,10 @@ class CategoryValuesOut(BaseModel):
 
 
 def _to_out(row) -> ConfigEntryOut:
+    # ``source`` was added in Sprint X.1 with DB-side DEFAULT 'default',
+    # but in-memory rows constructed by tests (TenantConfiguration(...)
+    # without flush) still see None until the row is persisted. Fall
+    # back to 'default' so the response stays valid in both paths.
     return ConfigEntryOut(
         id=row.id,
         category=row.category,
@@ -85,6 +91,7 @@ def _to_out(row) -> ConfigEntryOut:
         valid_to=row.valid_to,
         last_modified_by=row.last_modified_by,
         last_modified_at=row.last_modified_at,
+        source=row.source or "default",
     )
 
 
@@ -198,6 +205,9 @@ async def reset_to_default(
             value=default_value,
             user_id=user_id,
             data_type=default_type,
+            # Sprint X.1 — restoring the seeded default flips provenance
+            # back to 'default' so the UI badge re-renders correctly.
+            source="default",
         )
     except TenantConfigValidationError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))

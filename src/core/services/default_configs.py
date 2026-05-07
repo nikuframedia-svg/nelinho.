@@ -586,6 +586,10 @@ async def seed_tenant_defaults(
             value=value,
             user_id=user_id,
             data_type=data_type,
+            # Sprint X.1 — seeded rows carry ``source='default'`` so the
+            # UI can show a "system default" badge and the "Reset to
+            # default" button is meaningful (it restores this row).
+            source="default",
         )
         written += 1
     return written

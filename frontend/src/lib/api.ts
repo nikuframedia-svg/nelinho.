@@ -2398,7 +2398,11 @@ export interface ConfigEntry {
   valid_to: string | null;
   last_modified_by: string | null;
   last_modified_at: string;
+  // Sprint X.1 — Plan v4 §4.7 provenance: 'default' | 'manual' | 'learned_rule'
+  source: ConfigSource;
 }
+
+export type ConfigSource = 'default' | 'manual' | 'learned_rule';
 
 export interface ConfigCategoryValues {
   category: string;
