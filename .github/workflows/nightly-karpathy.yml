@@ -90,7 +90,9 @@ jobs:
           # corram com a identidade da App, nao com GITHUB_TOKEN.
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Auth via subscricao Max do Luis (nao API key paga). Token gerado
+          # localmente via `claude setup-token` e guardado em CLAUDE_CODE_OAUTH_TOKEN.
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ steps.app-token.outputs.token }}
           prompt: ${{ steps.load-prompt.outputs.content }}
           # claude_args agrupa flags que costumavam ser inputs separados.
