@@ -54,3 +54,4 @@ numpy==1.26.3
 pytest==7.4.4
 pytest-asyncio==0.23.3
 pytest-cov==4.1.0
+hypothesis>=6.92  # property-based testing — used by tests/plan/test_preview_delta_property.py
