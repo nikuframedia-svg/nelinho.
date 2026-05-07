@@ -43,6 +43,7 @@ from src.governance.api_learning_metrics import router as learning_metrics_route
 from src.workforce.api import router as workforce_router
 from src.workforce.employee_extras_api import router as workforce_employees_router  # Sprint Q.3
 from src.copilot.alerts.api import router as copilot_alerts_router
+from src.shared.realtime.activity_api import router as activity_router
 from src.shared.scheduler import start_scheduler, shutdown_scheduler
 from src.plan.api.cpo import router as plan_cpo_router
 from src.ml.api import router as ml_router
@@ -534,6 +535,7 @@ app.include_router(plan_cpo_router)  # CPO v4 scheduler (Sprint E — DRCFFS-R)
 # Sprint D.1 — Real-time SSE fan-out of Kafka events to the browser.
 from src.shared.realtime import router as realtime_router
 app.include_router(realtime_router)
+app.include_router(activity_router)  # /v1/activity/recent — outbox poll for LiveActivityFeed
 app.include_router(ml_router)  # ML learning infrastructure (Sprint G)
 app.include_router(copilot_poetiq_router)  # POETIQ copilot↔CPO loop (Sprint K.4)
 

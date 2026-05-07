@@ -457,6 +457,35 @@ async def list_semantic_views():
 
 
 @router.get(
+    "/semantic/blocked-metrics",
+    summary="Get Blocked Metrics",
+    description="List metrics that cannot be calculated with current data.",
+    tags=["factory", "semantic-queries"],
+)
+async def get_blocked_metrics():
+    """
+    Get list of metrics blocked from calculation.
+
+    Declared BEFORE the catch-all `/semantic/{view_id}` so FastAPI's
+    router matches this specific path first; otherwise `view_id` would
+    capture `"blocked-metrics"` and reject it via the views allow-list.
+    """
+    return {
+        "blocked_metrics": [
+            {
+                "metric_id": metric_id,
+                "reason": info["reason"],
+                "required_data": info["required_data"],
+            }
+            for metric_id, info in BLOCKED_METRICS.items()
+        ],
+        "allowed_metrics": ALLOWED_METRICS,
+        "total_blocked": len(BLOCKED_METRICS),
+        "total_allowed": len(ALLOWED_METRICS),
+    }
+
+
+@router.get(
     "/semantic/{view_id}",
     response_model=SemanticViewResponse,
     summary="Query semantic view",
@@ -1080,37 +1109,6 @@ async def get_lead_time_analysis(
     """
     result = semantic.get_lead_time(days_back=days_back)
     return SemanticQueryResponse(**result)
-
-
-# ============================================================================
-# BLOCKED METRICS ENDPOINT
-# ============================================================================
-
-@router.get(
-    "/semantic/blocked-metrics",
-    summary="Get Blocked Metrics",
-    description="List metrics that cannot be calculated with current data.",
-    tags=["factory", "semantic-queries"],
-)
-async def get_blocked_metrics():
-    """
-    Get list of blocked metrics.
-    
-    These metrics cannot be calculated because required data is missing.
-    """
-    return {
-        "blocked_metrics": [
-            {
-                "metric_id": metric_id,
-                "reason": info["reason"],
-                "required_data": info["required_data"],
-            }
-            for metric_id, info in BLOCKED_METRICS.items()
-        ],
-        "allowed_metrics": ALLOWED_METRICS,
-        "total_blocked": len(BLOCKED_METRICS),
-        "total_allowed": len(ALLOWED_METRICS),
-    }
 
 
 # ============================================================================
