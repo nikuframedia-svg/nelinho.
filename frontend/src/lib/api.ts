@@ -2836,3 +2836,37 @@ export const yamlPolicyApi = {
       { method: 'POST', body: JSON.stringify({ reason }) },
     ),
 };
+
+// ────────────────────────────────────────────────────────────────────────
+// phaseGapsApi — Sprint X.3 (cura/secagem editável via UI).
+// Wraps GET /v1/plan/phase-gaps (merged DB + SEED view) and PATCH
+// .../{from}/{to} with reason ≥10 chars. Consumed by the new
+// "Cura/Secagem" tab in SettingsPage. The CPO scheduler picks up the
+// new value on the next /v1/plan/cpo/schedule run via the same
+// `state._load_phase_transition_gaps` loader the dispatcher uses.
+// ────────────────────────────────────────────────────────────────────────
+
+export interface PhaseGap {
+  from_phase_code: string;
+  to_phase_code: string;
+  min_gap_hours: number;
+  reason: string | null;
+  n_observations: number | null;
+  active: boolean;
+  /** 'seed' = fallback to NELO_CURING_GAPS_SEED; 'db' = persisted edit */
+  source: 'seed' | 'db' | string;
+}
+
+export const phaseGapsApi = {
+  list: () => request<{ items: PhaseGap[] }>('/v1/plan/phase-gaps'),
+
+  update: (
+    fromPhaseCode: string,
+    toPhaseCode: string,
+    payload: { min_gap_hours: number; reason: string },
+  ) =>
+    request<PhaseGap>(
+      `/v1/plan/phase-gaps/${encodeURIComponent(fromPhaseCode)}/${encodeURIComponent(toPhaseCode)}`,
+      { method: 'PATCH', body: JSON.stringify(payload) },
+    ),
+};

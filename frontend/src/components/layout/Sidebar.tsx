@@ -163,6 +163,11 @@ const dataNavItems: NavItem[] = [
     icon: <BookOpen size={20} />,
     path: '/admin/regras',
   },
+  {
+    label: 'Cura / Secagem',
+    icon: <FlaskConical size={20} />,
+    path: '/admin/cura-secagem',
+  },
 ];
 
 const bottomNavItems: NavItem[] = [
