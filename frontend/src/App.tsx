@@ -43,6 +43,7 @@ const SuggestionsPage = lazy(() => import('./pages/improve/SuggestionsPage').the
 
 // NEW: Operations Inbox - Action-oriented exceptions view
 const OpsInboxPage = lazy(() => import('./pages/OpsInboxPage').then(m => ({ default: m.OpsInboxPage })));
+const DecisoesInboxPage = lazy(() => import('./pages/DecisoesInboxPage'));
 
 // NEW: Workforce Operations System - The Killer Feature
 const WorkforceDashboard = lazy(() => import('./pages/workforce/WorkforceDashboard').then(m => ({ default: m.WorkforceDashboard })));
@@ -108,6 +109,13 @@ function App() {
                   <Route path="inbox" element={
                     <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
                       <OpsInboxPage />
+                    </Suspense>
+                  } />
+
+                  {/* Plan v4 §4 (advisory mode) — Inbox de Decisões */}
+                  <Route path="decisoes" element={
+                    <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
+                      <DecisoesInboxPage />
                     </Suspense>
                   } />
 

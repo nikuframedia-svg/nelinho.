@@ -17,6 +17,7 @@ import {
   FlaskConical,
   Lightbulb,
   Inbox,
+  CheckSquare,
   Database,
   Shield,
   Brain,
@@ -43,6 +44,11 @@ const navItems: NavItem[] = [
     label: 'Ops Inbox',
     icon: <Inbox size={20} />,
     path: '/inbox',
+  },
+  {
+    label: 'Decisões',
+    icon: <CheckSquare size={20} />,
+    path: '/decisoes',
   },
   {
     label: 'CORE',

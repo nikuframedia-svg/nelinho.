@@ -2832,3 +2832,131 @@ export const yamlPolicyApi = {
       { method: 'POST', body: JSON.stringify({ reason }) },
     ),
 };
+
+// ────────────────────────────────────────────────────────────────────────
+// suggestionsApi — Plan v4 §4 (advisory mode) wrapper around /v1/improve.
+// Maps the backend's "improvement suggestion" rows (which are domain-
+// generic: oee/quality/supply/hr) into the shop-floor Suggestion shape
+// the decision/ components consume. The backend does NOT yet emit
+// `priority` / `if_accept` / `if_reject` fields — we derive them from
+// confidence and from `estimated_impact`, with sensible Portuguese
+// fallbacks. When the backend ships native Plan v4 fields, drop the
+// derive functions; the page consumers stay unchanged.
+// ────────────────────────────────────────────────────────────────────────
+
+import type {
+  Suggestion as DecisionSuggestion,
+  SuggestionPriority,
+} from '../types/decision';
+
+interface ImproveSuggestionRow {
+  id: string;
+  title: string;
+  description: string;
+  domain: string;
+  action_type: string;
+  status: string;
+  source: string;
+  estimated_impact: Record<string, unknown>;
+  confidence: number;
+  created_at: string;
+  reviewed_at?: string | null;
+  reviewed_by?: string | null;
+}
+
+function derivePriority(confidence: number, domain: string): SuggestionPriority {
+  if (domain === 'quality' || domain === 'safety') {
+    if (confidence >= 0.85) return 'critical';
+    if (confidence >= 0.7) return 'high';
+  }
+  if (confidence >= 0.85) return 'high';
+  if (confidence >= 0.6) return 'medium';
+  return 'low';
+}
+
+function deriveAcceptConsequence(
+  estimated_impact: Record<string, unknown>,
+): string[] {
+  const lines: string[] = [];
+  for (const [key, raw] of Object.entries(estimated_impact ?? {})) {
+    if (raw && typeof raw === 'object' && 'delta' in (raw as object)) {
+      const delta = (raw as { delta?: number }).delta;
+      const conf = (raw as { confidence?: number }).confidence;
+      if (typeof delta === 'number') {
+        const sign = delta > 0 ? '+' : '';
+        const confTxt =
+          typeof conf === 'number' ? ` (confiança ${Math.round(conf * 100)}%)` : '';
+        lines.push(`${key}: ${sign}${delta}${confTxt}`);
+      }
+    }
+  }
+  if (lines.length === 0) {
+    lines.push('Impacto estimado pelo sistema. Ver detalhe da sugestão.');
+  }
+  return lines;
+}
+
+function deriveRejectConsequence(domain: string): string[] {
+  return [
+    `Mantém o estado actual de ${domain}.`,
+    'Sistema regista a rejeição e a sua razão (alimenta a aprendizagem).',
+  ];
+}
+
+function improveToDecision(row: ImproveSuggestionRow): DecisionSuggestion {
+  return {
+    id: row.id,
+    priority: derivePriority(row.confidence, row.domain),
+    title: row.title,
+    what_changed: row.title,
+    why: row.description,
+    if_accept: deriveAcceptConsequence(row.estimated_impact),
+    if_reject: deriveRejectConsequence(row.domain),
+    alternative: null,
+    confidence: row.confidence,
+    source: row.source,
+    created_at: row.created_at,
+    status: row.status as DecisionSuggestion['status'],
+  };
+}
+
+export const suggestionsApi = {
+  list: async (params: { status?: string; domain?: string; limit?: number } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.status) qs.set('status', params.status);
+    if (params.domain) qs.set('domain', params.domain);
+    qs.set('limit', String(params.limit ?? 50));
+    const rows = await request<ImproveSuggestionRow[]>(
+      `/v1/improve/suggestions?${qs.toString()}`,
+    );
+    return rows.map(improveToDecision);
+  },
+
+  get: async (suggestionId: string) => {
+    const row = await request<ImproveSuggestionRow>(
+      `/v1/improve/suggestions/${encodeURIComponent(suggestionId)}`,
+    );
+    return improveToDecision(row);
+  },
+
+  accept: async (suggestionId: string, reason?: string) => {
+    // Backend approve endpoint takes no body today; we still accept the
+    // reason in the client signature so call-sites stay symmetric with
+    // reject(). When the backend grows an `approval_reason` field we
+    // plumb it through here without changing pages.
+    void reason;
+    const row = await request<ImproveSuggestionRow>(
+      `/v1/improve/suggestions/${encodeURIComponent(suggestionId)}/approve`,
+      { method: 'POST' },
+    );
+    return improveToDecision(row);
+  },
+
+  reject: async (suggestionId: string, reason: string) => {
+    const row = await request<ImproveSuggestionRow>(
+      `/v1/improve/suggestions/${encodeURIComponent(suggestionId)}/reject`,
+      { method: 'POST', body: JSON.stringify({ reason }) },
+    );
+    return improveToDecision(row);
+  },
+};
