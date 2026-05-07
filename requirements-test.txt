@@ -15,6 +15,7 @@ pydantic==2.5.3
 pydantic-settings==2.1.0
 python-multipart==0.0.6
 starlette  # pulled by fastapi; no explicit pin needed
+sse-starlette==2.1.0  # Sprint D.1 — SSE; imported by src/shared/realtime/api.py at module load
 
 # Database (models declare pgvector types guarded by import; asyncpg is imported by database.py)
 sqlalchemy[asyncio]==2.0.25
@@ -53,3 +54,4 @@ numpy==1.26.3
 pytest==7.4.4
 pytest-asyncio==0.23.3
 pytest-cov==4.1.0
+hypothesis>=6.92  # property-based testing — used by tests/plan/test_preview_delta_property.py
