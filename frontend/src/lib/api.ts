@@ -1406,6 +1406,9 @@ export interface DecisionRun {
   sandbox_result?: Record<string, any>;
   before_state: Record<string, any>;
   after_state?: Record<string, any>;
+  /** Sprint Q.13.C — payload that the decision will execute. Editable
+   *  via WG05 modify-payload flow. */
+  action_data?: Record<string, any>;
   proposed_by: string;
   proposed_at: string;
   executed_at?: string;
@@ -2657,6 +2660,9 @@ export interface TransportSuggestion {
   if_reject: string;
   alternative?: string;
   affected_order_ids?: string[];
+  /** Only set when type === 'swap_between_batches'. Identifies the
+   *  batch the affected orders should be swapped INTO. */
+  target_batch_id?: string;
 }
 
 /**

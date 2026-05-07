@@ -7,7 +7,7 @@
 
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { RotateCcw, CheckCircle, Clock, AlertTriangle, FileSpreadsheet, X } from 'lucide-react';
+import { RotateCcw, Clock, AlertTriangle, FileSpreadsheet } from 'lucide-react';
 import type { Ingestion, RollbackImpact } from '@/types';
 import { useIngestions } from '@/hooks';
 

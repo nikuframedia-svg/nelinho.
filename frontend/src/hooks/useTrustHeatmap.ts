@@ -33,6 +33,7 @@ const COLUMN_LABELS: Record<keyof TrustIndexV2Response['components'], string> = 
   anomaly: 'Anomaly',
   evidence: 'Evidence',
   causal_coherence: 'Causal Coherence',
+  timeliness: 'Timeliness',
 };
 
 function v2ToHeatmap(payload: TrustIndexV2Response): TrustCell[][] {

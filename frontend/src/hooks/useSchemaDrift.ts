@@ -41,7 +41,7 @@ export function useSchemaDrift() {
     }
   }, []);
 
-  const handleAction = useCallback(async (drift: SchemaDrift, action: 'accept' | 'reject' | 'ignore') => {
+  const handleAction = useCallback(async (drift: SchemaDrift, _action: 'accept' | 'reject' | 'ignore') => {
     try {
       // In production: POST to API
       // For now, just remove from local state

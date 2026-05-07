@@ -6,8 +6,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import type { TableCoverage } from '@/types';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-
 export function useCoverageAnalysis() {
   const [coverage, setCoverage] = useState<TableCoverage[]>([]);
   const [loading, setLoading] = useState(true);

@@ -43,8 +43,6 @@ import {
   Clock,
   Cpu,
 } from 'lucide-react';
-import { formatDistanceToNow } from 'date-fns';
-import { pt } from 'date-fns/locale';
 import { DarkPageLayout } from '../layouts';
 import {
   BarcodeScanButton,
