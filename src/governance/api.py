@@ -74,10 +74,19 @@ class PolicyResponse(BaseModel):
 # DEPENDENCIES
 # ============================================================================
 
-from src.shared.auth.headers import require_tenant_header, require_user_header
+from src.shared.auth.headers import (
+    AdminContext,
+    require_admin,
+    require_tenant_header,
+    require_user_header,
+)
 
 # Sprint Q.12 Onda 0.1: replaced silent zero-UUID/'api_user' defaults with
 # fail-closed dependencies that return 401 when the header is absent.
+# Sprint Q.18.A.1: irreversible ops below (bulk, payload patch, execute,
+# rollback, kill-switch) now require :func:`require_admin` instead of
+# :func:`require_user_header`. Any authenticated user could previously
+# stop production via /kill-switch — closed with a single dep swap.
 get_tenant_id = require_tenant_header
 get_current_user = require_user_header
 
@@ -254,16 +263,20 @@ async def get_timeline(
 @router.post("/decisions/bulk")
 async def bulk_act(
     body: BulkRequest,
-    user: str = Depends(get_current_user),
+    admin: AdminContext = Depends(require_admin),
     service: GovernanceService = Depends(get_governance_service),
 ):
     """Apply multiple approve/reject/request_changes in a single call.
 
     Per-item response — a SoD violation on one decision does not abort the rest.
+
+    Sprint Q.18.A.1: admin-only. Bulk approve/reject is a privileged
+    operation — single approvals still go through the per-item endpoint
+    where SoD enforces "approver != proposer".
     """
     results = await service.bulk_act(
         items=[item.model_dump() for item in body.items],
-        approved_by=user,
+        approved_by=admin.user_id,
     )
     ok = sum(1 for r in results if r["status"] == "ok")
     return {"ok": ok, "failed": len(results) - ok, "results": results}
@@ -277,14 +290,20 @@ async def bulk_act(
 async def modify_decision_payload(
     decision_id: str,
     body: ModifyPayloadIn,
-    user: str = Depends(get_current_user),
+    admin: AdminContext = Depends(require_admin),
     service: GovernanceService = Depends(get_governance_service),
 ):
+    """Modify a pending decision's payload before approval.
+
+    Sprint Q.18.A.1: admin-only. Editing a proposed decision changes
+    what every subsequent approver votes on — concentrate the trust
+    surface on admins.
+    """
     try:
         return await service.modify_payload(
             decision_id=decision_id,
             patch=body.patch,
-            modified_by=user,
+            modified_by=admin.user_id,
             reason=body.reason,
         )
     except ValueError as exc:
@@ -407,25 +426,28 @@ async def approve_decision(
 @router.post("/decisions/{decision_id}/execute")
 async def execute_decision(
     decision_id: str,
-    user: str = Depends(get_current_user),
+    admin: AdminContext = Depends(require_admin),
     service: GovernanceService = Depends(get_governance_service),
 ):
     """
     Execute an approved decision.
-    
+
     Only approved decisions can be executed.
+
+    Sprint Q.18.A.1: admin-only. Execution writes to the production
+    schedule/inventory/payroll — irreversible without a rollback decision.
     """
     try:
         decision = await service.execute_decision(
             decision_id=decision_id,
-            executed_by=user,
+            executed_by=admin.user_id,
         )
-        
+
         return {
             "success": True,
             "decision_id": decision_id,
             "status": decision["status"],
-            "executed_by": user,
+            "executed_by": admin.user_id,
             "executed_at": decision["executed_at"],
             "outcome_hash": decision.get("outcome_hash"),
         }
@@ -446,26 +468,29 @@ async def execute_decision(
 async def rollback_decision(
     decision_id: str,
     reason: str = Query(..., min_length=10, description="Reason for rollback"),
-    user: str = Depends(get_current_user),
+    admin: AdminContext = Depends(require_admin),
     service: GovernanceService = Depends(get_governance_service),
 ):
     """
     Rollback an executed decision.
-    
+
     Requires a reason (min 10 characters) for audit purposes.
+
+    Sprint Q.18.A.1: admin-only. Rolling back inverts production state
+    — same blast radius as execute.
     """
     try:
         decision = await service.rollback_decision(
             decision_id=decision_id,
-            rolled_back_by=user,
+            rolled_back_by=admin.user_id,
             reason=reason,
         )
-        
+
         return {
             "success": True,
             "decision_id": decision_id,
             "status": decision["status"],
-            "rolled_back_by": user,
+            "rolled_back_by": admin.user_id,
             "rolled_back_at": decision["rolled_back_at"],
             "reason": reason,
         }
@@ -593,28 +618,28 @@ async def get_decision_delta(
 async def activate_kill_switch(
     scope: str = Query(..., description="Scope to kill (e.g., 'all', 'decision_type:X')"),
     reason: str = Query(..., min_length=10, description="Reason for kill switch"),
-    user: str = Depends(get_current_user),
+    admin: AdminContext = Depends(require_admin),
     service: GovernanceService = Depends(get_governance_service),
 ):
     """
     EMERGENCY: Activate kill switch.
-    
+
     This immediately stops execution of decisions in the specified scope.
     No approval required - this is for emergency situations only.
-    
+
     All kill switch activations are logged and audited.
     """
     decision = await service.activate_kill_switch(
         scope=scope,
-        activated_by=user,
+        activated_by=admin.user_id,
         reason=reason,
     )
-    
+
     return {
         "success": True,
         "kill_switch_id": decision["id"],
         "scope": scope,
-        "activated_by": user,
+        "activated_by": admin.user_id,
         "activated_at": decision["executed_at"],
         "reason": reason,
         "warning": "KILL SWITCH ACTIVATED - Decisions in scope are now blocked",
