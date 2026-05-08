@@ -47,3 +47,40 @@ export type { BarcodeScanButtonProps } from './BarcodeScanButton';
 export { ConfigParam } from './ConfigParam';
 export type { ConfigParamProps, ConfigParamType } from './ConfigParam';
 
+// Sprint Q.18.UI.A — atomic primitives para o refactor 8-páginas
+// alinhado com FRONTEND_DESIGN_PROMPT.md.
+export { KPICard } from './KPICard';
+export type { KPICardProps, KPIStatus } from './KPICard';
+export { AlertCard } from './AlertCard';
+export type {
+  AlertCardProps,
+  AlertCardAction,
+  AlertSeverity,
+  AlertSource,
+} from './AlertCard';
+export { TimelineSuggestion } from './TimelineSuggestion';
+export type {
+  TimelineSuggestionProps,
+  TimelineSuggestionAlternative,
+  SuggestionPriority,
+} from './TimelineSuggestion';
+export { BoatCard } from './BoatCard';
+export type { BoatCardProps, BoatStatus } from './BoatCard';
+export { PhaseColumn } from './PhaseColumn';
+export type { PhaseColumnProps } from './PhaseColumn';
+export { WorkerAvatar } from './WorkerAvatar';
+export type { WorkerAvatarProps } from './WorkerAvatar';
+export { CausalChainCard } from './CausalChainCard';
+export type { CausalChainCardProps } from './CausalChainCard';
+export { ApprovalButtons } from './ApprovalButtons';
+export type { ApprovalButtonsProps, ReasonRequirement } from './ApprovalButtons';
+export { GanttChart, GanttBar } from './GanttChart';
+export type {
+  GanttChartProps,
+  GanttRow,
+  GanttBarData,
+  GanttBarKind,
+  GanttBarStatus,
+} from './GanttChart';
+export { BigButton } from './BigButton';
+

@@ -235,6 +235,18 @@ function App() {
                     </Suspense>
                   } />
                   
+                  {/* Sprint Q.18.UI.A — novos paths PT-PT.
+                      Por agora redirect para a versão antiga; cada Q.18.UI.X
+                      vai substituir o redirect pela página nativa. */}
+                  <Route path="painel" element={<Navigate to="/" replace />} />
+                  <Route path="producao" element={<Navigate to="/plan/scheduling" replace />} />
+                  <Route path="planeamento" element={<Navigate to="/plan/scheduling" replace />} />
+                  <Route path="expedicao" element={<Navigate to="/plan/dispatch" replace />} />
+                  <Route path="equipa" element={<Navigate to="/core/employees" replace />} />
+                  <Route path="qualidade" element={<Navigate to="/profit/quality" replace />} />
+                  <Route path="relatorios" element={<Navigate to="/" replace />} />
+                  <Route path="configuracao" element={<Navigate to="/settings" replace />} />
+
                   {/* Legacy routes - redirect to new structure */}
                   <Route path="products" element={<Navigate to="/core/products" replace />} />
                   <Route path="machines" element={<Navigate to="/core/machines" replace />} />
