@@ -53,7 +53,9 @@
       "PowerShell($psql = \"$env:USERPROFILE\\\\scoop\\\\apps\\\\postgresql\\\\current\\\\bin\\\\psql.exe\"; & $psql -U postgres -d postgres -c \"DROP DATABASE prodplan_one;\" 2>&1; & $psql -U postgres -d postgres -c \"CREATE DATABASE prodplan_one OWNER prodplan;\" 2>&1; & $psql -U postgres -d prodplan_one -c \"GRANT ALL ON SCHEMA public TO prodplan;\" 2>&1; & $psql -U prodplan -d prodplan_one -f \"c:\\\\Users\\\\User\\\\nelinho\\\\scripts\\\\init-db.sql\" 2>&1 | Select-Object -Last 5)",
       "PowerShell(Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue; \"Killed PID $\\($_.OwningProcess\\) on :8000\" }; $psql = \"$env:USERPROFILE\\\\scoop\\\\apps\\\\postgresql\\\\current\\\\bin\\\\psql.exe\"; & $psql -U postgres -d postgres -c \"SELECT pg_terminate_backend\\(pid\\) FROM pg_stat_activity WHERE datname = 'prodplan_one' AND pid <> pg_backend_pid\\(\\);\" 2>&1 | Select-Object -Last 3; & $psql -U postgres -d postgres -c \"DROP DATABASE prodplan_one;\" 2>&1; & $psql -U postgres -d postgres -c \"CREATE DATABASE prodplan_one OWNER prodplan;\" 2>&1)",
       "PowerShell($psql = \"$env:USERPROFILE\\\\scoop\\\\apps\\\\postgresql\\\\current\\\\bin\\\\psql.exe\"; & $psql -U postgres -d prodplan_one -c \"GRANT ALL ON SCHEMA public TO prodplan;\" 2>&1; & $psql -U prodplan -d prodplan_one -f \"c:\\\\Users\\\\User\\\\nelinho\\\\scripts\\\\init-db.sql\" 2>&1 | Select-Object -Last 5; Write-Output \"---now alembic---\"; Set-Location \"c:\\\\Users\\\\User\\\\nelinho\"; $env:PYTHONPATH = \"c:\\\\Users\\\\User\\\\nelinho\"; & \".\\\\.venv\\\\Scripts\\\\python.exe\" -m alembic upgrade head 2>&1 | Select-Object -Last 30)",
-      "Bash(git checkout *)"
+      "Bash(git checkout *)",
+      "Bash(touch tests/legacy/__init__.py)",
+      "Bash(PYTHONPATH=. python -m pytest tests/legacy/test_legacy_tenant_failclosed_q18a4.py -v)"
     ]
   }
 }
