@@ -12,6 +12,8 @@ import { RealtimeProvider } from './providers/RealtimeProvider';
 const Dashboard = lazy(() => import('./pages/Dashboard').then(m => ({ default: m.Dashboard })));
 // Sprint Q.18.ZIP.B — Painel portado do nelo zip (substitui Dashboard como rota /)
 const PainelPage = lazy(() => import('./pages/painel/PainelPage'));
+// Sprint Q.18.ZIP.C — Producao portada (mapa fabrica + 3 vistas + DragDrop)
+const ProducaoPage = lazy(() => import('./pages/producao/ProducaoPage'));
 const RAGIngestPage = lazy(() => import('./pages/admin/RAGIngestPage').then(m => ({ default: m.RAGIngestPage })));
 const SettingsPage = lazy(() => import('./pages/admin/SettingsPage').then(m => ({ default: m.SettingsPage })));
 const DQAPage = lazy(() => import('./pages/admin/DQAPage').then(m => ({ default: m.DQAPage })));
@@ -256,7 +258,12 @@ function App() {
                       Nota Q.18.ZIP.B: /painel já é nativo acima — esta entrada
                       é redundante (mantida só por defesa caso alguém tire). */}
                   {/* /painel removido daqui — agora rota nativa acima */}
-                  <Route path="producao" element={<Navigate to="/plan/scheduling" replace />} />
+                  {/* Q.18.ZIP.C — /producao agora nativa */}
+                  <Route path="producao" element={
+                    <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
+                      <ProducaoPage />
+                    </Suspense>
+                  } />
                   <Route path="planeamento" element={<Navigate to="/plan/scheduling" replace />} />
                   <Route path="expedicao" element={<Navigate to="/plan/dispatch" replace />} />
                   <Route path="equipa" element={<Navigate to="/core/employees" replace />} />
