@@ -73,6 +73,19 @@ async function fetchQualityRework(filter: 'open' | 'rework') {
   }
 }
 
+async function fetchMoldsHealthReport() {
+  try {
+    const resp = await fetch(
+      `http://127.0.0.1:8001/v1/plan/molds/health-report?limit=24`,
+      { headers: { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' } }
+    );
+    if (!resp.ok) return null;
+    return await resp.json();
+  } catch {
+    return null;
+  }
+}
+
 export default function QualidadePage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const tabFromUrl = searchParams.get('tab');
@@ -249,17 +262,106 @@ function ReworkListTab({ filter }: { filter: 'open' | 'rework' }) {
 }
 
 function MoldsTab() {
+  const moldsQuery = useQuery({
+    queryKey: ['qualidade', 'molds', 'health-report'],
+    queryFn: () => fetchMoldsHealthReport(),
+    staleTime: 60_000,
+    retry: 0,
+  });
+
+  const items: any[] = useMemo(() => {
+    const data: any = moldsQuery.data;
+    if (!data) return [];
+    if (Array.isArray(data)) return data;
+    return data.items ?? [];
+  }, [moldsQuery.data]);
+
+  const reds = items.filter((m) => m.health?.risk_category === 'red').length;
+  const yellows = items.filter((m) => m.health?.risk_category === 'yellow').length;
+
   return (
-    <Panel title="Moldes em risco" badge="—" flush>
-      <EmptyState
-        title="Cards moldes com ciclos/100, manutenção, defeitos"
-        hint={
-          'Endpoint /v1/quality/molds/at-risk ainda não está exposto (Q.18.ZIP.BE.3 deferred). ' +
-          'Quando wired, mostra grid 4×2 cards de moldes com taxa erro semana, ciclos/100, próx. manutenção e barra defeitos.'
-        }
-        mascot
-        size="md"
-      />
+    <Panel
+      title="Moldes — health report"
+      badge={items.length || '—'}
+      flush
+    >
+      {moldsQuery.isLoading ? (
+        <div className="px-4 py-6 text-center text-xs text-text-dark-tertiary">
+          A carregar moldes…
+        </div>
+      ) : moldsQuery.isError || moldsQuery.data === null ? (
+        <EmptyState
+          title="Endpoint /v1/plan/molds/health-report indisponível"
+          hint="Quando wired, mostra grid de moldes com score de saúde, risco (red/yellow/green) e componentes da fórmula."
+          mascot
+          size="md"
+        />
+      ) : items.length === 0 ? (
+        <EmptyState
+          title="Sem moldes registados"
+          hint="O endpoint respondeu mas devolveu lista vazia (sem dados de manutenção)."
+          mascot
+          size="sm"
+        />
+      ) : (
+        <>
+          <div className="px-4 py-2 border-b border-white/[0.06] flex items-center gap-3 text-[11px] text-text-dark-tertiary">
+            <span>
+              <span className="font-semibold text-danger">{reds}</span> red
+            </span>
+            <span>
+              <span className="font-semibold text-warning">{yellows}</span> yellow
+            </span>
+            <span className="ml-auto">{items.length} moldes</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 p-3">
+            {items.slice(0, 24).map((m, idx) => {
+              const score = m.health?.score_0_100 ?? 100;
+              const cat = m.health?.risk_category ?? 'green';
+              const tone =
+                cat === 'red'
+                  ? 'bg-danger/15 text-danger border-danger/40'
+                  : cat === 'yellow'
+                    ? 'bg-warning/15 text-warning border-warning/40'
+                    : 'bg-success/15 text-success border-success/40';
+              return (
+                <div
+                  key={m.id ?? idx}
+                  className="rounded-md border border-white/[0.08] bg-white/[0.02] p-3 hover:bg-white/[0.04] transition-colors"
+                >
+                  <div className="flex items-start justify-between gap-2 mb-2">
+                    <div className="min-w-0">
+                      <div className="text-xs font-mono text-text-dark-primary truncate">
+                        {m.mold_code ?? '—'}
+                      </div>
+                      <div className="text-[10px] text-text-dark-tertiary truncate">
+                        {m.model_id ?? '—'}
+                      </div>
+                    </div>
+                    <span
+                      className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold border ${tone}`}
+                    >
+                      {cat}
+                    </span>
+                  </div>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-2xl font-semibold text-text-dark-primary tabular-nums">
+                      {score}
+                    </span>
+                    <span className="text-[10px] text-text-dark-tertiary">/100</span>
+                  </div>
+                  <div className="mt-2 h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
+                    <div
+                      className={`h-full ${cat === 'red' ? 'bg-danger' : cat === 'yellow' ? 'bg-warning' : 'bg-success'}`}
+                      style={{ width: `${score}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
     </Panel>
   );
 }

@@ -536,6 +536,10 @@ app.include_router(plan_cpo_router)  # CPO v4 scheduler (Sprint E — DRCFFS-R)
 from src.shared.api.auth_me import router as auth_me_router  # noqa: E402
 app.include_router(auth_me_router)
 
+# Sprint Q.18.ZIP.BE.4 — POST /v1/reports/generate dispatcher.
+from src.reports.api import router as reports_router  # noqa: E402
+app.include_router(reports_router)
+
 # Sprint D.1 — Real-time SSE fan-out of Kafka events to the browser.
 from src.shared.realtime import router as realtime_router
 app.include_router(realtime_router)
