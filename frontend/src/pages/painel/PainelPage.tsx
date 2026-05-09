@@ -207,11 +207,13 @@ function BacklogByClientPanel({ refreshKey }: { refreshKey: number }) {
 const INBOX_TAB_IDS = ['pending', 'accepted', 'rejected', 'all'] as const;
 type InboxTabId = (typeof INBOX_TAB_IDS)[number];
 
-// Backend DecisionStatus enum (src/governance/models.py:58):
-//   proposed/pending_approval/approved/rejected/executing/executed/...
-// Inbox "Pendentes" = aguardam aprovação humana → PENDING_APPROVAL.
+// Backend /v1/decisions/ usa SharedDecisionRun com DecisionStatus
+// enum simples (src/shared/models/governance.py:20):
+//   PROPOSED / APPROVED / EXECUTED / ROLLED_BACK / REJECTED.
+// Inbox "Pendentes" = propostas que aguardam aprovação → PROPOSED.
+// (NÃO PENDING_APPROVAL — esse é do enum de /v1/governance/decisions/.)
 const STATUS_BY_TAB: Record<InboxTabId, string | undefined> = {
-  pending: 'PENDING_APPROVAL',
+  pending: 'PROPOSED',
   accepted: 'EXECUTED',
   rejected: 'REJECTED',
   all: undefined,
