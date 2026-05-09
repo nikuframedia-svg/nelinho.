@@ -56,7 +56,7 @@ export function TopBar({ breadcrumbs }: TopBarProps = {}) {
     <header
       className="
         h-13 px-6 flex items-center gap-4
-        bg-dark-800/60 backdrop-blur border-b border-white/[0.06]
+        bg-dark-900 border-b border-bd-1
         sticky top-0 z-20
       "
       style={{ height: 52 }}
@@ -73,10 +73,10 @@ export function TopBar({ breadcrumbs }: TopBarProps = {}) {
         className="
           flex items-center gap-2 w-80 max-w-[40vw]
           px-3 py-1.5 rounded-md
-          bg-dark-900/60 border border-white/[0.06]
-          text-text-dark-tertiary hover:text-text-dark-secondary hover:border-white/10
+          bg-dark-800 border border-bd-1
+          text-text-dark-tertiary hover:text-text-dark-secondary hover:border-bd-2
           transition-colors duration-150
-          focus:outline-none focus:ring-2 focus:ring-accent-500/40
+          focus:outline-none focus:ring-2 focus:ring-blue/40
         "
         title="Procurar (⌘K)"
         aria-label="Procurar"
@@ -85,7 +85,7 @@ export function TopBar({ breadcrumbs }: TopBarProps = {}) {
         <span className="text-sm flex-1 text-left truncate">
           Procurar barco, operador, fase…
         </span>
-        <span className="inline-flex items-center gap-0.5 text-[10px] tabular-nums text-text-dark-tertiary border border-white/10 rounded px-1.5 py-0.5">
+        <span className="inline-flex items-center gap-0.5 text-[10px] tabular-nums text-text-dark-tertiary border border-bd-1 rounded px-1.5 py-0.5">
           <Command size={10} />K
         </span>
       </button>
@@ -101,9 +101,9 @@ export function TopBar({ breadcrumbs }: TopBarProps = {}) {
         type="button"
         className="
           relative p-2 rounded-md
-          text-text-dark-tertiary hover:text-text-dark-secondary hover:bg-white/5
+          text-text-dark-tertiary hover:text-text-dark-secondary hover:bg-dark-800
           transition-colors duration-150
-          focus:outline-none focus:ring-2 focus:ring-accent-500/40
+          focus:outline-none focus:ring-2 focus:ring-blue/40
         "
         aria-label="Notificações"
         title="Notificações"

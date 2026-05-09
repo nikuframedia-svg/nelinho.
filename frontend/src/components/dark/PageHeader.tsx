@@ -39,24 +39,29 @@ export function PageHeader({
   return (
     <header
       className={`
-        flex flex-col gap-1.5 px-6 py-4
-        border-b border-white/[0.06]
+        flex flex-col gap-1.5 px-7 pt-5 pb-4
+        bg-dark-900 border-b border-bd-1
+        sticky top-13 z-10
         ${className}
       `}
+      style={{ top: 52 }}
     >
       {breadcrumbs ? <div className="text-xs">{breadcrumbs}</div> : null}
 
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-3 min-w-0">
           {icon ? (
-            <span className="shrink-0 text-accent-400">{icon}</span>
+            <span className="shrink-0 text-blue">{icon}</span>
           ) : null}
           <div className="min-w-0">
-            <h1 className="text-xl font-semibold text-text-dark-primary leading-tight truncate">
+            <h1
+              className="text-xl font-semibold text-text-dark-primary leading-tight truncate"
+              style={{ letterSpacing: '-0.2px' }}
+            >
               {title}
             </h1>
             {subtitle ? (
-              <p className="text-[10px] uppercase tracking-widest text-text-dark-tertiary mt-1">
+              <p className="text-[13px] text-text-dark-tertiary mt-0.5">
                 {subtitle}
               </p>
             ) : null}

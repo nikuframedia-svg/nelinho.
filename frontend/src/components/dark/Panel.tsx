@@ -45,13 +45,13 @@ export function Panel({
   return (
     <section
       className={`
-        bg-dark-800/60 border border-white/[0.06] rounded-lg
+        bg-dark-800 border border-bd-1 rounded-lg
         flex flex-col
         ${className}
       `}
     >
       {!bare && (title || badge || action) ? (
-        <header className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-white/[0.06]">
+        <header className="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-bd-1">
           <div className="flex items-baseline gap-2 min-w-0">
             {title ? (
               <h3 className="text-sm font-semibold text-text-dark-primary truncate">

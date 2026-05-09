@@ -86,14 +86,14 @@
      ALPHA DASHBOARD THEME
      ═══════════════════════════════════════════════════════════════════════════ */
   
-  /* Background Hierarchy - Alpha Dark */
-  --color-bg-base: #0d0f12;
-  --color-bg-primary: #0d0f12;
-  --color-bg-secondary: #1a1d21;
-  --color-bg-tertiary: #22262b;
-  --color-bg-elevated: #252a30;
-  --color-bg-card: #1a1d21;
-  --color-bg-card-hover: #22262b;
+  /* Background Hierarchy — Q.18.ZIP.tokens aligned com nelo.html zip --bg-N */
+  --color-bg-base: #0A0A0A;       /* matches --bg-0 */
+  --color-bg-primary: #0A0A0A;
+  --color-bg-secondary: #111113;  /* matches --bg-1 */
+  --color-bg-tertiary: #16171A;   /* matches --bg-2 */
+  --color-bg-elevated: #1E1F23;   /* matches --bg-3 */
+  --color-bg-card: #111113;
+  --color-bg-card-hover: #16171A;
   
   /* Accent Colors - Alpha Teal */
   --color-accent: #4fd1c5;
@@ -111,19 +111,19 @@
   --color-amber: #fbbf24;
   --color-coral: #ff6b6b;
   
-  /* Text Colors - Alpha */
-  --color-text-primary: #ffffff;
-  --color-text-secondary: #9ca3af;
-  --color-text-tertiary: #6b7280;
-  --color-text-muted: #4b5563;
-  --color-text-white: #ffffff;
-  --color-text-gray: #9ca3af;
-  
-  /* Border Colors - Alpha (more subtle) */
-  --color-border: rgba(255, 255, 255, 0.06);
-  --color-border-subtle: rgba(255, 255, 255, 0.06);
-  --color-border-hover: rgba(255, 255, 255, 0.12);
-  --color-border-strong: rgba(255, 255, 255, 0.15);
+  /* Text Colors — Q.18.ZIP.tokens aligned com nelo.html zip --fg-N */
+  --color-text-primary: #FAFAFA;    /* matches --fg-0 */
+  --color-text-secondary: #D4D4D8;  /* matches --fg-1 */
+  --color-text-tertiary: #A1A1AA;   /* matches --fg-2 */
+  --color-text-muted: #71717A;      /* matches --fg-3 */
+  --color-text-white: #FAFAFA;
+  --color-text-gray: #A1A1AA;
+
+  /* Border Colors — Q.18.ZIP.tokens sólidos (não translúcidos) */
+  --color-border: #25262B;            /* matches --bd-1 */
+  --color-border-subtle: #25262B;
+  --color-border-hover: #34353B;      /* matches --bd-2 */
+  --color-border-strong: #4A4C54;     /* matches --bd-3 */
   --color-border-accent: rgba(79, 209, 197, 0.3);
   
   /* Status Colors */
@@ -1423,22 +1423,23 @@ body {
    SCROLLBAR - DARK THEME
    ═══════════════════════════════════════════════════════════════════════════ */
 
+/* Q.18.ZIP.tokens — scrollbar matching nelo.html zip */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 
 ::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.02);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
-  border-radius: 100px;
+  background: var(--bd-2);
+  border-radius: 6px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.25);
+  background: var(--bd-3);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

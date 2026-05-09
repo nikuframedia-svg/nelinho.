@@ -158,18 +158,18 @@ export function Sidebar() {
   };
 
   return (
-    <aside className="w-64 h-screen bg-gradient-to-b from-dark-800 to-dark-700 border-r border-white/[0.06] flex flex-col fixed left-0 top-0">
+    <aside className="w-64 h-screen bg-dark-800 border-r border-bd-1 flex flex-col fixed left-0 top-0">
       {/* Logo */}
-      <div className="px-5 py-5 border-b border-white/[0.06]">
+      <div className="px-5 py-5 border-b border-bd-1">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-accent-500 to-accent-600 flex items-center justify-center shadow-glow-teal">
+          <div className="w-9 h-9 rounded-md bg-blue flex items-center justify-center">
             <Sparkles size={18} className="text-white" />
           </div>
           <div className="min-w-0">
             <div className="text-sm font-semibold text-text-dark-primary tracking-tight leading-tight">
               NELO
             </div>
-            <div className="text-[10px] text-accent-400 font-medium tracking-widest uppercase">
+            <div className="text-[10px] text-text-dark-tertiary font-medium tracking-widest uppercase">
               ProdPlan ONE
             </div>
           </div>
@@ -198,22 +198,22 @@ export function Sidebar() {
                       <NavLink
                         to={item.path}
                         className={cn(
-                          'group flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150 relative',
+                          'group flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-all duration-150 relative',
                           active
-                            ? 'bg-accent-500/15 text-accent-400 border border-accent-500/30'
-                            : 'text-text-dark-secondary hover:bg-white/5 hover:text-text-dark-primary border border-transparent'
+                            ? 'bg-dark-700 text-text-dark-primary'
+                            : 'text-text-dark-secondary hover:bg-dark-700 hover:text-text-dark-primary'
                         )}
                       >
                         {active ? (
                           <span
-                            className="absolute left-0 top-2 bottom-2 w-0.5 bg-accent-400 rounded-r"
+                            className="absolute left-0 top-2 bottom-2 w-0.5 bg-blue rounded-r"
                             aria-hidden="true"
                           />
                         ) : null}
                         <span
                           className={cn(
                             'shrink-0',
-                            active ? 'text-accent-400' : 'text-text-dark-tertiary group-hover:text-text-dark-secondary'
+                            active ? 'text-blue' : 'text-text-dark-tertiary group-hover:text-text-dark-secondary'
                           )}
                         >
                           {item.icon}
@@ -235,22 +235,22 @@ export function Sidebar() {
       </nav>
 
       {/* Bottom — help + user */}
-      <div className="px-3 py-4 border-t border-white/[0.06]">
+      <div className="px-3 py-4 border-t border-bd-1">
         <button
           type="button"
-          className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-text-dark-tertiary hover:bg-white/5 hover:text-text-dark-secondary transition-colors duration-150"
+          className="w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-text-dark-tertiary hover:bg-dark-700 hover:text-text-dark-secondary transition-colors duration-150"
           aria-label="Ajuda"
         >
           <HelpCircle size={18} className="opacity-80" />
           <span>Ajuda</span>
         </button>
 
-        <div className="mt-3 pt-3 border-t border-white/[0.06]">
+        <div className="mt-3 pt-3 border-t border-bd-1">
           <div
-            className="flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-white/5 transition-colors cursor-pointer"
+            className="flex items-center gap-3 px-2 py-2 rounded-md hover:bg-dark-700 transition-colors cursor-pointer"
             title={me?.email ?? '—'}
           >
-            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-accent-500/30 to-accent-700/30 border border-accent-500/40 flex items-center justify-center text-xs font-bold text-accent-300">
+            <div className="w-9 h-9 rounded-full bg-dark-700 border border-bd-2 flex items-center justify-center text-xs font-bold text-text-dark-primary">
               {me ? initials(me.name) : '—'}
             </div>
             <div className="flex-1 min-w-0">

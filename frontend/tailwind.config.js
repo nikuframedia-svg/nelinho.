@@ -7,13 +7,13 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Dark theme backgrounds
+        // Dark theme backgrounds — aligned com nelo.html zip --bg-N
         dark: {
-          900: '#0a0f1a',
-          800: '#0f172a',
-          700: '#111827',
-          600: '#1f2937',
-          500: '#374151',
+          900: '#0A0A0A',   // matches --bg-0 (page bg)
+          800: '#111113',   // matches --bg-1 (card bg)
+          700: '#16171A',   // matches --bg-2 (nested)
+          600: '#1E1F23',   // matches --bg-3 (track / hover)
+          500: '#2A2B30',   // matches --bg-4 (elevated)
         },
         // Accent - Teal
         accent: {
@@ -41,13 +41,22 @@ export default {
           800: '#075985',
           900: '#0c4a6e',
         },
-        // Text colors for dark theme
+        // Text colors for dark theme — aligned com nelo.html zip --fg-N
         'text-dark': {
-          primary: '#f1f5f9',
-          secondary: '#94a3b8',
-          tertiary: '#64748b',
-          muted: '#475569',
+          primary:   '#FAFAFA',  // matches --fg-0
+          secondary: '#D4D4D8',  // matches --fg-1
+          tertiary:  '#A1A1AA',  // matches --fg-2
+          muted:     '#71717A',  // matches --fg-3
         },
+        // Border tokens (zip --bd-N) accessible as Tailwind utility classes
+        'bd-1': '#25262B',
+        'bd-2': '#34353B',
+        'bd-3': '#4A4C54',
+        // Status colors (zip-aligned, used inline)
+        green:  { DEFAULT: '#22C55E' },
+        yellow: { DEFAULT: '#EAB308' },
+        red:    { DEFAULT: '#EF4444' },
+        blue:   { DEFAULT: '#3B82F6' },
         // Status colors
         success: {
           DEFAULT: '#10b981',
@@ -78,9 +87,9 @@ export default {
         },
       },
       fontFamily: {
-        // Q.18.ZIP.A — Geist primária (do nelo zip), Space Grotesk fallback
-        sans: ['Geist', 'Space Grotesk', 'DM Sans', 'Inter', 'system-ui', 'sans-serif'],
-        mono: ['Geist Mono', 'JetBrains Mono', 'Fira Code', 'monospace'],
+        // Q.18.ZIP.tokens — Inter primária matching nelo.html zip body
+        sans: ['Inter', 'Geist', 'Space Grotesk', 'DM Sans', 'system-ui', 'sans-serif'],
+        mono: ['JetBrains Mono', 'Geist Mono', 'Fira Code', 'monospace'],
       },
       boxShadow: {
         'card': '0 4px 16px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.2)',
@@ -94,6 +103,11 @@ export default {
         'inner-glow': 'inset 0 0 20px rgba(20, 184, 166, 0.1)',
       },
       borderRadius: {
+        // Q.18.ZIP.tokens — alinhar com zip --r-{sm,md,lg,xl}
+        sm: '6px',
+        md: '8px',
+        lg: '12px',   // era 0.5rem (8px) Tailwind default
+        xl: '16px',   // era 0.75rem (12px) Tailwind default
         '2xl': '1rem',
         '3xl': '1.5rem',
       },
