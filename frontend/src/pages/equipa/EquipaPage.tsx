@@ -25,9 +25,12 @@ import {
   Users,
   CalendarRange,
   TrendingUp,
-  Activity,
+  AlertTriangle,
+  FlaskConical,
+  GraduationCap,
   RefreshCw,
   Sparkles,
+  Info,
 } from 'lucide-react';
 import { PageHeader, Tabs } from '../../components/dark';
 import { SkeletonLoader } from '../../components/ui/Skeleton';
@@ -51,11 +54,54 @@ function askCopilot(query: string) {
   window.dispatchEvent(new CustomEvent('copilot:open', { detail: { query } }));
 }
 
-const TAB_IDS = ['lista', 'alocacoes', 'produtividade', 'workforce'] as const;
+const TAB_IDS = [
+  'lista',
+  'alocacoes',
+  'produtividade',
+  'risco',
+  'simulador',
+  'formacao',
+] as const;
 type TabId = (typeof TAB_IDS)[number];
 
 function isTabId(v: string | null): v is TabId {
   return v !== null && (TAB_IDS as readonly string[]).includes(v);
+}
+
+/** Banner explicando que Risco/Simulador/Formação partilham o
+ *  WorkforceDashboard até endpoints dedicados (Q.18.ZIP.BE.2) existirem. */
+function FocusBanner({ focus }: { focus: 'risco' | 'simulador' | 'formacao' }) {
+  const labels = {
+    risco: {
+      title: 'Tab Risco',
+      hint: 'Painel completo abaixo: foca em RiskHeatmap (skill × operador) + SPOFs + DependencyGraph + CascadeImpact.',
+    },
+    simulador: {
+      title: 'Tab Simulador',
+      hint: 'Painel completo abaixo: foca em WorkforceSimulator (what-if ausência) + ScenarioComparisonMatrix.',
+    },
+    formacao: {
+      title: 'Tab Formação',
+      hint: 'Painel completo abaixo: foca em TrainingRecommendation (planos sugeridos por skill gap).',
+    },
+  };
+  const f = labels[focus];
+  return (
+    <div className="mx-2 mb-3 flex items-start gap-2 px-3 py-2 rounded-md bg-primary-500/5 border border-primary-500/20">
+      <Info size={14} className="shrink-0 mt-0.5 text-primary-300" />
+      <div className="flex-1 text-xs">
+        <span className="font-semibold text-primary-300">{f.title}</span>
+        <span className="text-text-dark-secondary"> · {f.hint}</span>
+        <div className="text-[10px] text-text-dark-tertiary mt-1">
+          Decomposição em endpoints dedicados (
+          <code className="font-mono">/v1/workforce/risks/spof</code>,
+          <code className="font-mono">/simulate/absence</code>,
+          <code className="font-mono">/training/suggestions</code>) ainda não wired
+          (Q.18.ZIP.BE.2 deferred).
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function EquipaPage() {
@@ -66,21 +112,11 @@ export default function EquipaPage() {
   const tabs = useMemo(
     () => [
       { id: 'lista', label: 'Lista', icon: <Users size={13} /> },
-      {
-        id: 'alocacoes',
-        label: 'Alocações',
-        icon: <CalendarRange size={13} />,
-      },
-      {
-        id: 'produtividade',
-        label: 'Produtividade',
-        icon: <TrendingUp size={13} />,
-      },
-      {
-        id: 'workforce',
-        label: 'Risco · Simulador · Formação',
-        icon: <Activity size={13} />,
-      },
+      { id: 'alocacoes', label: 'Alocações', icon: <CalendarRange size={13} /> },
+      { id: 'produtividade', label: 'Produtividade', icon: <TrendingUp size={13} /> },
+      { id: 'risco', label: 'Risco', icon: <AlertTriangle size={13} /> },
+      { id: 'simulador', label: 'Simulador', icon: <FlaskConical size={13} /> },
+      { id: 'formacao', label: 'Formação', icon: <GraduationCap size={13} /> },
     ],
     []
   );
@@ -146,10 +182,29 @@ export default function EquipaPage() {
             <ProductivityPage />
           </Suspense>
         )}
-        {activeTab === 'workforce' && (
-          <Suspense fallback={fallback}>
-            <WorkforceDashboard />
-          </Suspense>
+        {activeTab === 'risco' && (
+          <>
+            <FocusBanner focus="risco" />
+            <Suspense fallback={fallback}>
+              <WorkforceDashboard />
+            </Suspense>
+          </>
+        )}
+        {activeTab === 'simulador' && (
+          <>
+            <FocusBanner focus="simulador" />
+            <Suspense fallback={fallback}>
+              <WorkforceDashboard />
+            </Suspense>
+          </>
+        )}
+        {activeTab === 'formacao' && (
+          <>
+            <FocusBanner focus="formacao" />
+            <Suspense fallback={fallback}>
+              <WorkforceDashboard />
+            </Suspense>
+          </>
         )}
       </div>
     </div>

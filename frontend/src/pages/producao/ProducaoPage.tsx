@@ -27,6 +27,7 @@ import {
   Filter,
   RefreshCw,
   Sparkles,
+  AlertTriangle,
 } from 'lucide-react';
 import {
   PageHeader,
@@ -308,9 +309,24 @@ function PhasesView({
   }
 
   return (
-    <div className="overflow-x-auto pb-2">
-      <div className="flex gap-3 min-w-max">
-        {phaseRows.map((r) => (
+    <div className="space-y-3">
+      {/* Q.18.ZIP.M.5 light — aviso visível sobre drag-drop por barco */}
+      <div className="mx-2 flex items-start gap-2 px-3 py-2 rounded-md bg-warning/5 border border-warning/20">
+        <AlertTriangle size={14} className="shrink-0 mt-0.5 text-warning" />
+        <div className="flex-1 text-xs">
+          <span className="font-semibold text-warning">Drag-drop entre fases pendente</span>
+          <span className="text-text-dark-secondary">
+            {' '}— Endpoint <code className="font-mono">/v1/plan/orders/active</code> com lista de barcos por fase ainda não está exposto (Q.18.ZIP.BE.1 deferred).
+          </span>
+          <div className="text-[10px] text-text-dark-tertiary mt-1">
+            Para drag-drop funcional → vista <strong>Tabela</strong> (DragDropPlanner Q.4 wired ao schedulePreviewApi).
+          </div>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto pb-2">
+        <div className="flex gap-3 min-w-max">
+          {phaseRows.map((r) => (
           <PhaseColumn
             key={r.phase.id}
             phase_id={r.phase.id}
@@ -335,6 +351,7 @@ function PhasesView({
             )}
           </PhaseColumn>
         ))}
+        </div>
       </div>
     </div>
   );
