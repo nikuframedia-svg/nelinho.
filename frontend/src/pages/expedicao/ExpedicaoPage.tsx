@@ -240,8 +240,8 @@ function ShipmentDetail({ shipment }: { shipment: TransportBatch }) {
     <div
       style={{
         padding: 22,
-        background: 'rgba(255,255,255,0.03)',
-        border: '1px solid rgba(255,255,255,0.08)',
+        background: 'var(--bg-1)',
+        border: '1px solid var(--bd-1)',
         borderRadius: 12,
       }}
     >
@@ -258,7 +258,7 @@ function ShipmentDetail({ shipment }: { shipment: TransportBatch }) {
           <div
             style={{
               fontSize: 11,
-              color: 'rgba(255,255,255,0.45)',
+              color: 'var(--fg-3)',
               textTransform: 'uppercase',
               letterSpacing: 0.4,
               fontWeight: 600,
@@ -282,7 +282,7 @@ function ShipmentDetail({ shipment }: { shipment: TransportBatch }) {
             style={{
               fontSize: 22,
               fontWeight: 700,
-              color: 'rgba(255,255,255,0.95)',
+              color: 'var(--fg-0)',
               marginTop: 2,
             }}
           >
@@ -291,7 +291,7 @@ function ShipmentDetail({ shipment }: { shipment: TransportBatch }) {
           <div
             style={{
               fontSize: 12,
-              color: 'rgba(255,255,255,0.85)',
+              color: 'var(--fg-1)',
               marginTop: 4,
               lineHeight: 1.4,
             }}
@@ -323,7 +323,7 @@ function ShipmentDetail({ shipment }: { shipment: TransportBatch }) {
           <div
             style={{
               height: 6,
-              background: 'rgba(255,255,255,0.08)',
+              background: 'var(--bd-1)',
               borderRadius: 3,
               overflow: 'hidden',
               display: 'flex',
@@ -353,7 +353,7 @@ function ShipmentDetail({ shipment }: { shipment: TransportBatch }) {
               gap: 14,
               marginTop: 8,
               fontSize: 11,
-              color: 'rgba(255,255,255,0.65)',
+              color: 'var(--fg-2)',
             }}
           >
             <span>
@@ -388,7 +388,7 @@ function ShipmentDetail({ shipment }: { shipment: TransportBatch }) {
                 border: '1px solid var(--blue-bd)',
                 borderRadius: 8,
                 fontSize: 12,
-                color: 'rgba(255,255,255,0.85)',
+                color: 'var(--fg-1)',
                 display: 'flex',
                 gap: 8,
                 alignItems: 'flex-start',
@@ -409,9 +409,9 @@ function ShipmentDetail({ shipment }: { shipment: TransportBatch }) {
             type="button"
             className="w-full px-3 py-2 rounded-md text-xs font-medium border transition-colors"
             style={{
-              background: 'rgba(255,255,255,0.04)',
-              borderColor: 'rgba(255,255,255,0.10)',
-              color: 'rgba(255,255,255,0.85)',
+              background: 'var(--bg-2)',
+              borderColor: 'var(--bd-2)',
+              color: 'var(--fg-1)',
             }}
           >
             Ver barcos
@@ -422,7 +422,7 @@ function ShipmentDetail({ shipment }: { shipment: TransportBatch }) {
             style={{
               background: 'transparent',
               borderColor: 'transparent',
-              color: 'rgba(255,255,255,0.65)',
+              color: 'var(--fg-2)',
             }}
           >
             Documentos
@@ -454,15 +454,15 @@ function KPIStrip({
     <div
       style={{
         padding: '16px 18px',
-        background: 'rgba(255,255,255,0.03)',
-        border: '1px solid rgba(255,255,255,0.08)',
+        background: 'var(--bg-1)',
+        border: '1px solid var(--bd-1)',
         borderRadius: 12,
       }}
     >
       <div
         style={{
           fontSize: 11,
-          color: 'rgba(255,255,255,0.55)',
+          color: 'var(--fg-2)',
           fontWeight: 500,
           textTransform: 'uppercase',
           letterSpacing: 0.4,
@@ -483,7 +483,7 @@ function KPIStrip({
           {value}
         </span>
         {unit ? (
-          <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.55)' }}>
+          <span style={{ fontSize: 13, color: 'var(--fg-2)' }}>
             {unit}
           </span>
         ) : null}
@@ -491,7 +491,7 @@ function KPIStrip({
       <div
         style={{
           fontSize: 11,
-          color: 'rgba(255,255,255,0.45)',
+          color: 'var(--fg-3)',
           marginTop: 6,
           lineHeight: 1.4,
         }}

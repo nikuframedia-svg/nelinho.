@@ -305,8 +305,8 @@ function ResumoTab() {
         {/* Erros recentes */}
         <div
           style={{
-            background: 'rgba(255,255,255,0.03)',
-            border: '1px solid rgba(255,255,255,0.08)',
+            background: 'var(--bg-1)',
+            border: '1px solid var(--bd-1)',
             borderRadius: 12,
             overflow: 'hidden',
           }}
@@ -314,7 +314,7 @@ function ResumoTab() {
           <div
             style={{
               padding: '18px 22px',
-              borderBottom: '1px solid rgba(255,255,255,0.08)',
+              borderBottom: '1px solid var(--bd-1)',
               display: 'flex',
               alignItems: 'center',
               gap: 10,
@@ -365,7 +365,7 @@ function ResumoTab() {
                       padding: '12px 22px',
                       borderBottom:
                         i < Math.min(reworkItems.length, 8) - 1
-                          ? '1px solid rgba(255,255,255,0.06)'
+                          ? '1px solid var(--bd-1)'
                           : 'none',
                       display: 'flex',
                       alignItems: 'center',
@@ -404,8 +404,8 @@ function ResumoTab() {
         {/* Moldes */}
         <div
           style={{
-            background: 'rgba(255,255,255,0.03)',
-            border: '1px solid rgba(255,255,255,0.08)',
+            background: 'var(--bg-1)',
+            border: '1px solid var(--bd-1)',
             borderRadius: 12,
             overflow: 'hidden',
           }}
@@ -413,7 +413,7 @@ function ResumoTab() {
           <div
             style={{
               padding: '18px 22px',
-              borderBottom: '1px solid rgba(255,255,255,0.08)',
+              borderBottom: '1px solid var(--bd-1)',
               display: 'flex',
               alignItems: 'center',
               gap: 10,
@@ -475,7 +475,7 @@ function ResumoTab() {
                       padding: '12px 22px',
                       borderBottom:
                         i < Math.min(moldsItems.length, 6) - 1
-                          ? '1px solid rgba(255,255,255,0.06)'
+                          ? '1px solid var(--bd-1)'
                           : 'none',
                     }}
                   >
@@ -493,7 +493,7 @@ function ResumoTab() {
                     <div
                       style={{
                         height: 4,
-                        background: 'rgba(255,255,255,0.08)',
+                        background: 'var(--bd-1)',
                         borderRadius: 2,
                         marginTop: 6,
                         overflow: 'hidden',
@@ -555,19 +555,19 @@ function OEETab() {
       <div
         style={{
           padding: '14px 18px',
-          background: 'rgba(255,255,255,0.03)',
-          border: '1px solid rgba(255,255,255,0.08)',
+          background: 'var(--bg-1)',
+          border: '1px solid var(--bd-1)',
           borderRadius: 12,
           fontSize: 13,
-          color: 'rgba(255,255,255,0.85)',
+          color: 'var(--fg-1)',
           lineHeight: 1.6,
         }}
       >
-        <strong style={{ color: 'rgba(255,255,255,0.95)' }}>O que é OEE?</strong>{' '}
+        <strong style={{ color: 'var(--fg-0)' }}>O que é OEE?</strong>{' '}
         Mede que percentagem do tempo a fábrica está realmente a produzir bem.{' '}
         <strong>78%</strong> significa que de cada 8h de trabalho, 6h15 produzem
         barcos sem defeito.{' '}
-        <span style={{ color: 'rgba(255,255,255,0.65)' }}>Meta NELO: 80%.</span>
+        <span style={{ color: 'var(--fg-2)' }}>Meta NELO: 80%.</span>
       </div>
 
       {/* Aviso endpoint pendente */}
@@ -598,8 +598,8 @@ function OEETab() {
         <div
           style={{
             padding: 22,
-            background: 'rgba(255,255,255,0.03)',
-            border: '1px solid rgba(255,255,255,0.08)',
+            background: 'var(--bg-1)',
+            border: '1px solid var(--bd-1)',
             borderRadius: 12,
           }}
         >
@@ -619,7 +619,7 @@ function OEETab() {
             >
               78,4
             </span>
-            <span style={{ fontSize: 18, color: 'rgba(255,255,255,0.55)' }}>%</span>
+            <span style={{ fontSize: 18, color: 'var(--fg-2)' }}>%</span>
             <span className="ml-auto text-xs" style={{ color: 'var(--green)' }}>
               ↑ 2,3% vs ontem
             </span>
@@ -689,7 +689,7 @@ function OEETab() {
                 <div
                   style={{
                     height: 4,
-                    background: 'rgba(255,255,255,0.08)',
+                    background: 'var(--bd-1)',
                     borderRadius: 2,
                     overflow: 'hidden',
                   }}
@@ -706,7 +706,7 @@ function OEETab() {
             ))}
             <div
               className="flex justify-between mt-2 pt-3"
-              style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}
+              style={{ borderTop: '1px solid var(--bd-1)' }}
             >
               <span className="text-xs text-text-dark-secondary font-semibold">
                 Total perdido / semana
@@ -746,15 +746,15 @@ function OEEBlock({
     <div
       style={{
         padding: 22,
-        background: 'rgba(255,255,255,0.03)',
-        border: '1px solid rgba(255,255,255,0.08)',
+        background: 'var(--bg-1)',
+        border: '1px solid var(--bd-1)',
         borderRadius: 12,
       }}
     >
       <div
         style={{
           fontSize: 11,
-          color: 'rgba(255,255,255,0.55)',
+          color: 'var(--fg-2)',
           textTransform: 'uppercase',
           letterSpacing: 0.4,
           fontWeight: 600,
@@ -774,7 +774,7 @@ function OEEBlock({
         >
           {value}
         </span>
-        <span style={{ fontSize: 14, color: 'rgba(255,255,255,0.55)' }}>%</span>
+        <span style={{ fontSize: 14, color: 'var(--fg-2)' }}>%</span>
       </div>
       <div className="text-[11px] text-text-dark-tertiary mt-1">Meta: {target}%</div>
       <div className="text-xs text-text-dark-secondary mt-2.5 leading-relaxed">
@@ -785,11 +785,11 @@ function OEEBlock({
           style={{
             marginTop: 10,
             padding: '8px 10px',
-            background: 'rgba(255,255,255,0.04)',
+            background: 'var(--bg-2)',
             borderRadius: 6,
             borderLeft: `2px solid var(--${tone})`,
             fontSize: 11,
-            color: 'rgba(255,255,255,0.85)',
+            color: 'var(--fg-1)',
           }}
         >
           <strong
@@ -827,7 +827,7 @@ function ThroughputChart({ data, target }: { data: number[]; target: number }) {
             x2={w - pad.r}
             y1={pad.t + ch * (1 - t)}
             y2={pad.t + ch * (1 - t)}
-            stroke="rgba(255,255,255,0.08)"
+            stroke="var(--bd-1)"
             strokeDasharray={t === 0 ? '0' : '2 3'}
           />
         ))}
@@ -837,7 +837,7 @@ function ThroughputChart({ data, target }: { data: number[]; target: number }) {
             x={pad.l - 6}
             y={pad.t + ch * (1 - t) + 3}
             fontSize="9"
-            fill="rgba(255,255,255,0.45)"
+            fill="var(--fg-3)"
             textAnchor="end"
           >
             {Math.round(max * t)}
@@ -892,7 +892,7 @@ function ThroughputChart({ data, target }: { data: number[]; target: number }) {
               x={pad.l + i * dx}
               y={h - 8}
               fontSize="9"
-              fill="rgba(255,255,255,0.45)"
+              fill="var(--fg-3)"
               textAnchor="middle"
             >
               D−{data.length - 1 - i}
@@ -964,15 +964,15 @@ function KPIStrip({
     <div
       style={{
         padding: '16px 18px',
-        background: 'rgba(255,255,255,0.03)',
-        border: '1px solid rgba(255,255,255,0.08)',
+        background: 'var(--bg-1)',
+        border: '1px solid var(--bd-1)',
         borderRadius: 12,
       }}
     >
       <div
         style={{
           fontSize: 11,
-          color: 'rgba(255,255,255,0.55)',
+          color: 'var(--fg-2)',
           fontWeight: 500,
           textTransform: 'uppercase',
           letterSpacing: 0.4,
@@ -993,13 +993,13 @@ function KPIStrip({
           {value}
         </span>
         {unit ? (
-          <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.55)' }}>{unit}</span>
+          <span style={{ fontSize: 13, color: 'var(--fg-2)' }}>{unit}</span>
         ) : null}
       </div>
       <div
         style={{
           fontSize: 11,
-          color: 'rgba(255,255,255,0.45)',
+          color: 'var(--fg-3)',
           marginTop: 6,
           lineHeight: 1.4,
         }}
@@ -1168,7 +1168,7 @@ function MoldsTab() {
                   style={{
                     borderRadius: 8,
                     border: `1px solid var(--${tone}-bd)`,
-                    background: 'rgba(255,255,255,0.02)',
+                    background: 'var(--bg-2)',
                     padding: 12,
                   }}
                 >
@@ -1205,7 +1205,7 @@ function MoldsTab() {
                     style={{
                       marginTop: 8,
                       height: 6,
-                      background: 'rgba(255,255,255,0.06)',
+                      background: 'var(--bd-1)',
                       borderRadius: 3,
                       overflow: 'hidden',
                     }}

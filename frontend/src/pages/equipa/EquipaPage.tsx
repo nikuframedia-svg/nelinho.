@@ -412,15 +412,15 @@ function ListaTab() {
       <div
         style={{
           padding: '14px 18px',
-          background: 'rgba(255,255,255,0.03)',
-          border: '1px solid rgba(255,255,255,0.08)',
+          background: 'var(--bg-1)',
+          border: '1px solid var(--bd-1)',
           borderRadius: 12,
           fontSize: 13,
-          color: 'rgba(255,255,255,0.85)',
+          color: 'var(--fg-1)',
           lineHeight: 1.6,
         }}
       >
-        <strong style={{ color: 'rgba(255,255,255,0.95)' }}>
+        <strong style={{ color: 'var(--fg-0)' }}>
           Como o sistema mede operadores:
         </strong>{' '}
         O score 0–10 vem do histórico — taxa de erro, qualidade, tempo médio.{' '}
@@ -498,7 +498,7 @@ function ListaTab() {
           <div className="overflow-x-auto">
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
-                <tr style={{ background: 'rgba(255,255,255,0.04)' }}>
+                <tr style={{ background: 'var(--bg-2)' }}>
                   {['Operador', 'Tier', 'Score', 'Taxa erro', 'Operações', 'Skill principal', 'Estado', ''].map((h) => (
                     <th
                       key={h}
@@ -506,11 +506,11 @@ function ListaTab() {
                         padding: '10px 16px',
                         textAlign: 'left',
                         fontSize: 11,
-                        color: 'rgba(255,255,255,0.65)',
+                        color: 'var(--fg-2)',
                         fontWeight: 600,
                         textTransform: 'uppercase',
                         letterSpacing: 0.4,
-                        borderBottom: '1px solid rgba(255,255,255,0.08)',
+                        borderBottom: '1px solid var(--bd-1)',
                       }}
                     >
                       {h}
@@ -547,12 +547,12 @@ function ListaTab() {
                         cursor: 'pointer',
                         borderBottom:
                           i < enriched.length - 1
-                            ? '1px solid rgba(255,255,255,0.06)'
+                            ? '1px solid var(--bd-1)'
                             : 'none',
                         transition: 'background-color 0.12s',
                       }}
                       onMouseEnter={(e) => {
-                        e.currentTarget.style.background = 'rgba(255,255,255,0.03)';
+                        e.currentTarget.style.background = 'var(--bg-1)';
                       }}
                       onMouseLeave={(e) => {
                         e.currentTarget.style.background = 'transparent';
@@ -592,12 +592,12 @@ function ListaTab() {
                         </span>
                       </td>
                       <td
-                        style={{ padding: '12px 16px', color: 'rgba(255,255,255,0.85)' }}
+                        style={{ padding: '12px 16px', color: 'var(--fg-1)' }}
                         className="tabular-nums"
                       >
                         {w.ops !== null ? w.ops.toLocaleString('pt-PT') : '—'}
                       </td>
-                      <td style={{ padding: '12px 16px', color: 'rgba(255,255,255,0.85)' }}>
+                      <td style={{ padding: '12px 16px', color: 'var(--fg-1)' }}>
                         {w.job_title ?? '—'}
                       </td>
                       <td style={{ padding: '12px 16px' }}>
@@ -606,7 +606,7 @@ function ListaTab() {
                             ● Activo
                           </span>
                         ) : (
-                          <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)' }}>
+                          <span style={{ fontSize: 12, color: 'var(--fg-3)' }}>
                             ○ {w.status === 'VACATION' ? 'Férias' : 'Inactivo'}
                           </span>
                         )}
@@ -669,22 +669,22 @@ function AlocacoesTab() {
       <div
         style={{
           padding: '12px 16px',
-          background: 'rgba(255,255,255,0.03)',
-          border: '1px solid rgba(255,255,255,0.08)',
+          background: 'var(--bg-1)',
+          border: '1px solid var(--bd-1)',
           borderRadius: 8,
           fontSize: 12,
-          color: 'rgba(255,255,255,0.65)',
+          color: 'var(--fg-2)',
           lineHeight: 1.5,
         }}
       >
-        <strong style={{ color: 'rgba(255,255,255,0.85)' }}>Como funciona:</strong>{' '}
+        <strong style={{ color: 'var(--fg-1)' }}>Como funciona:</strong>{' '}
         Cada operador tem skills com score 0–10 baseado no histórico (taxa de
         erro, qualidade, tempo). O sistema sugere a melhor atribuição mas você
         pode arrastar-e-largar livremente. Operadores tier{' '}
         <code
           style={{
-            color: 'rgba(255,255,255,0.85)',
-            background: 'rgba(255,255,255,0.08)',
+            color: 'var(--fg-1)',
+            background: 'var(--bd-1)',
             padding: '0 4px',
             borderRadius: 3,
             fontFamily: 'monospace',
@@ -781,15 +781,15 @@ function KPIStrip({
     <div
       style={{
         padding: '16px 18px',
-        background: 'rgba(255,255,255,0.03)',
-        border: '1px solid rgba(255,255,255,0.08)',
+        background: 'var(--bg-1)',
+        border: '1px solid var(--bd-1)',
         borderRadius: 12,
       }}
     >
       <div
         style={{
           fontSize: 11,
-          color: 'rgba(255,255,255,0.55)',
+          color: 'var(--fg-2)',
           fontWeight: 500,
           textTransform: 'uppercase',
           letterSpacing: 0.4,
@@ -810,7 +810,7 @@ function KPIStrip({
           {value}
         </span>
         {unit ? (
-          <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.55)' }}>
+          <span style={{ fontSize: 13, color: 'var(--fg-2)' }}>
             {unit}
           </span>
         ) : null}
@@ -818,7 +818,7 @@ function KPIStrip({
       <div
         style={{
           fontSize: 11,
-          color: 'rgba(255,255,255,0.45)',
+          color: 'var(--fg-3)',
           marginTop: 6,
           lineHeight: 1.4,
         }}
@@ -880,8 +880,8 @@ function WorkerRowZip({
     <div
       style={{
         padding: '10px 12px',
-        background: 'rgba(255,255,255,0.03)',
-        border: '1px solid rgba(255,255,255,0.08)',
+        background: 'var(--bg-1)',
+        border: '1px solid var(--bd-1)',
         borderRadius: 8,
         display: 'flex',
         alignItems: 'center',
@@ -913,7 +913,7 @@ function WorkerRowZip({
           </span>
           <span
             style={{
-              color: isAvailable ? 'var(--green)' : 'rgba(255,255,255,0.45)',
+              color: isAvailable ? 'var(--green)' : 'var(--fg-3)',
             }}
           >
             ● {statusLabel}
@@ -951,8 +951,8 @@ function DispatchRowZip({ order }: { order: ActiveOrder }) {
     <div
       style={{
         padding: '14px 16px',
-        background: 'rgba(255,255,255,0.03)',
-        border: '1px solid rgba(255,255,255,0.08)',
+        background: 'var(--bg-1)',
+        border: '1px solid var(--bd-1)',
         borderLeft: `3px solid var(--${statusColor})`,
         borderRadius: 8,
         display: 'grid',
@@ -987,8 +987,8 @@ function DispatchRowZip({ order }: { order: ActiveOrder }) {
             alignItems: 'center',
             gap: 8,
             padding: '8px 10px',
-            background: 'rgba(255,255,255,0.02)',
-            border: '1px dashed rgba(255,255,255,0.12)',
+            background: 'var(--bg-2)',
+            border: '1px dashed var(--bd-2)',
             borderRadius: 6,
             minHeight: 42,
           }}

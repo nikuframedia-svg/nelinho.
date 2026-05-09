@@ -404,15 +404,15 @@ function AprendizagemZipView() {
       <div
         style={{
           padding: '14px 18px',
-          background: 'rgba(255,255,255,0.03)',
-          border: '1px solid rgba(255,255,255,0.08)',
+          background: 'var(--bg-1)',
+          border: '1px solid var(--bd-1)',
           borderRadius: 12,
           fontSize: 13,
-          color: 'rgba(255,255,255,0.85)',
+          color: 'var(--fg-1)',
           lineHeight: 1.6,
         }}
       >
-        <strong style={{ color: 'rgba(255,255,255,0.95)' }}>Transparência total.</strong>{' '}
+        <strong style={{ color: 'var(--fg-0)' }}>Transparência total.</strong>{' '}
         Tudo o que o sistema aprendeu está aqui. Pode <strong>aprovar</strong>,{' '}
         <strong>rejeitar</strong>, ou <strong>pausar</strong> qualquer regra. Nada
         é mágico, nada é caixa-preta.
@@ -423,8 +423,8 @@ function AprendizagemZipView() {
         {/* Regras aprendidas */}
         <div
           style={{
-            background: 'rgba(255,255,255,0.03)',
-            border: '1px solid rgba(255,255,255,0.08)',
+            background: 'var(--bg-1)',
+            border: '1px solid var(--bd-1)',
             borderRadius: 12,
             overflow: 'hidden',
           }}
@@ -432,7 +432,7 @@ function AprendizagemZipView() {
           <div
             style={{
               padding: '18px 22px',
-              borderBottom: '1px solid rgba(255,255,255,0.08)',
+              borderBottom: '1px solid var(--bd-1)',
             }}
           >
             <div className="text-sm font-semibold text-text-dark-primary">
@@ -466,7 +466,7 @@ function AprendizagemZipView() {
                       padding: '16px 22px',
                       borderBottom:
                         i < rules.length - 1
-                          ? '1px solid rgba(255,255,255,0.06)'
+                          ? '1px solid var(--bd-1)'
                           : 'none',
                     }}
                   >
@@ -541,8 +541,8 @@ function AprendizagemZipView() {
         <div
           style={{
             padding: 22,
-            background: 'rgba(255,255,255,0.03)',
-            border: '1px solid rgba(255,255,255,0.08)',
+            background: 'var(--bg-1)',
+            border: '1px solid var(--bd-1)',
             borderRadius: 12,
           }}
         >
@@ -587,7 +587,7 @@ function AprendizagemZipView() {
                     style={{
                       position: 'relative',
                       height: 6,
-                      background: 'rgba(255,255,255,0.08)',
+                      background: 'var(--bd-1)',
                       borderRadius: 3,
                     }}
                   >
@@ -598,7 +598,7 @@ function AprendizagemZipView() {
                         top: 0,
                         bottom: 0,
                         width: `${Math.min(100, w.default * 100 * 2.5)}%`,
-                        background: 'rgba(255,255,255,0.18)',
+                        background: 'var(--bd-3)',
                         borderRadius: 3,
                       }}
                     />

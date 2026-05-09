@@ -305,8 +305,8 @@ function PhasesView({
             <div
               key={p.id}
               style={{
-                background: 'rgba(255,255,255,0.03)',
-                border: '1px solid rgba(255,255,255,0.08)',
+                background: 'var(--bg-1)',
+                border: '1px solid var(--bd-1)',
                 borderRadius: 8,
                 minHeight: 380,
                 display: 'flex',
@@ -317,7 +317,7 @@ function PhasesView({
               <div
                 style={{
                   padding: '10px 12px',
-                  borderBottom: '1px solid rgba(255,255,255,0.08)',
+                  borderBottom: '1px solid var(--bd-1)',
                 }}
               >
                 <div
@@ -330,7 +330,7 @@ function PhasesView({
                   <span
                     style={{
                       fontSize: 11,
-                      color: 'rgba(255,255,255,0.45)',
+                      color: 'var(--fg-3)',
                       fontWeight: 500,
                     }}
                   >
@@ -351,7 +351,7 @@ function PhasesView({
                   style={{
                     fontSize: 12,
                     fontWeight: 600,
-                    color: 'rgba(255,255,255,0.95)',
+                    color: 'var(--fg-0)',
                     marginTop: 3,
                   }}
                 >
@@ -360,7 +360,7 @@ function PhasesView({
                 <div
                   style={{
                     height: 3,
-                    background: 'rgba(255,255,255,0.08)',
+                    background: 'var(--bd-1)',
                     borderRadius: 2,
                     marginTop: 6,
                     overflow: 'hidden',
@@ -379,7 +379,7 @@ function PhasesView({
                   <div
                     style={{
                       fontSize: 10,
-                      color: 'rgba(255,255,255,0.45)',
+                      color: 'var(--fg-3)',
                       marginTop: 4,
                       display: 'flex',
                       alignItems: 'center',
@@ -408,8 +408,8 @@ function PhasesView({
                       display: 'grid',
                       placeItems: 'center',
                       fontSize: 11,
-                      color: 'rgba(255,255,255,0.30)',
-                      border: '1px dashed rgba(255,255,255,0.10)',
+                      color: 'var(--fg-3)',
+                      border: '1px dashed var(--bd-2)',
                       borderRadius: 6,
                       minHeight: 60,
                     }}
@@ -449,8 +449,8 @@ function GanttView({ orders }: { orders: ActiveOrder[] }) {
     left: 0,
     background: 'rgba(20, 24, 30, 0.95)',
     padding: '10px 14px',
-    borderBottom: '1px solid rgba(255,255,255,0.08)',
-    borderRight: '1px solid rgba(255,255,255,0.08)',
+    borderBottom: '1px solid var(--bd-1)',
+    borderRight: '1px solid var(--bd-1)',
     minWidth: 160,
     zIndex: 1,
   };
@@ -459,23 +459,23 @@ function GanttView({ orders }: { orders: ActiveOrder[] }) {
     left: 160,
     background: 'rgba(20, 24, 30, 0.95)',
     padding: '10px 14px',
-    borderBottom: '1px solid rgba(255,255,255,0.08)',
-    borderRight: '1px solid rgba(255,255,255,0.08)',
+    borderBottom: '1px solid var(--bd-1)',
+    borderRight: '1px solid var(--bd-1)',
     minWidth: 80,
     fontSize: 12,
-    color: 'rgba(255,255,255,0.85)',
+    color: 'var(--fg-1)',
     zIndex: 1,
   };
   const headSticky = (left: number) => ({
     position: 'sticky' as const,
     left,
-    background: 'rgba(255,255,255,0.04)',
+    background: 'var(--bg-2)',
     padding: '10px 14px',
     textAlign: 'left' as const,
-    borderBottom: '1px solid rgba(255,255,255,0.08)',
-    borderRight: '1px solid rgba(255,255,255,0.08)',
+    borderBottom: '1px solid var(--bd-1)',
+    borderRight: '1px solid var(--bd-1)',
     fontSize: 11,
-    color: 'rgba(255,255,255,0.65)',
+    color: 'var(--fg-2)',
     fontWeight: 600,
     textTransform: 'uppercase' as const,
     letterSpacing: 0.4,
@@ -485,8 +485,8 @@ function GanttView({ orders }: { orders: ActiveOrder[] }) {
   return (
     <div
       style={{
-        background: 'rgba(255,255,255,0.03)',
-        border: '1px solid rgba(255,255,255,0.08)',
+        background: 'var(--bg-1)',
+        border: '1px solid var(--bd-1)',
         borderRadius: 8,
         overflow: 'hidden',
       }}
@@ -501,7 +501,7 @@ function GanttView({ orders }: { orders: ActiveOrder[] }) {
           }}
         >
           <thead>
-            <tr style={{ background: 'rgba(255,255,255,0.04)' }}>
+            <tr style={{ background: 'var(--bg-2)' }}>
               <th style={{ ...headSticky(0), minWidth: 160 }}>Barco</th>
               <th style={{ ...headSticky(160), minWidth: 80 }}>Cliente</th>
               {GANTT_DAYS.map((d) => (
@@ -510,9 +510,9 @@ function GanttView({ orders }: { orders: ActiveOrder[] }) {
                   style={{
                     padding: '10px 8px',
                     textAlign: 'center',
-                    borderBottom: '1px solid rgba(255,255,255,0.08)',
+                    borderBottom: '1px solid var(--bd-1)',
                     fontSize: 11,
-                    color: 'rgba(255,255,255,0.65)',
+                    color: 'var(--fg-2)',
                     fontWeight: 500,
                     minWidth: 80,
                   }}
@@ -553,12 +553,12 @@ function GanttView({ orders }: { orders: ActiveOrder[] }) {
               }[status];
 
               return (
-                <tr key={o.id ?? idx} style={{ background: 'rgba(255,255,255,0.02)' }}>
+                <tr key={o.id ?? idx} style={{ background: 'var(--bg-2)' }}>
                   <td style={stickyCellName}>
-                    <div style={{ fontWeight: 600, color: 'rgba(255,255,255,0.95)' }}>
+                    <div style={{ fontWeight: 600, color: 'var(--fg-0)' }}>
                       {o.product_type} #{hull || '—'}
                     </div>
-                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)' }}>
+                    <div style={{ fontSize: 11, color: 'var(--fg-3)' }}>
                       {o.product_name}
                     </div>
                   </td>
@@ -569,8 +569,8 @@ function GanttView({ orders }: { orders: ActiveOrder[] }) {
                     <td
                       key={d}
                       style={{
-                        borderBottom: '1px solid rgba(255,255,255,0.06)',
-                        borderRight: '1px solid rgba(255,255,255,0.04)',
+                        borderBottom: '1px solid var(--bd-1)',
+                        borderRight: '1px solid var(--bg-2)',
                         padding: 4,
                         height: 36,
                         position: 'relative',

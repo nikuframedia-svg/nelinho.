@@ -255,8 +255,8 @@ export default function PainelPage() {
         <div
           style={{
             padding: '22px 26px',
-            background: 'rgba(255,255,255,0.03)',
-            border: '1px solid rgba(255,255,255,0.08)',
+            background: 'var(--bg-1)',
+            border: '1px solid var(--bd-1)',
             borderRadius: 12,
             display: 'flex',
             alignItems: 'center',
@@ -283,7 +283,7 @@ export default function PainelPage() {
               style={{
                 fontSize: 18,
                 fontWeight: 500,
-                color: 'rgba(255,255,255,0.95)',
+                color: 'var(--fg-0)',
                 lineHeight: 1.4,
               }}
             >
@@ -296,7 +296,7 @@ export default function PainelPage() {
             <div
               style={{
                 fontSize: 13,
-                color: 'rgba(255,255,255,0.65)',
+                color: 'var(--fg-2)',
                 marginTop: 6,
               }}
             >
@@ -369,8 +369,8 @@ export default function PainelPage() {
           {/* Atenção necessária */}
           <div
             style={{
-              background: 'rgba(255,255,255,0.03)',
-              border: '1px solid rgba(255,255,255,0.08)',
+              background: 'var(--bg-1)',
+              border: '1px solid var(--bd-1)',
               borderRadius: 12,
               padding: 20,
             }}
@@ -428,8 +428,8 @@ export default function PainelPage() {
           {/* Próximas expedições */}
           <div
             style={{
-              background: 'rgba(255,255,255,0.03)',
-              border: '1px solid rgba(255,255,255,0.08)',
+              background: 'var(--bg-1)',
+              border: '1px solid var(--bd-1)',
               borderRadius: 12,
               padding: 20,
             }}
@@ -544,8 +544,8 @@ function KPICardZip({
       onClick={onClick}
       style={{
         padding: '16px 18px',
-        background: 'rgba(255,255,255,0.03)',
-        border: '1px solid rgba(255,255,255,0.08)',
+        background: 'var(--bg-1)',
+        border: '1px solid var(--bd-1)',
         borderRadius: 12,
         cursor: onClick ? 'pointer' : 'default',
         transition: 'background 0.12s, border-color 0.12s',
@@ -554,7 +554,7 @@ function KPICardZip({
       <div
         style={{
           fontSize: 11,
-          color: 'rgba(255,255,255,0.55)',
+          color: 'var(--fg-2)',
           fontWeight: 500,
           textTransform: 'uppercase',
           letterSpacing: 0.4,
@@ -575,7 +575,7 @@ function KPICardZip({
           {value}
         </span>
         {unit ? (
-          <span style={{ fontSize: 14, color: 'rgba(255,255,255,0.55)' }}>
+          <span style={{ fontSize: 14, color: 'var(--fg-2)' }}>
             {unit}
           </span>
         ) : null}
@@ -588,7 +588,7 @@ function KPICardZip({
       <div
         style={{
           fontSize: 11,
-          color: 'rgba(255,255,255,0.45)',
+          color: 'var(--fg-3)',
           marginTop: 8,
           lineHeight: 1.4,
         }}
@@ -640,8 +640,8 @@ function AlertCardZip({ alert }: { alert: any }) {
     <div
       style={{
         padding: '12px 14px',
-        background: 'rgba(255,255,255,0.02)',
-        border: '1px solid rgba(255,255,255,0.06)',
+        background: 'var(--bg-2)',
+        border: '1px solid var(--bd-1)',
         borderLeft: `3px solid var(--${sevColor})`,
         borderRadius: 8,
       }}
@@ -663,7 +663,7 @@ function AlertCardZip({ alert }: { alert: any }) {
       {alert.cause ? (
         <div
           className="text-xs text-text-dark-secondary mt-1.5 pl-3"
-          style={{ borderLeft: '2px solid rgba(255,255,255,0.10)' }}
+          style={{ borderLeft: '2px solid var(--bd-2)' }}
         >
           <strong className="text-text-dark-primary">Causa:</strong> {alert.cause}
         </div>
@@ -695,8 +695,8 @@ function ShipmentRowZip({ shipment }: { shipment: any }) {
     <div
       style={{
         padding: '12px 14px',
-        background: 'rgba(255,255,255,0.02)',
-        border: '1px solid rgba(255,255,255,0.06)',
+        background: 'var(--bg-2)',
+        border: '1px solid var(--bd-1)',
         borderRadius: 8,
       }}
     >
@@ -720,7 +720,7 @@ function ShipmentRowZip({ shipment }: { shipment: any }) {
       <div
         style={{
           height: 5,
-          background: 'rgba(255,255,255,0.08)',
+          background: 'var(--bd-1)',
           borderRadius: 3,
           overflow: 'hidden',
         }}
@@ -780,8 +780,8 @@ function AIPanel() {
   return (
     <div
       style={{
-        background: 'rgba(255,255,255,0.03)',
-        border: '1px solid rgba(255,255,255,0.08)',
+        background: 'var(--bg-1)',
+        border: '1px solid var(--bd-1)',
         borderRadius: 12,
         overflow: 'hidden',
       }}
@@ -789,7 +789,7 @@ function AIPanel() {
       <div
         style={{
           padding: '18px 22px',
-          borderBottom: '1px solid rgba(255,255,255,0.08)',
+          borderBottom: '1px solid var(--bd-1)',
           display: 'flex',
           alignItems: 'center',
           gap: 10,
@@ -829,7 +829,7 @@ function AIPanel() {
             key={i}
             style={{
               padding: '20px 22px',
-              borderRight: i < 3 ? '1px solid rgba(255,255,255,0.06)' : 'none',
+              borderRight: i < 3 ? '1px solid var(--bd-1)' : 'none',
             }}
           >
             <div
@@ -837,7 +837,7 @@ function AIPanel() {
               style={{
                 fontSize: 28,
                 fontWeight: 700,
-                color: 'rgba(255,255,255,0.95)',
+                color: 'var(--fg-0)',
                 lineHeight: 1,
               }}
             >
@@ -1003,8 +1003,8 @@ function SuggestionCardZip({ decision }: { decision: any }) {
     <div
       style={{
         padding: '12px 14px',
-        background: 'rgba(255,255,255,0.02)',
-        border: '1px solid rgba(255,255,255,0.06)',
+        background: 'var(--bg-2)',
+        border: '1px solid var(--bd-1)',
         borderLeft: `3px solid var(--${sevColor})`,
         borderRadius: 8,
       }}
@@ -1243,7 +1243,7 @@ function TrustPanel({ refreshKey }: { refreshKey: number }) {
                   style={{
                     width: 80,
                     height: 6,
-                    background: 'rgba(255,255,255,0.08)',
+                    background: 'var(--bd-1)',
                     borderRadius: 3,
                     overflow: 'hidden',
                   }}

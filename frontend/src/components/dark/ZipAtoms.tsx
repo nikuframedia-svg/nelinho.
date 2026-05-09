@@ -83,9 +83,9 @@ export function ToneBadge({
         borderRadius: 999,
         fontWeight: 500,
         letterSpacing: 0.1,
-        color: isAccent ? `var(--${tone})` : 'rgba(255,255,255,0.85)',
-        background: isAccent ? `var(--${tone}-bg)` : 'rgba(255,255,255,0.06)',
-        border: `1px solid ${isAccent ? `var(--${tone}-bd)` : 'rgba(255,255,255,0.10)'}`,
+        color: isAccent ? `var(--${tone})` : 'var(--fg-1)',
+        background: isAccent ? `var(--${tone}-bg)` : 'var(--bd-1)',
+        border: `1px solid ${isAccent ? `var(--${tone}-bd)` : 'var(--bd-2)'}`,
         whiteSpace: 'nowrap',
       }}
     >
@@ -153,16 +153,16 @@ export function Legend({
         display: 'flex',
         gap: 18,
         padding: '10px 14px',
-        background: 'rgba(255,255,255,0.03)',
-        border: '1px solid rgba(255,255,255,0.08)',
+        background: 'var(--bg-1)',
+        border: '1px solid var(--bd-1)',
         borderRadius: 8,
         fontSize: 11,
-        color: 'rgba(255,255,255,0.65)',
+        color: 'var(--fg-2)',
         flexWrap: 'wrap',
         alignItems: 'center',
       }}
     >
-      <span style={{ fontWeight: 500, color: 'rgba(255,255,255,0.85)' }}>
+      <span style={{ fontWeight: 500, color: 'var(--fg-1)' }}>
         {hint}
       </span>
       {trailing ? <span>{trailing}</span> : null}
@@ -244,7 +244,7 @@ export function BoatCardZip({
       onClick={onClick}
       title={tooltip}
       style={{
-        background: 'rgba(255,255,255,0.04)',
+        background: 'var(--bg-2)',
         border: `1px solid var(--${s.color}-bd)`,
         borderLeft: `3px solid var(--${s.color})`,
         borderRadius: 6,
@@ -270,7 +270,7 @@ export function BoatCardZip({
           style={{
             fontSize: 12,
             fontWeight: 700,
-            color: 'rgba(255,255,255,0.95)',
+            color: 'var(--fg-0)',
           }}
         >
           {boat.short}{' '}
@@ -306,7 +306,7 @@ export function BoatCardZip({
           justifyContent: 'space-between',
           gap: 6,
           fontSize: 10,
-          color: 'rgba(255,255,255,0.55)',
+          color: 'var(--fg-2)',
         }}
       >
         <span
@@ -338,7 +338,7 @@ export function BoatCardZip({
                 ? 'var(--red)'
                 : boat.dx <= 2
                   ? 'var(--yellow)'
-                  : 'rgba(255,255,255,0.45)',
+                  : 'var(--fg-3)',
             fontWeight: 500,
           }}
         >

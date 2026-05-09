@@ -1,49 +1,76 @@
 @import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap');
+/* Legacy preserved (algumas páginas antigas ainda referem) */
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700;9..40,800&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap');
 
-/* Q.18.ZIP.A — Palantir industrial overlay tokens (additive, não substitui o sistema teal/dark) */
+/* Q.18.ZIP.tokens — port literal de design/nelo-zip/nelo.html :root. */
 :root {
-  --accent-orange: #f97316;
+  /* ── Background hierarchy (sólidos hierárquicos do zip) ── */
+  --bg-0: #0A0A0A;   /* page bg */
+  --bg-1: #111113;   /* card bg */
+  --bg-2: #16171A;   /* nested card / panel bg */
+  --bg-3: #1E1F23;   /* progress track / hover bg */
+  --bg-4: #2A2B30;   /* elevated overlay */
+
+  /* ── Borders ── */
+  --bd-1: #25262B;
+  --bd-2: #34353B;
+  --bd-3: #4A4C54;
+
+  /* ── Text colors ── */
+  --fg-0: #FAFAFA;   /* primary */
+  --fg-1: #D4D4D8;   /* secondary */
+  --fg-2: #A1A1AA;   /* tertiary */
+  --fg-3: #71717A;   /* faded / placeholder */
+
+  /* ── Status / severity (10% bg, 30% bd matching zip) ── */
+  --green:    #22C55E;
+  --green-bg: rgba(34, 197, 94, 0.10);
+  --green-bd: rgba(34, 197, 94, 0.30);
+
+  --yellow:    #EAB308;
+  --yellow-bg: rgba(234, 179, 8, 0.10);
+  --yellow-bd: rgba(234, 179, 8, 0.30);
+
+  --red:    #EF4444;
+  --red-bg: rgba(239, 68, 68, 0.10);
+  --red-bd: rgba(239, 68, 68, 0.30);
+
+  --blue:    #3B82F6;
+  --blue-bg: rgba(59, 130, 246, 0.10);
+  --blue-bd: rgba(59, 130, 246, 0.30);
+
+  --orange:    #F97316;
+  --orange-bg: rgba(249, 115, 22, 0.10);
+  --orange-bd: rgba(249, 115, 22, 0.30);
+
+  --purple:    #A855F7;
+  --purple-bg: rgba(168, 85, 247, 0.10);
+  --purple-bd: rgba(168, 85, 247, 0.30);
+
+  --gray:    #6B7280;
+  --gray-bg: rgba(107, 114, 128, 0.10);
+  --gray-bd: rgba(107, 114, 128, 0.30);
+
+  /* ── Radii ── */
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-xl: 16px;
+
+  /* ── Shadows ── */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --shadow-3: 0 12px 32px rgba(0, 0, 0, 0.6);
+
+  /* Legacy preserved (não remover — outras páginas consomem) */
+  --accent-orange: #F97316;
   --accent-orange-soft: rgba(249, 115, 22, 0.12);
   --accent-orange-bd: rgba(249, 115, 22, 0.35);
   --bd-focus: #4d9ef6;
   --grid-line: rgba(255, 255, 255, 0.025);
-
-  /* Q.18.ZIP.atoms — status / severity tokens (matching design/nelo-zip/src/atoms.jsx).
-     Cada cor tem 3 variantes:
-       --{color}      — solid color (border-left, dot, fg)
-       --{color}-bg   — soft bg (Badge background, card bg)
-       --{color}-bd   — border alpha (Badge border, separator)
-     STATUS map: on_time→green, at_risk→yellow, late→red, curing→gray, completed→blue.
-     SEVERITY map: critical→red, high→orange, medium→yellow, low→blue. */
-  --green:    #22c55e;
-  --green-bg: rgba(34, 197, 94, 0.15);
-  --green-bd: rgba(34, 197, 94, 0.40);
-
-  --yellow:    #f59e0b;
-  --yellow-bg: rgba(245, 158, 11, 0.15);
-  --yellow-bd: rgba(245, 158, 11, 0.40);
-
-  --red:    #ef4444;
-  --red-bg: rgba(239, 68, 68, 0.15);
-  --red-bd: rgba(239, 68, 68, 0.40);
-
-  --blue:    #3b82f6;
-  --blue-bg: rgba(59, 130, 246, 0.15);
-  --blue-bd: rgba(59, 130, 246, 0.40);
-
-  --orange:    #f97316;
-  --orange-bg: rgba(249, 115, 22, 0.15);
-  --orange-bd: rgba(249, 115, 22, 0.40);
-
-  --purple:    #b780ff;
-  --purple-bg: rgba(183, 128, 255, 0.15);
-  --purple-bd: rgba(183, 128, 255, 0.40);
-
-  --gray:    #64748b;
-  --gray-bg: rgba(100, 116, 139, 0.15);
-  --gray-bd: rgba(100, 116, 139, 0.40);
 }
 
 /* Opt-in grid background — Palantir trademark (32×32 subtle grid) */
@@ -128,7 +155,7 @@
   --radius-card: 1.25rem;
   --radius-full: 9999px;
   
-  --font-family-sans: 'DM Sans', 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-family-sans: 'Inter', 'DM Sans', 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
 * {
@@ -143,9 +170,10 @@ html {
 }
 
 body {
-  background: #0d0f12;
+  background: var(--bg-0);  /* Q.18.ZIP.tokens — negro puro #0A0A0A do zip */
   min-height: 100vh;
-  color: var(--color-text-primary);
+  color: var(--fg-0);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
