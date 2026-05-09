@@ -66,6 +66,9 @@ class ThroughputService:
                 ))),
             }
         except Exception as exc:  # pragma: no cover — defensive
+            # Limpa transacção asyncpg poisoned para que próximas queries
+            # na mesma session não falhem com InFailedSQLTransactionError.
+            await self.session.rollback()
             logger.warning("throughput config load failed: %s", exc)
             return {
                 "min_eur_day": DEFAULT_TARGET_MIN,
