@@ -237,12 +237,23 @@ export function CapabilitiesProvider({ children }: { children: ReactNode }) {
     };
   }, [capabilitiesResponse]);
 
+  // Backend /v1/capabilities/ devolve `modules: List[ModuleCapability]`
+  // e `features: List[FeatureCapability]` (objectos com .id), não strings.
+  // Suportamos ambos para tolerar respostas legacy / testes.
   const hasModule = (module: string): boolean => {
-    return capabilities?.modules?.includes(module) ?? false;
+    const modules = capabilities?.modules;
+    if (!modules) return false;
+    return (modules as any[]).some((m) =>
+      typeof m === 'string' ? m === module : m?.id === module
+    );
   };
 
   const hasFeature = (feature: string): boolean => {
-    return capabilities?.features?.includes(feature) ?? false;
+    const features = capabilities?.features;
+    if (!features) return false;
+    return (features as any[]).some((f) =>
+      typeof f === 'string' ? f === feature : f?.id === feature
+    );
   };
 
   const isMetricBlocked = (metricId: string): boolean => {

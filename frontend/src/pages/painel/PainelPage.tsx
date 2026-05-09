@@ -207,8 +207,11 @@ function BacklogByClientPanel({ refreshKey }: { refreshKey: number }) {
 const INBOX_TAB_IDS = ['pending', 'accepted', 'rejected', 'all'] as const;
 type InboxTabId = (typeof INBOX_TAB_IDS)[number];
 
+// Backend DecisionStatus enum (src/governance/models.py:58):
+//   proposed/pending_approval/approved/rejected/executing/executed/...
+// Inbox "Pendentes" = aguardam aprovação humana → PENDING_APPROVAL.
 const STATUS_BY_TAB: Record<InboxTabId, string | undefined> = {
-  pending: 'PENDING',
+  pending: 'PENDING_APPROVAL',
   accepted: 'EXECUTED',
   rejected: 'REJECTED',
   all: undefined,
@@ -417,13 +420,28 @@ export default function PainelPage() {
   const otdPct = (otdQuery.data as any)?.otd_pct ?? null;
   const fpyPct = (fpyQuery.data as any)?.fpy_pct ?? null;
 
-  const trustScore = (trustQuery.data as any)?.trust_index ?? null;
+  // Backend /v1/dqa/trust-index devolve { composite: 0..1, components:
+  // { completeness: 0..1, validity: 0..1, ... }, weights: { ... } }.
+  // Aceita ambos `composite` (canónico) e `trust_index` (legacy) por defesa.
+  const trustScore = (trustQuery.data as any)?.composite
+    ?? (trustQuery.data as any)?.trust_index
+    ?? null;
   const trustGrade = trustScore !== null ? scoreToGrade(trustScore) : undefined;
 
   const trustComponents = useMemo<TrustComponentFromApi[]>(() => {
     const data: any = trustQuery.data;
     if (!data) return [];
     if (Array.isArray(data.components)) return data.components;
+    if (data.components && typeof data.components === 'object') {
+      const weights = data.weights ?? {};
+      return Object.entries(data.components)
+        .filter(([, score]) => score !== null && score !== undefined)
+        .map(([name, score]) => ({
+          name,
+          score: Number(score),
+          weight: weights[name],
+        }));
+    }
     return [];
   }, [trustQuery.data]);
 
