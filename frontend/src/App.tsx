@@ -24,6 +24,8 @@ const EquipaPage = lazy(() => import('./pages/equipa/EquipaPage'));
 const QualidadePage = lazy(() => import('./pages/qualidade/QualidadePage'));
 // Sprint Q.18.ZIP.H — Configuracao portada (7 tabs com sub-tabs Aprendizagem/Sistema/DadosMestre)
 const ConfiguracaoPage = lazy(() => import('./pages/configuracao/ConfiguracaoPage'));
+// Sprint Q.18.ZIP.I — Relatorios portados (5 tabs: KPIs/Custos/Pricing/Cenarios/Export)
+const RelatoriosPage = lazy(() => import('./pages/relatorios/RelatoriosPage'));
 const RAGIngestPage = lazy(() => import('./pages/admin/RAGIngestPage').then(m => ({ default: m.RAGIngestPage })));
 const SettingsPage = lazy(() => import('./pages/admin/SettingsPage').then(m => ({ default: m.SettingsPage })));
 const DQAPage = lazy(() => import('./pages/admin/DQAPage').then(m => ({ default: m.DQAPage })));
@@ -298,7 +300,12 @@ function App() {
                       <QualidadePage />
                     </Suspense>
                   } />
-                  <Route path="relatorios" element={<Navigate to="/" replace />} />
+                  {/* Q.18.ZIP.I — /relatorios agora nativa (5 tabs) */}
+                  <Route path="relatorios" element={
+                    <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
+                      <RelatoriosPage />
+                    </Suspense>
+                  } />
                   {/* Q.18.ZIP.H — /configuracao agora nativa (7 tabs + sub-tabs) */}
                   <Route path="configuracao" element={
                     <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
