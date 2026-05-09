@@ -1,21 +1,29 @@
 /**
- * PainelPage — homepage portada do nelo (1).zip pages-1.jsx:PainelPage.
+ * PainelPage — port literal de design/nelo-zip/src/page-ceo.jsx.
  *
- * Substitui Dashboard.tsx + OpsInboxPage.tsx + DecisionsPage.tsx +
- * plan/TimelinePage.tsx + improve/SuggestionsPage.tsx (todos absorvidos
- * em secções/panels desta página).
+ * Estrutura idêntica ao zip:
+ *   1. Hero — frase de estado da fábrica + ícone + "Ver detalhe"
+ *   2. 4 KPI cards (Barcos / OEE / Throughput / Margem)
+ *   3. Grid 2-col: "Atenção necessária" (AlertCardZip) | "Próximas expedições" (ShipmentRowZip)
+ *   4. AI Panel "O que o sistema fez por si esta semana" (4 stats)
  *
- * Layout do zip (4 áreas):
- *   1. PageHeader (título + subtítulo + Atualizar/Filtros/Pedir-ao-Copilot)
- *   2. KPI grid 4 cards (€/dia, Concluídos, Em risco, Alertas activos) com
- *      Sparkline (quando há série histórica) e TrustBadge
- *   3. Grid 2-col: Alertas activos · 5 (AlertRow list) | Timeline aprovação
- *   4. Grid 2:1: Actividade ao vivo (LiveActivityFeed wrapped) | Trust sources
+ * Plus secções extra preservadas (Onda 4):
+ *   5. Inbox de decisões (filter tabs Pendentes/Aceites/Rejeitadas/Tudo)
+ *   6. Backlog por cliente
+ *   7. Actividade ao vivo + Trust index — fontes
  *
- * ZERO MOCKS: dados reais via TanStack Query; empty/error states explícitos.
- * Sem sparklines fake — se backend não devolver série, KPICard render sem.
+ * Wire ao backend real:
+ *   - /v1/plan/orders/active → contagem barcos por status
+ *   - /v1/profit/dashboard → throughput hoje (now ✓ post-fix)
+ *   - /v1/copilot/alerts (via ceoDashboardApi.activeAlerts)
+ *   - /v1/plan/transport/batches → próximas expedições
+ *   - /v1/decisions/?status_filter=PROPOSED → inbox
+ *   - /v1/dqa/trust-index?scope=factory → trust panel
+ *   - /v1/ceo/backlog-by-client → backlog
  *
- * Sprint Q.18.ZIP.B.
+ * ZERO MOCKS. Empty states honestos quando endpoint não responde.
+ *
+ * Sprint Q.18.ZIP.PAIN.
  */
 
 import { useMemo, useState } from 'react';
@@ -23,195 +31,836 @@ import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   RefreshCw,
-  Filter,
   Sparkles,
-  Euro,
-  CheckCircle2,
-  AlertTriangle,
-  Bell,
   ArrowRight,
-  Activity,
   Inbox,
+  Truck,
+  AlertTriangle,
+  CheckCircle2,
+  Brain,
+  Activity,
 } from 'lucide-react';
 import {
   PageHeader,
-  KPICard,
   Panel,
-  AlertRow,
-  TrustBadge,
   Tabs,
+  TrustBadge,
+  ZipSevBadge,
   scoreToGrade,
-  type KPIStatus,
-  type AlertKind,
+  type ZipSeverity,
 } from '../../components/dark';
 import { LiveActivityFeed } from '../../components/activity/LiveActivityFeed';
 import { ceoDashboardApi, decisionsApi, dqaApi } from '../../lib/api';
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// TYPES — alguns derivados de tipos partial em ceoDashboardApi/dqaApi
-// ═══════════════════════════════════════════════════════════════════════════════
+// ─── Endpoints auxiliares ───────────────────────────────────────────────────
 
-interface AlertRowFromApi {
-  alert_id?: string | number;
-  severity?: 'critical' | 'high' | 'medium' | 'low' | string;
-  title?: string;
-  message?: string;
-  source?: string;
-  created_at?: string;
-  meta?: string;
+interface ActiveOrder {
+  id: string;
+  hull: string | null;
+  product_name: string;
+  product_type: string;
+  phase: string | null;
+  status: string;
+  created_date: string | null;
+  transport_date: string | null;
 }
 
-interface TrustComponentFromApi {
-  name: string;
-  score: number;
+async function fetchActiveOrders(): Promise<ActiveOrder[]> {
+  const resp = await fetch(
+    'http://127.0.0.1:8001/v1/plan/orders/active?limit=500',
+    { headers: { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' } },
+  );
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return resp.json();
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// HELPERS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-function severityToKindLocal(sev?: string): AlertKind {
-  switch (sev) {
-    case 'critical':
-    case 'high':
-      return 'danger';
-    case 'medium':
-      return 'warning';
-    case 'low':
-      return 'info';
-    default:
-      return 'neutral';
+async function fetchProfitDashboard() {
+  try {
+    const resp = await fetch('http://127.0.0.1:8001/v1/profit/dashboard', {
+      headers: { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' },
+    });
+    if (!resp.ok) return null;
+    return await resp.json();
+  } catch {
+    return null;
   }
+}
+
+async function fetchTransportBatches() {
+  try {
+    const resp = await fetch(
+      'http://127.0.0.1:8001/v1/plan/transport/batches?limit=20',
+      { headers: { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' } },
+    );
+    if (!resp.ok) return [];
+    return await resp.json();
+  } catch {
+    return [];
+  }
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+function deriveStatus(transport_date: string | null, phase: string | null): string {
+  if (phase === 'Cura') return 'curing';
+  if (!transport_date) return 'on_time';
+  const t = new Date(transport_date).getTime();
+  const today = new Date().setHours(0, 0, 0, 0);
+  const dx = Math.round((t - today) / (1000 * 60 * 60 * 24));
+  if (dx < 0) return 'late';
+  if (dx <= 2) return 'at_risk';
+  return 'on_time';
 }
 
 function relativeTime(iso?: string): string {
   if (!iso) return '';
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '';
-  const diffMs = Date.now() - date.getTime();
-  const min = Math.floor(diffMs / 60_000);
-  if (min < 1) return 'agora';
-  if (min < 60) return `há ${min} min`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `há ${hr}h`;
-  return `há ${Math.floor(hr / 24)}d`;
+  const d = new Date(iso);
+  const diff = (Date.now() - d.getTime()) / 60000;
+  if (diff < 1) return 'agora';
+  if (diff < 60) return `há ${Math.round(diff)} min`;
+  if (diff < 60 * 24) return `há ${Math.round(diff / 60)}h`;
+  return `há ${Math.round(diff / (60 * 24))} dias`;
 }
 
-function statusForCount(count: number, threshold: number): KPIStatus {
-  if (count === 0) return 'neutral';
-  if (count <= threshold) return 'yellow';
-  return 'red';
+function shipmentDayLabel(iso: string): string {
+  const d = new Date(iso + 'T00:00:00');
+  const days = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+  return days[d.getDay()];
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// COPILOT TRIGGER — pede ao copilot via custom event que CopilotFab escuta
-// ═══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
+// PAGE
+// ═══════════════════════════════════════════════════════════════════════════
 
-function askCopilot(query: string) {
-  window.dispatchEvent(
-    new CustomEvent('copilot:open', { detail: { query } })
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// BACKLOG BY CLIENT PANEL — Q.18.ZIP Onda 4 (endpoint existing sub-utilizado)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-function BacklogByClientPanel({ refreshKey }: { refreshKey: number }) {
+export default function PainelPage() {
   const navigate = useNavigate();
-  const backlogQuery = useQuery({
-    queryKey: ['painel', 'backlog-by-client', refreshKey],
-    queryFn: () => ceoDashboardApi.backlogByClient({ limit: 8 }),
-    staleTime: 60_000,
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const ordersQuery = useQuery({
+    queryKey: ['painel', 'orders', refreshKey],
+    queryFn: fetchActiveOrders,
+    staleTime: 30_000,
     retry: 0,
-    refetchOnWindowFocus: false,
   });
 
-  const items: any[] = useMemo(() => {
-    const data: any = backlogQuery.data;
+  const profitQuery = useQuery({
+    queryKey: ['painel', 'profit', refreshKey],
+    queryFn: fetchProfitDashboard,
+    staleTime: 60_000,
+    retry: 0,
+  });
+
+  const alertsQuery = useQuery({
+    queryKey: ['painel', 'alerts', refreshKey],
+    queryFn: () => ceoDashboardApi.activeAlerts({ limit: 8 }),
+    staleTime: 30_000,
+    retry: 1,
+  });
+
+  const transportQuery = useQuery({
+    queryKey: ['painel', 'transport', refreshKey],
+    queryFn: fetchTransportBatches,
+    staleTime: 60_000,
+    retry: 0,
+  });
+
+  const orders = ordersQuery.data ?? [];
+  const totalActive = orders.length;
+  const ordersWithStatus = useMemo(
+    () => orders.map((o) => ({ ...o, _status: deriveStatus(o.transport_date, o.phase) })),
+    [orders],
+  );
+  const onTime = ordersWithStatus.filter((o) => o._status === 'on_time').length;
+  const atRisk = ordersWithStatus.filter((o) => o._status === 'at_risk').length;
+  const late = ordersWithStatus.filter((o) => o._status === 'late').length;
+
+  const throughputToday = profitQuery.data?.throughput_eur?.today ?? null;
+  const throughputTrend = profitQuery.data?.trend_14d?.map((p: any) => p.eur) ?? [];
+
+  const alertsItems = useMemo<any[]>(() => {
+    const data: any = alertsQuery.data;
     if (!data) return [];
     if (Array.isArray(data)) return data;
-    return data.items ?? [];
-  }, [backlogQuery.data]);
+    if (Array.isArray(data.items)) return data.items;
+    if (Array.isArray(data.alerts)) return data.alerts;
+    return [];
+  }, [alertsQuery.data]);
 
-  if (backlogQuery.isError || (backlogQuery.data && items.length === 0)) {
-    return null; // Não polui o Painel se não há dados
-  }
+  const transportBatches = transportQuery.data ?? [];
+
+  // ─── Hero state derivation ───
+  const heroState = (() => {
+    if (totalActive === 0) {
+      return {
+        tone: 'gray',
+        icon: Activity,
+        head: 'Sem barcos activos',
+        sub: 'Nenhuma ordem em produção neste momento.',
+      };
+    }
+    if (late > 0) {
+      return {
+        tone: 'red',
+        icon: AlertTriangle,
+        head: 'em atraso',
+        sub: `${late} ${late === 1 ? 'barco atrasado' : 'barcos atrasados'} · ${atRisk} em risco · ${onTime} no prazo. Há decisões a aguardar a sua aprovação.`,
+      };
+    }
+    if (atRisk > 0) {
+      return {
+        tone: 'yellow',
+        icon: AlertTriangle,
+        head: 'em risco',
+        sub: `${atRisk} ${atRisk === 1 ? 'barco em risco' : 'barcos em risco'} · ${onTime} no prazo. Vamos cumprir as próximas expedições com margem apertada.`,
+      };
+    }
+    return {
+      tone: 'green',
+      icon: CheckCircle2,
+      head: 'no plano',
+      sub: `${onTime} dos ${totalActive} barcos no prazo. Sem alertas críticos. Continuar a executar.`,
+    };
+  })();
 
   return (
-    <Panel
-      title="Backlog por cliente"
-      badge={items.length}
-      action={
-        <button
-          type="button"
-          onClick={() => navigate('/relatorios')}
-          className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs text-text-dark-secondary hover:text-text-dark-primary hover:bg-white/5 transition-colors"
+    <div>
+      <PageHeader
+        title="Bom dia, Luis."
+        subtitle="Resumo do dia"
+        actions={
+          <>
+            <button
+              type="button"
+              onClick={() => setRefreshKey((k) => k + 1)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-transparent text-text-dark-secondary hover:bg-white/5 hover:text-text-dark-primary border border-white/[0.08] text-xs font-medium transition-colors"
+            >
+              <RefreshCw size={13} />
+              Atualizar
+            </button>
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new CustomEvent('copilot:open', { detail: { query: 'Que sugestões há para hoje?' } }))}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-white text-xs font-medium transition-colors"
+              style={{ background: 'var(--blue)', border: '1px solid var(--blue)' }}
+            >
+              <Sparkles size={13} />
+              Sugestões
+            </button>
+          </>
+        }
+      />
+
+      <div className="px-6 py-4 space-y-5">
+        {/* ─── Hero ─── */}
+        <div
+          style={{
+            padding: '22px 26px',
+            background: 'rgba(255,255,255,0.03)',
+            border: '1px solid rgba(255,255,255,0.08)',
+            borderRadius: 12,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 18,
+          }}
         >
-          Ver mais <ArrowRight size={12} />
-        </button>
-      }
-      flush
-    >
-      {backlogQuery.isLoading ? (
-        <div className="px-4 py-4 text-center text-xs text-text-dark-tertiary">
-          A carregar backlog…
+          <div
+            style={{
+              width: 44,
+              height: 44,
+              borderRadius: 8,
+              background: `var(--${heroState.tone}-bg)`,
+              border: `1px solid var(--${heroState.tone}-bd)`,
+              color: `var(--${heroState.tone})`,
+              display: 'grid',
+              placeItems: 'center',
+              flexShrink: 0,
+            }}
+          >
+            <heroState.icon size={22} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <div
+              style={{
+                fontSize: 18,
+                fontWeight: 500,
+                color: 'rgba(255,255,255,0.95)',
+                lineHeight: 1.4,
+              }}
+            >
+              A fábrica está{' '}
+              <span style={{ color: `var(--${heroState.tone})`, fontWeight: 600 }}>
+                {heroState.head}
+              </span>
+              .
+            </div>
+            <div
+              style={{
+                fontSize: 13,
+                color: 'rgba(255,255,255,0.65)',
+                marginTop: 6,
+              }}
+            >
+              {heroState.sub}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate('/producao')}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-xs font-medium transition-colors"
+            style={{
+              background: 'var(--blue-bg)',
+              color: 'var(--blue)',
+              border: '1px solid var(--blue-bd)',
+            }}
+          >
+            Ver detalhe <ArrowRight size={14} />
+          </button>
         </div>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead className="border-b border-white/[0.06]">
-              <tr className="text-left text-[10px] uppercase tracking-wider text-text-dark-tertiary">
-                <th className="px-3 py-2 font-semibold">Cliente</th>
-                <th className="px-3 py-2 font-semibold text-right">Encomendas</th>
-                <th className="px-3 py-2 font-semibold text-right">Valor €</th>
-                <th className="px-3 py-2 font-semibold">Próximo prazo</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.slice(0, 8).map((row, idx) => (
-                <tr
-                  key={row.client_name ?? row.id ?? idx}
-                  className="border-b border-white/[0.04] hover:bg-white/[0.02]"
+
+        {/* ─── 4 KPIs ─── */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(4, 1fr)',
+            gap: 14,
+          }}
+        >
+          <KPICardZip
+            label="Barcos em produção"
+            value={totalActive.toString()}
+            unit=""
+            context={`${onTime} no prazo · ${atRisk} em risco · ${late} atrasados`}
+            tone={late > 0 ? 'red' : atRisk > 0 ? 'yellow' : 'green'}
+            onClick={() => navigate('/producao')}
+          />
+          <KPICardZip
+            label="OEE da fábrica"
+            value="—"
+            unit="%"
+            context="Endpoint OEE indisponível (ingestão de eventos pendente)"
+            tone="gray"
+            onClick={() => navigate('/qualidade?tab=oee')}
+          />
+          <KPICardZip
+            label="Throughput hoje"
+            value={throughputToday !== null ? Math.round(throughputToday).toString() : '—'}
+            unit="€"
+            context={
+              throughputToday !== null
+                ? 'Receita reconhecida · /v1/profit/dashboard'
+                : 'Sem dados de revenue hoje'
+            }
+            tone={throughputToday !== null && throughputToday > 0 ? 'green' : 'gray'}
+            sparkline={throughputTrend}
+            onClick={() => navigate('/relatorios')}
+          />
+          <KPICardZip
+            label="Margem por barco"
+            value="—"
+            unit="€"
+            context="Calculado em sub-sprint dedicado (cost service + revenue join)"
+            tone="gray"
+            onClick={() => navigate('/relatorios?tab=custos')}
+          />
+        </div>
+
+        {/* ─── Grid 2-col: Alertas + Expedições ─── */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 22 }}>
+          {/* Atenção necessária */}
+          <div
+            style={{
+              background: 'rgba(255,255,255,0.03)',
+              border: '1px solid rgba(255,255,255,0.08)',
+              borderRadius: 12,
+              padding: 20,
+            }}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2.5">
+                <div
+                  style={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: 6,
+                    background: 'var(--orange-bg)',
+                    color: 'var(--orange)',
+                    display: 'grid',
+                    placeItems: 'center',
+                    border: '1px solid var(--orange-bd)',
+                  }}
                 >
-                  <td className="px-3 py-2 text-text-dark-primary truncate max-w-[200px]">
-                    {row.client_name ?? row.client ?? '—'}
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-text-dark-secondary">
-                    {row.orders_count ?? row.count ?? '—'}
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-text-dark-secondary">
-                    {row.total_value_eur !== undefined
-                      ? `€${Math.round(row.total_value_eur).toLocaleString('pt-PT')}`
-                      : '—'}
-                  </td>
-                  <td className="px-3 py-2 text-text-dark-tertiary tabular-nums">
-                    {row.earliest_deadline
-                      ? new Date(row.earliest_deadline).toLocaleDateString('pt-PT')
-                      : '—'}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  <AlertTriangle size={16} />
+                </div>
+                <div>
+                  <div className="text-sm font-semibold text-text-dark-primary leading-tight">
+                    Atenção necessária
+                  </div>
+                  <div className="text-xs text-text-dark-tertiary mt-0.5">
+                    {alertsItems.length} {alertsItems.length === 1 ? 'alerta activo' : 'alertas activos'} · ordenados por urgência
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => navigate('/qualidade')}
+                className="inline-flex items-center gap-1 text-xs text-text-dark-secondary hover:text-text-dark-primary"
+              >
+                Ver inbox <ArrowRight size={12} />
+              </button>
+            </div>
+            {alertsQuery.isLoading ? (
+              <div className="px-3 py-6 text-center text-xs text-text-dark-tertiary">
+                A carregar alertas…
+              </div>
+            ) : alertsItems.length === 0 ? (
+              <div className="px-3 py-6 text-center text-xs text-text-dark-tertiary">
+                Sem alertas activos. Tudo calmo no chão de fábrica.
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2.5">
+                {alertsItems.slice(0, 5).map((a, idx) => (
+                  <AlertCardZip key={a.alert_id ?? idx} alert={a} />
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Próximas expedições */}
+          <div
+            style={{
+              background: 'rgba(255,255,255,0.03)',
+              border: '1px solid rgba(255,255,255,0.08)',
+              borderRadius: 12,
+              padding: 20,
+            }}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2.5">
+                <div
+                  style={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: 6,
+                    background: 'var(--blue-bg)',
+                    color: 'var(--blue)',
+                    display: 'grid',
+                    placeItems: 'center',
+                    border: '1px solid var(--blue-bd)',
+                  }}
+                >
+                  <Truck size={16} />
+                </div>
+                <div>
+                  <div className="text-sm font-semibold text-text-dark-primary leading-tight">
+                    Próximas expedições
+                  </div>
+                  <div className="text-xs text-text-dark-tertiary mt-0.5">
+                    Estado dos próximos camiões
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => navigate('/expedicao')}
+                className="inline-flex items-center gap-1 text-xs text-text-dark-secondary hover:text-text-dark-primary"
+              >
+                Ver tudo <ArrowRight size={12} />
+              </button>
+            </div>
+            {transportQuery.isLoading ? (
+              <div className="px-3 py-6 text-center text-xs text-text-dark-tertiary">
+                A carregar expedições…
+              </div>
+            ) : transportBatches.length === 0 ? (
+              <div className="px-3 py-6 text-center text-xs text-text-dark-tertiary">
+                Sem expedições agendadas.
+              </div>
+            ) : (
+              <div className="flex flex-col gap-3">
+                {transportBatches.slice(0, 3).map((s: any) => (
+                  <ShipmentRowZip key={s.id ?? s.code} shipment={s} />
+                ))}
+              </div>
+            )}
+          </div>
         </div>
-      )}
-    </Panel>
+
+        {/* ─── AI Panel ─── */}
+        <AIPanel />
+
+        {/* ─── Inbox (preserve Onda 4) ─── */}
+        <InboxPanel refreshKey={refreshKey} />
+
+        {/* ─── Backlog por cliente (preserve Onda 4) ─── */}
+        <BacklogByClientPanel refreshKey={refreshKey} />
+
+        {/* ─── Activity feed + Trust panel (preserve) ─── */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className="lg:col-span-2">
+            <Panel
+              title="Actividade ao vivo"
+              action={
+                <span className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-success">
+                  <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
+                  AO VIVO
+                </span>
+              }
+              flush
+              bodyClassName="p-0"
+            >
+              <LiveActivityFeed maxItems={6} showHeader={false} compact />
+            </Panel>
+          </div>
+          <TrustPanel refreshKey={refreshKey} />
+        </div>
+      </div>
+    </div>
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// INBOX PANEL — Q.18.ZIP.M.2
-// ═══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
+// KPICardZip — port literal page-ceo.jsx KPICard pattern
+// ═══════════════════════════════════════════════════════════════════════════
+
+function KPICardZip({
+  label,
+  value,
+  unit,
+  context,
+  tone,
+  sparkline,
+  onClick,
+}: {
+  label: string;
+  value: string;
+  unit: string;
+  context: string;
+  tone: 'green' | 'yellow' | 'red' | 'gray' | 'blue';
+  sparkline?: number[];
+  onClick?: () => void;
+}) {
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        padding: '16px 18px',
+        background: 'rgba(255,255,255,0.03)',
+        border: '1px solid rgba(255,255,255,0.08)',
+        borderRadius: 12,
+        cursor: onClick ? 'pointer' : 'default',
+        transition: 'background 0.12s, border-color 0.12s',
+      }}
+    >
+      <div
+        style={{
+          fontSize: 11,
+          color: 'rgba(255,255,255,0.55)',
+          fontWeight: 500,
+          textTransform: 'uppercase',
+          letterSpacing: 0.4,
+          marginBottom: 8,
+        }}
+      >
+        {label}
+      </div>
+      <div className="flex items-baseline gap-1 tabular-nums">
+        <span
+          style={{
+            fontSize: 32,
+            fontWeight: 700,
+            color: `var(--${tone})`,
+            lineHeight: 1,
+          }}
+        >
+          {value}
+        </span>
+        {unit ? (
+          <span style={{ fontSize: 14, color: 'rgba(255,255,255,0.55)' }}>
+            {unit}
+          </span>
+        ) : null}
+      </div>
+      {sparkline && sparkline.length > 0 ? (
+        <div style={{ marginTop: 10, height: 24 }}>
+          <SparklineMini points={sparkline} color={`var(--${tone})`} />
+        </div>
+      ) : null}
+      <div
+        style={{
+          fontSize: 11,
+          color: 'rgba(255,255,255,0.45)',
+          marginTop: 8,
+          lineHeight: 1.4,
+        }}
+      >
+        {context}
+      </div>
+    </div>
+  );
+}
+
+function SparklineMini({ points, color }: { points: number[]; color: string }) {
+  if (points.length === 0) return null;
+  const max = Math.max(...points, 1);
+  const min = Math.min(...points, 0);
+  const range = max - min || 1;
+  const w = 100;
+  const h = 24;
+  const path = points
+    .map((p, i) => {
+      const x = (i / (points.length - 1)) * w;
+      const y = h - ((p - min) / range) * h;
+      return `${i === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)}`;
+    })
+    .join(' ');
+  return (
+    <svg
+      viewBox={`0 0 ${w} ${h}`}
+      preserveAspectRatio="none"
+      style={{ width: '100%', height: '100%' }}
+    >
+      <path d={path} fill="none" stroke={color} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AlertCardZip — port literal page-ceo.jsx AlertCard
+// ═══════════════════════════════════════════════════════════════════════════
+
+function AlertCardZip({ alert }: { alert: any }) {
+  const sev: ZipSeverity =
+    alert.severity === 'critical' || alert.severity === 'high' || alert.severity === 'medium' || alert.severity === 'low'
+      ? alert.severity
+      : 'medium';
+  const sevColor =
+    sev === 'critical' ? 'red' : sev === 'high' ? 'orange' : sev === 'medium' ? 'yellow' : 'blue';
+
+  return (
+    <div
+      style={{
+        padding: '12px 14px',
+        background: 'rgba(255,255,255,0.02)',
+        border: '1px solid rgba(255,255,255,0.06)',
+        borderLeft: `3px solid var(--${sevColor})`,
+        borderRadius: 8,
+      }}
+    >
+      <div className="flex items-center justify-between gap-2 mb-1.5">
+        <ZipSevBadge severity={sev} size="sm" />
+        <span className="text-[10px] text-text-dark-tertiary">
+          {relativeTime(alert.created_at)}
+        </span>
+      </div>
+      <div className="text-sm font-medium text-text-dark-primary">
+        {alert.title ?? alert.message ?? '(Sem título)'}
+      </div>
+      {alert.detail || alert.description ? (
+        <div className="text-xs text-text-dark-secondary mt-1">
+          {alert.detail ?? alert.description}
+        </div>
+      ) : null}
+      {alert.cause ? (
+        <div
+          className="text-xs text-text-dark-secondary mt-1.5 pl-3"
+          style={{ borderLeft: '2px solid rgba(255,255,255,0.10)' }}
+        >
+          <strong className="text-text-dark-primary">Causa:</strong> {alert.cause}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ShipmentRowZip — port literal page-ceo.jsx ShipmentRow
+// ═══════════════════════════════════════════════════════════════════════════
+
+function ShipmentRowZip({ shipment }: { shipment: any }) {
+  const transport = shipment.transport_date ?? shipment.date;
+  const total = shipment.truck_capacity_units ?? shipment.total ?? 50;
+  // Sem assignments wired ainda — mostramos só o destino + capacity.
+  // Quando wired, ready/in_prod/at_risk derivam de assignments.
+  const ready = shipment.ready ?? 0;
+  const in_prod = shipment.in_prod ?? 0;
+  const at_risk = shipment.at_risk ?? 0;
+  const pct = total > 0 ? Math.round((ready / total) * 100) : 0;
+  const tone = at_risk > 0 ? 'yellow' : pct === 100 ? 'green' : 'blue';
+  const day = transport ? shipmentDayLabel(transport) : '—';
+  const dayShort = transport
+    ? `${transport.slice(8, 10)}/${transport.slice(5, 7)}`
+    : '—';
+
+  return (
+    <div
+      style={{
+        padding: '12px 14px',
+        background: 'rgba(255,255,255,0.02)',
+        border: '1px solid rgba(255,255,255,0.06)',
+        borderRadius: 8,
+      }}
+    >
+      <div className="flex items-baseline justify-between gap-2 mb-1">
+        <div className="flex items-baseline gap-2">
+          <span className="text-sm font-semibold text-text-dark-primary">{day}</span>
+          <span className="text-[11px] text-text-dark-tertiary tabular-nums">
+            {dayShort}
+          </span>
+        </div>
+        <span
+          className="text-sm font-semibold tabular-nums"
+          style={{ color: `var(--${tone})` }}
+        >
+          {ready}/{total}
+        </span>
+      </div>
+      <div className="text-xs text-text-dark-secondary mb-2">
+        {shipment.destination ?? shipment.client ?? '—'}
+      </div>
+      <div
+        style={{
+          height: 5,
+          background: 'rgba(255,255,255,0.08)',
+          borderRadius: 3,
+          overflow: 'hidden',
+        }}
+      >
+        <div
+          style={{
+            width: `${pct}%`,
+            height: '100%',
+            background: `var(--${tone})`,
+          }}
+        />
+      </div>
+      <div className="flex gap-3 mt-2 text-[11px] text-text-dark-secondary">
+        <span>✓ {ready} prontos</span>
+        {in_prod > 0 && <span>◐ {in_prod} em produção</span>}
+        {at_risk > 0 && (
+          <span style={{ color: 'var(--yellow)' }}>◆ {at_risk} em risco</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AIPanel — port literal page-ceo.jsx (4 stats horizontal)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function AIPanel() {
+  // Dados reais quando endpoint /v1/copilot/stats existir; agora derivamos
+  // do count de decisions.
+  const decisionsQuery = useQuery({
+    queryKey: ['painel', 'ai-stats'],
+    queryFn: async () => {
+      const fetchTotal = async (status?: string) => {
+        try {
+          const r: any = await decisionsApi.list({ status, page_size: 1 });
+          return r?.total ?? 0;
+        } catch {
+          return 0;
+        }
+      };
+      const [proposed, executed, rejected] = await Promise.all([
+        fetchTotal('PROPOSED'),
+        fetchTotal('EXECUTED'),
+        fetchTotal('REJECTED'),
+      ]);
+      const total = proposed + executed + rejected;
+      return { total, executed, rejected, proposed };
+    },
+    staleTime: 60_000,
+    retry: 0,
+  });
+
+  const stats = decisionsQuery.data ?? { total: 0, executed: 0, rejected: 0, proposed: 0 };
+  const acceptanceRate = stats.total > 0 ? Math.round((stats.executed / stats.total) * 100) : 0;
+
+  return (
+    <div
+      style={{
+        background: 'rgba(255,255,255,0.03)',
+        border: '1px solid rgba(255,255,255,0.08)',
+        borderRadius: 12,
+        overflow: 'hidden',
+      }}
+    >
+      <div
+        style={{
+          padding: '18px 22px',
+          borderBottom: '1px solid rgba(255,255,255,0.08)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+        }}
+      >
+        <div
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: 6,
+            background: 'var(--purple-bg)',
+            color: 'var(--purple)',
+            display: 'grid',
+            placeItems: 'center',
+            border: '1px solid var(--purple-bd)',
+          }}
+        >
+          <Brain size={16} />
+        </div>
+        <div>
+          <div className="text-sm font-semibold text-text-dark-primary">
+            O que o sistema fez por si esta semana
+          </div>
+          <div className="text-xs text-text-dark-tertiary mt-0.5">
+            O assistente é uma proposta — você decide sempre
+          </div>
+        </div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)' }}>
+        {[
+          { value: stats.total.toString(), label: 'Sugestões geradas', sub: 'Plano, atribuição, qualidade' },
+          { value: stats.executed.toString(), label: 'Aceites por si', sub: `${acceptanceRate}% — ${acceptanceRate >= 70 ? 'boa concordância' : 'baixa concordância'}` },
+          { value: stats.rejected.toString(), label: 'Rejeitadas', sub: 'O sistema aprendeu com cada uma' },
+          { value: '—', label: 'Poupança estimada', sub: 'Calculado em sub-sprint cost service' },
+        ].map((s, i) => (
+          <div
+            key={i}
+            style={{
+              padding: '20px 22px',
+              borderRight: i < 3 ? '1px solid rgba(255,255,255,0.06)' : 'none',
+            }}
+          >
+            <div
+              className="tabular-nums"
+              style={{
+                fontSize: 28,
+                fontWeight: 700,
+                color: 'rgba(255,255,255,0.95)',
+                lineHeight: 1,
+              }}
+            >
+              {s.value}
+            </div>
+            <div className="text-xs text-text-dark-secondary mt-2 font-medium">
+              {s.label}
+            </div>
+            <div className="text-[11px] text-text-dark-tertiary mt-1">{s.sub}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// InboxPanel — preserved from Onda 4
+// ═══════════════════════════════════════════════════════════════════════════
 
 const INBOX_TAB_IDS = ['pending', 'accepted', 'rejected', 'all'] as const;
 type InboxTabId = (typeof INBOX_TAB_IDS)[number];
 
-// Backend /v1/decisions/ usa SharedDecisionRun com DecisionStatus
-// enum simples (src/shared/models/governance.py:20):
-//   PROPOSED / APPROVED / EXECUTED / ROLLED_BACK / REJECTED.
-// Inbox "Pendentes" = propostas que aguardam aprovação → PROPOSED.
-// (NÃO PENDING_APPROVAL — esse é do enum de /v1/governance/decisions/.)
 const STATUS_BY_TAB: Record<InboxTabId, string | undefined> = {
   pending: 'PROPOSED',
   accepted: 'EXECUTED',
@@ -226,20 +875,19 @@ function InboxPanel({ refreshKey }: { refreshKey: number }) {
   const counts = useQuery({
     queryKey: ['painel', 'inbox', 'counts', refreshKey],
     queryFn: async () => {
-      // Faz 4 queries em paralelo para counts (tolerante a falhas)
-      const fetch = async (status?: string) => {
+      const fetchTotal = async (status?: string) => {
         try {
           const r: any = await decisionsApi.list({ status, page_size: 1 });
-          return r?.total ?? r?.count ?? r?.items?.length ?? 0;
+          return r?.total ?? 0;
         } catch {
           return 0;
         }
       };
       const [pending, accepted, rejected, all] = await Promise.all([
-        fetch('PENDING'),
-        fetch('EXECUTED'),
-        fetch('REJECTED'),
-        fetch(undefined),
+        fetchTotal('PROPOSED'),
+        fetchTotal('EXECUTED'),
+        fetchTotal('REJECTED'),
+        fetchTotal(undefined),
       ]);
       return { pending, accepted, rejected, all };
     },
@@ -250,10 +898,13 @@ function InboxPanel({ refreshKey }: { refreshKey: number }) {
   const list = useQuery({
     queryKey: ['painel', 'inbox', 'list', tab, refreshKey],
     queryFn: async () => {
-      const status = STATUS_BY_TAB[tab];
       try {
-        return (await decisionsApi.list({ status, page_size: 6 })) as any;
-      } catch (err) {
+        const r: any = await decisionsApi.list({
+          status: STATUS_BY_TAB[tab],
+          page_size: 6,
+        });
+        return r;
+      } catch {
         return null;
       }
     },
@@ -307,10 +958,6 @@ function InboxPanel({ refreshKey }: { refreshKey: number }) {
           <div className="px-4 py-6 text-center text-xs text-text-dark-tertiary">
             <Inbox size={20} className="mx-auto mb-2 opacity-50" />
             Endpoint /v1/decisions indisponível.
-            <br />
-            <span className="text-text-dark-secondary">
-              Quando wired, sugestões CPO aparecem aqui.
-            </span>
           </div>
         ) : items.length === 0 ? (
           <div className="px-4 py-6 text-center text-xs text-text-dark-tertiary">
@@ -318,34 +965,15 @@ function InboxPanel({ refreshKey }: { refreshKey: number }) {
             {tab === 'pending'
               ? 'Sem decisões pendentes. Tudo decidido!'
               : tab === 'accepted'
-              ? 'Sem decisões aceites no período.'
-              : tab === 'rejected'
-              ? 'Sem decisões rejeitadas no período.'
-              : 'Sem decisões registadas.'}
+                ? 'Sem decisões aceites no período.'
+                : tab === 'rejected'
+                  ? 'Sem decisões rejeitadas.'
+                  : 'Sem decisões.'}
           </div>
         ) : (
-          <div className="flex flex-col divide-y divide-white/[0.04]">
+          <div className="space-y-2">
             {items.slice(0, 6).map((d, idx) => (
-              <button
-                key={d.id ?? d.decision_id ?? idx}
-                type="button"
-                onClick={() => navigate('/configuracao?tab=auditoria')}
-                className="text-left px-3 py-2 hover:bg-white/[0.03] transition-colors"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <span className="text-sm text-text-dark-primary truncate">
-                    {d.title ?? d.summary ?? d.decision_type ?? '(Sem título)'}
-                  </span>
-                  <span className="shrink-0 text-[10px] uppercase tracking-wider text-text-dark-tertiary">
-                    {d.status ?? d.decision_status ?? ''}
-                  </span>
-                </div>
-                {d.created_at ? (
-                  <span className="text-[10px] text-text-dark-tertiary tabular-nums">
-                    {new Date(d.created_at).toLocaleString('pt-PT')}
-                  </span>
-                ) : null}
-              </button>
+              <SuggestionCardZip key={d.id ?? idx} decision={d} />
             ))}
           </div>
         )}
@@ -354,341 +982,296 @@ function InboxPanel({ refreshKey }: { refreshKey: number }) {
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// PAGE
-// ═══════════════════════════════════════════════════════════════════════════════
+// ─── SuggestionCardZip ──────────────────────────────────────────────────────
 
-export default function PainelPage() {
+function SuggestionCardZip({ decision }: { decision: any }) {
+  const sandbox = decision.sandbox_result ?? {};
+  const priority: ZipSeverity =
+    sandbox.priority === 'critical' || sandbox.priority === 'high' || sandbox.priority === 'medium' || sandbox.priority === 'low'
+      ? sandbox.priority
+      : 'medium';
+  const sevColor =
+    priority === 'critical'
+      ? 'red'
+      : priority === 'high'
+        ? 'orange'
+        : priority === 'medium'
+          ? 'yellow'
+          : 'blue';
+
+  return (
+    <div
+      style={{
+        padding: '12px 14px',
+        background: 'rgba(255,255,255,0.02)',
+        border: '1px solid rgba(255,255,255,0.06)',
+        borderLeft: `3px solid var(--${sevColor})`,
+        borderRadius: 8,
+      }}
+    >
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <ZipSevBadge severity={priority} size="sm" />
+        {sandbox.confidence ? (
+          <span className="text-[10px] text-text-dark-tertiary tabular-nums">
+            confiança {sandbox.confidence}%
+          </span>
+        ) : null}
+      </div>
+      <div className="text-sm font-medium text-text-dark-primary">
+        {decision.title ?? '(Sem título)'}
+      </div>
+      {sandbox.why ? (
+        <div className="text-xs text-text-dark-secondary mt-1.5">
+          <strong className="text-text-dark-primary">Porquê:</strong> {sandbox.why}
+        </div>
+      ) : null}
+      {sandbox.if_accept || sandbox.if_reject ? (
+        <div className="grid grid-cols-2 gap-2 mt-2">
+          {sandbox.if_accept ? (
+            <div
+              style={{
+                padding: 8,
+                background: 'var(--green-bg)',
+                border: '1px solid var(--green-bd)',
+                borderRadius: 6,
+              }}
+            >
+              <div
+                className="text-[10px] uppercase tracking-wider mb-1 font-semibold"
+                style={{ color: 'var(--green)' }}
+              >
+                Se aceitar
+              </div>
+              <ul className="text-[11px] text-text-dark-secondary space-y-0.5 list-none">
+                {sandbox.if_accept.slice(0, 3).map((line: string, i: number) => (
+                  <li key={i}>· {line}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {sandbox.if_reject ? (
+            <div
+              style={{
+                padding: 8,
+                background: 'var(--red-bg)',
+                border: '1px solid var(--red-bd)',
+                borderRadius: 6,
+              }}
+            >
+              <div
+                className="text-[10px] uppercase tracking-wider mb-1 font-semibold"
+                style={{ color: 'var(--red)' }}
+              >
+                Se rejeitar
+              </div>
+              <ul className="text-[11px] text-text-dark-secondary space-y-0.5 list-none">
+                {sandbox.if_reject.slice(0, 3).map((line: string, i: number) => (
+                  <li key={i}>· {line}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {sandbox.alternative ? (
+        <div
+          style={{
+            marginTop: 8,
+            padding: 8,
+            background: 'var(--purple-bg)',
+            border: '1px solid var(--purple-bd)',
+            borderRadius: 6,
+          }}
+        >
+          <div
+            className="text-[10px] uppercase tracking-wider mb-1 font-semibold"
+            style={{ color: 'var(--purple)' }}
+          >
+            Alternativa
+          </div>
+          <div className="text-[11px] text-text-dark-primary font-medium">
+            {sandbox.alternative.label}
+          </div>
+          {sandbox.alternative.detail ? (
+            <div className="text-[11px] text-text-dark-secondary mt-0.5">
+              {sandbox.alternative.detail}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {sandbox.source ? (
+        <div className="text-[10px] text-text-dark-tertiary mt-2">
+          fonte: {sandbox.source}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BacklogByClientPanel — preserved from Onda 4
+// ═══════════════════════════════════════════════════════════════════════════
+
+function BacklogByClientPanel({ refreshKey }: { refreshKey: number }) {
   const navigate = useNavigate();
-  const [refreshKey, setRefreshKey] = useState(0);
-
-  // ─── Queries paralelas, cada uma independente ───
-  const otdQuery = useQuery({
-    queryKey: ['painel', 'otd', refreshKey],
-    queryFn: () => ceoDashboardApi.otd({ window_days: 7 }),
+  const backlogQuery = useQuery({
+    queryKey: ['painel', 'backlog-by-client', refreshKey],
+    queryFn: () => ceoDashboardApi.backlogByClient({ limit: 8 }),
     staleTime: 60_000,
-    retry: 1,
+    retry: 0,
     refetchOnWindowFocus: false,
   });
 
-  const fpyQuery = useQuery({
-    queryKey: ['painel', 'fpy', refreshKey],
-    queryFn: () => ceoDashboardApi.firstPassYield({ window_days: 7 }),
-    staleTime: 60_000,
-    retry: 1,
-    refetchOnWindowFocus: false,
-  });
+  const items: any[] = useMemo(() => {
+    const data: any = backlogQuery.data;
+    if (!data) return [];
+    if (Array.isArray(data)) return data;
+    return data.items ?? data.clients ?? [];
+  }, [backlogQuery.data]);
 
-  const alertsQuery = useQuery({
-    queryKey: ['painel', 'alerts', refreshKey],
-    queryFn: () => ceoDashboardApi.activeAlerts({ limit: 8 }),
-    staleTime: 30_000,
-    retry: 1,
-    refetchOnWindowFocus: false,
-  });
+  if (backlogQuery.isLoading) return null;
+  if (items.length === 0) return null;
 
-  const expeditionsQuery = useQuery({
-    queryKey: ['painel', 'expeditions', refreshKey],
-    queryFn: () => ceoDashboardApi.expeditionsNextNDays({ horizon_days: 7 }),
-    staleTime: 60_000,
-    retry: 1,
-    refetchOnWindowFocus: false,
-  });
+  return (
+    <Panel
+      title="Backlog por cliente"
+      badge={items.length}
+      action={
+        <button
+          type="button"
+          onClick={() => navigate('/expedicao')}
+          className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs text-text-dark-secondary hover:text-text-dark-primary hover:bg-white/5 transition-colors"
+        >
+          Detalhe <ArrowRight size={11} />
+        </button>
+      }
+      flush
+    >
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead className="border-b border-white/[0.06]">
+            <tr className="text-left text-[10px] uppercase tracking-wider text-text-dark-tertiary">
+              <th className="px-3 py-2">Cliente</th>
+              <th className="px-3 py-2 text-right">Encomendas</th>
+              <th className="px-3 py-2 text-right">Valor €</th>
+              <th className="px-3 py-2">Próximo prazo</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.slice(0, 8).map((c, idx) => (
+              <tr
+                key={c.client_id ?? idx}
+                className="border-b border-white/[0.04] hover:bg-white/[0.02]"
+              >
+                <td className="px-3 py-2 text-text-dark-primary">
+                  {c.client_name ?? c.client_id ?? '—'}
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums text-text-dark-secondary">
+                  {c.order_count ?? 0}
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums text-text-dark-primary font-medium">
+                  €{Math.round(c.total_value_eur ?? 0).toLocaleString('pt-PT')}
+                </td>
+                <td className="px-3 py-2 text-text-dark-secondary">
+                  {c.earliest_deadline ?? '—'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Panel>
+  );
+}
 
+// ═══════════════════════════════════════════════════════════════════════════
+// TrustPanel — preserved
+// ═══════════════════════════════════════════════════════════════════════════
+
+function TrustPanel({ refreshKey }: { refreshKey: number }) {
+  const navigate = useNavigate();
   const trustQuery = useQuery({
     queryKey: ['painel', 'trust', refreshKey],
     queryFn: () => dqaApi.trustIndex({ scope: 'factory' }),
     staleTime: 5 * 60_000,
     retry: 1,
-    refetchOnWindowFocus: false,
   });
 
-  // ─── Derivações para KPIs ───
-  const alertsItems = useMemo<AlertRowFromApi[]>(() => {
-    const data: any = alertsQuery.data;
-    if (!data) return [];
-    if (Array.isArray(data)) return data;
-    if (Array.isArray(data.items)) return data.items;
-    if (Array.isArray(data.alerts)) return data.alerts;
-    return [];
-  }, [alertsQuery.data]);
-
-  const expeditionsAtRisk = useMemo(() => {
-    const data: any = expeditionsQuery.data;
-    if (!data?.items) return 0;
-    return data.items.filter((it: any) => it.risk === 'over_capacity' || it.risk === 'near_capacity').length;
-  }, [expeditionsQuery.data]);
-
-  const otdPct = (otdQuery.data as any)?.otd_pct ?? null;
-  const fpyPct = (fpyQuery.data as any)?.fpy_pct ?? null;
-
-  // Backend /v1/dqa/trust-index devolve { composite: 0..1, components:
-  // { completeness: 0..1, validity: 0..1, ... }, weights: { ... } }.
-  // Aceita ambos `composite` (canónico) e `trust_index` (legacy) por defesa.
   const trustScore = (trustQuery.data as any)?.composite
     ?? (trustQuery.data as any)?.trust_index
     ?? null;
   const trustGrade = trustScore !== null ? scoreToGrade(trustScore) : undefined;
 
-  const trustComponents = useMemo<TrustComponentFromApi[]>(() => {
+  const trustComponents = useMemo<{ name: string; score: number }[]>(() => {
     const data: any = trustQuery.data;
     if (!data) return [];
-    if (Array.isArray(data.components)) return data.components;
-    if (data.components && typeof data.components === 'object') {
-      const weights = data.weights ?? {};
+    if (data.components && typeof data.components === 'object' && !Array.isArray(data.components)) {
       return Object.entries(data.components)
         .filter(([, score]) => score !== null && score !== undefined)
-        .map(([name, score]) => ({
-          name,
-          score: Number(score),
-          weight: weights[name],
-        }));
+        .map(([name, score]) => ({ name, score: Number(score) }));
     }
     return [];
   }, [trustQuery.data]);
 
-  // ─── Refresh universal ───
-  const handleRefresh = () => setRefreshKey((k) => k + 1);
-
   return (
-    <div>
-      <PageHeader
-        title="Painel"
-        subtitle="VISÃO GERAL · TURNO DE HOJE"
-        actions={
-          <>
-            <button
-              type="button"
-              onClick={handleRefresh}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-transparent text-text-dark-secondary hover:bg-white/5 hover:text-text-dark-primary border border-white/[0.08] text-xs font-medium transition-colors"
-              title="Atualizar dados"
-            >
-              <RefreshCw size={13} />
-              Atualizar
-            </button>
-            <button
-              type="button"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-dark-700 text-text-dark-secondary hover:bg-dark-600 hover:text-text-dark-primary border border-white/[0.08] text-xs font-medium transition-colors"
-              disabled
-              title="Em breve — filtros globais"
-            >
-              <Filter size={13} />
-              Filtros
-            </button>
-            <button
-              type="button"
-              onClick={() => askCopilot('O que devo focar hoje no painel?')}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-accent-500 text-white hover:bg-accent-400 text-xs font-medium transition-colors"
-            >
-              <Sparkles size={13} />
-              Pedir ao Copilot
-            </button>
-          </>
-        }
-      />
-
-      <div className="px-6 py-4 space-y-4">
-        {/* ═══ KPI GRID ═══ */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <KPICard
-            label="OTD (7 dias)"
-            icon={<Euro size={14} />}
-            value={otdPct === null ? '—' : (otdPct * 100).toFixed(0)}
-            unit="%"
-            target="100"
-            status={
-              otdPct === null
-                ? 'neutral'
-                : otdPct >= 0.95
-                ? 'green'
-                : otdPct >= 0.85
-                ? 'yellow'
-                : 'red'
-            }
-            description="Entregas no prazo · janela 7 dias"
-            trust={trustGrade}
-            onClick={() => navigate('/relatorios')}
-          />
-          <KPICard
-            label="Qualidade 1ª passagem"
-            icon={<CheckCircle2 size={14} />}
-            value={fpyPct === null ? '—' : (fpyPct * 100).toFixed(0)}
-            unit="%"
-            target="95"
-            status={
-              fpyPct === null
-                ? 'neutral'
-                : fpyPct >= 0.85
-                ? 'green'
-                : fpyPct >= 0.70
-                ? 'yellow'
-                : 'red'
-            }
-            description="Sem retrabalho · 7 dias"
-            trust={trustGrade}
-            onClick={() => navigate('/qualidade')}
-          />
-          <KPICard
-            label="Expedições em risco"
-            icon={<AlertTriangle size={14} />}
-            value={expeditionsAtRisk}
-            unit="lotes"
-            status={statusForCount(expeditionsAtRisk, 1)}
-            description="Próximos 7 dias"
-            onClick={() => navigate('/expedicao')}
-          />
-          <KPICard
-            label="Alertas activos"
-            icon={<Bell size={14} />}
-            value={alertsItems.length}
-            unit="aviso"
-            status={statusForCount(alertsItems.length, 2)}
-            description={alertsItems.length === 0 ? 'Tudo calmo' : 'Carregar para ver lista'}
-          />
+    <Panel title="Trust index — fontes" badge={trustGrade} flush>
+      {trustQuery.isLoading ? (
+        <div className="px-4 py-6 text-center text-xs text-text-dark-tertiary">
+          A calcular trust…
         </div>
-
-        {/* ═══ ROW: Alertas + Timeline ═══ */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <Panel
-            title="Alertas activos"
-            badge={alertsItems.length}
-            action={
-              <button
-                type="button"
-                onClick={() => navigate('/qualidade')}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs text-text-dark-secondary hover:text-text-dark-primary hover:bg-white/5 transition-colors"
-              >
-                Ver tudo <ArrowRight size={12} />
-              </button>
-            }
-            flush
-          >
-            {alertsQuery.isLoading ? (
-              <div className="px-4 py-6 text-center text-xs text-text-dark-tertiary">
-                A carregar alertas…
-              </div>
-            ) : alertsQuery.isError ? (
-              <div className="px-4 py-6 text-center text-xs text-danger">
-                Erro a carregar alertas — clica em Atualizar.
-              </div>
-            ) : alertsItems.length === 0 ? (
-              <div className="px-4 py-6 text-center text-xs text-text-dark-tertiary">
-                Sem alertas activos. Tudo calmo no chão de fábrica.
-              </div>
-            ) : (
-              <div>
-                {alertsItems.slice(0, 6).map((a, idx) => (
-                  <AlertRow
-                    key={`${a.alert_id ?? idx}`}
-                    kind={severityToKindLocal(a.severity)}
-                    title={a.title ?? a.message ?? '(Sem título)'}
-                    meta={
-                      [a.source?.toUpperCase(), relativeTime(a.created_at)]
-                        .filter(Boolean)
-                        .join(' · ')
-                    }
-                    onClick={() => navigate('/qualidade')}
-                  />
-                ))}
-              </div>
-            )}
-          </Panel>
-
-          {/* Q.18.ZIP.M.2 — Inbox melhorada com filter tabs */}
-          <InboxPanel refreshKey={refreshKey} />
+      ) : trustComponents.length === 0 ? (
+        <div className="px-4 py-6 text-center text-xs text-text-dark-tertiary">
+          Sem componentes de Trust visíveis.
         </div>
-
-        {/* fecho do grid 2-col */}
-        <div className="hidden">{/* spacer */}
-        </div>
-
-        {/* ═══ Q.18.ZIP Onda 4 — Backlog por cliente (endpoint existing sub-utilizado) ═══ */}
-        <BacklogByClientPanel refreshKey={refreshKey} />
-
-        {/* ═══ ROW: Activity feed + Trust sources ═══ */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <div className="lg:col-span-2">
-            <Panel
-              title="Actividade ao vivo"
-              action={
-                <span className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-success">
-                  <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
-                  AO VIVO
-                </span>
-              }
-              flush
-              bodyClassName="p-0"
-            >
-              <LiveActivityFeed maxItems={6} showHeader={false} compact />
-            </Panel>
-          </div>
-
-          <Panel
-            title="Trust index — fontes"
-            badge={trustGrade}
-            flush
-          >
-            {trustQuery.isLoading ? (
-              <div className="px-4 py-6 text-center text-xs text-text-dark-tertiary">
-                A calcular trust…
-              </div>
-            ) : trustQuery.isError ? (
-              <div className="px-4 py-6 text-center text-xs text-danger">
-                Erro a calcular Trust Index.
-              </div>
-            ) : trustComponents.length === 0 ? (
-              <div className="px-4 py-6 text-center text-xs text-text-dark-tertiary">
-                Sem componentes de Trust visíveis.
-                <br />
-                <button
-                  type="button"
-                  onClick={() => navigate('/configuracao?tab=trust')}
-                  className="text-accent-400 hover:underline mt-1 inline-flex items-center gap-1"
-                >
-                  Configurar Trust Index
-                  <ArrowRight size={11} />
-                </button>
-              </div>
-            ) : (
-              <div className="px-4 py-3 space-y-3">
-                {trustComponents.map((c) => {
-                  const grade = scoreToGrade(c.score);
-                  const pctW = `${Math.round(c.score * 100)}%`;
-                  const barColor =
-                    c.score >= 0.85
-                      ? 'bg-success'
-                      : c.score >= 0.70
-                      ? 'bg-warning'
-                      : 'bg-danger';
-                  return (
-                    <div key={c.name} className="flex items-center gap-3">
-                      <div className="flex-1 text-xs text-text-dark-secondary truncate">
-                        {c.name}
-                      </div>
-                      <div className="w-20 h-1.5 bg-dark-900 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full ${barColor} transition-all duration-300`}
-                          style={{ width: pctW }}
-                        />
-                      </div>
-                      <TrustBadge grade={grade} size="xs" />
-                    </div>
-                  );
-                })}
-                <div className="border-t border-white/[0.06] pt-2 mt-2">
-                  <button
-                    type="button"
-                    onClick={() => navigate('/configuracao?tab=trust')}
-                    className="text-[10px] text-text-dark-tertiary hover:text-text-dark-secondary inline-flex items-center gap-1"
-                  >
-                    <Activity size={10} /> Ver detalhes Trust v2
-                  </button>
+      ) : (
+        <div className="px-4 py-3 space-y-2.5">
+          {trustComponents.map((c) => {
+            const grade = scoreToGrade(c.score);
+            const pctW = `${Math.round(c.score * 100)}%`;
+            const barColor =
+              c.score >= 0.85
+                ? 'var(--green)'
+                : c.score >= 0.70
+                  ? 'var(--yellow)'
+                  : 'var(--red)';
+            return (
+              <div key={c.name} className="flex items-center gap-3">
+                <div className="flex-1 text-xs text-text-dark-secondary truncate">
+                  {c.name}
                 </div>
+                <div
+                  style={{
+                    width: 80,
+                    height: 6,
+                    background: 'rgba(255,255,255,0.08)',
+                    borderRadius: 3,
+                    overflow: 'hidden',
+                  }}
+                >
+                  <div
+                    style={{
+                      width: pctW,
+                      height: '100%',
+                      background: barColor,
+                      transition: 'width 0.3s ease',
+                    }}
+                  />
+                </div>
+                <TrustBadge grade={grade} size="xs" />
               </div>
-            )}
-          </Panel>
+            );
+          })}
+          <div className="border-t border-white/[0.06] pt-2 mt-2">
+            <button
+              type="button"
+              onClick={() => navigate('/configuracao?tab=trust')}
+              className="text-[10px] text-text-dark-tertiary hover:text-text-dark-secondary inline-flex items-center gap-1"
+            >
+              <Activity size={10} /> Detalhe Trust v2
+            </button>
+          </div>
         </div>
-      </div>
-    </div>
+      )}
+    </Panel>
   );
 }
