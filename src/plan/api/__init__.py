@@ -14,6 +14,7 @@ from .transport import router as transport_router  # Sprint Q.2
 from .schedule_preview import router as schedule_preview_router  # Sprint Q.4
 from .phase_gaps import router as phase_gaps_router  # Sprint X.3 (cura/secagem editável)
 from .mold import router as mold_router  # Sprint R.6 (Q.18.ZIP.BE.3 wire)
+from .orders import router as orders_router  # Sprint Q.18.ZIP.BE.1
 
 router = APIRouter(prefix="/v1/plan", tags=["PLAN"])
 
@@ -25,6 +26,7 @@ router.include_router(transport_router)
 router.include_router(schedule_preview_router)
 router.include_router(phase_gaps_router)
 router.include_router(mold_router)
+router.include_router(orders_router)
 
 
 

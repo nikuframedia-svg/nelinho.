@@ -35,9 +35,34 @@ import {
   PhaseColumn,
   Panel,
   GanttChart,
+  BoatCard,
   type GanttRow,
 } from '../../components/dark';
 import { factoryApi, type BottleneckData, type WIPData } from '../../lib/factoryApi';
+
+interface ActiveOrder {
+  id: string;
+  hull: string | null;
+  product_name: string;
+  product_type: string;
+  phase: string | null;
+  status: string;
+  created_date: string | null;
+  transport_date: string | null;
+}
+
+async function fetchActiveOrders(): Promise<ActiveOrder[] | null> {
+  try {
+    const resp = await fetch(
+      'http://127.0.0.1:8001/v1/plan/orders/active?limit=500',
+      { headers: { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' } }
+    );
+    if (!resp.ok) return null;
+    return await resp.json();
+  } catch {
+    return null;
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // FASES NELO (canónicas — extraídas do brief PP1_NELO_PLANO_v4.md §3.1)
@@ -74,37 +99,47 @@ const PHASES: PhaseDef[] = [
 interface PhaseRow {
   phase: PhaseDef;
   count: number;
+  orders: ActiveOrder[];
   is_bottleneck: boolean;
   backlog_hours: number;
 }
 
-function buildPhaseRows(bottlenecks: BottleneckData | undefined | null): PhaseRow[] {
-  const byId = new Map<string, { count: number; is_bottleneck: boolean; backlog_hours: number }>();
+function buildPhaseRows(
+  bottlenecks: BottleneckData | undefined | null,
+  ordersByPhase: Map<string, ActiveOrder[]>
+): PhaseRow[] {
+  const byId = new Map<string, { is_bottleneck: boolean; backlog_hours: number }>();
   if (bottlenecks?.bottlenecks) {
     for (const b of bottlenecks.bottlenecks) {
-      // Mapear nome da fase devolvido pelo backend ao id canónico
       const matchPhase = PHASES.find(
         (p) =>
           p.name.toLowerCase() === b.fase_nome?.toLowerCase() ||
           p.id === b.fase_id
       );
       const key = matchPhase?.id ?? b.fase_id;
-      // Aproximação: backlog_hours / 8h_dia / capacity = n barcos pendentes
-      // Sem endpoint dedicado, isto é o sinal mais próximo de "WIP por fase"
-      const approxCount = Math.max(0, Math.round(b.backlog_hours / 8));
       byId.set(key, {
-        count: approxCount,
         is_bottleneck: b.is_critical,
         backlog_hours: b.backlog_hours,
       });
     }
   }
-  return PHASES.map((p) => ({
-    phase: p,
-    count: byId.get(p.id)?.count ?? 0,
-    is_bottleneck: byId.get(p.id)?.is_bottleneck ?? false,
-    backlog_hours: byId.get(p.id)?.backlog_hours ?? 0,
-  }));
+  return PHASES.map((p) => {
+    const ordersHere = ordersByPhase.get(p.id) ?? [];
+    const fromBottleneck = byId.get(p.id);
+    // Preferimos o count REAL de orders (Q.18.ZIP.BE.1).
+    // Fallback: aproximação via backlog_hours / 8h.
+    const realCount = ordersHere.length;
+    const approxCount = fromBottleneck
+      ? Math.max(0, Math.round(fromBottleneck.backlog_hours / 8))
+      : 0;
+    return {
+      phase: p,
+      count: realCount > 0 ? realCount : approxCount,
+      orders: ordersHere,
+      is_bottleneck: fromBottleneck?.is_bottleneck ?? false,
+      backlog_hours: fromBottleneck?.backlog_hours ?? 0,
+    };
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -141,9 +176,33 @@ export default function ProducaoPage() {
     refetchOnWindowFocus: false,
   });
 
+  // Q.18.ZIP.BE.1 — barcos reais por fase (popula PhaseColumn cards)
+  const ordersQuery = useQuery({
+    queryKey: ['producao', 'orders-active', refreshKey],
+    queryFn: () => fetchActiveOrders(),
+    staleTime: 30_000,
+    retry: 0,
+    refetchOnWindowFocus: false,
+  });
+
+  const ordersByPhase: Map<string, ActiveOrder[]> = useMemo(() => {
+    const m = new Map<string, ActiveOrder[]>();
+    const list = ordersQuery.data ?? [];
+    for (const o of list) {
+      // Mapear current_phase_name ao id canónico
+      const matchPhase = PHASES.find(
+        (p) => p.name.toLowerCase() === (o.phase ?? '').toLowerCase()
+      );
+      const key = matchPhase?.id ?? 'unknown';
+      if (!m.has(key)) m.set(key, []);
+      m.get(key)!.push(o);
+    }
+    return m;
+  }, [ordersQuery.data]);
+
   const phaseRows = useMemo(
-    () => buildPhaseRows(bottlenecksQuery.data?.data),
-    [bottlenecksQuery.data]
+    () => buildPhaseRows(bottlenecksQuery.data?.data, ordersByPhase),
+    [bottlenecksQuery.data, ordersByPhase]
   );
 
   const totalBoats = (wipQuery.data?.data as WIPData | undefined)?.open_orders ?? 0;
@@ -265,7 +324,11 @@ export default function ProducaoPage() {
 
         {/* ═══ Vista activa ═══ */}
         {view === 'phases' && (
-          <PhasesView phaseRows={phaseRows} loading={bottlenecksQuery.isLoading} />
+          <PhasesView
+            phaseRows={phaseRows}
+            loading={bottlenecksQuery.isLoading || ordersQuery.isLoading}
+            ordersAvailable={!ordersQuery.isError && ordersQuery.data !== null}
+          />
         )}
         {view === 'gantt' && (
           <Panel title="Plano semanal" badge={`${ganttRows.length} fases`} flush>
@@ -296,9 +359,11 @@ export default function ProducaoPage() {
 function PhasesView({
   phaseRows,
   loading,
+  ordersAvailable,
 }: {
   phaseRows: PhaseRow[];
   loading: boolean;
+  ordersAvailable: boolean;
 }) {
   if (loading) {
     return (
@@ -310,47 +375,70 @@ function PhasesView({
 
   return (
     <div className="space-y-3">
-      {/* Q.18.ZIP.M.5 light — aviso visível sobre drag-drop por barco */}
-      <div className="mx-2 flex items-start gap-2 px-3 py-2 rounded-md bg-warning/5 border border-warning/20">
-        <AlertTriangle size={14} className="shrink-0 mt-0.5 text-warning" />
-        <div className="flex-1 text-xs">
-          <span className="font-semibold text-warning">Drag-drop entre fases pendente</span>
-          <span className="text-text-dark-secondary">
-            {' '}— Endpoint <code className="font-mono">/v1/plan/orders/active</code> com lista de barcos por fase ainda não está exposto (Q.18.ZIP.BE.1 deferred).
-          </span>
-          <div className="text-[10px] text-text-dark-tertiary mt-1">
-            Para drag-drop funcional → vista <strong>Tabela</strong> (DragDropPlanner Q.4 wired ao schedulePreviewApi).
+      {/* Aviso só quando endpoint /v1/plan/orders/active não responde
+          (degraded). Quando funciona mas devolve []  → mostra colunas
+          com EmptyState "Sem barcos activos". */}
+      {!ordersAvailable && (
+        <div className="mx-2 flex items-start gap-2 px-3 py-2 rounded-md bg-warning/5 border border-warning/20">
+          <AlertTriangle size={14} className="shrink-0 mt-0.5 text-warning" />
+          <div className="flex-1 text-xs">
+            <span className="font-semibold text-warning">Endpoint /v1/plan/orders/active indisponível</span>
+            <span className="text-text-dark-secondary">
+              {' '}— Cards de barcos por fase ficam vazios. Counts mostrados são aproximação via bottlenecks.
+            </span>
+            <div className="text-[10px] text-text-dark-tertiary mt-1">
+              Para drag-drop funcional → vista <strong>Tabela</strong> (DragDropPlanner Q.4 wired ao schedulePreviewApi).
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       <div className="overflow-x-auto pb-2">
         <div className="flex gap-3 min-w-max">
           {phaseRows.map((r) => (
-          <PhaseColumn
-            key={r.phase.id}
-            phase_id={r.phase.id}
-            phase_name={r.phase.name}
-            count={r.count}
-            capacity={r.phase.capacity}
-            current_load={r.count}
-            curing_hours={r.phase.curing_hours}
-            is_bottleneck={r.is_bottleneck}
-          >
-            {r.count === 0 ? (
-              <div className="text-[10px] text-text-dark-tertiary text-center py-4">
-                Sem barcos
-              </div>
-            ) : (
-              <div className="text-[10px] text-text-dark-tertiary text-center py-3">
-                {r.count} barco{r.count !== 1 ? 's' : ''} estimado{r.count !== 1 ? 's' : ''}
-                <div className="mt-1 text-text-dark-secondary">
-                  Para drag-drop por barco → vista <strong>Tabela</strong>
+            <PhaseColumn
+              key={r.phase.id}
+              phase_id={r.phase.id}
+              phase_name={r.phase.name}
+              count={r.count}
+              capacity={r.phase.capacity}
+              current_load={r.count}
+              curing_hours={r.phase.curing_hours}
+              is_bottleneck={r.is_bottleneck}
+            >
+              {r.orders.length > 0 ? (
+                <div className="space-y-2">
+                  {r.orders.slice(0, 8).map((o) => (
+                    <BoatCard
+                      key={o.id}
+                      order_id={parseInt(o.hull ?? '0', 10) || 0}
+                      model={o.product_name}
+                      model_short={o.product_type || '—'}
+                      phase={o.phase ?? r.phase.name}
+                      status={r.is_bottleneck ? 'at_risk' : 'on_time'}
+                      transport_date={o.transport_date ?? undefined}
+                    />
+                  ))}
+                  {r.orders.length > 8 && (
+                    <div className="text-[10px] text-text-dark-tertiary text-center py-1">
+                      +{r.orders.length - 8} mais
+                    </div>
+                  )}
                 </div>
-              </div>
-            )}
-          </PhaseColumn>
-        ))}
+              ) : r.count === 0 ? (
+                <div className="text-[10px] text-text-dark-tertiary text-center py-4">
+                  Sem barcos
+                </div>
+              ) : (
+                <div className="text-[10px] text-text-dark-tertiary text-center py-3">
+                  {r.count} barco{r.count !== 1 ? 's' : ''} estimado{r.count !== 1 ? 's' : ''}
+                  <div className="mt-1 text-text-dark-secondary">
+                    Detalhe → vista <strong>Tabela</strong>
+                  </div>
+                </div>
+              )}
+            </PhaseColumn>
+          ))}
         </div>
       </div>
     </div>
