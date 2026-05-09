@@ -14,7 +14,8 @@
  */
 
 import type { ReactNode } from 'react';
-import { AlertCircle, AlertTriangle, Bell, Info, Bot, User } from 'lucide-react';
+import { AlertCircle, AlertTriangle, Bell, Info, User } from 'lucide-react';
+import { CopilotMascot } from '../copilot/CopilotMascot';
 
 export type AlertSeverity = 'critical' | 'high' | 'medium' | 'low';
 export type AlertSource = 'auto' | 'manual';
@@ -128,15 +129,16 @@ export function AlertCard({
           </span>
           {source ? (
             <span
-              className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider text-text-dark-tertiary"
-              title={source === 'auto' ? 'Detectado pelo sistema' : 'Criado manualmente'}
+              className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-text-dark-tertiary"
+              title={source === 'auto' ? 'Detectado pelo Nelinho (Copilot)' : 'Criado manualmente'}
             >
               {source === 'auto' ? (
-                <Bot className="w-3 h-3" />
+                /* Q.18.ZIP.L — Nelinho mascot identifica deteção automatica */
+                <CopilotMascot size="sm" className="!h-4 w-auto" />
               ) : (
                 <User className="w-3 h-3" />
               )}
-              {source === 'auto' ? 'auto' : 'manual'}
+              {source === 'auto' ? 'Nelinho' : 'manual'}
             </span>
           ) : null}
           {timestamp ? (

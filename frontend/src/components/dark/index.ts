@@ -105,3 +105,7 @@ export type { BreadcrumbsProps, BreadcrumbItem } from './Breadcrumbs';
 export { Modal } from './Modal';
 export type { ModalProps } from './Modal';
 
+// Sprint Q.18.ZIP.L — EmptyState global com Nelinho mascot opcional
+export { EmptyState } from './EmptyState';
+export type { EmptyStateProps } from './EmptyState';
+
