@@ -2,6 +2,23 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700;9..40,800&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap');
 
+/* Q.18.ZIP.A — Palantir industrial overlay tokens (additive, não substitui o sistema teal/dark) */
+:root {
+  --accent-orange: #f97316;
+  --accent-orange-soft: rgba(249, 115, 22, 0.12);
+  --accent-orange-bd: rgba(249, 115, 22, 0.35);
+  --bd-focus: #4d9ef6;
+  --grid-line: rgba(255, 255, 255, 0.025);
+}
+
+/* Opt-in grid background — Palantir trademark (32×32 subtle grid) */
+.with-grid {
+  background-image:
+    linear-gradient(0deg, var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
 @theme {
   /* ═══════════════════════════════════════════════════════════════════════════
      ALPHA DASHBOARD THEME

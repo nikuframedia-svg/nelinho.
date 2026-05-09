@@ -17,6 +17,8 @@
 import type { ReactNode } from 'react';
 import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import { formatNumber } from '../../lib/utils';
+import { Sparkline } from './Sparkline';
+import { TrustBadge, type TrustGrade } from './TrustBadge';
 
 export type KPIStatus = 'green' | 'yellow' | 'red' | 'neutral';
 
@@ -40,6 +42,10 @@ export interface KPICardProps {
   /** Click navega — ex: para /producao?filter=at_risk. */
   onClick?: () => void;
   className?: string;
+  /** Q.18.ZIP.A — Sparkline opcional (N pontos de tendência). Vem de query histórica. */
+  spark?: number[];
+  /** Q.18.ZIP.A — TrustBadge opcional (qualidade da fonte de dados). */
+  trust?: TrustGrade;
 }
 
 const STATUS_BORDER: Record<KPIStatus, string> = {
@@ -74,6 +80,8 @@ export function KPICard({
   icon,
   onClick,
   className = '',
+  spark,
+  trust,
 }: KPICardProps): ReactNode {
   const interactive = onClick !== undefined;
   const valueStr = typeof value === 'number' ? formatNumber(value) : value;
@@ -125,7 +133,7 @@ export function KPICard({
           : undefined
       }
     >
-      {/* Header — ícone + label */}
+      {/* Header — ícone + label + (trust badge) */}
       <div className="flex items-start justify-between gap-2 mb-4">
         <div className="flex items-center gap-2 min-w-0">
           {icon ? (
@@ -134,6 +142,8 @@ export function KPICard({
           <span className="text-[11px] font-semibold uppercase tracking-wider text-text-dark-tertiary truncate">
             {label}
           </span>
+          {/* Q.18.ZIP.A — Trust badge inline com label */}
+          {trust ? <TrustBadge grade={trust} size="xs" /> : null}
         </div>
 
         {trend !== undefined && TrendIcon ? (
@@ -169,6 +179,13 @@ export function KPICard({
         <p className="text-xs text-text-dark-secondary mt-2 leading-snug">
           {description}
         </p>
+      ) : null}
+
+      {/* Q.18.ZIP.A — Sparkline tendência (renderiza só se passado) */}
+      {spark && spark.length > 0 ? (
+        <div className={`mt-3 ${STATUS_VALUE[status]} opacity-70`}>
+          <Sparkline points={spark} width={120} height={26} />
+        </div>
       ) : null}
     </div>
   );

@@ -84,3 +84,24 @@ export type {
 } from './GanttChart';
 export { BigButton } from './BigButton';
 
+// Sprint Q.18.ZIP.A — primitives portados/inspirados no nelo (1).zip
+// (Palantir industrial design + visual mais dinâmico).
+export { Sparkline } from './Sparkline';
+export type { SparklineProps } from './Sparkline';
+export { TrustBadge, scoreToGrade } from './TrustBadge';
+export type { TrustBadgeProps, TrustGrade } from './TrustBadge';
+export { AlertRow, severityToKind } from './AlertRow';
+export type { AlertRowProps, AlertKind } from './AlertRow';
+export { Panel } from './Panel';
+export type { PanelProps } from './Panel';
+export { Tabs } from './Tabs';
+export type { TabsProps, TabItem } from './Tabs';
+export { SegmentedControl } from './SegmentedControl';
+export type { SegmentedControlProps, SegmentOption } from './SegmentedControl';
+export { PageHeader } from './PageHeader';
+export type { PageHeaderProps } from './PageHeader';
+export { Breadcrumbs } from './Breadcrumbs';
+export type { BreadcrumbsProps, BreadcrumbItem } from './Breadcrumbs';
+export { Modal } from './Modal';
+export type { ModalProps } from './Modal';
+

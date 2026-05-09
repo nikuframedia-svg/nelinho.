@@ -64,10 +64,23 @@ export default {
           light: '#f87171',
           dark: '#dc2626',
         },
+        // Q.18.ZIP.A — Palantir industrial accent (additive, não substitui o teal)
+        'accent-orange': {
+          DEFAULT: '#f97316',
+          light: '#fb923c',
+          soft: 'rgba(249, 115, 22, 0.12)',
+          bd: 'rgba(249, 115, 22, 0.35)',
+        },
+        purple: {
+          DEFAULT: '#b780ff',
+          light: '#c89eff',
+          soft: 'rgba(183, 128, 255, 0.12)',
+        },
       },
       fontFamily: {
-        sans: ['Space Grotesk', 'DM Sans', 'Inter', 'system-ui', 'sans-serif'],
-        mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
+        // Q.18.ZIP.A — Geist primária (do nelo zip), Space Grotesk fallback
+        sans: ['Geist', 'Space Grotesk', 'DM Sans', 'Inter', 'system-ui', 'sans-serif'],
+        mono: ['Geist Mono', 'JetBrains Mono', 'Fira Code', 'monospace'],
       },
       boxShadow: {
         'card': '0 4px 16px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.2)',

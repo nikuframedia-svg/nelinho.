@@ -17,6 +17,7 @@ import { useState, useEffect } from 'react';
 import { Search, Bell, Command } from 'lucide-react';
 import { useCommandPalette } from '../../hooks';
 import { UmweltSwitcher } from '../dashboard/UmweltSwitcher';
+import { Breadcrumbs, type BreadcrumbItem } from '../dark/Breadcrumbs';
 
 function nowLabel(): string {
   const fmt = new Intl.DateTimeFormat('pt-PT', {
@@ -29,7 +30,14 @@ function nowLabel(): string {
   return fmt.format(new Date());
 }
 
-export function TopBar() {
+export interface TopBarProps {
+  /** Q.18.ZIP.A — slot opcional de breadcrumbs antes da search.
+   *  Cada página-mãe pode passar [{label: 'Operação'}, {label: 'Painel'}]
+   *  para mostrar `Nelo · Operação · Painel` no topo. */
+  breadcrumbs?: BreadcrumbItem[];
+}
+
+export function TopBar({ breadcrumbs }: TopBarProps = {}) {
   const { open: openCommandPalette } = useCommandPalette();
   const [now, setNow] = useState(nowLabel());
 
@@ -37,6 +45,12 @@ export function TopBar() {
     const id = window.setInterval(() => setNow(nowLabel()), 30_000);
     return () => window.clearInterval(id);
   }, []);
+
+  // Sempre incluir 'Nelo' como root crumb se breadcrumbs passados
+  const fullCrumbs: BreadcrumbItem[] | undefined =
+    breadcrumbs && breadcrumbs.length > 0
+      ? [{ label: 'Nelo' }, ...breadcrumbs]
+      : undefined;
 
   return (
     <header
@@ -47,6 +61,11 @@ export function TopBar() {
       "
       style={{ height: 52 }}
     >
+      {/* Q.18.ZIP.A — Breadcrumbs slot (renderiza só se passado) */}
+      {fullCrumbs ? (
+        <Breadcrumbs items={fullCrumbs} className="hidden md:flex" />
+      ) : null}
+
       {/* Search trigger (opens CommandPalette) */}
       <button
         type="button"
