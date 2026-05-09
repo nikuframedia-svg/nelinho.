@@ -10,6 +10,8 @@ import { RealtimeProvider } from './providers/RealtimeProvider';
 
 // Lazy load heavy pages for code splitting
 const Dashboard = lazy(() => import('./pages/Dashboard').then(m => ({ default: m.Dashboard })));
+// Sprint Q.18.ZIP.B — Painel portado do nelo zip (substitui Dashboard como rota /)
+const PainelPage = lazy(() => import('./pages/painel/PainelPage'));
 const RAGIngestPage = lazy(() => import('./pages/admin/RAGIngestPage').then(m => ({ default: m.RAGIngestPage })));
 const SettingsPage = lazy(() => import('./pages/admin/SettingsPage').then(m => ({ default: m.SettingsPage })));
 const DQAPage = lazy(() => import('./pages/admin/DQAPage').then(m => ({ default: m.DQAPage })));
@@ -99,8 +101,21 @@ function App() {
                 
                 <Routes>
                 <Route path="/" element={<Layout />}>
-                  {/* Dashboard */}
+                  {/* Sprint Q.18.ZIP.B — / serve PainelPage (porto do nelo zip).
+                      Dashboard.tsx mantém-se no disco até cleanup Q.18.ZIP.K
+                      mas já não é renderizado pela rota canónica. */}
                   <Route index element={
+                    <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
+                      <PainelPage />
+                    </Suspense>
+                  } />
+                  <Route path="painel" element={
+                    <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
+                      <PainelPage />
+                    </Suspense>
+                  } />
+                  {/* Acesso ao Dashboard antigo via path explícito (debug/comparação) */}
+                  <Route path="dashboard-legacy" element={
                     <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
                       <Dashboard />
                     </Suspense>
@@ -237,8 +252,10 @@ function App() {
                   
                   {/* Sprint Q.18.UI.A — novos paths PT-PT.
                       Por agora redirect para a versão antiga; cada Q.18.UI.X
-                      vai substituir o redirect pela página nativa. */}
-                  <Route path="painel" element={<Navigate to="/" replace />} />
+                      vai substituir o redirect pela página nativa.
+                      Nota Q.18.ZIP.B: /painel já é nativo acima — esta entrada
+                      é redundante (mantida só por defesa caso alguém tire). */}
+                  {/* /painel removido daqui — agora rota nativa acima */}
                   <Route path="producao" element={<Navigate to="/plan/scheduling" replace />} />
                   <Route path="planeamento" element={<Navigate to="/plan/scheduling" replace />} />
                   <Route path="expedicao" element={<Navigate to="/plan/dispatch" replace />} />
