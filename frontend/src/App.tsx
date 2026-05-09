@@ -137,8 +137,10 @@ function App() {
                     </Suspense>
                   } />
                   
-                  {/* NEW: Operations Inbox - Action-oriented exceptions */}
-                  <Route path="inbox" element={
+                  {/* /inbox: Q.18.ZIP.M.2 absorvido em /painel?tab=inbox.
+                      Mantém legacy reachable via /inbox-legacy para debug. */}
+                  <Route path="inbox" element={<Navigate to="/painel?tab=inbox" replace />} />
+                  <Route path="inbox-legacy" element={
                     <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
                       <OpsInboxPage />
                     </Suspense>
@@ -166,8 +168,76 @@ function App() {
                     </Suspense>
                   } />
                   
-                  {/* CORE Module - Master Data */}
+                  {/* ── Q.18.ZIP Onda 5 — legacy redirects ───────────────
+                      Bookmarks antigos continuam a funcionar mas levam para
+                      a página portada equivalente. Páginas legacy ainda
+                      acessíveis via -legacy suffix para debug/comparação. */}
+
+                  {/* CORE Master Data → /configuracao tab "Dados Mestre" */}
                   <Route path="core">
+                    <Route path="products" element={<Navigate to="/configuracao?tab=dados-mestre&sub=products" replace />} />
+                    <Route path="machines" element={<Navigate to="/configuracao?tab=dados-mestre&sub=machines" replace />} />
+                    <Route path="employees" element={<Navigate to="/equipa?tab=lista" replace />} />
+                    <Route path="operations" element={<Navigate to="/configuracao?tab=dados-mestre&sub=operations" replace />} />
+                    <Route path="rates" element={<Navigate to="/configuracao?tab=dados-mestre&sub=rates" replace />} />
+                    <Route path="tenants" element={<Navigate to="/configuracao?tab=dados-mestre&sub=tenants" replace />} />
+                    <Route path="bom" element={<Navigate to="/configuracao?tab=dados-mestre&sub=bom" replace />} />
+                    <Route path="customers" element={<Navigate to="/configuracao?tab=dados-mestre&sub=customers" replace />} />
+                    <Route path="suppliers" element={<Navigate to="/configuracao?tab=dados-mestre&sub=suppliers" replace />} />
+                  </Route>
+
+                  {/* PLAN Production → /producao | /planeamento */}
+                  <Route path="plan">
+                    <Route path="scheduling" element={<Navigate to="/producao" replace />} />
+                    <Route path="mrp" element={<Navigate to="/planeamento?tab=materiais" replace />} />
+                    <Route path="capacity" element={<Navigate to="/producao?view=fase" replace />} />
+                    <Route path="timeline" element={<Navigate to="/painel" replace />} />
+                    <Route path="dispatch" element={<Navigate to="/expedicao" replace />} />
+                  </Route>
+
+                  {/* PROFIT → /relatorios + /qualidade */}
+                  <Route path="profit">
+                    <Route path="oee" element={<Navigate to="/qualidade?tab=oee" replace />} />
+                    <Route path="quality" element={<Navigate to="/qualidade?tab=resumo" replace />} />
+                    <Route path="cogs" element={<Navigate to="/relatorios?tab=custos" replace />} />
+                    <Route path="pricing" element={<Navigate to="/relatorios?tab=pricing" replace />} />
+                    <Route path="scenarios" element={<Navigate to="/relatorios?tab=cenarios" replace />} />
+                    <Route path="kpis" element={<Navigate to="/relatorios?tab=kpis" replace />} />
+                  </Route>
+
+                  {/* HR → /equipa */}
+                  <Route path="hr">
+                    <Route path="allocations" element={<Navigate to="/equipa?tab=alocacoes" replace />} />
+                    <Route path="payroll" element={<Navigate to="/relatorios?tab=kpis" replace />} />
+                    <Route path="productivity" element={<Navigate to="/equipa?tab=produtividade" replace />} />
+                  </Route>
+
+                  {/* SUPPLY → /planeamento + /relatorios */}
+                  <Route path="supply">
+                    <Route path="inventory" element={<Navigate to="/planeamento?tab=materiais" replace />} />
+                    <Route path="forecast" element={<Navigate to="/planeamento?tab=forecast" replace />} />
+                    <Route path="rop" element={<Navigate to="/planeamento?tab=materiais" replace />} />
+                    <Route path="abc" element={<Navigate to="/relatorios?tab=custos" replace />} />
+                  </Route>
+
+                  {/* WORKFORCE → /equipa Risco/Simulador/Formação */}
+                  <Route path="workforce">
+                    <Route index element={<Navigate to="/equipa?tab=risco" replace />} />
+                    <Route path="risk" element={<Navigate to="/equipa?tab=risco" replace />} />
+                    <Route path="simulator" element={<Navigate to="/equipa?tab=simulador" replace />} />
+                    <Route path="training" element={<Navigate to="/equipa?tab=formacao" replace />} />
+                  </Route>
+
+                  {/* SHARED + diagnóstico/sandbox */}
+                  <Route path="decisions" element={<Navigate to="/painel?tab=inbox" replace />} />
+                  <Route path="explain" element={<Navigate to="/qualidade?tab=diagnostico" replace />} />
+                  <Route path="explain/:metricId" element={<Navigate to="/qualidade?tab=diagnostico" replace />} />
+                  <Route path="twin" element={<Navigate to="/planeamento?tab=simulador" replace />} />
+                  <Route path="sandbox" element={<Navigate to="/planeamento?tab=simulador" replace />} />
+                  <Route path="suggestions" element={<Navigate to="/painel?tab=inbox" replace />} />
+
+                  {/* Legacy reachable para debug — usar com cuidado */}
+                  <Route path="core-legacy">
                     <Route path="products" element={<ProductsPage />} />
                     <Route path="machines" element={<MachinesPage />} />
                     <Route path="employees" element={<EmployeesPage />} />
@@ -178,9 +248,7 @@ function App() {
                     <Route path="customers" element={<CustomersPage />} />
                     <Route path="suppliers" element={<SuppliersPage />} />
                   </Route>
-                  
-                  {/* PLAN Module - Production Planning */}
-                  <Route path="plan">
+                  <Route path="plan-legacy">
                     <Route path="scheduling" element={<SchedulingPage />} />
                     <Route path="mrp" element={<MRPPage />} />
                     <Route path="capacity" element={<CapacityPage />} />
@@ -195,9 +263,7 @@ function App() {
                       </Suspense>
                     } />
                   </Route>
-                  
-                  {/* PROFIT Module - Cost & Pricing */}
-                  <Route path="profit">
+                  <Route path="profit-legacy">
                     <Route path="oee" element={<OEEPage />} />
                     <Route path="quality" element={<QualityPage />} />
                     <Route path="cogs" element={<COGSPage />} />
@@ -205,71 +271,39 @@ function App() {
                     <Route path="scenarios" element={<ScenariosPage />} />
                     <Route path="kpis" element={<KPIsPage />} />
                   </Route>
-                  
-                  {/* HR Module - Human Resources */}
-                  <Route path="hr">
+                  <Route path="hr-legacy">
                     <Route path="allocations" element={<AllocationsPage />} />
                     <Route path="payroll" element={<PayrollPage />} />
                     <Route path="productivity" element={<ProductivityPage />} />
                   </Route>
-                  
-                  {/* SUPPLY Module - Supply Chain Planning */}
-                  <Route path="supply">
+                  <Route path="supply-legacy">
                     <Route path="inventory" element={<InventoryPage />} />
                     <Route path="forecast" element={<ForecastPage />} />
                     <Route path="rop" element={<ROPPage />} />
                     <Route path="abc" element={<ABCPage />} />
                   </Route>
-                  
-                  {/* WORKFORCE Module - Decision OS for Workforce Operations (KILLER FEATURE) */}
-                  <Route path="workforce">
-                    <Route index element={
-                      <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
-                        <WorkforceDashboard />
-                      </Suspense>
-                    } />
-                    <Route path="risk" element={
-                      <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
-                        <WorkforceDashboard />
-                      </Suspense>
-                    } />
-                    <Route path="simulator" element={
-                      <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
-                        <WorkforceDashboard />
-                      </Suspense>
-                    } />
-                    <Route path="training" element={
-                      <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
-                        <WorkforceDashboard />
-                      </Suspense>
-                    } />
-                  </Route>
-                  
-                  {/* SHARED Module - Decision Intelligence Platform */}
-                  <Route path="decisions" element={<DecisionsPage />} />
-                  
-                  {/* NEW MODULES - Explain, Twin, Sandbox, Suggestions */}
-                  <Route path="explain" element={
+                  <Route path="workforce-legacy" element={
+                    <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
+                      <WorkforceDashboard />
+                    </Suspense>
+                  } />
+                  <Route path="decisions-legacy" element={<DecisionsPage />} />
+                  <Route path="explain-legacy" element={
                     <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
                       <ExplainPage />
                     </Suspense>
                   } />
-                  <Route path="explain/:metricId" element={
-                    <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
-                      <ExplainPage />
-                    </Suspense>
-                  } />
-                  <Route path="twin" element={
+                  <Route path="twin-legacy" element={
                     <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
                       <TwinPage />
                     </Suspense>
                   } />
-                  <Route path="sandbox" element={
+                  <Route path="sandbox-legacy" element={
                     <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
                       <SandboxPage />
                     </Suspense>
                   } />
-                  <Route path="suggestions" element={
+                  <Route path="suggestions-legacy" element={
                     <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
                       <SuggestionsPage />
                     </Suspense>
@@ -328,15 +362,31 @@ function App() {
                   <Route path="products" element={<Navigate to="/core/products" replace />} />
                   <Route path="machines" element={<Navigate to="/core/machines" replace />} />
                   
-                  {/* Settings */}
-                  <Route path="settings" element={
+                  {/* Settings → /configuracao tab "Scheduling" (port da SettingsPage) */}
+                  <Route path="settings" element={<Navigate to="/configuracao?tab=scheduling" replace />} />
+                  <Route path="settings-legacy" element={
                     <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
                       <SettingsPage />
                     </Suspense>
                   } />
-                  
-                  {/* Admin routes */}
+
+                  {/* Admin → /configuracao com tab apropriada */}
                   <Route path="admin">
+                    <Route path="rag-ingest" element={<Navigate to="/configuracao?tab=sistema&sub=rag" replace />} />
+                    <Route path="dqa" element={<Navigate to="/configuracao?tab=trust" replace />} />
+                    <Route path="audit-trail" element={<Navigate to="/configuracao?tab=sistema&sub=audit" replace />} />
+                    <Route path="rbac" element={<Navigate to="/configuracao?tab=sistema&sub=rbac" replace />} />
+                    <Route path="learned-rules" element={<Navigate to="/configuracao?tab=aprendizagem&sub=learned" replace />} />
+                    <Route path="regras" element={<Navigate to="/configuracao?tab=aprendizagem&sub=regras" replace />} />
+                    <Route path="cura-secagem" element={<Navigate to="/configuracao?tab=cura" replace />} />
+                    <Route path="data-quality" element={<Navigate to="/configuracao?tab=trust" replace />} />
+                    <Route path="tool-registry" element={<Navigate to="/configuracao?tab=sistema&sub=tools" replace />} />
+                    <Route path="data-ingestion" element={<Navigate to="/configuracao?tab=sistema&sub=ingestion" replace />} />
+                    <Route path="health" element={<Navigate to="/configuracao?tab=sistema&sub=health" replace />} />
+                  </Route>
+
+                  {/* Admin legacy reachable via -legacy para debug/comparação */}
+                  <Route path="admin-legacy">
                     <Route path="rag-ingest" element={
                       <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
                         <RAGIngestPage />
