@@ -109,3 +109,24 @@ export type { ModalProps } from './Modal';
 export { EmptyState } from './EmptyState';
 export type { EmptyStateProps } from './EmptyState';
 
+// Sprint Q.18.ZIP.atoms — atoms portados literalmente do design/nelo-zip/src/atoms.jsx
+// (status colors green/yellow/red/blue/orange/purple/gray + glyph ●◆▲◐ inline).
+// `StatusBadge` do zip exposto como `ZipStatusBadge` para não colidir com
+// o legacy DarkBadge.StatusBadge (semantica diferente).
+export {
+  ToneBadge as ZipToneBadge,
+  StatusBadge as ZipStatusBadge,
+  SevBadge as ZipSevBadge,
+  Legend as ZipLegend,
+  BoatCardZip,
+  STATUS_MAP as ZIP_STATUS_MAP,
+  SEV_MAP as ZIP_SEV_MAP,
+} from './ZipAtoms';
+export type {
+  ToneColor as ZipToneColor,
+  BoatStatus as ZipBoatStatus,
+  Severity as ZipSeverity,
+  LegendItem as ZipLegendItem,
+  ZipBoat,
+} from './ZipAtoms';
+
