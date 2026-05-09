@@ -7,13 +7,14 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Dark theme backgrounds — aligned com nelo.html zip --bg-N
+        // Dark theme backgrounds — Q.18.ZIP.design2 OKLCH (HEX equivalents)
+        // hue 250 = cool blue-gray neutral (Palantir-like)
         dark: {
-          900: '#0A0A0A',   // matches --bg-0 (page bg)
-          800: '#111113',   // matches --bg-1 (card bg)
-          700: '#16171A',   // matches --bg-2 (nested)
-          600: '#1E1F23',   // matches --bg-3 (track / hover)
-          500: '#2A2B30',   // matches --bg-4 (elevated)
+          900: '#1d2025',   // matches --bg-0 oklch(0.158 0.008 250)
+          800: '#252830',   // matches --bg-1 oklch(0.195 0.008 250)
+          700: '#2c2f37',   // matches --bg-2 oklch(0.225 0.009 250)
+          600: '#373a43',   // matches --bg-3 oklch(0.265 0.010 250)
+          500: '#42454f',   // matches --bg-4 oklch(0.305 0.011 250)
         },
         // Accent - Teal
         accent: {
@@ -41,22 +42,22 @@ export default {
           800: '#075985',
           900: '#0c4a6e',
         },
-        // Text colors for dark theme — aligned com nelo.html zip --fg-N
+        // Text colors — Q.18.ZIP.design2 OKLCH (HEX equivalents)
         'text-dark': {
-          primary:   '#FAFAFA',  // matches --fg-0
-          secondary: '#D4D4D8',  // matches --fg-1
-          tertiary:  '#A1A1AA',  // matches --fg-2
-          muted:     '#71717A',  // matches --fg-3
+          primary:   '#f0f1f3',  // matches --fg-0 oklch(0.96 0.005 250)
+          secondary: '#c8cbd0',  // matches --fg-1 oklch(0.82 0.008 250)
+          tertiary:  '#888d96',  // matches --fg-2 oklch(0.62 0.012 250)
+          muted:     '#5a5f68',  // matches --fg-3 oklch(0.45 0.015 250)
         },
-        // Border tokens (zip --bd-N) accessible as Tailwind utility classes
-        'bd-1': '#25262B',
-        'bd-2': '#34353B',
-        'bd-3': '#4A4C54',
-        // Status colors (zip-aligned, used inline)
-        green:  { DEFAULT: '#22C55E' },
-        yellow: { DEFAULT: '#EAB308' },
-        red:    { DEFAULT: '#EF4444' },
-        blue:   { DEFAULT: '#3B82F6' },
+        // Border tokens (--bd-N) accessible as Tailwind utility classes
+        'bd-1': '#3b3e47',  // matches --bd-1 oklch(0.295 0.011 250)
+        'bd-2': '#494d58',  // matches --bd-2 oklch(0.355 0.013 250)
+        'bd-3': '#5a5f68',  // matches --bd-3 oklch(0.420 0.014 250)
+        // Status colors (design2 desaturated calm — HEX approximations)
+        green:  { DEFAULT: '#5fc77e' },  // oklch(0.78 0.14 155)
+        yellow: { DEFAULT: '#d6b146' },  // oklch(0.82 0.14 90)
+        red:    { DEFAULT: '#e76060' },  // oklch(0.72 0.18 25)
+        blue:   { DEFAULT: '#7aa3d8' },  // oklch(0.72 0.14 245)
         // Status colors
         success: {
           DEFAULT: '#10b981',
@@ -87,9 +88,13 @@ export default {
         },
       },
       fontFamily: {
-        // Q.18.ZIP.tokens — Inter primária matching nelo.html zip body
-        sans: ['Inter', 'Geist', 'Space Grotesk', 'DM Sans', 'system-ui', 'sans-serif'],
-        mono: ['JetBrains Mono', 'Geist Mono', 'Fira Code', 'monospace'],
+        // Q.18.ZIP.design2 — Geist primária matching design package index.html
+        sans: ['Geist', 'Inter', 'Space Grotesk', 'DM Sans', 'system-ui', 'sans-serif'],
+        mono: ['Geist Mono', 'JetBrains Mono', 'Fira Code', 'monospace'],
+      },
+      fontSize: {
+        // Q.18.ZIP.design2 — base 13px (era 14px Tailwind default)
+        base: ['13px', { lineHeight: '1.45' }],
       },
       boxShadow: {
         'card': '0 4px 16px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.2)',
@@ -103,11 +108,11 @@ export default {
         'inner-glow': 'inset 0 0 20px rgba(20, 184, 166, 0.1)',
       },
       borderRadius: {
-        // Q.18.ZIP.tokens — alinhar com zip --r-{sm,md,lg,xl}
-        sm: '6px',
-        md: '8px',
-        lg: '12px',   // era 0.5rem (8px) Tailwind default
-        xl: '16px',   // era 0.75rem (12px) Tailwind default
+        // Q.18.ZIP.design2 — refinado, mais pequeno (matching design package)
+        sm: '4px',    // era 6px
+        md: '6px',    // era 8px
+        lg: '10px',   // era 12px (matching --r-lg do design package)
+        xl: '14px',   // era 16px
         '2xl': '1rem',
         '3xl': '1.5rem',
       },
