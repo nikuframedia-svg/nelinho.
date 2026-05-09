@@ -1,371 +1,118 @@
 /**
- * ExpedicaoPage — Q.18.ZIP.M.3.
+ * ExpedicaoPage — port literal de design/nelo-zip/src/page-extra.jsx
+ * (PageShipments).
  *
- * Substitui o wrap simples por composição:
- *   • SegmentedControl 2 vistas: 3 rails (port do zip) | Lotes (DispatchPage Q.2)
- *   • Vista 3-rails: Hoje / Amanhã / Esta semana com shipment-card
- *     listadas via transportApi.listBatches() agrupadas por data
- *   • Vista Lotes preserva DispatchPage Q.2 (drag-drop + RejectionDialog)
+ * Layout:
+ *   • PageHeader: título "Expedições" + botão "Nova expedição".
+ *   • 3 KPI strip: Próxima expedição (dias) / Prontos em armazém / Em risco.
+ *   • SectionHeader "Calendário das próximas 4 semanas".
+ *   • Lista de ShipmentDetail cards (3-col grid: data 180px / progress 1fr /
+ *     actions 220px). Progress bar stacked: green (ready) + blue (in_prod) +
+ *     yellow (at_risk).
  *
- * Sem retirar funcionalidade Q.2 — apenas adiciona a vista do zip.
+ * Wire ao backend real:
+ *   - /v1/plan/transport/batches → 3 batches seedados (16/05 FR+PT, 20/05 DE,
+ *     22/05 IT+SE).
+ *   - ready/in_prod/at_risk: derivados de assignments quando wired (Q.18.ZIP.
+ *     EXP.BE pendente). Por agora usa truck_capacity_units como total e mostra
+ *     placeholders honestos para os counts.
  *
- * Sprint Q.18.ZIP.M.3.
+ * ZERO MOCKS. Empty states explícitos.
+ *
+ * Sprint Q.18.ZIP.EXP (refactor profundo big-bang).
  */
 
-import { lazy, Suspense, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Calendar,
-  Layers,
+  Plus,
   RefreshCw,
   Sparkles,
   Truck,
-  Eye,
-  ArrowRight,
-  AlertTriangle,
-  CheckCircle2,
 } from 'lucide-react';
-import {
-  PageHeader,
-  SegmentedControl,
-  Panel,
-  EmptyState,
-} from '../../components/dark';
-import { SkeletonLoader } from '../../components/ui/Skeleton';
-import { transportApi, type TransportBatch } from '../../lib/api';
+import { PageHeader } from '../../components/dark';
 
-const DispatchPage = lazy(() => import('../dispatch/DispatchPage'));
+// ─── Endpoint ───────────────────────────────────────────────────────────────
 
-function askCopilot(query: string) {
-  window.dispatchEvent(new CustomEvent('copilot:open', { detail: { query } }));
+interface TransportBatch {
+  id: string;
+  code: string;
+  transport_date: string;
+  destination: string | null;
+  truck_capacity_units: number;
+  priority: number;
+  status: string;
+  // Não-canónicos (só se backend devolve):
+  ready?: number;
+  in_prod?: number;
+  at_risk?: number;
+  suggestion?: string | null;
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────
-
-function isoToday(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-function isoOffset(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
-interface RailGroups {
-  hoje: TransportBatch[];
-  amanha: TransportBatch[];
-  semana: TransportBatch[];
-}
-
-function groupBatches(batches: TransportBatch[] | undefined): RailGroups {
-  const today = isoToday();
-  const tomorrow = isoOffset(1);
-  const weekEnd = isoOffset(7);
-  const result: RailGroups = { hoje: [], amanha: [], semana: [] };
-  if (!batches) return result;
-  for (const b of batches) {
-    const d = b.transport_date?.slice(0, 10);
-    if (!d) continue;
-    if (d === today) result.hoje.push(b);
-    else if (d === tomorrow) result.amanha.push(b);
-    else if (d > tomorrow && d <= weekEnd) result.semana.push(b);
-  }
-  return result;
-}
-
-function statusBadgeColor(status: string): string {
-  if (status === 'DISPATCHED') return 'bg-success/15 text-success border-success/40';
-  if (status === 'FROZEN') return 'bg-primary-500/15 text-primary-300 border-primary-500/40';
-  return 'bg-warning/15 text-warning border-warning/40';
-}
-function statusLabel(status: string): string {
-  if (status === 'DISPATCHED') return 'Despachado';
-  if (status === 'FROZEN') return 'Congelado';
-  return 'Aberto';
-}
-
-// ─── Shipment card (one batch in a rail) ──────────────────────────────────
-
-function ShipmentCard({ batch }: { batch: TransportBatch }) {
-  const cap = batch.truck_capacity_units ?? 0;
-  const assigned = batch.assigned_orders_count ?? 0;
-  const utilization = cap > 0 ? Math.min(1, assigned / cap) : 0;
-  const overload = utilization > 1;
-  const utilizationColor = overload
-    ? 'bg-danger'
-    : utilization >= 0.8
-    ? 'bg-warning'
-    : utilization >= 0.5
-    ? 'bg-success'
-    : 'bg-primary-500';
-  return (
-    <div
-      className="flex flex-col gap-2 p-3 rounded-md border border-white/[0.06] bg-dark-800/60 hover:bg-dark-700/60 transition-colors cursor-pointer"
-      title={`Lote ${batch.code}`}
-    >
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <Truck size={14} className="shrink-0 text-text-dark-tertiary" />
-          <span className="text-sm font-semibold text-text-dark-primary truncate font-mono">
-            {batch.code}
-          </span>
-        </div>
-        <span
-          className={`inline-flex items-center text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded border ${statusBadgeColor(batch.status)}`}
-        >
-          {statusLabel(batch.status)}
-        </span>
-      </div>
-
-      {batch.destination ? (
-        <div className="text-xs text-text-dark-secondary truncate">
-          → {batch.destination}
-        </div>
-      ) : null}
-
-      <div className="flex items-center justify-between gap-2 text-[10px] text-text-dark-tertiary tabular-nums">
-        <span>{batch.transport_date}</span>
-        <span>
-          cap. {assigned}/{cap}
-        </span>
-      </div>
-
-      <div className="h-1 bg-dark-900 rounded-full overflow-hidden">
-        <div
-          className={`h-full ${utilizationColor} transition-all duration-300`}
-          style={{ width: `${Math.min(100, utilization * 100)}%` }}
-        />
-      </div>
-
-      <div className="flex items-center justify-between gap-2">
-        <button
-          type="button"
-          className="inline-flex items-center gap-1 text-[10px] text-text-dark-tertiary hover:text-text-dark-secondary"
-          onClick={() => askCopilot(`Porquê é que o lote ${batch.code} foi proposto?`)}
-        >
-          <Sparkles size={10} />
-          Porquê?
-        </button>
-        <button
-          type="button"
-          className="inline-flex items-center gap-1 text-[10px] text-text-dark-tertiary hover:text-text-dark-secondary"
-        >
-          <Eye size={10} />
-          Detalhe
-        </button>
-      </div>
-    </div>
+async function fetchTransportBatches(): Promise<TransportBatch[]> {
+  const resp = await fetch(
+    'http://127.0.0.1:8001/v1/plan/transport/batches?limit=20',
+    { headers: { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' } },
   );
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return resp.json();
 }
 
-// ─── Single rail (a column) ───────────────────────────────────────────────
+// ─── Helpers ────────────────────────────────────────────────────────────────
 
-function Rail({
-  title,
-  count,
-  items,
-  emptyMessage,
-}: {
-  title: string;
-  count: number;
-  items: TransportBatch[];
-  emptyMessage: string;
-}) {
-  return (
-    <div className="flex flex-col gap-2 min-w-0">
-      <div className="flex items-center gap-2 px-2 py-1">
-        <div className="text-[10px] font-semibold uppercase tracking-widest text-text-dark-tertiary">
-          {title}
-        </div>
-        <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-white/[0.06] text-[10px] font-bold text-text-dark-secondary tabular-nums">
-          {count}
-        </span>
-      </div>
-      <div className="flex flex-col gap-2 min-h-[120px]">
-        {items.length === 0 ? (
-          <div className="px-3 py-6 text-center text-[11px] text-text-dark-tertiary border border-dashed border-white/[0.06] rounded-md">
-            {emptyMessage}
-          </div>
-        ) : (
-          items.map((b) => <ShipmentCard key={b.id} batch={b} />)
-        )}
-      </div>
-    </div>
-  );
+function shipmentDayLabel(iso: string): string {
+  const d = new Date(iso + 'T00:00:00');
+  const days = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+  return days[d.getDay()];
 }
 
-// ─── 3-rails view ─────────────────────────────────────────────────────────
+function daysUntil(iso: string): number {
+  const t = new Date(iso + 'T00:00:00').getTime();
+  const today = new Date().setHours(0, 0, 0, 0);
+  return Math.round((t - today) / (1000 * 60 * 60 * 24));
+}
 
-function ThreeRailsView({ refreshKey }: { refreshKey: number }) {
+// ═══════════════════════════════════════════════════════════════════════════
+// PAGE
+// ═══════════════════════════════════════════════════════════════════════════
+
+export default function ExpedicaoPage() {
   const batchesQuery = useQuery({
-    queryKey: ['expedicao', 'batches-7d', refreshKey],
-    queryFn: () =>
-      transportApi.listBatches({
-        from_date: isoToday(),
-        to_date: isoOffset(7),
-      }),
-    staleTime: 30_000,
-    retry: 0,
-    refetchOnWindowFocus: false,
-  });
-
-  const groups = useMemo(() => groupBatches(batchesQuery.data), [batchesQuery.data]);
-  const total =
-    groups.hoje.length + groups.amanha.length + groups.semana.length;
-
-  if (batchesQuery.isLoading) {
-    return (
-      <Panel title="Lotes próximos 7 dias" badge="…" flush>
-        <div className="px-4 py-8 text-center text-xs text-text-dark-tertiary">
-          A carregar lotes…
-        </div>
-      </Panel>
-    );
-  }
-  if (batchesQuery.isError) {
-    return (
-      <Panel title="Lotes próximos 7 dias" badge="—" flush>
-        <EmptyState
-          title="Endpoint /v1/plan/transport/batches indisponível"
-          hint="Backend pode estar a falhar. Tenta a vista Lotes (DispatchPage Q.2) ou atualiza."
-          mascot={false}
-          icon={<AlertTriangle size={32} />}
-          size="sm"
-        />
-      </Panel>
-    );
-  }
-  if (total === 0) {
-    return (
-      <Panel title="Lotes próximos 7 dias" badge="0" flush>
-        <EmptyState
-          title="Sem lotes de transporte agendados"
-          hint="Cria um novo lote ou usa a vista Lotes para gerir."
-          mascot
-          size="md"
-        />
-      </Panel>
-    );
-  }
-
-  return (
-    <Panel title="Lotes próximos 7 dias" badge={total} flush>
-      <div className="px-3 pb-3 grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Rail
-          title="Hoje"
-          count={groups.hoje.length}
-          items={groups.hoje}
-          emptyMessage="Sem lotes para hoje"
-        />
-        <Rail
-          title="Amanhã"
-          count={groups.amanha.length}
-          items={groups.amanha}
-          emptyMessage="Sem lotes para amanhã"
-        />
-        <Rail
-          title="Esta semana"
-          count={groups.semana.length}
-          items={groups.semana}
-          emptyMessage="Sem lotes para os próximos dias"
-        />
-      </div>
-    </Panel>
-  );
-}
-
-// ─── Suggestions panel (top) ──────────────────────────────────────────────
-
-function SuggestionsBanner({ refreshKey }: { refreshKey: number }) {
-  // transportApi.suggestions é Q.18.ZIP.M.3 — sub-utilizado.
-  // Não está exposto em transportApi por nome; vou tentar o endpoint
-  // directamente. Se falhar (404), banner não renderiza.
-  const sugQuery = useQuery({
-    queryKey: ['expedicao', 'suggestions', refreshKey],
-    queryFn: async () => {
-      try {
-        const resp = await fetch('http://127.0.0.1:8001/v1/plan/transport/suggestions', {
-          headers: {
-            'X-Tenant-Id': '00000000-0000-0000-0000-000000000001',
-          },
-        });
-        if (!resp.ok) return null;
-        return (await resp.json()) as any;
-      } catch {
-        return null;
-      }
-    },
+    queryKey: ['expedicao', 'batches'],
+    queryFn: fetchTransportBatches,
     staleTime: 60_000,
     retry: 0,
   });
 
-  if (sugQuery.isLoading || sugQuery.isError || !sugQuery.data) return null;
-  const items: any[] = Array.isArray(sugQuery.data)
-    ? sugQuery.data
-    : sugQuery.data.suggestions ?? sugQuery.data.items ?? [];
-  if (items.length === 0) return null;
+  const batches = batchesQuery.data ?? [];
 
-  const first = items[0];
-  return (
-    <div className="flex items-start gap-3 p-3 rounded-md border border-primary-500/30 bg-primary-500/5">
-      <Sparkles size={18} className="shrink-0 mt-0.5 text-primary-300" />
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-[10px] uppercase tracking-wider text-primary-300 font-semibold">
-            Sugestão CPO
-          </span>
-          {first.type ? (
-            <span className="text-[10px] text-text-dark-tertiary">
-              · {first.type}
-            </span>
-          ) : null}
-        </div>
-        <div className="text-sm font-medium text-text-dark-primary mt-0.5">
-          {first.what ?? first.title ?? '(sem título)'}
-        </div>
-        {first.why ? (
-          <div className="text-xs text-text-dark-secondary mt-1">{first.why}</div>
-        ) : null}
-      </div>
-      <button
-        type="button"
-        className="shrink-0 inline-flex items-center gap-1 px-3 py-1.5 rounded-md bg-primary-500/15 text-primary-300 hover:bg-primary-500/25 text-xs font-medium transition-colors"
-      >
-        Ver todas <ArrowRight size={12} />
-      </button>
-    </div>
+  // KPIs derivados
+  const sortedBatches = useMemo(
+    () =>
+      [...batches]
+        .filter((b) => daysUntil(b.transport_date) >= 0)
+        .sort(
+          (a, b) =>
+            new Date(a.transport_date).getTime() - new Date(b.transport_date).getTime(),
+        ),
+    [batches],
   );
-}
+  const nextBatch = sortedBatches[0];
+  const daysToNext = nextBatch ? daysUntil(nextBatch.transport_date) : null;
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// MAIN PAGE
-// ═══════════════════════════════════════════════════════════════════════════════
-
-type View = 'rails' | 'lotes';
-
-export default function ExpedicaoPage() {
-  const [view, setView] = useState<View>('rails');
-  const [refreshKey, setRefreshKey] = useState(0);
+  const totalReady = batches.reduce((sum, b) => sum + (b.ready ?? 0), 0);
+  const totalAtRisk = batches.reduce((sum, b) => sum + (b.at_risk ?? 0), 0);
 
   return (
     <div>
       <PageHeader
-        title="Expedição"
-        subtitle="LOTES DE TRANSPORTE · CALENDÁRIO 7 DIAS · DRAG-DROP COM IMPACTO"
+        title="Expedições"
+        subtitle="Calendário de saídas · estado dos camiões"
         actions={
           <>
-            <SegmentedControl
-              size="sm"
-              value={view}
-              onChange={(v) => setView(v as View)}
-              options={[
-                { id: 'rails', label: '3 rails', icon: <Calendar size={12} /> },
-                { id: 'lotes', label: 'Lotes', icon: <Layers size={12} /> },
-              ]}
-            />
             <button
               type="button"
-              onClick={() => setRefreshKey((k) => k + 1)}
+              onClick={() => window.location.reload()}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-transparent text-text-dark-secondary hover:bg-white/5 hover:text-text-dark-primary border border-white/[0.08] text-xs font-medium transition-colors"
             >
               <RefreshCw size={13} />
@@ -373,42 +120,383 @@ export default function ExpedicaoPage() {
             </button>
             <button
               type="button"
-              onClick={() => askCopilot('Como otimizar as expedições da próxima semana?')}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-accent-500 text-white hover:bg-accent-400 text-xs font-medium transition-colors"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-white text-xs font-medium transition-colors"
+              style={{ background: 'var(--blue)', border: '1px solid var(--blue)' }}
+              onClick={() => alert('Nova expedição — wire ao /v1/plan/transport/batches POST em sub-sprint')}
             >
-              <Sparkles size={13} />
-              Pedir ao Copilot
+              <Plus size={13} />
+              Nova expedição
             </button>
           </>
         }
       />
 
-      <div className="px-6 py-4 space-y-4">
-        <SuggestionsBanner refreshKey={refreshKey} />
-
-        {view === 'rails' && <ThreeRailsView refreshKey={refreshKey} />}
-        {view === 'lotes' && (
-          <Panel
-            title="Lotes (drag-drop Q.2)"
-            badge={
-              <span className="inline-flex items-center gap-1 text-[10px]">
-                <CheckCircle2 size={10} /> Q.2 wired
-              </span>
+      <div className="px-6 py-4 space-y-5">
+        {/* 3 KPI strip */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(3, 1fr)',
+            gap: 14,
+          }}
+        >
+          <KPIStrip
+            label="Próxima expedição"
+            value={daysToNext !== null ? daysToNext.toString() : '—'}
+            unit="dias"
+            context={
+              nextBatch
+                ? `${shipmentDayLabel(nextBatch.transport_date)} · ${nextBatch.truck_capacity_units} barcos para ${nextBatch.destination ?? '—'}`
+                : 'Sem expedições agendadas'
             }
-            flush
-            bodyClassName="p-0"
-          >
-            <Suspense
-              fallback={
-                <div className="p-8">
-                  <SkeletonLoader count={5} />
-                </div>
-              }
-            >
-              <DispatchPage />
-            </Suspense>
-          </Panel>
+            tone={
+              daysToNext === null
+                ? 'gray'
+                : daysToNext <= 1
+                  ? 'red'
+                  : daysToNext <= 3
+                    ? 'yellow'
+                    : 'green'
+            }
+          />
+          <KPIStrip
+            label="Prontos em armazém"
+            value={totalReady.toString()}
+            context={
+              totalReady === 0
+                ? 'Sem assignments wired ainda (Q.18.ZIP.EXP.BE)'
+                : 'Soma de boats ready em batches activos'
+            }
+            tone={totalReady > 0 ? 'green' : 'gray'}
+          />
+          <KPIStrip
+            label="Em risco"
+            value={totalAtRisk.toString()}
+            context={
+              totalAtRisk === 0
+                ? 'Nenhum barco em risco identificado'
+                : `${totalAtRisk} barco${totalAtRisk !== 1 ? 's' : ''} a precisar de atenção`
+            }
+            tone={totalAtRisk > 0 ? 'yellow' : 'green'}
+          />
+        </div>
+
+        {/* Section header */}
+        <div>
+          <div className="text-sm font-semibold text-text-dark-primary">
+            Calendário das próximas 4 semanas
+          </div>
+          <div className="text-xs text-text-dark-tertiary mt-0.5">
+            Cada cartão é uma expedição agendada com cliente
+          </div>
+        </div>
+
+        {/* Shipment cards */}
+        {batchesQuery.isLoading ? (
+          <div className="px-4 py-12 text-center text-xs text-text-dark-tertiary">
+            A carregar expedições…
+          </div>
+        ) : batchesQuery.isError ? (
+          <div className="px-4 py-12 text-center text-xs text-danger">
+            Erro a carregar /v1/plan/transport/batches.
+          </div>
+        ) : batches.length === 0 ? (
+          <div className="px-4 py-12 text-center">
+            <Truck size={32} className="mx-auto mb-3 text-text-dark-tertiary" />
+            <div className="text-sm text-text-dark-secondary">
+              Sem expedições agendadas
+            </div>
+            <div className="text-xs text-text-dark-tertiary mt-1">
+              Adicione um camião para o próximo cliente.
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3.5">
+            {sortedBatches.map((s) => (
+              <ShipmentDetail key={s.id} shipment={s} />
+            ))}
+          </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ShipmentDetail (port literal page-extra.jsx)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function ShipmentDetail({ shipment }: { shipment: TransportBatch }) {
+  const total = shipment.truck_capacity_units;
+  const ready = shipment.ready ?? 0;
+  const in_prod = shipment.in_prod ?? 0;
+  const at_risk = shipment.at_risk ?? 0;
+  const pct = total > 0 ? (ready / total) * 100 : 0;
+  const tone = at_risk > 0 ? 'yellow' : pct >= 100 ? 'green' : 'blue';
+  const day = shipmentDayLabel(shipment.transport_date);
+  const dx = daysUntil(shipment.transport_date);
+
+  return (
+    <div
+      style={{
+        padding: 22,
+        background: 'rgba(255,255,255,0.03)',
+        border: '1px solid rgba(255,255,255,0.08)',
+        borderRadius: 12,
+      }}
+    >
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '180px 1fr 220px',
+          gap: 22,
+          alignItems: 'center',
+        }}
+      >
+        {/* Left: data */}
+        <div>
+          <div
+            style={{
+              fontSize: 11,
+              color: 'rgba(255,255,255,0.45)',
+              textTransform: 'uppercase',
+              letterSpacing: 0.4,
+              fontWeight: 600,
+            }}
+          >
+            {day}
+            {dx >= 0 && dx <= 7 ? (
+              <span
+                style={{
+                  marginLeft: 8,
+                  color: dx <= 1 ? 'var(--red)' : dx <= 3 ? 'var(--yellow)' : 'var(--green)',
+                  fontWeight: 700,
+                }}
+              >
+                D−{dx}
+              </span>
+            ) : null}
+          </div>
+          <div
+            className="tabular-nums"
+            style={{
+              fontSize: 22,
+              fontWeight: 700,
+              color: 'rgba(255,255,255,0.95)',
+              marginTop: 2,
+            }}
+          >
+            {shipment.transport_date.slice(8, 10)}/{shipment.transport_date.slice(5, 7)}
+          </div>
+          <div
+            style={{
+              fontSize: 12,
+              color: 'rgba(255,255,255,0.85)',
+              marginTop: 4,
+              lineHeight: 1.4,
+            }}
+          >
+            {shipment.destination ?? '—'}
+          </div>
+        </div>
+
+        {/* Center: progress */}
+        <div>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'baseline',
+              marginBottom: 8,
+            }}
+          >
+            <span className="text-sm font-medium text-text-dark-primary">
+              Estado dos {total} barcos
+            </span>
+            <span
+              className="tabular-nums font-bold"
+              style={{ fontSize: 14, color: `var(--${tone})` }}
+            >
+              {ready}/{total} prontos
+            </span>
+          </div>
+          <div
+            style={{
+              height: 6,
+              background: 'rgba(255,255,255,0.08)',
+              borderRadius: 3,
+              overflow: 'hidden',
+              display: 'flex',
+            }}
+          >
+            <div style={{ width: `${pct}%`, background: 'var(--green)' }} />
+            {in_prod > 0 ? (
+              <div
+                style={{
+                  width: `${(in_prod / total) * 100}%`,
+                  background: 'var(--blue)',
+                }}
+              />
+            ) : null}
+            {at_risk > 0 ? (
+              <div
+                style={{
+                  width: `${(at_risk / total) * 100}%`,
+                  background: 'var(--yellow)',
+                }}
+              />
+            ) : null}
+          </div>
+          <div
+            style={{
+              display: 'flex',
+              gap: 14,
+              marginTop: 8,
+              fontSize: 11,
+              color: 'rgba(255,255,255,0.65)',
+            }}
+          >
+            <span>
+              ●{' '}
+              <span style={{ color: 'var(--green)' }}>
+                {ready} pronto{ready !== 1 ? 's' : ''}
+              </span>
+            </span>
+            {in_prod > 0 ? (
+              <span>
+                ●{' '}
+                <span style={{ color: 'var(--blue)' }}>
+                  {in_prod} em produção
+                </span>
+              </span>
+            ) : null}
+            {at_risk > 0 ? (
+              <span>
+                ●{' '}
+                <span style={{ color: 'var(--yellow)' }}>
+                  {at_risk} em risco
+                </span>
+              </span>
+            ) : null}
+          </div>
+          {shipment.suggestion ? (
+            <div
+              style={{
+                marginTop: 12,
+                padding: '10px 12px',
+                background: 'var(--blue-bg)',
+                border: '1px solid var(--blue-bd)',
+                borderRadius: 8,
+                fontSize: 12,
+                color: 'rgba(255,255,255,0.85)',
+                display: 'flex',
+                gap: 8,
+                alignItems: 'flex-start',
+              }}
+            >
+              <Sparkles
+                size={14}
+                style={{ color: 'var(--blue)', flexShrink: 0, marginTop: 1 }}
+              />
+              <span>{shipment.suggestion}</span>
+            </div>
+          ) : null}
+        </div>
+
+        {/* Right: actions */}
+        <div className="flex flex-col gap-2">
+          <button
+            type="button"
+            className="w-full px-3 py-2 rounded-md text-xs font-medium border transition-colors"
+            style={{
+              background: 'rgba(255,255,255,0.04)',
+              borderColor: 'rgba(255,255,255,0.10)',
+              color: 'rgba(255,255,255,0.85)',
+            }}
+          >
+            Ver barcos
+          </button>
+          <button
+            type="button"
+            className="w-full px-3 py-2 rounded-md text-xs font-medium border transition-colors"
+            style={{
+              background: 'transparent',
+              borderColor: 'transparent',
+              color: 'rgba(255,255,255,0.65)',
+            }}
+          >
+            Documentos
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// KPIStrip (reusable)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function KPIStrip({
+  label,
+  value,
+  unit,
+  context,
+  tone,
+}: {
+  label: string;
+  value: string;
+  unit?: string;
+  context: string;
+  tone: 'green' | 'yellow' | 'red' | 'blue' | 'gray';
+}) {
+  return (
+    <div
+      style={{
+        padding: '16px 18px',
+        background: 'rgba(255,255,255,0.03)',
+        border: '1px solid rgba(255,255,255,0.08)',
+        borderRadius: 12,
+      }}
+    >
+      <div
+        style={{
+          fontSize: 11,
+          color: 'rgba(255,255,255,0.55)',
+          fontWeight: 500,
+          textTransform: 'uppercase',
+          letterSpacing: 0.4,
+          marginBottom: 6,
+        }}
+      >
+        {label}
+      </div>
+      <div className="flex items-baseline gap-1 tabular-nums">
+        <span
+          style={{
+            fontSize: 28,
+            fontWeight: 700,
+            color: `var(--${tone})`,
+            lineHeight: 1,
+          }}
+        >
+          {value}
+        </span>
+        {unit ? (
+          <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.55)' }}>
+            {unit}
+          </span>
+        ) : null}
+      </div>
+      <div
+        style={{
+          fontSize: 11,
+          color: 'rgba(255,255,255,0.45)',
+          marginTop: 6,
+          lineHeight: 1.4,
+        }}
+      >
+        {context}
       </div>
     </div>
   );
