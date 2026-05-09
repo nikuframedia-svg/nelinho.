@@ -114,6 +114,93 @@ function askCopilot(query: string) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// BACKLOG BY CLIENT PANEL — Q.18.ZIP Onda 4 (endpoint existing sub-utilizado)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function BacklogByClientPanel({ refreshKey }: { refreshKey: number }) {
+  const navigate = useNavigate();
+  const backlogQuery = useQuery({
+    queryKey: ['painel', 'backlog-by-client', refreshKey],
+    queryFn: () => ceoDashboardApi.backlogByClient({ limit: 8 }),
+    staleTime: 60_000,
+    retry: 0,
+    refetchOnWindowFocus: false,
+  });
+
+  const items: any[] = useMemo(() => {
+    const data: any = backlogQuery.data;
+    if (!data) return [];
+    if (Array.isArray(data)) return data;
+    return data.items ?? [];
+  }, [backlogQuery.data]);
+
+  if (backlogQuery.isError || (backlogQuery.data && items.length === 0)) {
+    return null; // Não polui o Painel se não há dados
+  }
+
+  return (
+    <Panel
+      title="Backlog por cliente"
+      badge={items.length}
+      action={
+        <button
+          type="button"
+          onClick={() => navigate('/relatorios')}
+          className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs text-text-dark-secondary hover:text-text-dark-primary hover:bg-white/5 transition-colors"
+        >
+          Ver mais <ArrowRight size={12} />
+        </button>
+      }
+      flush
+    >
+      {backlogQuery.isLoading ? (
+        <div className="px-4 py-4 text-center text-xs text-text-dark-tertiary">
+          A carregar backlog…
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="border-b border-white/[0.06]">
+              <tr className="text-left text-[10px] uppercase tracking-wider text-text-dark-tertiary">
+                <th className="px-3 py-2 font-semibold">Cliente</th>
+                <th className="px-3 py-2 font-semibold text-right">Encomendas</th>
+                <th className="px-3 py-2 font-semibold text-right">Valor €</th>
+                <th className="px-3 py-2 font-semibold">Próximo prazo</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.slice(0, 8).map((row, idx) => (
+                <tr
+                  key={row.client_name ?? row.id ?? idx}
+                  className="border-b border-white/[0.04] hover:bg-white/[0.02]"
+                >
+                  <td className="px-3 py-2 text-text-dark-primary truncate max-w-[200px]">
+                    {row.client_name ?? row.client ?? '—'}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-text-dark-secondary">
+                    {row.orders_count ?? row.count ?? '—'}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-text-dark-secondary">
+                    {row.total_value_eur !== undefined
+                      ? `€${Math.round(row.total_value_eur).toLocaleString('pt-PT')}`
+                      : '—'}
+                  </td>
+                  <td className="px-3 py-2 text-text-dark-tertiary tabular-nums">
+                    {row.earliest_deadline
+                      ? new Date(row.earliest_deadline).toLocaleDateString('pt-PT')
+                      : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // INBOX PANEL — Q.18.ZIP.M.2
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -494,6 +581,9 @@ export default function PainelPage() {
         {/* fecho do grid 2-col */}
         <div className="hidden">{/* spacer */}
         </div>
+
+        {/* ═══ Q.18.ZIP Onda 4 — Backlog por cliente (endpoint existing sub-utilizado) ═══ */}
+        <BacklogByClientPanel refreshKey={refreshKey} />
 
         {/* ═══ ROW: Activity feed + Trust sources ═══ */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
