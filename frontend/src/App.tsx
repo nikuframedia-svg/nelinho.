@@ -16,6 +16,8 @@ const PainelPage = lazy(() => import('./pages/painel/PainelPage'));
 const ProducaoPage = lazy(() => import('./pages/producao/ProducaoPage'));
 // Sprint Q.18.ZIP.D — Planeamento portado (4 tabs: Atribuicao/Materiais/Forecast/Simulador)
 const PlaneamentoPage = lazy(() => import('./pages/planeamento/PlaneamentoPage'));
+// Sprint Q.18.ZIP.E — Expedicao portada (wrap DispatchPage Q.2 com PageHeader)
+const ExpedicaoPage = lazy(() => import('./pages/expedicao/ExpedicaoPage'));
 const RAGIngestPage = lazy(() => import('./pages/admin/RAGIngestPage').then(m => ({ default: m.RAGIngestPage })));
 const SettingsPage = lazy(() => import('./pages/admin/SettingsPage').then(m => ({ default: m.SettingsPage })));
 const DQAPage = lazy(() => import('./pages/admin/DQAPage').then(m => ({ default: m.DQAPage })));
@@ -272,7 +274,12 @@ function App() {
                       <PlaneamentoPage />
                     </Suspense>
                   } />
-                  <Route path="expedicao" element={<Navigate to="/plan/dispatch" replace />} />
+                  {/* Q.18.ZIP.E — /expedicao agora nativa (wrap DispatchPage Q.2) */}
+                  <Route path="expedicao" element={
+                    <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
+                      <ExpedicaoPage />
+                    </Suspense>
+                  } />
                   <Route path="equipa" element={<Navigate to="/core/employees" replace />} />
                   <Route path="qualidade" element={<Navigate to="/profit/quality" replace />} />
                   <Route path="relatorios" element={<Navigate to="/" replace />} />
