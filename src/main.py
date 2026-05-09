@@ -532,6 +532,10 @@ app.include_router(workforce_employees_router)  # Sprint Q.3 — Employees extra
 app.include_router(copilot_alerts_router)  # Proactive alerts (Sprint C — Fase 5)
 app.include_router(plan_cpo_router)  # CPO v4 scheduler (Sprint E — DRCFFS-R)
 
+# Sprint Q.18.UI.A.1 — minimal /v1/auth/me for the Sidebar user chip.
+from src.shared.api.auth_me import router as auth_me_router  # noqa: E402
+app.include_router(auth_me_router)
+
 # Sprint D.1 — Real-time SSE fan-out of Kafka events to the browser.
 from src.shared.realtime import router as realtime_router
 app.include_router(realtime_router)

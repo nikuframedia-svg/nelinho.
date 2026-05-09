@@ -2870,3 +2870,21 @@ export const phaseGapsApi = {
       { method: 'PATCH', body: JSON.stringify(payload) },
     ),
 };
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AUTH (Sprint Q.18.UI.A.1) — minimal /v1/auth/me for the Sidebar user chip.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface CurrentUser {
+  user_id: string | null;
+  tenant_id: string;
+  role: string;
+  name: string;
+  email: string;
+  umwelt: 'manager' | 'operator' | 'ceo' | string;
+}
+
+export const authApi = {
+  /** Identidade actual (vem de JWT quando existir; dev usa headers X-*). */
+  me: () => request<CurrentUser>('/v1/auth/me'),
+};

@@ -29,8 +29,29 @@ import {
   HelpCircle,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { cn } from '../../lib/utils';
 import { useCapabilities } from '../../providers';
+import { authApi, type CurrentUser } from '../../lib/api';
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 0 || parts[0] === '') return '—';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+function roleLabel(role: string): string {
+  const map: Record<string, string> = {
+    manager: 'Gestor',
+    operator: 'Operador',
+    ceo: 'CEO',
+    admin: 'Administrador',
+    admin_platform: 'Administrador',
+    admin_tenant: 'Administrador',
+  };
+  return map[role.toLowerCase()] ?? role;
+}
 
 interface NavItem {
   /** Path canónico (PT-PT). */
@@ -120,6 +141,17 @@ export function Sidebar() {
   } catch {
     hasModule = () => true;
   }
+
+  // Sprint Q.18.UI.A.1 — utilizador real vem de /v1/auth/me. ZERO MOCKS:
+  // se erro / loading, mostra placeholder explícito ("—"), nunca dados
+  // hardcoded.
+  const meQuery = useQuery<CurrentUser>({
+    queryKey: ['auth', 'me'],
+    queryFn: () => authApi.me(),
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+  });
+  const me = meQuery.data;
 
   const isActive = (path: string): boolean => {
     if (path === '/painel') {
@@ -217,21 +249,37 @@ export function Sidebar() {
         </button>
 
         <div className="mt-3 pt-3 border-t border-white/[0.06]">
-          <div className="flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-white/5 transition-colors cursor-pointer">
+          <div
+            className="flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-white/5 transition-colors cursor-pointer"
+            title={me?.email ?? '—'}
+          >
             <div className="w-9 h-9 rounded-full bg-gradient-to-br from-accent-500/30 to-accent-700/30 border border-accent-500/40 flex items-center justify-center text-xs font-bold text-accent-300">
-              LU
+              {me ? initials(me.name) : '—'}
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold text-text-dark-primary truncate">
-                Luis
+                {meQuery.isError ? '—' : me?.name ?? 'A carregar…'}
               </p>
               <p className="text-[10px] text-text-dark-tertiary truncate">
-                NELO · Gestor
+                NELO · {me ? roleLabel(me.role) : (meQuery.isError ? 'sem ligação' : '…')}
               </p>
             </div>
             <div
-              className="w-2 h-2 rounded-full bg-success shadow-glow-green"
-              aria-label="Online"
+              className={cn(
+                'w-2 h-2 rounded-full',
+                meQuery.isError
+                  ? 'bg-danger'
+                  : meQuery.isLoading
+                  ? 'bg-warning'
+                  : 'bg-success shadow-glow-green'
+              )}
+              aria-label={
+                meQuery.isError
+                  ? 'Sem ligação'
+                  : meQuery.isLoading
+                  ? 'A ligar'
+                  : 'Online'
+              }
             />
           </div>
         </div>
