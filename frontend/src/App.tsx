@@ -22,6 +22,8 @@ const ExpedicaoPage = lazy(() => import('./pages/expedicao/ExpedicaoPage'));
 const EquipaPage = lazy(() => import('./pages/equipa/EquipaPage'));
 // Sprint Q.18.ZIP.G — Qualidade portada (4 tabs: Resumo/Diagnostico/OEE/Moldes)
 const QualidadePage = lazy(() => import('./pages/qualidade/QualidadePage'));
+// Sprint Q.18.ZIP.H — Configuracao portada (7 tabs com sub-tabs Aprendizagem/Sistema/DadosMestre)
+const ConfiguracaoPage = lazy(() => import('./pages/configuracao/ConfiguracaoPage'));
 const RAGIngestPage = lazy(() => import('./pages/admin/RAGIngestPage').then(m => ({ default: m.RAGIngestPage })));
 const SettingsPage = lazy(() => import('./pages/admin/SettingsPage').then(m => ({ default: m.SettingsPage })));
 const DQAPage = lazy(() => import('./pages/admin/DQAPage').then(m => ({ default: m.DQAPage })));
@@ -297,7 +299,12 @@ function App() {
                     </Suspense>
                   } />
                   <Route path="relatorios" element={<Navigate to="/" replace />} />
-                  <Route path="configuracao" element={<Navigate to="/settings" replace />} />
+                  {/* Q.18.ZIP.H — /configuracao agora nativa (7 tabs + sub-tabs) */}
+                  <Route path="configuracao" element={
+                    <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
+                      <ConfiguracaoPage />
+                    </Suspense>
+                  } />
 
                   {/* Legacy routes - redirect to new structure */}
                   <Route path="products" element={<Navigate to="/core/products" replace />} />
