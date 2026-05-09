@@ -31,6 +31,7 @@ import {
   Bell,
   ArrowRight,
   Activity,
+  Inbox,
 } from 'lucide-react';
 import {
   PageHeader,
@@ -38,12 +39,13 @@ import {
   Panel,
   AlertRow,
   TrustBadge,
+  Tabs,
   scoreToGrade,
   type KPIStatus,
   type AlertKind,
 } from '../../components/dark';
 import { LiveActivityFeed } from '../../components/activity/LiveActivityFeed';
-import { ceoDashboardApi, dqaApi } from '../../lib/api';
+import { ceoDashboardApi, decisionsApi, dqaApi } from '../../lib/api';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES — alguns derivados de tipos partial em ceoDashboardApi/dqaApi
@@ -108,6 +110,155 @@ function statusForCount(count: number, threshold: number): KPIStatus {
 function askCopilot(query: string) {
   window.dispatchEvent(
     new CustomEvent('copilot:open', { detail: { query } })
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// INBOX PANEL — Q.18.ZIP.M.2
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const INBOX_TAB_IDS = ['pending', 'accepted', 'rejected', 'all'] as const;
+type InboxTabId = (typeof INBOX_TAB_IDS)[number];
+
+const STATUS_BY_TAB: Record<InboxTabId, string | undefined> = {
+  pending: 'PENDING',
+  accepted: 'EXECUTED',
+  rejected: 'REJECTED',
+  all: undefined,
+};
+
+function InboxPanel({ refreshKey }: { refreshKey: number }) {
+  const navigate = useNavigate();
+  const [tab, setTab] = useState<InboxTabId>('pending');
+
+  const counts = useQuery({
+    queryKey: ['painel', 'inbox', 'counts', refreshKey],
+    queryFn: async () => {
+      // Faz 4 queries em paralelo para counts (tolerante a falhas)
+      const fetch = async (status?: string) => {
+        try {
+          const r: any = await decisionsApi.list({ status, page_size: 1 });
+          return r?.total ?? r?.count ?? r?.items?.length ?? 0;
+        } catch {
+          return 0;
+        }
+      };
+      const [pending, accepted, rejected, all] = await Promise.all([
+        fetch('PENDING'),
+        fetch('EXECUTED'),
+        fetch('REJECTED'),
+        fetch(undefined),
+      ]);
+      return { pending, accepted, rejected, all };
+    },
+    staleTime: 30_000,
+    retry: 0,
+  });
+
+  const list = useQuery({
+    queryKey: ['painel', 'inbox', 'list', tab, refreshKey],
+    queryFn: async () => {
+      const status = STATUS_BY_TAB[tab];
+      try {
+        return (await decisionsApi.list({ status, page_size: 6 })) as any;
+      } catch (err) {
+        return null;
+      }
+    },
+    staleTime: 15_000,
+    retry: 0,
+  });
+
+  const items: any[] = useMemo(() => {
+    const data: any = list.data;
+    if (!data) return [];
+    if (Array.isArray(data)) return data;
+    return data.items ?? data.decisions ?? [];
+  }, [list.data]);
+
+  const tabsConfig = [
+    { id: 'pending', label: 'Pendentes', count: counts.data?.pending },
+    { id: 'accepted', label: 'Aceites', count: counts.data?.accepted },
+    { id: 'rejected', label: 'Rejeitadas', count: counts.data?.rejected },
+    { id: 'all', label: 'Tudo', count: counts.data?.all },
+  ];
+
+  return (
+    <Panel
+      title="Inbox de decisões"
+      badge={counts.data?.pending ?? '—'}
+      action={
+        <button
+          type="button"
+          onClick={() => navigate('/configuracao?tab=auditoria')}
+          className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs text-text-dark-secondary hover:text-text-dark-primary hover:bg-white/5 transition-colors"
+        >
+          Histórico
+        </button>
+      }
+      flush
+    >
+      <div className="px-2 pt-2">
+        <Tabs
+          variant="pills"
+          tabs={tabsConfig}
+          value={tab}
+          onChange={(v) => setTab(v as InboxTabId)}
+        />
+      </div>
+      <div className="px-2 py-3">
+        {list.isLoading ? (
+          <div className="px-4 py-6 text-center text-xs text-text-dark-tertiary">
+            A carregar decisões…
+          </div>
+        ) : list.isError || list.data === null ? (
+          <div className="px-4 py-6 text-center text-xs text-text-dark-tertiary">
+            <Inbox size={20} className="mx-auto mb-2 opacity-50" />
+            Endpoint /v1/decisions indisponível.
+            <br />
+            <span className="text-text-dark-secondary">
+              Quando wired, sugestões CPO aparecem aqui.
+            </span>
+          </div>
+        ) : items.length === 0 ? (
+          <div className="px-4 py-6 text-center text-xs text-text-dark-tertiary">
+            <Inbox size={20} className="mx-auto mb-2 opacity-50" />
+            {tab === 'pending'
+              ? 'Sem decisões pendentes. Tudo decidido!'
+              : tab === 'accepted'
+              ? 'Sem decisões aceites no período.'
+              : tab === 'rejected'
+              ? 'Sem decisões rejeitadas no período.'
+              : 'Sem decisões registadas.'}
+          </div>
+        ) : (
+          <div className="flex flex-col divide-y divide-white/[0.04]">
+            {items.slice(0, 6).map((d, idx) => (
+              <button
+                key={d.id ?? d.decision_id ?? idx}
+                type="button"
+                onClick={() => navigate('/configuracao?tab=auditoria')}
+                className="text-left px-3 py-2 hover:bg-white/[0.03] transition-colors"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-sm text-text-dark-primary truncate">
+                    {d.title ?? d.summary ?? d.decision_type ?? '(Sem título)'}
+                  </span>
+                  <span className="shrink-0 text-[10px] uppercase tracking-wider text-text-dark-tertiary">
+                    {d.status ?? d.decision_status ?? ''}
+                  </span>
+                </div>
+                {d.created_at ? (
+                  <span className="text-[10px] text-text-dark-tertiary tabular-nums">
+                    {new Date(d.created_at).toLocaleString('pt-PT')}
+                  </span>
+                ) : null}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </Panel>
   );
 }
 
@@ -336,28 +487,12 @@ export default function PainelPage() {
             )}
           </Panel>
 
-          <Panel
-            title="Timeline de aprovação"
-            badge="0"
-            action={
-              <button
-                type="button"
-                onClick={() => navigate('/configuracao?tab=auditoria')}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs text-text-dark-secondary hover:text-text-dark-primary hover:bg-white/5 transition-colors"
-              >
-                Histórico
-              </button>
-            }
-            flush
-          >
-            <div className="px-4 py-6 text-center text-xs text-text-dark-tertiary">
-              Sem decisões pendentes de aprovação.
-              <br />
-              <span className="text-text-dark-secondary">
-                Quando o CPO sugerir mudanças, aparecem aqui.
-              </span>
-            </div>
-          </Panel>
+          {/* Q.18.ZIP.M.2 — Inbox melhorada com filter tabs */}
+          <InboxPanel refreshKey={refreshKey} />
+        </div>
+
+        {/* fecho do grid 2-col */}
+        <div className="hidden">{/* spacer */}
         </div>
 
         {/* ═══ ROW: Activity feed + Trust sources ═══ */}
