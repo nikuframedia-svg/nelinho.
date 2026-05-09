@@ -10,7 +10,16 @@ import { RealtimeProvider } from './providers/RealtimeProvider';
 
 // Lazy load heavy pages for code splitting
 const Dashboard = lazy(() => import('./pages/Dashboard').then(m => ({ default: m.Dashboard })));
-// Sprint Q.18.ZIP.B — Painel portado do nelo zip (substitui Dashboard como rota /)
+// Sprint Q.18.ZIP.shell — 10 páginas standalone matching nelo.html zip (path PT-PT canónicos)
+const DirecaoPage = lazy(() => import('./pages/direcao/DirecaoPage'));
+const InboxDecisoesPage = lazy(() => import('./pages/inbox/InboxDecisoesPage'));
+const PlanoProducaoPage = lazy(() => import('./pages/plano-producao/PlanoProducaoPage'));
+const AtribuicaoDiariaPage = lazy(() => import('./pages/atribuicao/AtribuicaoDiariaPage'));
+const OEEPageZip = lazy(() => import('./pages/oee/OEEPage'));
+const OperadoresPage = lazy(() => import('./pages/operadores/OperadoresPage'));
+const AprendizagemPage = lazy(() => import('./pages/aprendizagem/AprendizagemPage'));
+const DefinicoesPage = lazy(() => import('./pages/definicoes/DefinicoesPage'));
+// Sprint Q.18.ZIP.B — Painel portado do nelo zip (legacy — agora /direcao)
 const PainelPage = lazy(() => import('./pages/painel/PainelPage'));
 // Sprint Q.18.ZIP.M.0+M.1 — CEO View novo (substitui CEODashboardPage broken)
 const CEOView = lazy(() => import('./pages/painel/CEOView'));
@@ -117,15 +126,54 @@ function App() {
                 
                 <Routes>
                 <Route path="/" element={<Layout />}>
-                  {/* Sprint Q.18.ZIP.B — / serve PainelPage (porto do nelo zip).
-                      Dashboard.tsx mantém-se no disco até cleanup Q.18.ZIP.K
-                      mas já não é renderizado pela rota canónica. */}
-                  <Route index element={
+                  {/* Sprint Q.18.ZIP.shell — / redireciona para /direcao matching zip nelo.html */}
+                  <Route index element={<Navigate to="/direcao" replace />} />
+
+                  {/* ── 10 páginas standalone matching zip ── */}
+                  <Route path="direcao" element={
                     <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
-                      <PainelPage />
+                      <DirecaoPage />
                     </Suspense>
                   } />
-                  <Route path="painel" element={
+                  <Route path="inbox" element={
+                    <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
+                      <InboxDecisoesPage />
+                    </Suspense>
+                  } />
+                  <Route path="plano-producao" element={
+                    <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
+                      <PlanoProducaoPage />
+                    </Suspense>
+                  } />
+                  <Route path="atribuicao" element={
+                    <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
+                      <AtribuicaoDiariaPage />
+                    </Suspense>
+                  } />
+                  <Route path="oee" element={
+                    <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
+                      <OEEPageZip />
+                    </Suspense>
+                  } />
+                  <Route path="operadores" element={
+                    <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
+                      <OperadoresPage />
+                    </Suspense>
+                  } />
+                  <Route path="aprendizagem" element={
+                    <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
+                      <AprendizagemPage />
+                    </Suspense>
+                  } />
+                  <Route path="definicoes" element={
+                    <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
+                      <DefinicoesPage />
+                    </Suspense>
+                  } />
+
+                  {/* Legacy /painel + Painel-old para debug — agora redirecionam */}
+                  <Route path="painel" element={<Navigate to="/direcao" replace />} />
+                  <Route path="painel-legacy" element={
                     <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
                       <PainelPage />
                     </Suspense>
@@ -152,7 +200,8 @@ function App() {
                       em /ceo-legacy). Usa endpoints individuais (otd, fpy,
                       alerts, expeditions) com graceful degradation em vez do
                       /v1/profit/dashboard que devolve 500. */}
-                  <Route path="ceo" element={
+                  <Route path="ceo" element={<Navigate to="/direcao" replace />} />
+                  <Route path="ceo-view-legacy" element={
                     <Suspense fallback={<div className="p-8"><SkeletonLoader count={3} /></div>}>
                       <CEOView />
                     </Suspense>
@@ -314,45 +363,47 @@ function App() {
                       vai substituir o redirect pela página nativa.
                       Nota Q.18.ZIP.B: /painel já é nativo acima — esta entrada
                       é redundante (mantida só por defesa caso alguém tire). */}
-                  {/* /painel removido daqui — agora rota nativa acima */}
-                  {/* Q.18.ZIP.C — /producao agora nativa */}
-                  <Route path="producao" element={
-                    <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
-                      <ProducaoPage />
-                    </Suspense>
-                  } />
-                  {/* Q.18.ZIP.D — /planeamento agora nativa (4 tabs) */}
-                  <Route path="planeamento" element={
-                    <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
-                      <PlaneamentoPage />
-                    </Suspense>
-                  } />
-                  {/* Q.18.ZIP.E — /expedicao agora nativa (wrap DispatchPage Q.2) */}
-                  <Route path="expedicao" element={
-                    <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
-                      <ExpedicaoPage />
-                    </Suspense>
-                  } />
-                  {/* Q.18.ZIP.F — /equipa agora nativa (4 tabs) */}
-                  <Route path="equipa" element={
-                    <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
-                      <EquipaPage />
-                    </Suspense>
-                  } />
-                  {/* Q.18.ZIP.G — /qualidade agora nativa (4 tabs) */}
+                  {/* ── Legacy paths PT-PT antigos → redirect para novos zip ── */}
+                  <Route path="producao" element={<Navigate to="/plano-producao" replace />} />
+                  <Route path="planeamento" element={<Navigate to="/plano-producao" replace />} />
+                  <Route path="equipa" element={<Navigate to="/operadores" replace />} />
+                  <Route path="relatorios" element={<Navigate to="/oee" replace />} />
+                  <Route path="configuracao" element={<Navigate to="/aprendizagem" replace />} />
+
+                  {/* /qualidade + /expedicao mantêm path canónico zip */}
                   <Route path="qualidade" element={
                     <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
                       <QualidadePage />
                     </Suspense>
                   } />
-                  {/* Q.18.ZIP.I — /relatorios agora nativa (5 tabs) */}
-                  <Route path="relatorios" element={
+                  <Route path="expedicao" element={
+                    <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
+                      <ExpedicaoPage />
+                    </Suspense>
+                  } />
+
+                  {/* Páginas legacy acessíveis via -legacy para debug/comparação */}
+                  <Route path="producao-legacy" element={
+                    <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
+                      <ProducaoPage />
+                    </Suspense>
+                  } />
+                  <Route path="planeamento-legacy" element={
+                    <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
+                      <PlaneamentoPage />
+                    </Suspense>
+                  } />
+                  <Route path="equipa-legacy" element={
+                    <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
+                      <EquipaPage />
+                    </Suspense>
+                  } />
+                  <Route path="relatorios-legacy" element={
                     <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
                       <RelatoriosPage />
                     </Suspense>
                   } />
-                  {/* Q.18.ZIP.H — /configuracao agora nativa (7 tabs + sub-tabs) */}
-                  <Route path="configuracao" element={
+                  <Route path="configuracao-legacy" element={
                     <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
                       <ConfiguracaoPage />
                     </Suspense>

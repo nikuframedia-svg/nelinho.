@@ -1,30 +1,22 @@
 /**
- * PageHeader — cabeçalho padrão de cada página-mãe.
+ * PageHeader — port literal de design/nelo-zip/src/atoms.jsx PageHeader.
  *
- * Pattern repetido em todas as 4 páginas de pages-1.jsx do nelo zip:
- *   ┌─────────────────────────────────────────────────────────┐
- *   │ Painel                                  [Atualizar] [⚙] │
- *   │ VISÃO GERAL · TURNO HOJE · ATUALIZADO HÁ 2 MIN          │
- *   └─────────────────────────────────────────────────────────┘
+ * Padding: 20px 28px 16px 28px. Border-bottom bd-1. Sticky top 52 z-10.
+ * Ícone opcional 38x38 box bg-2 bd-1 à esquerda do título.
+ * Title 20px 600 letter-spacing -0.2. Subtitle 13px regular fg-2.
  *
- * Subtitle em uppercase letter-spaced (Palantir aesthetic).
- * Actions slot à direita aceita qualquer ReactNode (botões, badges).
- *
- * Sprint Q.18.ZIP.A.
+ * Sprint Q.18.ZIP.shell.
  */
 
 import type { ReactNode } from 'react';
 
 export interface PageHeaderProps {
   title: string;
-  /** Subtítulo metadata (renderizado uppercase letter-spaced). */
   subtitle?: string;
-  /** Ícone opcional à esquerda do título. */
+  /** Ícone à esquerda (renderizado em box 38x38 bg-2 + bd-1). */
   icon?: ReactNode;
-  /** Botões/actions à direita (ex: Atualizar/Filtros/Pedir-ao-Copilot). */
+  /** Botões/actions à direita. */
   actions?: ReactNode;
-  /** Breadcrumbs opcionais por cima do título. */
-  breadcrumbs?: ReactNode;
   className?: string;
 }
 
@@ -33,45 +25,61 @@ export function PageHeader({
   subtitle,
   icon,
   actions,
-  breadcrumbs,
   className = '',
 }: PageHeaderProps): ReactNode {
   return (
     <header
-      className={`
-        flex flex-col gap-1.5 px-7 pt-5 pb-4
-        bg-dark-900 border-b border-bd-1
-        sticky top-13 z-10
-        ${className}
-      `}
-      style={{ top: 52 }}
+      className={`flex items-start justify-between sticky z-10 border-b border-bd-1 ${className}`}
+      style={{
+        padding: '20px 28px 16px 28px',
+        background: 'var(--bg-0)',
+        top: 52,
+        gap: 16,
+      }}
     >
-      {breadcrumbs ? <div className="text-xs">{breadcrumbs}</div> : null}
-
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="flex items-center gap-3 min-w-0">
-          {icon ? (
-            <span className="shrink-0 text-blue">{icon}</span>
-          ) : null}
-          <div className="min-w-0">
-            <h1
-              className="text-xl font-semibold text-text-dark-primary leading-tight truncate"
-              style={{ letterSpacing: '-0.2px' }}
-            >
-              {title}
-            </h1>
-            {subtitle ? (
-              <p className="text-[13px] text-text-dark-tertiary mt-0.5">
-                {subtitle}
-              </p>
-            ) : null}
+      <div className="flex items-center" style={{ gap: 12 }}>
+        {icon ? (
+          <div
+            className="grid place-items-center text-text-dark-secondary"
+            style={{
+              width: 38,
+              height: 38,
+              background: 'var(--bg-2)',
+              border: '1px solid var(--bd-1)',
+              borderRadius: 'var(--r-md)',
+              flexShrink: 0,
+            }}
+          >
+            {icon}
           </div>
-        </div>
-
-        {actions ? (
-          <div className="flex items-center gap-2 shrink-0">{actions}</div>
         ) : null}
+        <div className="min-w-0">
+          <h1
+            className="text-text-dark-primary truncate"
+            style={{
+              margin: 0,
+              fontSize: 20,
+              fontWeight: 600,
+              letterSpacing: '-0.2px',
+            }}
+          >
+            {title}
+          </h1>
+          {subtitle ? (
+            <div
+              className="text-text-dark-tertiary"
+              style={{ fontSize: 13, marginTop: 3 }}
+            >
+              {subtitle}
+            </div>
+          ) : null}
+        </div>
       </div>
+      {actions ? (
+        <div className="flex items-center" style={{ gap: 8 }}>
+          {actions}
+        </div>
+      ) : null}
     </header>
   );
 }

@@ -109,6 +109,9 @@ export type { ModalProps } from './Modal';
 export { EmptyState } from './EmptyState';
 export type { EmptyStateProps } from './EmptyState';
 
+// Sprint Q.18.ZIP.shell — LiveBadge "● Em direto" (zip atoms.jsx port literal)
+export { LiveBadge } from './LiveBadge';
+
 // Sprint Q.18.ZIP.atoms — atoms portados literalmente do design/nelo-zip/src/atoms.jsx
 // (status colors green/yellow/red/blue/orange/purple/gray + glyph ●◆▲◐ inline).
 // `StatusBadge` do zip exposto como `ZipStatusBadge` para não colidir com

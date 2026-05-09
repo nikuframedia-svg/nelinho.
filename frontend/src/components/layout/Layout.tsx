@@ -32,8 +32,8 @@ export function Layout() {
   return (
     <div className="min-h-screen bg-bg-base">
       <Sidebar />
-      {/* Sidebar é fixed w-64 (256px). Empurrar conteúdo. */}
-      <div className="ml-64 flex flex-col min-h-screen">
+      {/* Sidebar é fixed 240px. Empurrar conteúdo. */}
+      <div className="flex flex-col min-h-screen" style={{ marginLeft: 240 }}>
         <TopBar />
         <main className="flex-1 min-h-[calc(100vh-52px)]">
           <Outlet />

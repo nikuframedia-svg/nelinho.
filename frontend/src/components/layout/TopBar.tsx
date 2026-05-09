@@ -1,43 +1,40 @@
 /**
- * TopBar — barra fina (52px) por cima do conteúdo, ao lado da Sidebar.
+ * TopBar — port literal de design/nelo-zip/src/shell.jsx Topbar.
  *
- * Conteúdo (FRONTEND_DESIGN_PROMPT §4.1 + design/nelo-zip/src/shell.jsx:
- * 133-190):
- *   ┌──────────────────────────────────────────────────────────────────┐
- *   │ 🔍 Procurar barco, operador, fase…  ⌘K  | Gestor·Op·CEO | 🔔 | sex 09 mai · 14:23 │
- *   └──────────────────────────────────────────────────────────────────┘
+ * Layout: search 320px (bg-2) + flex-1 spacer + LiveBadge + date longo +
+ * botão "Assistente" (Sparkles icon, azul quando aberto).
  *
- * Sem nav primária (essa vive na Sidebar). Sem hardcoded user — esse
- * vai no chip da Sidebar via /v1/auth/me.
+ * Sem UmweltSwitcher / Notifications / Breadcrumbs (zip não tem).
+ * User chip vive na Sidebar footer (zip pattern).
  *
- * Sprint Q.18.UI.A.1.
+ * Sprint Q.18.ZIP.shell.
  */
 
 import { useState, useEffect } from 'react';
-import { Search, Bell, Command } from 'lucide-react';
+import { Search, Sparkles } from 'lucide-react';
 import { useCommandPalette } from '../../hooks';
-import { UmweltSwitcher } from '../dashboard/UmweltSwitcher';
-import { Breadcrumbs, type BreadcrumbItem } from '../dark/Breadcrumbs';
+import { LiveBadge } from '../dark/LiveBadge';
 
 function nowLabel(): string {
-  const fmt = new Intl.DateTimeFormat('pt-PT', {
-    weekday: 'short',
-    day: '2-digit',
-    month: 'short',
+  // Format zip: "terça-feira, 12 de maio · 10:30"
+  const d = new Date();
+  const dateStr = d.toLocaleDateString('pt-PT', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  });
+  const timeStr = d.toLocaleTimeString('pt-PT', {
     hour: '2-digit',
     minute: '2-digit',
   });
-  return fmt.format(new Date());
+  return `${dateStr} · ${timeStr}`;
 }
 
-export interface TopBarProps {
-  /** Q.18.ZIP.A — slot opcional de breadcrumbs antes da search.
-   *  Cada página-mãe pode passar [{label: 'Operação'}, {label: 'Painel'}]
-   *  para mostrar `Nelo · Operação · Painel` no topo. */
-  breadcrumbs?: BreadcrumbItem[];
+function openCopilot() {
+  window.dispatchEvent(new CustomEvent('copilot:open'));
 }
 
-export function TopBar({ breadcrumbs }: TopBarProps = {}) {
+export function TopBar() {
   const { open: openCommandPalette } = useCommandPalette();
   const [now, setNow] = useState(nowLabel());
 
@@ -46,78 +43,81 @@ export function TopBar({ breadcrumbs }: TopBarProps = {}) {
     return () => window.clearInterval(id);
   }, []);
 
-  // Sempre incluir 'Nelo' como root crumb se breadcrumbs passados
-  const fullCrumbs: BreadcrumbItem[] | undefined =
-    breadcrumbs && breadcrumbs.length > 0
-      ? [{ label: 'Nelo' }, ...breadcrumbs]
-      : undefined;
-
   return (
     <header
-      className="
-        h-13 px-6 flex items-center gap-4
-        bg-dark-900 border-b border-bd-1
-        sticky top-0 z-20
-      "
-      style={{ height: 52 }}
+      className="flex items-center sticky top-0 z-20 border-b border-bd-1"
+      style={{
+        height: 52,
+        flexShrink: 0,
+        background: 'var(--bg-0)',
+        padding: '0 24px',
+        gap: 16,
+      }}
     >
-      {/* Q.18.ZIP.A — Breadcrumbs slot (renderiza só se passado) */}
-      {fullCrumbs ? (
-        <Breadcrumbs items={fullCrumbs} className="hidden md:flex" />
-      ) : null}
-
-      {/* Search trigger (opens CommandPalette) */}
+      {/* Search */}
       <button
         type="button"
         onClick={openCommandPalette}
-        className="
-          flex items-center gap-2 w-80 max-w-[40vw]
-          px-3 py-1.5 rounded-md
-          bg-dark-800 border border-bd-1
-          text-text-dark-tertiary hover:text-text-dark-secondary hover:border-bd-2
-          transition-colors duration-150
-          focus:outline-none focus:ring-2 focus:ring-blue/40
-        "
+        className="flex items-center gap-2 text-text-dark-tertiary hover:text-text-dark-secondary transition-colors"
+        style={{
+          width: 320,
+          background: 'var(--bg-2)',
+          border: '1px solid var(--bd-1)',
+          borderRadius: 'var(--r-md)',
+          padding: '6px 12px',
+        }}
         title="Procurar (⌘K)"
         aria-label="Procurar"
       >
         <Search size={14} className="shrink-0" />
-        <span className="text-sm flex-1 text-left truncate">
-          Procurar barco, operador, fase…
+        <span className="flex-1 text-left truncate" style={{ fontSize: 13 }}>
+          Procurar barco, operador, fase...
         </span>
-        <span className="inline-flex items-center gap-0.5 text-[10px] tabular-nums text-text-dark-tertiary border border-bd-1 rounded px-1.5 py-0.5">
-          <Command size={10} />K
+        <span
+          className="text-text-dark-tertiary"
+          style={{
+            fontSize: 10,
+            padding: '1px 6px',
+            border: '1px solid var(--bd-1)',
+            borderRadius: 4,
+          }}
+        >
+          ⌘K
         </span>
       </button>
 
       <div className="flex-1" />
 
-      {/* Umwelt switcher (Gestor / Operador / CEO) */}
-      <UmweltSwitcher className="hidden md:inline-flex" />
-
-      {/* Notifications — sem mock count. Quando o endpoint existir,
-          vem de useQuery. Por agora botão sem badge. */}
-      <button
-        type="button"
-        className="
-          relative p-2 rounded-md
-          text-text-dark-tertiary hover:text-text-dark-secondary hover:bg-dark-800
-          transition-colors duration-150
-          focus:outline-none focus:ring-2 focus:ring-blue/40
-        "
-        aria-label="Notificações"
-        title="Notificações"
-      >
-        <Bell size={18} />
-      </button>
+      {/* Live indicator */}
+      <LiveBadge />
 
       {/* Date + time */}
       <span
-        className="hidden lg:inline text-xs text-text-dark-tertiary tabular-nums"
+        className="text-text-dark-secondary tabular-nums hidden lg:inline"
+        style={{ fontSize: 12 }}
         aria-label="Data e hora actual"
       >
         {now}
       </span>
+
+      {/* Assistente button */}
+      <button
+        type="button"
+        onClick={openCopilot}
+        className="inline-flex items-center gap-1.5 font-medium transition-colors"
+        style={{
+          padding: '6px 12px',
+          height: 32,
+          background: 'var(--bg-2)',
+          color: 'var(--fg-1)',
+          border: '1px solid var(--bd-2)',
+          borderRadius: 'var(--r-md)',
+          fontSize: 12,
+        }}
+      >
+        <Sparkles size={14} />
+        Assistente
+      </button>
     </header>
   );
 }
