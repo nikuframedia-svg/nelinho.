@@ -12,6 +12,8 @@ import { RealtimeProvider } from './providers/RealtimeProvider';
 const Dashboard = lazy(() => import('./pages/Dashboard').then(m => ({ default: m.Dashboard })));
 // Sprint Q.18.ZIP.B — Painel portado do nelo zip (substitui Dashboard como rota /)
 const PainelPage = lazy(() => import('./pages/painel/PainelPage'));
+// Sprint Q.18.ZIP.M.0+M.1 — CEO View novo (substitui CEODashboardPage broken)
+const CEOView = lazy(() => import('./pages/painel/CEOView'));
 // Sprint Q.18.ZIP.C — Producao portada (mapa fabrica + 3 vistas + DragDrop)
 const ProducaoPage = lazy(() => import('./pages/producao/ProducaoPage'));
 // Sprint Q.18.ZIP.D — Planeamento portado (4 tabs: Atribuicao/Materiais/Forecast/Simulador)
@@ -144,7 +146,16 @@ function App() {
 
                   {/* Sprint H — 3 Umwelts */}
                   <Route path="gestor" element={<Navigate to="/" replace />} />
+                  {/* Q.18.ZIP.M.0+M.1 — CEO View novo (CEODashboardPage legacy
+                      em /ceo-legacy). Usa endpoints individuais (otd, fpy,
+                      alerts, expeditions) com graceful degradation em vez do
+                      /v1/profit/dashboard que devolve 500. */}
                   <Route path="ceo" element={
+                    <Suspense fallback={<div className="p-8"><SkeletonLoader count={3} /></div>}>
+                      <CEOView />
+                    </Suspense>
+                  } />
+                  <Route path="ceo-legacy" element={
                     <Suspense fallback={<div className="p-8"><SkeletonLoader count={3} /></div>}>
                       <CEODashboardPage />
                     </Suspense>
