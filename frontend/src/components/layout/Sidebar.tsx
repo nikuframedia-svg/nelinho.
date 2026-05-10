@@ -21,6 +21,7 @@ import {
   Truck,
   Brain,
   Settings,
+  FileCode,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -106,6 +107,7 @@ export function Sidebar() {
       label: 'Sistema',
       items: [
         { path: '/aprendizagem', label: 'O que aprendi', icon: <Brain size={16} /> },
+        { path: '/regras', label: 'Regras Q.17 (YAML)', icon: <FileCode size={16} /> },
         { path: '/definicoes', label: 'Definições', icon: <Settings size={16} /> },
       ],
     },

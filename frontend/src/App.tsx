@@ -165,6 +165,11 @@ function App() {
                       <AprendizagemPage />
                     </Suspense>
                   } />
+                  <Route path="regras" element={
+                    <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
+                      <RegrasPage />
+                    </Suspense>
+                  } />
                   <Route path="definicoes" element={
                     <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
                       <DefinicoesPage />
