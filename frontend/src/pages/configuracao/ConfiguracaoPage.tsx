@@ -36,6 +36,7 @@ import { SkeletonLoader } from '../../components/ui/Skeleton';
 import { Q17Dashboard } from '../../components/aprendizagem/Q17Panels';
 import { BCamadasDashboard } from '../../components/aprendizagem/BCamadasPanels';
 import { CausalDashboard } from '../../components/causal/CausalPanels';
+import { CopilotExtrasDashboard } from '../../components/copilot/CopilotExtras';
 
 // ─── Pages wrapped ───
 const SettingsPage = lazy(() =>
@@ -119,7 +120,7 @@ function isTabId(v: string | null): v is TabId {
   return v !== null && (TAB_IDS as readonly string[]).includes(v);
 }
 
-const APREND_SUB = ['resumo', 'regras', 'aprendidas', 'q17', 'camadas', 'causal'] as const;
+const APREND_SUB = ['resumo', 'regras', 'aprendidas', 'q17', 'camadas', 'causal', 'copilot'] as const;
 type AprendSub = (typeof APREND_SUB)[number];
 
 const SISTEMA_SUB = ['saude', 'ingestao', 'rag', 'tools'] as const;
@@ -229,6 +230,7 @@ export default function ConfiguracaoPage() {
                   { id: 'q17', label: 'Q.17 Avançado' },
                   { id: 'camadas', label: '4 Camadas Aprendizagem' },
                   { id: 'causal', label: 'Causal/Explain' },
+                  { id: 'copilot', label: 'Copilot extras' },
                 ]}
                 value={aprendSub}
                 onChange={(v) => setAprendSub(v as AprendSub)}
@@ -249,9 +251,13 @@ export default function ConfiguracaoPage() {
                 <div className="px-4">
                   <BCamadasDashboard />
                 </div>
-              ) : (
+              ) : aprendSub === 'causal' ? (
                 <div className="px-4">
                   <CausalDashboard />
+                </div>
+              ) : (
+                <div className="px-4">
+                  <CopilotExtrasDashboard />
                 </div>
               )}
             </Suspense>

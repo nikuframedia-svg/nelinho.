@@ -345,6 +345,41 @@ async def ingest_rag_document(
     }
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# User feedback collector — Onda 13 M (UI ad-hoc 👍👎 + texto)
+# ──────────────────────────────────────────────────────────────────────────
+
+@router.post("/feedback/user", status_code=status.HTTP_200_OK)
+async def submit_user_feedback(
+    payload: dict,
+    tenant_id: UUID = Depends(get_tenant_id),
+):
+    """Recebe feedback ad-hoc do utilizador (👍/👎 + texto livre).
+
+    Onda 13 M minimal stub: log out + retorna 200 com echo. Persistência
+    em UserFeedback model fica para sub-sprint dedicado (tabela ainda não
+    existe; criar adiciona migration + 2 endpoints CRUD).
+
+    Payload aceita: ``{thumb: 'up'|'down', text: str, context?: dict}``.
+    """
+    import logging
+    log = logging.getLogger("copilot.feedback")
+    thumb = payload.get("thumb", "").strip()
+    text = (payload.get("text") or "").strip()
+    if thumb not in ("up", "down"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="thumb must be 'up' or 'down'")
+    log.info(
+        "user_feedback tenant=%s thumb=%s text_len=%d context=%s",
+        tenant_id, thumb, len(text), payload.get("context") or {},
+    )
+    return {
+        "status": "received",
+        "thumb": thumb,
+        "text_len": len(text),
+        "tenant_id": str(tenant_id),
+    }
+
+
 @router.post("/health/reset-circuit")
 async def reset_circuit_breaker():
     """
