@@ -2640,6 +2640,28 @@ export const workforceEmployeesApi = {
       `/v1/workforce/employees/${encodeURIComponent(employeeId)}/soft-delete`,
       { method: 'POST', body: JSON.stringify(payload) },
     ),
+
+  // Q.18 fix-workforce — escala 1-3 derivada do quality score Laplace.
+  levelSummary: (employeeId: string) =>
+    request<{
+      employee_id: string;
+      quality_score: number;
+      derived_level: 1 | 2 | 3;
+      level_label: string;
+      level_description: string;
+      recommended_boats: string[];
+      skills_apt: string[];
+      per_phase_skills: Array<{
+        phase_id: string;
+        phase_name?: string;
+        can_do: boolean;
+        nivel?: number | null;
+        ops_count: number;
+        last_used_at?: string | null;
+      }>;
+    }>(
+      `/v1/workforce/employees/${encodeURIComponent(employeeId)}/level-summary`,
+    ),
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════

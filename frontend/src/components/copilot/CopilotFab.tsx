@@ -5,6 +5,7 @@ import copilotMascotImage from '../../assets/copilot-mascot.png';
 export function CopilotFab() {
   const [isOpen, setIsOpen] = useState(false);
   const [initialQuery, setInitialQuery] = useState<string | null>(null);
+  const [initialEntity, setInitialEntity] = useState<{ entity_type?: string; entity_id?: string } | null>(null);
   const [showTooltip, setShowTooltip] = useState(false);
   const [openedViaFab, setOpenedViaFab] = useState(false);
   const [buttonSize, setButtonSize] = useState({ width: '100px', height: '100px' });
@@ -24,14 +25,20 @@ export function CopilotFab() {
     return () => window.removeEventListener('resize', updateSize);
   }, []);
   
-  // Escutar evento para abrir drawer com query pré-formatada
+  // Escutar evento para abrir drawer com query pré-formatada (+ optional entity)
   useEffect(() => {
     const handleOpenEvent = (event: CustomEvent) => {
-      setInitialQuery(event.detail.query);
-      setOpenedViaFab(false); // Não é via FAB, é via outro componente
+      setInitialQuery(event.detail?.query ?? null);
+      // Q.18 fix-workforce — quando dispatch traz entity_type/entity_id (ex:
+      // employee detail drawer), passar ao Copilot para enriquecer contexto.
+      const ent = (event.detail?.entity_type && event.detail?.entity_id)
+        ? { entity_type: String(event.detail.entity_type), entity_id: String(event.detail.entity_id) }
+        : null;
+      setInitialEntity(ent);
+      setOpenedViaFab(false);
       setIsOpen(true);
     };
-    
+
     window.addEventListener('copilot:open', handleOpenEvent as EventListener);
     return () => {
       window.removeEventListener('copilot:open', handleOpenEvent as EventListener);
@@ -41,6 +48,7 @@ export function CopilotFab() {
   const handleClose = () => {
     setIsOpen(false);
     setInitialQuery(null);
+    setInitialEntity(null);
     setOpenedViaFab(false);
   };
 
@@ -118,11 +126,13 @@ export function CopilotFab() {
       
       {/* Drawer */}
       {isOpen && (
-        <CopilotDrawer 
-          isOpen={isOpen} 
-          onClose={handleClose} 
+        <CopilotDrawer
+          isOpen={isOpen}
+          onClose={handleClose}
           initialQuery={initialQuery}
           openedViaFab={openedViaFab}
+          initialEntityType={initialEntity?.entity_type}
+          initialEntityId={initialEntity?.entity_id}
         />
       )}
     </>

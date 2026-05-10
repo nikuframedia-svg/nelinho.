@@ -186,6 +186,35 @@ async def get_skill_matrix(
     }
 
 
+# ---------------------------------------------------------------------------
+# Level summary (Q.18 fix-workforce) — escala 1-3 derivada do quality score
+# ---------------------------------------------------------------------------
+
+@router.get("/{employee_id}/level-summary")
+async def get_level_summary(
+    employee_id: UUID,
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Resumo do nível global (1-3, 1=melhor) do operador.
+
+    Escala derivada do quality score Laplace [1-10] já existente. Inclui
+    descrição do nível, barcos recomendados e skill matrix per-fase para
+    polivalência. Usado pela UI de /equipa > Lista (drawer detail) e pelo
+    Copilot quando entity_type=employee + entity_id.
+    """
+    from src.workforce.levels import level_summary_payload
+
+    svc = EmployeeExtrasService(session, tenant_id)
+    quality = await svc.quality_score(employee_id)
+    skills = await svc.skill_matrix(employee_id)
+    skills_apt_names = [r.phase_name or r.phase_id for r in skills if r.can_do]
+    payload = level_summary_payload(quality.score, skills_apt_names)
+    payload["employee_id"] = str(employee_id)
+    payload["per_phase_skills"] = [r.to_dict() for r in skills]
+    return payload
+
+
 @router.patch("/{employee_id}/skills")
 async def toggle_skill(
     employee_id: UUID,

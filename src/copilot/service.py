@@ -130,7 +130,19 @@ class CopilotService:
             kpi_snapshot=kpi_snapshot,
         )
         perf_metrics["context_build_ms"] = int((time.time() - context_start) * 1000)
-        
+
+        # 4.5 Entity-aware context (Q.18 fix-workforce):
+        # Quando o frontend envia entity_type="employee" + entity_id, injectar
+        # quality_score + nível derivado + skills na context_facts para o LLM
+        # responder perguntas como "que barcos posso atribuir ao {nome}?".
+        if request.entity_type == "employee" and request.entity_id is not None:
+            try:
+                context_facts["employee_context"] = await _build_employee_facts(
+                    self.session, self.tenant_id, request.entity_id
+                )
+            except Exception as e:
+                logger.warning(f"Falha a construir employee_context: {e}")
+
         # 5. Retrieve RAG (apenas se necessário - reduzir ainda mais)
         rag_chunks = []
         if request.include_citations and intent not in ("kpi_current", "generic"):
@@ -1400,4 +1412,28 @@ IMPORTANTE:
                 "correlation_id": str(correlation_id),  # Para debugging
             },
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Q.18 fix-workforce — entity-aware context helpers
+# ─────────────────────────────────────────────────────────────────────────
+
+async def _build_employee_facts(session, tenant_id, employee_id):
+    """Construir bloco employee_context para o LLM quando entity_type='employee'.
+
+    Devolve quality_score, derived_level (1-3, 1=melhor), label, descrição,
+    barcos recomendados e até 10 skills aptos do operador. O Copilot Nelinho
+    usa estes factos para responder perguntas como "que barcos posso atribuir
+    ao {nome}?" sem inventar dados.
+    """
+    from src.workforce.employee_extras_service import EmployeeExtrasService
+    from src.workforce.levels import level_summary_payload
+
+    svc = EmployeeExtrasService(session, tenant_id)
+    quality = await svc.quality_score(employee_id)
+    skills = await svc.skill_matrix(employee_id)
+    skills_apt_names = [r.phase_name or r.phase_id for r in skills if r.can_do]
+    payload = level_summary_payload(quality.score, skills_apt_names)
+    payload["employee_id"] = str(employee_id)
+    return payload
 

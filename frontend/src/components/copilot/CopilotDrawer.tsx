@@ -10,6 +10,10 @@ interface CopilotDrawerProps {
   onClose: () => void;
   initialQuery?: string | null;
   openedViaFab?: boolean;
+  /** Q.18 fix-workforce — quando vem de um drawer entity-aware (ex: employee
+   * detail), enviar entity_type/entity_id ao backend para enriquecer contexto. */
+  initialEntityType?: string;
+  initialEntityId?: string;
 }
 
 interface Message {
@@ -19,7 +23,14 @@ interface Message {
   timestamp: Date;
 }
 
-export function CopilotDrawer({ isOpen, onClose, initialQuery, openedViaFab = false }: CopilotDrawerProps) {
+export function CopilotDrawer({
+  isOpen,
+  onClose,
+  initialQuery,
+  openedViaFab = false,
+  initialEntityType,
+  initialEntityId,
+}: CopilotDrawerProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [modelStatus, setModelStatus] = useState<'ONLINE' | 'OFFLINE'>('ONLINE');
@@ -239,22 +250,29 @@ export function CopilotDrawer({ isOpen, onClose, initialQuery, openedViaFab = fa
         (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
           ? crypto.randomUUID()
           : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      // Q.18 fix-workforce — entity-aware (ex: employee) enriquece contexto LLM.
+      const entityFields: { entity_type?: string; entity_id?: string } = {};
+      if (initialEntityType && initialEntityId) {
+        entityFields.entity_type = initialEntityType;
+        entityFields.entity_id = initialEntityId;
+      }
       try {
         if (currentConversationId) {
           try {
             return await copilotApi.sendMessage(currentConversationId, {
               user_query: query,
               idempotency_key,
+              ...entityFields,
             });
           } catch (error: any) {
             if (error?.status === 401) {
               setCurrentConversationId(null);
-              return await copilotApi.ask({ user_query: query, idempotency_key });
+              return await copilotApi.ask({ user_query: query, idempotency_key, ...entityFields });
             }
             throw error;
           }
         }
-        return await copilotApi.ask({ user_query: query, idempotency_key });
+        return await copilotApi.ask({ user_query: query, idempotency_key, ...entityFields });
       } finally {
         setIsSendingMessage(false);
       }

@@ -21,9 +21,12 @@
  * Sprint Q.18.ZIP.EQ (refactor profundo big-bang).
  */
 
-import { lazy, Suspense, useMemo } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import { workforceEmployeesApi } from '../../lib/api';
+import { EmployeeFormModal } from '../../components/workforce/EmployeeFormModal';
+import { EmployeeDetailDrawer } from '../../components/workforce/EmployeeDetailDrawer';
 import {
   Users,
   CalendarRange,
@@ -257,8 +260,9 @@ export default function EquipaPage() {
             {activeTab === 'lista' ? (
               <button
                 type="button"
-                disabled
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-transparent text-text-dark-tertiary border border-white/[0.08] text-xs font-medium opacity-50 cursor-not-allowed"
+                onClick={() => window.dispatchEvent(new CustomEvent('equipa:add-employee'))}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-white text-xs font-medium transition-colors"
+                style={{ background: 'var(--blue)', border: '1px solid var(--blue)' }}
               >
                 <Plus size={13} />
                 Adicionar operador
@@ -381,6 +385,43 @@ function ListaTab() {
     staleTime: 60_000,
     retry: 0,
   });
+
+  // Q.18 fix-workforce — nível derivado (1-3) por operador via /level-summary.
+  const levelsQuery = useQuery({
+    queryKey: ['equipa', 'employee-levels', employees.map((e) => e.id).join(',')],
+    queryFn: async () => {
+      if (employees.length === 0) return new Map<string, 1 | 2 | 3>();
+      const results = await Promise.all(
+        employees.map(async (e) => {
+          try {
+            const summary = await workforceEmployeesApi.levelSummary(e.id);
+            return [e.id, summary.derived_level] as const;
+          } catch {
+            return [e.id, null as unknown as 1 | 2 | 3] as const;
+          }
+        }),
+      );
+      return new Map(results);
+    },
+    enabled: employees.length > 0,
+    staleTime: 60_000,
+    retry: 0,
+  });
+
+  // Add/Edit/Detail state — modal + drawer interno (lift seria mais
+  // refactor; window event do PageHeader btn faz a ponte).
+  const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState<any | null>(null);
+  const [drawerEmp, setDrawerEmp] = useState<{ id: string; name?: string } | null>(null);
+
+  useEffect(() => {
+    function handleAdd() {
+      setEditing(null);
+      setFormOpen(true);
+    }
+    window.addEventListener('equipa:add-employee', handleAdd);
+    return () => window.removeEventListener('equipa:add-employee', handleAdd);
+  }, []);
 
   const enriched: EmployeeWithStats[] = useMemo(() => {
     const statsMap = statsQuery.data ?? new Map();
@@ -511,7 +552,7 @@ function ListaTab() {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
                 <tr style={{ background: 'var(--bg-2)' }}>
-                  {['Operador', 'Tier', 'Score', 'Taxa erro', 'Operações', 'Skill principal', 'Estado', ''].map((h) => (
+                  {['Operador', 'Tier', 'Nível', 'Score', 'Taxa erro', 'Operações', 'Skill principal', 'Estado', ''].map((h) => (
                     <th
                       key={h}
                       style={{
@@ -555,6 +596,7 @@ function ListaTab() {
                   return (
                     <tr
                       key={w.id}
+                      onClick={() => setDrawerEmp({ id: w.id, name: w.employee_name })}
                       style={{
                         cursor: 'pointer',
                         borderBottom:
@@ -582,6 +624,18 @@ function ListaTab() {
                         <ZipToneBadge tone={tierTone(w.tier)} size="sm">
                           {w.tier}
                         </ZipToneBadge>
+                      </td>
+                      <td style={{ padding: '12px 16px' }}>
+                        {(() => {
+                          const lvl = levelsQuery.data?.get(w.id);
+                          if (!lvl) return <span style={{ color: 'var(--fg-3)', fontSize: 11 }}>—</span>;
+                          const tone = lvl === 1 ? 'green' : lvl === 2 ? 'yellow' : 'red';
+                          return (
+                            <ZipToneBadge tone={tone} size="sm">
+                              {lvl}
+                            </ZipToneBadge>
+                          );
+                        })()}
                       </td>
                       <td style={{ padding: '12px 16px' }} className="tabular-nums">
                         <span
@@ -634,6 +688,38 @@ function ListaTab() {
           </div>
         )}
       </Panel>
+
+      <EmployeeFormModal
+        isOpen={formOpen}
+        onClose={() => {
+          setFormOpen(false);
+          setEditing(null);
+        }}
+        editing={editing}
+      />
+
+      <EmployeeDetailDrawer
+        open={!!drawerEmp}
+        employeeId={drawerEmp?.id ?? null}
+        employeeName={drawerEmp?.name}
+        onClose={() => setDrawerEmp(null)}
+        onEdit={() => {
+          if (!drawerEmp) return;
+          const emp = employees.find((e) => e.id === drawerEmp.id);
+          if (emp) {
+            setEditing({
+              id: emp.id,
+              employee_code: emp.employee_code,
+              employee_name: emp.employee_name,
+              department: emp.department,
+              job_title: emp.job_title,
+              status: emp.status,
+            });
+            setFormOpen(true);
+            setDrawerEmp(null);
+          }
+        }}
+      />
     </div>
   );
 }
