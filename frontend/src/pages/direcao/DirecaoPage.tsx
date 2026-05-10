@@ -10,7 +10,7 @@
  * Sprint Q.18.ZIP.shell.
  */
 
-import { useMemo, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useMemo, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -23,8 +23,14 @@ import {
   CheckCircle2,
   Brain,
   Activity,
+  Euro,
 } from 'lucide-react';
-import { PageHeader, ZipSevBadge, type ZipSeverity } from '../../components/dark';
+import { PageHeader, Tabs, ZipSevBadge, type ZipSeverity } from '../../components/dark';
+import { SkeletonLoader } from '../../components/ui/Skeleton';
+
+const ProfitDashboard = lazy(() =>
+  import('../../components/profit/ProfitPanels').then((m) => ({ default: m.ProfitDashboard })),
+);
 import { ceoDashboardApi, decisionsApi } from '../../lib/api';
 
 interface ActiveOrder {
@@ -103,6 +109,7 @@ function shipmentDayLabel(iso: string): string {
 export default function DirecaoPage() {
   const navigate = useNavigate();
   const [refreshKey, setRefreshKey] = useState(0);
+  const [tab, setTab] = useState<'resumo' | 'profit'>('resumo');
 
   const ordersQuery = useQuery({
     queryKey: ['direcao', 'orders', refreshKey],
@@ -227,6 +234,26 @@ export default function DirecaoPage() {
         }
       />
 
+      <div className="px-7 pt-2">
+        <Tabs
+          tabs={[
+            { id: 'resumo', label: 'Resumo do dia', icon: <Building2 size={13} /> },
+            { id: 'profit', label: 'Profit Intelligence', icon: <Euro size={13} /> },
+          ]}
+          value={tab}
+          onChange={(id) => setTab(id as 'resumo' | 'profit')}
+        />
+      </div>
+
+      {tab === 'profit' && (
+        <div style={{ padding: '24px 28px' }}>
+          <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
+            <ProfitDashboard />
+          </Suspense>
+        </div>
+      )}
+
+      {tab === 'resumo' && (
       <div style={{ padding: '24px 28px' }} className="space-y-5">
         {/* Hero */}
         <div
@@ -405,6 +432,7 @@ export default function DirecaoPage() {
         {/* AI Panel */}
         <AIPanel />
       </div>
+      )}
     </div>
   );
 }
