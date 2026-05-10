@@ -860,6 +860,56 @@ async def rule_firings_adoption(
     return report.to_dict()
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# Onda 14 N — Activity outbox ledger viewer
+# ──────────────────────────────────────────────────────────────────────────
 
+@router.get("/event-outbox")
+async def list_event_outbox(
+    status_filter: Optional[str] = None,
+    limit: int = 50,
+    tenant_id: UUID = Depends(require_tenant_header),
+    db: AsyncSession = Depends(get_session),
+):
+    """Lista eventos do outbox (pending/sent/failed)."""
+    from sqlalchemy import select as _sa_select
+    from src.shared.outbox_models import EventOutbox
+    stmt = _sa_select(EventOutbox).where(EventOutbox.tenant_id == tenant_id)
+    if status_filter:
+        stmt = stmt.where(EventOutbox.status == status_filter)
+    stmt = stmt.order_by(EventOutbox.created_at.desc()).limit(max(1, min(limit, 200)))
+    rows = (await db.execute(stmt)).scalars().all()
+    return {
+        "items": [
+            {
+                "id": str(r.id),
+                "event_type": r.event_type,
+                "status": r.status,
+                "aggregate_id": str(r.aggregate_id) if getattr(r, "aggregate_id", None) else None,
+                "payload_keys": list(r.payload.keys()) if isinstance(r.payload, dict) else [],
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ],
+        "count": len(rows),
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Onda 14 N — RBAC matrix viewer
+# ──────────────────────────────────────────────────────────────────────────
+
+@router.get("/rbac/matrix")
+async def get_rbac_matrix():
+    """Devolve a matriz roles × permissions actual (Sprint Q.18.N)."""
+    from src.shared.auth.rbac import ROLE_PERMISSIONS, Role, Permission
+    return {
+        "roles": [r.value for r in Role],
+        "permissions": [p.value for p in Permission],
+        "matrix": {
+            role.value: sorted([p.value for p in perms])
+            for role, perms in ROLE_PERMISSIONS.items()
+        },
+    }
 
 
