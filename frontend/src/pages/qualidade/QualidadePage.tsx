@@ -24,9 +24,10 @@
  * Sprint Q.18.ZIP.QUAL (refactor profundo big-bang).
  */
 
-import { lazy, Suspense, useMemo } from 'react';
+import { lazy, Suspense, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import { MoldDefectDrawer } from '../../components/molds/MoldDefectDrawer';
 import {
   ShieldCheck,
   Brain,
@@ -1134,6 +1135,8 @@ function MoldsTab() {
     retry: 0,
   });
 
+  const [drawer, setDrawer] = useState<{ id: string | null; code?: string }>({ id: null });
+
   const items: any[] = useMemo(() => {
     const data: any = moldsQuery.data;
     if (!data) return [];
@@ -1181,13 +1184,17 @@ function MoldsTab() {
               const cat = m.health?.risk_category ?? 'green';
               const tone = cat === 'red' ? 'red' : cat === 'yellow' ? 'yellow' : 'green';
               return (
-                <div
+                <button
                   key={m.id ?? idx}
+                  type="button"
+                  onClick={() => setDrawer({ id: m.id ?? m.mold_id ?? null, code: m.mold_code })}
                   style={{
                     borderRadius: 8,
                     border: `1px solid var(--${tone}-bd)`,
                     background: 'var(--bg-2)',
                     padding: 12,
+                    textAlign: 'left',
+                    cursor: 'pointer',
                   }}
                 >
                   <div className="flex items-start justify-between gap-2 mb-2">
@@ -1236,12 +1243,18 @@ function MoldsTab() {
                       }}
                     />
                   </div>
-                </div>
+                </button>
               );
             })}
           </div>
         </>
       )}
+      <MoldDefectDrawer
+        open={!!drawer.id}
+        moldId={drawer.id}
+        moldCode={drawer.code}
+        onClose={() => setDrawer({ id: null })}
+      />
     </Panel>
   );
 }
