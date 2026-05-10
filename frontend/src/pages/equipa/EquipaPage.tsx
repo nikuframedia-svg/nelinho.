@@ -31,6 +31,7 @@ import {
   AlertTriangle,
   FlaskConical,
   GraduationCap,
+  History,
   RefreshCw,
   Sparkles,
   Plus,
@@ -55,6 +56,11 @@ const ProductivityPage = lazy(() =>
 const WorkforceDashboard = lazy(() =>
   import('../workforce/WorkforceDashboard').then((m) => ({
     default: m.WorkforceDashboard,
+  })),
+);
+const SkillsDashboard = lazy(() =>
+  import('../../components/workforce/SkillMatrixDrawer').then((m) => ({
+    default: m.SkillsDashboard,
   })),
 );
 
@@ -173,7 +179,7 @@ function deriveBoatStatus(transport_date: string | null, phase: string | null): 
 // PAGE
 // ═══════════════════════════════════════════════════════════════════════════
 
-const TAB_IDS = ['lista', 'alocacoes', 'produtividade', 'risco', 'simulador', 'formacao'] as const;
+const TAB_IDS = ['lista', 'alocacoes', 'produtividade', 'risco', 'simulador', 'formacao', 'skills'] as const;
 type TabId = (typeof TAB_IDS)[number];
 function isTabId(v: string | null): v is TabId {
   return v !== null && (TAB_IDS as readonly string[]).includes(v);
@@ -192,6 +198,7 @@ export default function EquipaPage() {
       { id: 'risco', label: 'Risco', icon: <AlertTriangle size={13} /> },
       { id: 'simulador', label: 'Simulador', icon: <FlaskConical size={13} /> },
       { id: 'formacao', label: 'Formação', icon: <GraduationCap size={13} /> },
+      { id: 'skills', label: 'Skills history', icon: <History size={13} /> },
     ],
     [],
   );
@@ -325,6 +332,11 @@ export default function EquipaPage() {
               <WorkforceDashboard />
             </Suspense>
           </>
+        )}
+        {activeTab === 'skills' && (
+          <Suspense fallback={fallback}>
+            <SkillsDashboard />
+          </Suspense>
         )}
       </div>
     </div>
