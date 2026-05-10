@@ -22,15 +22,21 @@
  * Sprint Q.18.ZIP.EXP (refactor profundo big-bang).
  */
 
-import { useMemo } from 'react';
+import { lazy, Suspense, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   Plus,
   RefreshCw,
   Sparkles,
   Truck,
+  Boxes,
 } from 'lucide-react';
-import { PageHeader } from '../../components/dark';
+import { PageHeader, Tabs } from '../../components/dark';
+import { SkeletonLoader } from '../../components/ui/Skeleton';
+
+const SupplyDashboard = lazy(() =>
+  import('../../components/supply/SupplyPanels').then((m) => ({ default: m.SupplyDashboard })),
+);
 
 // ─── Endpoint ───────────────────────────────────────────────────────────────
 
@@ -77,6 +83,7 @@ function daysUntil(iso: string): number {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export default function ExpedicaoPage() {
+  const [tab, setTab] = useState<'expedicoes' | 'supply'>('expedicoes');
   const batchesQuery = useQuery({
     queryKey: ['expedicao', 'batches'],
     queryFn: fetchTransportBatches,
@@ -131,6 +138,26 @@ export default function ExpedicaoPage() {
         }
       />
 
+      <div className="px-6 pt-2">
+        <Tabs
+          tabs={[
+            { id: 'expedicoes', label: 'Expedições', icon: <Truck size={13} /> },
+            { id: 'supply', label: 'Supply / Forecast', icon: <Boxes size={13} /> },
+          ]}
+          value={tab}
+          onChange={(id) => setTab(id as 'expedicoes' | 'supply')}
+        />
+      </div>
+
+      {tab === 'supply' && (
+        <div className="px-6 py-4">
+          <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
+            <SupplyDashboard />
+          </Suspense>
+        </div>
+      )}
+
+      {tab === 'expedicoes' && (
       <div className="px-6 py-4 space-y-5">
         {/* 3 KPI strip */}
         <div
@@ -218,6 +245,7 @@ export default function ExpedicaoPage() {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }
