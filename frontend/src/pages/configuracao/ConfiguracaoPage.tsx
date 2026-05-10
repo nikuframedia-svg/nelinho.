@@ -34,6 +34,7 @@ import {
 import { PageHeader, Tabs } from '../../components/dark';
 import { SkeletonLoader } from '../../components/ui/Skeleton';
 import { Q17Dashboard } from '../../components/aprendizagem/Q17Panels';
+import { BCamadasDashboard } from '../../components/aprendizagem/BCamadasPanels';
 
 // ─── Pages wrapped ───
 const SettingsPage = lazy(() =>
@@ -117,7 +118,7 @@ function isTabId(v: string | null): v is TabId {
   return v !== null && (TAB_IDS as readonly string[]).includes(v);
 }
 
-const APREND_SUB = ['resumo', 'regras', 'aprendidas', 'q17'] as const;
+const APREND_SUB = ['resumo', 'regras', 'aprendidas', 'q17', 'camadas'] as const;
 type AprendSub = (typeof APREND_SUB)[number];
 
 const SISTEMA_SUB = ['saude', 'ingestao', 'rag', 'tools'] as const;
@@ -225,6 +226,7 @@ export default function ConfiguracaoPage() {
                   { id: 'regras', label: 'Regras (NL→DSL Q.17)' },
                   { id: 'aprendidas', label: 'Regras aprendidas (Camada 1)' },
                   { id: 'q17', label: 'Q.17 Avançado' },
+                  { id: 'camadas', label: '4 Camadas Aprendizagem' },
                 ]}
                 value={aprendSub}
                 onChange={(v) => setAprendSub(v as AprendSub)}
@@ -237,9 +239,13 @@ export default function ConfiguracaoPage() {
                 <RegrasPage />
               ) : aprendSub === 'aprendidas' ? (
                 <LearnedRulesPage />
-              ) : (
+              ) : aprendSub === 'q17' ? (
                 <div className="px-4">
                   <Q17Dashboard />
+                </div>
+              ) : (
+                <div className="px-4">
+                  <BCamadasDashboard />
                 </div>
               )}
             </Suspense>
