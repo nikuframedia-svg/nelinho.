@@ -30,6 +30,7 @@ import {
   type ZipBoat,
   type ZipBoatStatus,
 } from '../../components/dark';
+import { CPODashboard } from '../../components/cpo/CPOPanels';
 
 // ─── PHASES canónicas (matching data.jsx PHASES, slice 0,11) ────────────────
 
@@ -147,7 +148,7 @@ function deriveStatus(dx: number | undefined, phaseName: string | null): ZipBoat
 
 // ─── Page ───────────────────────────────────────────────────────────────────
 
-type View = 'phases' | 'gantt' | 'calendar';
+type View = 'phases' | 'gantt' | 'calendar' | 'cpo';
 
 export default function ProducaoPage() {
   const [view, setView] = useState<View>('phases');
@@ -204,6 +205,7 @@ export default function ProducaoPage() {
                 { id: 'phases', label: 'Por fase' },
                 { id: 'gantt', label: 'Gantt' },
                 { id: 'calendar', label: 'Calendário' },
+                { id: 'cpo', label: 'CPO' },
               ]}
             />
             <button
@@ -241,6 +243,7 @@ export default function ProducaoPage() {
         )}
         {view === 'gantt' && <GanttView orders={orders} />}
         {view === 'calendar' && <CalendarView />}
+        {view === 'cpo' && <CPODashboard />}
       </div>
     </div>
   );
