@@ -39,6 +39,7 @@ import { CausalDashboard } from '../../components/causal/CausalPanels';
 import { CopilotExtrasDashboard } from '../../components/copilot/CopilotExtras';
 import { GovernanceDashboard } from '../../components/governance/GovernancePanels';
 import { FactoryPulseDashboard } from '../../components/dataproduct/FactoryPulsePanels';
+import { MlRegistryDashboard } from '../../components/ml/MlRegistryPanel';
 
 // ─── Pages wrapped ───
 const SettingsPage = lazy(() =>
@@ -122,7 +123,7 @@ function isTabId(v: string | null): v is TabId {
   return v !== null && (TAB_IDS as readonly string[]).includes(v);
 }
 
-const APREND_SUB = ['resumo', 'regras', 'aprendidas', 'q17', 'camadas', 'causal', 'copilot', 'governance', 'dataproduct'] as const;
+const APREND_SUB = ['resumo', 'regras', 'aprendidas', 'q17', 'camadas', 'causal', 'copilot', 'governance', 'dataproduct', 'ml'] as const;
 type AprendSub = (typeof APREND_SUB)[number];
 
 const SISTEMA_SUB = ['saude', 'ingestao', 'rag', 'tools'] as const;
@@ -235,6 +236,7 @@ export default function ConfiguracaoPage() {
                   { id: 'copilot', label: 'Copilot extras' },
                   { id: 'governance', label: 'Governance/Audit' },
                   { id: 'dataproduct', label: 'Factory data product' },
+                  { id: 'ml', label: 'ML registry' },
                 ]}
                 value={aprendSub}
                 onChange={(v) => setAprendSub(v as AprendSub)}
@@ -267,9 +269,13 @@ export default function ConfiguracaoPage() {
                 <div className="px-4">
                   <GovernanceDashboard />
                 </div>
-              ) : (
+              ) : aprendSub === 'dataproduct' ? (
                 <div className="px-4">
                   <FactoryPulseDashboard />
+                </div>
+              ) : (
+                <div className="px-4">
+                  <MlRegistryDashboard />
                 </div>
               )}
             </Suspense>
