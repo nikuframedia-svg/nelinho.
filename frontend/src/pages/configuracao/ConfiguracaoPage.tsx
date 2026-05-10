@@ -41,6 +41,7 @@ import { GovernanceDashboard } from '../../components/governance/GovernancePanel
 import { FactoryPulseDashboard } from '../../components/dataproduct/FactoryPulsePanels';
 import { MlRegistryDashboard } from '../../components/ml/MlRegistryPanel';
 import { TwinDashboard } from '../../components/twin/TwinPanels';
+import { ReportsAdminDashboard } from '../../components/reports/ReportsAdminPanel';
 
 // ─── Pages wrapped ───
 const SettingsPage = lazy(() =>
@@ -127,7 +128,7 @@ function isTabId(v: string | null): v is TabId {
 const APREND_SUB = ['resumo', 'regras', 'aprendidas', 'q17', 'camadas', 'causal', 'copilot', 'governance', 'dataproduct', 'ml', 'twin'] as const;
 type AprendSub = (typeof APREND_SUB)[number];
 
-const SISTEMA_SUB = ['saude', 'ingestao', 'rag', 'tools'] as const;
+const SISTEMA_SUB = ['saude', 'ingestao', 'rag', 'tools', 'reports'] as const;
 type SistemaSub = (typeof SISTEMA_SUB)[number];
 
 const MESTRE_SUB = [
@@ -317,6 +318,7 @@ export default function ConfiguracaoPage() {
                   { id: 'ingestao', label: 'Ingestão' },
                   { id: 'rag', label: 'RAG' },
                   { id: 'tools', label: 'Tools' },
+                  { id: 'reports', label: 'Reports schedule' },
                 ]}
                 value={sistemaSub}
                 onChange={(v) => setSistemaSub(v as SistemaSub)}
@@ -327,6 +329,11 @@ export default function ConfiguracaoPage() {
               {sistemaSub === 'ingestao' && <DataIngestionPage />}
               {sistemaSub === 'rag' && <RAGIngestPage />}
               {sistemaSub === 'tools' && <ToolRegistryPage />}
+              {sistemaSub === 'reports' && (
+                <div className="px-4">
+                  <ReportsAdminDashboard />
+                </div>
+              )}
             </Suspense>
           </div>
         )}

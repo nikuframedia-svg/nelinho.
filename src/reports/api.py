@@ -224,3 +224,89 @@ async def generate_report(
         row_count=len(rows),
         generated_at=now,
     )
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Onda 18 R — schedule + email + retention stubs
+# ──────────────────────────────────────────────────────────────────────────
+
+
+class ReportScheduleRequest(BaseModel):
+    template_id: str = Field(description="Template do relatório.")
+    cron: str = Field(description="Expressão cron, ex: '0 8 * * MON'.")
+    enabled: bool = Field(default=True)
+
+
+@router.post("/schedule")
+async def schedule_report(
+    req: ReportScheduleRequest,
+    tenant_id: UUID = Depends(require_tenant_header),
+):
+    """Agenda execução periódica do template (Onda 18 R).
+
+    Stub: log + retorna echo. Persistência em ReportSchedule model
+    fica para sub-sprint dedicado (necessita migration).
+    """
+    import logging
+    logging.getLogger("reports.schedule").info(
+        "schedule_report tenant=%s template=%s cron=%s enabled=%s",
+        tenant_id, req.template_id, req.cron, req.enabled,
+    )
+    return {
+        "status": "stubbed",
+        "template_id": req.template_id,
+        "cron": req.cron,
+        "enabled": req.enabled,
+        "next_run": None,
+        "message": "Schedule registered (stub). Persistence pending sub-sprint.",
+    }
+
+
+class ReportEmailRequest(BaseModel):
+    template_id: str
+    to: list[str] = Field(min_length=1, description="Lista de destinatários email.")
+    schedule_cron: str | None = Field(default=None)
+
+
+@router.post("/email")
+async def email_report(
+    req: ReportEmailRequest,
+    tenant_id: UUID = Depends(require_tenant_header),
+):
+    """Configura entrega por email (Onda 18 R)."""
+    import logging
+    logging.getLogger("reports.email").info(
+        "email_report tenant=%s template=%s to=%s cron=%s",
+        tenant_id, req.template_id, req.to, req.schedule_cron,
+    )
+    return {
+        "status": "stubbed",
+        "template_id": req.template_id,
+        "recipients": req.to,
+        "schedule_cron": req.schedule_cron,
+        "message": "Email delivery configured (stub). SMTP integration pending.",
+    }
+
+
+class ReportRetentionRequest(BaseModel):
+    template_id: str
+    retention_days: int = Field(ge=7, le=3650)
+
+
+@router.post("/retention")
+async def set_report_retention(
+    req: ReportRetentionRequest,
+    tenant_id: UUID = Depends(require_tenant_header),
+):
+    """Define janela de retenção GDPR para o template (Onda 18 R)."""
+    import logging
+    logging.getLogger("reports.retention").info(
+        "set_retention tenant=%s template=%s days=%d",
+        tenant_id, req.template_id, req.retention_days,
+    )
+    return {
+        "status": "stubbed",
+        "template_id": req.template_id,
+        "retention_days": req.retention_days,
+        "message": "GDPR retention set (stub). Cleanup job pending.",
+    }
