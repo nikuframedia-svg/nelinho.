@@ -42,6 +42,7 @@ import { FactoryPulseDashboard } from '../../components/dataproduct/FactoryPulse
 import { MlRegistryDashboard } from '../../components/ml/MlRegistryPanel';
 import { TwinDashboard } from '../../components/twin/TwinPanels';
 import { ReportsAdminDashboard } from '../../components/reports/ReportsAdminPanel';
+import { ComponentsShowcase } from '../../components/showcase/ComponentsShowcase';
 
 // ─── Pages wrapped ───
 const SettingsPage = lazy(() =>
@@ -125,7 +126,7 @@ function isTabId(v: string | null): v is TabId {
   return v !== null && (TAB_IDS as readonly string[]).includes(v);
 }
 
-const APREND_SUB = ['resumo', 'regras', 'aprendidas', 'q17', 'camadas', 'causal', 'copilot', 'governance', 'dataproduct', 'ml', 'twin'] as const;
+const APREND_SUB = ['resumo', 'regras', 'aprendidas', 'q17', 'camadas', 'causal', 'copilot', 'governance', 'dataproduct', 'ml', 'twin', 'showcase'] as const;
 type AprendSub = (typeof APREND_SUB)[number];
 
 const SISTEMA_SUB = ['saude', 'ingestao', 'rag', 'tools', 'reports'] as const;
@@ -240,6 +241,7 @@ export default function ConfiguracaoPage() {
                   { id: 'dataproduct', label: 'Factory data product' },
                   { id: 'ml', label: 'ML registry' },
                   { id: 'twin', label: 'Twin sandbox' },
+                  { id: 'showcase', label: 'Showcase' },
                 ]}
                 value={aprendSub}
                 onChange={(v) => setAprendSub(v as AprendSub)}
@@ -280,9 +282,13 @@ export default function ConfiguracaoPage() {
                 <div className="px-4">
                   <MlRegistryDashboard />
                 </div>
-              ) : (
+              ) : aprendSub === 'twin' ? (
                 <div className="px-4">
                   <TwinDashboard />
+                </div>
+              ) : (
+                <div className="px-4">
+                  <ComponentsShowcase />
                 </div>
               )}
             </Suspense>
