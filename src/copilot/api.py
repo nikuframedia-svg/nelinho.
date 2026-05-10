@@ -46,6 +46,44 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/copilot", tags=["COPILOT"])
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# Idempotency cache (Onda fix-copilot Bug C)
+#
+# Schema já aceitava `idempotency_key` mas não era usado em lado nenhum:
+# se o browser fazia retry no timeout do Ollama (~30s), o handler criava
+# 2 CopilotSuggestion distintos. Cache in-memory single-process com TTL
+# 5min basta para dev. Em produção multi-worker, trocar dict por Redis.
+# ──────────────────────────────────────────────────────────────────────────
+
+_IDEMPOTENCY_TTL_SECONDS = 300
+_IDEMPOTENCY_CACHE: Dict[tuple, tuple] = {}  # {(tenant, user, key): (response, expires_epoch)}
+
+
+def _idempotency_get(tenant_id: UUID, user_id: str, key: str) -> Optional[CopilotResponse]:
+    import time
+    cache_key = (str(tenant_id), str(user_id), key)
+    entry = _IDEMPOTENCY_CACHE.get(cache_key)
+    if entry is None:
+        return None
+    response, expires = entry
+    if time.time() > expires:
+        _IDEMPOTENCY_CACHE.pop(cache_key, None)
+        return None
+    return response
+
+
+def _idempotency_set(tenant_id: UUID, user_id: str, key: str, response: CopilotResponse) -> None:
+    import time
+    cache_key = (str(tenant_id), str(user_id), key)
+    _IDEMPOTENCY_CACHE[cache_key] = (response, time.time() + _IDEMPOTENCY_TTL_SECONDS)
+    # Best-effort sweep: limit unbounded growth
+    if len(_IDEMPOTENCY_CACHE) > 1000:
+        now = time.time()
+        for k, (_, exp) in list(_IDEMPOTENCY_CACHE.items()):
+            if exp < now:
+                _IDEMPOTENCY_CACHE.pop(k, None)
+
+
 def get_tenant_id(x_tenant_id: UUID = Header(...)) -> UUID:
     """Extract tenant ID from header."""
     return x_tenant_id
@@ -90,16 +128,25 @@ async def ask_copilot(
     8. Store message in conversation (se conversation_id fornecido)
     9. Return response
     """
+    # Idempotency check (Onda fix-copilot Bug C) — devolve resposta cacheada
+    # se browser/cliente retentar com mesma key (timeout fetch ~30s).
+    if request.idempotency_key:
+        cached = _idempotency_get(tenant_id, user.user_id, request.idempotency_key)
+        if cached is not None:
+            return cached
+
     # Rate limiting
     rate_limiter = get_rate_limiter()
     await rate_limiter.enforce_rate_limit(tenant_id, user.user_id)
-    
+
     # Service
     service = CopilotService(session, tenant_id, user.user_id, user.role)
-    
+
     # Processar com tratamento de erros
     try:
         response, audit_data = await service.process_ask(request)
+        if request.idempotency_key:
+            _idempotency_set(tenant_id, user.user_id, request.idempotency_key, response)
         return response
     except Exception as e:
         # Capturar qualquer erro não tratado e normalizar
