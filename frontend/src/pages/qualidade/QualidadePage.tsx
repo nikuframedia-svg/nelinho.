@@ -55,12 +55,15 @@ const ExplainPage = lazy(() =>
 const TrustDqaDashboard = lazy(() =>
   import('../../components/dqa/TrustDqaDashboard').then((m) => ({ default: m.TrustDqaDashboard })),
 );
+const QualityIntelDashboard = lazy(() =>
+  import('../../components/quality/QualityIntelPanels').then((m) => ({ default: m.QualityIntelDashboard })),
+);
 
 function askCopilot(query: string) {
   window.dispatchEvent(new CustomEvent('copilot:open', { detail: { query } }));
 }
 
-const TAB_IDS = ['resumo', 'erros', 'moldes', 'retrabalho', 'diagnostico', 'oee', 'trust'] as const;
+const TAB_IDS = ['resumo', 'erros', 'moldes', 'retrabalho', 'diagnostico', 'oee', 'trust', 'inteligencia'] as const;
 type TabId = (typeof TAB_IDS)[number];
 function isTabId(v: string | null): v is TabId {
   return v !== null && (TAB_IDS as readonly string[]).includes(v);
@@ -127,6 +130,7 @@ export default function QualidadePage() {
       { id: 'diagnostico', label: 'Diagnóstico', icon: <Brain size={13} /> },
       { id: 'oee', label: 'OEE', icon: <Activity size={13} /> },
       { id: 'trust', label: 'Trust + DQA', icon: <ShieldCheck size={13} /> },
+      { id: 'inteligencia', label: 'Inteligência', icon: <Brain size={13} /> },
     ],
     [],
   );
@@ -202,6 +206,11 @@ export default function QualidadePage() {
         {activeTab === 'trust' && (
           <Suspense fallback={fallback}>
             <TrustDqaDashboard />
+          </Suspense>
+        )}
+        {activeTab === 'inteligencia' && (
+          <Suspense fallback={fallback}>
+            <QualityIntelDashboard />
           </Suspense>
         )}
       </div>
