@@ -14,6 +14,7 @@ import { useState, useEffect } from 'react';
 import { Search, Sparkles } from 'lucide-react';
 import { useCommandPalette } from '../../hooks';
 import { LiveBadge } from '../dark/LiveBadge';
+import { UmweltPills } from './UmweltPills';
 
 function nowLabel(): string {
   // Format zip: "terça-feira, 12 de maio · 10:30"
@@ -87,6 +88,9 @@ export function TopBar() {
       </button>
 
       <div className="flex-1" />
+
+      {/* Umwelt switcher (Onda 12 L) */}
+      <UmweltPills />
 
       {/* Live indicator */}
       <LiveBadge />

@@ -28,6 +28,7 @@ import {
 import { PageHeader, Tabs, ZipSevBadge, type ZipSeverity } from '../../components/dark';
 import { SkeletonLoader } from '../../components/ui/Skeleton';
 import { ReportExportButton } from '../../components/reports/ReportExportButton';
+import { useUmwelt } from '../../lib/umwelt';
 
 const ProfitDashboard = lazy(() =>
   import('../../components/profit/ProfitPanels').then((m) => ({ default: m.ProfitDashboard })),
@@ -111,6 +112,7 @@ export default function DirecaoPage() {
   const navigate = useNavigate();
   const [refreshKey, setRefreshKey] = useState(0);
   const [tab, setTab] = useState<'resumo' | 'profit'>('resumo');
+  const { isReadOnly } = useUmwelt();
 
   const ordersQuery = useQuery({
     queryKey: ['direcao', 'orders', refreshKey],
@@ -216,6 +218,7 @@ export default function DirecaoPage() {
               Actualizar
             </button>
             <ReportExportButton defaultTemplate="producao" />
+            {!isReadOnly && (
             <button
               type="button"
               onClick={() => navigate('/inbox')}
@@ -232,6 +235,7 @@ export default function DirecaoPage() {
               <Sparkles size={13} />
               Sugestões
             </button>
+            )}
           </>
         }
       />
