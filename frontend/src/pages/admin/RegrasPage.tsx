@@ -510,6 +510,27 @@ export default function RegrasPage() {
       subtitle="Escreve em PT, o sistema traduz para policy declarativa. Aprovas, e a regra entra em vigor."
       icon={<BookOpen className="h-6 w-6" />}
     >
+      {/* Onda 1 Q.17 — Sandbox dry-run banner */}
+      <div
+        className="mb-4 px-3 py-2 rounded flex items-start gap-2"
+        style={{
+          background: 'var(--blue-bg)',
+          border: '1px solid var(--blue-bd)',
+          fontSize: 12,
+          color: 'var(--fg-1)',
+        }}
+      >
+        <Sparkles size={14} style={{ color: 'var(--blue)', flexShrink: 0, marginTop: 2 }} />
+        <div className="flex-1">
+          <strong style={{ color: 'var(--fg-0)' }}>Sandbox dry-run activo:</strong>{' '}
+          Antes de cada regra entrar em vigor, o sistema simula numa cópia
+          isolada da DB para validar Spelke axioms (capacidade ≥0, precedência,
+          molde exclusivo, dual-resource Laminagem 88.5%, skill match, cura
+          16 transições, safety net ≥ baseline). Se algum axioma é violado, a
+          regra é rejeitada com explicação visível no diff modal.
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Left: NL composer + list */}
         <div className="flex flex-col gap-4">

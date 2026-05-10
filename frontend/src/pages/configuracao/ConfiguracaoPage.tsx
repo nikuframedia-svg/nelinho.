@@ -33,6 +33,7 @@ import {
 } from 'lucide-react';
 import { PageHeader, Tabs } from '../../components/dark';
 import { SkeletonLoader } from '../../components/ui/Skeleton';
+import { Q17Dashboard } from '../../components/aprendizagem/Q17Panels';
 
 // ─── Pages wrapped ───
 const SettingsPage = lazy(() =>
@@ -116,7 +117,7 @@ function isTabId(v: string | null): v is TabId {
   return v !== null && (TAB_IDS as readonly string[]).includes(v);
 }
 
-const APREND_SUB = ['resumo', 'regras', 'aprendidas'] as const;
+const APREND_SUB = ['resumo', 'regras', 'aprendidas', 'q17'] as const;
 type AprendSub = (typeof APREND_SUB)[number];
 
 const SISTEMA_SUB = ['saude', 'ingestao', 'rag', 'tools'] as const;
@@ -209,10 +210,11 @@ export default function ConfiguracaoPage() {
           </Suspense>
         )}
 
-        {/* Aprendizagem — 3 sub-tabs:
+        {/* Aprendizagem — 4 sub-tabs (Onda 1 Q.17):
             • Resumo (zip page-learning.jsx port literal: regras + pesos)
             • Regras (NL→DSL Q.17 — RegrasPage rica para criar/editar)
-            • Aprendidas (Camada 1 — LearnedRulesPage existing) */}
+            • Aprendidas (Camada 1 — LearnedRulesPage existing)
+            • Q.17 Avançado — audit firings + impact + schema + conflitos */}
         {activeTab === 'aprendizagem' && (
           <div>
             <div className="px-4 mb-2">
@@ -222,6 +224,7 @@ export default function ConfiguracaoPage() {
                   { id: 'resumo', label: 'Resumo' },
                   { id: 'regras', label: 'Regras (NL→DSL Q.17)' },
                   { id: 'aprendidas', label: 'Regras aprendidas (Camada 1)' },
+                  { id: 'q17', label: 'Q.17 Avançado' },
                 ]}
                 value={aprendSub}
                 onChange={(v) => setAprendSub(v as AprendSub)}
@@ -232,8 +235,12 @@ export default function ConfiguracaoPage() {
                 <AprendizagemZipView />
               ) : aprendSub === 'regras' ? (
                 <RegrasPage />
-              ) : (
+              ) : aprendSub === 'aprendidas' ? (
                 <LearnedRulesPage />
+              ) : (
+                <div className="px-4">
+                  <Q17Dashboard />
+                </div>
               )}
             </Suspense>
           </div>
