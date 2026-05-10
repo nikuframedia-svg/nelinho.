@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { PageHeader, Tabs, ZipSevBadge, type ZipSeverity } from '../../components/dark';
 import { SkeletonLoader } from '../../components/ui/Skeleton';
+import { ReportExportButton } from '../../components/reports/ReportExportButton';
 
 const ProfitDashboard = lazy(() =>
   import('../../components/profit/ProfitPanels').then((m) => ({ default: m.ProfitDashboard })),
@@ -214,6 +215,7 @@ export default function DirecaoPage() {
               <RefreshCw size={13} />
               Actualizar
             </button>
+            <ReportExportButton defaultTemplate="producao" />
             <button
               type="button"
               onClick={() => navigate('/inbox')}
