@@ -8,7 +8,19 @@
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { FormModal, type FormField } from '../ui';
-import { employeesApi } from '../../lib/api';
+import { employeesApi, workforceEmployeesApi } from '../../lib/api';
+
+// Q.18 fix-workforce — mapping nível inicial (1-3, 1=melhor) → quality score
+// Laplace [1-10] que o sistema usa para derivar o nível. Útil para definir
+// nível inicial quando o operador é novo (sem histórico → score default ≈9).
+//   1 (Top)        → 9.0 (acima do limiar 8.0)
+//   2 (Médio)      → 6.5 (entre 5.0 e 7.9)
+//   3 (Em formação)→ 3.0 (abaixo de 5.0)
+const LEVEL_TO_SCORE: Record<string, number> = {
+  '1': 9.0,
+  '2': 6.5,
+  '3': 3.0,
+};
 
 const FIELDS: FormField[] = [
   { name: 'employee_code', label: 'Código', type: 'text', required: true },
@@ -42,6 +54,17 @@ const FIELDS: FormField[] = [
     ],
     defaultValue: 'ACTIVE',
   },
+  {
+    name: 'nivel_inicial',
+    label: 'Nível (1=Top, 2=Médio, 3=Em formação) — opcional',
+    type: 'select',
+    options: [
+      { value: '', label: 'Deixar derivar dos defeitos automaticamente' },
+      { value: '1', label: '1 — Top (faz K1 elite + K4)' },
+      { value: '2', label: '2 — Médio (faz K2 + K1 standard)' },
+      { value: '3', label: '3 — Em formação (recreio supervisionado)' },
+    ],
+  },
 ];
 
 interface Props {
@@ -56,25 +79,57 @@ interface Props {
 export function EmployeeFormModal({ isOpen, onClose, editing, onSuccess, onError }: Props) {
   const qc = useQueryClient();
 
+  function invalidate() {
+    qc.invalidateQueries({ queryKey: ['equipa', 'employees'] });
+    qc.invalidateQueries({ queryKey: ['equipa', 'employee-levels'] });
+    qc.invalidateQueries({ queryKey: ['workforce', 'employees'] });
+    qc.invalidateQueries({ queryKey: ['employees'] });
+    qc.invalidateQueries({ queryKey: ['employee-level-summary'] });
+  }
+
+  /** Faz override do quality score quando user seleccionou um nível inicial.
+   * Aceita falha silenciosa: o employee já foi criado/actualizado. */
+  async function maybeOverrideLevel(employeeId: string, nivelStr: string | undefined) {
+    if (!nivelStr) return;
+    const score = LEVEL_TO_SCORE[String(nivelStr)];
+    if (typeof score !== 'number') return;
+    try {
+      await workforceEmployeesApi.overrideQualityScore(employeeId, {
+        score,
+        reason: `Nível inicial ${nivelStr} definido manualmente via /equipa Add/Edit form`,
+      });
+    } catch (err: any) {
+      // Não falha o flow — só avisa.
+      onError?.(`Operador gravado, mas nível não foi gravado: ${err?.message ?? 'erro'}`);
+    }
+  }
+
   const createMutation = useMutation({
-    mutationFn: (data: any) => employeesApi.create(data),
+    mutationFn: async (data: any) => {
+      const { nivel_inicial, ...payload } = data;
+      const created = await employeesApi.create(payload);
+      const newId = (created as any)?.id ?? (created as any)?.employee_id;
+      if (newId) await maybeOverrideLevel(String(newId), nivel_inicial);
+      return created;
+    },
     onSuccess: () => {
       onSuccess?.('Operador criado.');
-      qc.invalidateQueries({ queryKey: ['equipa', 'employees'] });
-      qc.invalidateQueries({ queryKey: ['workforce', 'employees'] });
-      qc.invalidateQueries({ queryKey: ['employees'] });
+      invalidate();
       onClose();
     },
     onError: (err: any) => onError?.(err?.message ?? 'Erro ao criar operador.'),
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: any }) => employeesApi.update(id, data),
+    mutationFn: async ({ id, data }: { id: string; data: any }) => {
+      const { nivel_inicial, ...payload } = data;
+      const updated = await employeesApi.update(id, payload);
+      await maybeOverrideLevel(id, nivel_inicial);
+      return updated;
+    },
     onSuccess: () => {
       onSuccess?.('Operador actualizado.');
-      qc.invalidateQueries({ queryKey: ['equipa', 'employees'] });
-      qc.invalidateQueries({ queryKey: ['workforce', 'employees'] });
-      qc.invalidateQueries({ queryKey: ['employees'] });
+      invalidate();
       onClose();
     },
     onError: (err: any) => onError?.(err?.message ?? 'Erro ao actualizar operador.'),

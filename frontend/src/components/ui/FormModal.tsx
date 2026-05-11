@@ -88,7 +88,7 @@ export function FormModal({
                       name={field.name}
                       required={field.required}
                       defaultValue={initialData[field.name] || ''}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     >
                       <option value="">Selecione...</option>
                       {field.options?.map(option => (
@@ -104,7 +104,7 @@ export function FormModal({
                       placeholder={field.placeholder}
                       defaultValue={initialData[field.name] || ''}
                       rows={4}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                   ) : field.type === 'checkbox' ? (
                     <label className="flex items-center gap-2">
@@ -126,7 +126,7 @@ export function FormModal({
                       min={field.min}
                       max={field.max}
                       step={field.step}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                   )}
                 </div>
