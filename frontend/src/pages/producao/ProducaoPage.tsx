@@ -195,6 +195,7 @@ export default function ProducaoPage() {
       <PageHeader
         title="Plano de produção"
         subtitle={`Onde está cada barco · ${orders.length} barcos activos · 41 fases`}
+        helpId="plano-producao"
         actions={
           <>
             <SegmentedControl

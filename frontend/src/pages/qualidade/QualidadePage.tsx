@@ -166,6 +166,7 @@ export default function QualidadePage() {
       <PageHeader
         title={titleByTab(activeTab)}
         subtitle={subtitleByTab(activeTab)}
+        helpId={activeTab === 'oee' ? 'oee' : 'qualidade'}
         actions={
           <>
             <button

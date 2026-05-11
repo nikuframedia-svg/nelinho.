@@ -255,6 +255,7 @@ export default function EquipaPage() {
       <PageHeader
         title={titleByTab(activeTab)}
         subtitle={subtitleByTab(activeTab, empCount)}
+        helpId={activeTab === 'alocacoes' ? 'atribuicao' : 'operadores'}
         actions={
           <>
             {activeTab === 'lista' ? (

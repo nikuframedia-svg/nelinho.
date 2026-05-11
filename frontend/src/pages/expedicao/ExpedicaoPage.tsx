@@ -115,6 +115,7 @@ export default function ExpedicaoPage() {
       <PageHeader
         title="Expedições"
         subtitle="Calendário de saídas · estado dos camiões"
+        helpId="expedicao"
         actions={
           <>
             <button

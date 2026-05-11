@@ -184,6 +184,7 @@ export default function ConfiguracaoPage() {
       <PageHeader
         title="Configuração"
         subtitle="GERAL · APRENDIZAGEM · TRUST · ACESSOS · AUDITORIA · SISTEMA · DADOS MESTRE"
+        helpId={activeTab === 'aprendizagem' ? 'aprendizagem' : 'definicoes'}
         actions={
           <>
             <button

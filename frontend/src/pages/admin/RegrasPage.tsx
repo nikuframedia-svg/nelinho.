@@ -509,6 +509,7 @@ export default function RegrasPage() {
       title="Regras de Negócio"
       subtitle="Escreve em PT, o sistema traduz para policy declarativa. Aprovas, e a regra entra em vigor."
       icon={<BookOpen className="h-6 w-6" />}
+      helpId="regras"
     >
       {/* Onda 1 Q.17 — Sandbox dry-run banner */}
       <div

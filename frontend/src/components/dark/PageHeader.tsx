@@ -9,6 +9,8 @@
  */
 
 import type { ReactNode } from 'react';
+import { PageHelpButton } from '../help/PageHelpButton';
+import type { PageHelpId } from '../../data/pageHelp';
 
 export interface PageHeaderProps {
   title: string;
@@ -17,6 +19,8 @@ export interface PageHeaderProps {
   icon?: ReactNode;
   /** Botões/actions à direita. */
   actions?: ReactNode;
+  /** Quando definido, renderiza botão "?" (PageHelpButton) à esquerda das actions. */
+  helpId?: PageHelpId;
   className?: string;
 }
 
@@ -25,6 +29,7 @@ export function PageHeader({
   subtitle,
   icon,
   actions,
+  helpId,
   className = '',
 }: PageHeaderProps): ReactNode {
   return (
@@ -75,8 +80,9 @@ export function PageHeader({
           ) : null}
         </div>
       </div>
-      {actions ? (
+      {(helpId || actions) ? (
         <div className="flex items-center" style={{ gap: 8 }}>
+          {helpId ? <PageHelpButton helpId={helpId} /> : null}
           {actions}
         </div>
       ) : null}

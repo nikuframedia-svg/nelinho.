@@ -86,6 +86,7 @@ export default function InboxDecisoesPage() {
         icon={<Inbox size={20} />}
         title="Inbox de decisões"
         subtitle="Aprovações pendentes · histórico recente · padrões aprendidos"
+        helpId="inbox"
         actions={
           <button
             type="button"

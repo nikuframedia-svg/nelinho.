@@ -199,6 +199,7 @@ export default function DirecaoPage() {
         icon={<Building2 size={20} />}
         title="Bom dia, Luis."
         subtitle="Resumo do dia"
+        helpId="direcao"
         actions={
           <>
             <button

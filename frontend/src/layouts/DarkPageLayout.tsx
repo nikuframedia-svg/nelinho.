@@ -1,4 +1,6 @@
 import type { ReactNode } from 'react';
+import { PageHelpButton } from '../components/help/PageHelpButton';
+import type { PageHelpId } from '../data/pageHelp';
 
 interface DarkPageLayoutProps {
   children: ReactNode;
@@ -6,6 +8,8 @@ interface DarkPageLayoutProps {
   subtitle?: string;
   icon?: ReactNode;
   actions?: ReactNode;
+  /** Quando definido, renderiza botão "?" à esquerda das actions. */
+  helpId?: PageHelpId;
   noPadding?: boolean;
 }
 
@@ -15,12 +19,13 @@ export function DarkPageLayout({
   subtitle,
   icon,
   actions,
+  helpId,
   noPadding = false,
 }: DarkPageLayoutProps) {
   return (
     <div className="min-h-screen bg-bg-base">
       {/* Page Header */}
-      {(title || actions) && (
+      {(title || actions || helpId) && (
         <div className="sticky top-0 z-10 bg-bg-base/95 backdrop-blur-sm border-b border-border-subtle">
           <div className={noPadding ? 'px-6 py-4' : 'px-8 py-5'}>
             <div className="flex items-center justify-between">
@@ -46,8 +51,9 @@ export function DarkPageLayout({
               </div>
 
               {/* Actions Section */}
-              {actions && (
+              {(actions || helpId) && (
                 <div className="flex items-center gap-3">
+                  {helpId && <PageHelpButton helpId={helpId} />}
                   {actions}
                 </div>
               )}
