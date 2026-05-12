@@ -111,8 +111,16 @@ class Settings(BaseSettings):
     debug: bool = Field(default=False)
     log_level: str = Field(default="INFO")
     
-    # CORS
-    cors_origins: str = Field(default="http://localhost:3000,http://localhost:5173")
+    # CORS — Windows/Vite serve em 127.0.0.1 por defeito quando arrancado via
+    # --host 127.0.0.1; browsers tratam localhost ≠ 127.0.0.1 como origens
+    # distintas para CORS. Permitir ambas evita "Failed to fetch" silencioso
+    # no boot loader (CapabilitiesProvider).
+    cors_origins: str = Field(
+        default=(
+            "http://localhost:3000,http://localhost:5173,"
+            "http://127.0.0.1:3000,http://127.0.0.1:5173"
+        )
+    )
     
     # COPILOT
     copilot_enabled: bool = Field(default=True)
