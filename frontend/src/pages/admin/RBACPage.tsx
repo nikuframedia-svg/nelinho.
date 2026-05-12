@@ -62,6 +62,7 @@ export function RBACPage() {
 
   return (
     <DarkPageLayout
+      breadcrumbs={[{ label: 'Sistema' }, { label: 'Acessos' }, { label: 'RBAC' }]}
       title="RBAC Management"
       subtitle="Role-Based Access Control"
       icon={<Shield size={20} />}

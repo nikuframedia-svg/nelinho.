@@ -57,6 +57,21 @@
   --gray-bg: oklch(0.30 0.008 250 / 0.30);
   --gray-bd: oklch(0.45 0.012 250 / 0.40);
 
+  /* Page padding token — DarkPageLayout + pages que querem alinhar
+     consistente (Q.18.UI.B.3). lg breakpoint sobe para 2rem em 1024+ */
+  --page-padding-x: 1.5rem;
+  --page-padding-y: 1.5rem;
+}
+
+@media (min-width: 1024px) {
+  :root {
+    --page-padding-x: 2rem;
+    --page-padding-y: 2rem;
+  }
+}
+
+:root {
+
   /* Radii — design package: smaller, more refined */
   --r-sm: 4px;
   --r-md: 6px;

@@ -271,6 +271,7 @@ export function AuditTrailPage() {
 
   return (
     <DarkPageLayout
+      breadcrumbs={[{ label: 'Sistema' }, { label: 'Auditoria' }]}
       title="Audit Trail"
       subtitle="Complete history of all system changes and decisions"
       icon={<History size={20} />}

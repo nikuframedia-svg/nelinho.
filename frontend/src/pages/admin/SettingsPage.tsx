@@ -231,6 +231,7 @@ export function SettingsPage() {
 
   return (
     <DarkPageLayout
+      breadcrumbs={[{ label: 'Sistema' }, { label: 'Definições' }]}
       title="Settings"
       subtitle="Manage system and tenant settings"
       icon={<Settings size={20} />}

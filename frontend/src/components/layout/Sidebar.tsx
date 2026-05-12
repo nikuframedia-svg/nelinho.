@@ -134,7 +134,7 @@ export function Sidebar() {
 
   return (
     <aside
-      className="h-screen flex flex-col fixed left-0 top-0 bg-dark-800 border-r border-bd-1"
+      className="h-screen sticky top-0 flex flex-col bg-dark-800 border-r border-bd-1"
       style={{ width: 240 }}
     >
       {/* Logo */}
@@ -142,18 +142,13 @@ export function Sidebar() {
         className="flex items-center gap-2.5 border-b border-bd-1"
         style={{ padding: '18px 20px' }}
       >
-        <div
-          className="flex items-center justify-center text-white font-bold"
-          style={{
-            width: 30,
-            height: 30,
-            background: 'var(--blue)',
-            borderRadius: 'var(--r-md)',
-            fontSize: 14,
-          }}
-        >
-          N
-        </div>
+        <img
+          src="/nelo-logo.png"
+          alt="NELO"
+          width={30}
+          height={30}
+          className="shrink-0 rounded-md object-contain"
+        />
         <div>
           <div
             className="text-text-dark-primary font-semibold leading-tight"
@@ -211,15 +206,7 @@ export function Sidebar() {
                       {active ? (
                         <span
                           aria-hidden="true"
-                          style={{
-                            position: 'absolute',
-                            left: -10,
-                            top: 8,
-                            bottom: 8,
-                            width: 2,
-                            background: 'var(--blue)',
-                            borderRadius: 2,
-                          }}
+                          className="absolute inset-y-1 left-0 w-1 rounded-r-full bg-blue"
                         />
                       ) : null}
                       <span

@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react'
 import path from 'path'
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react()],
   resolve: {
     alias: {
@@ -17,13 +17,11 @@ export default defineConfig({
     },
   },
   build: {
-    // Minificar sem usar eval
-    minify: 'esbuild', // Usa esbuild em vez de terser (mais seguro)
-    // Desabilitar source maps em produção se necessário para segurança
-    sourcemap: true, // Manter em dev para debugging
+    minify: 'esbuild',
+    // Sourcemaps só em dev — em prod não expomos código original.
+    sourcemap: mode === 'development',
   },
-  // Desabilitar qualquer transformação que possa usar eval
   esbuild: {
     legalComments: 'none',
   },
-})
+}))

@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogCloseButton } from './Dialog';
-import { Button } from './Button';
+import { Modal } from '../dark/Modal';
+import { DarkButton } from '../dark/DarkButton';
+import { DarkInput, DarkTextarea } from '../dark/DarkInput';
+import { DarkSelect } from '../dark/DarkSelect';
 
 export interface FormField {
   name: string;
@@ -30,6 +32,8 @@ interface FormModalProps {
   children?: ReactNode;
 }
 
+const FORM_ID = 'form-modal-body';
+
 export function FormModal({
   title,
   isOpen,
@@ -47,119 +51,139 @@ export function FormModal({
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
     const data: Record<string, any> = {};
-    
-    fields.forEach(field => {
+
+    fields.forEach((field) => {
       const value = formData.get(field.name);
       if (value !== null) {
         if (field.type === 'number') {
           data[field.name] = value === '' ? null : Number(value);
         } else if (field.type === 'checkbox') {
-          data[field.name] = (e.currentTarget.querySelector(`[name="${field.name}"]`) as HTMLInputElement)?.checked || false;
+          const el = e.currentTarget.querySelector(`[name="${field.name}"]`) as HTMLInputElement | null;
+          data[field.name] = el?.checked ?? false;
         } else {
           data[field.name] = value;
         }
+      } else if (field.type === 'checkbox') {
+        const el = e.currentTarget.querySelector(`[name="${field.name}"]`) as HTMLInputElement | null;
+        data[field.name] = el?.checked ?? false;
       }
     });
-    
+
     await onSubmit(data);
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl w-full">
-        <DialogCloseButton onClose={onClose} />
-        <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-          {description && <p className="text-sm text-slate-500 mt-1">{description}</p>}
-        </DialogHeader>
-        
-        <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-hidden">
-          <div className="px-6 py-4 flex-1 overflow-y-auto">
-            <div className="space-y-4">
-              {fields.map(field => (
-                <div key={field.name}>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    {field.label}
-                    {field.required && <span className="text-red-500 ml-1">*</span>}
-                  </label>
-                  
-                  {field.type === 'select' ? (
-                    <select
-                      name={field.name}
-                      required={field.required}
-                      defaultValue={initialData[field.name] || ''}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                      <option value="">Selecione...</option>
-                      {field.options?.map(option => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  ) : field.type === 'textarea' ? (
-                    <textarea
-                      name={field.name}
-                      required={field.required}
-                      placeholder={field.placeholder}
-                      defaultValue={initialData[field.name] || ''}
-                      rows={4}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  ) : field.type === 'checkbox' ? (
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        name={field.name}
-                        defaultChecked={initialData[field.name] || false}
-                        className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500"
-                      />
-                      <span className="text-sm text-slate-600">{field.placeholder || field.label}</span>
-                    </label>
-                  ) : (
-                    <input
-                      type={field.type || 'text'}
-                      name={field.name}
-                      required={field.required}
-                      placeholder={field.placeholder}
-                      defaultValue={initialData[field.name] || ''}
-                      min={field.min}
-                      max={field.max}
-                      step={field.step}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  )}
-                </div>
-              ))}
-              
-              {children}
+    <Modal
+      open={isOpen}
+      onClose={onClose}
+      title={title}
+      size="lg"
+      footer={
+        <>
+          <DarkButton
+            type="button"
+            variant="ghost"
+            onClick={onClose}
+            disabled={isLoading}
+          >
+            {cancelLabel}
+          </DarkButton>
+          <DarkButton
+            type="submit"
+            form={FORM_ID}
+            variant="primary"
+            loading={isLoading}
+            disabled={isLoading}
+          >
+            {submitLabel}
+          </DarkButton>
+        </>
+      }
+    >
+      {description && (
+        <p className="text-xs text-text-dark-tertiary mb-4">{description}</p>
+      )}
+
+      <form id={FORM_ID} onSubmit={handleSubmit} className="space-y-4">
+        {fields.map((field) => {
+          const initial = initialData[field.name];
+          const labelNode = (
+            <label className="block text-sm font-medium text-text-dark-secondary mb-1.5">
+              {field.label}
+              {field.required && <span className="text-danger ml-1" aria-hidden="true">*</span>}
+            </label>
+          );
+
+          if (field.type === 'select') {
+            return (
+              <div key={field.name}>
+                {labelNode}
+                <DarkSelect
+                  name={field.name}
+                  required={field.required}
+                  disabled={field.disabled}
+                  defaultValue={initial ?? ''}
+                  placeholder={field.placeholder ?? 'Selecione…'}
+                  options={field.options ?? []}
+                />
+              </div>
+            );
+          }
+
+          if (field.type === 'textarea') {
+            return (
+              <div key={field.name}>
+                {labelNode}
+                <DarkTextarea
+                  name={field.name}
+                  required={field.required}
+                  disabled={field.disabled}
+                  placeholder={field.placeholder}
+                  defaultValue={initial ?? ''}
+                  rows={4}
+                />
+              </div>
+            );
+          }
+
+          if (field.type === 'checkbox') {
+            return (
+              <label
+                key={field.name}
+                className="flex items-center gap-2 text-sm text-text-dark-secondary cursor-pointer"
+              >
+                <input
+                  type="checkbox"
+                  name={field.name}
+                  defaultChecked={Boolean(initial)}
+                  disabled={field.disabled}
+                  className="w-4 h-4 rounded border-bd-2 bg-dark-700 text-accent focus:ring-2 focus:ring-accent/30"
+                />
+                <span>{field.placeholder || field.label}</span>
+              </label>
+            );
+          }
+
+          return (
+            <div key={field.name}>
+              {labelNode}
+              <DarkInput
+                type={field.type || 'text'}
+                name={field.name}
+                required={field.required}
+                disabled={field.disabled}
+                placeholder={field.placeholder}
+                defaultValue={initial ?? ''}
+                min={field.min}
+                max={field.max}
+                step={field.step}
+              />
             </div>
-          </div>
-          
-          <div className="px-6 py-4 border-t border-slate-200 flex justify-end gap-3">
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={onClose}
-              disabled={isLoading}
-            >
-              {cancelLabel}
-            </Button>
-            <Button
-              type="submit"
-              variant="primary"
-              loading={isLoading}
-              disabled={isLoading}
-            >
-              {submitLabel}
-            </Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
+          );
+        })}
+
+        {children}
+      </form>
+    </Modal>
   );
 }
-
-
-
-

@@ -506,6 +506,7 @@ export default function RegrasPage() {
 
   return (
     <DarkPageLayout
+      breadcrumbs={[{ label: 'Sistema' }, { label: 'Regras Q.17 (YAML)' }]}
       title="Regras de Negócio"
       subtitle="Escreve em PT, o sistema traduz para policy declarativa. Aprovas, e a regra entra em vigor."
       icon={<BookOpen className="h-6 w-6" />}

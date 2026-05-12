@@ -389,6 +389,7 @@ export function LearnedRulesPage() {
 
   return (
     <DarkPageLayout
+      breadcrumbs={[{ label: 'Sistema' }, { label: 'Aprendizagem' }, { label: 'Regras aprendidas' }]}
       title="Regras Aprendidas"
       subtitle="Revisão das preferências que o detector Camada 1 extraiu dos commits"
       icon={<Brain size={20} />}

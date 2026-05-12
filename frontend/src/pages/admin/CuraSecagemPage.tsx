@@ -207,6 +207,7 @@ export default function CuraSecagemPage() {
 
   return (
     <DarkPageLayout
+      breadcrumbs={[{ label: 'Sistema' }, { label: 'Cura / Secagem' }]}
       title="Cura / Secagem"
       subtitle="16 transições mandatórias entre fases. Química real — cada edição é auditada."
       icon={<FlaskConical className="w-6 h-6 text-amber-300" />}
