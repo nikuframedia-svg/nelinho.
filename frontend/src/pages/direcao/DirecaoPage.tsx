@@ -25,7 +25,7 @@ import {
   Activity,
   Euro,
 } from 'lucide-react';
-import { PageHeader, Tabs, ZipSevBadge, type ZipSeverity } from '../../components/dark';
+import { PageHeader, Tabs, ZipSevBadge, EmptyState, type ZipSeverity } from '../../components/dark';
 import { SkeletonLoader } from '../../components/ui/Skeleton';
 import { ReportExportButton } from '../../components/reports/ReportExportButton';
 import { useUmwelt } from '../../lib/umwelt';
@@ -274,7 +274,7 @@ export default function DirecaoPage() {
           }}
         >
           <div
-            className="grid place-items-center shrink-0"
+            className={`grid place-items-center shrink-0 ${hero.tone === 'red' || hero.tone === 'yellow' ? 'animate-pulse motion-reduce:animate-none' : ''}`}
             style={{
               width: 44,
               height: 44,
@@ -282,7 +282,14 @@ export default function DirecaoPage() {
               border: `1px solid var(--${hero.tone}-bd)`,
               color: `var(--${hero.tone})`,
               borderRadius: 'var(--r-md)',
+              boxShadow:
+                hero.tone === 'red'
+                  ? '0 0 24px oklch(0.50 0.14 25 / 0.45)'
+                  : hero.tone === 'yellow'
+                    ? '0 0 24px oklch(0.50 0.12 80 / 0.45)'
+                    : undefined,
             }}
+            aria-label={`Estado: ${hero.head}`}
           >
             <hero.Icon size={22} />
           </div>
@@ -390,9 +397,11 @@ export default function DirecaoPage() {
                 A carregar alertas…
               </div>
             ) : alertsItems.length === 0 ? (
-              <div className="py-6 text-center text-text-dark-tertiary" style={{ fontSize: 12 }}>
-                Sem alertas activos. Tudo calmo no chão de fábrica.
-              </div>
+              <EmptyState
+                size="sm"
+                title="Sem alertas activos"
+                hint="Tudo calmo no chão de fábrica. Os turnos seguem o plano."
+              />
             ) : (
               <div className="flex flex-col" style={{ gap: 10 }}>
                 {alertsItems.slice(0, 5).map((a, idx) => (
@@ -423,9 +432,11 @@ export default function DirecaoPage() {
                 A carregar expedições…
               </div>
             ) : transportBatches.length === 0 ? (
-              <div className="py-6 text-center text-text-dark-tertiary" style={{ fontSize: 12 }}>
-                Sem expedições agendadas.
-              </div>
+              <EmptyState
+                size="sm"
+                title="Sem expedições agendadas"
+                hint="Quando houver camiões para carregar, aparecem aqui ordenados por data."
+              />
             ) : (
               <div className="flex flex-col" style={{ gap: 12 }}>
                 {transportBatches.slice(0, 3).map((s: any) => (

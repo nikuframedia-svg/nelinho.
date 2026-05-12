@@ -9,6 +9,8 @@ interface DarkBadgeProps {
   size?: BadgeSize;
   dot?: boolean;
   icon?: ReactNode;
+  /** Pulse subtil para chamar atenção (apaga com prefers-reduced-motion). */
+  pulse?: boolean;
   className?: string;
 }
 
@@ -45,10 +47,13 @@ export function DarkBadge({
   size = 'md',
   dot = false,
   icon,
+  pulse = false,
   className = '',
 }: DarkBadgeProps) {
   return (
-    <span className={`badge-dark ${variantClasses[variant]} ${sizeClasses[size]} ${className}`}>
+    <span
+      className={`badge-dark ${variantClasses[variant]} ${sizeClasses[size]} ${pulse ? 'animate-pulse motion-reduce:animate-none' : ''} ${className}`}
+    >
       {dot && (
         <span className={`status-dot ${dotClasses[variant]}`} />
       )}
