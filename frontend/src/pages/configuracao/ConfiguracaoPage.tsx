@@ -210,7 +210,7 @@ export default function ConfiguracaoPage() {
       />
 
       <div className="px-6 pt-2">
-        <Tabs tabs={tabs} value={activeTab} onChange={handleTabChange} />
+        <Tabs tabs={tabs} value={activeTab} onChange={handleTabChange} sticky />
       </div>
 
       <div className="px-2 py-4">

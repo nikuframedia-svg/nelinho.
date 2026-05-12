@@ -303,7 +303,7 @@ export default function EquipaPage() {
       />
 
       <div className="px-6 pt-2">
-        <Tabs tabs={tabs} value={activeTab} onChange={handleTabChange} />
+        <Tabs tabs={tabs} value={activeTab} onChange={handleTabChange} sticky />
       </div>
 
       <div className="px-6 py-4">

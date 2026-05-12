@@ -16,19 +16,23 @@ import { useCommandPalette } from '../../hooks';
 import { LiveBadge } from '../dark/LiveBadge';
 import { UmweltPills } from './UmweltPills';
 
-function nowLabel(): string {
-  // Format zip: "terça-feira, 12 de maio · 10:30"
+function nowLabels(): { compact: string; full: string } {
   const d = new Date();
-  const dateStr = d.toLocaleDateString('pt-PT', {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-  });
-  const timeStr = d.toLocaleTimeString('pt-PT', {
+  const compact = d.toLocaleTimeString('pt-PT', {
     hour: '2-digit',
     minute: '2-digit',
   });
-  return `${dateStr} · ${timeStr}`;
+  const full = `${d.toLocaleDateString('pt-PT', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  })} · ${d.toLocaleTimeString('pt-PT', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })}`;
+  return { compact, full };
 }
 
 function openCopilot() {
@@ -37,10 +41,10 @@ function openCopilot() {
 
 export function TopBar() {
   const { open: openCommandPalette } = useCommandPalette();
-  const [now, setNow] = useState(nowLabel());
+  const [now, setNow] = useState(nowLabels());
 
   useEffect(() => {
-    const id = window.setInterval(() => setNow(nowLabel()), 30_000);
+    const id = window.setInterval(() => setNow(nowLabels()), 30_000);
     return () => window.clearInterval(id);
   }, []);
 
@@ -95,13 +99,14 @@ export function TopBar() {
       {/* Live indicator */}
       <LiveBadge />
 
-      {/* Date + time */}
+      {/* Hora compacta — tooltip com data completa */}
       <span
-        className="text-text-dark-secondary tabular-nums hidden lg:inline"
+        className="text-text-dark-secondary tabular-nums hidden lg:inline cursor-default"
         style={{ fontSize: 12 }}
-        aria-label="Data e hora actual"
+        aria-label={`Data e hora actual: ${now.full}`}
+        title={now.full}
       >
-        {now}
+        {now.compact}
       </span>
 
       {/* Assistente button */}

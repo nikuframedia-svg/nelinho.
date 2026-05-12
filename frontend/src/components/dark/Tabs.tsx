@@ -35,7 +35,11 @@ export interface TabsProps {
   className?: string;
   /** Variante visual. 'underline' = underline padrão (default); 'pills' = pílulas. */
   variant?: 'underline' | 'pills';
+  /** Quando true, o tab bar fica sticky abaixo do TopBar (top: 52px). */
+  sticky?: boolean;
 }
+
+const STICKY_CLASS = 'sticky top-[52px] z-10 bg-bg-base/95 backdrop-blur-sm';
 
 export function Tabs({
   tabs,
@@ -43,14 +47,16 @@ export function Tabs({
   onChange,
   className = '',
   variant = 'underline',
+  sticky = false,
 }: TabsProps): ReactNode {
+  const stickyExtra = sticky ? ` ${STICKY_CLASS}` : '';
   if (variant === 'pills') {
     return (
       <div
         className={`
           inline-flex items-center gap-1 p-1 rounded-lg
           bg-dark-800/60 border border-white/[0.06]
-          ${className}
+          ${className}${stickyExtra}
         `}
         role="tablist"
       >
@@ -100,7 +106,7 @@ export function Tabs({
       className={`
         flex items-center gap-1 border-b border-white/[0.06]
         overflow-x-auto
-        ${className}
+        ${className}${stickyExtra}
       `}
       role="tablist"
     >
