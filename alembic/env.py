@@ -41,6 +41,7 @@ from src.factory_data_product.models import curated as factory_curated_models  #
 from src.sandbox import models as sandbox_models  # migration 030
 from src.improve import models as improve_models  # migration 031
 from src.shared.models import user as shared_user_models  # migration 046 (Q.22.A)
+from src.legacy import models as legacy_models  # migration 047 (Q.22.C)
 
 # this is the Alembic Config object
 config = context.config

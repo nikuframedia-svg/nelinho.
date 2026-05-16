@@ -18,7 +18,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.shared.database import get_session
 from src.plan.models.order import ProductionOrder, OrderStatus
+from src.legacy.models import ProductionError
 from src.hr.models.legacy_allocation import LegacyAllocation
+
+_SEVERITY_LABELS = {1: "Minor", 2: "Major", 3: "Critical"}
 
 logger = logging.getLogger(__name__)
 
@@ -495,77 +498,173 @@ async def allocations_stats(
 # ERRORS ENDPOINTS
 # ============================================================================
 
+_EMPTY_STATS = {
+    "total": 0,
+    "bySeverity": {"minor": 0, "major": 0, "critical": 0},
+    "ordersWithErrors": 0,
+    "topDescriptions": [],
+    "topPhases": [],
+}
+
+
 @router.get("/api/errors/stats")
 async def errors_stats(
     tenant_id: UUID = Depends(get_tenant_id),
     session: AsyncSession = Depends(get_session),
 ):
-    """Get aggregate statistics for all errors."""
-    
-    # TODO: Implement when ProductionError model is available
-    # For now, return empty structure compatible with ErrorsStats interface
-    # This prevents 404 errors when DB is not available
-    
+    """Aggregate statistics across all production errors for the tenant.
+
+    Not paginated — the counts span the whole table.
+    """
     try:
-        # If we have a ProductionError model in the future, query here
-        # For now, return empty stats
+        base = and_(ProductionError.tenant_id == tenant_id)
+
+        total = (
+            await session.execute(
+                select(func.count()).select_from(ProductionError).where(base)
+            )
+        ).scalar() or 0
+
+        by_severity = {"minor": 0, "major": 0, "critical": 0}
+        severity_rows = (
+            await session.execute(
+                select(ProductionError.severity, func.count())
+                .where(base)
+                .group_by(ProductionError.severity)
+            )
+        ).all()
+        for severity, count in severity_rows:
+            label = _SEVERITY_LABELS.get(severity, "")
+            if label:
+                by_severity[label.lower()] = int(count)
+
+        orders_with_errors = (
+            await session.execute(
+                select(func.count(func.distinct(ProductionError.order_id)))
+                .where(and_(base, ProductionError.order_id.isnot(None)))
+            )
+        ).scalar() or 0
+
+        top_descriptions = [
+            {"description": desc, "count": int(count)}
+            for desc, count in (
+                await session.execute(
+                    select(ProductionError.description, func.count())
+                    .where(base)
+                    .group_by(ProductionError.description)
+                    .order_by(func.count().desc())
+                    .limit(5)
+                )
+            ).all()
+        ]
+
+        top_phases = [
+            {"phase": phase, "count": int(count)}
+            for phase, count in (
+                await session.execute(
+                    select(ProductionError.phase_name, func.count())
+                    .where(base)
+                    .group_by(ProductionError.phase_name)
+                    .order_by(func.count().desc())
+                    .limit(5)
+                )
+            ).all()
+        ]
+
         return {
-            "total": 0,
-            "bySeverity": {
-                "minor": 0,
-                "major": 0,
-                "critical": 0,
-            },
-            "ordersWithErrors": 0,
-            "topDescriptions": [],
-            "topPhases": [],
+            "total": int(total),
+            "bySeverity": by_severity,
+            "ordersWithErrors": int(orders_with_errors),
+            "topDescriptions": top_descriptions,
+            "topPhases": top_phases,
         }
-    except Exception as e:
-        logger.warning(f"Error fetching errors stats: {e}")
-        # Return empty structure even on error
-        return {
-            "total": 0,
-            "bySeverity": {
-                "minor": 0,
-                "major": 0,
-                "critical": 0,
-            },
-            "ordersWithErrors": 0,
-            "topDescriptions": [],
-            "topPhases": [],
-        }
+    except (ConnectionRefusedError, Exception) as e:
+        error_str = str(e).lower()
+        if any(s in error_str for s in ("connection refused", "operationalerror", "interfaceerror")):
+            logger.warning(f"DB unavailable in errors_stats, returning fallback: {e}")
+            return dict(_EMPTY_STATS)
+        raise
 
 
 @router.get("/api/errors")
 async def list_errors(
-    page: int = 1,
-    page_size: int = 20,
-    order_id: Optional[str] = None,
-    severity: Optional[str] = None,
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    pageSize: int = Query(20, ge=1, le=100, description="Items per page"),
+    severity: Optional[int] = Query(None, ge=1, le=3, description="Filter by severity 1-3"),
+    phase: Optional[str] = Query(None, description="Filter by phase name"),
+    search: Optional[str] = Query(None, description="Search in description"),
+    sortBy: str = Query("severity", description="Sort field: id, severity, description, orderId"),
+    sortOrder: str = Query("desc", description="Sort order: asc, desc"),
     tenant_id: UUID = Depends(get_tenant_id),
     session: AsyncSession = Depends(get_session),
 ):
-    """List production errors with pagination and filters."""
-    
-    # TODO: Implement when ProductionError model is available
-    # For now, return empty paginated response compatible with frontend
-    
+    """List production errors with pagination and filters.
+
+    Response shape matches the frontend ``ErrorsResponse`` interface.
+    """
     try:
-        # If we have a ProductionError model in the future, query here
-        # For now, return empty list
-        return {
-            "data": [],
-            "total": 0,
-            "page": page,
-            "page_size": page_size,
-            "total_pages": 0,
+        query = select(ProductionError).where(ProductionError.tenant_id == tenant_id)
+
+        if severity is not None:
+            query = query.where(ProductionError.severity == severity)
+        if phase:
+            query = query.where(ProductionError.phase_name == phase)
+        if search:
+            query = query.where(ProductionError.description.ilike(f"%{search}%"))
+
+        total = (
+            await session.execute(select(func.count()).select_from(query.subquery()))
+        ).scalar() or 0
+
+        sort_field_map = {
+            "id": ProductionError.id,
+            "severity": ProductionError.severity,
+            "description": ProductionError.description,
+            "orderId": ProductionError.order_id,
         }
-    except Exception as e:
-        logger.warning(f"Error fetching errors list: {e}")
+        sort_field = sort_field_map.get(sortBy, ProductionError.severity)
+        query = query.order_by(
+            sort_field.asc() if sortOrder.lower() == "asc" else sort_field.desc()
+        )
+
+        offset = (page - 1) * pageSize
+        result = await session.execute(query.limit(pageSize).offset(offset))
+        errors = result.scalars().all()
+
+        data = [
+            {
+                "id": str(e.id),
+                "orderId": str(e.order_id) if e.order_id else None,
+                "phaseName": e.phase_name,
+                "evalPhaseName": e.eval_phase_name,
+                "description": e.description,
+                "severity": e.severity,
+                "severityLabel": _SEVERITY_LABELS.get(e.severity, "Minor"),
+            }
+            for e in errors
+        ]
+
+        total_pages = math.ceil(total / pageSize) if pageSize > 0 else 0
         return {
-            "data": [],
-            "total": 0,
+            "data": data,
+            "total": int(total),
             "page": page,
-            "page_size": page_size,
-            "total_pages": 0,
+            "pageSize": pageSize,
+            "totalPages": total_pages,
+            "hasNextPage": page < total_pages,
+            "hasPreviousPage": page > 1,
         }
+    except (ConnectionRefusedError, Exception) as e:
+        error_str = str(e).lower()
+        if any(s in error_str for s in ("connection refused", "operationalerror", "interfaceerror")):
+            logger.warning(f"DB unavailable in list_errors, returning fallback: {e}")
+            return {
+                "data": [],
+                "total": 0,
+                "page": page,
+                "pageSize": pageSize,
+                "totalPages": 0,
+                "hasNextPage": False,
+                "hasPreviousPage": False,
+            }
+        raise

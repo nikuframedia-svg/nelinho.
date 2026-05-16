@@ -68,6 +68,8 @@ def _import_all_models() -> None:
 
     # Q.22.A — User table
     from src.shared.models import user as shared_user_models  # noqa: F401
+    # Q.22.C — ProductionError
+    from src.legacy import models as legacy_models  # noqa: F401
 
 
 _SCHEMAS = (
