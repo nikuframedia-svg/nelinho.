@@ -148,6 +148,45 @@ class MovementRow(_Frozen):
     problem: Optional[str] = None
 
 
+# ─── Operations (vw_pp1_operations) — for OEE ──────────────────────────
+
+
+class OperationRow(_Frozen):
+    """One row per OF×fase executed. Source for OEE calculation.
+
+    `standard_time_hours` comes from `PRODUTO_FASE.PRODF_TEMPO` when the
+    product has a routing declared for the phase, falling back to
+    `FASES_PRODUCAO.FP_VALOR_REF_K1` (the K1-class reference). Quality
+    flags (`problem_*`) capture inline categorisation per OF_FP row —
+    `OFFP_PROBLEMA` child table is empty in MAR-KAYAKS; the live data
+    lives on these columns.
+    """
+
+    operation_id: int  # OFFP_ID
+    work_order_id: int
+    phase_id: int
+    phase_name: str
+    start_at: Optional[datetime] = None
+    end_at: Optional[datetime] = None
+    expected_at: Optional[datetime] = None
+    standard_time_hours: float
+    temperature: float
+    humidity: float
+    problem_neck: Optional[str] = None
+    problem_interior_id: Optional[int] = None
+    problem_paint_id: Optional[int] = None
+    problem_mold_id: Optional[int] = None
+    problem_lamination_id: Optional[int] = None
+    problem_logged_at: Optional[datetime] = None
+    is_return: bool
+    severe_return: bool
+    product_id: int
+    shift_id: Optional[int] = None
+    mold_work_order_id: Optional[int] = None
+    product_type_name: Optional[str] = None
+    phase_is_automatic: bool = False
+
+
 # ─── Aggregate helpers ──────────────────────────────────────────────────
 
 

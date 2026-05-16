@@ -37,10 +37,13 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from src.shared.config import settings
 
+from datetime import date
+
 from .schemas import (
     BomRow,
     HealthCheckResult,
     MovementRow,
+    OperationRow,
     OrderRow,
     ProductOrderCount,
     RoutingRow,
@@ -179,6 +182,43 @@ SELECT
 FROM dbo.PLANEAMENTO_DIARIO p WITH (NOLOCK)
 """
 
+_VW_OPERATIONS_SQL = """
+SELECT
+    offp.OFFP_ID                AS operation_id,
+    offp.OFFP_OF_ID             AS work_order_id,
+    offp.OFFP_FP_ID             AS phase_id,
+    fp.FP_NOME                  AS phase_name,
+    offp.OFFP_DATAINICIO        AS start_at,
+    offp.OFFP_DATAFIM           AS end_at,
+    offp.OFFP_DATA_PREVISTA     AS expected_at,
+    COALESCE(pf.PRODF_TEMPO, fp.FP_VALOR_REF_K1, 0) AS standard_time_hours,
+    offp.OFFP_TEMPERATURA       AS temperature,
+    offp.OFFP_HUMIDADE          AS humidity,
+    offp.OFFP_PROBS_GOLA        AS problem_neck,
+    offp.OFFP_PROBS_INTERIOR    AS problem_interior_id,
+    offp.OFFP_PROBS_PINTURA     AS problem_paint_id,
+    offp.OFFP_PROBS_MOLDE       AS problem_mold_id,
+    offp.OFFP_PROBS_LAMINAGEM   AS problem_lamination_id,
+    offp.OFFP_PROBS_DATA        AS problem_logged_at,
+    offp.OFFP_RETURN            AS is_return,
+    offp.OFFP_RETORNO_GRAVE     AS severe_return,
+    of_.OF_P_ID                 AS product_id,
+    of_.OF_TURN_ID              AS shift_id,
+    of_.OF_OF_ID_MLD            AS mold_work_order_id,
+    pt.TP_NOME                  AS product_type_name,
+    fp.FP_AUTOMATICA            AS phase_is_automatic
+FROM        dbo.OF_FP            offp WITH (NOLOCK)
+INNER JOIN  dbo.FASES_PRODUCAO   fp   WITH (NOLOCK) ON fp.FP_ID = offp.OFFP_FP_ID
+INNER JOIN  dbo.ORDEMFABRICO     of_  WITH (NOLOCK) ON of_.OF_ID = offp.OFFP_OF_ID
+INNER JOIN  dbo.PRODUTO          p    WITH (NOLOCK) ON p.P_ID = of_.OF_P_ID
+LEFT JOIN   dbo.PRODUTO_TIPO     pt   WITH (NOLOCK) ON pt.TP_ID = p.P_TP_ID
+LEFT JOIN   dbo.PRODUTO_FASE     pf   WITH (NOLOCK)
+            ON pf.PRODF_P_ID = of_.OF_P_ID
+           AND pf.PRODF_FP_ID = offp.OFFP_FP_ID
+           AND pf.PRODF_DATA_ELIMINADO IS NULL
+"""
+
+
 _VW_MOVEMENTS_SQL = """
 SELECT
     m.MOV_ID                 AS movement_id,
@@ -308,6 +348,40 @@ async def list_current_schedule(limit: int = 50) -> list[ScheduleRow]:
     return [ScheduleRow(**r) for r in rows]
 
 
+# ─── Operations (source for OEE) ────────────────────────────────────────
+
+
+async def list_operations(
+    date_from: date,
+    date_to: date,
+    limit: int = 100_000,
+) -> list[OperationRow]:
+    """Operations executed within `[date_from, date_to]` window (filter by `end_at`).
+
+    Heavy query — `OF_FP` has 2.6 M rows total. Always pass a tight window.
+    Default limit 100 k covers ~3 months at NELO's current cadence.
+    Replace inline subquery with `dbo.vw_pp1_operations` once views are
+    deployed.
+    """
+    sql = f"""
+    SELECT TOP {int(limit)} v.* FROM (
+        {_VW_OPERATIONS_SQL}
+    ) v
+    WHERE v.end_at >= :date_from
+      AND v.end_at <  :date_to_plus_one
+      AND v.start_at IS NOT NULL
+    ORDER BY v.end_at DESC
+    """
+    # NELO data has datetimes; pass full-day bounds to be inclusive.
+    from datetime import datetime, timedelta
+    params = {
+        "date_from": datetime.combine(date_from, datetime.min.time()),
+        "date_to_plus_one": datetime.combine(date_to + timedelta(days=1), datetime.min.time()),
+    }
+    rows = await _fetch_all(sql, params)
+    return [OperationRow(**r) for r in rows]
+
+
 # ─── Aggregations for health-check ──────────────────────────────────────
 
 
@@ -372,6 +446,7 @@ __all__: Sequence[str] = (
     "health_check",
     "list_current_schedule",
     "list_open_orders",
+    "list_operations",
     "list_recent_movements",
     "top_products_by_orders",
 )

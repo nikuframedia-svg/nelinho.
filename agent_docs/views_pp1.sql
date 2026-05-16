@@ -185,6 +185,54 @@ GO
 
 
 /* -----------------------------------------------------------------------------
+   vw_pp1_operations — Operations executed (OF_FP × Fase × Produto).
+
+   Source for OEE calculation. Joins OF_FP (the execution log, 2.6M rows)
+   with FASES_PRODUCAO for K1/K2/K4 reference times, ORDEMFABRICO for
+   product linkage, and PRODUTO_FASE for product-specific standard time
+   (preferred over the K1/K2/K4 generic reference when available).
+
+   No date filter at the view level — callers MUST filter by `end_at`.
+   ----------------------------------------------------------------------------- */
+CREATE OR ALTER VIEW dbo.vw_pp1_operations AS
+SELECT
+    offp.OFFP_ID                AS operation_id,
+    offp.OFFP_OF_ID             AS work_order_id,
+    offp.OFFP_FP_ID             AS phase_id,
+    fp.FP_NOME                  AS phase_name,
+    offp.OFFP_DATAINICIO        AS start_at,
+    offp.OFFP_DATAFIM           AS end_at,
+    offp.OFFP_DATA_PREVISTA     AS expected_at,
+    COALESCE(pf.PRODF_TEMPO, fp.FP_VALOR_REF_K1, 0) AS standard_time_hours,
+    offp.OFFP_TEMPERATURA       AS temperature,
+    offp.OFFP_HUMIDADE          AS humidity,
+    offp.OFFP_PROBS_GOLA        AS problem_neck,
+    offp.OFFP_PROBS_INTERIOR    AS problem_interior_id,
+    offp.OFFP_PROBS_PINTURA     AS problem_paint_id,
+    offp.OFFP_PROBS_MOLDE       AS problem_mold_id,
+    offp.OFFP_PROBS_LAMINAGEM   AS problem_lamination_id,
+    offp.OFFP_PROBS_DATA        AS problem_logged_at,
+    offp.OFFP_RETURN            AS is_return,
+    offp.OFFP_RETORNO_GRAVE     AS severe_return,
+    of_.OF_P_ID                 AS product_id,
+    of_.OF_TURN_ID              AS shift_id,
+    of_.OF_OF_ID_MLD            AS mold_work_order_id,
+    pt.TP_NOME                  AS product_type_name,
+    fp.FP_AUTOMATICA            AS phase_is_automatic
+FROM        dbo.OF_FP            offp WITH (NOLOCK)
+INNER JOIN  dbo.FASES_PRODUCAO   fp   WITH (NOLOCK) ON fp.FP_ID = offp.OFFP_FP_ID
+INNER JOIN  dbo.ORDEMFABRICO     of_  WITH (NOLOCK) ON of_.OF_ID = offp.OFFP_OF_ID
+INNER JOIN  dbo.PRODUTO          p    WITH (NOLOCK) ON p.P_ID = of_.OF_P_ID
+LEFT JOIN   dbo.PRODUTO_TIPO     pt   WITH (NOLOCK) ON pt.TP_ID = p.P_TP_ID
+LEFT JOIN   dbo.PRODUTO_FASE     pf   WITH (NOLOCK)
+            ON pf.PRODF_P_ID = of_.OF_P_ID
+           AND pf.PRODF_FP_ID = offp.OFFP_FP_ID
+           AND pf.PRODF_DATA_ELIMINADO IS NULL
+WHERE offp.OFFP_DATAINICIO IS NOT NULL;
+GO
+
+
+/* -----------------------------------------------------------------------------
    vw_pp1_movements — Stock + WIP ledger, LAST 12 MONTHS only.
 
    MOVIMENTO has 12 M+ rows in total. ProdPlan ONE only needs recent activity
