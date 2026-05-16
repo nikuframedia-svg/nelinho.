@@ -13,8 +13,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import type { BlockedMetric } from '@/types';
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { apiFetch } from '../lib/api';
 
 export function useBlockedMetrics() {
   const [metrics, setMetrics] = useState<BlockedMetric[]>([]);
@@ -24,17 +23,13 @@ export function useBlockedMetrics() {
   const fetchMetrics = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/v1/factory/semantic/blocked-metrics`);
-      if (!response.ok) {
-        throw new Error(
-          `BlockedMetrics API returned ${response.status} ${response.statusText}`
-        );
-      }
-      const data = await response.json();
-      const list: BlockedMetric[] = Array.isArray(data?.metrics)
-        ? data.metrics
-        : Array.isArray(data)
+      const data = await apiFetch<{ metrics?: BlockedMetric[] } | BlockedMetric[]>(
+        '/v1/factory/semantic/blocked-metrics'
+      );
+      const list: BlockedMetric[] = Array.isArray(data)
         ? data
+        : Array.isArray(data?.metrics)
+        ? data.metrics
         : [];
       setMetrics(list);
       setError(null);

@@ -33,8 +33,7 @@ import {
   Play,
   ChevronRight,
 } from 'lucide-react';
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { apiFetch } from '../../lib/api';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -107,24 +106,7 @@ type TabId = 'definition' | 'formula' | 'lineage' | 'trust' | 'limitations' | 'i
 // ═══════════════════════════════════════════════════════════════════════════════
 
 async function fetchExplainedMetric(metricId: string): Promise<ExplainedMetric> {
-  const tenantId = localStorage.getItem('tenant_id') || '00000000-0000-0000-0000-000000000000';
-  
-  const response = await fetch(`${API_BASE}/v1/explain/metric/${metricId}`, {
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Tenant-Id': tenantId,
-    },
-  });
-  
-  if (!response.ok) {
-    if (response.status === 422) {
-      const errorData = await response.json();
-      throw new Error(errorData.detail?.message || 'Metric is blocked');
-    }
-    throw new Error(`Failed to fetch metric: ${response.status}`);
-  }
-  
-  return response.json();
+  return apiFetch<ExplainedMetric>(`/v1/explain/metric/${metricId}`);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

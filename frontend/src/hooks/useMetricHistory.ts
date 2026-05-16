@@ -11,8 +11,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import type { MetricHistoryPoint } from '@/types';
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { apiFetch } from '../lib/api';
 
 interface UseMetricHistoryOptions {
   days?: number;
@@ -34,22 +33,17 @@ export function useMetricHistory(metricId: string, options: UseMetricHistoryOpti
     }
     setLoading(true);
     try {
-      const url = new URL(
-        `${API_BASE}/v1/explain/metric/${encodeURIComponent(metricId)}/history`
+      const params = new URLSearchParams({
+        days: String(days),
+        granularity,
+      });
+      const payload = await apiFetch<{ points?: MetricHistoryPoint[] } | MetricHistoryPoint[]>(
+        `/v1/explain/metric/${encodeURIComponent(metricId)}/history?${params}`
       );
-      url.searchParams.set('days', String(days));
-      url.searchParams.set('granularity', granularity);
-      const response = await fetch(url.toString());
-      if (!response.ok) {
-        throw new Error(
-          `Metric history API returned ${response.status} ${response.statusText}`
-        );
-      }
-      const payload = await response.json();
-      const points: MetricHistoryPoint[] = Array.isArray(payload?.points)
-        ? payload.points
-        : Array.isArray(payload)
+      const points: MetricHistoryPoint[] = Array.isArray(payload)
         ? payload
+        : Array.isArray(payload?.points)
+        ? payload.points
         : [];
       setData(points);
       setError(null);

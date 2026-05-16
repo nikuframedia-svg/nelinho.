@@ -11,8 +11,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import type { LLMTool } from '@/types';
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { apiFetch } from '../lib/api';
 
 export function useToolRegistry() {
   const [tools, setTools] = useState<LLMTool[]>([]);
@@ -22,17 +21,11 @@ export function useToolRegistry() {
   const fetchTools = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/v1/tools`);
-      if (!response.ok) {
-        throw new Error(
-          `Tools API returned ${response.status} ${response.statusText}`
-        );
-      }
-      const data = await response.json();
-      const list: LLMTool[] = Array.isArray(data?.tools)
-        ? data.tools
-        : Array.isArray(data)
+      const data = await apiFetch<{ tools?: LLMTool[] } | LLMTool[]>('/v1/tools');
+      const list: LLMTool[] = Array.isArray(data)
         ? data
+        : Array.isArray(data?.tools)
+        ? data.tools
         : [];
       setTools(list);
       setError(null);
@@ -45,16 +38,10 @@ export function useToolRegistry() {
   }, []);
 
   const updateTool = useCallback(async (toolId: string, updates: Partial<LLMTool>): Promise<boolean> => {
-    const response = await fetch(`${API_BASE}/v1/tools/${toolId}`, {
+    await apiFetch<unknown>(`/v1/tools/${toolId}`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updates),
     });
-    if (!response.ok) {
-      throw new Error(
-        `Tool update failed: ${response.status} ${response.statusText}`
-      );
-    }
     setTools(prev => prev.map(tool => (tool.id === toolId ? { ...tool, ...updates } : tool)));
     return true;
   }, []);

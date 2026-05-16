@@ -24,8 +24,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { getApiBase } from '../lib/api';
 
 // Keep at most this many events in the rolling buffer. Old events are
 // dropped head-first so long-running pages don't grow unbounded.
@@ -114,7 +113,7 @@ export function useRealtimeEvents(
     }
 
     const tenantId = resolveTenantId(tenantIdOverride);
-    const url = new URL(`${API_BASE}/v1/realtime/events`);
+    const url = new URL(`${getApiBase()}/v1/realtime/events`);
     url.searchParams.set('tenant_id', tenantId);
     url.searchParams.set('channels', channels.join(','));
 

@@ -46,8 +46,7 @@ import {
 } from '../../components/dark';
 import { governanceApi } from '../../lib/factoryApi';
 import type { DecisionRun } from '../../lib/factoryApi';
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { apiFetch } from '../../lib/api';
 
 // ============================================================================
 // TYPES
@@ -80,29 +79,22 @@ async function fetchAuditLogs(filters: {
   date_from?: string;
   date_to?: string;
 }): Promise<AuditLog[]> {
-  const tenantId = localStorage.getItem('tenant_id') || '00000000-0000-0000-0000-000000000000';
-  
   const params = new URLSearchParams();
   if (filters.entity_type) params.append('entity_type', filters.entity_type);
   if (filters.user) params.append('user', filters.user);
   if (filters.date_from) params.append('date_from', filters.date_from);
   if (filters.date_to) params.append('date_to', filters.date_to);
-  
-  const response = await fetch(`${API_BASE}/v1/governance/audit-logs?${params}`, {
-    headers: {
-      'X-Tenant-Id': tenantId,
-    },
-  });
-  
-  if (!response.ok) {
-    // If 404, endpoint not yet implemented - return empty array with notice
-    if (response.status === 404) {
+
+  try {
+    return await apiFetch<AuditLog[]>(`/v1/governance/audit-logs?${params}`);
+  } catch (e) {
+    // 404 — endpoint not yet implemented; the page renders an explicit
+    // empty state rather than surfacing a hard error.
+    if ((e as { status?: number }).status === 404) {
       return [];
     }
-    throw new Error(`Failed to fetch audit logs: ${response.status}`);
+    throw e;
   }
-  
-  return response.json();
 }
 
 // ============================================================================

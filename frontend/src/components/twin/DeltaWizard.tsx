@@ -27,8 +27,7 @@ import {
   Shield,
   AlertCircle,
 } from 'lucide-react';
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { apiFetch } from '../../lib/api';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // BLOCKED METRICS - Cannot be simulated (no source data)
@@ -182,11 +181,6 @@ export function DeltaWizard({
     setFieldValues(prev => ({ ...prev, [key]: value }));
   };
 
-  // Get tenant ID
-  const getTenantId = () => {
-    return localStorage.getItem('tenant_id') || '00000000-0000-0000-0000-000000000000';
-  };
-
   // Real API simulation
   const simulateImpact = async () => {
     if (!selectedType) return;
@@ -197,39 +191,20 @@ export function DeltaWizard({
     
     try {
       // Step 1: Apply delta to scenario
-      const deltaResponse = await fetch(`${API_BASE}/v1/twin/scenarios/${scenarioId}/apply-delta`, {
+      await apiFetch<unknown>(`/v1/twin/scenarios/${scenarioId}/apply-delta`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Tenant-Id': getTenantId(),
-        },
         body: JSON.stringify({
           entity_type: selectedType,
           entity_key: fieldValues.phase_id || fieldValues.scope || 'all',
           patch: fieldValues,
         }),
       });
-      
-      if (!deltaResponse.ok) {
-        const errorData = await deltaResponse.json().catch(() => ({}));
-        throw new Error(errorData.detail || `Failed to apply delta: ${deltaResponse.status}`);
-      }
-      
+
       // Step 2: Run simulation
-      const simulateResponse = await fetch(`${API_BASE}/v1/twin/scenarios/${scenarioId}/simulate`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Tenant-Id': getTenantId(),
-        },
-      });
-      
-      if (!simulateResponse.ok) {
-        const errorData = await simulateResponse.json().catch(() => ({}));
-        throw new Error(errorData.detail || `Simulation failed: ${simulateResponse.status}`);
-      }
-      
-      const result: SimulationResult = await simulateResponse.json();
+      const result = await apiFetch<SimulationResult>(
+        `/v1/twin/scenarios/${scenarioId}/simulate`,
+        { method: 'POST' }
+      );
       
       // Step 3: Process results - filter out blocked metrics
       const impacts: MetricImpact[] = [];

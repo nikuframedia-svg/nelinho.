@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { pt } from 'date-fns/locale';
+import { apiFetch } from '../../lib/api';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -53,22 +54,15 @@ interface LiveActivityFeedProps {
 // removed because dashboards consuming this would imply factory state
 // that does not exist.)
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-
 async function fetchRecentActivity(maxItems: number): Promise<ActivityItem[]> {
-  const url = new URL(`${API_BASE}/v1/activity/recent`);
-  url.searchParams.set('limit', String(maxItems));
-  const response = await fetch(url.toString());
-  if (!response.ok) {
-    throw new Error(
-      `Activity feed API returned ${response.status} ${response.statusText}`
-    );
-  }
-  const payload = await response.json();
-  const raw = Array.isArray(payload?.items)
-    ? payload.items
-    : Array.isArray(payload)
+  const params = new URLSearchParams({ limit: String(maxItems) });
+  const payload = await apiFetch<{ items?: unknown[] } | unknown[]>(
+    `/v1/activity/recent?${params}`
+  );
+  const raw = Array.isArray(payload)
     ? payload
+    : Array.isArray(payload?.items)
+    ? payload.items
     : [];
   return raw.map((it: any) => ({
     ...it,

@@ -3,7 +3,12 @@
  * Monitors backend availability and notifies listeners of status changes
  */
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { getApiBase } from './api';
+
+// Health probes deliberately use raw `fetch` (not `apiFetch`): they must NOT
+// pass through the circuit breaker — this is the code that *detects* the
+// backend being down, so it cannot depend on the breaker being closed.
+const API_BASE = getApiBase();
 
 export type BackendStatus = 'online' | 'offline' | 'checking';
 

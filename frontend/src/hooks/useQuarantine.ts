@@ -9,8 +9,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import type { QuarantinedRow } from '@/types';
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { apiFetch } from '../lib/api';
 
 interface QuarantineStats {
   critical: number;
@@ -53,13 +52,7 @@ export function useQuarantine() {
   const fetchQuarantine = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/v1/factory/quarantine`);
-      if (!response.ok) {
-        throw new Error(
-          `Quarantine API returned ${response.status} ${response.statusText}`
-        );
-      }
-      const data = await response.json();
+      const data = await apiFetch<{ rows?: QuarantinedRow[] }>('/v1/factory/quarantine');
       const rowsArr: QuarantinedRow[] = Array.isArray(data?.rows) ? data.rows : [];
       setRows(rowsArr);
       setStats(computeStats(rowsArr));
@@ -80,16 +73,10 @@ export function useQuarantine() {
     type: 'fix' | 'override' | 'discard';
     justification: string;
   }) => {
-    const response = await fetch(`${API_BASE}/v1/factory/quarantine/${rowId}/resolve`, {
+    await apiFetch<unknown>(`/v1/factory/quarantine/${rowId}/resolve`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(resolution),
     });
-    if (!response.ok) {
-      throw new Error(
-        `Quarantine resolve failed: ${response.status} ${response.statusText}`
-      );
-    }
     setRows(prev => {
       const next = prev.filter(r => r.id !== rowId);
       setStats(computeStats(next));

@@ -8,8 +8,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import type { Runbook } from '@/types';
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { apiFetch } from '../lib/api';
 
 export function useRunbooks() {
   const [runbooks, setRunbooks] = useState<Runbook[]>([]);
@@ -19,17 +18,11 @@ export function useRunbooks() {
   const fetchRunbooks = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/v1/runbooks`);
-      if (!response.ok) {
-        throw new Error(
-          `Runbooks API returned ${response.status} ${response.statusText}`
-        );
-      }
-      const data = await response.json();
-      const list: Runbook[] = Array.isArray(data?.runbooks)
-        ? data.runbooks
-        : Array.isArray(data)
+      const data = await apiFetch<{ runbooks?: Runbook[] } | Runbook[]>('/v1/runbooks');
+      const list: Runbook[] = Array.isArray(data)
         ? data
+        : Array.isArray(data?.runbooks)
+        ? data.runbooks
         : [];
       setRunbooks(list);
       setError(null);
@@ -42,15 +35,7 @@ export function useRunbooks() {
   }, []);
 
   const executeRunbook = useCallback(async (runbookId: string): Promise<boolean> => {
-    const response = await fetch(`${API_BASE}/v1/runbooks/${runbookId}/execute`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-    });
-    if (!response.ok) {
-      throw new Error(
-        `Runbook execute failed: ${response.status} ${response.statusText}`
-      );
-    }
+    await apiFetch<unknown>(`/v1/runbooks/${runbookId}/execute`, { method: 'POST' });
     return true;
   }, []);
 

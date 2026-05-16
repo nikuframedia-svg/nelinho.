@@ -9,8 +9,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import type { ApprovalStep } from '@/types';
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { apiFetch } from '../lib/api';
 
 export function useApprovalChain(decisionId: string) {
   const [approvalChain, setApprovalChain] = useState<ApprovalStep[]>([]);
@@ -25,15 +24,9 @@ export function useApprovalChain(decisionId: string) {
     }
     setLoading(true);
     try {
-      const response = await fetch(
-        `${API_BASE}/v1/governance/decisions/${decisionId}/approval-chain`
+      const data = await apiFetch<{ chain?: ApprovalStep[] }>(
+        `/v1/governance/decisions/${decisionId}/approval-chain`
       );
-      if (!response.ok) {
-        throw new Error(
-          `Approval-chain API returned ${response.status} ${response.statusText}`
-        );
-      }
-      const data = await response.json();
       const chain: ApprovalStep[] = Array.isArray(data?.chain) ? data.chain : [];
       setApprovalChain(chain);
       setError(null);
@@ -46,17 +39,10 @@ export function useApprovalChain(decisionId: string) {
   }, [decisionId]);
 
   const approve = useCallback(async (stepId: string, comment?: string): Promise<boolean> => {
-    const response = await fetch(
-      `${API_BASE}/v1/governance/decisions/${decisionId}/approval-chain/${stepId}/approve`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ comment }),
-      }
+    await apiFetch<unknown>(
+      `/v1/governance/decisions/${decisionId}/approval-chain/${stepId}/approve`,
+      { method: 'POST', body: JSON.stringify({ comment }) }
     );
-    if (!response.ok) {
-      throw new Error(`Approve failed: ${response.status} ${response.statusText}`);
-    }
     setApprovalChain(prev => prev.map(step =>
       step.id === stepId
         ? { ...step, status: 'approved' as const, comment, decided_at: new Date().toISOString() }
@@ -66,17 +52,10 @@ export function useApprovalChain(decisionId: string) {
   }, [decisionId]);
 
   const reject = useCallback(async (stepId: string, comment: string): Promise<boolean> => {
-    const response = await fetch(
-      `${API_BASE}/v1/governance/decisions/${decisionId}/approval-chain/${stepId}/reject`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ comment }),
-      }
+    await apiFetch<unknown>(
+      `/v1/governance/decisions/${decisionId}/approval-chain/${stepId}/reject`,
+      { method: 'POST', body: JSON.stringify({ comment }) }
     );
-    if (!response.ok) {
-      throw new Error(`Reject failed: ${response.status} ${response.statusText}`);
-    }
     setApprovalChain(prev => prev.map(step =>
       step.id === stepId
         ? { ...step, status: 'rejected' as const, comment, decided_at: new Date().toISOString() }

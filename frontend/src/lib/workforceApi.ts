@@ -19,33 +19,22 @@ import type {
   ScenarioComparison,
   WorkforceDelta,
 } from '../components/workforce/types';
+import { apiFetch } from './api';
 
-const API_ROOT = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-const API_BASE = `${API_ROOT}/v1/workforce`;
-
-/**
- * Helper to handle API responses
- */
-async function handleResponse<T>(response: Response): Promise<T> {
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`API Error: ${response.status} - ${errorText}`);
-  }
-  return response.json();
-}
+const ROOT = '/v1/workforce';
 
 /**
- * Workforce API client
+ * Workforce API client — routes through apiFetch (circuit breaker + retry +
+ * tenant/user headers).
  */
 export const workforceApi = {
   /**
    * Get the complete dependency graph
-   * 
+   *
    * Returns nodes (phases, employees) and edges (aptitudes).
    */
   async getDependencyGraph(): Promise<DependencyGraph> {
-    const response = await fetch(`${API_BASE}/dependency-graph`);
-    return handleResponse<DependencyGraph>(response);
+    return apiFetch<DependencyGraph>(`${ROOT}/dependency-graph`);
   },
 
   /**
@@ -58,8 +47,7 @@ export const workforceApi = {
    * 4. Economic impact
    */
   async getCascadeImpact(phaseId: string): Promise<CascadeImpact> {
-    const response = await fetch(`${API_BASE}/cascade-impact/${encodeURIComponent(phaseId)}`);
-    return handleResponse<CascadeImpact>(response);
+    return apiFetch<CascadeImpact>(`${ROOT}/cascade-impact/${encodeURIComponent(phaseId)}`);
   },
 
   /**
@@ -69,12 +57,10 @@ export const workforceApi = {
    * @returns Before/after comparison with impact metrics
    */
   async simulate(deltas: WorkforceDelta[]): Promise<SimulationResult> {
-    const response = await fetch(`${API_BASE}/simulate`, {
+    return apiFetch<SimulationResult>(`${ROOT}/simulate`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(deltas),
     });
-    return handleResponse<SimulationResult>(response);
   },
 
   /**
@@ -86,8 +72,9 @@ export const workforceApi = {
    * 3. Employee proximity
    */
   async getTrainingRecommendations(limit: number = 10): Promise<TrainingRecommendation[]> {
-    const response = await fetch(`${API_BASE}/training-recommendations?limit=${limit}`);
-    return handleResponse<TrainingRecommendation[]>(response);
+    return apiFetch<TrainingRecommendation[]>(
+      `${ROOT}/training-recommendations?limit=${limit}`
+    );
   },
 
   /**
@@ -101,12 +88,10 @@ export const workforceApi = {
    * - Payback period
    */
   async compareScenarios(scenarioIds: string[]): Promise<ScenarioComparison> {
-    const response = await fetch(`${API_BASE}/scenarios/compare`, {
+    return apiFetch<ScenarioComparison>(`${ROOT}/scenarios/compare`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(scenarioIds),
     });
-    return handleResponse<ScenarioComparison>(response);
   },
 };
 

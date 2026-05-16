@@ -5,7 +5,7 @@
  * Includes semantic queries, capabilities, and governance endpoints.
  */
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { apiFetch, getApiBase } from './api';
 
 // ============================================================================
 // TYPES
@@ -135,27 +135,12 @@ export interface CapabilitiesSummary {
 // HELPERS
 // ============================================================================
 
-function getTenantId(): string {
-  // In a real app, this would come from auth context
-  return localStorage.getItem('tenantId') || '00000000-0000-0000-0000-000000000000';
-}
-
+// All JSON traffic routes through `apiFetch` (api.ts) so it shares the
+// circuit breaker, retry policy and tenant/user headers. The previous local
+// `getTenantId()` read the wrong localStorage key (`tenantId`) and fell back
+// to the zero UUID, which the backend rejects by design.
 async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${endpoint}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Tenant-Id': getTenantId(),
-      ...options?.headers,
-    },
-  });
-  
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-    throw new Error(error.detail || `API error: ${response.status}`);
-  }
-  
-  return response.json();
+  return apiFetch<T>(endpoint, options);
 }
 
 // ============================================================================
@@ -353,13 +338,22 @@ export const ingestionApi = {
       user,
     });
 
+    // Multipart upload keeps a raw `fetch` (apiFetch forces a JSON
+    // Content-Type, which would break the FormData boundary). Headers
+    // mirror api.ts: snake_case localStorage keys + non-zero dev tenant.
+    const tenantId =
+      localStorage.getItem('tenant_id') || '00000000-0000-0000-0000-000000000001';
+    const userId =
+      localStorage.getItem('user_id') || '00000000-0000-0000-0000-000000000001';
     const response = await fetch(
-      `${API_BASE}/v1/factory/ingest?${params.toString()}`,
+      `${getApiBase()}/v1/factory/ingest?${params.toString()}`,
       {
         method: 'POST',
         body: formData,
         headers: {
-          'X-Tenant-Id': getTenantId(),
+          'X-Tenant-Id': tenantId,
+          'X-User-Id': userId,
+          'X-User-Role': localStorage.getItem('user_role') || 'admin',
         },
       }
     );

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
+import { getApiBase } from '../lib/api';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const EXPECTED_CONTRACT_VERSION = '1.0.0';
 
 export function ContractDegradedBanner() {
@@ -11,7 +11,7 @@ export function ContractDegradedBanner() {
   useEffect(() => {
     const checkContractVersion = async () => {
       try {
-        const response = await fetch(`${API_BASE}/health`, {
+        const response = await fetch(`${getApiBase()}/health`, {
           method: 'GET',
           headers: { 'Content-Type': 'application/json' },
         });

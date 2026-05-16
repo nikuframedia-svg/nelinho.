@@ -2832,3 +2832,18 @@ export const yamlPolicyApi = {
       { method: 'POST', body: JSON.stringify({ reason }) },
     ),
 };
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Q.21.A — Public fetch helper
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// `apiFetch` exposes the internal `request()` so every API call in the app
+// goes through the same circuit breaker, retry policy and tenant/user headers.
+// Direct `fetch()` calls bypassing this lose all three. Use `getApiBase()` only
+// when a raw URL is needed (SSE/EventSource, health probes) — never to rebuild
+// an ad-hoc fetch that should have gone through `apiFetch`.
+export { request as apiFetch };
+
+export function getApiBase(): string {
+  return API_BASE;
+}

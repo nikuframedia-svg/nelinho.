@@ -11,8 +11,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import type { TableCoverage } from '@/types';
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { apiFetch } from '../lib/api';
 
 export function useCoverageAnalysis() {
   const [coverage, setCoverage] = useState<TableCoverage[]>([]);
@@ -22,17 +21,13 @@ export function useCoverageAnalysis() {
   const fetchCoverage = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/v1/factory/semantic/coverage`);
-      if (!response.ok) {
-        throw new Error(
-          `Coverage API returned ${response.status} ${response.statusText}`
-        );
-      }
-      const data = await response.json();
-      const list: TableCoverage[] = Array.isArray(data?.tables)
-        ? data.tables
-        : Array.isArray(data)
+      const data = await apiFetch<{ tables?: TableCoverage[] } | TableCoverage[]>(
+        '/v1/factory/semantic/coverage'
+      );
+      const list: TableCoverage[] = Array.isArray(data)
         ? data
+        : Array.isArray(data?.tables)
+        ? data.tables
         : [];
       setCoverage(list);
       setError(null);

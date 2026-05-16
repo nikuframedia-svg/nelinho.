@@ -5,8 +5,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import type { SchemaDrift } from '@/types';
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { apiFetch } from '../lib/api';
 
 export function useSchemaDrift() {
   const [drifts, setDrifts] = useState<SchemaDrift[]>([]);
@@ -16,23 +15,16 @@ export function useSchemaDrift() {
   const fetchDrifts = useCallback(async () => {
     try {
       setLoading(true);
-      
-      // Try API first
+
       try {
-        const response = await fetch(`${API_BASE}/v1/factory/meta/schema-drift`);
-        if (response.ok) {
-          const data = await response.json();
-          if (data && data.drifts) {
-            setDrifts(data.drifts);
-            return;
-          }
-        }
+        const data = await apiFetch<{ drifts?: SchemaDrift[] }>(
+          '/v1/factory/meta/schema-drift'
+        );
+        setDrifts(Array.isArray(data?.drifts) ? data.drifts : []);
       } catch {
-        // Fall back to mock (empty - no drift is good!)
+        // No drift telemetry available — no drift is the safe default.
+        setDrifts([]);
       }
-      
-      // By default, no drifts detected
-      setDrifts([]);
       setError(null);
     } catch (e) {
       setError(e as Error);

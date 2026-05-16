@@ -13,8 +13,7 @@ import { createContext, useContext, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Ban, RefreshCw } from 'lucide-react';
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { apiFetch } from '../lib/api';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // BLOCKED METRICS (from backend config.py)
@@ -118,21 +117,7 @@ const CapabilitiesContext = createContext<CapabilitiesContextValue | null>(null)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 async function fetchCapabilities(): Promise<CapabilitiesResponse> {
-  // Q.18.AUTH — dev tenant default (não-zero UUID, aceite por require_tenant_header).
-  const tenantId = localStorage.getItem('tenant_id') || '00000000-0000-0000-0000-000000000001';
-  
-  const response = await fetch(`${API_BASE}/v1/capabilities/`, {
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Tenant-Id': tenantId,
-    },
-  });
-  
-  if (!response.ok) {
-    throw new Error(`Failed to load capabilities: ${response.status}`);
-  }
-  
-  return response.json();
+  return apiFetch<CapabilitiesResponse>('/v1/capabilities/');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

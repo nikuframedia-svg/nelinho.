@@ -5,8 +5,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import type { SoDConflict } from '@/types';
-
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { apiFetch } from '../lib/api';
 
 export function useSoDCheck(actionId: string, userId: string) {
   const [conflicts, setConflicts] = useState<SoDConflict[]>([]);
@@ -18,23 +17,17 @@ export function useSoDCheck(actionId: string, userId: string) {
     
     try {
       setLoading(true);
-      
-      // Try API first
+
       try {
-        const response = await fetch(`${API_BASE}/api/v1/governance/sod/check?action_id=${actionId}&user_id=${userId}`);
-        if (response.ok) {
-          const data = await response.json();
-          if (data && data.conflicts) {
-            setConflicts(data.conflicts);
-            return;
-          }
-        }
+        const params = new URLSearchParams({ action_id: actionId, user_id: userId });
+        const data = await apiFetch<{ conflicts?: SoDConflict[] }>(
+          `/api/v1/governance/sod/check?${params}`
+        );
+        setConflicts(Array.isArray(data?.conflicts) ? data.conflicts : []);
       } catch {
-        // Fall back to empty (no conflicts)
+        // No SoD telemetry available — no conflicts is the safe default.
+        setConflicts([]);
       }
-      
-      // By default, no conflicts
-      setConflicts([]);
       setError(null);
     } catch (e) {
       setError(e as Error);
