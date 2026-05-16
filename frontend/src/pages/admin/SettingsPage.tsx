@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQueries, useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import {
-  Settings, Users, Key, Bell, Plug, Loader2, Save, RotateCcw, Truck, HardHat,
+  Settings, Users, Loader2, Save, RotateCcw, Truck, HardHat,
   CalendarClock, Hammer, Box, ShieldCheck, Globe, Brain, Beaker,
 } from 'lucide-react';
 import { configApi, tenantsApi, learningApi } from '../../lib/api';
@@ -19,9 +19,6 @@ import {
 type TabType =
   | 'general'
   | 'tenant'
-  | 'api'
-  | 'notifications'
-  | 'integrations'
   | 'transport'
   | 'workforce'
   | 'scheduling'
@@ -182,9 +179,6 @@ export function SettingsPage() {
     { id: 'trust' as TabType, label: 'Trust Index', icon: ShieldCheck },
     { id: 'learning' as TabType, label: 'Aprendizagem', icon: Brain },
     { id: 'system' as TabType, label: 'Sistema', icon: Globe },
-    { id: 'api' as TabType, label: 'API', icon: Key },
-    { id: 'notifications' as TabType, label: 'Notifications', icon: Bell },
-    { id: 'integrations' as TabType, label: 'Integrations', icon: Plug },
   ];
 
   const handleSave = () => {
@@ -368,36 +362,6 @@ export function SettingsPage() {
                   <p className="text-text-secondary">No tenant information available.</p>
                 </div>
               )}
-            </DarkCard>
-          )}
-
-          {activeTab === 'api' && (
-            <DarkCard title="API Configuration" subtitle="Manage API keys and access">
-              <div className="text-center py-12">
-                <Key size={40} className="mx-auto mb-3 text-text-tertiary opacity-50" />
-                <p className="text-text-secondary font-medium">Coming Soon</p>
-                <p className="text-text-tertiary text-sm mt-1">API configuration functionality is in development.</p>
-              </div>
-            </DarkCard>
-          )}
-
-          {activeTab === 'notifications' && (
-            <DarkCard title="Notifications" subtitle="Configure notification preferences">
-              <div className="text-center py-12">
-                <Bell size={40} className="mx-auto mb-3 text-text-tertiary opacity-50" />
-                <p className="text-text-secondary font-medium">Coming Soon</p>
-                <p className="text-text-tertiary text-sm mt-1">Notification settings are in development.</p>
-              </div>
-            </DarkCard>
-          )}
-
-          {activeTab === 'integrations' && (
-            <DarkCard title="Integrations" subtitle="Connect with external services">
-              <div className="text-center py-12">
-                <Plug size={40} className="mx-auto mb-3 text-text-tertiary opacity-50" />
-                <p className="text-text-secondary font-medium">Coming Soon</p>
-                <p className="text-text-tertiary text-sm mt-1">Integration with external services is in development.</p>
-              </div>
             </DarkCard>
           )}
 
@@ -1293,34 +1257,18 @@ const TRUST_KEYS: ConfigKeyRow[] = [
 
 // ── Sistema panel (idioma + tema stub) ───────────────────────────────────
 function SystemSettingsPanel() {
-  const toast = useToastContext();
-  const [language, setLanguage] = useState<'pt-PT' | 'en-US' | 'de-DE'>('pt-PT');
-
   return (
     <DarkCard title="Sistema" subtitle="Idioma · tema · formatos (Plan v4 §11.1)">
       <div className="space-y-4 mt-4">
-        <DarkSelect
-          label="Idioma da UI"
-          options={[
-            { value: 'pt-PT', label: 'Português (Portugal)' },
-            { value: 'en-US', label: 'English (US) — coming soon' },
-            { value: 'de-DE', label: 'Deutsch — coming soon' },
-          ]}
-          value={language}
-          onChange={(e) => setLanguage(e.target.value as 'pt-PT' | 'en-US' | 'de-DE')}
-        />
+        <div>
+          <p className="text-xs text-slate-400 mb-1">Idioma da UI</p>
+          <p className="text-sm text-white font-medium">Português (Portugal)</p>
+        </div>
         <p className="text-xs text-slate-500">
-          O frontend Q.6 usa apenas PT-PT directamente nos componentes. Suporte
-          completo i18n (en-US, de-DE) está diferido — chega quando a base de
-          strings for grande o suficiente para justificar o overhead i18next.
+          O frontend usa apenas PT-PT directamente nos componentes. Suporte
+          completo i18n está diferido — chega quando a base de strings for
+          grande o suficiente para justificar o overhead i18next.
         </p>
-        <DarkButton
-          variant="secondary"
-          size="sm"
-          onClick={() => toast.info('i18n completo está diferido para a Fase 5.')}
-        >
-          Aplicar idioma
-        </DarkButton>
       </div>
     </DarkCard>
   );
