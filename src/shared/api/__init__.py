@@ -10,11 +10,13 @@ from fastapi import APIRouter
 
 from .decisions import router as decisions_router
 from .capabilities import router as capabilities_router
+from .auth_me import router as auth_me_router
 
 router = APIRouter(prefix="/v1", tags=["Shared"])
 
 router.include_router(decisions_router)
 router.include_router(capabilities_router)
+router.include_router(auth_me_router)
 
 
 

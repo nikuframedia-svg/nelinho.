@@ -66,6 +66,9 @@ def _import_all_models() -> None:
     # Q.17.C — tenant_rule + revision tables (NL→YAML rule authoring)
     from src.governance.yaml_policy import models as yaml_policy_models  # noqa: F401
 
+    # Q.22.A — User table
+    from src.shared.models import user as shared_user_models  # noqa: F401
+
 
 _SCHEMAS = (
     "core", "plan", "profit", "hr", "dqa", "governance", "supply", "quality",
