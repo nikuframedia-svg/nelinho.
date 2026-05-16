@@ -41,11 +41,16 @@ from datetime import date
 
 from .schemas import (
     BomRow,
+    EntityPhaseRow,
+    EntityRow,
     HealthCheckResult,
+    MoldRow,
     MovementRow,
     OperationRow,
     OrderRow,
+    PhaseRow,
     ProductOrderCount,
+    ProductRow,
     RoutingRow,
     ScheduleRow,
 )
@@ -250,6 +255,72 @@ WHERE m.MOV_DATA >= DATEADD(month, -12, CAST(GETDATE() AS date))
 """
 
 
+# Q.20.A — master-data view bodies (used by the ETL mirrors). Column
+# names verified against agent_docs/mar_kayaks_schema_discovery.md —
+# FASES_PRODUCAO (FP_*), ENTIDADE (E_*), ENTIDADE_FASE (EFP_*),
+# MOLDES (MLD_*). No guessed names.
+
+_VW_PHASES_SQL = """
+SELECT
+    fp.FP_ID            AS phase_id,
+    fp.FP_NOME          AS phase_name,
+    fp.FP_DESCRICAO     AS phase_description,
+    fp.FP_SEQUENCIA     AS sequence,
+    fp.FP_PRODUCAO      AS is_production,
+    fp.FP_AUTOMATICA    AS is_automatic,
+    fp.FP_PODE_REPETIR  AS can_repeat,
+    fp.FP_FP_ID         AS parent_phase_id,
+    fp.FP_HORA_COEF     AS hour_coefficient,
+    fp.FP_VALOR_REF_K1  AS k1_reference_hours,
+    fp.FP_VALOR_REF_K2  AS k2_reference_hours,
+    fp.FP_VALOR_REF_K4  AS k4_reference_hours
+FROM dbo.FASES_PRODUCAO fp WITH (NOLOCK)
+"""
+
+_VW_ENTITIES_SQL = """
+SELECT
+    e.E_ID            AS entity_id,
+    e.E_NOME          AS name,
+    e.E_ACTIVO        AS active,
+    e.E_NELO          AS is_internal,
+    e.E_TRANSPORTADOR AS is_carrier,
+    e.E_CHEFE         AS is_supervisor,
+    e.E_CUSTOHORA     AS cost_per_hour,
+    e.E_NIVEL         AS level,
+    e.E_PRODUTIVIDADE AS productivity,
+    e.E_ENT_ID        AS entity_type_id,
+    et.ENT_NOME       AS entity_type_name,
+    e.E_DATAENTRADA   AS entry_date,
+    e.E_PAIS          AS country,
+    e.E_EMAIL         AS email
+FROM        dbo.ENTIDADE      e   WITH (NOLOCK)
+LEFT JOIN   dbo.ENTIDADE_TIPO et  WITH (NOLOCK) ON et.ENT_ID = e.E_ENT_ID
+"""
+
+_VW_ENTITY_PHASES_SQL = """
+SELECT
+    ef.EFP_ID            AS entity_phase_id,
+    ef.EFP_E_ID          AS entity_id,
+    ef.EFP_FP_ID         AS phase_id,
+    ef.EFP_PRODUTIVIDADE AS proficiency,
+    ef.EFP_CHEFE         AS is_supervisor,
+    ef.EFP_QUALIFICADO   AS qualified,
+    ef.EFP_DATAINICIO    AS start_date,
+    ef.EFP_DATAFIM       AS end_date
+FROM dbo.ENTIDADE_FASE ef WITH (NOLOCK)
+"""
+
+_VW_MOLDS_SQL = """
+SELECT
+    mld.MLD_ID       AS mold_id,
+    mld.MLD_NOME     AS mold_name,
+    mld.MLD_MLDTP_ID AS mold_type_id,
+    mld.MLD_UTILIZ   AS usage_count,
+    mld.MLD_DATA     AS acquired_at
+FROM dbo.MOLDES mld WITH (NOLOCK)
+"""
+
+
 async def _fetch_all(sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Run a SELECT and return list of row dicts (column → value)."""
     engine = get_engine()
@@ -382,6 +453,95 @@ async def list_operations(
     return [OperationRow(**r) for r in rows]
 
 
+# ─── Master data (for the ERP→Postgres ETL mirrors) ─────────────────────
+
+
+async def list_phases() -> list[PhaseRow]:
+    """All production phases (work centres) from `FASES_PRODUCAO` (~71 rows)."""
+    sql = f"SELECT * FROM ({_VW_PHASES_SQL}) v ORDER BY v.sequence, v.phase_id"
+    rows = await _fetch_all(sql)
+    return [PhaseRow(**r) for r in rows]
+
+
+async def list_products(limit: int = 50_000) -> list[ProductRow]:
+    """Product catalogue (`PRODUTO`, ~14 k rows). Bounded by `limit`."""
+    sql = f"""
+    SELECT TOP {int(limit)}
+        p.P_ID            AS product_id,
+        p.P_NOME          AS product_name,
+        p.P_NOME_EN       AS product_name_en,
+        p.P_TP_ID         AS product_type_id,
+        p.P_ACTIVO        AS active,
+        p.P_DESCONTINUADO AS discontinued,
+        p.P_FABRICOINTERNO AS in_house,
+        p.P_PRECOCUSTO    AS cost_price
+    FROM dbo.PRODUTO p WITH (NOLOCK)
+    ORDER BY p.P_ID
+    """
+    rows = await _fetch_all(sql)
+    return [ProductRow(**r) for r in rows]
+
+
+async def list_entities(internal_only: bool = False, limit: int = 20_000) -> list[EntityRow]:
+    """Entities from `ENTIDADE`. `internal_only=True` restricts to NELO
+    employees (`E_NELO=1`) — the ~122 operators master-data needs."""
+    where = "WHERE v.is_internal = 1" if internal_only else ""
+    sql = f"""
+    SELECT TOP {int(limit)} * FROM (
+        {_VW_ENTITIES_SQL}
+    ) v
+    {where}
+    ORDER BY v.entity_id
+    """
+    rows = await _fetch_all(sql)
+    return [EntityRow(**r) for r in rows]
+
+
+async def list_entity_phases() -> list[EntityPhaseRow]:
+    """Operator × phase competence matrix (`ENTIDADE_FASE`, ~1.3 k rows)."""
+    sql = f"SELECT * FROM ({_VW_ENTITY_PHASES_SQL}) v ORDER BY v.entity_id, v.phase_id"
+    rows = await _fetch_all(sql)
+    return [EntityPhaseRow(**r) for r in rows]
+
+
+async def list_molds() -> list[MoldRow]:
+    """ERP-side mold catalogue (`MOLDES`, ~91 rows). The full ~510 molds
+    live in Excel; this is used for reconciliation + pocket enrichment."""
+    sql = f"SELECT * FROM ({_VW_MOLDS_SQL}) v ORDER BY v.mold_id"
+    rows = await _fetch_all(sql)
+    return [MoldRow(**r) for r in rows]
+
+
+async def list_all_routings(limit: int = 200_000) -> list[RoutingRow]:
+    """Every product routing row (`PRODUTO_FASE` joined to `FASES_PRODUCAO`).
+
+    Unlike :func:`get_routing` (one product) this returns the whole
+    routing surface for the master-data mirror to group into templates.
+    Heavy — `PRODUTO_FASE` has ~42 k rows; the `limit` is a safety cap.
+    """
+    sql = f"""
+    SELECT TOP {int(limit)} * FROM (
+        {_VW_ROUTINGS_SQL}
+    ) v
+    ORDER BY v.product_id, v.sequence
+    """
+    rows = await _fetch_all(sql)
+    return [RoutingRow(**r) for r in rows]
+
+
+async def list_all_bom(limit: int = 200_000) -> list[BomRow]:
+    """Every active BOM line (`PRODUTO_COMPONENTE`). Heavy — ~117 k rows;
+    `limit` is a safety cap. Used by the master-data mirror."""
+    sql = f"""
+    SELECT TOP {int(limit)} * FROM (
+        {_VW_BOM_SQL}
+    ) v
+    ORDER BY v.parent_product_id, v.bom_id
+    """
+    rows = await _fetch_all(sql)
+    return [BomRow(**r) for r in rows]
+
+
 # ─── Aggregations for health-check ──────────────────────────────────────
 
 
@@ -444,9 +604,16 @@ __all__: Sequence[str] = (
     "get_engine",
     "get_routing",
     "health_check",
+    "list_all_bom",
+    "list_all_routings",
     "list_current_schedule",
+    "list_entities",
+    "list_entity_phases",
+    "list_molds",
     "list_open_orders",
     "list_operations",
+    "list_phases",
+    "list_products",
     "list_recent_movements",
     "top_products_by_orders",
 )

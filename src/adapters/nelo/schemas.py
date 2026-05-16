@@ -187,6 +187,117 @@ class OperationRow(_Frozen):
     phase_is_automatic: bool = False
 
 
+# ─── Phases (vw_pp1_phases) — master of work centres ───────────────────
+
+
+class PhaseRow(_Frozen):
+    """One production phase (work centre) from `dbo.FASES_PRODUCAO`.
+
+    The `phase_id` is the join key every routing / operation / skill row
+    references. K1/K2/K4 reference hours are class-specific standards
+    (never the actual time — see `OperationRow`).
+    """
+
+    phase_id: int  # FP_ID
+    phase_name: str
+    phase_description: Optional[str] = None
+    sequence: int
+    is_production: bool
+    is_automatic: bool
+    can_repeat: bool
+    parent_phase_id: Optional[int] = None
+    hour_coefficient: float
+    k1_reference_hours: float
+    k2_reference_hours: float
+    k4_reference_hours: float
+
+
+# ─── Products (vw_pp1_products) — catalogue ────────────────────────────
+
+
+class ProductRow(_Frozen):
+    """One `dbo.PRODUTO` row — the product catalogue (boats + components).
+
+    `product_type_id` (`P_TP_ID`) points at `PRODUTO_TIPO`; the master
+    mirror classifies finished-good vs semi-finished from it. `cost_price`
+    is € (NEVER a coefficient — see CLAUDE.md).
+    """
+
+    product_id: int  # P_ID
+    product_name: str
+    product_name_en: Optional[str] = None
+    product_type_id: Optional[int] = None
+    active: bool
+    discontinued: bool
+    in_house: bool
+    cost_price: float
+
+
+# ─── Entities / operators (vw_pp1_entities) ────────────────────────────
+
+
+class EntityRow(_Frozen):
+    """One row of `dbo.ENTIDADE` — the polymorphic hub (people, clients,
+    suppliers, operators).
+
+    For master-data sync only the operator-relevant columns are exposed.
+    `is_internal` (`E_NELO`) flags a NELO employee; `cost_per_hour`
+    (`E_CUSTOHORA`) is € — useful for COGS, never for scheduling time.
+    """
+
+    entity_id: int  # E_ID
+    name: str
+    active: bool
+    is_internal: bool
+    is_carrier: bool
+    is_supervisor: bool
+    cost_per_hour: float
+    level: int
+    productivity: float
+    entity_type_id: Optional[int] = None
+    entity_type_name: Optional[str] = None
+    entry_date: Optional[datetime] = None
+    country: Optional[str] = None
+    email: Optional[str] = None
+
+
+# ─── Skill matrix (vw_pp1_entity_phases) ───────────────────────────────
+
+
+class EntityPhaseRow(_Frozen):
+    """One `dbo.ENTIDADE_FASE` row — operator × phase competence.
+
+    `qualified` (`EFP_QUALIFICADO`) and `proficiency` (`EFP_PRODUTIVIDADE`,
+    1..5-ish) drive the Spelke skill-match axiom. `is_supervisor`
+    (`EFP_CHEFE`) marks the operator as a chefe for that phase.
+    """
+
+    entity_phase_id: int  # EFP_ID
+    entity_id: int
+    phase_id: int
+    proficiency: int
+    is_supervisor: bool
+    qualified: bool
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+
+
+# ─── Molds (vw_pp1_molds) ──────────────────────────────────────────────
+
+
+class MoldRow(_Frozen):
+    """One `dbo.MOLDES` row. The ERP knows only ~91 molds (the full ~510
+    live in Excel); this is the ERP-side catalogue used for reconciliation
+    and pocket-count enrichment. `MOLDES` has no maintenance columns.
+    """
+
+    mold_id: int  # MLD_ID
+    mold_name: str
+    mold_type_id: int
+    usage_count: int
+    acquired_at: Optional[datetime] = None
+
+
 # ─── Aggregate helpers ──────────────────────────────────────────────────
 
 

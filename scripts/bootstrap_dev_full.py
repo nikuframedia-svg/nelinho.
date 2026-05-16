@@ -66,6 +66,9 @@ def _import_all_models() -> None:
     # Q.17.C — tenant_rule + revision tables (NL→YAML rule authoring)
     from src.governance.yaml_policy import models as yaml_policy_models  # noqa: F401
 
+    # Q.20.A — core.etl_run audit table (ERP→Postgres sync trail)
+    from src.core.models import etl_run as core_etl_run_models  # noqa: F401
+
 
 _SCHEMAS = (
     "core", "plan", "profit", "hr", "dqa", "governance", "supply", "quality",

@@ -40,6 +40,7 @@ from src.plan.models import phase_gap as plan_phase_gap_models  # migration 023
 from src.factory_data_product.models import curated as factory_curated_models  # migrations 028, 029
 from src.sandbox import models as sandbox_models  # migration 030
 from src.improve import models as improve_models  # migration 031
+from src.core.models import etl_run as core_etl_run_models  # migration 047 (Q.20.A)
 
 # this is the Alembic Config object
 config = context.config
