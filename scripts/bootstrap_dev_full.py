@@ -69,10 +69,17 @@ def _import_all_models() -> None:
     # Q.20.A — core.etl_run audit table (ERP→Postgres sync trail)
     from src.core.models import etl_run as core_etl_run_models  # noqa: F401
 
+    # Q.22.A — shared.users identity table (backs GET /v1/auth/me)
+    from src.shared.models import user as shared_user_models  # noqa: F401
+    # Q.22.C — plan.production_errors (backs /api/errors*)
+    from src.legacy import models as legacy_models  # noqa: F401
+    # Q.22.D — reports.report_schedule + report_run
+    from src.reports import models as reports_models  # noqa: F401
+
 
 _SCHEMAS = (
     "core", "plan", "profit", "hr", "dqa", "governance", "supply", "quality",
-    "sandbox", "twin", "improve", "shared",
+    "sandbox", "twin", "improve", "shared", "reports",
     "factory_curated", "factory_meta", "factory_raw",
 )
 
