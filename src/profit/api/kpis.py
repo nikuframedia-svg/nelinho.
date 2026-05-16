@@ -367,13 +367,16 @@ async def get_kpi_snapshot_explained(
     # Generate explanations for relevant KPIs
     explanation_engine = ExplanationEngine(session, tenant_id)
     explanations = {}
-    
+
     # Explain OTD if orders data available
     if snapshot.orders_total.value is not None and snapshot.orders_total.value > 0:
         explanations["otd"] = await explanation_engine.explain_kpi("otd")
-    
-    # TODO: Add explanations for other KPIs (margin, inventory_turnover, etc.)
-    
+
+    # margin / inventory_turnover are advisory (structural explanation, no
+    # data gate); machine_breakdown queries the schedule table directly.
+    for kpi_name in ("margin", "inventory_turnover", "machine_breakdown"):
+        explanations[kpi_name] = await explanation_engine.explain_kpi(kpi_name)
+
     return KPISnapshotExplainedResponse(
         snapshot=snapshot,
         explanations=explanations,
