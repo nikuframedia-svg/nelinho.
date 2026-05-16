@@ -117,103 +117,77 @@ function transformApiToPhaseRisks(apiData: any): PhaseRisk[] {
 }
 
 /**
- * Generate SPOF alerts from phase risks
+ * Generate SPOF alerts from phase risks.
+ *
+ * ZERO MOCKS: the alert carries only real phase-level telemetry (apt-worker
+ * count, backlog, orders). Employee identity is intentionally NOT fabricated
+ * from an index — `/v1/factory/skills-risk` does not return per-phase
+ * employees, so `employeeName`/`employeeId`/`estimatedDailyCost` stay
+ * undefined and the panel degrades to a phase-level view.
  */
 function generateSPOFAlertsFromRisks(phaseRisks: PhaseRisk[]): SPOFAlert[] {
   return phaseRisks
     .filter(p => p.isSPOF || p.aptosActive <= 2)
     .slice(0, 5)
-    .map((p, idx) => ({
-      phaseId: p.phaseId,
-      phaseName: p.phaseName,
-      employeeId: `emp-${p.phaseId}-1`,
-      employeeName: `Funcionário apto ${idx + 1}`,
-      backlogHours: p.backlogHours,
-      ordersAffected: p.ordersAtRisk,
-      estimatedDailyCost: Math.floor(p.backlogHours * 5.54 / 8),
-      riskLevel: p.riskLevel === 'critical' ? 'critical' : 'high',
-    }));
+    .map(p => {
+      const realEmployee = p.employees[0];
+      return {
+        phaseId: p.phaseId,
+        phaseName: p.phaseName,
+        aptosActive: p.aptosActive,
+        backlogHours: p.backlogHours,
+        ordersAffected: p.ordersAtRisk,
+        riskLevel: p.riskLevel === 'critical' ? 'critical' : ('high' as const),
+        ...(realEmployee
+          ? { employeeId: realEmployee.id, employeeName: realEmployee.name }
+          : {}),
+      };
+    });
 }
 
 /**
- * Generate dependency graph from phase and employee data
+ * Generate the dependency graph from phase risk data.
+ *
+ * ZERO MOCKS: only real phase nodes are emitted. Employee nodes and
+ * employee→phase aptitude edges are NOT synthesized from an index —
+ * `/v1/factory/skills-risk` carries no per-phase employee identity, so the
+ * graph ships with empty edges and `DependencyGraph` renders an explicit
+ * "telemetria incompleta" empty state.
  */
 function generateDependencyGraphFromData(phaseRisks: PhaseRisk[], employeesCount: number): DependencyGraphData {
-  const nodes = [
-    ...phaseRisks.map(p => ({
-      id: `phase-${p.phaseId}`,
-      type: 'phase' as const,
-      label: p.phaseName,
-      data: { id: p.phaseId, name: p.phaseName, description: '' },
-      riskLevel: p.riskLevel as any,
-      size: 25,
-    })),
-    ...Array.from({ length: Math.min(employeesCount, 10) }, (_, i) => ({
-      id: `emp-${i}`,
-      type: 'employee' as const,
-      label: `Funcionário ${i + 1}`,
-      data: { id: `emp-${i}`, name: `Funcionário ${i + 1}`, isActive: true, aptitudes: [] },
-      size: 18,
-    })),
-  ];
-
-  // Generate edges (employee-to-phase connections)
-  const edges = phaseRisks.flatMap((p, pIdx) => 
-    Array.from({ length: Math.min(p.aptosActive, 3) }, (_, eIdx) => ({
-      id: `e-${pIdx}-${eIdx}`,
-      source: `emp-${(pIdx + eIdx) % Math.min(employeesCount, 10)}`,
-      target: `phase-${p.phaseId}`,
-      type: 'aptitude' as const,
-    }))
-  );
+  const nodes: GraphNode[] = phaseRisks.map(p => ({
+    id: `phase-${p.phaseId}`,
+    type: 'phase' as const,
+    label: p.phaseName,
+    data: { id: p.phaseId, name: p.phaseName, description: '' },
+    riskLevel: p.riskLevel,
+    size: 25,
+  }));
 
   return {
     nodes,
-    edges,
+    edges: [],
     metadata: {
       totalEmployees: employeesCount,
       totalPhases: phaseRisks.length,
-      totalLinks: edges.length,
+      totalLinks: 0,
       spofNodes: phaseRisks.filter(p => p.isSPOF).map(p => `phase-${p.phaseId}`),
-      criticalPaths: phaseRisks.filter(p => p.isSPOF).map(p => [`phase-${p.phaseId}`, `emp-0`]),
+      criticalPaths: [],
     },
   };
 }
 
 /**
- * Generate training recommendations from phase risks
+ * Generate training recommendations from phase risks.
+ *
+ * ZERO MOCKS: a training recommendation names *who* to cross-train. Phase
+ * risk data carries no employee identity, so we cannot honestly produce one
+ * from an index — return empty and let the consumer show an explicit empty
+ * state. Recommendations with real employees come from
+ * `workforceApi.getTrainingRecommendations()` once that telemetry exists.
  */
-function generateTrainingRecommendationsFromRisks(phaseRisks: PhaseRisk[]): TrainingRecommendation[] {
-  const criticalPhases = phaseRisks.filter(p => p.isSPOF || p.riskLevel === 'critical' || p.riskLevel === 'high');
-  
-  return criticalPhases.slice(0, 3).map((phase, idx) => ({
-    id: `rec-${idx + 1}`,
-    priority: phase.isSPOF ? 'critical' : 'high',
-    employee: {
-      id: `emp-${idx + 1}`,
-      name: `Funcionário ${idx + 1}`,
-      currentPhases: ['Fase Base'],
-    },
-    targetPhase: {
-      id: phase.phaseId,
-      name: phase.phaseName,
-    },
-    reasoning: [
-      `${phase.phaseName} tem apenas ${phase.aptosActive} funcionário(s) apto(s)${phase.isSPOF ? ' (SPOF crítico)' : ''}`,
-      `Backlog de ${phase.backlogHours.toFixed(0)}h em risco`,
-      phase.isSPOF ? 'Elimina o maior risco operacional' : 'Reduz risco de single dependency',
-    ],
-    expectedImpact: {
-      spofEliminated: phase.isSPOF,
-      riskReduction: phase.isSPOF ? 35 : 20,
-      backlogSecured: phase.backlogHours,
-    },
-    estimatedCost: {
-      hours: 40,
-      cost: 40 * 5.54,
-    },
-    trustIndex: 55,
-  }));
+function generateTrainingRecommendationsFromRisks(_phaseRisks: PhaseRisk[]): TrainingRecommendation[] {
+  return [];
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -582,6 +556,17 @@ export function WorkforceDashboard() {
             }
           >
             <div className="space-y-3">
+              {trainingRecommendations.length === 0 && (
+                <div className="p-4 bg-slate-800/50 rounded-lg border border-slate-700/50 text-center">
+                  <p className="text-sm text-slate-300 font-medium mb-1">
+                    Sem recomendações de formação
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    Requer telemetria de aptidões por funcionário. Ingerir o Excel
+                    NELO para gerar recomendações nominais.
+                  </p>
+                </div>
+              )}
               {trainingRecommendations.slice(0, 2).map((rec, index) => (
                 <div
                   key={rec.id}

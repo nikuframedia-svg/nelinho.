@@ -76,12 +76,15 @@ export interface PhaseRisk {
 export interface SPOFAlert {
   phaseId: string;
   phaseName: string;
-  employeeId: string;
-  employeeName: string;
+  aptosActive: number;
   backlogHours: number;
   ordersAffected: number;
-  estimatedDailyCost: number;
   riskLevel: 'critical' | 'high';
+  // Populated only when the API supplies per-phase employee identity.
+  // ZERO MOCKS: never fabricated from an index when telemetry is absent.
+  employeeId?: string;
+  employeeName?: string;
+  estimatedDailyCost?: number;
 }
 
 export interface SkillsRiskSummary {

@@ -155,6 +155,27 @@ export function DependencyGraph({
     );
   }
 
+  // ZERO MOCKS: a dependency graph needs employee→phase aptitude edges. When
+  // `/v1/factory/skills-risk` carries no per-phase employee identity the graph
+  // has no edges — show an explicit empty state instead of a meaningless
+  // scatter of phase dots.
+  if (graph.edges.length === 0) {
+    return (
+      <div className="bg-slate-900 border border-slate-700 rounded-xl p-6">
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <div className="p-3 bg-slate-800 rounded-xl mb-4">
+            <Network className="text-slate-500" size={28} />
+          </div>
+          <h3 className="font-semibold text-white mb-1">Grafo de dependências indisponível</h3>
+          <p className="text-sm text-slate-400 max-w-md">
+            Sem telemetria de aptidões funcionário–fase. Ingerir o Excel NELO ou
+            verificar o endpoint <code className="bg-slate-800 px-1 rounded">/factory/skills-risk</code>.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="bg-slate-900 border border-slate-700 rounded-xl overflow-hidden">
       {/* Header */}

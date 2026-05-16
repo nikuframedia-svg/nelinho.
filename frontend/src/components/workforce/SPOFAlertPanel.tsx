@@ -77,8 +77,8 @@ export function SPOFAlertPanel({
       {/* Alerts List */}
       <div className={`divide-y divide-slate-800 ${compact ? 'max-h-64 overflow-y-auto' : ''}`}>
         {alerts.map((alert, index) => (
-          <div 
-            key={`${alert.phaseId}-${alert.employeeId}`}
+          <div
+            key={alert.phaseId}
             className={`
               p-4 hover:bg-slate-800/30 transition-colors
               ${alert.riskLevel === 'critical' ? 'border-l-4 border-l-red-500' : 'border-l-4 border-l-orange-500'}
@@ -99,18 +99,30 @@ export function SPOFAlertPanel({
 
                 {/* Details */}
                 <div className="grid grid-cols-2 gap-3 mb-3">
-                  <button
-                    onClick={() => onViewEmployee?.(alert.employeeId)}
-                    className="flex items-center gap-2 p-2 bg-slate-800/50 rounded-lg text-left hover:bg-slate-800 transition-colors group"
-                  >
-                    <User size={14} className="text-slate-400" />
-                    <div className="min-w-0">
-                      <p className="text-[10px] text-slate-500 uppercase">Único Apto</p>
-                      <p className="text-sm text-white font-medium truncate group-hover:text-accent">
-                        {alert.employeeName}
-                      </p>
+                  {alert.employeeName ? (
+                    <button
+                      onClick={() => alert.employeeId && onViewEmployee?.(alert.employeeId)}
+                      className="flex items-center gap-2 p-2 bg-slate-800/50 rounded-lg text-left hover:bg-slate-800 transition-colors group"
+                    >
+                      <User size={14} className="text-slate-400" />
+                      <div className="min-w-0">
+                        <p className="text-[10px] text-slate-500 uppercase">Único Apto</p>
+                        <p className="text-sm text-white font-medium truncate group-hover:text-accent">
+                          {alert.employeeName}
+                        </p>
+                      </div>
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-2 p-2 bg-slate-800/50 rounded-lg">
+                      <User size={14} className="text-slate-400" />
+                      <div className="min-w-0">
+                        <p className="text-[10px] text-slate-500 uppercase">Funcionários Aptos</p>
+                        <p className="text-sm text-white font-medium">
+                          {alert.aptosActive} activo{alert.aptosActive === 1 ? '' : 's'}
+                        </p>
+                      </div>
                     </div>
-                  </button>
+                  )}
                   <div className="flex items-center gap-2 p-2 bg-slate-800/50 rounded-lg">
                     <Clock size={14} className="text-slate-400" />
                     <div>
@@ -125,8 +137,14 @@ export function SPOFAlertPanel({
                   <p className="text-xs text-red-300 flex items-start gap-2">
                     <XCircle size={14} className="flex-shrink-0 mt-0.5" />
                     <span>
-                      <strong>Se {alert.employeeName.split(' ')[0]} ficar indisponível:</strong>{' '}
-                      {alert.ordersAffected} ordens param • ~€{alert.estimatedDailyCost.toFixed(0)}/dia em risco
+                      <strong>
+                        {alert.employeeName
+                          ? `Se ${alert.employeeName.split(' ')[0]} ficar indisponível:`
+                          : 'Se um funcionário apto ficar indisponível:'}
+                      </strong>{' '}
+                      {alert.ordersAffected} ordens param
+                      {alert.estimatedDailyCost !== undefined &&
+                        ` • ~€${alert.estimatedDailyCost.toFixed(0)}/dia em risco`}
                     </span>
                   </p>
                 </div>
