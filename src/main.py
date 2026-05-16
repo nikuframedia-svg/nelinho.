@@ -539,6 +539,10 @@ app.include_router(activity_router)  # /v1/activity/recent — outbox poll for L
 app.include_router(ml_router)  # ML learning infrastructure (Sprint G)
 app.include_router(copilot_poetiq_router)  # POETIQ copilot↔CPO loop (Sprint K.4)
 
+# Sprint Q.22 — Reports module (schedule / generate / email / retention)
+from src.reports.api import router as reports_router  # noqa: E402
+app.include_router(reports_router)
+
 
 # API info
 @app.get("/", tags=["Info"])

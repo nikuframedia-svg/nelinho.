@@ -70,11 +70,13 @@ def _import_all_models() -> None:
     from src.shared.models import user as shared_user_models  # noqa: F401
     # Q.22.C — ProductionError
     from src.legacy import models as legacy_models  # noqa: F401
+    # Q.22.D — reports module
+    from src.reports import models as reports_models  # noqa: F401
 
 
 _SCHEMAS = (
     "core", "plan", "profit", "hr", "dqa", "governance", "supply", "quality",
-    "sandbox", "twin", "improve", "shared",
+    "sandbox", "twin", "improve", "shared", "reports",
     "factory_curated", "factory_meta", "factory_raw",
 )
 

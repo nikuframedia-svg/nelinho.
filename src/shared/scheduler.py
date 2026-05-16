@@ -286,6 +286,37 @@ def register_tenant(
         coalesce=True,
         max_instances=1,
     )
+    # Sprint Q.22.G — report retention cleanup. Runs daily 04:45 UTC,
+    # after the audit retention purge (04:30). Prunes ReportRun rows
+    # past their owning schedule's retention_days; each delete is
+    # audited in core.audit_log.
+    _scheduler.add_job(
+        _report_retention_cleanup_job,
+        trigger=CronTrigger(hour=4, minute=45, timezone="UTC"),
+        args=[tenant_id],
+        id=f"report_retention_cleanup:{tenant_id}",
+        name=f"report_retention_cleanup[{tenant_id}]",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+
+
+async def _report_retention_cleanup_job(tenant_id: UUID) -> None:
+    """Sprint Q.22.G — prune expired ReportRun rows for one tenant."""
+    from src.reports.cleanup import cleanup_expired_runs
+    from src.shared.database import get_session_context
+
+    try:
+        async with get_session_context() as session:
+            deleted = await cleanup_expired_runs(session, tenant_id)
+        logger.info(
+            "report_retention_cleanup: tenant=%s deleted=%d", tenant_id, deleted
+        )
+    except Exception as exc:  # best-effort — never crash the scheduler
+        logger.warning(
+            "report_retention_cleanup failed for tenant=%s: %s", tenant_id, exc
+        )
 
 
 async def shutdown_scheduler() -> None:

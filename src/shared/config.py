@@ -65,6 +65,22 @@ class Settings(BaseSettings):
     sqlserver_pool_size: int = Field(default=5, ge=1, le=20)
     sqlserver_query_timeout_s: int = Field(default=30, ge=1, le=300)
 
+    # SMTP (Sprint Q.22.F — report email delivery)
+    # Leave `smtp_enabled=False` (the default) in dev: report deliveries
+    # are persisted + logged, no SMTP connection is opened.
+    smtp_enabled: bool = Field(
+        default=False,
+        description="Flip to True to actually send report emails via SMTP",
+    )
+    smtp_host: Optional[str] = Field(default=None, description="SMTP server host")
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_user: Optional[str] = Field(default=None, description="SMTP login user")
+    smtp_password: Optional[str] = Field(default=None, description="SMTP login password")
+    smtp_from: str = Field(
+        default="prodplan@nelo.local",
+        description="From address for outbound report emails",
+    )
+
     # Security
     secret_key: str = Field(
         default="dev-only-insecure-key-override-in-production-via-env",
