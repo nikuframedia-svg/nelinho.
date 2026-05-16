@@ -236,7 +236,7 @@ function StubbedActionsBadge({ rule }: { rule: YamlPolicyRule }) {
     alert: true, // Q.17.F.4 — wired to CopilotAlert row
     block: true,
     modify_fitness: true,
-    reassign_worker: false,
+    reassign_worker: true, // Q.17.F.7 — wired to governance.decision_run
     propose_maintenance: true, // Q.17.F.6 — wired to governance.decision_run
     notify: false,
     set_config: true,

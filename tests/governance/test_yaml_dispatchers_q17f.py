@@ -168,6 +168,60 @@ async def test_dispatch_propose_maintenance_no_callback_reports_stubbed():
 
 
 # ---------------------------------------------------------------------------
+# Q.17.F.7 — reassign_worker routes through create_decision
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dispatch_reassign_worker_routes_to_create_decision():
+    captured: list[dict[str, Any]] = []
+
+    async def cb(decision_data: dict[str, Any]) -> str:
+        captured.append(decision_data)
+        return "decision-reassign-4"
+
+    rule = _build_rule(
+        action=ActionType.REASSIGN_WORKER,
+        params={
+            "phase_id": "FASE-12",
+            "replacement_worker_id": "OP-077",
+            "reason_pt": "Operador titular ausente",
+        },
+    )
+    ctx = DispatchContext(
+        tenant_id=_TENANT,
+        event_type=EventType.MOLD_USAGE_THRESHOLD.value,
+        event_payload={"uses_count": 850},
+        create_decision=cb,
+    )
+    results = await dispatch(rule, ctx)
+
+    assert len(captured) == 1
+    assert captured[0]["decision_type"] == "worker_reassignment"
+    assert captured[0]["action_data"]["phase_id"] == "FASE-12"
+    assert captured[0]["action_data"]["replacement_worker_id"] == "OP-077"
+    assert captured[0]["source_rule"] == rule.id
+    assert results[0].status == "ok"
+    assert results[0].payload["decision_id"] == "decision-reassign-4"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_reassign_worker_no_callback_reports_stubbed():
+    rule = _build_rule(
+        action=ActionType.REASSIGN_WORKER,
+        params={"phase_id": "x", "replacement_worker_id": "y", "reason_pt": "z"},
+    )
+    ctx = DispatchContext(
+        tenant_id=_TENANT,
+        event_type=EventType.MOLD_USAGE_THRESHOLD.value,
+        event_payload={"uses_count": 850},
+    )
+    results = await dispatch(rule, ctx)
+    assert results[0].status == "stubbed"
+    assert "no create_decision callback" in (results[0].detail or "")
+
+
+# ---------------------------------------------------------------------------
 # Wiring matrix — backend side of the backend/frontend mirror
 # ---------------------------------------------------------------------------
 
@@ -175,3 +229,7 @@ async def test_dispatch_propose_maintenance_no_callback_reports_stubbed():
 def test_action_wiring_create_decision_and_propose_maintenance_wired():
     assert ACTION_WIRING["create_decision"]["wired"] is True
     assert ACTION_WIRING["propose_maintenance"]["wired"] is True
+
+
+def test_action_wiring_reassign_worker_wired():
+    assert ACTION_WIRING["reassign_worker"]["wired"] is True

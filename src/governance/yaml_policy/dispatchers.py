@@ -77,7 +77,7 @@ ACTION_WIRING: dict[str, dict[str, Any]] = {
     "alert":               {"wired": True,  "destination": "CopilotAlert row via runtime._build_dispatch_context"},
     "block":               {"wired": True,  "destination": "engine.block_results() + caller HTTPException 409"},
     "modify_fitness":      {"wired": True,  "destination": "set_config callback → ConfigStore → CPO reads on next schedule"},
-    "reassign_worker":     {"wired": False, "destination": "Kafka prodplan.workforce.reassign_requested (consumer TBD)"},
+    "reassign_worker":     {"wired": True,  "destination": "create_decision callback → governance.decision_run (worker_reassignment)"},
     "propose_maintenance": {"wired": True,  "destination": "create_decision callback → governance.decision_run (mold_maintenance)"},
     "notify":              {"wired": False, "destination": "Kafka prodplan.realtime.{channel} (consumer TBD)"},
     "set_config":          {"wired": True,  "destination": "ConfigStore.set() — write-through to tenant_configuration"},
@@ -178,27 +178,37 @@ async def _dispatch_modify_fitness(rule: Rule, params: dict[str, Any], ctx: Disp
 
 
 async def _dispatch_reassign_worker(rule: Rule, params: dict[str, Any], ctx: DispatchContext) -> DispatchResult:
-    """Substitute the operator on a phase. Emits Kafka event for the scheduler."""
+    """Substitute the operator on a phase.
+
+    Q.17.F.7 — routes through ``create_decision`` rather than mutating
+    the schedule directly: a worker swap touches the Spelke ``skill_match``
+    axiom and Q.17 rules always ``requires_human_approval``. The dispatcher
+    opens a ``worker_reassignment`` governance decision so a human approves
+    it, with full audit trail.
+    """
     payload = {
         "phase_id": params.get("phase_id"),
         "replacement_worker_id": params.get("replacement_worker_id"),
         "reason_pt": params.get("reason_pt", ""),
     }
-    if ctx.emit_kafka is not None:
-        await ctx.emit_kafka("prodplan.workforce.reassign_requested", {
-            "tenant_id": str(ctx.tenant_id),
-            "rule_id": rule.id,
-            **payload,
+    if ctx.create_decision is not None:
+        decision_id = await ctx.create_decision({
+            "decision_type": "worker_reassignment",
+            "title": f"Substituição de operador na fase {payload['phase_id']}",
+            "risk_level": "medium",
+            "action_data": payload,
+            "source_rule": rule.id,
         })
+        payload["decision_id"] = decision_id
     _log.info(
         "yaml_policy.reassign_worker tenant=%s rule=%s phase=%s -> worker=%s",
         ctx.tenant_id, rule.id, payload["phase_id"], payload["replacement_worker_id"],
     )
     return DispatchResult(
         action="reassign_worker",
-        status=_stubbed_or_ok("reassign_worker", has_callback=ctx.emit_kafka is not None),
+        status=_stubbed_or_ok("reassign_worker", has_callback=ctx.create_decision is not None),
         payload=payload,
-        detail="kafka topic emitted but no consumer wired yet",
+        detail=None if ctx.create_decision is not None else "no create_decision callback in context",
     )
 
 
