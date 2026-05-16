@@ -1274,8 +1274,8 @@ function SystemSettingsPanel() {
           label="Idioma da UI"
           options={[
             { value: 'pt-PT', label: 'Português (Portugal)' },
-            { value: 'en-US', label: 'English (US) — coming soon' },
-            { value: 'de-DE', label: 'Deutsch — coming soon' },
+            { value: 'en-US', label: 'English (US) — diferido' },
+            { value: 'de-DE', label: 'Deutsch — diferido' },
           ]}
           value={language}
           onChange={(e) => setLanguage(e.target.value as 'pt-PT' | 'en-US' | 'de-DE')}

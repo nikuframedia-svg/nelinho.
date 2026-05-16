@@ -41,7 +41,6 @@ import {
   CheckCircle2,
   ChevronRight,
   Lock,
-  Plus,
   Send,
   Truck,
   Wrench,
@@ -192,15 +191,6 @@ export default function DispatchPage() {
       title="Despacho / Expedição"
       subtitle="Plan v4 §7 — DE01-DE08 · drag-and-drop entre camiões + sugestões com consequências"
       icon={<Truck size={20} />}
-      actions={
-        <DarkButton
-          variant="primary"
-          icon={<Plus size={16} />}
-          onClick={() => alert('TODO Q.2: modal criar batch')}
-        >
-          Novo batch
-        </DarkButton>
-      }
     >
       <DndContext sensors={sensors} onDragEnd={onDragEnd}>
         <div className="grid grid-cols-12 gap-4">
