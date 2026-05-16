@@ -49,6 +49,7 @@ import {
   type ZipSeverity,
 } from '../../components/dark';
 import { SkeletonLoader } from '../../components/ui/Skeleton';
+import { getApiBase } from '../../lib/api';
 
 const ExplainPage = lazy(() =>
   import('../explain/ExplainPage').then((m) => ({ default: m.ExplainPage })),
@@ -72,11 +73,12 @@ function isTabId(v: string | null): v is TabId {
 
 // ─── Endpoints ──────────────────────────────────────────────────────────────
 
+// Q.21.A/B — base URL via api.ts (concorda com VITE_API_URL).
 async function fetchQualityRework(filter?: 'open' | 'rework') {
   try {
     const url = filter
-      ? `http://127.0.0.1:8001/v1/quality/rework?filter=${filter}&limit=20`
-      : `http://127.0.0.1:8001/v1/quality/rework?limit=20`;
+      ? `${getApiBase()}/v1/quality/rework?filter=${filter}&limit=20`
+      : `${getApiBase()}/v1/quality/rework?limit=20`;
     const resp = await fetch(url, {
       headers: { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' },
     });
@@ -90,7 +92,7 @@ async function fetchQualityRework(filter?: 'open' | 'rework') {
 async function fetchMoldsHealthReport() {
   try {
     const resp = await fetch(
-      `http://127.0.0.1:8001/v1/plan/molds/health-report?limit=24`,
+      `${getApiBase()}/v1/plan/molds/health-report?limit=24`,
       { headers: { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' } },
     );
     if (!resp.ok) return null;
@@ -103,7 +105,7 @@ async function fetchMoldsHealthReport() {
 async function fetchQualityDashboard() {
   try {
     const resp = await fetch(
-      'http://127.0.0.1:8001/v1/quality/dashboard?group_by=phase&top_n=10',
+      `${getApiBase()}/v1/quality/dashboard?group_by=phase&top_n=10`,
       { headers: { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' } },
     );
     if (!resp.ok) return null;
@@ -566,7 +568,7 @@ function ResumoTab() {
 // OEETab — port literal page-oee.jsx
 // ═══════════════════════════════════════════════════════════════════════════
 
-const API_BASE_OEE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// Q.21.A/B — base URL via api.ts (concorda com VITE_API_URL).
 const TENANT_OEE = { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' };
 
 interface OEEItem {
@@ -589,7 +591,22 @@ interface OEEResponse {
 async function fetchOEE(group_by?: string): Promise<OEEResponse | null> {
   const qs = group_by ? `?group_by=${group_by}` : '';
   try {
-    const r = await fetch(`${API_BASE_OEE}/v1/profit/oee${qs}`, { headers: TENANT_OEE });
+    const r = await fetch(`${getApiBase()}/v1/profit/oee${qs}`, { headers: TENANT_OEE });
+    return r.ok ? r.json() : null;
+  } catch { return null; }
+}
+
+// Throughput diário real (€/dia) — GET /v1/profit/dashboard devolve
+// `trend_14d` (14 pontos densificados) + targets. Q.21.B substitui o
+// array de 14 números que estava hardcoded.
+interface ThroughputDashboard {
+  throughput_eur: { target_min: number; target_max: number };
+  trend_14d: Array<{ date: string; eur: number }>;
+}
+
+async function fetchThroughputDashboard(): Promise<ThroughputDashboard | null> {
+  try {
+    const r = await fetch(`${getApiBase()}/v1/profit/dashboard`, { headers: TENANT_OEE });
     return r.ok ? r.json() : null;
   } catch { return null; }
 }
@@ -614,10 +631,23 @@ function OEETab() {
     queryFn: () => fetchOEE('product_type'),
     staleTime: 5 * 60_000,
   });
+  const throughputQuery = useQuery({
+    queryKey: ['oee', 'throughput-14d'],
+    queryFn: fetchThroughputDashboard,
+    staleTime: 5 * 60_000,
+    retry: 0,
+  });
 
   const overall = overallQuery.data?.overall;
   const phases = byPhaseQuery.data?.breakdown ?? [];
   const types = byTypeQuery.data?.breakdown ?? [];
+  // Throughput diário real, em milhares de € (€28.4K → 28.4). A meta é o
+  // limite inferior da banda NELO (target_min) na mesma escala.
+  const throughput = throughputQuery.data;
+  const throughputData = (throughput?.trend_14d ?? []).map((p) => p.eur / 1000);
+  const throughputTarget = throughput
+    ? throughput.throughput_eur.target_min / 1000
+    : 0;
   const worstPhases = phases.slice(0, 8);
   const bestTypes = types.filter((t) => t.sample_size >= 5).sort((a, b) => b.oee - a.oee).slice(0, 10);
   const worstTypes = types.filter((t) => t.sample_size >= 5).sort((a, b) => a.oee - b.oee).slice(0, 5);
@@ -770,59 +800,30 @@ function OEETab() {
       {/* Throughput chart + Impacto financeiro */}
       <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr', gap: 22 }}>
         <Panel title="Throughput diário" badge="14 dias">
-          <ThroughputChart
-            data={[28.4, 29.1, 27.8, 30.2, 31.5, 32.0, 30.9, 28.5, 24.1, 25.3, 27.2, 30.8, 32.1, 33.2]}
-            target={30}
-          />
+          {throughputQuery.isLoading ? (
+            <div className="px-4 py-8 text-center text-xs text-text-dark-tertiary">
+              A carregar throughput…
+            </div>
+          ) : throughputData.length === 0 ? (
+            <EmptyState
+              title="Sem throughput registado"
+              hint="O endpoint /v1/profit/dashboard não devolveu série de receita. Verifica se há order_revenue para os últimos 14 dias."
+              size="sm"
+            />
+          ) : (
+            <ThroughputChart data={throughputData} target={throughputTarget} />
+          )}
         </Panel>
         <Panel title="Impacto financeiro" badge="€/sem">
-          <div className="px-2 py-1 flex flex-col gap-3">
-            {[
-              { label: 'Paragem por molde', value: 1280, color: 'red' },
-              { label: 'Lentidão Lixagem', value: 2400, color: 'yellow' },
-              { label: 'Retrabalho qualidade', value: 680, color: 'yellow' },
-              { label: 'Setup excessivo', value: 420, color: 'blue' },
-            ].map((r) => (
-              <div key={r.label}>
-                <div className="flex justify-between text-xs mb-1">
-                  <span className="text-text-dark-secondary">{r.label}</span>
-                  <span className="tabular-nums font-semibold text-text-dark-primary">
-                    €{r.value.toLocaleString('pt-PT')}
-                  </span>
-                </div>
-                <div
-                  style={{
-                    height: 4,
-                    background: 'var(--bd-1)',
-                    borderRadius: 2,
-                    overflow: 'hidden',
-                  }}
-                >
-                  <div
-                    style={{
-                      width: `${(r.value / 2400) * 100}%`,
-                      height: '100%',
-                      background: `var(--${r.color})`,
-                    }}
-                  />
-                </div>
-              </div>
-            ))}
-            <div
-              className="flex justify-between mt-2 pt-3"
-              style={{ borderTop: '1px solid var(--bd-1)' }}
-            >
-              <span className="text-xs text-text-dark-secondary font-semibold">
-                Total perdido / semana
-              </span>
-              <span
-                className="tabular-nums font-bold"
-                style={{ fontSize: 14, color: 'var(--red)' }}
-              >
-                €4.780
-              </span>
-            </div>
-          </div>
+          {/* Q.21.B — os 4 valores € + total €4.780 eram hardcoded (ZERO
+              MOCKS). Não há endpoint que decomponha o custo de perda por
+              causa, por isso mostramos um EmptyState honesto em vez de
+              números fabricados. Wire quando o backend o servir. */}
+          <EmptyState
+            title="Decomposição de perdas indisponível"
+            hint="Ainda não há endpoint que atribua o custo de perda às causas (paragem de molde, lentidão de fase, retrabalho). O custo de retrabalho real está no separador Retrabalho."
+            size="sm"
+          />
         </Panel>
       </div>
     </div>
