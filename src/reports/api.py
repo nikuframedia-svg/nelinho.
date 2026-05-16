@@ -232,7 +232,8 @@ async def generate_report(
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# Onda 18 R — schedule + email + retention stubs
+# Sprint Q.22.D-G — schedule (persistência) + email (SMTP) + retention
+# (cleanup). Já não são stubs: persistem em reports.* e auditam.
 # ──────────────────────────────────────────────────────────────────────────
 
 
@@ -463,24 +464,78 @@ async def email_report(
 
 
 class ReportRetentionRequest(BaseModel):
+    template_id: TemplateId
+    retention_days: int = Field(
+        ge=7, le=3650, description="Janela de retenção GDPR (dias)."
+    )
+    run_cleanup: bool = Field(
+        default=True,
+        description="Correr a limpeza dos runs expirados de imediato.",
+    )
+
+
+class ReportRetentionResponse(BaseModel):
     template_id: str
-    retention_days: int = Field(ge=7, le=3650)
+    retention_days: int
+    schedules_updated: int = Field(description="Schedules do template actualizados.")
+    runs_deleted: int = Field(description="Runs expirados apagados pela limpeza.")
+    message: str | None = None
 
 
-@router.post("/retention")
+@router.post("/retention", response_model=ReportRetentionResponse)
 async def set_report_retention(
     req: ReportRetentionRequest,
     tenant_id: UUID = Depends(require_tenant_header),
-):
-    """Define janela de retenção GDPR para o template (Onda 18 R)."""
-    import logging
-    logging.getLogger("reports.retention").info(
-        "set_retention tenant=%s template=%s days=%d",
-        tenant_id, req.template_id, req.retention_days,
+    session: AsyncSession = Depends(get_session),
+) -> ReportRetentionResponse:
+    """Define a janela de retenção GDPR de um template (Sprint Q.22.G).
+
+    Actualiza o ``retention_days`` de todos os ``report_schedule`` do
+    template e, se ``run_cleanup`` (default), corre logo
+    :func:`cleanup_expired_runs` para apagar os runs já expirados. Cada
+    UPDATE de schedule e cada DELETE de run escreve ``core.audit_log``.
+    """
+    from src.reports.cleanup import cleanup_expired_runs
+
+    schedules = (
+        await session.execute(
+            select(ReportSchedule).where(
+                ReportSchedule.tenant_id == tenant_id,
+                ReportSchedule.report_type == req.template_id,
+            )
+        )
+    ).scalars().all()
+
+    for schedule in schedules:
+        old = schedule.retention_days
+        schedule.retention_days = req.retention_days
+        session.add(
+            AuditLog(
+                tenant_id=tenant_id,
+                entity_type="report_schedule",
+                entity_id=schedule.id,
+                action="UPDATE",
+                old_values={"retention_days": old},
+                new_values={"retention_days": req.retention_days},
+                reason="janela de retenção GDPR actualizada",
+            )
+        )
+    if schedules:
+        await session.commit()
+
+    runs_deleted = 0
+    if req.run_cleanup:
+        runs_deleted = await cleanup_expired_runs(
+            session, tenant_id, default_retention_days=req.retention_days
+        )
+
+    return ReportRetentionResponse(
+        template_id=req.template_id,
+        retention_days=req.retention_days,
+        schedules_updated=len(schedules),
+        runs_deleted=runs_deleted,
+        message=(
+            f"{len(schedules)} agendamento(s) actualizado(s); "
+            f"{runs_deleted} run(s) expirado(s) apagado(s)."
+        ),
     )
-    return {
-        "status": "stubbed",
-        "template_id": req.template_id,
-        "retention_days": req.retention_days,
-        "message": "GDPR retention set (stub). Cleanup job pending.",
-    }
