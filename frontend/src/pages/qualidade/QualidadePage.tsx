@@ -566,9 +566,62 @@ function ResumoTab() {
 // OEETab — port literal page-oee.jsx
 // ═══════════════════════════════════════════════════════════════════════════
 
+const API_BASE_OEE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const TENANT_OEE = { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' };
+
+interface OEEItem {
+  group_value: string | null;
+  availability: number;
+  performance: number;
+  quality: number;
+  oee: number;
+  sample_size: number;
+  sample_excluded: number;
+}
+interface OEEResponse {
+  date_from: string;
+  date_to: string;
+  group_by: string;
+  overall: OEEItem;
+  breakdown: OEEItem[];
+}
+
+async function fetchOEE(group_by?: string): Promise<OEEResponse | null> {
+  const qs = group_by ? `?group_by=${group_by}` : '';
+  try {
+    const r = await fetch(`${API_BASE_OEE}/v1/profit/oee${qs}`, { headers: TENANT_OEE });
+    return r.ok ? r.json() : null;
+  } catch { return null; }
+}
+
+function toneFor(oee: number): 'green' | 'yellow' | 'red' {
+  return oee >= 0.60 ? 'green' : oee >= 0.40 ? 'yellow' : 'red';
+}
+
 function OEETab() {
-  // OEE não tem endpoint real ainda — placeholders honestos.
-  // Quando endpoint exposto (Q.18.ZIP.OEE.BE), substitui com dados reais.
+  const overallQuery = useQuery({
+    queryKey: ['oee', 'overall'],
+    queryFn: () => fetchOEE(),
+    staleTime: 5 * 60_000,
+  });
+  const byPhaseQuery = useQuery({
+    queryKey: ['oee', 'phase'],
+    queryFn: () => fetchOEE('phase'),
+    staleTime: 5 * 60_000,
+  });
+  const byTypeQuery = useQuery({
+    queryKey: ['oee', 'product_type'],
+    queryFn: () => fetchOEE('product_type'),
+    staleTime: 5 * 60_000,
+  });
+
+  const overall = overallQuery.data?.overall;
+  const phases = byPhaseQuery.data?.breakdown ?? [];
+  const types = byTypeQuery.data?.breakdown ?? [];
+  const worstPhases = phases.slice(0, 8);
+  const bestTypes = types.filter((t) => t.sample_size >= 5).sort((a, b) => b.oee - a.oee).slice(0, 10);
+  const worstTypes = types.filter((t) => t.sample_size >= 5).sort((a, b) => a.oee - b.oee).slice(0, 5);
+
   return (
     <div className="space-y-5">
       {/* Explainer */}
@@ -584,26 +637,12 @@ function OEETab() {
         }}
       >
         <strong style={{ color: 'var(--fg-0)' }}>O que é OEE?</strong>{' '}
-        Mede que percentagem do tempo a fábrica está realmente a produzir bem.{' '}
-        <strong>78%</strong> significa que de cada 8h de trabalho, 6h15 produzem
-        barcos sem defeito.{' '}
-        <span style={{ color: 'var(--fg-2)' }}>Meta NELO: 80%.</span>
-      </div>
-
-      {/* Aviso endpoint pendente */}
-      <div
-        style={{
-          padding: '10px 14px',
-          background: 'var(--yellow-bg)',
-          border: '1px solid var(--yellow-bd)',
-          borderRadius: 8,
-          fontSize: 12,
-          color: 'var(--yellow)',
-        }}
-      >
-        Endpoint <code className="font-mono">/v1/quality/oee</code> pendente — valores
-        abaixo são placeholders honestos baseados em médias da indústria.
-        Substitui com dados reais quando wired (sub-sprint Q.18.ZIP.OEE.BE).
+        Mede que percentagem do tempo a fábrica está realmente a produzir bem.
+        Calculado em tempo real a partir das operações executadas em <code>OF_FP</code>{' '}
+        (janela: 30 dias).{' '}
+        <span style={{ color: 'var(--fg-2)' }}>
+          Meta NELO: 60%+ (world-class: 85%+).
+        </span>
       </div>
 
       {/* OEE breakdown — 4 cards (1.4fr 1fr 1fr 1fr) */}
@@ -626,61 +665,106 @@ function OEETab() {
           <div className="text-sm font-semibold text-text-dark-primary mb-1">
             OEE Global
           </div>
-          <div className="text-xs text-text-dark-tertiary mb-3">Hoje · placeholder</div>
+          <div className="text-xs text-text-dark-tertiary mb-3">
+            {overall
+              ? `${overall.sample_size.toLocaleString('pt-PT')} ops · 30 dias`
+              : overallQuery.isLoading ? 'A carregar…' : 'sem dados'}
+          </div>
           <div className="flex items-baseline gap-2">
             <span
               className="tabular-nums"
               style={{
                 fontSize: 56,
                 fontWeight: 700,
-                color: 'var(--yellow)',
+                color: overall ? `var(--${toneFor(overall.oee)})` : 'var(--fg-3)',
                 lineHeight: 1,
               }}
             >
-              78,4
+              {overall ? (overall.oee * 100).toFixed(1).replace('.', ',') : '—'}
             </span>
             <span style={{ fontSize: 18, color: 'var(--fg-2)' }}>%</span>
-            <span className="ml-auto text-xs" style={{ color: 'var(--green)' }}>
-              ↑ 2,3% vs ontem
-            </span>
           </div>
-          <div className="mt-3" style={{ height: 60 }}>
-            <SparklineLarge
-              data={[28.4, 29.1, 27.8, 30.2, 31.5, 32.0, 30.9, 28.5, 24.1, 25.3, 27.2, 30.8, 32.1, 33.2].map((v) => 70 + v / 5)}
-              color="var(--yellow)"
-              height={60}
-            />
-          </div>
-          <div className="flex justify-between text-[11px] text-text-dark-tertiary mt-1.5">
-            <span>14 dias atrás</span>
-            <span>Hoje</span>
-          </div>
+          {overall && (
+            <div className="mt-3 text-xs text-text-dark-tertiary">
+              Excluídos {overall.sample_excluded} outliers
+            </div>
+          )}
         </div>
 
         <OEEBlock
           label="Disponibilidade"
-          value="92"
-          target="95"
-          tone="yellow"
+          value={overall ? Math.round(overall.availability * 100).toString() : '—'}
+          target="—"
+          tone={overall ? toneFor(overall.availability) : 'blue'}
           detail="Tempo a produzir vs tempo planeado"
-          loss="32min de paragem não planeada (molde K1 7 ML)"
+          loss={overall && overall.availability >= 0.99 ? 'Cap a 100% (paralelismo de operadores)' : undefined}
         />
         <OEEBlock
           label="Performance"
-          value="86"
-          target="90"
-          tone="yellow"
-          detail="Velocidade real vs velocidade ideal"
-          loss="Lixagem mais lenta — fila de 22 barcos"
+          value={overall ? Math.round(overall.performance * 100).toString() : '—'}
+          target="—"
+          tone={overall ? toneFor(overall.performance) : 'blue'}
+          detail="Velocidade real vs standard"
+          loss={overall && overall.performance < 0.6 ? 'Acabamento + Pintura lentos vs PRODF_TEMPO' : undefined}
         />
         <OEEBlock
           label="Qualidade"
-          value="99,1"
-          target="99"
-          tone="green"
-          detail="Barcos bons vs total produzido"
-          loss="2 barcos para retrabalho ligeiro"
+          value={overall ? Math.round(overall.quality * 100).toString() : '—'}
+          target="—"
+          tone={overall ? toneFor(overall.quality) : 'blue'}
+          detail="First-pass yield (OFFP_PROBS_* sem registo)"
+          loss={overall && overall.quality < 0.95 ? `${((1 - overall.quality) * overall.sample_size).toFixed(0)} ops com problema inline` : undefined}
         />
+      </div>
+
+      {/* Worst phases + best types */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 22 }}>
+        <Panel title="Piores fases por OEE" badge={`${phases.length} fases`}>
+          <div className="flex flex-col" style={{ gap: 8 }}>
+            {worstPhases.length === 0 ? (
+              <div className="text-xs text-text-dark-tertiary py-2">A carregar…</div>
+            ) : worstPhases.map((p) => (
+              <div key={p.group_value} className="flex items-center" style={{ gap: 12, padding: '6px 8px', borderRadius: 6, background: 'var(--bg-0)' }}>
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs text-text-dark-primary truncate">{p.group_value}</div>
+                  <div className="text-[10px] text-text-dark-tertiary">{p.sample_size} ops</div>
+                </div>
+                <div className="tabular-nums font-semibold" style={{ fontSize: 14, color: `var(--${toneFor(p.oee)})`, minWidth: 56, textAlign: 'right' }}>
+                  {(p.oee * 100).toFixed(1)}%
+                </div>
+                <div className="flex flex-col" style={{ gap: 1, fontSize: 9, color: 'var(--fg-2)', minWidth: 100, textAlign: 'right' }}>
+                  <span>Pf {Math.round(p.performance * 100)}%</span>
+                  <span>Ql {Math.round(p.quality * 100)}%</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Panel>
+
+        <Panel title="OEE por tipo de produto" badge={`${types.length} tipos`}>
+          <div className="flex flex-col" style={{ gap: 6 }}>
+            <div className="text-[10px] uppercase text-text-dark-tertiary mb-1">Piores (≥5 ops)</div>
+            {worstTypes.length === 0 ? (
+              <div className="text-xs text-text-dark-tertiary py-2">A carregar…</div>
+            ) : worstTypes.map((t) => (
+              <div key={t.group_value} className="flex items-center justify-between text-xs" style={{ padding: '4px 6px' }}>
+                <span className="text-text-dark-primary truncate" style={{ maxWidth: 160 }}>{t.group_value}</span>
+                <span className="tabular-nums font-semibold" style={{ color: `var(--${toneFor(t.oee)})` }}>
+                  {(t.oee * 100).toFixed(0)}%
+                </span>
+              </div>
+            ))}
+            <div className="text-[10px] uppercase text-text-dark-tertiary mt-3 mb-1">Melhores (≥5 ops)</div>
+            {bestTypes.slice(0, 5).map((t) => (
+              <div key={t.group_value} className="flex items-center justify-between text-xs" style={{ padding: '4px 6px' }}>
+                <span className="text-text-dark-primary truncate" style={{ maxWidth: 160 }}>{t.group_value}</span>
+                <span className="tabular-nums font-semibold" style={{ color: `var(--${toneFor(t.oee)})` }}>
+                  {(t.oee * 100).toFixed(0)}%
+                </span>
+              </div>
+            ))}
+          </div>
+        </Panel>
       </div>
 
       {/* Throughput chart + Impacto financeiro */}
@@ -921,47 +1005,6 @@ function ThroughputChart({ data, target }: { data: number[]; target: number }) {
         )}
       </svg>
     </div>
-  );
-}
-
-// ─── SparklineLarge (60px) ──────────────────────────────────────────────────
-
-function SparklineLarge({
-  data,
-  color,
-  height,
-}: {
-  data: number[];
-  color: string;
-  height: number;
-}) {
-  if (data.length === 0) return null;
-  const max = Math.max(...data, 1);
-  const min = Math.min(...data, 0);
-  const range = max - min || 1;
-  const w = 200;
-  const path = data
-    .map((p, i) => {
-      const x = (i / (data.length - 1)) * w;
-      const y = height - ((p - min) / range) * height;
-      return `${i === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)}`;
-    })
-    .join(' ');
-  return (
-    <svg
-      viewBox={`0 0 ${w} ${height}`}
-      preserveAspectRatio="none"
-      style={{ width: '100%', height: '100%' }}
-    >
-      <path
-        d={path}
-        fill="none"
-        stroke={color}
-        strokeWidth={1.5}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
   );
 }
 
