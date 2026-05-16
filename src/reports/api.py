@@ -36,8 +36,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.models.audit import AuditLog
+from src.reports.models import ReportRun, ReportSchedule
 from src.shared.auth.headers import require_tenant_header
 from src.shared.database import get_session
 
@@ -232,34 +235,108 @@ async def generate_report(
 
 
 class ReportScheduleRequest(BaseModel):
-    template_id: str = Field(description="Template do relatório.")
-    cron: str = Field(description="Expressão cron, ex: '0 8 * * MON'.")
+    template_id: TemplateId = Field(description="Template do relatório.")
+    cron: str = Field(min_length=1, description="Expressão cron, ex: '0 8 * * MON'.")
     enabled: bool = Field(default=True)
+    format: ReportFormat = Field(default="csv")
+    recipients: list[str] = Field(
+        default_factory=list, description="Destinatários email (opcional)."
+    )
+    retention_days: int = Field(
+        default=90, ge=7, le=3650, description="Janela de retenção GDPR (dias)."
+    )
 
 
-@router.post("/schedule")
+class ReportScheduleResponse(BaseModel):
+    id: UUID
+    template_id: str
+    cron: str
+    enabled: bool
+    format: ReportFormat
+    recipients: list[str]
+    retention_days: int
+    created_at: str
+
+
+@router.post("/schedule", response_model=ReportScheduleResponse, status_code=201)
 async def schedule_report(
     req: ReportScheduleRequest,
     tenant_id: UUID = Depends(require_tenant_header),
-):
-    """Agenda execução periódica do template (Onda 18 R).
+    session: AsyncSession = Depends(get_session),
+) -> ReportScheduleResponse:
+    """Agenda execução periódica de um template (Sprint Q.22.D).
 
-    Stub: log + retorna echo. Persistência em ReportSchedule model
-    fica para sub-sprint dedicado (necessita migration).
+    Persiste uma row ``reports.report_schedule``. A criação escreve um
+    ``core.audit_log`` INSERT na mesma transacção — invariante 7: "porque
+    é que o sistema tem este agendamento" tem resposta sem ``git blame``.
     """
-    import logging
-    logging.getLogger("reports.schedule").info(
-        "schedule_report tenant=%s template=%s cron=%s enabled=%s",
-        tenant_id, req.template_id, req.cron, req.enabled,
+    schedule = ReportSchedule(
+        tenant_id=tenant_id,
+        report_type=req.template_id,
+        cron=req.cron,
+        recipients=list(req.recipients),
+        format=req.format,
+        enabled=req.enabled,
+        retention_days=req.retention_days,
     )
-    return {
-        "status": "stubbed",
-        "template_id": req.template_id,
-        "cron": req.cron,
-        "enabled": req.enabled,
-        "next_run": None,
-        "message": "Schedule registered (stub). Persistence pending sub-sprint.",
-    }
+    session.add(schedule)
+    await session.flush()  # populate schedule.id
+
+    session.add(
+        AuditLog(
+            tenant_id=tenant_id,
+            entity_type="report_schedule",
+            entity_id=schedule.id,
+            action="INSERT",
+            new_values={
+                "report_type": req.template_id,
+                "cron": req.cron,
+                "enabled": req.enabled,
+                "retention_days": req.retention_days,
+            },
+            reason="report schedule created",
+        )
+    )
+    await session.commit()
+
+    return ReportScheduleResponse(
+        id=schedule.id,
+        template_id=schedule.report_type,
+        cron=schedule.cron,
+        enabled=schedule.enabled,
+        format=schedule.format,  # type: ignore[arg-type]
+        recipients=list(schedule.recipients),
+        retention_days=schedule.retention_days,
+        created_at=schedule.created_at.isoformat(),
+    )
+
+
+@router.get("/schedule", response_model=list[ReportScheduleResponse])
+async def list_report_schedules(
+    tenant_id: UUID = Depends(require_tenant_header),
+    session: AsyncSession = Depends(get_session),
+) -> list[ReportScheduleResponse]:
+    """Lista os agendamentos de relatórios do tenant (Sprint Q.22.D)."""
+    rows = (
+        await session.execute(
+            select(ReportSchedule)
+            .where(ReportSchedule.tenant_id == tenant_id)
+            .order_by(ReportSchedule.created_at.desc())
+        )
+    ).scalars().all()
+    return [
+        ReportScheduleResponse(
+            id=s.id,
+            template_id=s.report_type,
+            cron=s.cron,
+            enabled=s.enabled,
+            format=s.format,  # type: ignore[arg-type]
+            recipients=list(s.recipients),
+            retention_days=s.retention_days,
+            created_at=s.created_at.isoformat(),
+        )
+        for s in rows
+    ]
 
 
 class ReportEmailRequest(BaseModel):
