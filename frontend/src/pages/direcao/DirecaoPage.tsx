@@ -46,10 +46,13 @@ interface ActiveOrder {
   transport_date: string | null;
 }
 
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const TENANT_HEADER = { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' };
+
 async function fetchActiveOrders(): Promise<ActiveOrder[]> {
   const resp = await fetch(
-    'http://127.0.0.1:8001/v1/plan/orders/active?limit=500',
-    { headers: { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' } },
+    `${API_BASE}/v1/plan/orders/active?limit=500`,
+    { headers: TENANT_HEADER },
   );
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   return resp.json();
@@ -57,8 +60,8 @@ async function fetchActiveOrders(): Promise<ActiveOrder[]> {
 
 async function fetchProfitDashboard() {
   try {
-    const resp = await fetch('http://127.0.0.1:8001/v1/profit/dashboard', {
-      headers: { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' },
+    const resp = await fetch(`${API_BASE}/v1/profit/dashboard`, {
+      headers: TENANT_HEADER,
     });
     if (!resp.ok) return null;
     return await resp.json();
@@ -70,8 +73,8 @@ async function fetchProfitDashboard() {
 async function fetchTransportBatches() {
   try {
     const resp = await fetch(
-      'http://127.0.0.1:8001/v1/plan/transport/batches?limit=20',
-      { headers: { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' } },
+      `${API_BASE}/v1/plan/transport/batches?limit=20`,
+      { headers: TENANT_HEADER },
     );
     if (!resp.ok) return [];
     return await resp.json();
@@ -136,6 +139,15 @@ export default function DirecaoPage() {
     queryKey: ['direcao', 'transport', refreshKey],
     queryFn: fetchTransportBatches,
     staleTime: 60_000,
+    retry: 0,
+  });
+  const oeeQuery = useQuery({
+    queryKey: ['direcao', 'oee', refreshKey],
+    queryFn: async () => {
+      const r = await fetch(`${API_BASE}/v1/profit/oee`, { headers: TENANT_HEADER });
+      return r.ok ? r.json() : null;
+    },
+    staleTime: 5 * 60_000,
     retry: 0,
   });
 
@@ -346,11 +358,27 @@ export default function DirecaoPage() {
           />
           <KPICardZip
             label="OEE da fábrica"
-            value="—"
+            value={
+              oeeQuery.data?.overall
+                ? Math.round(oeeQuery.data.overall.oee * 100).toString()
+                : '—'
+            }
             unit="%"
-            context="Endpoint OEE em desenvolvimento"
-            tone="gray"
-            onClick={() => navigate('/oee')}
+            context={
+              oeeQuery.data?.overall
+                ? `Disp ${Math.round(oeeQuery.data.overall.availability * 100)}% · `
+                  + `Perf ${Math.round(oeeQuery.data.overall.performance * 100)}% · `
+                  + `Qual ${Math.round(oeeQuery.data.overall.quality * 100)}% `
+                  + `(${oeeQuery.data.overall.sample_size} ops)`
+                : oeeQuery.isLoading ? 'A carregar…' : 'Sem dados de OEE'
+            }
+            tone={
+              !oeeQuery.data?.overall ? 'gray'
+                : oeeQuery.data.overall.oee >= 0.60 ? 'green'
+                : oeeQuery.data.overall.oee >= 0.40 ? 'yellow'
+                : 'red'
+            }
+            onClick={() => navigate('/qualidade?tab=oee')}
           />
           <KPICardZip
             label="Throughput hoje"
