@@ -17,12 +17,13 @@ Templates (closed enum, mirrored no frontend RelatoriosPage REPORT_TEMPLATES):
   * ``producao``    — WIP por fase + throughput hoje (factory dashboard)
   * ``cliente``     — backlog agrupado por cliente
   * ``qualidade``   — rework dashboard agrupado por fase
-  * ``payroll``     — placeholder (delega quando service exposto)
-  * ``cogs``        — placeholder (delega quando service exposto)
-  * ``inventario``  — placeholder (delega quando service exposto)
+  * ``payroll``     — horas + custo de mão-de-obra por operador
+  * ``cogs``        — custo dos produtos vendidos por OF
+  * ``inventario``  — stock on-hand actual por SKU
 
-Estado actual: ``producao`` + ``cliente`` + ``qualidade`` ready (delegam
-aos services live). Os outros 3 retornam ``not_implemented`` sem 5xx.
+Estado actual: os 6 templates delegam aos generators / services live
+(Sprint Q.22.E ligou payroll/cogs/inventario). Quando uma tabela não
+tem dados o relatório vem ``ready`` com 0 linhas — nunca placeholders.
 """
 
 from __future__ import annotations
@@ -184,8 +185,6 @@ async def generate_report(
     filename = f"{req.template_id}_{today}.{filename_ext}"
 
     rows: list[dict[str, Any]] = []
-    not_impl = False
-    message: str | None = None
 
     if req.template_id == "producao":
         rows = await _gen_producao(session, tenant_id)
@@ -194,27 +193,17 @@ async def generate_report(
     elif req.template_id == "qualidade":
         rows = await _gen_qualidade(session, tenant_id, req.since, req.until)
     elif req.template_id in ("payroll", "cogs", "inventario"):
-        not_impl = True
-        message = (
-            f"Template '{req.template_id}' ainda não implementado. "
-            "Service backend correspondente será wired em sub-sprint dedicado."
+        # Sprint Q.22.E — payroll/cogs/inventario delegate to the
+        # generators in reports.generators (hr/profit/supply tables).
+        from src.reports.generators import run_generator
+
+        rows = await run_generator(
+            req.template_id, session, tenant_id, req.since, req.until
         )
     else:  # pragma: no cover — Pydantic Literal guarda
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             detail=f"Unknown template_id: {req.template_id}",
-        )
-
-    if not_impl:
-        return ReportResponse(
-            template_id=req.template_id,
-            status="not_implemented",
-            format=req.format,
-            filename=filename,
-            content="",
-            row_count=0,
-            generated_at=now,
-            message=message,
         )
 
     content = _format_payload(rows, req.format)
