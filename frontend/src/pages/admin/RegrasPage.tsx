@@ -237,10 +237,10 @@ function StubbedActionsBadge({ rule }: { rule: YamlPolicyRule }) {
     block: true,
     modify_fitness: true,
     reassign_worker: false,
-    propose_maintenance: false,
+    propose_maintenance: true, // Q.17.F.6 — wired to governance.decision_run
     notify: false,
     set_config: true,
-    create_decision: false,
+    create_decision: true, // Q.17.F.6 — wired to governance.decision_run
     pause_writes: false,
   };
   const stubbed = (rule.payload.then ?? [])

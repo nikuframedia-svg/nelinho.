@@ -43,12 +43,13 @@ def _build_dispatch_context(
     payload: dict[str, Any],
     session: AsyncSession | None,
 ) -> DispatchContext:
-    """Q.17.F.4 — assemble a DispatchContext with real callbacks.
+    """Q.17.F.4+ — assemble a DispatchContext with real callbacks.
 
-    When ``session`` is provided, ``emit_alert`` persists a CopilotAlert
-    row so the alert appears in the operator's Painel CEO immediately.
-    Other callbacks (emit_kafka, set_config, create_decision) are
-    progressively wired in subsequent Q.17.F sub-sprints.
+    - ``emit_alert`` persists a CopilotAlert row (needs ``session``).
+    - ``set_config`` write-through to TenantConfigService (needs ``session``).
+    - ``create_decision`` opens a governance.decision_run row (needs
+      ``session``; left None otherwise so the dispatcher reports
+      ``stubbed`` rather than a false ``ok``).
     """
 
     async def _emit_alert(alert_payload: dict[str, Any]) -> None:
@@ -100,15 +101,36 @@ def _build_dispatch_context(
         except Exception as exc:
             _log.warning("set_config via yaml_policy failed: %s", exc)
 
+    async def _create_decision(decision_data: dict[str, Any]) -> str | None:
+        """Q.17.F.6 — open a governance decision so a human approves it.
+
+        Persists a ``governance.decision_run`` row via
+        ``GovernanceService.propose_decision`` (audit_hash + chain in the
+        same transaction; the emission point controls the commit). Used
+        by the ``create_decision``, ``propose_maintenance`` and
+        ``reassign_worker`` dispatchers.
+        """
+        from src.governance.service import GovernanceService
+
+        svc = GovernanceService(session, tenant_id)
+        result = await svc.propose_decision(
+            decision_type=decision_data["decision_type"],
+            title=decision_data["title"],
+            action_data=decision_data.get("action_data", {}),
+            proposed_by=f"yaml_policy:{decision_data.get('source_rule', 'unknown')}",
+            risk_level=decision_data.get("risk_level", "medium"),
+        )
+        return result["id"]
+
     return DispatchContext(
         tenant_id=tenant_id,
         event_type=event_type,
         event_payload=payload,
         session=session,
         emit_alert=_emit_alert,
-        emit_kafka=None,  # Q.17.F.5 — wire to outbox_dispatcher
+        emit_kafka=None,  # Q.17.F.8 — replaced by the ``notify`` callback
         set_config=_set_config,
-        create_decision=None,  # Q.17.F.6 — wire to governance.decisions
+        create_decision=_create_decision if session is not None else None,
     )
 
 

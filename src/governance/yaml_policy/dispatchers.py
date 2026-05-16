@@ -78,10 +78,10 @@ ACTION_WIRING: dict[str, dict[str, Any]] = {
     "block":               {"wired": True,  "destination": "engine.block_results() + caller HTTPException 409"},
     "modify_fitness":      {"wired": True,  "destination": "set_config callback → ConfigStore → CPO reads on next schedule"},
     "reassign_worker":     {"wired": False, "destination": "Kafka prodplan.workforce.reassign_requested (consumer TBD)"},
-    "propose_maintenance": {"wired": False, "destination": "create_decision callback → governance.decisions (Q.17.F.6)"},
+    "propose_maintenance": {"wired": True,  "destination": "create_decision callback → governance.decision_run (mold_maintenance)"},
     "notify":              {"wired": False, "destination": "Kafka prodplan.realtime.{channel} (consumer TBD)"},
     "set_config":          {"wired": True,  "destination": "ConfigStore.set() — write-through to tenant_configuration"},
-    "create_decision":     {"wired": False, "destination": "governance.decisions table (Q.17.F.6)"},
+    "create_decision":     {"wired": True,  "destination": "create_decision callback → governance.decision_run"},
     "pause_writes":        {"wired": False, "destination": "router middleware (Q.18.D scope)"},
 }
 
@@ -226,7 +226,7 @@ async def _dispatch_propose_maintenance(rule: Rule, params: dict[str, Any], ctx:
         action="propose_maintenance",
         status=_stubbed_or_ok("propose_maintenance", has_callback=ctx.create_decision is not None),
         payload=payload,
-        detail="not yet wired to governance.decisions",
+        detail=None if ctx.create_decision is not None else "no create_decision callback in context",
     )
 
 
@@ -303,7 +303,7 @@ async def _dispatch_create_decision(rule: Rule, params: dict[str, Any], ctx: Dis
         action="create_decision",
         status=_stubbed_or_ok("create_decision", has_callback=ctx.create_decision is not None),
         payload=payload,
-        detail="not yet wired to governance.decisions",
+        detail=None if ctx.create_decision is not None else "no create_decision callback in context",
     )
 
 
