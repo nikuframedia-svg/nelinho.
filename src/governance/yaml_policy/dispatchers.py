@@ -43,9 +43,9 @@ class DispatchContext:
     # Optional callbacks injected by the host application. Stay None in
     # tests so dispatchers don't need a full backend up.
     emit_alert: Callable[[dict[str, Any]], Awaitable[None]] | None = None
-    emit_kafka: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None
     set_config: Callable[[str, str, Any, str | None], Awaitable[None]] | None = None
     create_decision: Callable[[dict[str, Any]], Awaitable[str]] | None = None
+    notify: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None
 
 
 @dataclass
@@ -77,12 +77,12 @@ ACTION_WIRING: dict[str, dict[str, Any]] = {
     "alert":               {"wired": True,  "destination": "CopilotAlert row via runtime._build_dispatch_context"},
     "block":               {"wired": True,  "destination": "engine.block_results() + caller HTTPException 409"},
     "modify_fitness":      {"wired": True,  "destination": "set_config callback → ConfigStore → CPO reads on next schedule"},
-    "reassign_worker":     {"wired": False, "destination": "Kafka prodplan.workforce.reassign_requested (consumer TBD)"},
-    "propose_maintenance": {"wired": False, "destination": "create_decision callback → governance.decisions (Q.17.F.6)"},
-    "notify":              {"wired": False, "destination": "Kafka prodplan.realtime.{channel} (consumer TBD)"},
+    "reassign_worker":     {"wired": True,  "destination": "create_decision callback → governance.decision_run (worker_reassignment)"},
+    "propose_maintenance": {"wired": True,  "destination": "create_decision callback → governance.decision_run (mold_maintenance)"},
+    "notify":              {"wired": True,  "destination": "RealtimeBridge.notify_channel — SSE in-process fan-out"},
     "set_config":          {"wired": True,  "destination": "ConfigStore.set() — write-through to tenant_configuration"},
-    "create_decision":     {"wired": False, "destination": "governance.decisions table (Q.17.F.6)"},
-    "pause_writes":        {"wired": False, "destination": "router middleware (Q.18.D scope)"},
+    "create_decision":     {"wired": True,  "destination": "create_decision callback → governance.decision_run"},
+    "pause_writes":        {"wired": True,  "destination": "pause_registry + PauseWritesMiddleware — 423 Locked on writes to the prefix"},
 }
 
 
@@ -178,27 +178,37 @@ async def _dispatch_modify_fitness(rule: Rule, params: dict[str, Any], ctx: Disp
 
 
 async def _dispatch_reassign_worker(rule: Rule, params: dict[str, Any], ctx: DispatchContext) -> DispatchResult:
-    """Substitute the operator on a phase. Emits Kafka event for the scheduler."""
+    """Substitute the operator on a phase.
+
+    Q.17.F.7 — routes through ``create_decision`` rather than mutating
+    the schedule directly: a worker swap touches the Spelke ``skill_match``
+    axiom and Q.17 rules always ``requires_human_approval``. The dispatcher
+    opens a ``worker_reassignment`` governance decision so a human approves
+    it, with full audit trail.
+    """
     payload = {
         "phase_id": params.get("phase_id"),
         "replacement_worker_id": params.get("replacement_worker_id"),
         "reason_pt": params.get("reason_pt", ""),
     }
-    if ctx.emit_kafka is not None:
-        await ctx.emit_kafka("prodplan.workforce.reassign_requested", {
-            "tenant_id": str(ctx.tenant_id),
-            "rule_id": rule.id,
-            **payload,
+    if ctx.create_decision is not None:
+        decision_id = await ctx.create_decision({
+            "decision_type": "worker_reassignment",
+            "title": f"Substituição de operador na fase {payload['phase_id']}",
+            "risk_level": "medium",
+            "action_data": payload,
+            "source_rule": rule.id,
         })
+        payload["decision_id"] = decision_id
     _log.info(
         "yaml_policy.reassign_worker tenant=%s rule=%s phase=%s -> worker=%s",
         ctx.tenant_id, rule.id, payload["phase_id"], payload["replacement_worker_id"],
     )
     return DispatchResult(
         action="reassign_worker",
-        status=_stubbed_or_ok("reassign_worker", has_callback=ctx.emit_kafka is not None),
+        status=_stubbed_or_ok("reassign_worker", has_callback=ctx.create_decision is not None),
         payload=payload,
-        detail="kafka topic emitted but no consumer wired yet",
+        detail=None if ctx.create_decision is not None else "no create_decision callback in context",
     )
 
 
@@ -226,12 +236,17 @@ async def _dispatch_propose_maintenance(rule: Rule, params: dict[str, Any], ctx:
         action="propose_maintenance",
         status=_stubbed_or_ok("propose_maintenance", has_callback=ctx.create_decision is not None),
         payload=payload,
-        detail="not yet wired to governance.decisions",
+        detail=None if ctx.create_decision is not None else "no create_decision callback in context",
     )
 
 
 async def _dispatch_notify(rule: Rule, params: dict[str, Any], ctx: DispatchContext) -> DispatchResult:
-    """Push to a SSE channel (alerts/timeline/dashboard/governance)."""
+    """Push to a SSE channel (alerts/timeline/dashboard/governance).
+
+    Q.17.F.8 — the ``notify`` callback fans the envelope out to connected
+    SSE subscribers in-process via the RealtimeBridge, so the event lands
+    even when no Kafka broker is running.
+    """
     channel = params.get("channel", "alerts")
     topic = params.get("topic", f"yaml_policy.{rule.id}")
     payload = {
@@ -239,12 +254,12 @@ async def _dispatch_notify(rule: Rule, params: dict[str, Any], ctx: DispatchCont
         "topic": topic,
         "payload": params.get("payload", {}),
     }
-    if ctx.emit_kafka is not None:
-        await ctx.emit_kafka(f"prodplan.realtime.{channel}", {
+    if ctx.notify is not None:
+        await ctx.notify(channel, {
             "tenant_id": str(ctx.tenant_id),
             "rule_id": rule.id,
             "topic": topic,
-            **payload,
+            "payload": payload["payload"],
         })
     _log.info(
         "yaml_policy.notify tenant=%s rule=%s channel=%s topic=%s",
@@ -252,9 +267,9 @@ async def _dispatch_notify(rule: Rule, params: dict[str, Any], ctx: DispatchCont
     )
     return DispatchResult(
         action="notify",
-        status=_stubbed_or_ok("notify", has_callback=ctx.emit_kafka is not None),
+        status=_stubbed_or_ok("notify", has_callback=ctx.notify is not None),
         payload=payload,
-        detail="kafka topic emitted but realtime bridge consumer is per-tenant",
+        detail=None if ctx.notify is not None else "no notify callback in context",
     )
 
 
@@ -303,31 +318,39 @@ async def _dispatch_create_decision(rule: Rule, params: dict[str, Any], ctx: Dis
         action="create_decision",
         status=_stubbed_or_ok("create_decision", has_callback=ctx.create_decision is not None),
         payload=payload,
-        detail="not yet wired to governance.decisions",
+        detail=None if ctx.create_decision is not None else "no create_decision callback in context",
     )
 
 
 async def _dispatch_pause_writes(rule: Rule, params: dict[str, Any], ctx: DispatchContext) -> DispatchResult:
-    """Toggle a fail-closed flag for the given route prefix.
+    """Fail-closed writes to a route prefix for a bounded window.
 
-    Q.17.D MVP: log + emit. Real implementation requires hooking into
-    each affected router's middleware. Out of scope for this sub-sprint;
-    Q.18 covers route-level write gates.
+    Q.17.F.9 — registers the pause in :mod:`pause_registry`;
+    :class:`PauseWritesMiddleware` reads it and answers 423 Locked for
+    matching write requests until ``duration_minutes`` elapse.
     """
+    from src.governance.yaml_policy.pause_registry import register_pause
+
     payload = {
         "route_prefix": params.get("route_prefix"),
         "duration_minutes": int(params.get("duration_minutes", 15)),
         "reason_pt": params.get("reason_pt", ""),
     }
+    expires_at = register_pause(
+        tenant_id=ctx.tenant_id,
+        route_prefix=payload["route_prefix"],
+        duration_minutes=payload["duration_minutes"],
+        reason_pt=payload["reason_pt"],
+    )
+    payload["expires_at"] = expires_at.isoformat()
     _log.warning(
-        "yaml_policy.pause_writes tenant=%s rule=%s prefix=%s dur=%dm (NOT YET WIRED)",
+        "yaml_policy.pause_writes tenant=%s rule=%s prefix=%s dur=%dm",
         ctx.tenant_id, rule.id, payload["route_prefix"], payload["duration_minutes"],
     )
     return DispatchResult(
         action="pause_writes",
-        status="stubbed",
+        status=_stubbed_or_ok("pause_writes"),
         payload=payload,
-        detail="not yet wired to router middleware",
     )
 
 

@@ -345,6 +345,11 @@ if DQA_ENABLED and not settings.is_development:
 from src.shared.http_metrics_middleware import register as _register_http_metrics
 _register_http_metrics(app)
 
+# Q.17.F.9 — enforce pause_writes rule actions: write requests to a
+# paused route prefix get 423 Locked.
+from src.governance.yaml_policy.pause_writes_middleware import register as _register_pause_writes
+_register_pause_writes(app)
+
 
 # Sprint Q.12 — normalize Pydantic 422 errors to a single readable string
 # so the frontend's `getErrorMessage(detail)` can show it directly. Antes

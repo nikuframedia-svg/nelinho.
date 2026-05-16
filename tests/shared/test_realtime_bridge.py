@@ -241,3 +241,52 @@ async def test_stop_sends_sentinel_to_subscribers(monkeypatch):
 
     received = await asyncio.wait_for(queue.get(), timeout=1.0)
     assert received is None
+
+
+# ---------------------------------------------------------------------------
+# Q.17.F.8 — notify_channel: in-process fan-out for the yaml_policy notify
+# dispatcher (no Kafka, no topic reverse-lookup).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_notify_channel_delivers_to_matching_subscriber():
+    bridge = RealtimeBridge.instance()
+    tenant = uuid4()
+    sub_id, queue = bridge.subscribe(tenant, ["alerts"])
+
+    delivered = await bridge.notify_channel(
+        tenant, "alerts", {"rule_id": "r1", "topic": "t", "payload": {"x": 1}},
+    )
+
+    assert delivered == 1
+    received = await asyncio.wait_for(queue.get(), timeout=1.0)
+    assert received["rule_id"] == "r1"
+    assert received["_channel"] == "alerts"
+    bridge.unsubscribe(sub_id)
+
+
+@pytest.mark.asyncio
+async def test_notify_channel_isolates_tenants():
+    bridge = RealtimeBridge.instance()
+    tenant_a, tenant_b = uuid4(), uuid4()
+    sub_id, queue = bridge.subscribe(tenant_b, ["alerts"])
+
+    delivered = await bridge.notify_channel(tenant_a, "alerts", {"rule_id": "r1"})
+
+    assert delivered == 0
+    assert queue.qsize() == 0
+    bridge.unsubscribe(sub_id)
+
+
+@pytest.mark.asyncio
+async def test_notify_channel_skips_unsubscribed_channel():
+    bridge = RealtimeBridge.instance()
+    tenant = uuid4()
+    sub_id, queue = bridge.subscribe(tenant, ["timeline"])
+
+    delivered = await bridge.notify_channel(tenant, "alerts", {"rule_id": "r1"})
+
+    assert delivered == 0
+    assert queue.qsize() == 0
+    bridge.unsubscribe(sub_id)
