@@ -205,56 +205,8 @@ def test_group_routing_patterns_drops_rows_without_phase():
 
 
 # ── end-to-end mirror (recording fake session — no DB) ────────────────────
-
-
-class _Result:
-    """Mimics a SQLAlchemy Result over a fixed list of objects/rows."""
-
-    def __init__(self, items) -> None:
-        self._items = list(items)
-
-    def scalars(self):
-        return self
-
-    def __iter__(self):
-        return iter(self._items)
-
-
-class _RecordingSession:
-    """A fake AsyncSession that records ``add``-ed objects and serves
-    ``execute`` from them — modelling a Postgres where rows written
-    earlier in the transaction are visible to later reads in the same
-    mirror (which is exactly how the real session behaves).
-
-    ``flush`` assigns UUIDs to id-less objects so ``_mirror_routing`` can
-    read ``template.id``. Supports both ``select(Entity)`` (returns the
-    objects) and ``select(Entity.col_a, Entity.col_b)`` (returns tuples).
-    """
-
-    def __init__(self) -> None:
-        self.added: list = []
-
-    def add(self, obj) -> None:
-        self.added.append(obj)
-
-    async def flush(self) -> None:
-        for obj in self.added:
-            if getattr(obj, "id", None) is None:
-                obj.id = uuid4()
-
-    async def execute(self, statement, *_a, **_kw) -> _Result:
-        descs = list(getattr(statement, "column_descriptions", []) or [])
-        if not descs:
-            return _Result([])
-        # The model class is the `entity` of the first column description.
-        model = descs[0].get("entity")
-        matches = [o for o in self.added if model is not None and isinstance(o, model)]
-        if len(descs) == 1 and descs[0].get("expr") is model:
-            # select(Model) → yield the ORM objects themselves.
-            return _Result(matches)
-        # select(Model.col_a, Model.col_b, ...) → yield value tuples.
-        attrs = [d["name"] for d in descs]
-        return _Result([tuple(getattr(o, a) for a in attrs) for o in matches])
+# RecordingSession comes from conftest.py — a fake AsyncSession that
+# serves reads from rows added earlier in the same transaction.
 
 
 @pytest.fixture
@@ -289,10 +241,10 @@ def _fake_adapter(monkeypatch):
     )
 
 
-async def test_mirror_master_data_runs_and_audits(_fake_adapter):
+async def test_mirror_master_data_runs_and_audits(_fake_adapter, recording_session):
     """Full mirror against the recording session: status ok, audit row
     written, products/employees inserted, routing collapsed to 1 pattern."""
-    session = _RecordingSession()
+    session = recording_session
     result = await mirror_master_data(session=session, tenant_id=TENANT, since=None)
 
     assert result.status == "ok"
@@ -314,9 +266,9 @@ async def test_mirror_master_data_runs_and_audits(_fake_adapter):
     assert {a.model_id for a in assignments} == {"1", "2"}
 
 
-async def test_mirror_master_data_leaves_durations_untouched(_fake_adapter):
+async def test_mirror_master_data_leaves_durations_untouched(_fake_adapter, recording_session):
     """Q.20.F owns p50/p90 — the master mirror must never set them."""
-    session = _RecordingSession()
+    session = recording_session
     await mirror_master_data(session=session, tenant_id=TENANT, since=None)
 
     phases = [o for o in session.added if isinstance(o, RoutingTemplatePhase)]

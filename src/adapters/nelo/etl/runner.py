@@ -134,6 +134,7 @@ class EtlRunner:
         *,
         key_fields: Sequence[str],
         update_fields: Optional[Sequence[str]] = None,
+        insert_only_fields: Optional[Sequence[str]] = None,
     ) -> Tuple[int, int]:
         """Insert new rows / update changed rows for ``model_class``.
 
@@ -142,6 +143,11 @@ class EtlRunner:
         key; a row matching an existing ``(tenant_id, *key)`` is updated,
         otherwise inserted. ``update_fields`` defaults to every non-key
         field present in ``rows``.
+
+        ``insert_only_fields`` are applied **only when inserting** a new
+        row, never on update — for columns the mirror must seed (e.g. a
+        NOT NULL column) but must not overwrite once another source has
+        enriched the existing row.
 
         Returns ``(inserted, updated)`` and adds the same to the run
         tally. Re-running with identical data yields ``(0, 0)``.
@@ -152,9 +158,10 @@ class EtlRunner:
         if not rows:
             return (0, 0)
 
+        insert_only = list(insert_only_fields or [])
         all_fields = {f for row in rows for f in row}
         if update_fields is None:
-            update_fields = sorted(all_fields - set(key_fields))
+            update_fields = sorted(all_fields - set(key_fields) - set(insert_only))
         else:
             update_fields = list(update_fields)
 
@@ -169,7 +176,7 @@ class EtlRunner:
                 obj = model_class(tenant_id=self.tenant_id)
                 for f in key_fields:
                     setattr(obj, f, row[f])
-                for f in update_fields:
+                for f in (*update_fields, *insert_only):
                     if f in row:
                         setattr(obj, f, row[f])
                 self.session.add(obj)
