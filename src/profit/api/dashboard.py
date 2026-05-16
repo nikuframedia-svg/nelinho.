@@ -73,6 +73,68 @@ async def get_dashboard(
     return await svc.dashboard(as_of=as_of)
 
 
+# ─── /oee (Q.19.A) — OEE from live NELO operations ───────────────────────
+
+from datetime import timedelta  # noqa: E402
+
+from src.profit.services.oee_service import OEEService  # noqa: E402
+
+
+def _oee_item_to_dict(item) -> dict:
+    return {
+        "group_value": item.group_value,
+        "availability": round(item.availability, 4),
+        "performance": round(item.performance, 4),
+        "quality": round(item.quality, 4),
+        "oee": round(item.oee, 4),
+        "sample_size": item.sample_size,
+        "sample_excluded": item.sample_excluded,
+    }
+
+
+@router.get("/oee")
+async def get_oee(
+    date_from: Optional[date] = Query(None, description="Default: 30 days ago"),
+    date_to: Optional[date] = Query(None, description="Default: today"),
+    group_by: Optional[str] = Query(
+        None,
+        description="One of: phase, shift, product_type, mold",
+    ),
+    tenant_id: UUID = Depends(get_tenant_id),
+):
+    """OEE from live NELO operations.
+
+    Reads `OF_FP` via the read-only adapter (`src.adapters.nelo.services
+    .list_operations`) and computes Availability × Performance × Quality
+    over the window. See `src/profit/services/oee_service.py` for the
+    component definitions and caveats.
+
+    `tenant_id` is required (header) but NELO data is tenant-agnostic —
+    the adapter reads the single MAR-KAYAKS DB. The header presence is
+    enforced for consistency with the rest of the API.
+    """
+    today = date.today()
+    df = date_from or (today - timedelta(days=30))
+    dt = date_to or today
+    gb = (group_by or "none").lower()
+    if gb not in {"none", "phase", "shift", "product_type", "mold"}:
+        raise HTTPException(status_code=400, detail=f"Invalid group_by: {gb}")
+
+    svc = OEEService()
+    try:
+        result = await svc.calculate(df, dt, group_by=gb)  # type: ignore[arg-type]
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "date_from": result.date_from.isoformat(),
+        "date_to": result.date_to.isoformat(),
+        "group_by": result.group_by,
+        "overall": _oee_item_to_dict(result.overall),
+        "breakdown": [_oee_item_to_dict(b) for b in result.breakdown],
+    }
+
+
 # ─── Sprint Q.5 — CEO Dashboard tiles (§9) ────────────────────────────────
 
 @router.get("/otd")
