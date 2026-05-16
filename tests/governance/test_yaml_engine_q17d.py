@@ -229,11 +229,14 @@ async def test_dispatch_modify_fitness_calls_set_config():
 async def test_dispatch_all_9_actions_work_without_callbacks():
     """No-callback dispatch should not crash for any action type.
 
-    Q.17.F.1: result.status is now ``stubbed`` for actions whose
-    destination subsystem isn't wired yet OR whose optional callback is
-    missing in the context. Only ``block`` is structurally always
-    ``ok`` because it has no external destination.
+    Q.17.F.1: result.status is ``stubbed`` for actions whose optional
+    context callback is missing. ``block`` and ``pause_writes`` are
+    structurally always ``ok`` because they need no external callback —
+    ``block`` has no destination and ``pause_writes`` writes straight to
+    the in-process pause registry.
     """
+    from src.governance.yaml_policy import pause_registry
+    pause_registry.reset_for_tests()
     tenant_id = UUID("11111111-1111-1111-1111-111111111111")
     matrix: dict[ActionType, dict[str, Any]] = {
         ActionType.ALERT: {"severity": "high", "title": "x", "message_pt": "y", "entity_refs": []},
@@ -255,9 +258,10 @@ async def test_dispatch_all_9_actions_work_without_callbacks():
         )
         results = await dispatch(rule, ctx)
         assert results[0].action == action.value
-        # All dispatchers run without crashing. Only ``block`` is "ok"
-        # without callbacks; the rest report ``stubbed``.
-        if action is ActionType.BLOCK:
+        # All dispatchers run without crashing. ``block`` and
+        # ``pause_writes`` are "ok" without callbacks; the rest report
+        # ``stubbed``.
+        if action in (ActionType.BLOCK, ActionType.PAUSE_WRITES):
             assert results[0].status == "ok"
         else:
             assert results[0].status == "stubbed"

@@ -271,6 +271,39 @@ async def test_dispatch_notify_no_callback_reports_stubbed():
 
 
 # ---------------------------------------------------------------------------
+# Q.17.F.9 — pause_writes registers a pause in the registry
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dispatch_pause_writes_registers_pause():
+    from src.governance.yaml_policy import pause_registry
+
+    pause_registry.reset_for_tests()
+    try:
+        rule = _build_rule(
+            action=ActionType.PAUSE_WRITES,
+            params={"route_prefix": "/v1/plan", "duration_minutes": 10, "reason_pt": "Travão"},
+        )
+        ctx = DispatchContext(
+            tenant_id=_TENANT,
+            event_type=EventType.MOLD_USAGE_THRESHOLD.value,
+            event_payload={"uses_count": 850},
+        )
+        results = await dispatch(rule, ctx)
+
+        assert results[0].status == "ok"
+        assert results[0].payload["route_prefix"] == "/v1/plan"
+        assert "expires_at" in results[0].payload
+
+        hit = pause_registry.is_paused(_TENANT, "/v1/plan/cpo/schedule")
+        assert hit is not None
+        assert hit.reason_pt == "Travão"
+    finally:
+        pause_registry.reset_for_tests()
+
+
+# ---------------------------------------------------------------------------
 # Wiring matrix — backend side of the backend/frontend mirror
 # ---------------------------------------------------------------------------
 
@@ -286,3 +319,15 @@ def test_action_wiring_reassign_worker_wired():
 
 def test_action_wiring_notify_wired():
     assert ACTION_WIRING["notify"]["wired"] is True
+
+
+def test_action_wiring_pause_writes_wired():
+    assert ACTION_WIRING["pause_writes"]["wired"] is True
+
+
+def test_action_wiring_all_nine_actions_wired():
+    """Q.17.F — after F.6–F.9 every ActionType is wired to a real destination."""
+    for action in ActionType:
+        assert ACTION_WIRING[action.value]["wired"] is True, (
+            f"{action.value} still stubbed"
+        )

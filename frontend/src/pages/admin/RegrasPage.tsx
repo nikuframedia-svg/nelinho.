@@ -241,7 +241,7 @@ function StubbedActionsBadge({ rule }: { rule: YamlPolicyRule }) {
     notify: true, // Q.17.F.8 — wired to RealtimeBridge SSE fan-out
     set_config: true,
     create_decision: true, // Q.17.F.6 — wired to governance.decision_run
-    pause_writes: false,
+    pause_writes: true, // Q.17.F.9 — wired to PauseWritesMiddleware
   };
   const stubbed = (rule.payload.then ?? [])
     .map((step) => step.action)

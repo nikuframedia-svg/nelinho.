@@ -82,7 +82,7 @@ ACTION_WIRING: dict[str, dict[str, Any]] = {
     "notify":              {"wired": True,  "destination": "RealtimeBridge.notify_channel — SSE in-process fan-out"},
     "set_config":          {"wired": True,  "destination": "ConfigStore.set() — write-through to tenant_configuration"},
     "create_decision":     {"wired": True,  "destination": "create_decision callback → governance.decision_run"},
-    "pause_writes":        {"wired": False, "destination": "router middleware (Q.18.D scope)"},
+    "pause_writes":        {"wired": True,  "destination": "pause_registry + PauseWritesMiddleware — 423 Locked on writes to the prefix"},
 }
 
 
@@ -323,26 +323,34 @@ async def _dispatch_create_decision(rule: Rule, params: dict[str, Any], ctx: Dis
 
 
 async def _dispatch_pause_writes(rule: Rule, params: dict[str, Any], ctx: DispatchContext) -> DispatchResult:
-    """Toggle a fail-closed flag for the given route prefix.
+    """Fail-closed writes to a route prefix for a bounded window.
 
-    Q.17.D MVP: log + emit. Real implementation requires hooking into
-    each affected router's middleware. Out of scope for this sub-sprint;
-    Q.18 covers route-level write gates.
+    Q.17.F.9 — registers the pause in :mod:`pause_registry`;
+    :class:`PauseWritesMiddleware` reads it and answers 423 Locked for
+    matching write requests until ``duration_minutes`` elapse.
     """
+    from src.governance.yaml_policy.pause_registry import register_pause
+
     payload = {
         "route_prefix": params.get("route_prefix"),
         "duration_minutes": int(params.get("duration_minutes", 15)),
         "reason_pt": params.get("reason_pt", ""),
     }
+    expires_at = register_pause(
+        tenant_id=ctx.tenant_id,
+        route_prefix=payload["route_prefix"],
+        duration_minutes=payload["duration_minutes"],
+        reason_pt=payload["reason_pt"],
+    )
+    payload["expires_at"] = expires_at.isoformat()
     _log.warning(
-        "yaml_policy.pause_writes tenant=%s rule=%s prefix=%s dur=%dm (NOT YET WIRED)",
+        "yaml_policy.pause_writes tenant=%s rule=%s prefix=%s dur=%dm",
         ctx.tenant_id, rule.id, payload["route_prefix"], payload["duration_minutes"],
     )
     return DispatchResult(
         action="pause_writes",
-        status="stubbed",
+        status=_stubbed_or_ok("pause_writes"),
         payload=payload,
-        detail="not yet wired to router middleware",
     )
 
 
