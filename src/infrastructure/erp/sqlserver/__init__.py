@@ -10,6 +10,6 @@ Read-only isn't enforced at the driver level — that's the DBA's job
 else). This module simply never emits INSERT/UPDATE/DELETE.
 """
 
-from .nelo_erp import NeloERPAdapter, NeloERPError
+from .nelo_erp import NeloERPAdapter, NeloERPError, compare_shadow
 
-__all__ = ["NeloERPAdapter", "NeloERPError"]
+__all__ = ["NeloERPAdapter", "NeloERPError", "compare_shadow"]

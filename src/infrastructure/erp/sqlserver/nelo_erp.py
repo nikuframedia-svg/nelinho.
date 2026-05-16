@@ -4,39 +4,39 @@ ProdPlan ONE — Nelo ERP Adapter (SQL Server, read-only)
 
 Wraps the Nelo factory ERP running on a separate LAN server. Every
 method reads — no writes, no DDL, no stored-procs with side effects.
-The rest of the system stays on the curated Excel ingest until the
-adapter proves itself; shadow mode (§shadow_mode below) exists so we
-can compare the live ERP's answers to the baked-in dataset before
-switching production over.
 
-Target SQL Server tables (per `PP1_NELO_Blueprint_v2.0.md` §14):
+Q.20 decision: the adapter targets the **``vw_pp1_*`` views**, not the
+raw ERP tables. The real ERP schema (``OF_FP``, ``PRODUTO``,
+``ENTIDADE``, …) is messy and unstable; IT NELO applies
+``agent_docs/views_pp1.sql`` once to create a stable, snake_case
+contract that this adapter consumes. If a raw table is renamed, only
+the view changes — the adapter stays put.
 
-    OrdensFabrico                    27.911 rows
-    FasesOrdemFabrico               529.450
-    FuncionariosFaseOrdemFabrico    423.769
-    OrdemFabricoErros                89.836
-    Funcionarios                        301  (122 active in 2024)
-    FuncionariosFasesAptos              902  (skill matrix)
-    Fases                                71  (41 active)
-    Moldes                              510  (397 in production)
-    Modelos                             899
-    FasesStandardModelos             15.445  (routing templates — has CoeficienteX)
+Views consumed (see ``agent_docs/views_pp1.sql`` for the DDL):
 
-The adapter exposes one fetch method per table we actually consume.
-Queries are bounded (explicit TOP / WHERE) so a misconfigured client
-can't DoS the ERP. Every method accepts a `limit` kwarg so a CLI caller
-can tune for exploration without editing code.
+    vw_pp1_produto              products master
+    vw_pp1_produto_fase         routing structure (product × phase × seq)
+    vw_pp1_fases_producao       phase catalogue
+    vw_pp1_entidade             workers / operators
+    vw_pp1_entidade_fase        skill matrix (worker × phase)
+    vw_pp1_produto_componente   BOM (parent × component)
+    vw_pp1_moldes               mold catalogue (ERP side — ~91 rows)
+    vw_pp1_of_fp                operation history (start/end timestamps)
+    vw_pp1_offp_probs           quality incidents
+    vw_pp1_of_checklist         checklist results
 
-Wiring:
+Queries are bounded (explicit ``TOP`` / ``WHERE``) so a misconfigured
+client can't DoS the ERP. Every method accepts a ``limit`` kwarg.
+
+Wiring::
+
     from src.shared.config import settings
     from src.infrastructure.erp.sqlserver import NeloERPAdapter
 
     if settings.sqlserver_enabled:
         adapter = NeloERPAdapter.from_settings(settings)
-        healthy = await adapter.health_check()
-        if healthy:
-            standards = await adapter.fetch_standard_times(limit=1000)
-            ...
+        if await adapter.health_check():
+            products = await adapter.fetch_products(limit=2000)
         await adapter.close()
 """
 
@@ -54,17 +54,16 @@ logger = logging.getLogger(__name__)
 
 class NeloERPError(RuntimeError):
     """Raised for any adapter-side failure (driver missing, query blew up,
-    transient network issue). Callers treat this as "ERP unavailable" and
-    fall back to the curated dataset.
+    transient network issue). Callers treat this as "ERP unavailable".
     """
 
 
 class NeloERPAdapter:
     """Read-only view over the Nelo ERP SQL Server.
 
-    Construct via `from_settings(...)` in production or pass an explicit
-    `engine` in tests. The adapter keeps one `AsyncEngine` alive between
-    calls (connection pooled); call `close()` on shutdown.
+    Construct via ``from_settings(...)`` in production or pass an explicit
+    ``engine`` in tests. The adapter keeps one ``AsyncEngine`` alive
+    between calls (connection pooled); call ``close()`` on shutdown.
     """
 
     def __init__(self, engine: AsyncEngine, *, query_timeout_s: int = 30) -> None:
@@ -75,10 +74,10 @@ class NeloERPAdapter:
 
     @classmethod
     def from_settings(cls, settings: Any) -> "NeloERPAdapter":
-        """Build the adapter from the app's `Settings` instance.
+        """Build the adapter from the app's ``Settings`` instance.
 
-        Raises `NeloERPError` if the URL is missing — callers should
-        check `settings.sqlserver_enabled` before calling this.
+        Raises ``NeloERPError`` if the URL is missing — callers should
+        check ``settings.sqlserver_enabled`` before calling this.
         """
         url = getattr(settings, "sqlserver_url", None)
         if not url:
@@ -111,196 +110,200 @@ class NeloERPAdapter:
     # ─── Diagnostics ─────────────────────────────────────────────────
 
     async def health_check(self) -> bool:
-        """Return True when a trivial `SELECT 1` round-trips. Any
-        exception bubbles up as False so monitoring can flip the
-        ERP-unavailable flag without breaking scheduled runs.
-        """
+        """Return True when a trivial ``SELECT 1`` round-trips."""
         try:
             async with self._engine.connect() as conn:
                 result = await conn.execute(text("SELECT 1 AS one"))
-                value = result.scalar()
-                return value == 1
+                return result.scalar() == 1
         except Exception as exc:
             logger.warning("Nelo ERP health check failed: %s", exc)
             return False
 
-    # ─── Fetch methods — one per table consumed ──────────────────────
+    async def view_available(self, view_name: str) -> bool:
+        """Return True when ``SELECT TOP 1`` from a ``vw_pp1_*`` view works.
 
-    async def fetch_orders(
-        self,
-        *,
-        since: Optional[date] = None,
-        limit: int = 1000,
-    ) -> List[Dict[str, Any]]:
-        """Recent production orders (`OrdensFabrico`).
-
-        * `since` filters by `Of_DataCriacao >= since` — defaults to "all".
-        * `limit` caps the result; pass a larger value for bulk refresh.
+        Used by the sync runbook to confirm IT NELO has applied
+        ``views_pp1.sql``. ``view_name`` is validated against a whitelist
+        so this can never become an injection vector.
         """
-        params: Dict[str, Any] = {"limit": int(limit)}
-        where = ""
-        if since is not None:
-            where = "WHERE Of_DataCriacao >= :since"
-            params["since"] = since
+        if view_name not in _KNOWN_VIEWS:
+            raise NeloERPError(f"unknown view: {view_name!r}")
+        try:
+            async with self._engine.connect() as conn:
+                await conn.execute(text(f"SELECT TOP 1 1 FROM {view_name}"))
+                return True
+        except Exception as exc:
+            logger.warning("Nelo ERP view %s unavailable: %s", view_name, exc)
+            return False
 
-        sql = f"""
+    # ─── Fetch methods — one per view consumed ───────────────────────
+
+    async def fetch_products(self, *, limit: int = 5000) -> List[Dict[str, Any]]:
+        """``vw_pp1_produto`` — products master (Q.20.B → core.products)."""
+        sql = """
             SELECT TOP (:limit)
-                Of_Id              AS of_id,
-                Of_Numero          AS numero,
-                Of_ProdutoId       AS produto_id,
-                Of_ModeloId        AS modelo_id,
-                Of_Estado          AS estado,
-                Of_DataCriacao     AS data_criacao,
-                Of_DataEntregaPrevista AS data_entrega_prevista,
-                Of_DataTransporte  AS data_transporte
-            FROM OrdensFabrico
-            {where}
-            ORDER BY Of_DataCriacao DESC
+                product_id, product_code, product_name,
+                product_type_raw, modelo_id, active
+            FROM vw_pp1_produto
+            ORDER BY product_code
         """
-        return await self._fetch(sql, params)
+        return await self._fetch(sql, {"limit": int(limit)})
+
+    async def fetch_product_phases(
+        self, *, limit: int = 30000,
+    ) -> List[Dict[str, Any]]:
+        """``vw_pp1_produto_fase`` — routing structure (Q.20.B).
+
+        ``coeficiente_x`` is returned verbatim — it is money (€ bonus),
+        NOT time. The ETL must NEVER treat it as a duration.
+        """
+        sql = """
+            SELECT TOP (:limit)
+                product_id, fase_id, sequencia,
+                requires_mold, coeficiente, coeficiente_x
+            FROM vw_pp1_produto_fase
+            ORDER BY product_id, sequencia
+        """
+        return await self._fetch(sql, {"limit": int(limit)})
+
+    async def fetch_phases(self, *, limit: int = 200) -> List[Dict[str, Any]]:
+        """``vw_pp1_fases_producao`` — phase catalogue (41 active of 71)."""
+        sql = """
+            SELECT TOP (:limit)
+                fase_id, fase_nome, fase_sequencia, fase_activo
+            FROM vw_pp1_fases_producao
+            ORDER BY fase_sequencia, fase_nome
+        """
+        return await self._fetch(sql, {"limit": int(limit)})
 
     async def fetch_workers(
-        self,
-        *,
-        active_only: bool = True,
-        limit: int = 500,
+        self, *, active_only: bool = True, limit: int = 1000,
     ) -> List[Dict[str, Any]]:
-        """Workers (`Funcionarios`). When `active_only=True`, filter to
-        rows the ERP flagged as active — though historical analysis in
-        2024 shows only ~122 of the 129 "active" records actually logged
-        work, so callers may need to cross-check via `fetch_activity`.
-        """
-        params: Dict[str, Any] = {"limit": int(limit)}
-        where = ""
-        if active_only:
-            where = "WHERE Func_Activo = 1"
-
+        """``vw_pp1_entidade`` — workers / operators (Q.20.B → core.employees)."""
+        where = "WHERE activo = 1" if active_only else ""
         sql = f"""
             SELECT TOP (:limit)
-                Func_Id                AS func_id,
-                Func_Nome              AS nome,
-                Func_Activo            AS activo,
-                Func_CustoHora         AS custo_hora,
-                Func_DataAdmissao      AS data_admissao
-            FROM Funcionarios
+                entidade_id, nome, activo, custo_hora, data_admissao
+            FROM vw_pp1_entidade
             {where}
-            ORDER BY Func_Nome
-        """
-        return await self._fetch(sql, params)
-
-    async def fetch_skill_matrix(
-        self,
-        *,
-        limit: int = 2000,
-    ) -> List[Dict[str, Any]]:
-        """Approved (worker, phase) pairs from `FuncionariosFasesAptos`.
-        The blueprint's 902-row dataset; populates `FactoryState.skill_matrix`.
-        """
-        sql = """
-            SELECT TOP (:limit)
-                FFA_FuncionarioId AS funcionario_id,
-                FFA_FaseId        AS fase_id,
-                FFA_Apto          AS apto
-            FROM FuncionariosFasesAptos
-            WHERE FFA_Apto = 1
-            ORDER BY FFA_FaseId, FFA_FuncionarioId
+            ORDER BY nome
         """
         return await self._fetch(sql, {"limit": int(limit)})
 
-    async def fetch_standard_times(
-        self,
-        *,
-        limit: int = 20000,
+    async def fetch_employee_phases(
+        self, *, limit: int = 5000,
     ) -> List[Dict[str, Any]]:
-        """`FasesStandardModelos` — routing templates + standard times
-        per (product, phase).
-
-        The `coeficiente_x` column is returned verbatim. Consumer is the
-        profit module (`PhaseBonusPayout`) — it's money (€ bonus), NOT
-        time (Sprint A CX confirmed with the Nelo CEO).
-        """
+        """``vw_pp1_entidade_fase`` — skill matrix (Q.20.D, ~1269 rows)."""
         sql = """
             SELECT TOP (:limit)
-                ProdutoFase_ProdutoId    AS produto_id,
-                ProdutoFase_FaseId       AS fase_id,
-                ProdutoFase_Sequencia    AS sequencia,
-                ProdutoFase_Coeficiente  AS coeficiente,
-                ProdutoFase_CoeficienteX AS coeficiente_x
-            FROM FasesStandardModelos
-            ORDER BY ProdutoFase_ProdutoId, ProdutoFase_Sequencia
+                entidade_id, fase_id, apto, nivel
+            FROM vw_pp1_entidade_fase
+            WHERE apto = 1
+            ORDER BY fase_id, entidade_id
         """
         return await self._fetch(sql, {"limit": int(limit)})
 
-    async def fetch_molds(
-        self,
-        *,
-        in_production_only: bool = True,
-        limit: int = 1000,
+    async def fetch_components(
+        self, *, limit: int = 30000,
     ) -> List[Dict[str, Any]]:
-        """`Moldes` catalog. The real ERP has no maintenance columns —
-        H2 (maintenance threshold) is still an unconfirmed hypothesis.
-        """
-        params: Dict[str, Any] = {"limit": int(limit)}
-        where = ""
-        if in_production_only:
-            where = "WHERE Molde_Estado = 'Em Producao'"
-
-        sql = f"""
-            SELECT TOP (:limit)
-                Molde_Id              AS molde_id,
-                Molde_Nome            AS nome,
-                Molde_Estado          AS estado,
-                Molde_ModeloId        AS modelo_id,
-                Molde_NumeroPocosId   AS numero_pocos,
-                Molde_TamanhoId       AS tamanho_id
-            FROM Moldes
-            {where}
-            ORDER BY Molde_Nome
-        """
-        return await self._fetch(sql, params)
-
-    async def fetch_phases_catalog(self, *, limit: int = 200) -> List[Dict[str, Any]]:
-        """`Fases` — the 71 phases catalog (41 active in 2024)."""
+        """``vw_pp1_produto_componente`` — BOM rows (Q.20.B → core.bom_items)."""
         sql = """
             SELECT TOP (:limit)
-                Fase_Id        AS fase_id,
-                Fase_Nome      AS nome,
-                Fase_Activo    AS activo,
-                Fase_Sequencia AS sequencia
-            FROM Fases
-            ORDER BY Fase_Sequencia, Fase_Nome
+                produto_id, componente_id, quantidade, unidade, sequencia
+            FROM vw_pp1_produto_componente
+            ORDER BY produto_id, sequencia
         """
         return await self._fetch(sql, {"limit": int(limit)})
 
-    async def fetch_errors(
+    async def fetch_molds(self, *, limit: int = 1000) -> List[Dict[str, Any]]:
+        """``vw_pp1_moldes`` — ERP-side mold catalogue (~91 rows).
+
+        The 510 production molds live in Excel; this view only carries the
+        subset the ERP knows about. Used by Q.20.C as a reconcile cross-check.
+        """
+        sql = """
+            SELECT TOP (:limit)
+                molde_id, molde_nome, estado, modelo_id,
+                numero_pocos, tamanho_id
+            FROM vw_pp1_moldes
+            ORDER BY molde_nome
+        """
+        return await self._fetch(sql, {"limit": int(limit)})
+
+    async def fetch_operations(
         self,
         *,
         since: Optional[date] = None,
-        limit: int = 10000,
+        limit: int = 100000,
     ) -> List[Dict[str, Any]]:
-        """`OrdemFabricoErros` — quality incidents with the "causer" chef
-        and the detecting phase. 89 836 rows in the historical dataset;
-        callers SHOULD pass `since` to avoid full-table scans.
+        """``vw_pp1_of_fp`` — operation history (Q.20.F time mining).
+
+        2.6M rows in the full dataset — callers MUST batch via ``since``
+        / ``limit``. ``duracao_horas`` is the cleaned ERP-side span; the
+        ETL recomputes from ``fase_of_inicio``/``fase_of_fim`` and never
+        trusts standard coefficients.
         """
         params: Dict[str, Any] = {"limit": int(limit)}
         where = ""
         if since is not None:
-            where = "WHERE Erro_DataRegisto >= :since"
+            where = "WHERE fase_of_inicio >= :since"
             params["since"] = since
-
         sql = f"""
             SELECT TOP (:limit)
-                Erro_Id              AS erro_id,
-                Erro_OfId            AS of_id,
-                Erro_FaseOfCulpada   AS fase_culpada_id,
-                Erro_FaseOfAvaliacao AS fase_avaliacao_id,
-                Erro_Descricao       AS descricao,
-                OFCH_GRAVIDADE       AS gravidade,
-                Erro_DataRegisto     AS data_registo,
-                Erro_ChefeId         AS chefe_id
-            FROM OrdemFabricoErros
+                of_id, produto_id, modelo_id, fase_id, entidade_id,
+                fase_of_inicio, fase_of_fim, duracao_horas
+            FROM vw_pp1_of_fp
             {where}
-            ORDER BY Erro_DataRegisto DESC
+            ORDER BY fase_of_inicio
+        """
+        return await self._fetch(sql, params)
+
+    async def fetch_quality_problems(
+        self,
+        *,
+        since: Optional[date] = None,
+        limit: int = 20000,
+    ) -> List[Dict[str, Any]]:
+        """``vw_pp1_offp_probs`` — quality incidents (Q.20.E).
+
+        ~90k rows historical — callers SHOULD pass ``since`` for
+        incremental imports.
+        """
+        params: Dict[str, Any] = {"limit": int(limit)}
+        where = ""
+        if since is not None:
+            where = "WHERE data_registo >= :since"
+            params["since"] = since
+        sql = f"""
+            SELECT TOP (:limit)
+                prob_id, of_id, fase_culpada_id, fase_avaliacao_id,
+                descricao, gravidade, data_registo,
+                chefe_id, entidade_culpada_id, modelo_id
+            FROM vw_pp1_offp_probs
+            {where}
+            ORDER BY data_registo
+        """
+        return await self._fetch(sql, params)
+
+    async def fetch_checklists(
+        self,
+        *,
+        since: Optional[date] = None,
+        limit: int = 20000,
+    ) -> List[Dict[str, Any]]:
+        """``vw_pp1_of_checklist`` — checklist results (Q.20.E)."""
+        params: Dict[str, Any] = {"limit": int(limit)}
+        where = ""
+        if since is not None:
+            where = "WHERE data_registo >= :since"
+            params["since"] = since
+        sql = f"""
+            SELECT TOP (:limit)
+                checklist_id, of_id, fase_id, item,
+                resultado, data_registo
+            FROM vw_pp1_of_checklist
+            {where}
+            ORDER BY data_registo
         """
         return await self._fetch(sql, params)
 
@@ -327,7 +330,22 @@ class NeloERPAdapter:
             raise NeloERPError(f"query failed: {exc}") from exc
 
 
-# ─── Shadow-mode helper ─────────────────────────────────────────────
+# Whitelist for `view_available` — never let a caller probe arbitrary SQL.
+_KNOWN_VIEWS = frozenset({
+    "vw_pp1_produto",
+    "vw_pp1_produto_fase",
+    "vw_pp1_fases_producao",
+    "vw_pp1_entidade",
+    "vw_pp1_entidade_fase",
+    "vw_pp1_produto_componente",
+    "vw_pp1_moldes",
+    "vw_pp1_of_fp",
+    "vw_pp1_offp_probs",
+    "vw_pp1_of_checklist",
+})
+
+
+# ─── Shadow / reconcile helper ──────────────────────────────────────
 
 
 async def compare_shadow(
@@ -339,10 +357,11 @@ async def compare_shadow(
     """Lightweight reconciliation helper — returns the keys present in
     one dataset but not the other plus the count on each side.
 
-    Used during the shadow-mode rollout to answer "is the live ERP
-    saying the same thing the curated Excel said?". Not exhaustive (no
-    column-by-column diff) — just enough to raise an alarm if the two
-    diverge in shape.
+    Q.20 reuses this for the operational-vs-curated reconcile: after an
+    ETL mirror runs, callers diff what the ERP says against what the
+    curated Excel layer holds and log/alert on divergence. Not
+    exhaustive (no column-by-column diff) — just enough to flag a
+    shape mismatch.
     """
     live_keys = {row.get(key) for row in live if key in row}
     curated_keys = {row.get(key) for row in curated if key in row}

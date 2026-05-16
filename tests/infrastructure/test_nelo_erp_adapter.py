@@ -1,9 +1,10 @@
-"""Sprint B.3 — NeloERPAdapter unit tests.
+"""Q.20.A — NeloERPAdapter unit tests (views-based).
 
-The real Nelo ERP lives on a separate LAN server — tests must run
-without one. We swap the `AsyncEngine` for a tiny fake that echoes the
-rows we seed, so SQL strings and param binding get exercised without
-needing `aioodbc` installed.
+The real Nelo ERP lives on a separate LAN server — tests run without one.
+We swap the `AsyncEngine` for a tiny fake that echoes seeded rows, so the
+SQL strings + param binding get exercised without `aioodbc` installed.
+
+Q.20: the adapter now targets `vw_pp1_*` views, not raw ERP tables.
 """
 
 from __future__ import annotations
@@ -42,15 +43,10 @@ class _FakeResult:
     def mappings(self) -> _FakeMappingsResult:
         return _FakeMappingsResult(self._rows)
 
-    def first(self) -> Optional[Any]:
-        return self._rows[0] if self._rows else None
-
     def scalar(self) -> Any:
         if not self._rows:
             return None
         first = self._rows[0]
-        # Health check seeds [{"one": 1}] — return the first value so
-        # `result.scalar()` behaves like SQLAlchemy's real Result.
         if isinstance(first, dict):
             return next(iter(first.values()))
         return first
@@ -67,11 +63,7 @@ class _FakeConnection:
         return None
 
     async def execute(self, stmt, params=None) -> _FakeResult:
-        self._engine.calls.append({
-            "sql": str(stmt),
-            "params": dict(params or {}),
-        })
-        # Use the head of the queued rows (or empty) for this call.
+        self._engine.calls.append({"sql": str(stmt), "params": dict(params or {})})
         if self._engine.queued_rows:
             rows = self._engine.queued_rows.pop(0)
         else:
@@ -80,11 +72,7 @@ class _FakeConnection:
 
 
 class _FakeEngine:
-    """Stand-in for SQLAlchemy's AsyncEngine.
-
-    Queue rows the next `execute(...)` should return; read `calls` to
-    assert how the adapter phrased its query.
-    """
+    """Stand-in for SQLAlchemy's AsyncEngine."""
 
     def __init__(self) -> None:
         self.calls: List[Dict[str, Any]] = []
@@ -95,12 +83,18 @@ class _FakeEngine:
         self.queued_rows.append(list(rows))
 
     def connect(self) -> _FakeConnection:
-        # SQLAlchemy's `engine.connect()` returns an async context manager;
-        # our fake is itself one.
         return _FakeConnection(self)
 
     async def dispose(self) -> None:
         self.disposed = True
+
+
+class _BoomContext:
+    async def __aenter__(self):
+        raise RuntimeError("cannot connect")
+
+    async def __aexit__(self, *exc):
+        return False
 
 
 @pytest.fixture
@@ -127,16 +121,14 @@ def test_from_settings_raises_when_url_missing():
 
 
 # ---------------------------------------------------------------------------
-# health_check
+# health_check / view_available
 # ---------------------------------------------------------------------------
 
 
 def test_health_check_returns_true_when_select_1_roundtrips(adapter, fake_engine):
     fake_engine.queue([{"one": 1}])
     assert asyncio.run(adapter.health_check()) is True
-    # Verify the adapter issued the SELECT 1 probe, not some other query.
-    call = fake_engine.calls[0]
-    assert "SELECT 1" in call["sql"]
+    assert "SELECT 1" in fake_engine.calls[0]["sql"]
 
 
 def test_health_check_returns_false_on_unexpected_value(adapter, fake_engine):
@@ -150,64 +142,58 @@ def test_health_check_returns_false_when_empty(adapter, fake_engine):
 
 
 def test_health_check_returns_false_on_driver_error(adapter, fake_engine, monkeypatch):
-    async def _boom(*_a, **_kw):
-        raise RuntimeError("network down")
-
     monkeypatch.setattr(fake_engine, "connect", lambda: _BoomContext())
     assert asyncio.run(adapter.health_check()) is False
 
 
-class _BoomContext:
-    async def __aenter__(self):
-        raise RuntimeError("cannot connect")
+def test_view_available_probes_the_view(adapter, fake_engine):
+    fake_engine.queue([{"col": 1}])
+    assert asyncio.run(adapter.view_available("vw_pp1_produto")) is True
+    sql = fake_engine.calls[0]["sql"]
+    assert "SELECT TOP 1" in sql and "vw_pp1_produto" in sql
 
-    async def __aexit__(self, *exc):
-        return False
+
+def test_view_available_rejects_unknown_view(adapter):
+    with pytest.raises(NeloERPError, match="unknown view"):
+        asyncio.run(adapter.view_available("vw_pp1_nope; DROP TABLE x"))
+
+
+def test_view_available_false_when_view_missing(adapter, fake_engine, monkeypatch):
+    monkeypatch.setattr(fake_engine, "connect", lambda: _BoomContext())
+    assert asyncio.run(adapter.view_available("vw_pp1_moldes")) is False
 
 
 # ---------------------------------------------------------------------------
-# fetch_orders — SQL shape + params
+# fetch_products / fetch_phases / fetch_workers — SQL shape + params
 # ---------------------------------------------------------------------------
 
 
-def test_fetch_orders_default_has_no_where_clause(adapter, fake_engine):
+def test_fetch_products_targets_the_view(adapter, fake_engine):
     fake_engine.queue([])
-    asyncio.run(adapter.fetch_orders())
+    asyncio.run(adapter.fetch_products(limit=2000))
     call = fake_engine.calls[0]
-    # No since filter → no WHERE clause; the TOP binding is always present.
-    assert "WHERE" not in call["sql"]
-    assert call["params"] == {"limit": 1000}
+    assert "FROM vw_pp1_produto" in call["sql"]
+    assert call["params"] == {"limit": 2000}
 
 
-def test_fetch_orders_with_since_adds_where_clause(adapter, fake_engine):
-    fake_engine.queue([])
-    since = date(2024, 1, 1)
-    asyncio.run(adapter.fetch_orders(since=since, limit=50))
-    call = fake_engine.calls[0]
-    assert "WHERE Of_DataCriacao >= :since" in call["sql"]
-    assert call["params"] == {"limit": 50, "since": since}
-
-
-def test_fetch_orders_returns_rows_as_dicts(adapter, fake_engine):
+def test_fetch_products_hydrates_rows(adapter, fake_engine):
     fake_engine.queue([
-        {"of_id": 1, "numero": "OF-001", "estado": "Aberta"},
-        {"of_id": 2, "numero": "OF-002", "estado": "Em Producao"},
+        {"product_id": "P1", "product_code": "K1V", "product_name": "K1 Vanquish"},
     ])
-    rows = asyncio.run(adapter.fetch_orders())
-    assert len(rows) == 2
-    assert rows[0]["numero"] == "OF-001"
-    assert rows[1]["estado"] == "Em Producao"
+    rows = asyncio.run(adapter.fetch_products())
+    assert rows[0]["product_code"] == "K1V"
 
 
-# ---------------------------------------------------------------------------
-# fetch_workers — active_only toggle
-# ---------------------------------------------------------------------------
+def test_fetch_phases_targets_phase_catalogue(adapter, fake_engine):
+    fake_engine.queue([])
+    asyncio.run(adapter.fetch_phases())
+    assert "FROM vw_pp1_fases_producao" in fake_engine.calls[0]["sql"]
 
 
 def test_fetch_workers_active_only_default(adapter, fake_engine):
     fake_engine.queue([])
     asyncio.run(adapter.fetch_workers())
-    assert "WHERE Func_Activo = 1" in fake_engine.calls[0]["sql"]
+    assert "WHERE activo = 1" in fake_engine.calls[0]["sql"]
 
 
 def test_fetch_workers_all_when_flag_false(adapter, fake_engine):
@@ -217,54 +203,75 @@ def test_fetch_workers_all_when_flag_false(adapter, fake_engine):
 
 
 # ---------------------------------------------------------------------------
-# fetch_standard_times — CoeficienteX preserved as `coeficiente_x`
+# fetch_product_phases — CoeficienteX preserved verbatim (money, not time)
 # ---------------------------------------------------------------------------
 
 
-def test_fetch_standard_times_includes_coeficiente_x_column(adapter, fake_engine):
+def test_fetch_product_phases_keeps_coeficiente_x_column(adapter, fake_engine):
     fake_engine.queue([])
-    asyncio.run(adapter.fetch_standard_times())
+    asyncio.run(adapter.fetch_product_phases())
     sql = fake_engine.calls[0]["sql"]
-    # Column list must carry the alias the profit module expects.
-    assert "ProdutoFase_CoeficienteX AS coeficiente_x" in sql
-    assert "ProdutoFase_Coeficiente  AS coeficiente" in sql
-
-
-def test_fetch_standard_times_hydrates_to_dicts_with_cx(adapter, fake_engine):
-    fake_engine.queue([
-        {
-            "produto_id": "P1", "fase_id": "LAM", "sequencia": 4,
-            "coeficiente": 8.0, "coeficiente_x": 6.10,
-        },
-    ])
-    rows = asyncio.run(adapter.fetch_standard_times())
-    assert rows[0]["coeficiente_x"] == 6.10
+    assert "coeficiente_x" in sql
+    assert "FROM vw_pp1_produto_fase" in sql
 
 
 # ---------------------------------------------------------------------------
-# fetch_skill_matrix / fetch_molds / fetch_errors — SQL smoke
+# fetch_employee_phases / fetch_components / fetch_molds — SQL smoke
 # ---------------------------------------------------------------------------
 
 
-def test_fetch_skill_matrix_only_approved(adapter, fake_engine):
+def test_fetch_employee_phases_only_approved(adapter, fake_engine):
     fake_engine.queue([])
-    asyncio.run(adapter.fetch_skill_matrix())
-    assert "FFA_Apto = 1" in fake_engine.calls[0]["sql"]
+    asyncio.run(adapter.fetch_employee_phases())
+    sql = fake_engine.calls[0]["sql"]
+    assert "apto = 1" in sql and "FROM vw_pp1_entidade_fase" in sql
 
 
-def test_fetch_molds_production_only_by_default(adapter, fake_engine):
+def test_fetch_components_targets_bom_view(adapter, fake_engine):
+    fake_engine.queue([])
+    asyncio.run(adapter.fetch_components())
+    assert "FROM vw_pp1_produto_componente" in fake_engine.calls[0]["sql"]
+
+
+def test_fetch_molds_targets_mold_view(adapter, fake_engine):
     fake_engine.queue([])
     asyncio.run(adapter.fetch_molds())
-    assert "Molde_Estado = 'Em Producao'" in fake_engine.calls[0]["sql"]
+    assert "FROM vw_pp1_moldes" in fake_engine.calls[0]["sql"]
 
 
-def test_fetch_errors_with_since(adapter, fake_engine):
+# ---------------------------------------------------------------------------
+# fetch_operations / fetch_quality_problems — incremental `since` filter
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_operations_default_has_no_where(adapter, fake_engine):
+    fake_engine.queue([])
+    asyncio.run(adapter.fetch_operations())
+    assert "WHERE" not in fake_engine.calls[0]["sql"]
+
+
+def test_fetch_operations_with_since_adds_where(adapter, fake_engine):
     fake_engine.queue([])
     since = date(2025, 1, 1)
-    asyncio.run(adapter.fetch_errors(since=since, limit=100))
+    asyncio.run(adapter.fetch_operations(since=since, limit=500))
     call = fake_engine.calls[0]
-    assert "Erro_DataRegisto >= :since" in call["sql"]
+    assert "fase_of_inicio >= :since" in call["sql"]
+    assert call["params"] == {"limit": 500, "since": since}
+
+
+def test_fetch_quality_problems_with_since(adapter, fake_engine):
+    fake_engine.queue([])
+    since = date(2025, 1, 1)
+    asyncio.run(adapter.fetch_quality_problems(since=since, limit=100))
+    call = fake_engine.calls[0]
+    assert "data_registo >= :since" in call["sql"]
     assert call["params"] == {"limit": 100, "since": since}
+
+
+def test_fetch_checklists_targets_checklist_view(adapter, fake_engine):
+    fake_engine.queue([])
+    asyncio.run(adapter.fetch_checklists())
+    assert "FROM vw_pp1_of_checklist" in fake_engine.calls[0]["sql"]
 
 
 # ---------------------------------------------------------------------------
@@ -273,18 +280,9 @@ def test_fetch_errors_with_since(adapter, fake_engine):
 
 
 def test_query_failure_wrapped_as_neloerperror(adapter, fake_engine, monkeypatch):
-    async def _boom_connect(*_a, **_kw):
-        raise RuntimeError("ODBC driver missing")
-
     monkeypatch.setattr(fake_engine, "connect", lambda: _BoomContext())
-
     with pytest.raises(NeloERPError, match="query failed"):
-        asyncio.run(adapter.fetch_orders())
-
-
-# ---------------------------------------------------------------------------
-# close() disposes the engine
-# ---------------------------------------------------------------------------
+        asyncio.run(adapter.fetch_products())
 
 
 def test_close_disposes_engine(adapter, fake_engine):
@@ -293,7 +291,7 @@ def test_close_disposes_engine(adapter, fake_engine):
 
 
 # ---------------------------------------------------------------------------
-# Shadow-mode compare helper
+# Shadow / reconcile helper
 # ---------------------------------------------------------------------------
 
 
