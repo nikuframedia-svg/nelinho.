@@ -303,6 +303,21 @@ def register_tenant(
         coalesce=True,
         max_instances=1,
     )
+    # Sprint Q.20.F — weekly historical time mining. Reads 2.6M operation
+    # rows from vw_pp1_of_fp, cleans them, and writes p50/p90 durations
+    # into routing_template_phase. Heavy + slow-moving, so weekly (Sunday
+    # 06:00 UTC, after causal_discovery at 05:00) rather than nightly.
+    # Also gated by `settings.sqlserver_enabled`.
+    _scheduler.add_job(
+        _nelo_time_mining_job,
+        trigger=CronTrigger(day_of_week=6, hour=6, minute=0, timezone="UTC"),
+        args=[tenant_id],
+        id=f"nelo_time_mining:{tenant_id}",
+        name=f"nelo_time_mining[{tenant_id}]",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
 
 
 async def shutdown_scheduler() -> None:
@@ -1034,6 +1049,34 @@ async def _nelo_erp_sync_job(tenant_id: UUID) -> None:
     except Exception as exc:
         logger.error(
             "nelo_erp_sync tenant=%s failed: %s", tenant_id, exc, exc_info=True,
+        )
+
+
+async def _nelo_time_mining_job(tenant_id: UUID) -> None:
+    """Sprint Q.20.F — weekly historical time mining.
+
+    Runs only the ``time_mining`` mirror (the heavy one excluded from the
+    nightly ``nelo_erp_sync``). Gated by ``settings.sqlserver_enabled``.
+    Best-effort — any failure is logged and never breaks the scheduler.
+    """
+    try:
+        from src.infrastructure.erp.etl.sync import run_nelo_sync
+    except ImportError:
+        logger.debug("nelo_time_mining: etl package missing — skipping tenant=%s", tenant_id)
+        return
+
+    started = datetime.utcnow()
+    try:
+        results = await run_nelo_sync(only=["time_mining"], tenant_id=tenant_id)
+        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        errors = sum(1 for r in results if r.status != "ok")
+        logger.info(
+            "nelo_time_mining tenant=%s mirrors=%d errors=%d elapsed_ms=%d",
+            tenant_id, len(results), errors, elapsed_ms,
+        )
+    except Exception as exc:
+        logger.error(
+            "nelo_time_mining tenant=%s failed: %s", tenant_id, exc, exc_info=True,
         )
 
 
