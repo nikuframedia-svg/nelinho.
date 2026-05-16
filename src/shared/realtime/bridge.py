@@ -303,6 +303,50 @@ class RealtimeBridge:
                 except asyncio.QueueFull:  # pragma: no cover
                     pass
 
+    async def notify_channel(
+        self,
+        tenant_id: UUID,
+        channel: str,
+        envelope: Dict[str, Any],
+    ) -> int:
+        """Q.17.F.8 — push an envelope straight to subscribers of
+        ``(tenant_id, channel)``.
+
+        Bypasses Kafka and the topic reverse-lookup of ``_fanout``: the
+        yaml_policy rule engine and the bridge share a process, so an
+        in-process fan-out delivers the event even when no Kafka broker
+        is up. Returns the number of subscribers the envelope reached.
+        """
+        enriched = dict(envelope)
+        enriched.setdefault("_channel", channel)
+
+        delivered = 0
+        for sub in list(self._subs.values()):
+            if str(sub.tenant_id) != str(tenant_id):
+                continue  # tenant isolation
+            if channel not in sub.channels:
+                continue  # subscriber didn't ask for this channel
+            try:
+                sub.queue.put_nowait(enriched)
+                delivered += 1
+            except asyncio.QueueFull:
+                try:
+                    _ = sub.queue.get_nowait()
+                except asyncio.QueueEmpty:  # pragma: no cover
+                    pass
+                sub.dropped_events += 1
+                if sub.dropped_events == 1:
+                    logger.warning(
+                        "RealtimeBridge: sub=%s queue full, dropping oldest",
+                        sub.sub_id,
+                    )
+                try:
+                    sub.queue.put_nowait(enriched)
+                    delivered += 1
+                except asyncio.QueueFull:  # pragma: no cover
+                    pass
+        return delivered
+
     # ─── Diagnostics ─────────────────────────────────────────────────
 
     @property

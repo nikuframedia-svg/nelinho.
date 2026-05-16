@@ -43,9 +43,9 @@ class DispatchContext:
     # Optional callbacks injected by the host application. Stay None in
     # tests so dispatchers don't need a full backend up.
     emit_alert: Callable[[dict[str, Any]], Awaitable[None]] | None = None
-    emit_kafka: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None
     set_config: Callable[[str, str, Any, str | None], Awaitable[None]] | None = None
     create_decision: Callable[[dict[str, Any]], Awaitable[str]] | None = None
+    notify: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None
 
 
 @dataclass
@@ -79,7 +79,7 @@ ACTION_WIRING: dict[str, dict[str, Any]] = {
     "modify_fitness":      {"wired": True,  "destination": "set_config callback → ConfigStore → CPO reads on next schedule"},
     "reassign_worker":     {"wired": True,  "destination": "create_decision callback → governance.decision_run (worker_reassignment)"},
     "propose_maintenance": {"wired": True,  "destination": "create_decision callback → governance.decision_run (mold_maintenance)"},
-    "notify":              {"wired": False, "destination": "Kafka prodplan.realtime.{channel} (consumer TBD)"},
+    "notify":              {"wired": True,  "destination": "RealtimeBridge.notify_channel — SSE in-process fan-out"},
     "set_config":          {"wired": True,  "destination": "ConfigStore.set() — write-through to tenant_configuration"},
     "create_decision":     {"wired": True,  "destination": "create_decision callback → governance.decision_run"},
     "pause_writes":        {"wired": False, "destination": "router middleware (Q.18.D scope)"},
@@ -241,7 +241,12 @@ async def _dispatch_propose_maintenance(rule: Rule, params: dict[str, Any], ctx:
 
 
 async def _dispatch_notify(rule: Rule, params: dict[str, Any], ctx: DispatchContext) -> DispatchResult:
-    """Push to a SSE channel (alerts/timeline/dashboard/governance)."""
+    """Push to a SSE channel (alerts/timeline/dashboard/governance).
+
+    Q.17.F.8 — the ``notify`` callback fans the envelope out to connected
+    SSE subscribers in-process via the RealtimeBridge, so the event lands
+    even when no Kafka broker is running.
+    """
     channel = params.get("channel", "alerts")
     topic = params.get("topic", f"yaml_policy.{rule.id}")
     payload = {
@@ -249,12 +254,12 @@ async def _dispatch_notify(rule: Rule, params: dict[str, Any], ctx: DispatchCont
         "topic": topic,
         "payload": params.get("payload", {}),
     }
-    if ctx.emit_kafka is not None:
-        await ctx.emit_kafka(f"prodplan.realtime.{channel}", {
+    if ctx.notify is not None:
+        await ctx.notify(channel, {
             "tenant_id": str(ctx.tenant_id),
             "rule_id": rule.id,
             "topic": topic,
-            **payload,
+            "payload": payload["payload"],
         })
     _log.info(
         "yaml_policy.notify tenant=%s rule=%s channel=%s topic=%s",
@@ -262,9 +267,9 @@ async def _dispatch_notify(rule: Rule, params: dict[str, Any], ctx: DispatchCont
     )
     return DispatchResult(
         action="notify",
-        status=_stubbed_or_ok("notify", has_callback=ctx.emit_kafka is not None),
+        status=_stubbed_or_ok("notify", has_callback=ctx.notify is not None),
         payload=payload,
-        detail="kafka topic emitted but realtime bridge consumer is per-tenant",
+        detail=None if ctx.notify is not None else "no notify callback in context",
     )
 
 

@@ -50,6 +50,8 @@ def _build_dispatch_context(
     - ``create_decision`` opens a governance.decision_run row (needs
       ``session``; left None otherwise so the dispatcher reports
       ``stubbed`` rather than a false ``ok``).
+    - ``notify`` fans an envelope out to SSE subscribers in-process via
+      the RealtimeBridge (no session needed).
     """
 
     async def _emit_alert(alert_payload: dict[str, Any]) -> None:
@@ -122,15 +124,28 @@ def _build_dispatch_context(
         )
         return result["id"]
 
+    async def _notify(channel: str, envelope: dict[str, Any]) -> None:
+        """Q.17.F.8 — push a realtime event to SSE subscribers in-process.
+
+        Bypasses Kafka entirely: the rule engine and the RealtimeBridge
+        run in the same process on the single-worker NELO deploy.
+        """
+        from src.shared.realtime.bridge import RealtimeBridge
+
+        try:
+            await RealtimeBridge.instance().notify_channel(tenant_id, channel, envelope)
+        except Exception as exc:
+            _log.warning("notify via yaml_policy failed: %s", exc)
+
     return DispatchContext(
         tenant_id=tenant_id,
         event_type=event_type,
         event_payload=payload,
         session=session,
         emit_alert=_emit_alert,
-        emit_kafka=None,  # Q.17.F.8 — replaced by the ``notify`` callback
         set_config=_set_config,
         create_decision=_create_decision if session is not None else None,
+        notify=_notify,
     )
 
 

@@ -222,6 +222,55 @@ async def test_dispatch_reassign_worker_no_callback_reports_stubbed():
 
 
 # ---------------------------------------------------------------------------
+# Q.17.F.8 — notify fans out via the in-process callback
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dispatch_notify_calls_callback():
+    captured: list[tuple[str, dict[str, Any]]] = []
+
+    async def cb(channel: str, envelope: dict[str, Any]) -> None:
+        captured.append((channel, envelope))
+
+    rule = _build_rule(
+        action=ActionType.NOTIFY,
+        params={"channel": "governance", "topic": "molde-critico", "payload": {"mold": "K1"}},
+    )
+    ctx = DispatchContext(
+        tenant_id=_TENANT,
+        event_type=EventType.MOLD_USAGE_THRESHOLD.value,
+        event_payload={"uses_count": 850},
+        notify=cb,
+    )
+    results = await dispatch(rule, ctx)
+
+    assert len(captured) == 1
+    channel, envelope = captured[0]
+    assert channel == "governance"
+    assert envelope["topic"] == "molde-critico"
+    assert envelope["payload"] == {"mold": "K1"}
+    assert envelope["rule_id"] == rule.id
+    assert results[0].status == "ok"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_notify_no_callback_reports_stubbed():
+    rule = _build_rule(
+        action=ActionType.NOTIFY,
+        params={"channel": "alerts", "topic": "t", "payload": {}},
+    )
+    ctx = DispatchContext(
+        tenant_id=_TENANT,
+        event_type=EventType.MOLD_USAGE_THRESHOLD.value,
+        event_payload={"uses_count": 850},
+    )
+    results = await dispatch(rule, ctx)
+    assert results[0].status == "stubbed"
+    assert "no notify callback" in (results[0].detail or "")
+
+
+# ---------------------------------------------------------------------------
 # Wiring matrix — backend side of the backend/frontend mirror
 # ---------------------------------------------------------------------------
 
@@ -233,3 +282,7 @@ def test_action_wiring_create_decision_and_propose_maintenance_wired():
 
 def test_action_wiring_reassign_worker_wired():
     assert ACTION_WIRING["reassign_worker"]["wired"] is True
+
+
+def test_action_wiring_notify_wired():
+    assert ACTION_WIRING["notify"]["wired"] is True
