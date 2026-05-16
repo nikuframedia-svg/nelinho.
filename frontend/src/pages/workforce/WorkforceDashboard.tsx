@@ -537,15 +537,15 @@ export function WorkforceDashboard() {
             />
           )}
           {activeView === 'scenarios' && (
+            // Q.21.D — `onExportPDF` removido: não há endpoint de export
+            // PDF e o callback só fazia console.log. O botão "Exportar PDF"
+            // do ScenarioComparisonMatrix só renderiza quando a prop é
+            // passada, por isso omiti-la esconde-o. `onApproveScenario`
+            // mantém-se mas sem o console.log — leva ao Twin para aprovar.
             <ScenarioComparisonMatrix
               comparison={scenarioComparison || null}
               isLoading={isLoadingScenarios}
-              onExportPDF={() => {
-                // TODO: Implement PDF export
-                console.log('Export PDF');
-              }}
-              onApproveScenario={(scenarioId) => {
-                console.log('Approve scenario:', scenarioId);
+              onApproveScenario={() => {
                 navigate('/twin');
               }}
             />

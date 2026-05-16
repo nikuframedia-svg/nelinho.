@@ -19,7 +19,7 @@
 
 import { lazy, Suspense, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Settings,
   Brain,
@@ -33,7 +33,7 @@ import {
 } from 'lucide-react';
 import { PageHeader, Tabs } from '../../components/dark';
 import { SkeletonLoader } from '../../components/ui/Skeleton';
-import { getApiBase } from '../../lib/api';
+import { getApiBase, preferenceRulesApi } from '../../lib/api';
 import { Q17Dashboard } from '../../components/aprendizagem/Q17Panels';
 import { BCamadasDashboard } from '../../components/aprendizagem/BCamadasPanels';
 import { CausalDashboard } from '../../components/causal/CausalPanels';
@@ -454,6 +454,7 @@ async function fetchFitnessWeights(): Promise<FitnessWeight[]> {
 }
 
 function AprendizagemZipView() {
+  const queryClient = useQueryClient();
   const rulesQuery = useQuery({
     queryKey: ['aprendizagem-zip', 'rules'],
     queryFn: fetchLearnedRules,
@@ -466,6 +467,34 @@ function AprendizagemZipView() {
     staleTime: 60_000,
     retry: 0,
   });
+
+  // Q.21.D — botões Aprovar/Recusar ligados aos endpoints reais
+  // (POST /v1/governance/preference-rules/{id}/confirm | /reject). O
+  // "Pausar" foi removido: não há transição de estado "paused" no backend.
+  const invalidateRules = () =>
+    queryClient.invalidateQueries({ queryKey: ['aprendizagem-zip', 'rules'] });
+
+  const confirmMutation = useMutation({
+    mutationFn: (ruleId: string) => preferenceRulesApi.confirm(ruleId),
+    onSuccess: invalidateRules,
+  });
+
+  const rejectMutation = useMutation({
+    mutationFn: ({ ruleId, reason }: { ruleId: string; reason: string }) =>
+      preferenceRulesApi.reject(ruleId, { reason }),
+    onSuccess: invalidateRules,
+  });
+
+  const handleReject = (ruleId: string) => {
+    const reason = window.prompt(
+      'Porque é que estás a recusar esta regra? (mínimo 10 caracteres)',
+    );
+    if (reason && reason.trim().length >= 10) {
+      rejectMutation.mutate({ ruleId, reason: reason.trim() });
+    }
+  };
+
+  const mutating = confirmMutation.isPending || rejectMutation.isPending;
 
   const rules = rulesQuery.data ?? [];
   const weights = weightsQuery.data ?? [];
@@ -573,11 +602,13 @@ function AprendizagemZipView() {
                         ) : null}
                       </div>
                       <div className="flex gap-2 shrink-0">
-                        {isSuggested ? (
+                        {isSuggested && r.id ? (
                           <>
                             <button
                               type="button"
-                              className="px-2.5 py-1 rounded text-xs font-medium"
+                              disabled={mutating}
+                              onClick={() => confirmMutation.mutate(r.id)}
+                              className="px-2.5 py-1 rounded text-xs font-medium disabled:opacity-50"
                               style={{
                                 background: 'var(--green)',
                                 color: '#fff',
@@ -587,19 +618,14 @@ function AprendizagemZipView() {
                             </button>
                             <button
                               type="button"
-                              className="px-2.5 py-1 rounded text-xs text-text-dark-secondary hover:text-text-dark-primary"
+                              disabled={mutating}
+                              onClick={() => handleReject(r.id)}
+                              className="px-2.5 py-1 rounded text-xs text-text-dark-secondary hover:text-text-dark-primary disabled:opacity-50"
                             >
                               Recusar
                             </button>
                           </>
-                        ) : (
-                          <button
-                            type="button"
-                            className="px-2.5 py-1 rounded text-xs text-text-dark-secondary hover:text-text-dark-primary"
-                          >
-                            Pausar
-                          </button>
-                        )}
+                        ) : null}
                       </div>
                     </div>
                   </div>

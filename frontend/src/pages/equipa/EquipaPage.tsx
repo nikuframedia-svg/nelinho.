@@ -36,7 +36,6 @@ import {
   GraduationCap,
   History,
   RefreshCw,
-  Sparkles,
   Plus,
   ChevronRight,
   GripVertical,
@@ -271,25 +270,18 @@ export default function EquipaPage() {
               </button>
             ) : null}
             {activeTab === 'alocacoes' ? (
-              <>
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-transparent text-text-dark-secondary hover:bg-white/5 hover:text-text-dark-primary border border-white/[0.08] text-xs font-medium transition-colors"
-                  onClick={() => window.print()}
-                >
-                  <Printer size={13} />
-                  Imprimir folha
-                </button>
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-white text-xs font-medium transition-colors"
-                  style={{ background: 'var(--blue)', border: '1px solid var(--blue)' }}
-                  onClick={() => alert('Sugerir atribuição — wire ao CPO em sub-sprint')}
-                >
-                  <Sparkles size={13} />
-                  Sugerir atribuição
-                </button>
-              </>
+              // Q.21.D — "Sugerir atribuição" removido: fazia só um alert()
+              // e não há endpoint de sugestão de atribuição de operadores
+              // (o CPO completo é POST /v1/plan/cpo/schedule, outra coisa).
+              // "Imprimir folha" mantém-se — window.print() é uma acção real.
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-transparent text-text-dark-secondary hover:bg-white/5 hover:text-text-dark-primary border border-white/[0.08] text-xs font-medium transition-colors"
+                onClick={() => window.print()}
+              >
+                <Printer size={13} />
+                Imprimir folha
+              </button>
             ) : null}
             <button
               type="button"

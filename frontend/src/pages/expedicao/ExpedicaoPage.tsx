@@ -25,7 +25,6 @@
 import { lazy, Suspense, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
-  Plus,
   RefreshCw,
   Sparkles,
   Truck,
@@ -119,25 +118,18 @@ export default function ExpedicaoPage() {
         subtitle="Calendário de saídas · estado dos camiões"
         helpId="expedicao"
         actions={
-          <>
-            <button
-              type="button"
-              onClick={() => window.location.reload()}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-transparent text-text-dark-secondary hover:bg-white/5 hover:text-text-dark-primary border border-white/[0.08] text-xs font-medium transition-colors"
-            >
-              <RefreshCw size={13} />
-              Atualizar
-            </button>
-            <button
-              type="button"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-white text-xs font-medium transition-colors"
-              style={{ background: 'var(--blue)', border: '1px solid var(--blue)' }}
-              onClick={() => alert('Nova expedição — wire ao /v1/plan/transport/batches POST em sub-sprint')}
-            >
-              <Plus size={13} />
-              Nova expedição
-            </button>
-          </>
+          // Q.21.D — "Nova expedição" removido: fazia só um alert(). Criar
+          // um batch (POST /v1/plan/transport/batches) precisa de um
+          // formulário próprio — fora do âmbito desta limpeza. "Atualizar"
+          // mantém-se (acção real).
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-transparent text-text-dark-secondary hover:bg-white/5 hover:text-text-dark-primary border border-white/[0.08] text-xs font-medium transition-colors"
+          >
+            <RefreshCw size={13} />
+            Atualizar
+          </button>
         }
       />
 
@@ -276,10 +268,13 @@ function ShipmentDetail({ shipment }: { shipment: TransportBatch }) {
         borderRadius: 12,
       }}
     >
+      {/* Q.21.D — coluna de acções removida: "Ver barcos" e "Documentos"
+          não tinham onClick nem endpoint (vista de barcos por batch /
+          documentos de expedição não existem no backend). */}
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: '180px 1fr 220px',
+          gridTemplateColumns: '180px 1fr',
           gap: 22,
           alignItems: 'center',
         }}
@@ -432,32 +427,6 @@ function ShipmentDetail({ shipment }: { shipment: TransportBatch }) {
               <span>{shipment.suggestion}</span>
             </div>
           ) : null}
-        </div>
-
-        {/* Right: actions */}
-        <div className="flex flex-col gap-2">
-          <button
-            type="button"
-            className="w-full px-3 py-2 rounded-md text-xs font-medium border transition-colors"
-            style={{
-              background: 'var(--bg-2)',
-              borderColor: 'var(--bd-2)',
-              color: 'var(--fg-1)',
-            }}
-          >
-            Ver barcos
-          </button>
-          <button
-            type="button"
-            className="w-full px-3 py-2 rounded-md text-xs font-medium border transition-colors"
-            style={{
-              background: 'transparent',
-              borderColor: 'transparent',
-              color: 'var(--fg-2)',
-            }}
-          >
-            Documentos
-          </button>
         </div>
       </div>
     </div>
