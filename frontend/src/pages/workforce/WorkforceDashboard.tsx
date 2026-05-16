@@ -514,14 +514,7 @@ export function WorkforceDashboard() {
             <ScenarioComparisonMatrix
               comparison={scenarioComparison || null}
               isLoading={isLoadingScenarios}
-              onExportPDF={() => {
-                // TODO: Implement PDF export
-                console.log('Export PDF');
-              }}
-              onApproveScenario={(scenarioId) => {
-                console.log('Approve scenario:', scenarioId);
-                navigate('/twin');
-              }}
+              onApproveScenario={() => navigate('/twin')}
             />
           )}
 

@@ -9,14 +9,12 @@
  * - Side-by-side comparison of baseline vs scenarios
  * - Visual indicators for better/worse metrics
  * - Recommended scenario highlighting
- * - Export to PDF capability
  */
 
 import { useState } from 'react';
-import { 
-  BarChart3, 
-  Check, 
-  Download, 
+import {
+  BarChart3,
+  Check,
   Share2,
   Shield,
   TrendingDown,
@@ -29,7 +27,6 @@ import type { ScenarioComparison } from './types';
 
 interface ScenarioComparisonMatrixProps {
   comparison: ScenarioComparison | null;
-  onExportPDF?: () => void;
   onSaveAll?: () => void;
   onPresent?: () => void;
   onApproveScenario?: (scenarioId: string) => void;
@@ -45,7 +42,6 @@ const SCENARIO_TYPE_STYLES = {
 
 export function ScenarioComparisonMatrix({
   comparison,
-  onExportPDF,
   onSaveAll,
   onPresent,
   onApproveScenario,
@@ -157,15 +153,6 @@ export function ScenarioComparisonMatrix({
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {onExportPDF && (
-            <button
-              onClick={onExportPDF}
-              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-lg text-sm flex items-center gap-2 transition-colors"
-            >
-              <Download size={14} />
-              Exportar PDF
-            </button>
-          )}
           {onSaveAll && (
             <button
               onClick={onSaveAll}

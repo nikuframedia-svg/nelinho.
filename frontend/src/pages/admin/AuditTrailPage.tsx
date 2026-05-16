@@ -47,6 +47,7 @@ import {
 import { governanceApi } from '../../lib/factoryApi';
 import type { DecisionRun } from '../../lib/factoryApi';
 import { apiFetch } from '../../lib/api';
+import { useToastContext } from '../../components/ToastProvider';
 
 // ============================================================================
 // TYPES
@@ -103,6 +104,7 @@ async function fetchAuditLogs(filters: {
 
 export function AuditTrailPage() {
   const queryClient = useQueryClient();
+  const toast = useToastContext();
   const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
   const [selectedDecision, setSelectedDecision] = useState<DecisionRun | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('table');
@@ -164,7 +166,7 @@ export function AuditTrailPage() {
   const handleExport = (format: 'csv' | 'json') => {
     const data = tabMode === 'decisions' ? decisions : auditLogs;
     if (!data || data.length === 0) {
-      alert('No data to export');
+      toast.warning('Sem dados para exportar');
       return;
     }
     

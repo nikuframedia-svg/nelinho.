@@ -104,6 +104,7 @@ export default function DispatchPage() {
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState<'ALL' | TransportBatchStatus>('ALL');
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [rejectionTarget, setRejectionTarget] = useState<{
     suggestionType: string;
     batchId: string;
@@ -157,6 +158,16 @@ export default function DispatchPage() {
   const dispatchMutation = useMutation({
     mutationFn: (batchId: string) => transportApi.dispatch(batchId),
     onSuccess: invalidateAll,
+  });
+
+  const createMutation = useMutation({
+    mutationFn: (payload: Parameters<typeof transportApi.createBatch>[0]) =>
+      transportApi.createBatch(payload),
+    onSuccess: (batch) => {
+      invalidateAll();
+      setSelectedBatchId(batch.id);
+      setShowCreateDialog(false);
+    },
   });
 
   // ── Drag-drop ──────────────────────────────────────────────────────────
@@ -215,7 +226,7 @@ export default function DispatchPage() {
         <DarkButton
           variant="primary"
           icon={<Plus size={16} />}
-          onClick={() => alert('TODO Q.2: modal criar batch')}
+          onClick={() => setShowCreateDialog(true)}
         >
           Novo batch
         </DarkButton>
@@ -311,6 +322,15 @@ export default function DispatchPage() {
           </aside>
         </div>
       </DndContext>
+
+      {showCreateDialog && (
+        <CreateBatchDialog
+          onClose={() => setShowCreateDialog(false)}
+          onSubmit={(payload) => createMutation.mutate(payload)}
+          isSubmitting={createMutation.isPending}
+          error={createMutation.error instanceof Error ? createMutation.error.message : null}
+        />
+      )}
 
       {rejectionTarget && (
         <RejectionDialog
@@ -627,6 +647,112 @@ function SuggestionCard({
         </DarkButton>
       </div>
     </li>
+  );
+}
+
+function CreateBatchDialog({
+  onClose,
+  onSubmit,
+  isSubmitting,
+  error,
+}: {
+  onClose: () => void;
+  onSubmit: (payload: Parameters<typeof transportApi.createBatch>[0]) => void;
+  isSubmitting: boolean;
+  error: string | null;
+}) {
+  const [code, setCode] = useState('');
+  const [transportDate, setTransportDate] = useState(
+    () => new Date().toISOString().slice(0, 10),
+  );
+  const [destination, setDestination] = useState('');
+  const [capacity, setCapacity] = useState('');
+  const canSubmit = code.trim() !== '' && transportDate !== '' && !isSubmitting;
+
+  const handleSubmit = () => {
+    if (!canSubmit) return;
+    const capacityNum = Number(capacity);
+    onSubmit({
+      code: code.trim(),
+      transport_date: transportDate,
+      ...(destination.trim() ? { destination: destination.trim() } : {}),
+      ...(capacity !== '' && Number.isFinite(capacityNum) && capacityNum > 0
+        ? { truck_capacity_units: capacityNum }
+        : {}),
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <DarkCard className="w-[480px] max-w-[90vw] p-5">
+        <h3 className="text-base font-semibold text-white mb-1">Novo batch de transporte</h3>
+        <p className="text-xs text-slate-400 mb-4">
+          Cria um camião aberto onde podes arrastar ordens para expedição.
+        </p>
+
+        <label htmlFor="batch-code" className="block text-xs text-slate-400 mb-1">
+          Código
+        </label>
+        <input
+          id="batch-code"
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          placeholder="Ex: CAM-2026-05-16-A"
+          className="w-full mb-3 px-3 py-2 bg-slate-800 border border-slate-700 rounded text-sm text-white placeholder:text-slate-500"
+        />
+
+        <label htmlFor="batch-date" className="block text-xs text-slate-400 mb-1">
+          Data de transporte
+        </label>
+        <input
+          id="batch-date"
+          type="date"
+          value={transportDate}
+          onChange={(e) => setTransportDate(e.target.value)}
+          className="w-full mb-3 px-3 py-2 bg-slate-800 border border-slate-700 rounded text-sm text-white"
+        />
+
+        <label htmlFor="batch-destination" className="block text-xs text-slate-400 mb-1">
+          Destino (opcional)
+        </label>
+        <input
+          id="batch-destination"
+          value={destination}
+          onChange={(e) => setDestination(e.target.value)}
+          placeholder="Ex: Madrid"
+          className="w-full mb-3 px-3 py-2 bg-slate-800 border border-slate-700 rounded text-sm text-white placeholder:text-slate-500"
+        />
+
+        <label htmlFor="batch-capacity" className="block text-xs text-slate-400 mb-1">
+          Capacidade do camião (unidades, opcional)
+        </label>
+        <input
+          id="batch-capacity"
+          type="number"
+          min={1}
+          value={capacity}
+          onChange={(e) => setCapacity(e.target.value)}
+          placeholder="Ex: 26"
+          className="w-full mb-4 px-3 py-2 bg-slate-800 border border-slate-700 rounded text-sm text-white placeholder:text-slate-500"
+        />
+
+        {error && (
+          <p className="text-xs text-red-400 mb-3 flex items-start gap-2">
+            <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
+            <span>{error}</span>
+          </p>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <DarkButton variant="secondary" size="sm" onClick={onClose} disabled={isSubmitting}>
+            Cancelar
+          </DarkButton>
+          <DarkButton variant="primary" size="sm" onClick={handleSubmit} disabled={!canSubmit}>
+            {isSubmitting ? 'A criar…' : 'Criar batch'}
+          </DarkButton>
+        </div>
+      </DarkCard>
+    </div>
   );
 }
 
