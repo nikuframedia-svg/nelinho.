@@ -110,6 +110,19 @@ class Settings(BaseSettings):
     environment: str = Field(default="development")
     debug: bool = Field(default=False)
     log_level: str = Field(default="INFO")
+
+    # Sprint Q.18.A.2 — global RBAC enforcement.
+    # Off by default in dev so the existing test client and admin pages
+    # don't have to wear roles in every fixture. main.py forces it on
+    # whenever environment == "production". Flip via env to opt-in
+    # locally: ``PRODPLAN_RBAC_STRICT=true``.
+    rbac_strict: bool = Field(
+        default=False,
+        description=(
+            "Enforce ROUTE_PREFIX_REQUIREMENTS via RBACMiddleware on every "
+            "request. Auto-enabled in production."
+        ),
+    )
     
     # CORS — Windows/Vite serve em 127.0.0.1 por defeito quando arrancado via
     # --host 127.0.0.1; browsers tratam localhost ≠ 127.0.0.1 como origens

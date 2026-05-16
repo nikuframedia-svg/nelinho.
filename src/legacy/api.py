@@ -12,10 +12,11 @@ from datetime import date
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.shared.auth.headers import require_tenant_header
 from src.shared.database import get_session
 from src.plan.models.order import ProductionOrder, OrderStatus
 from src.hr.models.legacy_allocation import LegacyAllocation
@@ -25,9 +26,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Legacy"])
 
 
-def get_tenant_id(x_tenant_id: UUID = Header(...)) -> UUID:
-    """Extract tenant ID from header."""
-    return x_tenant_id
+# Sprint Q.18.A.4: was a local ``get_tenant_id`` that accepted any UUID
+# header value (including the zero UUID). That defeated the Q.12 Onda 0.1
+# fail-closed guarantee on /api/orders, /api/allocations, /api/errors.
+# Reuse the project-wide dependency so 401 / zero-UUID rejection apply
+# uniformly across legacy endpoints.
+get_tenant_id = require_tenant_header
 
 
 # ============================================================================
