@@ -1,16 +1,13 @@
 /**
- * RelatoriosPage — porto do nelo (1).zip pages-2.jsx:RelatoriosPage.
+ * RelatoriosPage — 5 separadores de relatórios.
  *
- * 5 tabs do brief PROMPT_CLAUDE_CODE.md §3.8:
- *   • KPIs       — wrap KPIsPage existing
- *   • Custos     — wrap COGSPage existing
- *   • Pricing    — wrap PricingPage existing
- *   • Cenários   — wrap ScenariosPage existing
- *   • Exportar   — placeholder até endpoint /v1/reports/generate
- *                  (Q.18.ZIP.BE.3 deferred). Mostra lista de templates
- *                  PDF/Excel disponíveis com botão "Em breve".
- *
- * Sprint Q.18.ZIP.I.
+ *   • KPIs       — wrap KPIsPage
+ *   • Custos     — wrap COGSPage
+ *   • Pricing    — wrap PricingPage
+ *   • Cenários   — wrap ScenariosPage
+ *   • Exportar   — wire real ao POST /v1/reports/generate. Cada template
+ *                  gera e descarrega; os que o backend ainda não serve
+ *                  devolvem `not_implemented` (sem 5xx, estado honesto).
  */
 
 import { lazy, Suspense, useMemo, useState } from 'react';

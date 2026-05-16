@@ -190,9 +190,11 @@ function App() {
                     </Suspense>
                   } />
                   
-                  {/* /inbox: Q.18.ZIP.M.2 absorvido em /painel?tab=inbox.
-                      Mantém legacy reachable via /inbox-legacy para debug. */}
-                  <Route path="inbox" element={<Navigate to="/painel?tab=inbox" replace />} />
+                  {/* Q.21.E — a rota `inbox` está declarada acima (linha
+                      ~138) a servir o InboxDecisoesPage. A 2ª declaração
+                      que estava aqui (Navigate to /painel?tab=inbox) era
+                      código morto: o react-router usa sempre a 1ª. O
+                      OpsInboxPage legacy continua acessível via /inbox-legacy. */}
                   <Route path="inbox-legacy" element={
                     <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
                       <OpsInboxPage />
