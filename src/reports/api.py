@@ -172,6 +172,37 @@ async def _gen_qualidade(
         return []
 
 
+async def _collect_rows(
+    template_id: str,
+    session: AsyncSession,
+    tenant_id: UUID,
+    since: date | None,
+    until: date | None,
+) -> list[dict[str, Any]]:
+    """Dispatch ``template_id`` to its generator and return the rows.
+
+    Shared by ``/generate`` and ``/email`` so a report is produced the
+    exact same way whether it is downloaded or mailed.
+    """
+    if template_id == "producao":
+        return await _gen_producao(session, tenant_id)
+    if template_id == "cliente":
+        return await _gen_cliente(session, tenant_id)
+    if template_id == "qualidade":
+        return await _gen_qualidade(session, tenant_id, since, until)
+    if template_id in ("payroll", "cogs", "inventario"):
+        # Sprint Q.22.E — payroll/cogs/inventario delegate to the
+        # generators in reports.generators (hr/profit/supply tables).
+        from src.reports.generators import run_generator
+
+        return await run_generator(template_id, session, tenant_id, since, until)
+    # pragma: no cover — Pydantic Literal guarda os callers
+    raise HTTPException(
+        status.HTTP_400_BAD_REQUEST,
+        detail=f"Unknown template_id: {template_id}",
+    )
+
+
 @router.post("/generate", response_model=ReportResponse)
 async def generate_report(
     req: ReportRequest,
@@ -184,27 +215,9 @@ async def generate_report(
     filename_ext = "csv" if req.format == "csv" else "json"
     filename = f"{req.template_id}_{today}.{filename_ext}"
 
-    rows: list[dict[str, Any]] = []
-
-    if req.template_id == "producao":
-        rows = await _gen_producao(session, tenant_id)
-    elif req.template_id == "cliente":
-        rows = await _gen_cliente(session, tenant_id)
-    elif req.template_id == "qualidade":
-        rows = await _gen_qualidade(session, tenant_id, req.since, req.until)
-    elif req.template_id in ("payroll", "cogs", "inventario"):
-        # Sprint Q.22.E — payroll/cogs/inventario delegate to the
-        # generators in reports.generators (hr/profit/supply tables).
-        from src.reports.generators import run_generator
-
-        rows = await run_generator(
-            req.template_id, session, tenant_id, req.since, req.until
-        )
-    else:  # pragma: no cover — Pydantic Literal guarda
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            detail=f"Unknown template_id: {req.template_id}",
-        )
+    rows = await _collect_rows(
+        req.template_id, session, tenant_id, req.since, req.until
+    )
 
     content = _format_payload(rows, req.format)
     return ReportResponse(
@@ -329,29 +342,124 @@ async def list_report_schedules(
 
 
 class ReportEmailRequest(BaseModel):
-    template_id: str
+    template_id: TemplateId
     to: list[str] = Field(min_length=1, description="Lista de destinatários email.")
-    schedule_cron: str | None = Field(default=None)
+    format: ReportFormat = Field(default="csv")
+    since: date | None = Field(default=None)
+    until: date | None = Field(default=None)
 
 
-@router.post("/email")
+class ReportEmailResponse(BaseModel):
+    run_id: UUID
+    template_id: str
+    status: Literal["delivered", "generated", "failed"]
+    recipients: list[str]
+    row_count: int
+    sent: bool
+    skipped: bool
+    generated_at: str
+    message: str | None = None
+
+
+@router.post("/email", response_model=ReportEmailResponse)
 async def email_report(
     req: ReportEmailRequest,
     tenant_id: UUID = Depends(require_tenant_header),
-):
-    """Configura entrega por email (Onda 18 R)."""
-    import logging
-    logging.getLogger("reports.email").info(
-        "email_report tenant=%s template=%s to=%s cron=%s",
-        tenant_id, req.template_id, req.to, req.schedule_cron,
+    session: AsyncSession = Depends(get_session),
+) -> ReportEmailResponse:
+    """Gera um relatório e entrega-o por email (Sprint Q.22.F).
+
+    Gera as linhas, persiste uma ``reports.report_run`` (ad-hoc, sem
+    schedule), tenta o envio SMTP via :mod:`src.reports.email` e regista
+    o resultado. Em dev (``smtp_enabled=False``) o envio é ``skipped`` —
+    o relatório fica na mesma persistido com ``status="generated"``.
+    Cada run escreve um ``core.audit_log`` na mesma transacção.
+    """
+    from src.reports.email import EmailDeliveryError, send_report_email
+
+    now = datetime.utcnow()
+    rows = await _collect_rows(
+        req.template_id, session, tenant_id, req.since, req.until
     )
-    return {
-        "status": "stubbed",
-        "template_id": req.template_id,
-        "recipients": req.to,
-        "schedule_cron": req.schedule_cron,
-        "message": "Email delivery configured (stub). SMTP integration pending.",
-    }
+    content = _format_payload(rows, req.format)
+    ext = "csv" if req.format == "csv" else "json"
+
+    run = ReportRun(
+        tenant_id=tenant_id,
+        schedule_id=None,
+        report_type=req.template_id,
+        status="pending",
+        generated_at=now,
+        delivered_to=[],
+        payload={"rows": rows, "row_count": len(rows), "format": req.format},
+    )
+    session.add(run)
+    await session.flush()  # populate run.id
+
+    try:
+        delivery = await send_report_email(
+            recipients=req.to,
+            subject=f"Relatório {req.template_id} — {now.date().isoformat()}",
+            body=(
+                f"Relatório '{req.template_id}' gerado em "
+                f"{now.isoformat()} com {len(rows)} linha(s)."
+            ),
+            attachment_name=f"{req.template_id}_{now.date().isoformat()}.{ext}",
+            attachment_text=content,
+        )
+    except EmailDeliveryError as exc:
+        run.status = "failed"
+        run.error = str(exc)
+        session.add(
+            AuditLog(
+                tenant_id=tenant_id,
+                entity_type="report_run",
+                entity_id=run.id,
+                action="INSERT",
+                new_values={"report_type": req.template_id, "status": "failed"},
+                reason="report email delivery failed",
+            )
+        )
+        await session.commit()
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            detail=f"Falha na entrega do relatório por email: {exc}",
+        ) from exc
+
+    # sent → delivered; skipped (SMTP off / dev) → generated.
+    run.status = "delivered" if delivery["sent"] else "generated"
+    run.delivered_to = delivery["recipients"] if delivery["sent"] else []
+    session.add(
+        AuditLog(
+            tenant_id=tenant_id,
+            entity_type="report_run",
+            entity_id=run.id,
+            action="INSERT",
+            new_values={
+                "report_type": req.template_id,
+                "status": run.status,
+                "recipients": req.to,
+            },
+            reason="report emailed",
+        )
+    )
+    await session.commit()
+
+    return ReportEmailResponse(
+        run_id=run.id,
+        template_id=req.template_id,
+        status=run.status,  # type: ignore[arg-type]
+        recipients=req.to,
+        row_count=len(rows),
+        sent=delivery["sent"],
+        skipped=delivery["skipped"],
+        generated_at=now.isoformat(),
+        message=(
+            None
+            if delivery["sent"]
+            else "SMTP desligado — relatório gerado e persistido, não enviado."
+        ),
+    )
 
 
 class ReportRetentionRequest(BaseModel):
