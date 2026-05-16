@@ -13,9 +13,11 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Search, BarChart3, Users, Factory, Layers, Hash } from 'lucide-react';
 import { Panel, ZipToneBadge, EmptyState } from '../dark';
+import { getApiBase } from '../../lib/api';
 
 const TENANT = { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' };
-const BASE = 'http://127.0.0.1:8001';
+// Q.21.A — porta única via api.ts (concorda com VITE_API_URL).
+const BASE = getApiBase();
 
 function isoDays(offset: number): string {
   const d = new Date();

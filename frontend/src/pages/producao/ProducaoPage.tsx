@@ -31,6 +31,7 @@ import {
   type ZipBoatStatus,
 } from '../../components/dark';
 import { CPODashboard } from '../../components/cpo/CPOPanels';
+import { getApiBase } from '../../lib/api';
 
 // ─── PHASES canónicas (matching data.jsx PHASES, slice 0,11) ────────────────
 
@@ -98,8 +99,9 @@ interface ActiveOrder {
 }
 
 async function fetchActiveOrders(): Promise<ActiveOrder[]> {
+  // Q.21.A — base URL via api.ts (concorda com VITE_API_URL).
   const resp = await fetch(
-    'http://127.0.0.1:8001/v1/plan/orders/active?limit=500',
+    `${getApiBase()}/v1/plan/orders/active?limit=500`,
     { headers: { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' } },
   );
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);

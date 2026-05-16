@@ -24,7 +24,7 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { workforceEmployeesApi } from '../../lib/api';
+import { workforceEmployeesApi, getApiBase } from '../../lib/api';
 import { EmployeeFormModal } from '../../components/workforce/EmployeeFormModal';
 import { EmployeeDetailDrawer } from '../../components/workforce/EmployeeDetailDrawer';
 import {
@@ -118,9 +118,10 @@ const HULL_CLIENT: Record<number, string> = {
 
 // ─── Endpoints ──────────────────────────────────────────────────────────────
 
+// Q.21.A — base URL via api.ts (concorda com VITE_API_URL).
 async function fetchEmployees(): Promise<Employee[]> {
   const resp = await fetch(
-    'http://127.0.0.1:8001/v1/core/employees?limit=200',
+    `${getApiBase()}/v1/core/employees?limit=200`,
     { headers: { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' } },
   );
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -130,7 +131,7 @@ async function fetchEmployees(): Promise<Employee[]> {
 async function fetchEmployeeQualityScore(id: string): Promise<{ score: number; defect_rate: number; operations: number } | null> {
   try {
     const resp = await fetch(
-      `http://127.0.0.1:8001/v1/workforce/employees/${id}/quality-score`,
+      `${getApiBase()}/v1/workforce/employees/${id}/quality-score`,
       { headers: { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' } },
     );
     if (!resp.ok) return null;
@@ -142,7 +143,7 @@ async function fetchEmployeeQualityScore(id: string): Promise<{ score: number; d
 
 async function fetchActiveOrders(): Promise<ActiveOrder[]> {
   const resp = await fetch(
-    'http://127.0.0.1:8001/v1/plan/orders/active?limit=500',
+    `${getApiBase()}/v1/plan/orders/active?limit=500`,
     { headers: { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' } },
   );
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);

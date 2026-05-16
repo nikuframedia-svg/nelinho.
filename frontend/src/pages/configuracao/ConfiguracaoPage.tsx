@@ -33,6 +33,7 @@ import {
 } from 'lucide-react';
 import { PageHeader, Tabs } from '../../components/dark';
 import { SkeletonLoader } from '../../components/ui/Skeleton';
+import { getApiBase } from '../../lib/api';
 import { Q17Dashboard } from '../../components/aprendizagem/Q17Panels';
 import { BCamadasDashboard } from '../../components/aprendizagem/BCamadasPanels';
 import { CausalDashboard } from '../../components/causal/CausalPanels';
@@ -413,8 +414,9 @@ interface FitnessWeight {
 
 async function fetchLearnedRules(): Promise<LearnedRuleApi[]> {
   try {
+    // Q.21.A — base URL via api.ts (concorda com VITE_API_URL).
     const resp = await fetch(
-      'http://127.0.0.1:8001/v1/governance/preference-rules?limit=20',
+      `${getApiBase()}/v1/governance/preference-rules?limit=20`,
       { headers: { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' } },
     );
     if (!resp.ok) return [];
@@ -430,7 +432,7 @@ async function fetchFitnessWeights(): Promise<FitnessWeight[]> {
   // Endpoint `/v1/governance/learning/weights` — formato pode variar.
   try {
     const resp = await fetch(
-      'http://127.0.0.1:8001/v1/governance/learning/weights',
+      `${getApiBase()}/v1/governance/learning/weights`,
       { headers: { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' } },
     );
     if (!resp.ok) return [];

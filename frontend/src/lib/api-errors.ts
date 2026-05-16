@@ -100,7 +100,11 @@ export function getErrorSuggestion(error: unknown): string | null {
     case 502:
       return 'O problema pode ser temporário. Tenta novamente em alguns momentos.';
     case 503:
-      return 'Verifica se o servidor backend está a correr em http://localhost:8000';
+      // Q.21.A — porta única. Evita importar getApiBase() (criaria ciclo
+      // api.ts ↔ api-errors.ts); lê a env directamente com o mesmo fallback.
+      return `Verifica se o servidor backend está a correr em ${
+        import.meta.env.VITE_API_URL || 'http://127.0.0.1:8001'
+      }`;
     case 504:
       return 'A ligação pode estar lenta. Verifica a tua ligação à internet.';
     default:

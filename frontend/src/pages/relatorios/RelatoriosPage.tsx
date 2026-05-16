@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { PageHeader, Tabs, Panel } from '../../components/dark';
 import { SkeletonLoader } from '../../components/ui/Skeleton';
+import { getApiBase } from '../../lib/api';
 
 const KPIsPage = lazy(() =>
   import('../profit/KPIsPage').then((m) => ({ default: m.KPIsPage }))
@@ -79,7 +80,8 @@ interface ReportResponse {
 }
 
 async function generateReport(template_id: string, format: ReportFormat): Promise<ReportResponse> {
-  const resp = await fetch('http://127.0.0.1:8001/v1/reports/generate', {
+  // Q.21.A — base URL via api.ts (concorda com VITE_API_URL).
+  const resp = await fetch(`${getApiBase()}/v1/reports/generate`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

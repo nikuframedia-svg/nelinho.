@@ -9,9 +9,11 @@
 import { useQuery } from '@tanstack/react-query';
 import { X, Wrench } from 'lucide-react';
 import { ZipToneBadge, EmptyState } from '../dark';
+import { getApiBase } from '../../lib/api';
 
 const TENANT = { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' };
-const BASE = 'http://127.0.0.1:8001';
+// Q.21.A — porta única via api.ts (concorda com VITE_API_URL).
+const BASE = getApiBase();
 
 interface ReworkRow {
   id?: string;

@@ -24,8 +24,11 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { getApiBase } from '../lib/api';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// Q.21.A — porta única via api.ts. `EventSource` precisa do URL cru, por isso
+// usa `getApiBase()` em vez de `apiFetch` (SSE não passa pelo circuit breaker).
+const API_BASE = getApiBase();
 
 // Keep at most this many events in the rolling buffer. Old events are
 // dropped head-first so long-running pages don't grow unbounded.

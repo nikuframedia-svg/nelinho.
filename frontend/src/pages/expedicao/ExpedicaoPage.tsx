@@ -33,6 +33,7 @@ import {
 } from 'lucide-react';
 import { PageHeader, Tabs } from '../../components/dark';
 import { SkeletonLoader } from '../../components/ui/Skeleton';
+import { getApiBase } from '../../lib/api';
 
 const SupplyDashboard = lazy(() =>
   import('../../components/supply/SupplyPanels').then((m) => ({ default: m.SupplyDashboard })),
@@ -56,8 +57,9 @@ interface TransportBatch {
 }
 
 async function fetchTransportBatches(): Promise<TransportBatch[]> {
+  // Q.21.A — base URL via api.ts (concorda com VITE_API_URL).
   const resp = await fetch(
-    'http://127.0.0.1:8001/v1/plan/transport/batches?limit=20',
+    `${getApiBase()}/v1/plan/transport/batches?limit=20`,
     { headers: { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' } },
   );
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
