@@ -576,9 +576,23 @@ async def get_producer() -> KafkaProducerClient:
 
 
 async def publish_event(topic: str, event: EventBase) -> bool:
-    """Convenience function to publish an event."""
-    producer = await get_producer()
-    return await producer.publish(topic, event)
+    """Convenience function to publish an event.
+
+    Best-effort by design. On single-server native deploys (and in dev)
+    Kafka is not running — the transactional outbox (`event_outbox` +
+    LISTEN/NOTIFY) is the durable event path. A broker that is absent or
+    unreachable must never 500 the request that triggered the event, so
+    any connection/start failure is logged and swallowed, returning
+    `False`. Callers already ignore the return value.
+    """
+    try:
+        producer = await get_producer()
+        return await producer.publish(topic, event)
+    except Exception as exc:
+        logger.warning(
+            "publish_event(%s) skipped — Kafka unavailable: %s", topic, exc,
+        )
+        return False
 
 
 async def shutdown_kafka() -> None:
