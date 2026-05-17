@@ -17,10 +17,49 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.profit.models.cost import CostCalculation, CalculationStatus
 from src.profit.calculators.cogs_calculator import COGSCalculator, COGSResult
 from src.profit.calculators.scenario_simulator import ScenarioSimulator, CostMultipliers, ScenarioResult
+from src.core.services.configuration_service import ConfigurationService
+from src.profit.services.labor_cost_service import LaborCostResult, LaborCostService
+from src.profit.services.material_cost_service import MaterialCostResult, MaterialCostService
 from src.shared.kafka_client import publish_event, Topics
 from src.shared.events import COGSCalculatedEvent
 
 _logger = logging.getLogger(__name__)
+
+
+def assemble_cogs_inputs(
+    material: MaterialCostResult,
+    labor: LaborCostResult,
+    overhead_rate: Decimal,
+) -> Dict[str, Any]:
+    """Constrói os argumentos do COGSCalculator a partir das fontes reais.
+
+    Q.26.F.1 — liga o COGS ponta-a-ponta: material vem do BOM real
+    (Q.26.B), mão-de-obra do histórico OF_FP×OFFP_EQ (Q.26.C), overhead
+    da taxa configurada (`core.overhead_rates`). Cada fase de mão-de-obra
+    vira uma alocação `{horas, taxa}` — o calculador faz horas×taxa, que é
+    exactamente o custo da linha. As `total_production_hours` (base do
+    rateio de overhead) são as horas reais com decorrido válido.
+
+    Função pura — sem BD, testável directo.
+    """
+    labor_allocations = [
+        {
+            "employee_id": f"fase:{ln.phase_id}",
+            "employee_name": ln.phase_name,
+            "hours": ln.hours,
+            "rate": ln.sum_operator_rate,
+        }
+        for ln in labor.lines
+    ]
+    total_production_hours = sum(
+        (ln.hours for ln in labor.lines if ln.has_hours), Decimal("0")
+    )
+    return {
+        "bom_costs": dict(material.bom_costs),
+        "labor_allocations": labor_allocations,
+        "overhead_rate": overhead_rate,
+        "total_production_hours": total_production_hours,
+    }
 
 
 class CostService:
@@ -94,7 +133,51 @@ class CostService:
         )
         
         return result
-    
+
+    async def calculate_cogs_from_sources(
+        self,
+        *,
+        order_id: str,
+        product_id: UUID,
+        work_order_id: int,
+        quantity: Decimal = Decimal("1"),
+        save: bool = True,
+    ) -> COGSResult:
+        """Calcula o COGS de uma OF a partir das fontes de dados reais.
+
+        Q.26.F.1 — liga o COGS ponta-a-ponta. Em vez de receber os custos
+        por payload, puxa-os:
+
+        * material — `MaterialCostService` (BOM real × custo standard);
+        * mão-de-obra — `LaborCostService` (horas reais OF_FP × custo/hora);
+        * overhead — `ConfigurationService.get_overhead_rate_value()`.
+
+        `product_id` é o UUID de `core.products`; `work_order_id` é o
+        `OF_ID` legado do ERP. Custo de máquina fica 0 (Q.26.E — depende
+        do IoT). O resultado é persistido como qualquer COGS (`save`).
+        """
+        material = await MaterialCostService(
+            self.session, self.tenant_id
+        ).material_cost(product_id)
+        labor = await LaborCostService(
+            self.session, self.tenant_id
+        ).labor_cost(work_order_id)
+        overhead_rate = await ConfigurationService(
+            self.session, self.tenant_id
+        ).get_overhead_rate_value()
+
+        inputs = assemble_cogs_inputs(material, labor, overhead_rate)
+        return await self.calculate_cogs(
+            order_id=order_id,
+            product_id=product_id,
+            quantity=quantity,
+            bom_costs=inputs["bom_costs"],
+            labor_allocations=inputs["labor_allocations"],
+            overhead_rate=inputs["overhead_rate"],
+            total_production_hours=inputs["total_production_hours"],
+            save=save,
+        )
+
     async def _save_calculation(
         self,
         result: COGSResult,
