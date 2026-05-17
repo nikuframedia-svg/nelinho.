@@ -155,6 +155,9 @@ class _FakeScalars:
     def all(self) -> List[Any]:
         return list(self._items)
 
+    def first(self) -> Any:
+        return self._items[0] if self._items else None
+
 
 @pytest.fixture
 def fake_session() -> FakeSession:

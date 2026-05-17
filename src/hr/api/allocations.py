@@ -4,10 +4,11 @@ ProdPlan ONE - Allocations API
 """
 
 from datetime import date
+from decimal import Decimal
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -42,6 +43,24 @@ class AllocationCreatedItem(BaseModel):
 
 class AllocationCreateResponse(BaseModel):
     allocations: List[AllocationCreatedItem]
+
+
+class DailyAllocationRequest(BaseModel):
+    """Q.31.D.2 — atribuição drag-drop de um operador a um barco."""
+    employee_id: UUID
+    order_id: str
+    allocation_date: Optional[date] = None
+    allocated_hours: float = 8.0
+
+
+class DailyAllocationResponse(BaseModel):
+    allocation_id: str
+    employee_id: str
+    order_id: str
+    operation_id: str
+    allocation_date: str
+    allocated_hours: float
+    status: str
 
 
 class EmployeeAvailabilityResponse(BaseModel):
@@ -87,6 +106,41 @@ async def create_allocations(
     )
 
     return AllocationCreateResponse(allocations=allocations)
+
+
+@router.post("/daily", response_model=DailyAllocationResponse)
+async def create_daily_allocation(
+    request: DailyAllocationRequest,
+    tenant_id: UUID = Depends(require_tenant_header),
+    session: AsyncSession = Depends(get_session),
+):
+    """Q.31.D.2 — atribui um operador a um barco para um dia (drag-drop).
+
+    O serviço resolve a operação concreta a partir da `ProductionSchedule`.
+    Ordem sem fase agendada para o dia → 409.
+    """
+    service = AllocationService(session, tenant_id)
+    try:
+        allocation = await service.create_single_allocation(
+            employee_id=request.employee_id,
+            order_id=request.order_id,
+            allocation_date=request.allocation_date or date.today(),
+            allocated_hours=Decimal(str(request.allocated_hours)),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+    await session.commit()
+
+    return DailyAllocationResponse(
+        allocation_id=str(allocation.id),
+        employee_id=str(allocation.employee_id),
+        order_id=allocation.order_id,
+        operation_id=str(allocation.operation_id),
+        allocation_date=allocation.allocation_date.isoformat(),
+        allocated_hours=float(allocation.allocated_hours),
+        status=allocation.status.value,
+    )
 
 
 @router.get(

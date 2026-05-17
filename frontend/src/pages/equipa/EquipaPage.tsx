@@ -23,8 +23,17 @@
 
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { workforceEmployeesApi, getApiBase } from '../../lib/api';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  DndContext,
+  PointerSensor,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import { allocationsApi, workforceEmployeesApi, getApiBase } from '../../lib/api';
 import { EmployeeFormModal } from '../../components/workforce/EmployeeFormModal';
 import { EmployeeDetailDrawer } from '../../components/workforce/EmployeeDetailDrawer';
 import {
@@ -720,6 +729,15 @@ function ListaTab() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 function AlocacoesTab() {
+  const queryClient = useQueryClient();
+  // Q.31.D.2 — feedback do último arrasto (confirmação ou 409 honesto)
+  // e nomes dos operadores recém-atribuídos por barco. Estado efémero:
+  // é a confirmação da ação, não um histórico que finge ser persistido.
+  const [feedback, setFeedback] = useState<
+    { kind: 'ok' | 'error'; text: string } | null
+  >(null);
+  const [recentAssign, setRecentAssign] = useState<Record<string, string>>({});
+
   const employeesQuery = useQuery({
     queryKey: ['equipa', 'alocacoes', 'employees'],
     queryFn: fetchEmployees,
@@ -752,7 +770,56 @@ function AlocacoesTab() {
   const employees = employeesQuery.data ?? [];
   const orders = ordersQuery.data ?? [];
 
+  // Chave do barco = hull (o que `production_schedules.order_id` guarda;
+  // ver scripts/seed_nelo_demo.py). Fallback ao UUID se não houver hull.
+  const orderKey = (o: ActiveOrder): string => o.hull ?? o.id;
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+  );
+
+  const assignMutation = useMutation({
+    mutationFn: (payload: { employee_id: string; order_id: string }) =>
+      allocationsApi.createDaily(payload),
+  });
+
+  const employeeById = useMemo(
+    () => new Map(employees.map((e) => [e.id, e])),
+    [employees],
+  );
+  const orderByKey = useMemo(
+    () => new Map(orders.map((o) => [orderKey(o), o])),
+    [orders],
+  );
+
+  const handleDragEnd = async (event: DragEndEvent) => {
+    if (!event.over) return;
+    const employeeId = String(event.active.id);
+    const targetKey = String(event.over.id);
+    const emp = employeeById.get(employeeId);
+    const order = orderByKey.get(targetKey);
+    if (!emp || !order) return;
+    try {
+      await assignMutation.mutateAsync({
+        employee_id: employeeId,
+        order_id: targetKey,
+      });
+      setRecentAssign((prev) => ({ ...prev, [targetKey]: emp.employee_name }));
+      setFeedback({
+        kind: 'ok',
+        text: `${emp.employee_name} atribuído ao ${order.product_type} #${order.hull ?? '—'}.`,
+      });
+      queryClient.invalidateQueries({ queryKey: ['equipa', 'alocacoes'] });
+    } catch (err) {
+      setFeedback({
+        kind: 'error',
+        text: err instanceof Error ? err.message : 'Erro ao atribuir operador.',
+      });
+    }
+  };
+
   return (
+    <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
     <div className="space-y-5">
       {/* Explainer */}
       <div
@@ -829,12 +896,36 @@ function AlocacoesTab() {
                 Sem barcos activos.
               </div>
             ) : (
-              orders.slice(0, 8).map((o) => <DispatchRowZip key={o.id} order={o} />)
+              orders.slice(0, 8).map((o) => (
+                <DispatchRowZip
+                  key={o.id}
+                  order={o}
+                  dropId={orderKey(o)}
+                  assignedName={recentAssign[orderKey(o)] ?? null}
+                />
+              ))
             )}
           </div>
         </div>
       </div>
+
+      {/* Q.31.D.2 — feedback do arrasto */}
+      {feedback ? (
+        <div
+          style={{
+            padding: '10px 14px',
+            borderRadius: 8,
+            fontSize: 12,
+            background: feedback.kind === 'ok' ? 'var(--green-bg)' : 'var(--red-bg)',
+            border: `1px solid var(--${feedback.kind === 'ok' ? 'green' : 'red'}-bd)`,
+            color: `var(--${feedback.kind === 'ok' ? 'green' : 'red'})`,
+          }}
+        >
+          {feedback.text}
+        </div>
+      ) : null}
     </div>
+    </DndContext>
   );
 }
 
@@ -965,8 +1056,16 @@ function WorkerRowZip({
   const isAvailable = employee.status === 'ACTIVE';
   const statusLabel = isAvailable ? 'Disponível' : 'Férias';
 
+  // Q.31.D.2 — operador arrastável; o id do draggable é o employee.id.
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: employee.id,
+  });
+
   return (
     <div
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
       style={{
         padding: '10px 12px',
         background: 'var(--bg-1)',
@@ -976,7 +1075,7 @@ function WorkerRowZip({
         alignItems: 'center',
         gap: 11,
         cursor: 'grab',
-        opacity: isAvailable ? 1 : 0.5,
+        opacity: isDragging ? 0.4 : isAvailable ? 1 : 0.5,
       }}
     >
       <GripVertical size={14} className="text-text-dark-tertiary" />
@@ -1013,8 +1112,18 @@ function WorkerRowZip({
   );
 }
 
-function DispatchRowZip({ order }: { order: ActiveOrder }) {
+function DispatchRowZip({
+  order,
+  dropId,
+  assignedName,
+}: {
+  order: ActiveOrder;
+  dropId: string;
+  assignedName: string | null;
+}) {
   const hull = parseInt(order.hull ?? '0', 10) || 0;
+  // Q.31.D.2 — alvo de largada; o id do droppable é a chave do barco.
+  const { setNodeRef, isOver } = useDroppable({ id: dropId });
   const status = deriveBoatStatus(order.transport_date, order.phase);
   const statusColor = {
     on_time: 'green',
@@ -1068,20 +1177,28 @@ function DispatchRowZip({ order }: { order: ActiveOrder }) {
           {order.phase ?? '—'}
         </div>
         <div
+          ref={setNodeRef}
           style={{
             display: 'flex',
             alignItems: 'center',
             gap: 8,
             padding: '8px 10px',
-            background: 'var(--bg-2)',
-            border: '1px dashed var(--bd-2)',
+            background: isOver ? 'var(--green-bg)' : 'var(--bg-2)',
+            border: `1px dashed var(--${isOver ? 'green-bd' : 'bd-2'})`,
             borderRadius: 6,
             minHeight: 42,
+            transition: 'background 0.12s',
           }}
         >
-          <span className="text-xs text-text-dark-tertiary">
-            Arraste um operador para aqui
-          </span>
+          {assignedName ? (
+            <span className="text-xs" style={{ color: 'var(--green)' }}>
+              ● {assignedName} atribuído hoje
+            </span>
+          ) : (
+            <span className="text-xs text-text-dark-tertiary">
+              Arraste um operador para aqui
+            </span>
+          )}
         </div>
       </div>
 

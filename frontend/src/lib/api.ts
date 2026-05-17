@@ -711,7 +711,29 @@ export const allocationsApi = {
       `/v1/hr/allocations/optimize/${scheduleId}`,
       { method: 'POST' },
     ),
+
+  // Q.31.D.2 — atribuição drag-drop de um operador a um barco para um dia.
+  createDaily: (payload: {
+    employee_id: string;
+    order_id: string;
+    allocation_date?: string;
+    allocated_hours?: number;
+  }) =>
+    request<DailyAllocationResponse>('/v1/hr/allocations/daily', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
 };
+
+export interface DailyAllocationResponse {
+  allocation_id: string;
+  employee_id: string;
+  order_id: string;
+  operation_id: string;
+  allocation_date: string;
+  allocated_hours: number;
+  status: string;
+}
 
 // Payroll
 export const payrollApi = {
