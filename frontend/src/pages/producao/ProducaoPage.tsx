@@ -216,7 +216,7 @@ export default function ProducaoPage() {
         }
       />
 
-      <div className="px-6 py-4">
+      <div className="px-6 py-4 page-enter">
         {view === 'phases' && (
           <PhasesView
             phaseColumns={phaseColumns}
@@ -246,6 +246,18 @@ function PhasesView({
   isLoading: boolean;
   isError: boolean;
 }) {
+  // Q.23.E — a fase com mais barcos acumulados é o gargalo. Hooks antes
+  // de qualquer early return.
+  const bottleneckPhase = useMemo(() => {
+    let best: string | null = null;
+    let max = 1; // só marca se houver acumulação real (>=2 barcos)
+    for (const p of phaseColumns) {
+      const n = (ordersByPhase.get(p.name) ?? []).length;
+      if (n > max) { max = n; best = p.name; }
+    }
+    return best;
+  }, [phaseColumns, ordersByPhase]);
+
   if (isLoading) {
     return (
       <div className="px-4 py-12 text-center text-xs text-text-dark-tertiary">
@@ -286,6 +298,7 @@ function PhasesView({
       </div>
 
       <div
+        className="page-enter"
         style={{
           display: 'grid',
           gridTemplateColumns: `repeat(${phaseColumns.length}, minmax(140px, 1fr))`,
@@ -296,16 +309,18 @@ function PhasesView({
       >
         {phaseColumns.map((p) => {
           const boats = ordersByPhase.get(p.name) ?? [];
+          const isBottleneck = p.name === bottleneckPhase;
           return (
             <div
               key={p.name}
               style={{
                 background: 'var(--bg-1)',
-                border: '1px solid var(--bd-1)',
+                border: `1px solid ${isBottleneck ? 'var(--orange-bd)' : 'var(--bd-1)'}`,
                 borderRadius: 8,
                 minHeight: 380,
                 display: 'flex',
                 flexDirection: 'column',
+                boxShadow: isBottleneck ? '0 0 0 1px var(--orange-bd)' : undefined,
               }}
             >
               {/* Header — Q.21.C: contagem real de barcos. Sem barra
@@ -337,13 +352,25 @@ function PhasesView({
                     className="tabular-nums"
                     style={{
                       fontSize: 11,
-                      color: 'var(--fg-2)',
+                      color: isBottleneck ? 'var(--orange)' : 'var(--fg-2)',
                       fontWeight: 600,
                     }}
                   >
                     {boats.length} barco{boats.length !== 1 ? 's' : ''}
                   </span>
                 </div>
+                {isBottleneck ? (
+                  <div
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 600,
+                      color: 'var(--orange)',
+                      marginTop: 4,
+                    }}
+                  >
+                    ● Gargalo — mais barcos acumulados
+                  </div>
+                ) : null}
               </div>
 
               {/* Body */}
@@ -390,6 +417,15 @@ function PhasesView({
 // O endpoint /v1/plan/orders/active não devolve início/fim de fase por dia,
 // por isso mostramos uma tabela só com dados reais (barco · fase actual ·
 // expedição · estado), em vez de inventar uma timeline.
+
+// Q.23.E — cor do left-border de estado por linha (padrão AlertCardZip).
+const GANTT_STATUS_BAR: Record<ZipBoatStatus, string> = {
+  on_time: 'var(--green)',
+  at_risk: 'var(--yellow)',
+  late: 'var(--red)',
+  curing: 'var(--blue)',
+  completed: 'var(--green)',
+};
 
 function GanttView({ orders }: { orders: ActiveOrder[] }) {
   if (orders.length === 0) {
@@ -442,7 +478,8 @@ function GanttView({ orders }: { orders: ActiveOrder[] }) {
               return (
                 <tr
                   key={o.id ?? idx}
-                  className="border-b border-white/[0.04] hover:bg-white/[0.02]"
+                  className="border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors"
+                  style={{ boxShadow: `inset 3px 0 0 0 ${GANTT_STATUS_BAR[status]}` }}
                 >
                   <td className="px-3 py-2 font-medium text-text-dark-primary">
                     {o.product_type} #{hull || '—'}
