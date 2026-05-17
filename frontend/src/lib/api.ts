@@ -1837,6 +1837,44 @@ export const profitDashboardApi = {
   },
 };
 
+// ─── Q.31.A — drill-down de lucro (margem por barco) ─────────────────────
+
+export interface OrderMarginRow {
+  order_id: string;
+  hull: string;
+  product_name: string;
+  product_type: string;
+  status: string;
+  calculated: boolean;
+  revenue_eur: number | null;
+  total_cogs: number | null;
+  margin_eur: number | null;
+  margin_pct: number | null;
+}
+
+export interface OrderMarginsResponse {
+  count: number;
+  items: OrderMarginRow[];
+}
+
+export interface MarginSummaryResponse {
+  days: number;
+  order_count: number;
+  avg_margin_eur: number | null;
+  median_margin_eur: number | null;
+  negative_count: number;
+}
+
+export const profitApi = {
+  orderMargins: (params?: { date_from?: string; date_to?: string; limit?: number }) =>
+    request<OrderMarginsResponse>(
+      `/v1/profit/orders/margins?${new URLSearchParams(filterParams(params))}`,
+    ),
+
+  marginSummary: (days = 30) =>
+    request<MarginSummaryResponse>(`/v1/profit/orders/margin-summary?days=${days}`),
+};
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // SPRINT Q.5 — CEO dashboard tiles (OTD / Backlog / Alerts / FPY / Expeditions)
 // ═══════════════════════════════════════════════════════════════════════════════
