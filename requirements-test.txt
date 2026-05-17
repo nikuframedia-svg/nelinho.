@@ -55,10 +55,20 @@ joblib>=1.3
 scikit-learn>=1.5,<2
 numpy>=1.26,<3
 
-# pandas — os testes Q.12 de supply (ABC analysis, ROP, shortage detector)
-# importam src.supply.*, que usa pandas. Sem isto, 4 ficheiros falham na
-# colecção com ModuleNotFoundError. Pin alinhado com requirements.txt.
+# Engines exercitados pela suite — antes ausentes daqui (a suite cresceu
+# para além dos unit tests "mock-heavy" originais; `pytest tests/` corre-os
+# a todos):
+#  - pandas         : tests/supply/* (ABC analysis, ROP, shortage detector)
+#  - openpyxl       : tests/factory_data_product/* (ingestão de .xlsx)
+#  - alembic        : tests/shared/test_schema_drift.py (cadeia de migrações)
+#  - scipy/networkx : tests/copilot/test_discovery|attribution (causal)
+# Sem estes, 16 testes falham (colecção ou asserções). Pins alinhados com
+# requirements.txt onde aplicável.
 pandas>=2.2,<4
+openpyxl>=3.1,<4
+alembic==1.13.1
+scipy>=1.12,<2
+networkx>=3,<4
 
 # Testing
 pytest==7.4.4
