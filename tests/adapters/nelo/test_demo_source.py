@@ -80,10 +80,15 @@ async def test_phases_are_derived_from_routing():
 
 
 async def test_absent_sections_return_empty():
-    """Operators, skills, molds and operations are not in the package."""
+    """Operators, skills and molds are not in the package."""
     assert await demo_source.list_entities(internal_only=True) == []
     assert await demo_source.list_entity_phases() == []
     assert await demo_source.list_molds() == []
+
+
+async def test_operations_empty_when_package_predates_q24d_builder():
+    """The shipped demo_orders.json has no `operations` key yet — until
+    the Q.24.D builder extension is re-run, list_operations is empty."""
     assert await demo_source.list_operations(date_from=None, date_to=None) == []
 
 
@@ -136,3 +141,90 @@ async def test_package_path_override(monkeypatch, tmp_path):
     orders = await demo_source.list_open_orders()
     assert len(orders) == 1
     assert orders[0].work_order_id == 9001
+
+
+def _pkg_with_operations(ops: list[dict]) -> dict:
+    """A one-order synthetic package carrying an `operations` block —
+    models a demo package built by the Q.24.D builder extension."""
+    return {
+        "generated_at": "2026-01-01T00:00:00",
+        "source": "test",
+        "order_count": 1,
+        "orders": [
+            {
+                "order": {
+                    "work_order_id": 9001,
+                    "cost_price": 100.0,
+                    "sale_price": 200.0,
+                    "discount": 0.0,
+                    "paid_amount": 200.0,
+                    "coefficient_eur": 0.0,
+                    "is_paid": True,
+                    "supervised": False,
+                    "sequence": 1,
+                    "product_id": 42,
+                    "current_phase_id": 3,
+                    "warehouse_id": 1,
+                },
+                "routing": [],
+                "bom": [],
+                "movements": [],
+                "operations": ops,
+            }
+        ],
+    }
+
+
+def _op(operation_id: int, phase_id: int, end_at: str) -> dict:
+    return {
+        "operation_id": operation_id,
+        "work_order_id": 9001,
+        "phase_id": phase_id,
+        "phase_name": f"Fase {phase_id}",
+        "start_at": "2026-03-01T08:00:00",
+        "end_at": end_at,
+    }
+
+
+async def test_operations_loaded_and_product_id_injected(monkeypatch, tmp_path):
+    """Q.24.D — operations bundled by the builder load, with product_id
+    injected from the parent order (OF_FP has no product column)."""
+    path = tmp_path / "demo.json"
+    path.write_text(
+        json.dumps(_pkg_with_operations([_op(1, 3, "2026-03-01T12:00:00")])),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DEMO_PACKAGE_PATH", str(path))
+    demo_source._load.cache_clear()
+
+    ops = await demo_source.list_operations(date_from=None, date_to=None)
+    assert len(ops) == 1
+    assert ops[0].operation_id == 1
+    assert ops[0].product_id == 42  # injected from the order
+    assert ops[0].end_at is not None
+
+
+async def test_operations_filtered_by_end_at_window(monkeypatch, tmp_path):
+    from datetime import date
+
+    path = tmp_path / "demo.json"
+    path.write_text(
+        json.dumps(
+            _pkg_with_operations(
+                [
+                    _op(1, 3, "2026-01-15T12:00:00"),
+                    _op(2, 4, "2026-03-15T12:00:00"),
+                    _op(3, 5, "2026-06-15T12:00:00"),
+                ]
+            )
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("DEMO_PACKAGE_PATH", str(path))
+    demo_source._load.cache_clear()
+
+    ops = await demo_source.list_operations(
+        date_from=date(2026, 3, 1), date_to=date(2026, 4, 1)
+    )
+    assert [o.operation_id for o in ops] == [2]
+

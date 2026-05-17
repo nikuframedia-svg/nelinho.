@@ -253,7 +253,82 @@ async def list_molds() -> List[MoldRow]:
 
 
 async def list_operations(date_from: Any = None, date_to: Any = None, limit: int = 100_000) -> List[OperationRow]:
-    """The package bundles `movements`, not `OF_FP` operations. Q.24.D
-    extends the builder to add operations; until then this is empty so
-    the quality + time_mining mirrors run as clean no-ops."""
-    return []
+    """Operation history (`OF_FP`) bundled per order by the Q.24.D
+    builder extension. Feeds the quality + time_mining mirrors.
+
+    Filters by ``end_at`` in ``[date_from, date_to]`` when a window is
+    given. A package built before the Q.24.D builder extension has no
+    ``operations`` key — this then returns ``[]`` and the dependent
+    mirrors run as clean no-ops.
+
+    ``product_id`` is not on `OF_FP`; it is injected from the parent
+    order. ``standard_time_hours`` is not consulted by the mirrors
+    (time_mining uses the real start/end span) so it defaults to 0.
+    """
+    lo, hi = _window_bounds(date_from, date_to)
+    out: List[OperationRow] = []
+    for order in _orders():
+        product_id = order.get("order", {}).get("product_id")
+        for raw in order.get("operations", []):
+            end_at = _as_datetime(raw.get("end_at"))
+            if end_at is not None:
+                if lo is not None and end_at < lo:
+                    continue
+                if hi is not None and end_at >= hi:
+                    continue
+            out.append(_operation_row(raw, product_id))
+    return out[: int(limit)] if limit else out
+
+
+def _window_bounds(date_from: Any, date_to: Any) -> "tuple[datetime | None, datetime | None]":
+    """Coerce a (date_from, date_to) filter to half-open datetime bounds
+    ``[lo, hi)``. A plain ``date`` upper bound is inclusive of its whole
+    day — matching ``services.list_operations`` (which adds one day) so
+    the demo + ERP sources filter identically."""
+    from datetime import date as _date_cls
+    from datetime import timedelta
+
+    lo = _as_datetime(date_from)
+    hi = _as_datetime(date_to)
+    if (
+        hi is not None
+        and isinstance(date_to, _date_cls)
+        and not isinstance(date_to, datetime)
+    ):
+        hi = hi + timedelta(days=1)
+    return lo, hi
+
+
+def _as_datetime(value: Any) -> "datetime | None":
+    """Coerce an ISO string / date / datetime / None to a datetime."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    # a plain date
+    try:
+        return datetime(value.year, value.month, value.day)
+    except AttributeError:
+        return None
+
+
+def _operation_row(raw: Dict[str, Any], product_id: Any) -> OperationRow:
+    """Demo operation dict → OperationRow, injecting `product_id` from
+    the parent order and defaulting the columns `OF_FP` lacks."""
+    return OperationRow.model_validate(
+        {
+            "standard_time_hours": 0.0,
+            **raw,
+            "product_id": raw.get("product_id") or product_id,
+            "temperature": raw.get("temperature") or 0.0,
+            "humidity": raw.get("humidity") or 0.0,
+            "is_return": bool(raw.get("is_return")),
+            "severe_return": bool(raw.get("severe_return")),
+        }
+    )
+

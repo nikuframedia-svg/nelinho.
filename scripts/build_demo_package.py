@@ -184,6 +184,37 @@ WHERE m.MOV_OF_ID = ?
 ORDER BY m.MOV_DATA
 """
 
+# Q.24.D — per-OF operation history (OF_FP). Feeds the demo_source
+# `list_operations()` so the quality + time_mining mirrors can run on
+# real durations. start_at/end_at are the real OFFP_DATA{INICIO,FIM};
+# `product_id` is not on OF_FP — the demo_source injects it from the
+# parent order.
+OPERATIONS_SQL = """
+SELECT
+    offp.OFFP_ID              AS operation_id,
+    offp.OFFP_OF_ID           AS work_order_id,
+    offp.OFFP_FP_ID           AS phase_id,
+    fp.FP_NOME                AS phase_name,
+    offp.OFFP_DATAINICIO      AS start_at,
+    offp.OFFP_DATAFIM         AS end_at,
+    offp.OFFP_DATA_PREVISTA   AS expected_at,
+    offp.OFFP_TEMPERATURA     AS temperature,
+    offp.OFFP_HUMIDADE        AS humidity,
+    offp.OFFP_PROBS_GOLA      AS problem_neck,
+    offp.OFFP_PROBS_INTERIOR  AS problem_interior_id,
+    offp.OFFP_PROBS_PINTURA   AS problem_paint_id,
+    offp.OFFP_PROBS_MOLDE     AS problem_mold_id,
+    offp.OFFP_PROBS_LAMINAGEM AS problem_lamination_id,
+    offp.OFFP_PROBS_DATA      AS problem_logged_at,
+    offp.OFFP_RETURN          AS is_return,
+    offp.OFFP_RETORNO_GRAVE   AS severe_return,
+    fp.FP_AUTOMATICA          AS phase_is_automatic
+FROM dbo.OF_FP offp WITH (NOLOCK)
+INNER JOIN dbo.FASES_PRODUCAO fp WITH (NOLOCK) ON fp.FP_ID = offp.OFFP_FP_ID
+WHERE offp.OFFP_OF_ID = ?
+ORDER BY offp.OFFP_DATAINICIO
+"""
+
 
 def main() -> int:
     print("Connecting to MAR-KAYAKS …", flush=True)
@@ -210,6 +241,8 @@ def main() -> int:
         bom = _rows_to_dicts(cur)
         cur.execute(MOVEMENTS_SQL, wo_id)
         movements = _rows_to_dicts(cur)
+        cur.execute(OPERATIONS_SQL, wo_id)
+        operations = _rows_to_dicts(cur)
 
         out.append(
             {
@@ -217,17 +250,20 @@ def main() -> int:
                 "routing": routing,
                 "bom": bom,
                 "movements": movements,
+                "operations": operations,
                 "counts": {
                     "routing_steps": len(routing),
                     "bom_lines": len(bom),
                     "movements": len(movements),
+                    "operations": len(operations),
                 },
             }
         )
         print(
             f"  [{i:>2}/{len(orders)}] WO {wo_id:>10}  "
             f"product={order['product_name']:<40.40}  "
-            f"route={len(routing):>3}  bom={len(bom):>3}  mov={len(movements):>4}",
+            f"route={len(routing):>3}  bom={len(bom):>3}  "
+            f"mov={len(movements):>4}  ops={len(operations):>3}",
             flush=True,
         )
 
@@ -289,6 +325,7 @@ def main() -> int:
         "routing_steps",
         "bom_lines",
         "movements",
+        "operations",
     ]
     with csv_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=csv_cols)
@@ -299,6 +336,7 @@ def main() -> int:
             row["routing_steps"] = record["counts"]["routing_steps"]
             row["bom_lines"] = record["counts"]["bom_lines"]
             row["movements"] = record["counts"]["movements"]
+            row["operations"] = record["counts"].get("operations", 0)
             # Serialize dates / decimals to strings
             for k, v in list(row.items()):
                 if isinstance(v, (datetime, date)):
@@ -316,6 +354,7 @@ def main() -> int:
     print(f"  Total movements:   {sum(r['counts']['movements'] for r in out)}")
     print(f"  Total BOM lines:   {sum(r['counts']['bom_lines'] for r in out)}")
     print(f"  Total routing:     {sum(r['counts']['routing_steps'] for r in out)}")
+    print(f"  Total operations:  {sum(r['counts'].get('operations', 0) for r in out)}")
     types_seen = {(r["order"]["product_type_id"], r["order"]["product_type_name"]) for r in out}
     print(f"  Product types:     {len(types_seen)}")
     for tid, tname in sorted(types_seen):
