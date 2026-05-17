@@ -14,6 +14,8 @@ frontend always needs a usable ``CurrentUser``.
 
 from __future__ import annotations
 
+from typing import Optional
+
 from sqlalchemy import String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -40,6 +42,9 @@ class User(TenantBase):
     email: Mapped[str] = mapped_column(String(255), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(32), nullable=False)
+    # Q.31.G — hash bcrypt da password (login real D3). Nullable: um
+    # utilizador sem hash não pode autenticar por password.
+    password_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     def __repr__(self) -> str:
         return f"<User {self.email} ({self.role})>"

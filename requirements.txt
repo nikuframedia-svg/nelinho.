@@ -35,6 +35,9 @@ aiokafka==0.10.0
 # Sprint Q.7 Fase 4 — python-jose 3.3.0 → 3.4.0 (PYSEC-2024-232/233 algorithm-confusion + DoS)
 python-jose[cryptography]>=3.4.0,<4
 passlib[bcrypt]==1.7.4
+# Q.31.G — hashing de passwords. Usado directamente (bcrypt 4/5) porque o
+# passlib 1.7.4 não detecta o backend do bcrypt moderno.
+bcrypt>=4.0,<6
 
 # Data Processing
 # NOTE: Sprint I.3/I.4 bumped these — dowhy requires numpy>=2 and

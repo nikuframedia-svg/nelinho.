@@ -554,6 +554,10 @@ app.include_router(plan_cpo_router)  # CPO v4 scheduler (Sprint E — DRCFFS-R)
 from src.shared.api.auth_me import router as auth_me_router
 app.include_router(auth_me_router)
 
+# Q.31.G — login real por password (POST /v1/auth/login + /refresh).
+from src.shared.api.auth_login import router as auth_login_router
+app.include_router(auth_login_router)
+
 # Sprint Q.18.ZIP.BE.4 — POST /v1/reports/generate dispatcher.
 from src.reports.api import router as reports_router
 app.include_router(reports_router)
