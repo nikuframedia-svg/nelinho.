@@ -68,7 +68,12 @@ async def calculate_cogs(
         total_production_hours=request.total_production_hours,
         scrap_rate=request.scrap_rate,
     )
-    
+
+    # _save_calculation faz add+flush; get_session só faz commit automático
+    # quando session.new/dirty estão preenchidos — o flush esvazia-os, por
+    # isso a linha CostCalculation perdia-se no rollback. Commit explícito.
+    await session.commit()
+
     return COGSResponse(
         order_id=result.order_id,
         total_cogs=float(result.total_cogs),
@@ -124,6 +129,11 @@ async def calculate_order_cogs(
         product_id=product.id,
         work_order_id=work_order_id,
     )
+
+    # Commit explícito — ver nota em calculate_cogs (flush esvazia o
+    # session.new e o get_session não faz commit automático).
+    await session.commit()
+
     return COGSResponse(
         order_id=result.order_id,
         total_cogs=float(result.total_cogs),
