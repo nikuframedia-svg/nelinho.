@@ -483,9 +483,20 @@ async def list_products(limit: int = 50_000) -> list[ProductRow]:
 
 
 async def list_entities(internal_only: bool = False, limit: int = 20_000) -> list[EntityRow]:
-    """Entities from `ENTIDADE`. `internal_only=True` restricts to NELO
-    employees (`E_NELO=1`) — the ~122 operators master-data needs."""
-    where = "WHERE v.is_internal = 1" if internal_only else ""
+    """Entities from `ENTIDADE`. `internal_only=True` restricts to the
+    factory operators.
+
+    `E_NELO=1` alone only flags ~52 records — not the operator set the
+    skill matrix and operations reference. The canonical operators are
+    the entities with a competence row in `ENTIDADE_FASE`; both sets are
+    unioned so `core.employees` covers every operator the skills mirror
+    needs (otherwise every employee_skill row is skipped)."""
+    where = (
+        "WHERE v.is_internal = 1 "
+        "OR v.entity_id IN ("
+        "SELECT DISTINCT EFP_E_ID FROM dbo.ENTIDADE_FASE "
+        "WHERE EFP_E_ID IS NOT NULL)"
+    ) if internal_only else ""
     sql = f"""
     SELECT TOP {int(limit)} * FROM (
         {_VW_ENTITIES_SQL}
