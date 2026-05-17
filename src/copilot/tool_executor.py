@@ -192,7 +192,7 @@ class ToolExecutor:
 
             current_history.append({"role": "assistant", "content": json.dumps({"tool_call": tool_call})})
             current_history.append({"role": "user", "content": f"Tool result for {tool_id}:\n{result_text}\n\nNow answer the original question using this data."})
-            current_prompt = f"Based on the tool result above, provide your final answer."
+            current_prompt = "Based on the tool result above, provide your final answer."
 
         # Fallback: return last response
         return response, tool_log

@@ -18,8 +18,11 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 from difflib import SequenceMatcher
+
+if TYPE_CHECKING:
+    from src.factory_data_product.ingest.parser import SheetData
 
 logger = logging.getLogger(__name__)
 

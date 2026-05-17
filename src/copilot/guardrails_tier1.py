@@ -105,7 +105,7 @@ def scan(
     redacted = text
 
     for name, pattern in effective.items():
-        def _replace(match: re.Match) -> str:
+        def _replace(match: re.Match, name: str = name) -> str:
             raw = match.group(0)
             matches.append(Match(
                 pattern_name=name,

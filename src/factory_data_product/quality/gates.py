@@ -9,7 +9,7 @@ Define all quality checks with:
 - check function: actual validation logic
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field as _dc_field
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Set
 from uuid import UUID
@@ -31,7 +31,7 @@ class CheckResult:
     check_id: str
     severity: CheckSeverity
     passed: bool
-    details: Dict[str, Any] = field(default_factory=dict)
+    details: Dict[str, Any] = _dc_field(default_factory=dict)
     message: Optional[str] = None
 
 

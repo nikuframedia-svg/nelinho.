@@ -122,7 +122,7 @@ class MoldHealthCalculator:
             + components.rework_rate * weights["rework_rate"]
         )
         raw = 100.0 - penalty * 100.0
-        score = max(0, min(100, int(round(raw))))
+        score = max(0, min(100, round(raw)))
 
         risk = _risk_from_score(score, thresholds)
         return HealthResult(

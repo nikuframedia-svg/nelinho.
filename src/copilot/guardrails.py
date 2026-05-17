@@ -56,9 +56,7 @@ def detect_prompt_injection(user_query: str) -> Tuple[float, List[str]]:
     """
     risk_score = 0.0
     matched_patterns = []
-    
-    query_lower = user_query.lower()
-    
+
     for pattern in INJECTION_PATTERNS:
         matches = re.findall(pattern, user_query, re.IGNORECASE)
         if matches:
@@ -364,7 +362,7 @@ def validate_copilot_output(response: Dict[str, Any]) -> Tuple[bool, List[str]]:
     all_errors = []
     
     # Structure validation
-    struct_valid, struct_errors = validate_response_structure(response)
+    _struct_valid, struct_errors = validate_response_structure(response)
     all_errors.extend(struct_errors)
     
     # Evidence validation for facts

@@ -131,7 +131,7 @@ class RawToCuratedTransformer:
                     try:
                         handler(sheet_rows, ingestion_id, result)
                     except Exception as e:
-                        result.errors.append(f"Error transforming {sheet_name}: {str(e)}")
+                        result.errors.append(f"Error transforming {sheet_name}: {e!s}")
                         logger.error(f"Transform error for {sheet_name}: {e}")
         
         return result

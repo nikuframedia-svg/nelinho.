@@ -182,7 +182,7 @@ class AdminContext:
     a ``role`` string in :data:`_ADMIN_ROLES`.
     """
 
-    __slots__ = ("user_id", "role", "source")
+    __slots__ = ("role", "source", "user_id")
 
     def __init__(self, *, user_id: str, role: str, source: str) -> None:
         self.user_id = user_id

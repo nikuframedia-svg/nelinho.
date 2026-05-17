@@ -116,7 +116,7 @@ async def emit_drift_alert_if_any(
         code=CODE_SCHEMA_DRIFT,
         title=f"Schema drift detectado na ingestão {ingestion_id}",
         message_pt=(
-            f"A ingestão activada apresenta drift de schema vs. a anterior. "
+            "A ingestão activada apresenta drift de schema vs. a anterior. "
             + " | ".join(parts)
             + ". Revê o ficheiro antes de treinar modelos ML sobre estes dados."
         ),

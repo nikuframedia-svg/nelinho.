@@ -67,7 +67,7 @@ async def calculate_kpis(
     Returns:
         Dict com métricas calculadas ou None se não houver dados.
     """
-    from sqlalchemy import select, func, and_, or_, case
+    from sqlalchemy import select, case
     from src.plan.models.schedule import ProductionSchedule, ScheduleStatus
     from src.copilot.utils.citations import create_db_citation, create_calculation_citation
     import hashlib
@@ -148,7 +148,6 @@ async def calculate_kpis(
         if phases_total > 0:
             availability = (phases_started / phases_total) * 100.0
         
-        availability_query_hash = hashlib.sha256(f"availability_{tenant_id}".encode()).hexdigest()[:16]
         kpis["availability"] = KPIMetric(
             value=round(availability, 1) if availability is not None else None,
             updated_at=datetime.utcnow(),
@@ -196,7 +195,6 @@ async def calculate_kpis(
             if avg_act > 0 and avg_std > 0:
                 performance = min(100.0, (avg_std / avg_act) * 100.0)
         
-        performance_query_hash = hashlib.sha256(f"performance_{tenant_id}".encode()).hexdigest()[:16]
         kpis["performance"] = KPIMetric(
             value=round(performance, 1) if performance is not None else None,
             updated_at=datetime.utcnow(),
@@ -400,7 +398,7 @@ async def get_otd_heatmap(
     Uses product_code prefix (e.g., "K1", "K2", "C1") to group products.
     """
     from datetime import date, timedelta
-    from sqlalchemy import func as sql_func, and_, or_, case, cast, String
+    from sqlalchemy import func as sql_func, case, cast, String
     from sqlalchemy.sql import func as sql_func_expr
     from src.plan.models.schedule import ProductionSchedule, ScheduleStatus
     from src.core.models.product import Product

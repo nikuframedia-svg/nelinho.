@@ -141,7 +141,7 @@ def verify_token(token: str, token_type: str = "access") -> TokenPayload:
     except JWTError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Could not validate credentials: {str(e)}",
+            detail=f"Could not validate credentials: {e!s}",
         )
 
     # python-jose returns `exp`/`iat` as int (epoch seconds) — coerce to UTC datetime.
@@ -157,7 +157,7 @@ def verify_token(token: str, token_type: str = "access") -> TokenPayload:
     except (KeyError, TypeError, ValueError) as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Malformed token payload: {str(e)}",
+            detail=f"Malformed token payload: {e!s}",
         )
 
     if token_payload.type != token_type:
@@ -182,7 +182,7 @@ async def get_current_user(
     except (ValueError, AttributeError) as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Token claims are not valid UUIDs: {str(e)}",
+            detail=f"Token claims are not valid UUIDs: {e!s}",
         )
 
     return UserContext(

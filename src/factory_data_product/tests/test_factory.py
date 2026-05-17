@@ -375,7 +375,7 @@ class TestSemanticViews:
         When: Check
         Then: All have required fields
         """
-        for view_id, view_def in SEMANTIC_VIEW_DEFINITIONS.items():
+        for _view_id, view_def in SEMANTIC_VIEW_DEFINITIONS.items():
             assert view_def.view_id is not None
             assert view_def.name is not None
             assert view_def.fields is not None

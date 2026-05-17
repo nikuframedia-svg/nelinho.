@@ -170,7 +170,7 @@ def _stratified_sample(
 
     cap = max(_CAP_FLOOR, int(len(triplets) * cap_ratio))
     selected: List[Dict[str, Any]] = []
-    for cat, rows in by_category.items():
+    for _cat, rows in by_category.items():
         if len(rows) > cap:
             rng.shuffle(rows)
             selected.extend(rows[:cap])

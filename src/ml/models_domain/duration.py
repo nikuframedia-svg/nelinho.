@@ -91,7 +91,7 @@ class DurationModel:
                 range(len(filtered)),
                 key=lambda i: timestamps[i],
             )
-            split_at = int(round(len(order_idx) * 0.8))
+            split_at = round(len(order_idx) * 0.8)
             train_idx = order_idx[:split_at]
             val_idx = order_idx[split_at:]
             filtered = [filtered[i] for i in train_idx + val_idx]

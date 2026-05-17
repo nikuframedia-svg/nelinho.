@@ -518,7 +518,7 @@ class CopilotService:
                 f"Pydantic ValidationError ao criar CopilotResponse. "
                 f"Correlation: {correlation_id}. Erros: {validation_errors_detailed}"
             )
-            logger.error(f"Dados que causaram erro:")
+            logger.error("Dados que causaram erro:")
             logger.error(f"  type: {response_type} (valid: ANSWER, RUNBOOK_RESULT, PROPOSAL, ERROR)")
             logger.error(f"  intent: {response_intent} (valid: explain_oee, explain_plan_change, quality_summary, data_integrity, generic)")
             logger.error(f"  summary length: {len(response_summary)} (must be 1-500)")
@@ -604,7 +604,7 @@ class CopilotService:
         # 10. Retornar resposta (já redigida)
         try:
             return CopilotResponse(**response_dict), audit_data
-        except ValidationError as e:
+        except ValidationError:
             # Se redaction causar erro, retornar sem redaction
             logger.warning(f"Erro ao validar resposta após redaction. Correlation: {correlation_id}")
             return response, audit_data

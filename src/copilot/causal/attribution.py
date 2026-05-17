@@ -260,7 +260,7 @@ def attribution_analysis(
         ranked=ranked,
         baseline_mean=float(df[target].mean()),
         target_value=float(df[target].iloc[-1]),
-        sample_size=int(len(df)),
+        sample_size=len(df),
     )
 
 

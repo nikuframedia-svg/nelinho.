@@ -211,7 +211,7 @@ class GeneticScheduler:
         for op in operations:
             ops_by_order[op.order_id].append(op)
         
-        for order_id, order_ops in ops_by_order.items():
+        for _order_id, order_ops in ops_by_order.items():
             sorted_ops = sorted(order_ops, key=lambda x: x.sequence)
             for i, op in enumerate(sorted_ops):
                 preds = []
@@ -280,7 +280,7 @@ class GeneticScheduler:
         Returns tuple with single fitness value (for minimization).
         """
         # Decode individual to schedule
-        schedule, makespan_hours, total_tardiness, num_late = self._decode_individual(individual)
+        _schedule, makespan_hours, total_tardiness, _num_late = self._decode_individual(individual)
         
         # Calculate weighted fitness (lower is better)
         fitness = (

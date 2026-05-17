@@ -111,12 +111,12 @@ class QualityRunner:
                     "severity": check.severity.value,
                     "passed": False,
                     "details": {"error": str(e)},
-                    "message": f"Check error: {str(e)}",
+                    "message": f"Check error: {e!s}",
                 })
                 
                 if check.severity == CheckSeverity.BLOCKING:
                     result.failed_blocking += 1
-                    result.blocking_failures.append(f"Check {check_id} error: {str(e)}")
+                    result.blocking_failures.append(f"Check {check_id} error: {e!s}")
         
         # Determine overall status
         if result.failed_blocking > 0:

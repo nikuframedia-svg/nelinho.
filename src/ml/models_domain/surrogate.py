@@ -103,8 +103,8 @@ class SurrogateModel:
         metrics = {
             "wmape": round(err, 4),
             "samples": len(samples),
-            "samples_train": int(len(train_idx)),
-            "samples_val": int(len(val_idx)),
+            "samples_train": len(train_idx),
+            "samples_val": len(val_idx),
             "best_known_fitness": self.best_known_fitness,
         }
         logger.info(

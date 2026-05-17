@@ -139,7 +139,7 @@ class RateLimiter:
 
         except RateLimiterUnavailableError:
             raise
-        except Exception as exc:  # noqa: BLE001 — explicit fail-closed below
+        except Exception as exc:
             # Fall through to the env-aware handler.
             return await self._handle_backend_failure(tenant_id, actor_id, exc)
 
@@ -187,7 +187,7 @@ class RateLimiter:
         # consistent with Onda 0.3.
         try:
             raise exc
-        except Exception as inner:  # pragma: no cover — re-entry
+        except Exception:  # pragma: no cover — re-entry
             # Fail-CLOSED in production. The previous version returned
             # ``(True, None)`` here, turning a Redis outage into a
             # silent rate-limit bypass.

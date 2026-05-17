@@ -75,9 +75,9 @@ async def get_dashboard(
 
 # ─── /oee (Q.19.A) — OEE from live NELO operations ───────────────────────
 
-from datetime import timedelta  # noqa: E402
+from datetime import timedelta
 
-from src.profit.services.oee_service import OEEService  # noqa: E402
+from src.profit.services.oee_service import OEEService
 
 
 def _oee_item_to_dict(item) -> dict:

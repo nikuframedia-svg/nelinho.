@@ -10,7 +10,7 @@ import re
 from typing import List, Dict, Any, Optional, Tuple
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, func, text, and_, or_
+from sqlalchemy import select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.copilot.models import CopilotRAGChunk, PGVECTOR_AVAILABLE

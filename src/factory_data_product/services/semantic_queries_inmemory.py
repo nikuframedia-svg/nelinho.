@@ -731,7 +731,7 @@ class SemanticQueriesInMemory:
         Returns:
             Structured response with lead time statistics
         """
-        logger.info(f"Calculating lead time analysis")
+        logger.info("Calculating lead time analysis")
         
         curated = self._get_active_curated()
         if not curated:

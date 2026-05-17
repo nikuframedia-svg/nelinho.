@@ -318,7 +318,7 @@ async def run_rlm_agent(
     ))
     trace.turns.append(AgentTurn(role="user", content=question))
 
-    for step in range(max_steps):
+    for _step in range(max_steps):
         raw = await llm(trace.turns)
         trace.turns.append(AgentTurn(role="assistant", content=raw))
         try:
@@ -438,7 +438,7 @@ async def run_rlm_agent_continue(
 
     trace.turns.append(AgentTurn(role="user", content=question))
 
-    for step in range(max_steps):
+    for _step in range(max_steps):
         raw = await llm(trace.turns)
         trace.turns.append(AgentTurn(role="assistant", content=raw))
         try:

@@ -146,7 +146,7 @@ class QLoRATrainer:
 
 def _has_unsloth() -> bool:
     try:
-        import unsloth  # noqa: F401
+        import unsloth
     except Exception:
         return False
     return True

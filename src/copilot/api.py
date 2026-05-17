@@ -144,7 +144,7 @@ async def ask_copilot(
 
     # Processar com tratamento de erros
     try:
-        response, audit_data = await service.process_ask(request)
+        response, _audit_data = await service.process_ask(request)
         if request.idempotency_key:
             _idempotency_set(tenant_id, user.user_id, request.idempotency_key, response)
         return response
@@ -157,7 +157,7 @@ async def ask_copilot(
         
         logger.error(
             f"Erro inesperado ao processar pergunta do COPILOT. "
-            f"Correlation: {correlation_id}. Erro: {str(e)}",
+            f"Correlation: {correlation_id}. Erro: {e!s}",
             exc_info=True
         )
         
@@ -535,7 +535,7 @@ async def ask_copilot_dev(
     service = CopilotService(session, dev_tenant_id, dev_user_id, dev_role)
     
     # Processar
-    response, audit_data = await service.process_ask(request)
+    response, _audit_data = await service.process_ask(request)
     
     return response
 
@@ -1088,9 +1088,6 @@ async def execute_sandbox(
     """
     from src.copilot.actions import (
         Action,
-        ActionExecutor,
-        ActionHandlerNotImplementedError,
-        ActionMode,
     )
     from uuid import uuid4
     
@@ -1150,7 +1147,7 @@ async def execute_sandbox(
         logger.error(f"Sandbox execution failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Sandbox execution failed: {str(e)}",
+            detail=f"Sandbox execution failed: {e!s}",
         )
 
 
@@ -1254,7 +1251,7 @@ async def rollback_action(
         logger.error(f"Rollback failed: transaction_id={transaction_id}, error={e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Rollback failed: {str(e)}",
+            detail=f"Rollback failed: {e!s}",
         )
 
 

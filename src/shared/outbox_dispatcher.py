@@ -95,10 +95,10 @@ class OutboxDispatcher:
                     logger.warning(f"Invalid payload for event {event.id}: {e}")
                     # Move directly to DLQ if payload invalid
                     event.status = "failed"
-                    event.error_message = f"Invalid payload: {str(e)}"
+                    event.error_message = f"Invalid payload: {e!s}"
                     dlq_entry = EventDLQ(
                         event_outbox_id=event.id,
-                        error_message=f"Invalid payload: {str(e)}",
+                        error_message=f"Invalid payload: {e!s}",
                         retry_attempt=event.retry_count,
                     )
                     session.add(dlq_entry)
@@ -155,12 +155,12 @@ class OutboxDispatcher:
                     
                     logger.error(
                         f"Event moved to DLQ: id={event.id}, type={event.event_type}, "
-                        f"retry_count={event.retry_count}, error={str(e)}"
+                        f"retry_count={event.retry_count}, error={e!s}"
                     )
                 else:
                     logger.warning(
                         f"Event dispatch failed: id={event.id}, type={event.event_type}, "
-                        f"retry_count={event.retry_count}, error={str(e)}"
+                        f"retry_count={event.retry_count}, error={e!s}"
                     )
         
         # Commit all changes

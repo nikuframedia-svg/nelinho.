@@ -341,7 +341,7 @@ async def schedule_cpo(
         _yp_payload = {
             "tenant_id": str(tenant_id),
             "horizon_days": int(request.horizon_days),
-            "operations_count": int(len(result.get("operations", []))),
+            "operations_count": len(result.get("operations", [])),
             "fitness_score": float(result.get("fitness_score", 0.0)),
             "makespan_hours": float(result.get("makespan_hours", 0.0)),
             "tardiness_hours": float(result.get("total_tardiness_hours", 0.0)),

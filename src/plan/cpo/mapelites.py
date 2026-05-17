@@ -340,5 +340,5 @@ class MAPElites3D:
         span = hi - lo
         if span <= 0:
             return 0
-        idx = int(math.floor(((value - lo) / span) * n_bins))
+        idx = math.floor(((value - lo) / span) * n_bins)
         return max(0, min(n_bins - 1, idx))

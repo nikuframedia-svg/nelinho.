@@ -107,7 +107,7 @@ def _resolve_role(request: Request) -> tuple[str | None, str]:
     if scheme.lower() == "bearer" and token:
         try:
             payload = verify_token(token, "access")
-        except Exception:  # noqa: BLE001 — invalid/expired token
+        except Exception:
             return None, "none"
         return payload.role, "jwt"
 
