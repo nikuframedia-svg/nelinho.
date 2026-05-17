@@ -196,9 +196,40 @@ class TenantSession:
 
 
 async def init_db() -> None:
-    """Initialize database tables."""
+    """Initialize database tables.
+
+    pgvector pode não estar disponível (scoop Postgres sem a extensão
+    `vector`). Nesse caso a tabela `copilot_rag_chunk` — coluna
+    `VECTOR(768)` — não pode ser criada; em vez de abortar todo o
+    `init_db` (e deixar o backend sem BD), excluímo-la do `create_all`.
+    Mesmo comportamento do `scripts/bootstrap_dev_full.py`; o RAG
+    semântico fica desligado até pgvector existir. Ver CLAUDE.md.
+    """
+    import logging
+
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        has_vector = await conn.scalar(
+            text(
+                "SELECT EXISTS (SELECT 1 FROM pg_available_extensions "
+                "WHERE name = 'vector')"
+            )
+        )
+        if has_vector:
+            await conn.run_sync(Base.metadata.create_all)
+            return
+        tables = [
+            t for t in Base.metadata.sorted_tables
+            if t.name != "copilot_rag_chunk"
+        ]
+        await conn.run_sync(
+            lambda sync_conn: Base.metadata.create_all(
+                sync_conn, tables=tables
+            )
+        )
+        logging.getLogger(__name__).warning(
+            "pgvector indisponível — copilot_rag_chunk excluído do "
+            "init_db (RAG semântico desligado)."
+        )
 
 
 async def close_db() -> None:
