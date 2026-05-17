@@ -15,7 +15,7 @@ Coverage:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
@@ -28,11 +28,13 @@ from src.copilot.alerts.engine import (
 )
 from src.copilot.alerts.models import (
     CODE_BOTTLENECK_FORMATION,
+    CODE_DELIVERY_RISK,
     CODE_QUALITY_DEGRADATION,
     CODE_SKILLS_CONCENTRATION,
     CopilotAlert,
     STATUS_ACTIVE,
 )
+from src.plan.models.order import OrderStatus, ProductionOrder
 
 
 # ---------------------------------------------------------------------------
@@ -208,18 +210,53 @@ class TestQualityDetector:
 
 
 # ---------------------------------------------------------------------------
-# Delivery risk (blocked metric → no-op)
+# Delivery risk — Q.31.H: barco com transporte próximo e ainda em produção
 # ---------------------------------------------------------------------------
 
 class TestDeliveryRiskDetector:
-    async def test_always_empty_until_otd_data_exists(self, fake_session, tenant_id):
-        sq = FakeSemanticQueries()
-        # Give it everything — delivery detector still returns [] by design.
-        sq.set("get_bottlenecks", {"status": "OK", "rows": []})
-        engine = AlertsEngine(fake_session, tenant_id, semantic_queries=sq)
+    @staticmethod
+    def _order(tenant_id, transport_date, hull=4271):
+        return ProductionOrder(
+            id=uuid4(),
+            tenant_id=tenant_id,
+            legacy_id=hull,
+            product_name="K1 Vanquish",
+            product_type="K1",
+            current_phase_name="Laminagem",
+            status=OrderStatus.IN_PROGRESS,
+            transport_date=transport_date,
+        )
 
-        candidates = await engine._detect_delivery_risk()
-        assert candidates == []
+    async def test_boat_due_soon_in_production_fires_warn(self, fake_session, tenant_id):
+        fake_session.queue_scalars([
+            self._order(tenant_id, date.today() + timedelta(days=1)),
+        ])
+        engine = AlertsEngine(fake_session, tenant_id, semantic_queries=FakeSemanticQueries())
+        await engine.scan()
+
+        alerts = [a for a in _added_alerts(fake_session) if a.code == CODE_DELIVERY_RISK]
+        assert len(alerts) == 1
+        assert alerts[0].severity == "WARN"
+        assert alerts[0].entity_refs == ["barco:4271"]
+
+    async def test_overdue_boat_is_critical(self, fake_session, tenant_id):
+        fake_session.queue_scalars([
+            self._order(tenant_id, date.today() - timedelta(days=2)),
+        ])
+        engine = AlertsEngine(fake_session, tenant_id, semantic_queries=FakeSemanticQueries())
+        await engine.scan()
+
+        alerts = [a for a in _added_alerts(fake_session) if a.code == CODE_DELIVERY_RISK]
+        assert len(alerts) == 1
+        assert alerts[0].severity == "CRITICAL"
+
+    async def test_no_orders_no_delivery_alert(self, fake_session, tenant_id):
+        fake_session.queue_scalars([])
+        engine = AlertsEngine(fake_session, tenant_id, semantic_queries=FakeSemanticQueries())
+        await engine.scan()
+
+        alerts = [a for a in _added_alerts(fake_session) if a.code == CODE_DELIVERY_RISK]
+        assert alerts == []
 
 
 # ---------------------------------------------------------------------------
