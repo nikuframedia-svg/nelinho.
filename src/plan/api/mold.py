@@ -211,6 +211,18 @@ async def recompute_health(
     }
 
 
+@router.get("/molds/{mold_id}/maintenance")
+async def list_mold_maintenance(
+    mold_id: UUID,
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Q.31.B — eventos de manutenção de um molde (planeado/em curso/feito)."""
+    svc = MoldService(session, tenant_id)
+    events = await svc.list_maintenance(mold_id)
+    return [_event_to_dict(e) for e in events]
+
+
 @router.post("/molds/{mold_id}/maintenance", status_code=status.HTTP_201_CREATED)
 async def plan_mold_maintenance(
     mold_id: UUID,

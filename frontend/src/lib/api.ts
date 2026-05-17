@@ -2957,6 +2957,58 @@ export const authApi = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Q.31.B — Manutenção de moldes
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface MoldMaintenanceEvent {
+  id: string;
+  mold_id: string;
+  maintenance_type: string;
+  planned_date: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  status: string;
+  actual_duration_h: number | null;
+  parts_cost_eur: number | null;
+  labor_cost_eur: number | null;
+  comments: string | null;
+}
+
+export const moldsApi = {
+  /** Eventos de manutenção de um molde. */
+  listMaintenance: (moldId: string) =>
+    request<MoldMaintenanceEvent[]>(`/v1/plan/molds/${moldId}/maintenance`),
+  /** Planear uma manutenção. */
+  planMaintenance: (
+    moldId: string,
+    payload: { planned_date: string; maintenance_type?: string; comments?: string },
+  ) =>
+    request<MoldMaintenanceEvent>(`/v1/plan/molds/${moldId}/maintenance`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  /** Marcar uma manutenção planeada como iniciada. */
+  startMaintenance: (eventId: string) =>
+    request<MoldMaintenanceEvent>(
+      `/v1/plan/molds/maintenance/${eventId}/start`,
+      { method: 'POST' },
+    ),
+  /** Concluir uma manutenção em curso. */
+  completeMaintenance: (
+    eventId: string,
+    payload: {
+      actual_duration_h?: number;
+      parts_cost_eur?: number;
+      labor_cost_eur?: number;
+    },
+  ) =>
+    request<MoldMaintenanceEvent>(
+      `/v1/plan/molds/maintenance/${eventId}/complete`,
+      { method: 'POST', body: JSON.stringify(payload) },
+    ),
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // Q.31.F — Pesquisa global
 // ═══════════════════════════════════════════════════════════════════════════════
 
