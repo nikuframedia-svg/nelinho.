@@ -45,16 +45,34 @@ export function DarkTableBody({ children, className = '', ...props }: DarkTableB
 }
 
 // Table Row
+/** Estado visual da linha — pinta um left-border 3px (padrão AlertCardZip). */
+export type DarkTableRowStatus = 'success' | 'warning' | 'danger' | 'info' | 'neutral';
+
+const ROW_STATUS_COLOR: Record<DarkTableRowStatus, string> = {
+  success: 'var(--green)',
+  warning: 'var(--yellow)',
+  danger: 'var(--red)',
+  info: 'var(--blue)',
+  neutral: 'var(--bd-2)',
+};
+
 interface DarkTableRowProps extends HTMLAttributes<HTMLTableRowElement> {
   children: ReactNode;
   className?: string;
   clickable?: boolean;
+  /** Quando definido, pinta um left-border 3px de estado (inset box-shadow,
+   * fiável em tabelas com border-collapse ao contrário de border-left). */
+  status?: DarkTableRowStatus;
 }
 
-export function DarkTableRow({ children, className = '', clickable = false, ...props }: DarkTableRowProps) {
+export function DarkTableRow({ children, className = '', clickable = false, status, style, ...props }: DarkTableRowProps) {
+  const statusStyle = status
+    ? { boxShadow: `inset 3px 0 0 0 ${ROW_STATUS_COLOR[status]}` }
+    : undefined;
   return (
-    <tr 
+    <tr
       className={`transition-colors hover:bg-bg-card-hover ${clickable ? 'cursor-pointer' : ''} ${className}`}
+      style={statusStyle ? { ...style, ...statusStyle } : style}
       {...props}
     >
       {children}

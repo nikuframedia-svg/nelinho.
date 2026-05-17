@@ -46,6 +46,7 @@ export function Panel({
     <section
       className={`
         bg-dark-800 border border-bd-1 rounded-lg
+        shadow-[var(--shadow-2)]
         flex flex-col
         ${className}
       `}
