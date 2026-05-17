@@ -93,9 +93,43 @@ function saveQueue(q: QueuedReport[]): void {
 interface OperationCardProps {
   op: WorkerOperation;
   highlight?: boolean;
+  /** Q.30.A — chamado após iniciar/concluir, para refrescar a fila. */
+  onChanged?: () => void;
 }
 
-function OperationCard({ op, highlight = false }: OperationCardProps) {
+function OperationCard({ op, highlight = false, onChanged }: OperationCardProps) {
+  // Q.30.A — registar operação: o operador inicia e conclui a fase aqui.
+  const [qty, setQty] = useState<string>(String(op.quantity ?? ''));
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const startMutation = useMutation({
+    mutationFn: () => workerOperationsApi.start(op.id),
+    onSuccess: () => {
+      setActionError(null);
+      onChanged?.();
+    },
+    onError: () =>
+      setActionError('Não foi possível iniciar a fase. Tenta outra vez.'),
+  });
+
+  const completeMutation = useMutation({
+    mutationFn: () => {
+      const n = Number(qty);
+      return workerOperationsApi.complete(
+        op.id,
+        qty.trim() !== '' && Number.isFinite(n) ? { actual_quantity: n } : {},
+      );
+    },
+    onSuccess: () => {
+      setActionError(null);
+      onChanged?.();
+    },
+    onError: () =>
+      setActionError('Não foi possível concluir a fase. Tenta outra vez.'),
+  });
+
+  const busy = startMutation.isPending || completeMutation.isPending;
+
   const scheduledStart = new Date(op.scheduled_start);
   const scheduledEnd = new Date(op.scheduled_end);
   const when = Number.isFinite(scheduledStart.getTime())
@@ -164,6 +198,56 @@ function OperationCard({ op, highlight = false }: OperationCardProps) {
           qt <b className="text-text-white">{op.quantity}</b>
         </span>
       </div>
+
+      {/* Q.30.A — iniciar / concluir a fase */}
+      {(op.status === 'SCHEDULED' || op.status === 'IN_PROGRESS') && (
+        <div className="mt-4 border-t border-border-subtle pt-4">
+          {op.status === 'SCHEDULED' && (
+            <DarkButton
+              variant="primary"
+              size="lg"
+              fullWidth
+              disabled={busy}
+              onClick={() => startMutation.mutate()}
+            >
+              <PlayCircle size={18} className="mr-2" />
+              {startMutation.isPending ? 'A iniciar…' : 'Iniciar fase'}
+            </DarkButton>
+          )}
+          {op.status === 'IN_PROGRESS' && (
+            <div className="flex items-end gap-3">
+              <label className="flex flex-col">
+                <span className="text-xs text-text-secondary mb-1">
+                  Qt. produzida
+                </span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={0}
+                  value={qty}
+                  onChange={(e) => setQty(e.target.value)}
+                  className="w-24 h-14 rounded-xl bg-bg-elevated border border-border-subtle px-4 text-lg text-text-white placeholder:text-text-tertiary focus:outline-none focus:border-accent"
+                />
+              </label>
+              <div className="flex-1">
+                <DarkButton
+                  variant="primary"
+                  size="lg"
+                  fullWidth
+                  disabled={busy}
+                  onClick={() => completeMutation.mutate()}
+                >
+                  <CheckCircle2 size={18} className="mr-2" />
+                  {completeMutation.isPending ? 'A concluir…' : 'Concluir fase'}
+                </DarkButton>
+              </div>
+            </div>
+          )}
+          {actionError && (
+            <p className="text-sm text-amber-300 mt-2">{actionError}</p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -530,7 +614,7 @@ export function OperadorPage() {
               Sem operações atribuídas para hoje.
             </p>
           ) : (
-            <OperationCard op={next} highlight />
+            <OperationCard op={next} highlight onChanged={handleNewReport} />
           )}
         </div>
       </DarkCard>
@@ -546,7 +630,7 @@ export function OperadorPage() {
           </div>
           <div className="p-5 space-y-3">
             {rest.map((op) => (
-              <OperationCard key={op.id} op={op} />
+              <OperationCard key={op.id} op={op} onChanged={handleNewReport} />
             ))}
           </div>
         </DarkCard>

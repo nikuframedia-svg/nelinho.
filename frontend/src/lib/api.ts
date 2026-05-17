@@ -1938,6 +1938,17 @@ export interface WorkerOperation {
   actual_end: string | null;
 }
 
+/** Estado de uma fase após iniciar/concluir — Q.30.A. */
+export interface OperationState {
+  id: string;
+  order_id: string;
+  operation_sequence: number;
+  status: string;
+  actual_start: string | null;
+  actual_end: string | null;
+  actual_quantity: number | null;
+}
+
 export const workerOperationsApi = {
   today: (employeeId: string, params?: { as_of?: string }) => {
     const qs = params?.as_of ? `?as_of=${params.as_of}` : '';
@@ -1945,6 +1956,18 @@ export const workerOperationsApi = {
       `/v1/plan/schedule/worker/${employeeId}/operations-today${qs}`,
     );
   },
+  /** Q.30.A — operador marca uma fase como iniciada (SCHEDULED→IN_PROGRESS). */
+  start: (scheduleId: string) =>
+    request<OperationState>(`/v1/plan/schedule/${scheduleId}/start`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+  /** Q.30.A — operador marca uma fase como concluída (IN_PROGRESS→COMPLETED). */
+  complete: (scheduleId: string, payload?: { actual_quantity?: number }) =>
+    request<OperationState>(`/v1/plan/schedule/${scheduleId}/complete`, {
+      method: 'POST',
+      body: JSON.stringify(payload ?? {}),
+    }),
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
