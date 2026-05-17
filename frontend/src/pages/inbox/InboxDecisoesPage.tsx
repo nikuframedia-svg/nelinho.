@@ -11,9 +11,15 @@
  */
 
 import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Inbox, RefreshCw } from 'lucide-react';
-import { PageHeader, Tabs, ZipSevBadge, type ZipSeverity } from '../../components/dark';
+import {
+  ApprovalButtons,
+  PageHeader,
+  Tabs,
+  ZipSevBadge,
+  type ZipSeverity,
+} from '../../components/dark';
 import { decisionsApi } from '../../lib/api';
 
 const TAB_IDS = ['pending', 'accepted', 'rejected', 'all'] as const;
@@ -29,6 +35,7 @@ const STATUS_BY_TAB: Record<TabId, string | undefined> = {
 export default function InboxDecisoesPage() {
   const [tab, setTab] = useState<TabId>('pending');
   const [refreshKey, setRefreshKey] = useState(0);
+  const queryClient = useQueryClient();
 
   const counts = useQuery({
     queryKey: ['inbox', 'counts', refreshKey],
@@ -137,7 +144,13 @@ export default function InboxDecisoesPage() {
         ) : (
           <div className="flex flex-col page-enter" style={{ gap: 14 }}>
             {items.map((d, idx) => (
-              <SuggestionCardZip key={d.id ?? idx} decision={d} />
+              <SuggestionCardZip
+                key={d.id ?? idx}
+                decision={d}
+                onDecided={() =>
+                  queryClient.invalidateQueries({ queryKey: ['inbox'] })
+                }
+              />
             ))}
           </div>
         )}
@@ -146,8 +159,21 @@ export default function InboxDecisoesPage() {
   );
 }
 
-function SuggestionCardZip({ decision }: { decision: any }) {
+function SuggestionCardZip({
+  decision,
+  onDecided,
+}: {
+  decision: any;
+  onDecided: () => void;
+}) {
   const sandbox = decision.sandbox_result ?? {};
+
+  // Q.30.B — aprovar/rejeitar a decisão directamente no Inbox.
+  const decideMutation = useMutation({
+    mutationFn: (v: { status: 'APPROVED' | 'REJECTED'; comment?: string }) =>
+      decisionsApi.approve(decision.id, v),
+    onSuccess: () => onDecided(),
+  });
   const priority: ZipSeverity =
     sandbox.priority === 'critical' ||
     sandbox.priority === 'high' ||
@@ -261,6 +287,32 @@ function SuggestionCardZip({ decision }: { decision: any }) {
       {sandbox.source ? (
         <div className="text-text-dark-tertiary mt-3" style={{ fontSize: 11 }}>
           fonte: {sandbox.source}
+        </div>
+      ) : null}
+
+      {/* Q.30.B — só decisões pendentes (PROPOSED) são acionáveis */}
+      {decision.status === 'PROPOSED' ? (
+        <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--bd-1)' }}>
+          <ApprovalButtons
+            loading={decideMutation.isPending}
+            requireReason="on_reject"
+            onAccept={async (reason) => {
+              // erro fica visível via decideMutation.isError (banner abaixo)
+              try {
+                await decideMutation.mutateAsync({ status: 'APPROVED', comment: reason });
+              } catch { /* tratado pelo estado isError */ }
+            }}
+            onReject={async (reason) => {
+              try {
+                await decideMutation.mutateAsync({ status: 'REJECTED', comment: reason });
+              } catch { /* tratado pelo estado isError */ }
+            }}
+          />
+          {decideMutation.isError ? (
+            <div className="text-danger mt-2" style={{ fontSize: 12 }} role="alert">
+              Não foi possível registar a decisão. Tenta outra vez.
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>
