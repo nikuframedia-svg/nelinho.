@@ -558,6 +558,10 @@ app.include_router(auth_me_router)
 from src.shared.api.auth_login import router as auth_login_router
 app.include_router(auth_login_router)
 
+# Q.31.F — pesquisa global (GET /v1/search).
+from src.search.api import router as search_router
+app.include_router(search_router)
+
 # Sprint Q.18.ZIP.BE.4 — POST /v1/reports/generate dispatcher.
 from src.reports.api import router as reports_router
 app.include_router(reports_router)
