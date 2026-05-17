@@ -23,16 +23,18 @@
  */
 
 import { lazy, Suspense, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   RefreshCw,
   Sparkles,
   Truck,
   Boxes,
+  Plus,
+  CheckCircle2,
 } from 'lucide-react';
 import { PageHeader, Tabs } from '../../components/dark';
 import { SkeletonLoader } from '../../components/ui/Skeleton';
-import { getApiBase } from '../../lib/api';
+import { getApiBase, transportApi } from '../../lib/api';
 
 const SupplyDashboard = lazy(() =>
   import('../../components/supply/SupplyPanels').then((m) => ({ default: m.SupplyDashboard })),
@@ -85,6 +87,7 @@ function daysUntil(iso: string): number {
 
 export default function ExpedicaoPage() {
   const [tab, setTab] = useState<'expedicoes' | 'supply'>('expedicoes');
+  const [showForm, setShowForm] = useState(false);
   const batchesQuery = useQuery({
     queryKey: ['expedicao', 'batches'],
     queryFn: fetchTransportBatches,
@@ -118,18 +121,27 @@ export default function ExpedicaoPage() {
         subtitle="Calendário de saídas · estado dos camiões"
         helpId="expedicao"
         actions={
-          // Q.21.D — "Nova expedição" removido: fazia só um alert(). Criar
-          // um batch (POST /v1/plan/transport/batches) precisa de um
-          // formulário próprio — fora do âmbito desta limpeza. "Atualizar"
-          // mantém-se (acção real).
-          <button
-            type="button"
-            onClick={() => window.location.reload()}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-transparent text-text-dark-secondary hover:bg-white/5 hover:text-text-dark-primary border border-white/[0.08] text-xs font-medium transition-colors"
-          >
-            <RefreshCw size={13} />
-            Atualizar
-          </button>
+          // Q.30.C — "Nova expedição" voltou, agora com formulário real
+          // (POST /v1/plan/transport/batches via transportApi.createBatch).
+          <>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-transparent text-text-dark-secondary hover:bg-white/5 hover:text-text-dark-primary border border-white/[0.08] text-xs font-medium transition-colors"
+            >
+              <RefreshCw size={13} />
+              Atualizar
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowForm((v) => !v)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-white text-xs font-medium transition-colors"
+              style={{ background: 'var(--blue)', border: '1px solid var(--blue)' }}
+            >
+              <Plus size={13} />
+              Nova expedição
+            </button>
+          </>
         }
       />
 
@@ -154,6 +166,10 @@ export default function ExpedicaoPage() {
 
       {tab === 'expedicoes' && (
       <div className="px-6 py-4 space-y-5 page-enter">
+        {showForm && (
+          <NovaExpedicaoForm onClose={() => setShowForm(false)} />
+        )}
+
         {/* 3 KPI strip — Q.23.H: "Próxima expedição" em destaque */}
         <div
           className="page-enter"
@@ -244,6 +260,138 @@ export default function ExpedicaoPage() {
       </div>
       )}
     </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// NovaExpedicaoForm — Q.30.C: criar batch (POST /v1/plan/transport/batches)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const EXP_FIELD_CLASS =
+  'w-full px-3 py-2 rounded-md bg-dark-700 border border-white/10 text-sm ' +
+  'text-text-dark-primary placeholder:text-text-dark-tertiary focus:outline-none ' +
+  'focus:ring-2 focus:ring-accent-500/40 focus:border-accent-500/60';
+
+function NovaExpedicaoForm({ onClose }: { onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [code, setCode] = useState('');
+  const [transportDate, setTransportDate] = useState('');
+  const [capacity, setCapacity] = useState('');
+  const [destination, setDestination] = useState('');
+
+  const mutation = useMutation({
+    mutationFn: () => {
+      const cap = Number(capacity);
+      return transportApi.createBatch({
+        code: code.trim(),
+        transport_date: transportDate,
+        truck_capacity_units:
+          capacity.trim() !== '' && Number.isFinite(cap) ? cap : undefined,
+        destination: destination.trim() || undefined,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['expedicao', 'batches'] });
+      onClose();
+    },
+  });
+
+  function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!code.trim() || !transportDate) return;
+    mutation.mutate();
+  }
+
+  const disabled = !code.trim() || !transportDate || mutation.isPending;
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      style={{
+        padding: 18,
+        background: 'var(--bg-1)',
+        border: '1px solid var(--bd-1)',
+        borderRadius: 12,
+      }}
+      className="space-y-3 page-enter"
+    >
+      <div className="flex items-center gap-2">
+        <Truck size={16} className="text-text-dark-secondary" />
+        <span className="text-sm font-semibold text-text-dark-primary">
+          Nova expedição
+        </span>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <label className="block">
+          <span className="text-xs text-text-dark-secondary">Código *</span>
+          <input
+            type="text"
+            value={code}
+            onChange={(e) => setCode(e.target.value.toUpperCase())}
+            placeholder="EXP-2026-05-20"
+            className={`mt-1 ${EXP_FIELD_CLASS}`}
+            required
+          />
+        </label>
+        <label className="block">
+          <span className="text-xs text-text-dark-secondary">Data de transporte *</span>
+          <input
+            type="date"
+            value={transportDate}
+            onChange={(e) => setTransportDate(e.target.value)}
+            className={`mt-1 ${EXP_FIELD_CLASS}`}
+            required
+          />
+        </label>
+        <label className="block">
+          <span className="text-xs text-text-dark-secondary">Capacidade (barcos)</span>
+          <input
+            type="number"
+            inputMode="numeric"
+            min={0}
+            value={capacity}
+            onChange={(e) => setCapacity(e.target.value)}
+            placeholder="Ex: 6"
+            className={`mt-1 ${EXP_FIELD_CLASS}`}
+          />
+        </label>
+        <label className="block">
+          <span className="text-xs text-text-dark-secondary">Destino</span>
+          <input
+            type="text"
+            value={destination}
+            onChange={(e) => setDestination(e.target.value)}
+            placeholder="Ex: França — Lyon"
+            className={`mt-1 ${EXP_FIELD_CLASS}`}
+          />
+        </label>
+      </div>
+
+      {mutation.isError ? (
+        <div className="text-xs text-danger" role="alert">
+          Não foi possível criar a expedição. Tenta outra vez.
+        </div>
+      ) : null}
+
+      <div className="flex items-center gap-2">
+        <button
+          type="submit"
+          disabled={disabled}
+          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md text-white text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          style={{ background: 'var(--blue)', border: '1px solid var(--blue)' }}
+        >
+          <CheckCircle2 size={14} />
+          {mutation.isPending ? 'A criar…' : 'Criar expedição'}
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          className="inline-flex items-center px-4 py-2 rounded-md bg-transparent text-text-dark-secondary hover:bg-white/5 hover:text-text-dark-primary border border-white/[0.08] text-sm font-medium transition-colors"
+        >
+          Cancelar
+        </button>
+      </div>
+    </form>
   );
 }
 
