@@ -111,6 +111,30 @@ def start_scheduler(
         max_instances=1,
     )
 
+    # Q.25.D — sync ERP->Postgres. Mirrors leves (master/molds/skills/
+    # quality) todas as noites as 02:00 UTC, antes dos jobs que consomem
+    # os dados. O `time_mining` pesado (3 anos de OF_FP) semanal, Domingo
+    # 01:00 UTC. Registados sempre; fazem no-op quando sqlserver_enabled
+    # =False, por isso ligar o flag nao exige reiniciar o scheduler.
+    _scheduler.add_job(
+        _nelo_erp_sync_job,
+        trigger=CronTrigger(hour=2, minute=0, timezone="UTC"),
+        id="nelo_erp_sync",
+        name="nelo_erp_sync",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    _scheduler.add_job(
+        _nelo_erp_time_mining_job,
+        trigger=CronTrigger(day_of_week=6, hour=1, minute=0, timezone="UTC"),
+        id="nelo_erp_time_mining",
+        name="nelo_erp_time_mining",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+
     _scheduler.start()
     logger.info(
         f"Scheduler started: alerts every {alerts_interval_minutes}m for "
@@ -1048,3 +1072,60 @@ async def _daily_feedback_job(tenant_ids: List[UUID]) -> None:
             logger.info(f"daily_feedback generated for tenant={tid}")
         except Exception as e:
             logger.error(f"daily_feedback failed for tenant={tid}: {e}", exc_info=True)
+
+
+async def _nelo_erp_sync_job() -> None:
+    """Q.25.D — sync nocturno ERP->Postgres (mirrors leves).
+
+    Corre os mirrors ETL Q.20 excepto `time_mining` (o minerador
+    historico pesado tem cadencia propria — ``_nelo_erp_time_mining_job``).
+    GLOBAL e idempotente. No-op quando ``sqlserver_enabled=False``, por
+    isso ligar o flag em runtime nao exige reiniciar o scheduler.
+    """
+    from src.shared.config import settings
+
+    if not settings.sqlserver_enabled:
+        logger.debug("nelo_erp_sync skipped — sqlserver_enabled=False")
+        return
+
+    from src.adapters.nelo.etl.sync import run_nelo_sync
+
+    started = datetime.utcnow()
+    try:
+        results = await run_nelo_sync(exclude=["time_mining"])
+        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        failed = [r.source for r in results if r.status != "ok"]
+        logger.info(
+            "nelo_erp_sync mirrors=%s failed=%s elapsed_ms=%s",
+            [r.source for r in results], failed or "none", elapsed_ms,
+        )
+    except Exception as exc:
+        logger.error("nelo_erp_sync failed: %s", exc, exc_info=True)
+
+
+async def _nelo_erp_time_mining_job() -> None:
+    """Q.25.D — mineracao historica de tempos (o mirror pesado, semanal).
+
+    `time_mining` percorre ~3 anos de `OF_FP` (~680k linhas) para refrescar
+    as duracoes P50/P90 de `plan.routing_template_phase`. Cadencia semanal
+    — as duracoes mudam devagar. No-op quando ``sqlserver_enabled=False``.
+    """
+    from src.shared.config import settings
+
+    if not settings.sqlserver_enabled:
+        logger.debug("nelo_erp_time_mining skipped — sqlserver_enabled=False")
+        return
+
+    from src.adapters.nelo.etl.sync import run_nelo_sync
+
+    started = datetime.utcnow()
+    try:
+        results = await run_nelo_sync(only=["time_mining"])
+        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        for r in results:
+            logger.info(
+                "nelo_erp_time_mining status=%s read=%s upd=%s skip=%s elapsed_ms=%s",
+                r.status, r.rows_read, r.rows_updated, r.rows_skipped, elapsed_ms,
+            )
+    except Exception as exc:
+        logger.error("nelo_erp_time_mining failed: %s", exc, exc_info=True)
