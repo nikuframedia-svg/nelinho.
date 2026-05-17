@@ -52,6 +52,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "--since", metavar="YYYY-MM-DD",
         help="Watermark for incremental mirrors (quality, time_mining).",
     )
+    parser.add_argument(
+        "--source", choices=("erp", "demo"), default="erp",
+        help="Data source: 'erp' (live SQL Server, default) or 'demo' "
+        "(the bundled agent_docs/demo_orders.json — 50 real OFs, no "
+        "credentials needed).",
+    )
     return parser.parse_args(argv)
 
 
@@ -65,17 +71,22 @@ async def main(argv: list[str]) -> int:
             print(f"[FAIL] --since must be YYYY-MM-DD, got: {args.since}")
             return 1
 
-    print(f"NELO ERP-to-Postgres sync at {datetime.now():%Y-%m-%d %H:%M:%S}")
+    print(
+        f"NELO {args.source}-to-Postgres sync at "
+        f"{datetime.now():%Y-%m-%d %H:%M:%S}"
+    )
     try:
-        results = await run_nelo_sync(only=args.only, exclude=args.exclude, since=since)
+        results = await run_nelo_sync(
+            only=args.only, exclude=args.exclude, since=since, source=args.source,
+        )
     except Exception as exc:  # noqa: BLE001 — top-level reporter
         print(f"[FAIL] sync aborted: {type(exc).__name__}: {exc}")
         return 1
 
     if not results:
         print(
-            "[SKIP] No mirrors ran. Either SQLSERVER_ENABLED is False, "
-            "or no mirror matched the selection."
+            "[SKIP] No mirrors ran. With --source erp, SQLSERVER_ENABLED is "
+            "False; otherwise no mirror matched the selection."
         )
         return 0
 

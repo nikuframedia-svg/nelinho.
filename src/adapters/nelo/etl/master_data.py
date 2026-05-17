@@ -129,18 +129,23 @@ async def mirror_master_data(
     session,
     tenant_id: UUID,
     since: Optional[date] = None,
+    source=services,
 ) -> EtlRunResult:
-    """Run the master-data mirror under a single ``core.etl_run`` row."""
+    """Run the master-data mirror under a single ``core.etl_run`` row.
+
+    ``source`` is the adapter module to read from — :mod:`services` (the
+    live ERP, default) or :mod:`src.adapters.nelo.demo_source`.
+    """
     async with EtlRunner(session, tenant_id, source="master") as run:
-        await _mirror_products(run)
-        await _mirror_employees(run)
-        await _mirror_bom(run, session, tenant_id)
-        await _mirror_routing(run, session, tenant_id)
+        await _mirror_products(run, source)
+        await _mirror_employees(run, source)
+        await _mirror_bom(run, session, tenant_id, source)
+        await _mirror_routing(run, session, tenant_id, source)
     return run.result
 
 
-async def _mirror_products(run: EtlRunner) -> None:
-    rows = await services.list_products()
+async def _mirror_products(run: EtlRunner, source=services) -> None:
+    rows = await source.list_products()
     run.count_read(len(rows))
     mapped = [m for m in (_map_product(r) for r in rows) if m is not None]
     run.count_skipped(len(rows) - len(mapped))
@@ -151,8 +156,8 @@ async def _mirror_products(run: EtlRunner) -> None:
     )
 
 
-async def _mirror_employees(run: EtlRunner) -> None:
-    rows = await services.list_entities(internal_only=True)
+async def _mirror_employees(run: EtlRunner, source=services) -> None:
+    rows = await source.list_entities(internal_only=True)
     run.count_read(len(rows))
     mapped = [m for m in (_map_worker(r) for r in rows) if m is not None]
     run.count_skipped(len(rows) - len(mapped))
@@ -204,8 +209,8 @@ def _map_bom(rows: Sequence[BomRow], by_code: Dict[str, UUID]) -> Tuple[List[Dic
     return mapped, skipped
 
 
-async def _mirror_bom(run: EtlRunner, session, tenant_id: UUID) -> None:
-    rows = await services.list_all_bom()
+async def _mirror_bom(run: EtlRunner, session, tenant_id: UUID, source=services) -> None:
+    rows = await source.list_all_bom()
     run.count_read(len(rows))
     by_code = await _product_id_by_code(session, tenant_id)
     mapped, skipped = _map_bom(rows, by_code)
@@ -260,7 +265,7 @@ def group_routing_patterns(
     return patterns
 
 
-async def _mirror_routing(run: EtlRunner, session, tenant_id: UUID) -> None:
+async def _mirror_routing(run: EtlRunner, session, tenant_id: UUID, source=services) -> None:
     """Build routing templates from the product-phase routing surface.
 
     ``duration_p50_h`` / ``duration_p90_h`` are intentionally NOT written
@@ -268,7 +273,7 @@ async def _mirror_routing(run: EtlRunner, session, tenant_id: UUID) -> None:
     excludes those columns so a nightly master sync never wipes mined
     durations.
     """
-    rows = await services.list_all_routings()
+    rows = await source.list_all_routings()
     run.count_read(len(rows))
 
     patterns = group_routing_patterns(rows)

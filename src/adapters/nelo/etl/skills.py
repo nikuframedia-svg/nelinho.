@@ -104,11 +104,12 @@ async def mirror_skills(
     session,
     tenant_id: UUID,
     since: Optional[date] = None,
+    source=services,
 ) -> EtlRunResult:
     """Mirror the skill catalogue + the worker×phase competence matrix."""
     async with EtlRunner(session, tenant_id, source="skills") as run:
         # 1. hr.skills — one skill per production phase.
-        phases = await services.list_phases()
+        phases = await source.list_phases()
         run.count_read(len(phases))
         skill_rows = [m for m in (_map_skill(p) for p in phases) if m is not None]
         run.count_skipped(len(phases) - len(skill_rows))
@@ -122,7 +123,7 @@ async def mirror_skills(
         skill_by_code = await _code_to_id(session, tenant_id, Skill, "skill_code")
         emp_by_code = await _code_to_id(session, tenant_id, Employee, "employee_code")
 
-        ef_rows = await services.list_entity_phases()
+        ef_rows = await source.list_entity_phases()
         run.count_read(len(ef_rows))
         mapped, skipped = _map_employee_skills(ef_rows, emp_by_code, skill_by_code)
         run.count_skipped(skipped)

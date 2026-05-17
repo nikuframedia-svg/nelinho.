@@ -135,6 +135,7 @@ async def mirror_time_mining(
     session,
     tenant_id: UUID,
     since: Optional[date] = None,
+    source=services,
 ) -> EtlRunResult:
     """Mine real durations and write p50/p90 into routing_template_phase."""
     async with EtlRunner(session, tenant_id, source="time_mining") as run:
@@ -152,7 +153,7 @@ async def mirror_time_mining(
         samples: Dict[Tuple[UUID, str], List[float]] = defaultdict(list)
         skipped = 0
         for win_from, win_to in _month_windows(date_from, date_to):
-            ops = await services.list_operations(date_from=win_from, date_to=win_to)
+            ops = await source.list_operations(date_from=win_from, date_to=win_to)
             run.count_read(len(ops))
             for op in ops:
                 dur = operation_duration_h(op)

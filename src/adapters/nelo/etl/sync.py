@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date
-from typing import Awaitable, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 from uuid import UUID
 
 from .runner import EtlRunResult
@@ -33,6 +33,25 @@ _MIRRORS: Dict[str, MirrorFn] = {}
 def register_mirror(name: str, fn: MirrorFn) -> None:
     """Register a mirror under ``name`` (the ``--only`` selector value)."""
     _MIRRORS[name] = fn
+
+
+def _resolve_source(source: Any):
+    """Resolve the ``source`` selector to a module exposing the adapter
+    interface (``list_*`` + ``health_check`` + ``close_engine``).
+
+    * ``"erp"`` / ``None`` — the live SQL Server (:mod:`services`);
+    * ``"demo"`` — the bundled demo package (:mod:`demo_source`);
+    * a module/object — used verbatim (tests inject fakes here).
+    """
+    if source is None or source == "erp":
+        from src.adapters.nelo import services
+        return services
+    if source == "demo":
+        from src.adapters.nelo import demo_source
+        return demo_source
+    if isinstance(source, str):
+        raise ValueError(f"unknown source: {source!r}; use 'erp' or 'demo'")
+    return source
 
 
 def registered_mirrors() -> List[str]:
@@ -64,8 +83,9 @@ async def run_nelo_sync(
     exclude: Optional[List[str]] = None,
     tenant_id: Optional[UUID] = None,
     since: Optional[date] = None,
+    source: Any = "erp",
 ) -> List[EtlRunResult]:
-    """Run the ERP→Postgres sync.
+    """Run the source→Postgres sync.
 
     * ``only`` — subset of mirror names; ``None`` runs every registered one.
     * ``exclude`` — mirror names to drop (e.g. the heavy ``time_mining``
@@ -73,22 +93,28 @@ async def run_nelo_sync(
     * ``tenant_id`` — defaults to the dev tenant.
     * ``since`` — watermark forwarded to incremental mirrors (quality,
       time_mining).
+    * ``source`` — ``"erp"`` (live SQL Server, the default) or ``"demo"``
+      (the bundled demo package). The ``sqlserver_enabled`` gate only
+      applies to the ERP source — the demo source has no SQL Server.
 
     Returns one :class:`EtlRunResult` per mirror that ran. A single
     failing mirror is recorded (``status='error'``) and the others still
     run — one bad table never aborts the whole sync.
     """
-    from src.adapters.nelo.services import close_engine, health_check
     from src.shared.config import settings
     from src.shared.database import async_session_factory
+
+    src_mod = _resolve_source(source)
+    is_erp = source is None or source == "erp"
 
     if tenant_id is None:
         tenant_id = UUID("00000000-0000-0000-0000-000000000001")  # dev tenant
 
-    if not getattr(settings, "sqlserver_enabled", False):
+    if is_erp and not getattr(settings, "sqlserver_enabled", False):
         logger.warning(
             "nelo_sync skipped — settings.sqlserver_enabled is False. "
-            "Set it (and sqlserver_url) to run the ERP sync."
+            "Set it (and sqlserver_url) to run the ERP sync, or pass "
+            "source='demo' to ingest the bundled demo package."
         )
         return []
 
@@ -104,9 +130,10 @@ async def run_nelo_sync(
 
     results: List[EtlRunResult] = []
     try:
-        snapshot = await health_check()
+        snapshot = await src_mod.health_check()
         logger.info(
-            "nelo_sync — ERP reachable: open_orders=%d movements_30d=%d",
+            "nelo_sync — source=%s reachable: open_orders=%d movements_30d=%d",
+            ("erp" if is_erp else source),
             snapshot.open_orders_count, snapshot.movements_last_30d,
         )
 
@@ -121,6 +148,7 @@ async def run_nelo_sync(
                         session=session,
                         tenant_id=tenant_id,
                         since=since,
+                        source=src_mod,
                     )
                     await session.commit()
                 results.append(result)
@@ -134,6 +162,6 @@ async def run_nelo_sync(
                 failed.error = f"{type(exc).__name__}: {exc}"
                 results.append(failed)
     finally:
-        await close_engine()
+        await src_mod.close_engine()
 
     return results

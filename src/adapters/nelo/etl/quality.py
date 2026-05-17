@@ -148,12 +148,13 @@ async def mirror_quality(
     session,
     tenant_id: UUID,
     since: Optional[date] = None,
+    source=services,
 ) -> EtlRunResult:
     """Mirror quality incidents into the error catalogue + rework log."""
     async with EtlRunner(session, tenant_id, source="quality") as run:
         date_from = since or (date.today() - timedelta(days=_DEFAULT_LOOKBACK_DAYS))
         date_to = date.today()
-        ops = await services.list_operations(date_from=date_from, date_to=date_to)
+        ops = await source.list_operations(date_from=date_from, date_to=date_to)
         run.count_read(len(ops))
 
         incidents = [op for op in ops if _is_incident(op)]

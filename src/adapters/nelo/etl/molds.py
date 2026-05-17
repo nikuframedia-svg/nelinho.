@@ -66,10 +66,11 @@ async def mirror_molds(
     session,
     tenant_id: UUID,
     since: Optional[date] = None,
+    source=services,
 ) -> EtlRunResult:
     """Mirror the ERP-side mold catalogue into ``plan.mold``."""
     async with EtlRunner(session, tenant_id, source="molds") as run:
-        rows = await services.list_molds()
+        rows = await source.list_molds()
         run.count_read(len(rows))
         mapped = [m for m in (_map_mold(r) for r in rows) if m is not None]
         run.count_skipped(len(rows) - len(mapped))
