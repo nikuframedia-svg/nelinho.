@@ -454,7 +454,7 @@ function ListaTab() {
   const criticalSkills = Object.values(skillCount).filter((c) => c <= 1).length;
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 page-enter">
       {/* Explainer */}
       <div
         style={{
@@ -478,6 +478,7 @@ function ListaTab() {
 
       {/* KPI strip */}
       <div
+        className="page-enter"
         style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(4, 1fr)',
@@ -587,23 +588,22 @@ function ListaTab() {
                           : w.err < 0.18
                             ? 'yellow'
                             : 'red';
+                  // Q.23.F — SPOF: único operador experiente (>12m) na sua skill.
+                  const isSpof =
+                    w.tier === '>12m' &&
+                    !!w.job_title &&
+                    (skillCount[w.job_title] ?? 0) <= 1;
                   return (
                     <tr
                       key={w.id}
                       onClick={() => setDrawerEmp({ id: w.id, name: w.employee_name })}
+                      className="cursor-pointer transition-colors hover:bg-white/[0.03]"
                       style={{
-                        cursor: 'pointer',
                         borderBottom:
                           i < enriched.length - 1
                             ? '1px solid var(--bd-1)'
                             : 'none',
-                        transition: 'background-color 0.12s',
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.background = 'var(--bg-1)';
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.background = 'transparent';
+                        boxShadow: `inset 3px 0 0 0 var(--${tierTone(w.tier)})`,
                       }}
                     >
                       <td style={{ padding: '12px 16px' }}>
@@ -658,7 +658,26 @@ function ListaTab() {
                         {w.ops !== null ? w.ops.toLocaleString('pt-PT') : '—'}
                       </td>
                       <td style={{ padding: '12px 16px', color: 'var(--fg-1)' }}>
-                        {w.job_title ?? '—'}
+                        <span className="inline-flex items-center gap-1.5">
+                          {w.job_title ?? '—'}
+                          {isSpof ? (
+                            <span
+                              title="Único operador tier >12m nesta skill — ponto único de falha"
+                              style={{
+                                fontSize: 9,
+                                fontWeight: 700,
+                                color: 'var(--red)',
+                                background: 'var(--red-bg)',
+                                border: '1px solid var(--red-bd)',
+                                borderRadius: 4,
+                                padding: '1px 5px',
+                                letterSpacing: 0.3,
+                              }}
+                            >
+                              SPOF
+                            </span>
+                          ) : null}
+                        </span>
                       </td>
                       <td style={{ padding: '12px 16px' }}>
                         {w.status === 'ACTIVE' ? (
