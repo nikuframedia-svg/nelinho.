@@ -660,7 +660,7 @@ def decode(
                 final_op_by_order[op.order_id] = op
 
         scheduled_ids = {s.operation_id for s in scheduled}
-        for order_id, final_op in final_op_by_order.items():
+        for _order_id, final_op in final_op_by_order.items():
             if final_op.operation_id not in scheduled_ids:
                 # The final phase never got placed — don't count revenue.
                 continue
@@ -816,7 +816,7 @@ def _compute_target_starts(
     which we could compute a real target.
     """
     targets: Dict[str, datetime] = {}
-    for order_id, order_ops in order_to_ops.items():
+    for _order_id, order_ops in order_to_ops.items():
         # Latest due_date across the order's ops (first-set wins on ties).
         order_due: Optional[datetime] = None
         for op in order_ops:

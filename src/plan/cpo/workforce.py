@@ -109,7 +109,7 @@ def assign_workers_hungarian(
     ref = horizon_start or datetime.utcnow()
     cost = np.full((len(slots), len(workers)), INFEASIBLE_COST, dtype=np.float64)
 
-    for row, (op_idx, slot_idx, req) in enumerate(slots):
+    for row, (_op_idx, _slot_idx, req) in enumerate(slots):
         eligible_set: Set[str] = set(req.eligible_workers)
         start_ref = req.earliest_start or ref
         for col, worker_id in enumerate(workers):

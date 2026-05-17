@@ -12,9 +12,9 @@ Detectors (Sprint C baseline):
   that has fewer than 2 capable employees (SPOF risk).
 - quality_degradation: get_quality() → alert when total quality events
   exceed QUALITY_EVENTS_THRESHOLD in the current window.
-- delivery_risk: placeholder — OTD/due-date data is BLOCKED in the
-  semantic layer, so this detector currently emits nothing but is kept
-  here so the interface is stable when data becomes available.
+- delivery_risk: alert per ProductionOrder still IN_PROGRESS whose
+  transport_date falls within DELIVERY_RISK_WINDOW_DAYS (or is already
+  past). Reads production_orders directly — no semantic layer needed.
 
 Deduplication: for each detector, scans the last
 `ALERT_DEDUPE_WINDOW_MINUTES` of alerts and skips any that already match
@@ -24,7 +24,7 @@ Deduplication: for each detector, scans the last
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
@@ -39,6 +39,7 @@ from src.copilot.alerts.models import (
     STATUS_ACTIVE,
     CopilotAlert,
 )
+from src.plan.models.order import OrderStatus, ProductionOrder
 from src.shared.decorators import record_rule_firing
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,9 @@ logger = logging.getLogger(__name__)
 BOTTLENECK_DAYS_THRESHOLD = 10.0
 QUALITY_EVENTS_THRESHOLD = 500
 ALERT_DEDUPE_WINDOW_MINUTES = 60
+# Q.31.H — janela de risco de entrega: barco com transporte dentro de N dias
+# (ou já passado) e ainda em produção dispara o alerta.
+DELIVERY_RISK_WINDOW_DAYS = 3
 
 
 class AlertsEngine:
@@ -244,13 +248,62 @@ class AlertsEngine:
             "entity_refs": ["quality:global"],
         }]
 
+    @record_rule_firing(
+        rule_id="alerts.delivery_risk",
+        extract_payload=lambda self: {"window_days": DELIVERY_RISK_WINDOW_DAYS},
+        serialise_output=lambda candidates: {
+            "candidate_count": len(candidates),
+            "hulls": [c.get("context", {}).get("hull") for c in candidates],
+        },
+    )
     async def _detect_delivery_risk(self) -> List[Dict[str, Any]]:
+        """Barcos com transporte próximo/passado e ainda em produção.
+
+        Q.31.H — substitui o stub. Não precisa do semantic layer: lê
+        `production_orders` directamente (status IN_PROGRESS + transport_date
+        dentro da janela). Um barco por concluir cuja expedição é amanhã é
+        risco de entrega.
         """
-        Delivery risk requires OTD (on-time delivery) data, which is BLOCKED
-        in the semantic layer (no commercial due dates ingested). Kept as
-        a no-op so the detector list is complete; wire up when OTD lands.
-        """
-        return []
+        today = date.today()
+        horizon = today + timedelta(days=DELIVERY_RISK_WINDOW_DAYS)
+        stmt = select(ProductionOrder).where(
+            and_(
+                ProductionOrder.tenant_id == self.tenant_id,
+                ProductionOrder.status == OrderStatus.IN_PROGRESS,
+                ProductionOrder.transport_date.isnot(None),
+                ProductionOrder.transport_date <= horizon,
+            )
+        )
+        rows = list((await self.session.execute(stmt)).scalars().all())
+
+        candidates: List[Dict[str, Any]] = []
+        for o in rows:
+            overdue = o.transport_date < today
+            dias = (o.transport_date - today).days
+            quando = (
+                f"era esperado há {abs(dias)} dia(s)" if overdue
+                else "é hoje" if dias == 0
+                else f"é daqui a {dias} dia(s)"
+            )
+            candidates.append({
+                "severity": "CRITICAL" if overdue else "WARN",
+                "code": CODE_DELIVERY_RISK,
+                "title": f"Risco de atraso — barco #{o.legacy_id}",
+                "message_pt": (
+                    f"O barco #{o.legacy_id} ({o.product_type or '?'}) tem transporte "
+                    f"que {quando} mas ainda está em produção (fase "
+                    f"'{o.current_phase_name}'). Confirma se chega a tempo da expedição."
+                ),
+                "context": {
+                    "order_id": str(o.id),
+                    "hull": o.legacy_id,
+                    "transport_date": o.transport_date.isoformat(),
+                    "current_phase": o.current_phase_name,
+                    "overdue": overdue,
+                },
+                "entity_refs": [f"barco:{o.legacy_id}"],
+            })
+        return candidates
 
     # ------------------------------------------------------------------ #
     # Internals                                                          #

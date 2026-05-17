@@ -102,7 +102,7 @@ class PayrollService:
             total_overtime_cost = Decimal("0")
             total_burden = Decimal("0")
 
-            for emp_id, summary in employee_summaries.items():
+            for _emp_id, summary in employee_summaries.items():
                 total = summary["total_hours"]
                 rate = summary["hourly_rate"]
 

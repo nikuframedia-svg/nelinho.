@@ -94,18 +94,18 @@ class ExcelParser:
                     result.sheets[sheet_name] = sheet_data
                     result.total_rows += sheet_data.row_count
                 except Exception as e:
-                    result.errors.append(f"Error parsing sheet '{sheet_name}': {str(e)}")
+                    result.errors.append(f"Error parsing sheet '{sheet_name}': {e!s}")
                     logger.error(f"Error parsing sheet {sheet_name}: {e}")
             
         except Exception as e:
-            result.errors.append(f"Error reading Excel file: {str(e)}")
+            result.errors.append(f"Error reading Excel file: {e!s}")
             logger.error(f"Error reading Excel file: {e}")
         
         return result
     
     def _parse_sheet(self, excel_file, sheet_name: str) -> SheetData:
         """Parse a single sheet."""
-        pd = self._get_pandas()
+        self._get_pandas()
         
         # Read sheet
         df = excel_file.parse(sheet_name)
@@ -118,7 +118,7 @@ class ExcelParser:
         
         # Convert to list of dicts with normalization
         rows = []
-        for idx, row in df.iterrows():
+        for _idx, row in df.iterrows():
             normalized_row = self._normalize_row(row.to_dict())
             rows.append(normalized_row)
         

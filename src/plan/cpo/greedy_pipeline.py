@@ -254,7 +254,7 @@ class GreedyPipeline:
             variant = chromosome.routing_variant(op.operation_id)
             if variant != "A":
                 # Side-channel attribute. Decoder reads it only if it exists.
-                setattr(op, "variant", variant)
+                op.variant = variant
                 applied += 1
         return operations, applied
 

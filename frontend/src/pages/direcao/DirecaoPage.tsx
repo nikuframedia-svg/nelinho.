@@ -33,7 +33,7 @@ import { useUmwelt } from '../../lib/umwelt';
 const ProfitDashboard = lazy(() =>
   import('../../components/profit/ProfitPanels').then((m) => ({ default: m.ProfitDashboard })),
 );
-import { ceoDashboardApi, decisionsApi, getApiBase } from '../../lib/api';
+import { ceoDashboardApi, decisionsApi, getApiBase, profitApi } from '../../lib/api';
 
 interface ActiveOrder {
   id: string;
@@ -149,6 +149,13 @@ export default function DirecaoPage() {
       return r.ok ? r.json() : null;
     },
     staleTime: 5 * 60_000,
+    retry: 0,
+  });
+  // Q.31.A — agregado de margem para o KPI "Margem por barco".
+  const marginQuery = useQuery({
+    queryKey: ['direcao', 'margin-summary', refreshKey],
+    queryFn: () => profitApi.marginSummary(30),
+    staleTime: 60_000,
     retry: 0,
   });
 
@@ -397,10 +404,28 @@ export default function DirecaoPage() {
           />
           <KPICardZip
             label="Margem por barco"
-            value="—"
+            value={
+              marginQuery.data?.avg_margin_eur != null
+                ? Math.round(marginQuery.data.avg_margin_eur).toLocaleString('pt-PT')
+                : '—'
+            }
             unit="€"
-            context="Calculado em sub-sprint dedicado"
-            tone="gray"
+            context={
+              marginQuery.data && marginQuery.data.order_count > 0
+                ? `Média de ${marginQuery.data.order_count} ordens · `
+                  + `${marginQuery.data.negative_count} negativas (30 dias)`
+                : marginQuery.isLoading
+                  ? 'A carregar…'
+                  : 'Sem ordens com COGS calculado'
+            }
+            tone={
+              marginQuery.data?.avg_margin_eur == null
+                ? 'gray'
+                : marginQuery.data.avg_margin_eur > 0
+                  ? 'green'
+                  : 'red'
+            }
+            onClick={() => navigate('/relatorios?tab=lucro')}
           />
         </div>
 

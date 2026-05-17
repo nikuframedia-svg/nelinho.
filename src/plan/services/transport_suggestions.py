@@ -115,7 +115,7 @@ class TransportSuggestionsService:
         if batch is None or batch.status == "DISPATCHED":
             return []
 
-        orders, assigned_ids = await self._fetch_assigned_orders(batch_id)
+        orders, _assigned_ids = await self._fetch_assigned_orders(batch_id)
         unassigned = await self._fetch_unassigned_completed_orders()
         peer_batches = await self._fetch_peer_batches(batch.transport_date)
 

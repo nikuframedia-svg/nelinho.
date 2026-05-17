@@ -56,6 +56,11 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
+# Strong references to in-flight fan-out tasks. Without this the event
+# loop only holds a weak reference and may garbage-collect the task
+# mid-flight, silently dropping the rule-firing push (ruff RUF006).
+_PENDING_TASKS: "set[asyncio.Task[Any]]" = set()
+
 
 _PG_NOTIFY_CHANNEL = "rule_firing"
 
@@ -174,7 +179,9 @@ def _on_notify(connection, pid, channel: str, payload: str) -> None:
 
     # Schedule the async fan-out — the callback itself can't await.
     try:
-        asyncio.create_task(_route_to_bridge(body))
+        task = asyncio.create_task(_route_to_bridge(body))
+        _PENDING_TASKS.add(task)
+        task.add_done_callback(_PENDING_TASKS.discard)
     except RuntimeError as exc:
         # No running loop in this thread — happens in some test
         # configurations. Log + drop.

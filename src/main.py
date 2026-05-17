@@ -105,7 +105,7 @@ async def lifespan(app: FastAPI):
         
         # Initialize Redis (opcional)
         try:
-            redis = await get_redis()
+            await get_redis()
             logger.info("Redis connected")
         except Exception as redis_error:
             logger.warning(f"Redis connection failed: {redis_error}")
@@ -114,7 +114,7 @@ async def lifespan(app: FastAPI):
         # Initialize Kafka producer (opcional)
         if not settings.is_development:
             try:
-                producer = await get_producer()
+                await get_producer()
                 logger.info("Kafka producer started")
             except Exception as kafka_error:
                 logger.warning(f"Kafka connection failed: {kafka_error}")
@@ -512,19 +512,19 @@ app.include_router(core_router)
 app.include_router(tenant_config_router)  # Sprint L.3 — /v1/config/*
 
 # Sprint AA.4 — Trust Index v2.0 endpoint
-from src.dqa.api import router as dqa_router  # noqa: E402
+from src.dqa.api import router as dqa_router
 app.include_router(dqa_router)
 
 # Sprint Q.7 Fase 1 — Diagnostics dashboard (per-module health + infra pings)
-from src.diagnostics import router as diagnostics_router  # noqa: E402
+from src.diagnostics import router as diagnostics_router
 app.include_router(diagnostics_router)
 
 # Sprint N — Factory Map
-from src.factory_data_product.api.factory_map import router as factory_map_router  # noqa: E402
+from src.factory_data_product.api.factory_map import router as factory_map_router
 app.include_router(factory_map_router)
 
 # Sprint R — Quality
-from src.quality.api import router as quality_router  # noqa: E402
+from src.quality.api import router as quality_router
 app.include_router(quality_router)
 app.include_router(plan_router)
 app.include_router(profit_router)
@@ -551,11 +551,19 @@ app.include_router(copilot_alerts_router)  # Proactive alerts (Sprint C — Fase
 app.include_router(plan_cpo_router)  # CPO v4 scheduler (Sprint E — DRCFFS-R)
 
 # Sprint Q.18.UI.A.1 — minimal /v1/auth/me for the Sidebar user chip.
-from src.shared.api.auth_me import router as auth_me_router  # noqa: E402
+from src.shared.api.auth_me import router as auth_me_router
 app.include_router(auth_me_router)
 
+# Q.31.G — login real por password (POST /v1/auth/login + /refresh).
+from src.shared.api.auth_login import router as auth_login_router
+app.include_router(auth_login_router)
+
+# Q.31.F — pesquisa global (GET /v1/search).
+from src.search.api import router as search_router
+app.include_router(search_router)
+
 # Sprint Q.18.ZIP.BE.4 — POST /v1/reports/generate dispatcher.
-from src.reports.api import router as reports_router  # noqa: E402
+from src.reports.api import router as reports_router
 app.include_router(reports_router)
 
 # Sprint D.1 — Real-time SSE fan-out of Kafka events to the browser.

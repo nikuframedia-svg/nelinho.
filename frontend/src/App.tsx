@@ -10,6 +10,8 @@ import { RealtimeProvider } from './providers/RealtimeProvider';
 
 // Lazy load heavy pages for code splitting
 const Dashboard = lazy(() => import('./pages/Dashboard').then(m => ({ default: m.Dashboard })));
+// Q.31.G.2 — login real (página standalone, fora do Layout).
+const LoginPage = lazy(() => import('./pages/login/LoginPage'));
 // Sprint Q.18.ZIP.shell — 10 páginas standalone matching nelo.html zip (path PT-PT canónicos)
 const DirecaoPage = lazy(() => import('./pages/direcao/DirecaoPage'));
 const InboxDecisoesPage = lazy(() => import('./pages/inbox/InboxDecisoesPage'));
@@ -125,6 +127,12 @@ function App() {
             <ContractDegradedBanner />
                 
                 <Routes>
+                {/* Q.31.G.2 — login standalone, fora do Layout (sem sidebar). */}
+                <Route path="/login" element={
+                  <Suspense fallback={<div className="p-8"><SkeletonLoader count={3} /></div>}>
+                    <LoginPage />
+                  </Suspense>
+                } />
                 <Route path="/" element={<Layout />}>
                   {/* Sprint Q.18.ZIP.shell — / redireciona para /direcao matching zip nelo.html */}
                   <Route index element={<Navigate to="/direcao" replace />} />

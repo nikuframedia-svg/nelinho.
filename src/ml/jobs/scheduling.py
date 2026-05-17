@@ -54,7 +54,7 @@ def register_ml_retrain_jobs(
 
     count = 0
     for tid in tenant_list:
-        for name, job_cls, cron in job_specs:
+        for name, _job_cls, cron in job_specs:
             if not cron:
                 continue  # surrogate etc.
             scheduler.add_job(

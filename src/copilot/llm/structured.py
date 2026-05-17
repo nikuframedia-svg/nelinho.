@@ -87,17 +87,7 @@ async def structured_call(
             last_error = exc
             if attempt < max_retries:
                 # Feed the error back so the model self-corrects.
-                history = history + [
-                    {"role": "assistant", "content": json.dumps(payload)},
-                    {
-                        "role": "user",
-                        "content": (
-                            "Your previous JSON failed validation. Fix the "
-                            "issues and reply with ONLY the corrected JSON.\n\n"
-                            f"Validation errors:\n{_format_errors(exc)}"
-                        ),
-                    },
-                ]
+                history = [*history, {"role": "assistant", "content": json.dumps(payload)}, {"role": "user", "content": "Your previous JSON failed validation. Fix the " "issues and reply with ONLY the corrected JSON.\n\n" f"Validation errors:\n{_format_errors(exc)}"}]
                 continue
             raise StructuredValidationError(
                 f"Response invalid after {max_retries + 1} attempts: {exc}"

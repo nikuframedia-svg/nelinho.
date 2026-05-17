@@ -529,7 +529,7 @@ def iter_seeds() -> list[ConfigSeed]:
         # Local import avoids a hard dependency cycle and keeps this module
         # importable in environments where the YAML path is intentionally
         # not provisioned (e.g. minimal worker containers).
-        from src.governance.yaml_policy import load_seeds, YamlPolicyError  # noqa: WPS433
+        from src.governance.yaml_policy import load_seeds, YamlPolicyError
     except Exception as exc:  # pragma: no cover - defensive only
         _log.warning("yaml_policy import failed (%s); using embedded DEFAULT_SEEDS", exc)
         return list(DEFAULT_SEEDS)

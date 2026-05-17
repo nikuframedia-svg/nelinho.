@@ -75,9 +75,9 @@ async def get_dashboard(
 
 # ─── /oee (Q.19.A) — OEE from live NELO operations ───────────────────────
 
-from datetime import timedelta  # noqa: E402
+from datetime import timedelta
 
-from src.profit.services.oee_service import OEEService  # noqa: E402
+from src.profit.services.oee_service import OEEService
 
 
 def _oee_item_to_dict(item) -> dict:
@@ -269,6 +269,158 @@ async def sku_profitability(
         "date_to": date_to.isoformat(),
         "top_n": top_n,
         "items": items,
+    }
+
+
+# ─── /orders/margins + /margin-summary (Q.31.A — drill-down de lucro) ─────
+
+from src.plan.models.order import ProductionOrder
+from src.profit.models.cost import CostCalculation
+from src.profit.models.pricing import OrderRevenue
+
+
+def _margin_row(
+    order: ProductionOrder,
+    cost_by_order: dict,
+    rev_by_order: dict,
+) -> dict:
+    """Linha de margem de uma ordem. Sem `CostCalculation` → `calculated`
+    a False e margens `null` — honesto, não inventa números."""
+    key = str(order.legacy_id)
+    cc = cost_by_order.get(key)
+    revenue = rev_by_order.get(key)
+    status_val = getattr(order.status, "value", None) or str(order.status)
+    row = {
+        "order_id": key,
+        "hull": key,
+        "product_name": order.product_name,
+        "product_type": order.product_type,
+        "status": status_val,
+        "calculated": cc is not None,
+        "revenue_eur": float(revenue) if revenue is not None else None,
+        "total_cogs": None,
+        "margin_eur": None,
+        "margin_pct": None,
+    }
+    if cc is None:
+        return row
+    cogs = Decimal(str(cc.total_cogs))
+    row["total_cogs"] = float(cogs)
+    if revenue is not None:
+        margin = revenue - cogs
+        row["margin_eur"] = float(margin)
+        if revenue > 0:
+            row["margin_pct"] = float(
+                (margin / revenue).quantize(Decimal("0.0001"))
+            )
+    return row
+
+
+async def _collect_margin_rows(
+    session: AsyncSession,
+    tenant_id: UUID,
+    date_from: Optional[date],
+    date_to: Optional[date],
+    limit: int,
+) -> list[dict]:
+    """Junta `ProductionOrder` + `CostCalculation` (Q.26, quando existe)
+    + `OrderRevenue` numa lista de linhas de margem. 3 queries, sem N+1."""
+    ostmt = select(ProductionOrder).where(ProductionOrder.tenant_id == tenant_id)
+    if date_from is not None:
+        ostmt = ostmt.where(ProductionOrder.created_date >= date_from)
+    if date_to is not None:
+        ostmt = ostmt.where(ProductionOrder.created_date <= date_to)
+    ostmt = ostmt.order_by(
+        ProductionOrder.created_date.desc().nullslast()
+    ).limit(limit)
+    orders = list((await session.execute(ostmt)).scalars().all())
+    if not orders:
+        return []
+
+    keys = [str(o.legacy_id) for o in orders]
+
+    # CostCalculation: a versão mais alta ganha (iteramos por ordem
+    # crescente de versão, a última sobrepõe-se).
+    cost_by_order: dict = {}
+    cstmt = (
+        select(CostCalculation)
+        .where(
+            CostCalculation.tenant_id == tenant_id,
+            CostCalculation.order_id.in_(keys),
+        )
+        .order_by(CostCalculation.calculation_version)
+    )
+    for cc in (await session.execute(cstmt)).scalars().all():
+        cost_by_order[cc.order_id] = cc
+
+    rev_by_order: dict = {}
+    rstmt = select(OrderRevenue).where(
+        OrderRevenue.tenant_id == tenant_id,
+        OrderRevenue.order_id.in_(keys),
+    )
+    for rv in (await session.execute(rstmt)).scalars().all():
+        rev_by_order[rv.order_id] = Decimal(str(rv.total_revenue_eur))
+
+    return [_margin_row(o, cost_by_order, rev_by_order) for o in orders]
+
+
+@router.get("/orders/margins")
+async def list_order_margins(
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    limit: int = Query(50, ge=1, le=500),
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Q.31.A — lista de ordens com receita, COGS e margem por barco.
+
+    Drill-down do KPID "Margem por barco". Ordens sem `CostCalculation`
+    aparecem com `calculated=false` e margens `null`.
+    """
+    rows = await _collect_margin_rows(
+        session, tenant_id, date_from, date_to, limit
+    )
+    return {"count": len(rows), "items": rows}
+
+
+@router.get("/orders/margin-summary")
+async def order_margin_summary(
+    days: int = Query(30, ge=1, le=365),
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Q.31.A — agregado de margem para o KPI da DirecaoPage.
+
+    Só conta ordens com margem calculável (têm `CostCalculation` e
+    receita). `order_count` é esse universo, não o total de ordens.
+    """
+    date_from = date.today() - timedelta(days=days)
+    rows = await _collect_margin_rows(session, tenant_id, date_from, None, 2000)
+    margins = [
+        r["margin_eur"] for r in rows
+        if r["calculated"] and r["margin_eur"] is not None
+    ]
+    if not margins:
+        return {
+            "days": days,
+            "order_count": 0,
+            "avg_margin_eur": None,
+            "median_margin_eur": None,
+            "negative_count": 0,
+        }
+    ordered = sorted(margins)
+    n = len(ordered)
+    median = (
+        ordered[n // 2]
+        if n % 2 == 1
+        else (ordered[n // 2 - 1] + ordered[n // 2]) / 2
+    )
+    return {
+        "days": days,
+        "order_count": n,
+        "avg_margin_eur": round(sum(margins) / n, 2),
+        "median_margin_eur": round(median, 2),
+        "negative_count": sum(1 for m in margins if m < 0),
     }
 
 

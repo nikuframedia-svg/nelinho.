@@ -247,10 +247,6 @@ def forecast(
 
     # Pre-compute baselines for every node (single source of truth).
     baselines: Dict[str, float] = {n.id: float(n.baseline) for n in ALL_NODES}
-    input_or_confounder = {
-        n.id for n in ALL_NODES
-        if n.category in (NodeCategory.INPUT, NodeCategory.CONFOUNDER)
-    }
 
     rng = np.random.default_rng(seed)
     trajectory: List[StepStats] = []

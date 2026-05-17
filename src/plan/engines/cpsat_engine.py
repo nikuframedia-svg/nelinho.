@@ -126,7 +126,7 @@ class CPSATScheduler:
             machine_intervals[machine_id].append(interval_var)
         
         # Constraint 1: No overlap on each machine
-        for machine_id, intervals in machine_intervals.items():
+        for _machine_id, intervals in machine_intervals.items():
             if len(intervals) > 1:
                 model.AddNoOverlap(intervals)
         
@@ -137,7 +137,7 @@ class CPSATScheduler:
             ops_by_order[op.order_id].append(op)
         
         # Sort by sequence and add precedence constraints
-        for order_id, order_ops in ops_by_order.items():
+        for _order_id, order_ops in ops_by_order.items():
             sorted_ops = sorted(order_ops, key=lambda x: x.sequence)
             for i in range(len(sorted_ops) - 1):
                 curr_op = sorted_ops[i]
@@ -160,12 +160,12 @@ class CPSATScheduler:
         # Objective: Minimize makespan + weighted tardiness
         # Create makespan variable (maximum end time)
         makespan = model.NewIntVar(0, horizon_minutes, "makespan")
-        for op_id, (start_var, end_var, interval_var, op) in op_vars.items():
+        for _op_id, (_start_var, end_var, _interval_var, _op) in op_vars.items():
             model.Add(makespan >= end_var)
         
         # Create tardiness variables for each operation with due date
         tardiness_vars = []
-        for op_id, (start_var, end_var, interval_var, op) in op_vars.items():
+        for op_id, (_start_var, end_var, _interval_var, op) in op_vars.items():
             if op.due_date:
                 due_minutes = int((op.due_date - horizon_start).total_seconds() / 60)
                 if due_minutes > 0:
@@ -228,7 +228,7 @@ class CPSATScheduler:
         late_orders = set()
         max_end_minutes = 0
         
-        for op_id, (start_var, end_var, interval_var, op) in op_vars.items():
+        for _op_id, (start_var, end_var, _interval_var, op) in op_vars.items():
             start_minutes = solver.Value(start_var)
             end_minutes = solver.Value(end_var)
             

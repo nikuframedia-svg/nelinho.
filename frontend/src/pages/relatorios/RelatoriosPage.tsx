@@ -20,6 +20,7 @@ import {
   Download,
   RefreshCw,
   Sparkles,
+  Coins,
 } from 'lucide-react';
 import { PageHeader, Tabs, Panel } from '../../components/dark';
 import { SkeletonLoader } from '../../components/ui/Skeleton';
@@ -37,12 +38,15 @@ const PricingPage = lazy(() =>
 const ScenariosPage = lazy(() =>
   import('../profit/ScenariosPage').then((m) => ({ default: m.ScenariosPage }))
 );
+const OrderProfitPage = lazy(() =>
+  import('../profit/OrderProfitPage').then((m) => ({ default: m.OrderProfitPage }))
+);
 
 function askCopilot(query: string) {
   window.dispatchEvent(new CustomEvent('copilot:open', { detail: { query } }));
 }
 
-const TAB_IDS = ['kpis', 'custos', 'pricing', 'cenarios', 'export'] as const;
+const TAB_IDS = ['kpis', 'custos', 'lucro', 'pricing', 'cenarios', 'export'] as const;
 type TabId = (typeof TAB_IDS)[number];
 function isTabId(v: string | null): v is TabId {
   return v !== null && (TAB_IDS as readonly string[]).includes(v);
@@ -112,6 +116,7 @@ export default function RelatoriosPage() {
     () => [
       { id: 'kpis', label: 'KPIs', icon: <BarChart3 size={13} /> },
       { id: 'custos', label: 'Custos', icon: <Receipt size={13} /> },
+      { id: 'lucro', label: 'Lucro', icon: <Coins size={13} /> },
       { id: 'pricing', label: 'Pricing', icon: <Tag size={13} /> },
       { id: 'cenarios', label: 'Cenários', icon: <GitBranch size={13} /> },
       { id: 'export', label: 'Exportar', icon: <Download size={13} /> },
@@ -173,6 +178,11 @@ export default function RelatoriosPage() {
         {activeTab === 'custos' && (
           <Suspense fallback={fallback}>
             <COGSPage />
+          </Suspense>
+        )}
+        {activeTab === 'lucro' && (
+          <Suspense fallback={fallback}>
+            <OrderProfitPage />
           </Suspense>
         )}
         {activeTab === 'pricing' && (

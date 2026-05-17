@@ -18,6 +18,13 @@ asyncpg==0.29.0
 alembic==1.13.1
 greenlet==3.0.3
 
+# Nelo ERP — read-only async adapter to the MAR-KAYAKS SQL Server
+# (src/adapters/nelo). aioodbc is the async driver SQLAlchemy uses for
+# the mssql+aioodbc URL; pyodbc is its sync backend. The OS still needs
+# the "ODBC Driver for SQL Server" installed separately.
+aioodbc==0.5.0
+pyodbc==5.3.0
+
 # Redis
 redis[hiredis]==5.0.1
 
@@ -28,6 +35,9 @@ aiokafka==0.10.0
 # Sprint Q.7 Fase 4 — python-jose 3.3.0 → 3.4.0 (PYSEC-2024-232/233 algorithm-confusion + DoS)
 python-jose[cryptography]>=3.4.0,<4
 passlib[bcrypt]==1.7.4
+# Q.31.G — hashing de passwords. Usado directamente (bcrypt 4/5) porque o
+# passlib 1.7.4 não detecta o backend do bcrypt moderno.
+bcrypt>=4.0,<6
 
 # Data Processing
 # NOTE: Sprint I.3/I.4 bumped these — dowhy requires numpy>=2 and

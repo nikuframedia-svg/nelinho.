@@ -254,6 +254,22 @@ class MoldService:
         await self.session.flush()
         return event
 
+    async def list_maintenance(
+        self, mold_id: UUID,
+    ) -> list[MoldMaintenanceEvent]:
+        """Eventos de manutenção de um molde, mais recente primeiro (Q.31.B)."""
+        stmt = (
+            select(MoldMaintenanceEvent)
+            .where(
+                and_(
+                    MoldMaintenanceEvent.tenant_id == self.tenant_id,
+                    MoldMaintenanceEvent.mold_id == mold_id,
+                )
+            )
+            .order_by(MoldMaintenanceEvent.planned_date.desc())
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
     async def calendar(
         self, *, since: date, until: date,
     ) -> list[MoldMaintenanceEvent]:

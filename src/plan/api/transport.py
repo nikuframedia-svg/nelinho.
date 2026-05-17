@@ -28,11 +28,15 @@ from datetime import date
 from typing import List, Optional
 from uuid import UUID
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.services.tenant_config_service import TenantConfigService
+from src.plan.models.order import ProductionOrder
 from src.plan.services.transport_batch_service import (
     TransportBatchNotFoundError,
     TransportBatchService,
@@ -252,6 +256,64 @@ async def list_batch_orders(
     return {
         "batch_id": str(batch_id),
         "orders": [str(o) for o in orders],
+    }
+
+
+@router.get("/batches/{batch_id}/manifest")
+async def batch_manifest(
+    batch_id: UUID,
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Q.31.E — documento de expedição de uma batch.
+
+    Junta os dados da batch (código, data, destino) com a lista de barcos
+    atribuídos (casco, modelo, fase actual). O frontend imprime isto como
+    manifesto/packing-list. 404 se a batch não existe.
+    """
+    svc = TransportBatchService(session, tenant_id)
+    try:
+        batch = await svc.get_batch(batch_id)
+    except TransportBatchNotFoundError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="batch not found")
+
+    order_ids = await svc.list_orders(batch_id)
+    boats: list[dict] = []
+    if order_ids:
+        rows = (
+            await session.execute(
+                select(ProductionOrder).where(
+                    ProductionOrder.tenant_id == tenant_id,
+                    ProductionOrder.id.in_(order_ids),
+                )
+            )
+        ).scalars().all()
+        boats = [
+            {
+                "order_id": str(o.id),
+                "hull": o.legacy_id,
+                "product_name": o.product_name,
+                "product_type": o.product_type,
+                "current_phase": o.current_phase_name,
+                "status": o.status.value if hasattr(o.status, "value") else str(o.status),
+            }
+            for o in sorted(rows, key=lambda r: r.legacy_id)
+        ]
+
+    return {
+        "batch": {
+            "id": str(batch.id),
+            "code": batch.code,
+            "transport_date": (
+                batch.transport_date.isoformat() if batch.transport_date else None
+            ),
+            "destination": batch.destination,
+            "status": batch.status,
+            "truck_capacity_units": batch.truck_capacity_units,
+        },
+        "boats": boats,
+        "boat_count": len(boats),
+        "generated_at": datetime.now().isoformat(),
     }
 
 

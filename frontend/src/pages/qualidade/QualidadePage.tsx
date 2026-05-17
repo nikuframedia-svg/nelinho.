@@ -26,7 +26,7 @@
 
 import { lazy, Suspense, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { MoldDefectDrawer } from '../../components/molds/MoldDefectDrawer';
 import {
   ShieldCheck,
@@ -39,6 +39,7 @@ import {
   Sparkles,
   Eye,
   Boxes,
+  CheckCircle2,
 } from 'lucide-react';
 import {
   PageHeader,
@@ -49,7 +50,12 @@ import {
   type ZipSeverity,
 } from '../../components/dark';
 import { SkeletonLoader } from '../../components/ui/Skeleton';
-import { getApiBase } from '../../lib/api';
+import {
+  employeesApi,
+  getApiBase,
+  qualityReworkApi,
+  type ReworkCreatePayload,
+} from '../../lib/api';
 
 const ExplainPage = lazy(() =>
   import('../explain/ExplainPage').then((m) => ({ default: m.ExplainPage })),
@@ -200,7 +206,12 @@ export default function QualidadePage() {
         {activeTab === 'resumo' && <ResumoTab />}
         {activeTab === 'erros' && <ReworkListTab filter="open" />}
         {activeTab === 'moldes' && <MoldsTab />}
-        {activeTab === 'retrabalho' && <ReworkListTab filter="rework" />}
+        {activeTab === 'retrabalho' && (
+          <div className="space-y-4">
+            <NovoRetrabalhoForm />
+            <ReworkListTab filter="rework" />
+          </div>
+        )}
         {activeTab === 'diagnostico' && (
           <Suspense fallback={fallback}>
             <ExplainPage />
@@ -1078,6 +1089,229 @@ function KPIStrip({
         {context}
       </div>
     </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// NovoRetrabalhoForm — Q.30.D: lançar retrabalho (POST /v1/quality/rework)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const REWORK_ERROR_CODES: Array<{ code: string; label: string }> = [
+  { code: 'RESIN_BUBBLE', label: 'Bolha na resina' },
+  { code: 'PAINT_SCRATCH', label: 'Risco na pintura' },
+  { code: 'COLAGEM_FAIL', label: 'Falha na colagem' },
+  { code: 'LAMINATE_DEFECT', label: 'Defeito de laminagem' },
+  { code: 'DIMENSION_OFF', label: 'Dimensão fora de tolerância' },
+  { code: 'OTHER', label: 'Outro' },
+];
+
+const ROOT_CAUSE_CATEGORIES = [
+  'Erro de operador',
+  'Molde danificado',
+  'Material defeituoso',
+  'Procedimento incorreto',
+  'Equipamento',
+  'Outro',
+];
+
+const FIELD_CLASS =
+  'w-full px-3 py-2 rounded-md bg-dark-700 border border-white/10 text-sm ' +
+  'text-text-dark-primary placeholder:text-text-dark-tertiary focus:outline-none ' +
+  'focus:ring-2 focus:ring-accent-500/40 focus:border-accent-500/60';
+
+function NovoRetrabalhoForm() {
+  const queryClient = useQueryClient();
+  const [ofId, setOfId] = useState('');
+  const [errorCode, setErrorCode] = useState('');
+  const [phaseCauser, setPhaseCauser] = useState('');
+  const [rootCause, setRootCause] = useState('');
+  const [costEur, setCostEur] = useState('');
+  const [description, setDescription] = useState('');
+  const [causerEmployeeId, setCauserEmployeeId] = useState('');
+  const [savedBanner, setSavedBanner] = useState(false);
+
+  // Picker de operador — degrada para vazio se a lista não responder.
+  const employeesQuery = useQuery({
+    queryKey: ['qualidade', 'rework-employees'],
+    queryFn: () => employeesApi.list({ limit: 200 }),
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+  const employees: Array<{ id: string; label: string }> = useMemo(() => {
+    const raw = (employeesQuery.data as any)?.data ?? employeesQuery.data;
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((e: any) => {
+        const id = e.id ?? e.employee_id;
+        if (!id) return null;
+        const name =
+          [e.first_name, e.last_name].filter(Boolean).join(' ') ||
+          e.full_name ||
+          e.name ||
+          String(id).slice(0, 8);
+        return { id: String(id), label: name };
+      })
+      .filter(Boolean) as Array<{ id: string; label: string }>;
+  }, [employeesQuery.data]);
+
+  const mutation = useMutation({
+    mutationFn: (payload: ReworkCreatePayload) => qualityReworkApi.create(payload),
+    onSuccess: () => {
+      setSavedBanner(true);
+      setTimeout(() => setSavedBanner(false), 3_000);
+      setOfId('');
+      setErrorCode('');
+      setPhaseCauser('');
+      setRootCause('');
+      setCostEur('');
+      setDescription('');
+      setCauserEmployeeId('');
+      queryClient.invalidateQueries({ queryKey: ['qualidade', 'rework'] });
+    },
+  });
+
+  function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!ofId.trim() || !errorCode) return;
+    const cost = Number(costEur);
+    const payload: ReworkCreatePayload = {
+      of_id: ofId.trim(),
+      error_code: errorCode,
+      detected_at: new Date().toISOString(),
+      phase_id_causer: phaseCauser.trim() || undefined,
+      root_cause_category: rootCause || undefined,
+      error_description: description.trim() || undefined,
+      causer_employee_id: causerEmployeeId || undefined,
+      cost_estimate_eur:
+        costEur.trim() !== '' && Number.isFinite(cost) ? cost : undefined,
+    };
+    mutation.mutate(payload);
+  }
+
+  const disabled = !ofId.trim() || !errorCode || mutation.isPending;
+
+  return (
+    <Panel title="Registar novo retrabalho" badge="QA01">
+      <form onSubmit={handleSubmit} className="space-y-3 p-1">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <label className="block">
+            <span className="text-xs text-text-dark-secondary">Ordem (OF) *</span>
+            <input
+              type="text"
+              value={ofId}
+              onChange={(e) => setOfId(e.target.value.toUpperCase())}
+              placeholder="OF-12345"
+              className={`mt-1 ${FIELD_CLASS}`}
+              required
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs text-text-dark-secondary">Tipo de defeito *</span>
+            <select
+              value={errorCode}
+              onChange={(e) => setErrorCode(e.target.value)}
+              className={`mt-1 ${FIELD_CLASS}`}
+              required
+            >
+              <option value="">Escolher…</option>
+              {REWORK_ERROR_CODES.map((e) => (
+                <option key={e.code} value={e.code}>
+                  {e.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="text-xs text-text-dark-secondary">Fase onde ocorreu</span>
+            <input
+              type="text"
+              value={phaseCauser}
+              onChange={(e) => setPhaseCauser(e.target.value)}
+              placeholder="Ex: Laminagem"
+              className={`mt-1 ${FIELD_CLASS}`}
+            />
+          </label>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <label className="block">
+            <span className="text-xs text-text-dark-secondary">Causa-raiz</span>
+            <select
+              value={rootCause}
+              onChange={(e) => setRootCause(e.target.value)}
+              className={`mt-1 ${FIELD_CLASS}`}
+            >
+              <option value="">Escolher…</option>
+              {ROOT_CAUSE_CATEGORIES.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="text-xs text-text-dark-secondary">Operador responsável</span>
+            <select
+              value={causerEmployeeId}
+              onChange={(e) => setCauserEmployeeId(e.target.value)}
+              className={`mt-1 ${FIELD_CLASS}`}
+              disabled={employees.length === 0}
+            >
+              <option value="">
+                {employees.length === 0 ? 'Lista indisponível' : '— sem atribuir —'}
+              </option>
+              {employees.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="text-xs text-text-dark-secondary">Custo estimado €</span>
+            <input
+              type="number"
+              inputMode="decimal"
+              min={0}
+              value={costEur}
+              onChange={(e) => setCostEur(e.target.value)}
+              placeholder="0"
+              className={`mt-1 ${FIELD_CLASS}`}
+            />
+          </label>
+        </div>
+        <label className="block">
+          <span className="text-xs text-text-dark-secondary">Descrição (opcional)</span>
+          <textarea
+            rows={2}
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Ex: bolha de 3 mm no pavilhão lateral direito"
+            className={`mt-1 ${FIELD_CLASS} resize-none`}
+          />
+        </label>
+
+        {savedBanner ? (
+          <div className="flex items-center gap-2 text-xs text-success bg-success/10 border border-success/30 rounded-md px-3 py-2">
+            <CheckCircle2 size={14} /> Retrabalho registado.
+          </div>
+        ) : null}
+        {mutation.isError ? (
+          <div className="text-xs text-danger" role="alert">
+            Não foi possível registar o retrabalho. Tenta outra vez.
+          </div>
+        ) : null}
+
+        <button
+          type="submit"
+          disabled={disabled}
+          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md text-white text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          style={{ background: 'var(--blue)', border: '1px solid var(--blue)' }}
+        >
+          <Repeat size={14} />
+          {mutation.isPending ? 'A registar…' : 'Registar retrabalho'}
+        </button>
+      </form>
+    </Panel>
   );
 }
 

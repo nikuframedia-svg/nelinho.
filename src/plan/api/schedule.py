@@ -4,17 +4,21 @@ ProdPlan ONE - Schedule API
 """
 
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException, Header, status
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.shared.database import get_session
 from src.plan.models.schedule import ProductionSchedule, ScheduleStatus
-from src.plan.services.scheduling_service import SchedulingService
+from src.plan.services.scheduling_service import (
+    InvalidScheduleTransition,
+    SchedulingService,
+)
 from src.plan.engines.scheduling_adapter import SchedulerEngine, DispatchRule
 
 router = APIRouter(prefix="/schedule", tags=["Scheduling"])
@@ -295,6 +299,112 @@ def _combine_date_time(d: date, t) -> str:
     if t is None:
         return datetime.combine(d, datetime.min.time()).isoformat()
     return datetime.combine(d, t).isoformat()
+
+
+# ─── Q.30.A — Registar operação (iniciar / concluir) ─────────────────────
+
+class OperationStartRequest(BaseModel):
+    """Operador inicia uma fase. ``actual_start`` omisso → hora do servidor."""
+    actual_start: Optional[datetime] = None
+
+
+class OperationCompleteRequest(BaseModel):
+    """Operador conclui uma fase. ``actual_end`` omisso → hora do servidor."""
+    actual_end: Optional[datetime] = None
+    actual_quantity: Optional[Decimal] = None
+
+
+class OperationStateResponse(BaseModel):
+    """Estado da fase após a transição — o tablet refresca a fila com isto."""
+    id: str
+    order_id: str
+    operation_sequence: int
+    status: str
+    actual_start: Optional[str] = None
+    actual_end: Optional[str] = None
+    actual_quantity: Optional[float] = None
+
+
+def _operation_state(row: ProductionSchedule) -> OperationStateResponse:
+    return OperationStateResponse(
+        id=str(row.id),
+        order_id=row.order_id,
+        operation_sequence=row.operation_sequence,
+        status=(
+            row.status.value if isinstance(row.status, ScheduleStatus)
+            else str(row.status)
+        ),
+        actual_start=row.actual_start.isoformat() if row.actual_start else None,
+        actual_end=row.actual_end.isoformat() if row.actual_end else None,
+        actual_quantity=(
+            float(row.actual_quantity)
+            if row.actual_quantity is not None else None
+        ),
+    )
+
+
+@router.post("/{schedule_id}/start", response_model=OperationStateResponse)
+async def start_operation(
+    schedule_id: UUID,
+    request: OperationStartRequest,
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Q.30.A — operador marca uma fase como iniciada (SCHEDULED→IN_PROGRESS).
+
+    Grava o ``actual_start`` (por omissão a hora do servidor). É a porta
+    obrigatória antes de ``/complete``: a máquina de estados (FASE 3.5)
+    proíbe SCHEDULED→COMPLETED directo, para os actuals históricos ficarem
+    consistentes. 409 se a transição não é válida; 404 se a fase não existe.
+    """
+    service = SchedulingService(session, tenant_id)
+    try:
+        row = await service.update_status(
+            schedule_id,
+            status=ScheduleStatus.IN_PROGRESS,
+            actual_start=request.actual_start or datetime.now(),
+        )
+    except InvalidScheduleTransition as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Operação {schedule_id} não encontrada",
+        )
+    await session.commit()
+    return _operation_state(row)
+
+
+@router.post("/{schedule_id}/complete", response_model=OperationStateResponse)
+async def complete_operation(
+    schedule_id: UUID,
+    request: OperationCompleteRequest,
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Q.30.A — operador marca uma fase como concluída (IN_PROGRESS→COMPLETED).
+
+    Grava ``actual_end`` (por omissão a hora do servidor) e, se indicada, a
+    ``actual_quantity`` real produzida. Publica ``SCHEDULE_UPDATED`` para o
+    realtime. 409 se a fase não está IN_PROGRESS; 404 se não existe.
+    """
+    service = SchedulingService(session, tenant_id)
+    try:
+        row = await service.update_status(
+            schedule_id,
+            status=ScheduleStatus.COMPLETED,
+            actual_end=request.actual_end or datetime.now(),
+            actual_quantity=request.actual_quantity,
+        )
+    except InvalidScheduleTransition as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Operação {schedule_id} não encontrada",
+        )
+    await session.commit()
+    return _operation_state(row)
 
 
 

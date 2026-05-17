@@ -297,7 +297,7 @@ class CPSATLRHO:
                 op_id = op.get("operation_id") or ""
                 if op_id not in interval_vars:
                     continue
-                start_var, end_var, _, duration = interval_vars[op_id]
+                start_var, end_var, _, _duration = interval_vars[op_id]
                 new_start_min = solver.Value(start_var)
                 new_end_min = solver.Value(end_var)
                 new_start = window_start + timedelta(minutes=new_start_min)
@@ -356,7 +356,7 @@ class CPSATLRHO:
                         normalize_phase_code(succ.get("phase_name") or succ.get("phase_id")),
                     )
                     gap_h = phase_gaps.get(key, 0.0)
-                    gap_minutes = int(round(float(gap_h) * 60))
+                    gap_minutes = round(float(gap_h) * 60)
                 model.Add(succ_start >= pred_end + gap_minutes)
 
 

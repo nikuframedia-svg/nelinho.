@@ -711,7 +711,29 @@ export const allocationsApi = {
       `/v1/hr/allocations/optimize/${scheduleId}`,
       { method: 'POST' },
     ),
+
+  // Q.31.D.2 — atribuição drag-drop de um operador a um barco para um dia.
+  createDaily: (payload: {
+    employee_id: string;
+    order_id: string;
+    allocation_date?: string;
+    allocated_hours?: number;
+  }) =>
+    request<DailyAllocationResponse>('/v1/hr/allocations/daily', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
 };
+
+export interface DailyAllocationResponse {
+  allocation_id: string;
+  employee_id: string;
+  order_id: string;
+  operation_id: string;
+  allocation_date: string;
+  allocated_hours: number;
+  status: string;
+}
 
 // Payroll
 export const payrollApi = {
@@ -1815,6 +1837,44 @@ export const profitDashboardApi = {
   },
 };
 
+// ─── Q.31.A — drill-down de lucro (margem por barco) ─────────────────────
+
+export interface OrderMarginRow {
+  order_id: string;
+  hull: string;
+  product_name: string;
+  product_type: string;
+  status: string;
+  calculated: boolean;
+  revenue_eur: number | null;
+  total_cogs: number | null;
+  margin_eur: number | null;
+  margin_pct: number | null;
+}
+
+export interface OrderMarginsResponse {
+  count: number;
+  items: OrderMarginRow[];
+}
+
+export interface MarginSummaryResponse {
+  days: number;
+  order_count: number;
+  avg_margin_eur: number | null;
+  median_margin_eur: number | null;
+  negative_count: number;
+}
+
+export const profitApi = {
+  orderMargins: (params?: { date_from?: string; date_to?: string; limit?: number }) =>
+    request<OrderMarginsResponse>(
+      `/v1/profit/orders/margins?${new URLSearchParams(filterParams(params))}`,
+    ),
+
+  marginSummary: (days = 30) =>
+    request<MarginSummaryResponse>(`/v1/profit/orders/margin-summary?days=${days}`),
+};
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // SPRINT Q.5 — CEO dashboard tiles (OTD / Backlog / Alerts / FPY / Expeditions)
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1938,6 +1998,17 @@ export interface WorkerOperation {
   actual_end: string | null;
 }
 
+/** Estado de uma fase após iniciar/concluir — Q.30.A. */
+export interface OperationState {
+  id: string;
+  order_id: string;
+  operation_sequence: number;
+  status: string;
+  actual_start: string | null;
+  actual_end: string | null;
+  actual_quantity: number | null;
+}
+
 export const workerOperationsApi = {
   today: (employeeId: string, params?: { as_of?: string }) => {
     const qs = params?.as_of ? `?as_of=${params.as_of}` : '';
@@ -1945,6 +2016,18 @@ export const workerOperationsApi = {
       `/v1/plan/schedule/worker/${employeeId}/operations-today${qs}`,
     );
   },
+  /** Q.30.A — operador marca uma fase como iniciada (SCHEDULED→IN_PROGRESS). */
+  start: (scheduleId: string) =>
+    request<OperationState>(`/v1/plan/schedule/${scheduleId}/start`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+  /** Q.30.A — operador marca uma fase como concluída (IN_PROGRESS→COMPLETED). */
+  complete: (scheduleId: string, payload?: { actual_quantity?: number }) =>
+    request<OperationState>(`/v1/plan/schedule/${scheduleId}/complete`, {
+      method: 'POST',
+      body: JSON.stringify(payload ?? {}),
+    }),
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1958,6 +2041,10 @@ export interface ReworkCreatePayload {
   error_description?: string;
   root_cause_category?: string;
   causer_employee_id?: string;
+  /** Fase onde o defeito ocorreu (QA01) — Q.30.D. */
+  phase_id_causer?: string;
+  /** Fase de retrabalho (QA02 auto-routing p/ "Pintura") — Q.30.D. */
+  phase_id_rework?: string;
   cost_estimate_eur?: number;
   hours_lost?: number;
   notes?: string;
@@ -2708,6 +2795,29 @@ export interface TransportSuggestion {
  * so consumers can wire forms now and the actual fetches light up once Q.2
  * lands the FastAPI router.
  */
+/** Q.31.E — documento de expedição. */
+export interface TransportManifestBoat {
+  order_id: string;
+  hull: number;
+  product_name: string;
+  product_type: string;
+  current_phase: string;
+  status: string;
+}
+export interface TransportManifest {
+  batch: {
+    id: string;
+    code: string;
+    transport_date: string | null;
+    destination: string | null;
+    status: string;
+    truck_capacity_units: number;
+  };
+  boats: TransportManifestBoat[];
+  boat_count: number;
+  generated_at: string;
+}
+
 export const transportApi = {
   listBatches: (params?: { from_date?: string; to_date?: string; status?: TransportBatchStatus }) => {
     const qs = new URLSearchParams();
@@ -2757,6 +2867,12 @@ export const transportApi = {
   suggestions: (batchId: string) =>
     request<TransportSuggestion[]>(
       `/v1/plan/transport/batches/${encodeURIComponent(batchId)}/suggestions`,
+    ),
+
+  /** Q.31.E — documento de expedição (manifesto / packing list). */
+  manifest: (batchId: string) =>
+    request<TransportManifest>(
+      `/v1/plan/transport/batches/${encodeURIComponent(batchId)}/manifest`,
     ),
 
   /**
@@ -2909,9 +3025,100 @@ export interface CurrentUser {
   umwelt: 'manager' | 'operator' | 'ceo' | string;
 }
 
+/** Resposta de POST /v1/auth/login — Q.31.G. */
+export interface LoginResponse {
+  access_token: string;
+  refresh_token: string | null;
+  token_type: string;
+  role: string | null;
+  user_id: string | null;
+}
+
 export const authApi = {
   /** Identidade actual (vem de JWT quando existir; dev usa headers X-*). */
   me: () => request<CurrentUser>('/v1/auth/me'),
+  /** Q.31.G — login real por password. */
+  login: (email: string, password: string) =>
+    request<LoginResponse>('/v1/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    }),
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Q.31.B — Manutenção de moldes
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface MoldMaintenanceEvent {
+  id: string;
+  mold_id: string;
+  maintenance_type: string;
+  planned_date: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  status: string;
+  actual_duration_h: number | null;
+  parts_cost_eur: number | null;
+  labor_cost_eur: number | null;
+  comments: string | null;
+}
+
+export const moldsApi = {
+  /** Eventos de manutenção de um molde. */
+  listMaintenance: (moldId: string) =>
+    request<MoldMaintenanceEvent[]>(`/v1/plan/molds/${moldId}/maintenance`),
+  /** Planear uma manutenção. */
+  planMaintenance: (
+    moldId: string,
+    payload: { planned_date: string; maintenance_type?: string; comments?: string },
+  ) =>
+    request<MoldMaintenanceEvent>(`/v1/plan/molds/${moldId}/maintenance`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  /** Marcar uma manutenção planeada como iniciada. */
+  startMaintenance: (eventId: string) =>
+    request<MoldMaintenanceEvent>(
+      `/v1/plan/molds/maintenance/${eventId}/start`,
+      { method: 'POST' },
+    ),
+  /** Concluir uma manutenção em curso. */
+  completeMaintenance: (
+    eventId: string,
+    payload: {
+      actual_duration_h?: number;
+      parts_cost_eur?: number;
+      labor_cost_eur?: number;
+    },
+  ) =>
+    request<MoldMaintenanceEvent>(
+      `/v1/plan/molds/maintenance/${eventId}/complete`,
+      { method: 'POST', body: JSON.stringify(payload) },
+    ),
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Q.31.F — Pesquisa global
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface SearchHit {
+  type: 'barco' | 'operador' | 'molde' | 'erro';
+  id: string;
+  label: string;
+  sublabel: string;
+}
+
+export interface SearchResponse {
+  query: string;
+  results: SearchHit[];
+}
+
+export const searchApi = {
+  /** Pesquisa barcos / operadores / moldes / erros num só pedido. */
+  query: (q: string, limit = 5) =>
+    request<SearchResponse>(
+      `/v1/search?q=${encodeURIComponent(q)}&limit=${limit}`,
+    ),
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════

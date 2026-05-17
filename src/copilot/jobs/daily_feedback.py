@@ -263,7 +263,7 @@ async def generate_daily_feedback(
                 DailyFeedbackBullet(
                     severity="WARN",
                     title="Erro ao Gerar Feedback",
-                    text=f"Não foi possível gerar feedback completo: {str(e)}",
+                    text=f"Não foi possível gerar feedback completo: {e!s}",
                     citations=[],
                     suggested_runbooks=[],
                     suggested_actions=[],

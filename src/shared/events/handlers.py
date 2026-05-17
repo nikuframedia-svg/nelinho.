@@ -181,7 +181,6 @@ class LaborCostCommittedHandler:
     async def handle(self, envelope: EventEnvelope) -> None:
         logger.info(f"LaborCostCommittedHandler: Processing {envelope.event_id}")
 
-        tenant_id = UUID(envelope.tenant_id)
         payload = envelope.payload
         order_id = payload.get("order_id")
         total_labor_cost = payload.get("total_labor_cost", 0)

@@ -246,3 +246,22 @@ class CopilotActionLog(TenantBase):
     
     executed_at: Mapped[datetime] = mapped_column(nullable=False, default=datetime.utcnow)
     rollback_until: Mapped[Optional[datetime]] = mapped_column(nullable=True)  # 24h window for undo
+
+
+class CopilotUserFeedback(TenantBase):
+    """Feedback ad-hoc do utilizador sobre o Copilot — 👍/👎 + texto livre.
+
+    Q.31.H — antes o endpoint ``/feedback/user`` era um stub log-only; sem
+    tabela, o sinal mais valioso (o gestor a dizer "esta resposta ajudou /
+    não ajudou") perdia-se. Cada submissão da UI vira uma linha aqui.
+    """
+
+    __tablename__ = "copilot_user_feedback"
+    __table_args__ = (
+        Index("idx_copilot_user_feedback_tenant", "tenant_id"),
+        Index("idx_copilot_user_feedback_thumb", "tenant_id", "thumb"),
+    )
+
+    thumb: Mapped[str] = mapped_column(String(8), nullable=False)  # up | down
+    text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    context: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)

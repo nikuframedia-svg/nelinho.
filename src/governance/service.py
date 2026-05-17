@@ -251,8 +251,6 @@ class GovernanceService:
                 "requires_different_approver": True,
             }
         
-        decision_id = str(uuid4())
-        
         # Calculate input hash
         input_data = {
             "decision_type": decision_type,

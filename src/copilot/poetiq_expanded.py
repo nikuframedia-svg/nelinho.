@@ -215,7 +215,7 @@ def default_perturbation_tester(
             scenario=scenario,
             kernel_score_delta=kernel_delta,
             ops_affected=affected,
-            robust=affected == 0 or baseline_makespan > 0 and affected / max(1, len(ops)) < 0.10,
+            robust=affected == 0 or (baseline_makespan > 0 and affected / max(1, len(ops)) < 0.10),
         ))
     return reports
 

@@ -528,7 +528,7 @@ async def query_semantic_view(
             page=page,
             page_size=page_size,
             trust_score=view_def.trust_score,
-            disclaimers=view_def.disclaimers + ["No active ingestion data available"],
+            disclaimers=[*view_def.disclaimers, "No active ingestion data available"],
         )
     
     # Validate sort field

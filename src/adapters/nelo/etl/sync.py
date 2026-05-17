@@ -125,7 +125,7 @@ async def run_nelo_sync(
                     await session.commit()
                 results.append(result)
                 logger.info("nelo_sync mirror=%s %r", name, result)
-            except Exception as exc:  # noqa: BLE001 - one mirror must not abort the rest
+            except Exception as exc:
                 logger.error(
                     "nelo_sync mirror=%s failed: %s", name, exc, exc_info=True,
                 )

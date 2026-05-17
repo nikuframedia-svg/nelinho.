@@ -319,7 +319,7 @@ class TrustHeatmapGenerator:
                     regressed.append(segment)
                     
                     # Update trend in current
-                    for domain, cell in current_row.cells.items():
+                    for _domain, cell in current_row.cells.items():
                         cell.trend = TrustTrend.DEGRADING
                         cell.previous_value = prev_row.average_trust
                         cell.delta = delta

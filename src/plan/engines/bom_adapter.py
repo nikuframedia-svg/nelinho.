@@ -149,7 +149,7 @@ class BOMAdapter:
             if level > max_levels:
                 return
             if current_id in ancestors:
-                raise BOMCycleError(ancestors + [current_id])
+                raise BOMCycleError([*ancestors, current_id])
 
             ancestors.append(current_id)
             try:

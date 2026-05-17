@@ -9,10 +9,13 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Header, status
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.shared.database import get_session
 from src.profit.services.cost_service import CostService
+from src.plan.models.order import ProductionOrder
+from src.core.models.product import Product
 
 router = APIRouter(prefix="/cogs", tags=["COGS"])
 
@@ -66,6 +69,61 @@ async def calculate_cogs(
         scrap_rate=request.scrap_rate,
     )
     
+    return COGSResponse(
+        order_id=result.order_id,
+        total_cogs=float(result.total_cogs),
+        cogs_per_unit=float(result.cogs_per_unit),
+        breakdown=result.breakdown.to_dict(),
+        currency=result.currency,
+    )
+
+
+@router.post("/orders/{work_order_id}/calculate", response_model=COGSResponse)
+async def calculate_order_cogs(
+    work_order_id: int,
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Calcula o COGS de uma OF a partir das fontes de dados reais (Q.26.F.1).
+
+    Resolve a ordem de fabrico e o produto, e liga material (BOM real),
+    mão-de-obra (histórico OF_FP) e overhead — sem custos por payload.
+    """
+    order = (await session.execute(
+        select(ProductionOrder).where(
+            ProductionOrder.tenant_id == tenant_id,
+            ProductionOrder.legacy_id == work_order_id,
+        )
+    )).scalar_one_or_none()
+    if order is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Ordem de fabrico {work_order_id} não encontrada",
+        )
+
+    product = None
+    if order.product_id is not None:
+        product = (await session.execute(
+            select(Product).where(
+                Product.tenant_id == tenant_id,
+                Product.product_code == str(order.product_id),
+            )
+        )).scalar_one_or_none()
+    if product is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"Produto da ordem {work_order_id} não encontrado em "
+                "core.products — corre o sync de master-data primeiro"
+            ),
+        )
+
+    service = CostService(session, tenant_id)
+    result = await service.calculate_cogs_from_sources(
+        order_id=str(work_order_id),
+        product_id=product.id,
+        work_order_id=work_order_id,
+    )
     return COGSResponse(
         order_id=result.order_id,
         total_cogs=float(result.total_cogs),

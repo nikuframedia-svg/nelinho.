@@ -23,16 +23,21 @@
  */
 
 import { lazy, Suspense, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   RefreshCw,
   Sparkles,
   Truck,
   Boxes,
+  Plus,
+  CheckCircle2,
+  FileText,
+  Printer,
+  X,
 } from 'lucide-react';
 import { PageHeader, Tabs } from '../../components/dark';
 import { SkeletonLoader } from '../../components/ui/Skeleton';
-import { getApiBase } from '../../lib/api';
+import { getApiBase, transportApi } from '../../lib/api';
 
 const SupplyDashboard = lazy(() =>
   import('../../components/supply/SupplyPanels').then((m) => ({ default: m.SupplyDashboard })),
@@ -85,6 +90,8 @@ function daysUntil(iso: string): number {
 
 export default function ExpedicaoPage() {
   const [tab, setTab] = useState<'expedicoes' | 'supply'>('expedicoes');
+  const [showForm, setShowForm] = useState(false);
+  const [manifestBatchId, setManifestBatchId] = useState<string | null>(null);
   const batchesQuery = useQuery({
     queryKey: ['expedicao', 'batches'],
     queryFn: fetchTransportBatches,
@@ -118,18 +125,27 @@ export default function ExpedicaoPage() {
         subtitle="Calendário de saídas · estado dos camiões"
         helpId="expedicao"
         actions={
-          // Q.21.D — "Nova expedição" removido: fazia só um alert(). Criar
-          // um batch (POST /v1/plan/transport/batches) precisa de um
-          // formulário próprio — fora do âmbito desta limpeza. "Atualizar"
-          // mantém-se (acção real).
-          <button
-            type="button"
-            onClick={() => window.location.reload()}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-transparent text-text-dark-secondary hover:bg-white/5 hover:text-text-dark-primary border border-white/[0.08] text-xs font-medium transition-colors"
-          >
-            <RefreshCw size={13} />
-            Atualizar
-          </button>
+          // Q.30.C — "Nova expedição" voltou, agora com formulário real
+          // (POST /v1/plan/transport/batches via transportApi.createBatch).
+          <>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-transparent text-text-dark-secondary hover:bg-white/5 hover:text-text-dark-primary border border-white/[0.08] text-xs font-medium transition-colors"
+            >
+              <RefreshCw size={13} />
+              Atualizar
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowForm((v) => !v)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-white text-xs font-medium transition-colors"
+              style={{ background: 'var(--blue)', border: '1px solid var(--blue)' }}
+            >
+              <Plus size={13} />
+              Nova expedição
+            </button>
+          </>
         }
       />
 
@@ -154,6 +170,10 @@ export default function ExpedicaoPage() {
 
       {tab === 'expedicoes' && (
       <div className="px-6 py-4 space-y-5 page-enter">
+        {showForm && (
+          <NovaExpedicaoForm onClose={() => setShowForm(false)} />
+        )}
+
         {/* 3 KPI strip — Q.23.H: "Próxima expedição" em destaque */}
         <div
           className="page-enter"
@@ -237,13 +257,156 @@ export default function ExpedicaoPage() {
         ) : (
           <div className="flex flex-col gap-3.5 page-enter">
             {sortedBatches.map((s) => (
-              <ShipmentDetail key={s.id} shipment={s} />
+              <ShipmentDetail
+                key={s.id}
+                shipment={s}
+                onManifest={() => setManifestBatchId(s.id)}
+              />
             ))}
           </div>
         )}
       </div>
       )}
+
+      {manifestBatchId ? (
+        <ManifestModal
+          batchId={manifestBatchId}
+          onClose={() => setManifestBatchId(null)}
+        />
+      ) : null}
     </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// NovaExpedicaoForm — Q.30.C: criar batch (POST /v1/plan/transport/batches)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const EXP_FIELD_CLASS =
+  'w-full px-3 py-2 rounded-md bg-dark-700 border border-white/10 text-sm ' +
+  'text-text-dark-primary placeholder:text-text-dark-tertiary focus:outline-none ' +
+  'focus:ring-2 focus:ring-accent-500/40 focus:border-accent-500/60';
+
+function NovaExpedicaoForm({ onClose }: { onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [code, setCode] = useState('');
+  const [transportDate, setTransportDate] = useState('');
+  const [capacity, setCapacity] = useState('');
+  const [destination, setDestination] = useState('');
+
+  const mutation = useMutation({
+    mutationFn: () => {
+      const cap = Number(capacity);
+      return transportApi.createBatch({
+        code: code.trim(),
+        transport_date: transportDate,
+        truck_capacity_units:
+          capacity.trim() !== '' && Number.isFinite(cap) ? cap : undefined,
+        destination: destination.trim() || undefined,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['expedicao', 'batches'] });
+      onClose();
+    },
+  });
+
+  function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!code.trim() || !transportDate) return;
+    mutation.mutate();
+  }
+
+  const disabled = !code.trim() || !transportDate || mutation.isPending;
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      style={{
+        padding: 18,
+        background: 'var(--bg-1)',
+        border: '1px solid var(--bd-1)',
+        borderRadius: 12,
+      }}
+      className="space-y-3 page-enter"
+    >
+      <div className="flex items-center gap-2">
+        <Truck size={16} className="text-text-dark-secondary" />
+        <span className="text-sm font-semibold text-text-dark-primary">
+          Nova expedição
+        </span>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <label className="block">
+          <span className="text-xs text-text-dark-secondary">Código *</span>
+          <input
+            type="text"
+            value={code}
+            onChange={(e) => setCode(e.target.value.toUpperCase())}
+            placeholder="EXP-2026-05-20"
+            className={`mt-1 ${EXP_FIELD_CLASS}`}
+            required
+          />
+        </label>
+        <label className="block">
+          <span className="text-xs text-text-dark-secondary">Data de transporte *</span>
+          <input
+            type="date"
+            value={transportDate}
+            onChange={(e) => setTransportDate(e.target.value)}
+            className={`mt-1 ${EXP_FIELD_CLASS}`}
+            required
+          />
+        </label>
+        <label className="block">
+          <span className="text-xs text-text-dark-secondary">Capacidade (barcos)</span>
+          <input
+            type="number"
+            inputMode="numeric"
+            min={0}
+            value={capacity}
+            onChange={(e) => setCapacity(e.target.value)}
+            placeholder="Ex: 6"
+            className={`mt-1 ${EXP_FIELD_CLASS}`}
+          />
+        </label>
+        <label className="block">
+          <span className="text-xs text-text-dark-secondary">Destino</span>
+          <input
+            type="text"
+            value={destination}
+            onChange={(e) => setDestination(e.target.value)}
+            placeholder="Ex: França — Lyon"
+            className={`mt-1 ${EXP_FIELD_CLASS}`}
+          />
+        </label>
+      </div>
+
+      {mutation.isError ? (
+        <div className="text-xs text-danger" role="alert">
+          Não foi possível criar a expedição. Tenta outra vez.
+        </div>
+      ) : null}
+
+      <div className="flex items-center gap-2">
+        <button
+          type="submit"
+          disabled={disabled}
+          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md text-white text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          style={{ background: 'var(--blue)', border: '1px solid var(--blue)' }}
+        >
+          <CheckCircle2 size={14} />
+          {mutation.isPending ? 'A criar…' : 'Criar expedição'}
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          className="inline-flex items-center px-4 py-2 rounded-md bg-transparent text-text-dark-secondary hover:bg-white/5 hover:text-text-dark-primary border border-white/[0.08] text-sm font-medium transition-colors"
+        >
+          Cancelar
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -251,7 +414,13 @@ export default function ExpedicaoPage() {
 // ShipmentDetail (port literal page-extra.jsx)
 // ═══════════════════════════════════════════════════════════════════════════
 
-function ShipmentDetail({ shipment }: { shipment: TransportBatch }) {
+function ShipmentDetail({
+  shipment,
+  onManifest,
+}: {
+  shipment: TransportBatch;
+  onManifest: () => void;
+}) {
   const total = shipment.truck_capacity_units;
   const ready = shipment.ready ?? 0;
   const in_prod = shipment.in_prod ?? 0;
@@ -333,6 +502,16 @@ function ShipmentDetail({ shipment }: { shipment: TransportBatch }) {
           >
             {shipment.destination ?? '—'}
           </div>
+          {/* Q.31.E — gerar documento de expedição (manifesto) */}
+          <button
+            type="button"
+            onClick={onManifest}
+            className="mt-3 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs transition-colors hover:bg-white/5"
+            style={{ color: 'var(--fg-2)', border: '1px solid var(--bd-1)' }}
+          >
+            <FileText size={12} />
+            Manifesto
+          </button>
         </div>
 
         {/* Center: progress */}
@@ -436,6 +615,162 @@ function ShipmentDetail({ shipment }: { shipment: TransportBatch }) {
               <span>{shipment.suggestion}</span>
             </div>
           ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ManifestModal — Q.31.E: documento de expedição imprimível
+// ═══════════════════════════════════════════════════════════════════════════
+
+function ManifestModal({
+  batchId,
+  onClose,
+}: {
+  batchId: string;
+  onClose: () => void;
+}) {
+  const q = useQuery({
+    queryKey: ['transport-manifest', batchId],
+    queryFn: () => transportApi.manifest(batchId),
+    retry: 0,
+  });
+  const m = q.data;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgba(0,0,0,0.5)' }}
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-xl"
+        style={{ background: 'var(--bg-1)', border: '1px solid var(--bd-1)' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div
+          className="flex items-center justify-between px-5 py-3 border-b"
+          style={{ borderColor: 'var(--bd-1)' }}
+        >
+          <div className="flex items-center gap-2">
+            <FileText size={16} className="text-text-dark-secondary" />
+            <span className="text-sm font-semibold text-text-dark-primary">
+              Manifesto de expedição
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => window.print()}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs text-white"
+              style={{ background: 'var(--blue)' }}
+            >
+              <Printer size={12} />
+              Imprimir
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-1 rounded-md hover:bg-white/5"
+              aria-label="Fechar"
+            >
+              <X size={16} className="text-text-dark-secondary" />
+            </button>
+          </div>
+        </div>
+
+        <div className="p-5">
+          {q.isLoading ? (
+            <div className="text-xs text-text-dark-tertiary py-6 text-center">
+              A carregar manifesto…
+            </div>
+          ) : q.isError || !m ? (
+            <div className="text-xs text-danger py-6 text-center">
+              Não foi possível carregar o manifesto.
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <div>
+                  <span className="text-text-dark-tertiary">Código: </span>
+                  <span className="text-text-dark-primary font-medium">
+                    {m.batch.code}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-text-dark-tertiary">Data: </span>
+                  <span className="text-text-dark-primary font-medium">
+                    {m.batch.transport_date ?? '—'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-text-dark-tertiary">Destino: </span>
+                  <span className="text-text-dark-primary font-medium">
+                    {m.batch.destination ?? '—'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-text-dark-tertiary">Estado: </span>
+                  <span className="text-text-dark-primary font-medium">
+                    {m.batch.status}
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <div className="text-xs font-semibold text-text-dark-secondary mb-1">
+                  Barcos ({m.boat_count} / {m.batch.truck_capacity_units} de capacidade)
+                </div>
+                {m.boats.length === 0 ? (
+                  <div className="text-xs text-text-dark-tertiary py-3">
+                    Nenhum barco atribuído a esta expedição.
+                  </div>
+                ) : (
+                  <table className="w-full text-xs">
+                    <thead className="border-b border-white/[0.08]">
+                      <tr className="text-left text-[10px] uppercase tracking-wider text-text-dark-tertiary">
+                        <th className="px-2 py-1.5">Casco</th>
+                        <th className="px-2 py-1.5">Produto</th>
+                        <th className="px-2 py-1.5">Tipo</th>
+                        <th className="px-2 py-1.5">Fase actual</th>
+                        <th className="px-2 py-1.5">Estado</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {m.boats.map((b) => (
+                        <tr
+                          key={b.order_id}
+                          className="border-b border-white/[0.04]"
+                        >
+                          <td className="px-2 py-1.5 font-mono text-text-dark-primary">
+                            #{b.hull}
+                          </td>
+                          <td className="px-2 py-1.5 text-text-dark-secondary">
+                            {b.product_name}
+                          </td>
+                          <td className="px-2 py-1.5 text-text-dark-secondary">
+                            {b.product_type}
+                          </td>
+                          <td className="px-2 py-1.5 text-text-dark-secondary">
+                            {b.current_phase}
+                          </td>
+                          <td className="px-2 py-1.5 text-text-dark-secondary">
+                            {b.status}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+
+              <div className="text-[10px] text-text-dark-tertiary">
+                Gerado em {new Date(m.generated_at).toLocaleString('pt-PT')}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

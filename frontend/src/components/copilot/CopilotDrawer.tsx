@@ -97,7 +97,6 @@ export function CopilotDrawer({
   // Create conversation mutation
   const createConversationMutation = useMutation({
     mutationFn: (title?: string) => {
-      console.log('[COPILOT] createConversationMutation iniciado com título:', title);
       return copilotApi.createConversation(title || "Nova conversa");
     },
   });
@@ -106,8 +105,6 @@ export function CopilotDrawer({
   useEffect(() => {
     if (createConversationMutation.isSuccess && createConversationMutation.data) {
       const data = createConversationMutation.data;
-      console.log('[COPILOT] createConversationMutation.onSuccess chamado:', data);
-      console.log('[COPILOT] Estado de mensagens ANTES de criar conversa:', messages.length);
       setCurrentConversationId(data.id);
       // NÃO limpar mensagens - preservar as mensagens existentes (incluindo a resposta do COPILOT)
       // setMessages([]); // REMOVIDO - estava a limpar a resposta do COPILOT
@@ -116,7 +113,6 @@ export function CopilotDrawer({
       localStorage.removeItem('copilot_messages');
       localStorage.setItem('copilot_current_conversation_id', data.id);
       refetchConversations();
-      console.log('[COPILOT] Estado de mensagens DEPOIS de criar conversa:', messages.length);
       // Focar no input após criar conversa
       setTimeout(() => {
         inputRef.current?.focus();
@@ -152,11 +148,9 @@ export function CopilotDrawer({
   // Load messages when conversation changes (mas não sobrescrever se acabámos de adicionar mensagens)
   useEffect(() => {
     if (conversationMessages && currentConversationId && !isSendingMessage) {
-      console.log('[COPILOT] useEffect: Tentando carregar mensagens da conversa. Mensagens locais:', messages.length);
       // Só carregar se não estivermos no meio de uma mutation (para não sobrescrever mensagens novas)
       // E apenas se não houver mensagens locais (para não sobrescrever mensagens que acabámos de adicionar)
       if (messages.length === 0) {
-        console.log('[COPILOT] Carregando mensagens da conversa (nenhuma mensagem local)');
         const loadedMessages: Message[] = conversationMessages.map((msg) => {
           // Garantir que content_structured tem estrutura válida ou usar content_text
           let content: string | CopilotResponse = msg.content_text;
@@ -185,10 +179,7 @@ export function CopilotDrawer({
             timestamp: new Date(msg.created_at),
           };
         });
-        console.log('[COPILOT] Mensagens carregadas da conversa:', loadedMessages.length);
         setMessages(loadedMessages);
-      } else {
-        console.log('[COPILOT] Não carregando mensagens - já existem mensagens locais:', messages.length);
       }
     }
   }, [conversationMessages, currentConversationId, isSendingMessage, messages.length]);
@@ -386,12 +377,8 @@ export function CopilotDrawer({
   const handleSend = () => {
     const query = input.trim();
     if (!query || isSendingMessage || askMutation.isPending) {
-      console.log('[COPILOT] handleSend bloqueado:', { query: !!query, isSendingMessage, isPending: askMutation.isPending });
       return;
     }
-    
-    console.log('[COPILOT] handleSend chamado para query:', query);
-    console.log('[COPILOT] Estado de mensagens ANTES de adicionar user msg:', messages.length);
     
     // Adicionar mensagem do user imediatamente (antes da resposta)
     const userMsg: Message = {
@@ -402,13 +389,11 @@ export function CopilotDrawer({
     };
     setMessages((prev) => {
       const newMessages = [...prev, userMsg];
-      console.log('[COPILOT] Mensagem do user adicionada. Total:', newMessages.length);
       return newMessages;
     });
     setInput(''); // Limpar input imediatamente para melhor UX
     
     // Enviar pergunta ao COPILOT
-    console.log('[COPILOT] Chamando askMutation.mutate');
     askMutation.mutate(query);
   };
 

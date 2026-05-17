@@ -214,7 +214,7 @@ def compute_truck_consolidation_penalty_h(
         return 0.0
 
     penalty = 0.0
-    for batch_id, order_ids in orders_by_batch.items():
+    for _batch_id, order_ids in orders_by_batch.items():
         finish_times = []
         for order_id in order_ids:
             ops = ops_by_order.get(str(order_id))

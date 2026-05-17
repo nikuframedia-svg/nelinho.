@@ -6,10 +6,11 @@
  * mold_id adicionado nesta onda).
  */
 
-import { useQuery } from '@tanstack/react-query';
-import { X, Wrench } from 'lucide-react';
+import { useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { X, Wrench, Plus, Play, Check, CalendarClock } from 'lucide-react';
 import { ZipToneBadge, EmptyState } from '../dark';
-import { getApiBase } from '../../lib/api';
+import { getApiBase, moldsApi, type MoldMaintenanceEvent } from '../../lib/api';
 
 const TENANT = { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' };
 // Q.21.A — porta única via api.ts (concorda com VITE_API_URL).
@@ -84,6 +85,8 @@ export function MoldDefectDrawer({ open, moldId, moldCode, onClose }: DrawerProp
         </header>
 
         <div className="p-4 space-y-4">
+          {moldId ? <MoldMaintenanceSection moldId={moldId} /> : null}
+
           <div className="grid grid-cols-3 gap-2">
             <div className="rounded-md border p-3" style={{ borderColor: 'var(--bd-1)', background: 'var(--bg-2)' }}>
               <div className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--fg-3)' }}>
@@ -162,5 +165,179 @@ export function MoldDefectDrawer({ open, moldId, moldCode, onClose }: DrawerProp
         </div>
       </aside>
     </>
+  );
+}
+
+// ─── Q.31.B — Manutenção do molde (planear / iniciar / concluir) ─────────────
+
+const MNT_FIELD =
+  'w-full px-2.5 py-1.5 rounded-md text-xs';
+
+function moldFieldStyle(): React.CSSProperties {
+  return {
+    background: 'var(--bg-2)',
+    border: '1px solid var(--bd-1)',
+    color: 'var(--fg-1)',
+  };
+}
+
+function MoldMaintenanceSection({ moldId }: { moldId: string }) {
+  const queryClient = useQueryClient();
+  const [plannedDate, setPlannedDate] = useState('');
+  const [type, setType] = useState('preventive');
+  const [comments, setComments] = useState('');
+
+  const q = useQuery({
+    queryKey: ['mold-maintenance', moldId],
+    queryFn: () => moldsApi.listMaintenance(moldId),
+    retry: 0,
+  });
+  const events = (q.data ?? []) as MoldMaintenanceEvent[];
+
+  const invalidate = () =>
+    queryClient.invalidateQueries({ queryKey: ['mold-maintenance', moldId] });
+
+  const planMut = useMutation({
+    mutationFn: () =>
+      moldsApi.planMaintenance(moldId, {
+        planned_date: plannedDate,
+        maintenance_type: type,
+        comments: comments.trim() || undefined,
+      }),
+    onSuccess: () => {
+      setPlannedDate('');
+      setComments('');
+      invalidate();
+    },
+  });
+  const startMut = useMutation({
+    mutationFn: (eventId: string) => moldsApi.startMaintenance(eventId),
+    onSuccess: invalidate,
+  });
+  const completeMut = useMutation({
+    mutationFn: (eventId: string) => moldsApi.completeMaintenance(eventId, {}),
+    onSuccess: invalidate,
+  });
+
+  const busy = planMut.isPending || startMut.isPending || completeMut.isPending;
+
+  return (
+    <div
+      className="rounded-md border p-3 space-y-3"
+      style={{ borderColor: 'var(--bd-1)', background: 'var(--bg-2)' }}
+    >
+      <div className="flex items-center gap-2">
+        <CalendarClock size={13} style={{ color: 'var(--fg-3)' }} />
+        <span className="text-xs font-semibold" style={{ color: 'var(--fg-1)' }}>
+          Manutenção
+        </span>
+      </div>
+
+      {/* Planear */}
+      <form
+        className="grid grid-cols-2 gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (plannedDate && !busy) planMut.mutate();
+        }}
+      >
+        <input
+          type="date"
+          value={plannedDate}
+          onChange={(e) => setPlannedDate(e.target.value)}
+          className={MNT_FIELD}
+          style={moldFieldStyle()}
+          required
+        />
+        <select
+          value={type}
+          onChange={(e) => setType(e.target.value)}
+          className={MNT_FIELD}
+          style={moldFieldStyle()}
+        >
+          <option value="preventive">Preventiva</option>
+          <option value="corrective">Correctiva</option>
+        </select>
+        <input
+          type="text"
+          value={comments}
+          onChange={(e) => setComments(e.target.value)}
+          placeholder="Notas (opcional)"
+          className={`${MNT_FIELD} col-span-2`}
+          style={moldFieldStyle()}
+        />
+        <button
+          type="submit"
+          disabled={!plannedDate || busy}
+          className="col-span-2 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-white text-xs font-semibold disabled:opacity-50 transition-colors"
+          style={{ background: 'var(--blue)', border: '1px solid var(--blue)' }}
+        >
+          <Plus size={12} />
+          {planMut.isPending ? 'A planear…' : 'Planear manutenção'}
+        </button>
+      </form>
+
+      {/* Eventos */}
+      {q.isLoading ? (
+        <div className="text-[11px]" style={{ color: 'var(--fg-3)' }}>
+          A carregar manutenções…
+        </div>
+      ) : events.length === 0 ? (
+        <div className="text-[11px]" style={{ color: 'var(--fg-3)' }}>
+          Sem manutenções registadas para este molde.
+        </div>
+      ) : (
+        <div className="space-y-1.5">
+          {events.map((ev) => {
+            const done = !!ev.completed_at;
+            const running = !!ev.started_at && !done;
+            return (
+              <div
+                key={ev.id}
+                className="flex items-center justify-between gap-2 rounded-md border px-2.5 py-1.5"
+                style={{ borderColor: 'var(--bd-1)', background: 'var(--bg-1)' }}
+              >
+                <div className="min-w-0">
+                  <div className="text-xs" style={{ color: 'var(--fg-1)' }}>
+                    {ev.maintenance_type === 'corrective' ? 'Correctiva' : 'Preventiva'}
+                    {ev.planned_date ? ` · ${ev.planned_date}` : ''}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <ZipToneBadge
+                    tone={done ? 'green' : running ? 'yellow' : 'blue'}
+                    size="sm"
+                  >
+                    {done ? 'concluída' : running ? 'em curso' : 'planeada'}
+                  </ZipToneBadge>
+                  {!ev.started_at && !done ? (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => startMut.mutate(ev.id)}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] hover:bg-white/5 disabled:opacity-50"
+                      style={{ color: 'var(--fg-1)', border: '1px solid var(--bd-1)' }}
+                    >
+                      <Play size={11} /> Iniciar
+                    </button>
+                  ) : null}
+                  {running ? (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => completeMut.mutate(ev.id)}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] hover:bg-white/5 disabled:opacity-50"
+                      style={{ color: 'var(--green)', border: '1px solid var(--bd-1)' }}
+                    >
+                      <Check size={11} /> Concluir
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }

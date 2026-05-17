@@ -23,7 +23,7 @@ from src.copilot.schemas import (
     SandboxResponse,
 )
 from src.copilot.service import CopilotService
-from src.copilot.models import CopilotSuggestion, CopilotDecisionPR, CopilotConversation, CopilotMessage, CopilotActionLog
+from src.copilot.models import CopilotSuggestion, CopilotDecisionPR, CopilotConversation, CopilotMessage, CopilotActionLog, CopilotUserFeedback
 from src.copilot.actions import (
     ActionExecutor,
     ActionHandlerNotImplementedError,
@@ -144,7 +144,7 @@ async def ask_copilot(
 
     # Processar com tratamento de erros
     try:
-        response, audit_data = await service.process_ask(request)
+        response, _audit_data = await service.process_ask(request)
         if request.idempotency_key:
             _idempotency_set(tenant_id, user.user_id, request.idempotency_key, response)
         return response
@@ -157,7 +157,7 @@ async def ask_copilot(
         
         logger.error(
             f"Erro inesperado ao processar pergunta do COPILOT. "
-            f"Correlation: {correlation_id}. Erro: {str(e)}",
+            f"Correlation: {correlation_id}. Erro: {e!s}",
             exc_info=True
         )
         
@@ -400,27 +400,36 @@ async def ingest_rag_document(
 async def submit_user_feedback(
     payload: dict,
     tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
 ):
     """Recebe feedback ad-hoc do utilizador (👍/👎 + texto livre).
 
-    Onda 13 M minimal stub: log out + retorna 200 com echo. Persistência
-    em UserFeedback model fica para sub-sprint dedicado (tabela ainda não
-    existe; criar adiciona migration + 2 endpoints CRUD).
+    Q.31.H — persiste em ``copilot_user_feedback``. Antes era um stub
+    log-only e o sinal perdia-se.
 
     Payload aceita: ``{thumb: 'up'|'down', text: str, context?: dict}``.
     """
-    import logging
-    log = logging.getLogger("copilot.feedback")
-    thumb = payload.get("thumb", "").strip()
+    thumb = (payload.get("thumb") or "").strip()
     text = (payload.get("text") or "").strip()
     if thumb not in ("up", "down"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="thumb must be 'up' or 'down'")
-    log.info(
-        "user_feedback tenant=%s thumb=%s text_len=%d context=%s",
-        tenant_id, thumb, len(text), payload.get("context") or {},
+
+    from uuid import uuid4
+
+    context = payload.get("context")
+    row = CopilotUserFeedback(
+        id=uuid4(),
+        tenant_id=tenant_id,
+        thumb=thumb,
+        text=text or None,
+        context=context if isinstance(context, dict) else None,
     )
+    session.add(row)
+    await session.commit()
+
     return {
         "status": "received",
+        "id": str(row.id),
         "thumb": thumb,
         "text_len": len(text),
         "tenant_id": str(tenant_id),
@@ -535,7 +544,7 @@ async def ask_copilot_dev(
     service = CopilotService(session, dev_tenant_id, dev_user_id, dev_role)
     
     # Processar
-    response, audit_data = await service.process_ask(request)
+    response, _audit_data = await service.process_ask(request)
     
     return response
 
@@ -1088,9 +1097,6 @@ async def execute_sandbox(
     """
     from src.copilot.actions import (
         Action,
-        ActionExecutor,
-        ActionHandlerNotImplementedError,
-        ActionMode,
     )
     from uuid import uuid4
     
@@ -1150,7 +1156,7 @@ async def execute_sandbox(
         logger.error(f"Sandbox execution failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Sandbox execution failed: {str(e)}",
+            detail=f"Sandbox execution failed: {e!s}",
         )
 
 
@@ -1254,7 +1260,7 @@ async def rollback_action(
         logger.error(f"Rollback failed: transaction_id={transaction_id}, error={e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Rollback failed: {str(e)}",
+            detail=f"Rollback failed: {e!s}",
         )
 
 

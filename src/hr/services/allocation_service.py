@@ -21,6 +21,8 @@ from src.hr.engines.allocation_adapter import (
     EmployeeSkill as EngineSkill,
     AllocationResult,
 )
+from src.core.models.rates import LaborRate
+from src.plan.models.schedule import ProductionSchedule
 from src.shared.kafka_client import publish_event, Topics
 from src.shared.events import EmployeeAllocatedEvent, LaborCostCommittedEvent
 
@@ -228,6 +230,104 @@ class AllocationService:
         
         return allocations
     
+    async def create_single_allocation(
+        self,
+        employee_id: UUID,
+        order_id: str,
+        allocation_date: date,
+        allocated_hours: Decimal = Decimal("8"),
+    ) -> HRAllocation:
+        """Q.31.D.2 — atribui um operador a um barco para um dia.
+
+        O frontend arrasta operador → barco; aqui resolvemos a operação
+        concreta a partir da `ProductionSchedule` — a fase agendada para
+        esse dia com a menor `operation_sequence`. `HRAllocation.
+        operation_id` é FK obrigatória, por isso sem schedule não há
+        atribuição possível: levanta `ValueError` (a API → 409).
+
+        O custo é informativo: `hourly_rate` vem de `core.labor_rates`
+        (linha efectiva mais recente até `allocation_date`); operador
+        sem taxa entra a 0 — o custo nunca é inventado.
+        """
+        schedule = await self._resolve_schedule(order_id, allocation_date)
+        if schedule is None:
+            raise ValueError(
+                f"Sem operação agendada para a ordem {order_id} em "
+                f"{allocation_date.isoformat()} — não é possível atribuir."
+            )
+
+        rate = await self._employee_rate(employee_id, allocation_date)
+        estimated_cost = allocated_hours * rate
+
+        allocation = HRAllocation(
+            tenant_id=self.tenant_id,
+            employee_id=employee_id,
+            order_id=order_id,
+            operation_id=schedule.operation_id,
+            allocation_date=allocation_date,
+            allocated_hours=allocated_hours,
+            hourly_rate=rate,
+            estimated_cost=estimated_cost,
+            status=AllocationStatus.PLANNED,
+            skill_match=True,
+        )
+        self.session.add(allocation)
+
+        await publish_event(
+            Topics.EMPLOYEE_ALLOCATED,
+            EmployeeAllocatedEvent(
+                tenant_id=self.tenant_id,
+                payload={
+                    "employee_id": str(employee_id),
+                    "order_id": order_id,
+                    "operation_id": str(schedule.operation_id),
+                    "allocated_hours": float(allocated_hours),
+                    "estimated_cost": float(estimated_cost),
+                },
+            ),
+        )
+
+        await self.session.flush()
+        return allocation
+
+    async def _resolve_schedule(
+        self, order_id: str, allocation_date: date
+    ) -> Optional[ProductionSchedule]:
+        """A fase agendada para `order_id` que cobre `allocation_date`.
+
+        Escolhe a de menor `operation_sequence` — a próxima operação na
+        ordem de routing. Sem linha → `None`.
+        """
+        stmt = (
+            select(ProductionSchedule)
+            .where(
+                ProductionSchedule.tenant_id == self.tenant_id,
+                ProductionSchedule.order_id == order_id,
+                ProductionSchedule.scheduled_start_date <= allocation_date,
+                ProductionSchedule.scheduled_end_date >= allocation_date,
+            )
+            .order_by(ProductionSchedule.operation_sequence)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalars().first()
+
+    async def _employee_rate(
+        self, employee_id: UUID, as_of: date
+    ) -> Decimal:
+        """`loaded_rate` efectivo do operador em `as_of`, ou 0 se ausente."""
+        stmt = (
+            select(LaborRate.loaded_rate)
+            .where(
+                LaborRate.tenant_id == self.tenant_id,
+                LaborRate.employee_id == employee_id,
+                LaborRate.effective_date <= as_of,
+            )
+            .order_by(LaborRate.effective_date.desc())
+        )
+        result = await self.session.execute(stmt)
+        rate = result.scalars().first()
+        return rate if rate is not None else Decimal("0")
+
     async def get_allocations(
         self,
         order_id: str = None,
