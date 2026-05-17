@@ -405,6 +405,23 @@ async def schedule_cpo(
         # Never let commit persistence block a working schedule.
         logger.warning(f"Schedule-as-Code commit failed: {e}", exc_info=True)
 
+    # Sprint Q.dev-stack — materialize the schedule into
+    # `plan.production_schedules` so the daily drag-drop allocation
+    # (Q.31.D.2) and the operator start/complete flow (Q.30.A) have
+    # concrete rows to resolve against. Best-effort: a failure here never
+    # blocks a working schedule (same contract as the commit above).
+    try:
+        from src.plan.services.schedule_materializer import (
+            materialize_cpo_schedule,
+        )
+        materialized = await materialize_cpo_schedule(
+            db, tenant_id, result,
+            planning_run_id=commit_sha or "cpo-run",
+        )
+        logger.info("CPO schedule materialized: %s", materialized)
+    except Exception as e:
+        logger.warning(f"Schedule materialization failed: {e}", exc_info=True)
+
     return CPOScheduleResponse(
         tenant_id=str(tenant_id),
         engine_used=result.get("engine_used", "cpo_v4"),
