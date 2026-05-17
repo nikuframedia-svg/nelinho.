@@ -2735,6 +2735,29 @@ export interface TransportSuggestion {
  * so consumers can wire forms now and the actual fetches light up once Q.2
  * lands the FastAPI router.
  */
+/** Q.31.E — documento de expedição. */
+export interface TransportManifestBoat {
+  order_id: string;
+  hull: number;
+  product_name: string;
+  product_type: string;
+  current_phase: string;
+  status: string;
+}
+export interface TransportManifest {
+  batch: {
+    id: string;
+    code: string;
+    transport_date: string | null;
+    destination: string | null;
+    status: string;
+    truck_capacity_units: number;
+  };
+  boats: TransportManifestBoat[];
+  boat_count: number;
+  generated_at: string;
+}
+
 export const transportApi = {
   listBatches: (params?: { from_date?: string; to_date?: string; status?: TransportBatchStatus }) => {
     const qs = new URLSearchParams();
@@ -2784,6 +2807,12 @@ export const transportApi = {
   suggestions: (batchId: string) =>
     request<TransportSuggestion[]>(
       `/v1/plan/transport/batches/${encodeURIComponent(batchId)}/suggestions`,
+    ),
+
+  /** Q.31.E — documento de expedição (manifesto / packing list). */
+  manifest: (batchId: string) =>
+    request<TransportManifest>(
+      `/v1/plan/transport/batches/${encodeURIComponent(batchId)}/manifest`,
     ),
 
   /**

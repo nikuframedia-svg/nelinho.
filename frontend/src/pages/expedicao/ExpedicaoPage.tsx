@@ -31,6 +31,9 @@ import {
   Boxes,
   Plus,
   CheckCircle2,
+  FileText,
+  Printer,
+  X,
 } from 'lucide-react';
 import { PageHeader, Tabs } from '../../components/dark';
 import { SkeletonLoader } from '../../components/ui/Skeleton';
@@ -88,6 +91,7 @@ function daysUntil(iso: string): number {
 export default function ExpedicaoPage() {
   const [tab, setTab] = useState<'expedicoes' | 'supply'>('expedicoes');
   const [showForm, setShowForm] = useState(false);
+  const [manifestBatchId, setManifestBatchId] = useState<string | null>(null);
   const batchesQuery = useQuery({
     queryKey: ['expedicao', 'batches'],
     queryFn: fetchTransportBatches,
@@ -253,12 +257,23 @@ export default function ExpedicaoPage() {
         ) : (
           <div className="flex flex-col gap-3.5 page-enter">
             {sortedBatches.map((s) => (
-              <ShipmentDetail key={s.id} shipment={s} />
+              <ShipmentDetail
+                key={s.id}
+                shipment={s}
+                onManifest={() => setManifestBatchId(s.id)}
+              />
             ))}
           </div>
         )}
       </div>
       )}
+
+      {manifestBatchId ? (
+        <ManifestModal
+          batchId={manifestBatchId}
+          onClose={() => setManifestBatchId(null)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -399,7 +414,13 @@ function NovaExpedicaoForm({ onClose }: { onClose: () => void }) {
 // ShipmentDetail (port literal page-extra.jsx)
 // ═══════════════════════════════════════════════════════════════════════════
 
-function ShipmentDetail({ shipment }: { shipment: TransportBatch }) {
+function ShipmentDetail({
+  shipment,
+  onManifest,
+}: {
+  shipment: TransportBatch;
+  onManifest: () => void;
+}) {
   const total = shipment.truck_capacity_units;
   const ready = shipment.ready ?? 0;
   const in_prod = shipment.in_prod ?? 0;
@@ -481,6 +502,16 @@ function ShipmentDetail({ shipment }: { shipment: TransportBatch }) {
           >
             {shipment.destination ?? '—'}
           </div>
+          {/* Q.31.E — gerar documento de expedição (manifesto) */}
+          <button
+            type="button"
+            onClick={onManifest}
+            className="mt-3 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs transition-colors hover:bg-white/5"
+            style={{ color: 'var(--fg-2)', border: '1px solid var(--bd-1)' }}
+          >
+            <FileText size={12} />
+            Manifesto
+          </button>
         </div>
 
         {/* Center: progress */}
@@ -584,6 +615,162 @@ function ShipmentDetail({ shipment }: { shipment: TransportBatch }) {
               <span>{shipment.suggestion}</span>
             </div>
           ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ManifestModal — Q.31.E: documento de expedição imprimível
+// ═══════════════════════════════════════════════════════════════════════════
+
+function ManifestModal({
+  batchId,
+  onClose,
+}: {
+  batchId: string;
+  onClose: () => void;
+}) {
+  const q = useQuery({
+    queryKey: ['transport-manifest', batchId],
+    queryFn: () => transportApi.manifest(batchId),
+    retry: 0,
+  });
+  const m = q.data;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgba(0,0,0,0.5)' }}
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-xl"
+        style={{ background: 'var(--bg-1)', border: '1px solid var(--bd-1)' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div
+          className="flex items-center justify-between px-5 py-3 border-b"
+          style={{ borderColor: 'var(--bd-1)' }}
+        >
+          <div className="flex items-center gap-2">
+            <FileText size={16} className="text-text-dark-secondary" />
+            <span className="text-sm font-semibold text-text-dark-primary">
+              Manifesto de expedição
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => window.print()}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs text-white"
+              style={{ background: 'var(--blue)' }}
+            >
+              <Printer size={12} />
+              Imprimir
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-1 rounded-md hover:bg-white/5"
+              aria-label="Fechar"
+            >
+              <X size={16} className="text-text-dark-secondary" />
+            </button>
+          </div>
+        </div>
+
+        <div className="p-5">
+          {q.isLoading ? (
+            <div className="text-xs text-text-dark-tertiary py-6 text-center">
+              A carregar manifesto…
+            </div>
+          ) : q.isError || !m ? (
+            <div className="text-xs text-danger py-6 text-center">
+              Não foi possível carregar o manifesto.
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <div>
+                  <span className="text-text-dark-tertiary">Código: </span>
+                  <span className="text-text-dark-primary font-medium">
+                    {m.batch.code}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-text-dark-tertiary">Data: </span>
+                  <span className="text-text-dark-primary font-medium">
+                    {m.batch.transport_date ?? '—'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-text-dark-tertiary">Destino: </span>
+                  <span className="text-text-dark-primary font-medium">
+                    {m.batch.destination ?? '—'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-text-dark-tertiary">Estado: </span>
+                  <span className="text-text-dark-primary font-medium">
+                    {m.batch.status}
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <div className="text-xs font-semibold text-text-dark-secondary mb-1">
+                  Barcos ({m.boat_count} / {m.batch.truck_capacity_units} de capacidade)
+                </div>
+                {m.boats.length === 0 ? (
+                  <div className="text-xs text-text-dark-tertiary py-3">
+                    Nenhum barco atribuído a esta expedição.
+                  </div>
+                ) : (
+                  <table className="w-full text-xs">
+                    <thead className="border-b border-white/[0.08]">
+                      <tr className="text-left text-[10px] uppercase tracking-wider text-text-dark-tertiary">
+                        <th className="px-2 py-1.5">Casco</th>
+                        <th className="px-2 py-1.5">Produto</th>
+                        <th className="px-2 py-1.5">Tipo</th>
+                        <th className="px-2 py-1.5">Fase actual</th>
+                        <th className="px-2 py-1.5">Estado</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {m.boats.map((b) => (
+                        <tr
+                          key={b.order_id}
+                          className="border-b border-white/[0.04]"
+                        >
+                          <td className="px-2 py-1.5 font-mono text-text-dark-primary">
+                            #{b.hull}
+                          </td>
+                          <td className="px-2 py-1.5 text-text-dark-secondary">
+                            {b.product_name}
+                          </td>
+                          <td className="px-2 py-1.5 text-text-dark-secondary">
+                            {b.product_type}
+                          </td>
+                          <td className="px-2 py-1.5 text-text-dark-secondary">
+                            {b.current_phase}
+                          </td>
+                          <td className="px-2 py-1.5 text-text-dark-secondary">
+                            {b.status}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+
+              <div className="text-[10px] text-text-dark-tertiary">
+                Gerado em {new Date(m.generated_at).toLocaleString('pt-PT')}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
