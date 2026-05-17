@@ -1981,6 +1981,10 @@ export interface ReworkCreatePayload {
   error_description?: string;
   root_cause_category?: string;
   causer_employee_id?: string;
+  /** Fase onde o defeito ocorreu (QA01) — Q.30.D. */
+  phase_id_causer?: string;
+  /** Fase de retrabalho (QA02 auto-routing p/ "Pintura") — Q.30.D. */
+  phase_id_rework?: string;
   cost_estimate_eur?: number;
   hours_lost?: number;
   notes?: string;
