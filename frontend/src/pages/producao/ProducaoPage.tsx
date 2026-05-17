@@ -33,6 +33,7 @@ import {
   type ZipBoatStatus,
 } from '../../components/dark';
 import { CPODashboard } from '../../components/cpo/CPOPanels';
+import { DragDropPlanner } from '../../components/scheduling/DragDropPlanner';
 import { getApiBase } from '../../lib/api';
 
 // ─── Fases derivadas das ordens reais ───────────────────────────────────────
@@ -126,7 +127,7 @@ function deriveStatus(dx: number | undefined, phaseName: string | null): ZipBoat
 
 // ─── Page ───────────────────────────────────────────────────────────────────
 
-type View = 'phases' | 'gantt' | 'calendar' | 'cpo';
+type View = 'phases' | 'reorg' | 'gantt' | 'calendar' | 'cpo';
 
 export default function ProducaoPage() {
   const [view, setView] = useState<View>('phases');
@@ -183,6 +184,7 @@ export default function ProducaoPage() {
               onChange={(v) => setView(v as View)}
               options={[
                 { id: 'phases', label: 'Por fase' },
+                { id: 'reorg', label: 'Reorganizar' },
                 { id: 'gantt', label: 'Gantt' },
                 { id: 'calendar', label: 'Calendário' },
                 { id: 'cpo', label: 'CPO' },
@@ -225,6 +227,11 @@ export default function ProducaoPage() {
             isError={ordersQuery.isError}
           />
         )}
+        {/* Q.31.D — drag-drop que PERSISTE: arrastar uma operação entre
+            fases/operadores faz preview e o "Aplicar" grava via apply-move
+            (ScheduleCommit). O componente já existia, isolado em
+            /plan/scheduling — aqui fica alcançável do menu principal. */}
+        {view === 'reorg' && <DragDropPlanner />}
         {view === 'gantt' && <GanttView orders={orders} />}
         {view === 'calendar' && <CalendarView />}
         {view === 'cpo' && <CPODashboard />}
