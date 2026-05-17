@@ -22,6 +22,7 @@ import pytest
 from src.adapters.nelo.etl import master_data
 from src.adapters.nelo.etl.master_data import (
     _map_bom,
+    _map_labor_rate,
     _map_product,
     _map_worker,
     _routing_signature,
@@ -32,6 +33,7 @@ from src.adapters.nelo.schemas import BomRow, EntityRow, ProductRow, RoutingRow
 from src.core.models.bom import BOMItem
 from src.core.models.employee import Employee, EmploymentStatus
 from src.core.models.product import Product, ProductStatus, ProductType
+from src.core.models.rates import LaborRate
 from src.plan.models.routing_template import (
     ModelRoutingAssignment,
     RoutingTemplate,
@@ -110,6 +112,29 @@ def test_map_worker_uses_entry_date_when_present():
 def test_map_worker_inactive_status():
     mapped = _map_worker(_entity(entity_id=7, active=False))
     assert mapped["status"] == EmploymentStatus.TERMINATED
+
+
+def test_map_labor_rate_maps_cost_per_hour_to_loaded_rate():
+    """Q.26.C — E_CUSTOHORA -> loaded_rate; burden 0 (custo ja e total)."""
+    emp_id = uuid4()
+    mapped = _map_labor_rate(
+        _entity(entity_id=42, cost_per_hour=9.5),
+        by_code={"42": emp_id},
+        as_of=date(2026, 5, 17),
+    )
+    assert mapped["employee_id"] == emp_id
+    assert mapped["loaded_rate"] == Decimal("9.5")
+    assert mapped["base_hourly_rate"] == Decimal("9.5")
+    assert mapped["burden_rate"] == Decimal("0")
+    assert mapped["effective_date"] == date(2026, 5, 17)
+
+
+def test_map_labor_rate_none_when_employee_not_synced():
+    """Operador sem linha em core.employees -> None (nao se inventa FK)."""
+    mapped = _map_labor_rate(
+        _entity(entity_id=999), by_code={}, as_of=date(2026, 5, 17)
+    )
+    assert mapped is None
 
 
 # ── BOM mapping ───────────────────────────────────────────────────────────
@@ -260,17 +285,19 @@ async def test_mirror_master_data_runs_and_audits(_fake_adapter, recording_sessi
     result = await mirror_master_data(session=session, tenant_id=TENANT, since=None)
 
     assert result.status == "ok"
-    # 2 products + 2 entities + 1 bom + 4 routing rows read.
-    assert result.rows_read == 9
+    # 2 products + 2 entities + 2 labor rates + 1 bom + 4 routing rows read.
+    assert result.rows_read == 11
 
     products = [o for o in session.added if isinstance(o, Product)]
     employees = [o for o in session.added if isinstance(o, Employee)]
+    rates = [o for o in session.added if isinstance(o, LaborRate)]
     boms = [o for o in session.added if isinstance(o, BOMItem)]
     templates = [o for o in session.added if isinstance(o, RoutingTemplate)]
     assignments = [o for o in session.added if isinstance(o, ModelRoutingAssignment)]
 
     assert {p.product_code for p in products} == {"1", "2"}
     assert {e.employee_code for e in employees} == {"101", "102"}
+    assert len(rates) == 2  # Q.26.C — uma taxa de custo/hora por operador
     assert len(boms) == 1 and boms[0].sequence == 1
     # M1 and M2 share the route → exactly one ERP template, coverage 2.
     assert len(templates) == 1
