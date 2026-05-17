@@ -88,32 +88,10 @@ interface ActiveOrder {
   transport_date: string | null;
 }
 
-// Mapping cliente_code → flag (matching data.jsx CLIENTS)
-const CLIENT_FLAGS: Record<string, string> = {
-  FR: '🇫🇷',
-  DE: '🇩🇪',
-  PT: '🇵🇹',
-  IT: '🇮🇹',
-  SE: '🇸🇪',
-  NO: '🇳🇴',
-  AT: '🇦🇹',
-};
-
-// Hull → cliente map (data.jsx BOATS)
-const HULL_CLIENT: Record<number, string> = {
-  4271: 'FR',
-  4272: 'PT',
-  4273: 'FR',
-  4274: 'PT',
-  4275: 'PT',
-  5103: 'DE',
-  5104: 'IT',
-  5105: 'DE',
-  6001: 'PT',
-  6002: 'PT',
-  6003: 'NO',
-  6004: 'SE',
-};
+// Q.31.I — os mapas hull→cliente→bandeira eram demo data (data.jsx BOATS):
+// 12 hulls hardcoded, qualquer outro barco ficava sem bandeira. ZERO MOCKS.
+// production_orders não tem cliente/país; quando o ETL trouxer o cliente
+// do ERP, a bandeira volta como feature própria.
 
 // ─── Endpoints ──────────────────────────────────────────────────────────────
 
@@ -1037,8 +1015,6 @@ function WorkerRowZip({
 
 function DispatchRowZip({ order }: { order: ActiveOrder }) {
   const hull = parseInt(order.hull ?? '0', 10) || 0;
-  const clientCode = HULL_CLIENT[hull];
-  const clientFlag = clientCode ? CLIENT_FLAGS[clientCode] : '';
   const status = deriveBoatStatus(order.transport_date, order.phase);
   const statusColor = {
     on_time: 'green',
@@ -1074,8 +1050,7 @@ function DispatchRowZip({ order }: { order: ActiveOrder }) {
     >
       <div>
         <div className="text-sm font-semibold text-text-dark-primary">
-          {order.product_type} #{hull || '—'}{' '}
-          <span style={{ marginLeft: 4 }}>{clientFlag}</span>
+          {order.product_type} #{hull || '—'}
         </div>
         <div className="text-[11px] text-text-dark-secondary mt-0.5 truncate">
           {order.product_name}
