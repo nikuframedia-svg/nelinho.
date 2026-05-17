@@ -47,6 +47,7 @@ from .schemas import (
     MoldRow,
     MovementRow,
     OperationRow,
+    OrderLaborRow,
     OrderRow,
     PhaseRow,
     ProductOrderCount,
@@ -221,6 +222,27 @@ LEFT JOIN   dbo.PRODUTO_FASE     pf   WITH (NOLOCK)
             ON pf.PRODF_P_ID = of_.OF_P_ID
            AND pf.PRODF_FP_ID = offp.OFFP_FP_ID
            AND pf.PRODF_DATA_ELIMINADO IS NULL
+"""
+
+
+# Q.26.C.2 — per-order labour: every OF_FP execution of one work order
+# joined to its operators via OFFP_EQ. One row per (operation, operator);
+# the inner join drops phases with no operator (Cura etc.).
+_VW_ORDER_LABOR_SQL = """
+SELECT
+    offp.OFFP_ID         AS operation_id,
+    offp.OFFP_OF_ID      AS work_order_id,
+    offp.OFFP_FP_ID      AS phase_id,
+    fp.FP_NOME           AS phase_name,
+    offp.OFFP_DATAINICIO AS start_at,
+    offp.OFFP_DATAFIM    AS end_at,
+    offp.OFFP_RETURN     AS is_return,
+    eq.OFFPEQ_E_ID       AS operator_id,
+    eq.OFFPEQ_CHEFE      AS is_chefe
+FROM        dbo.OF_FP          offp WITH (NOLOCK)
+INNER JOIN  dbo.OFFP_EQ        eq   WITH (NOLOCK) ON eq.OFFPEQ_OFFP_ID = offp.OFFP_ID
+INNER JOIN  dbo.FASES_PRODUCAO fp   WITH (NOLOCK) ON fp.FP_ID = offp.OFFP_FP_ID
+WHERE offp.OFFP_OF_ID = :work_order_id
 """
 
 
@@ -451,6 +473,19 @@ async def list_operations(
     }
     rows = await _fetch_all(sql, params)
     return [OperationRow(**r) for r in rows]
+
+
+async def list_order_labor(work_order_id: int) -> list[OrderLaborRow]:
+    """Phase executions × operators for one work order (`OF_FP`×`OFFP_EQ`).
+
+    One row per (operation, operator) — the source for the per-order
+    labour cost (Q.26.C.2). Bounded by a single `OFFP_OF_ID`, so the
+    query is cheap despite `OF_FP` having 2.6 M rows.
+    """
+    rows = await _fetch_all(
+        _VW_ORDER_LABOR_SQL, {"work_order_id": int(work_order_id)}
+    )
+    return [OrderLaborRow(**r) for r in rows]
 
 
 # ─── Master data (for the ERP→Postgres ETL mirrors) ─────────────────────

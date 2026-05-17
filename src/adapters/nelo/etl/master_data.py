@@ -37,6 +37,7 @@ from src.adapters.nelo.schemas import BomRow, EntityRow, ProductRow, RoutingRow
 from src.core.models.bom import BOMItem
 from src.core.models.employee import Employee, EmploymentStatus
 from src.core.models.product import Product, ProductStatus, ProductType
+from src.core.models.rates import LaborRate
 from src.plan.models.routing_template import (
     ModelRoutingAssignment,
     RoutingTemplate,
@@ -88,6 +89,10 @@ def _map_product(row: ProductRow) -> Optional[Dict[str, Any]]:
         "product_name": str(row.product_name or row.product_id),
         "product_type": _classify_product_type(row.product_type_id),
         "status": status,
+        # P_PRECOCUSTO (€) — custo standard do produto. Q.26.A liga-o ao
+        # COGS. Faithful: mapeia tal e qual o ERP (incl. 0 e negativos —
+        # dado sujo a tratar a jusante, nao silenciar aqui).
+        "standard_cost": _to_decimal(row.cost_price, default=Decimal("0")),
     }
 
 
@@ -134,6 +139,7 @@ async def mirror_master_data(
     async with EtlRunner(session, tenant_id, source="master") as run:
         await _mirror_products(run)
         await _mirror_employees(run)
+        await _mirror_labor_rates(run, session, tenant_id)
         await _mirror_bom(run, session, tenant_id)
         await _mirror_routing(run, session, tenant_id)
     return run.result
@@ -147,7 +153,7 @@ async def _mirror_products(run: EtlRunner) -> None:
     await run.upsert(
         Product, mapped,
         key_fields=["product_code"],
-        update_fields=["product_name", "product_type", "status"],
+        update_fields=["product_name", "product_type", "status", "standard_cost"],
     )
 
 
@@ -160,6 +166,62 @@ async def _mirror_employees(run: EtlRunner) -> None:
         Employee, mapped,
         key_fields=["employee_code"],
         update_fields=["employee_name", "hire_date", "status"],
+    )
+
+
+async def _employee_id_by_code(session, tenant_id: UUID) -> Dict[str, UUID]:
+    """Map ERP operator key (``core.employees.employee_code``) → row UUID."""
+    rows = await session.execute(
+        select(Employee.employee_code, Employee.id).where(
+            Employee.tenant_id == tenant_id
+        )
+    )
+    return {str(code): eid for code, eid in rows}
+
+
+def _map_labor_rate(
+    row: EntityRow, by_code: Dict[str, UUID], as_of: date
+) -> Optional[Dict[str, Any]]:
+    """ERP entity → ``core.labor_rates`` dict (Q.26.C).
+
+    ``E_CUSTOHORA`` e o custo/hora total a empresa — mapeia-se directo
+    como ``loaded_rate``; ``burden_rate=0`` porque nao ha split de
+    encargos a fabricar (o ERP ja da o total). Custo 0 entra tal e qual.
+    """
+    emp_id = by_code.get(str(row.entity_id))
+    if emp_id is None:
+        return None
+    rate = _to_decimal(row.cost_per_hour, default=Decimal("0"))
+    return {
+        "employee_id": emp_id,
+        "effective_date": as_of,
+        "base_hourly_rate": rate,
+        "burden_rate": Decimal("0"),
+        "loaded_rate": rate,
+        "currency_code": "EUR",
+    }
+
+
+async def _mirror_labor_rates(run: EtlRunner, session, tenant_id: UUID) -> None:
+    """Sincroniza o custo/hora dos operadores -> ``core.labor_rates``.
+
+    Uma linha por operador, time-phased na data do sync — re-correr no
+    mesmo dia faz upsert; noutro dia cria uma linha nova (a taxa muda
+    com o tempo, e guardar o historico e o comportamento certo).
+    """
+    rows = await services.list_entities(internal_only=True)
+    run.count_read(len(rows))
+    by_code = await _employee_id_by_code(session, tenant_id)
+    as_of = date.today()
+    mapped = [
+        m for m in (_map_labor_rate(r, by_code, as_of) for r in rows)
+        if m is not None
+    ]
+    run.count_skipped(len(rows) - len(mapped))
+    await run.upsert(
+        LaborRate, mapped,
+        key_fields=["employee_id", "effective_date"],
+        update_fields=["base_hourly_rate", "burden_rate", "loaded_rate"],
     )
 
 

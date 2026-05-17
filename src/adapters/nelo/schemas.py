@@ -187,6 +187,31 @@ class OperationRow(_Frozen):
     phase_is_automatic: bool = False
 
 
+# ─── Order labour (OF_FP × OFFP_EQ) — per-order labour cost source ─────
+
+
+class OrderLaborRow(_Frozen):
+    """One row per (phase execution × operator) of a single work order.
+
+    Source for the per-order labour cost (Q.26.C.2): `OF_FP` joined to
+    `OFFP_EQ` (the operation↔operator link — its only payload columns are
+    the operator id and the `chefe` flag; there is **no** per-operator
+    hours column). Labour hours come from the elapsed `start_at→end_at`
+    of the `OF_FP` row. Phases with no operator in `OFFP_EQ` (e.g. Cura)
+    never reach here — the join is inner.
+    """
+
+    operation_id: int  # OFFP_ID
+    work_order_id: int  # OFFP_OF_ID
+    phase_id: int  # OFFP_FP_ID
+    phase_name: str
+    start_at: Optional[datetime] = None
+    end_at: Optional[datetime] = None
+    is_return: bool  # OFFP_RETURN — retrabalho
+    operator_id: int  # OFFPEQ_E_ID
+    is_chefe: bool  # OFFPEQ_CHEFE
+
+
 # ─── Phases (vw_pp1_phases) — master of work centres ───────────────────
 
 
