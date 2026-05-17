@@ -50,7 +50,7 @@ export function TopBar() {
 
   return (
     <header
-      className="flex items-center sticky top-0 z-20 border-b border-bd-1"
+      className="flex items-center sticky top-0 z-20"
       style={{
         height: 52,
         flexShrink: 0,

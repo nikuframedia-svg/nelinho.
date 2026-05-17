@@ -134,7 +134,7 @@ export function Sidebar() {
 
   return (
     <aside
-      className="h-screen sticky top-0 flex flex-col bg-dark-800 border-r border-bd-1"
+      className="h-screen flex flex-col fixed left-0 top-0 bg-dark-800"
       style={{ width: 240 }}
     >
       {/* Logo */}
@@ -142,13 +142,18 @@ export function Sidebar() {
         className="flex items-center gap-2.5 border-b border-bd-1"
         style={{ padding: '18px 20px' }}
       >
-        <img
-          src="/nelo-logo.png"
-          alt="NELO"
-          width={30}
-          height={30}
-          className="shrink-0 rounded-md object-contain"
-        />
+        <div
+          className="flex items-center justify-center text-white font-bold"
+          style={{
+            width: 30,
+            height: 30,
+            background: 'var(--blue)',
+            borderRadius: 'var(--r-md)',
+            fontSize: 14,
+          }}
+        >
+          N
+        </div>
         <div>
           <div
             className="text-text-dark-primary font-semibold leading-tight"

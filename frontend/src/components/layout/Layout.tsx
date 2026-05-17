@@ -30,9 +30,10 @@ export function Layout() {
   const { getShortcutsList } = useKeyboardShortcuts(openHelp);
 
   return (
-    <div className="min-h-screen bg-bg-base grid grid-cols-[240px_minmax(0,1fr)]">
+    <div className="min-h-screen bg-bg-base">
       <Sidebar />
-      <div className="flex flex-col min-w-0 min-h-screen">
+      {/* Sidebar é fixed 240px. Empurrar conteúdo. */}
+      <div className="flex flex-col min-h-screen" style={{ marginLeft: 240 }}>
         <TopBar />
         <main className="flex-1 min-h-[calc(100vh-52px)]">
           <Outlet />

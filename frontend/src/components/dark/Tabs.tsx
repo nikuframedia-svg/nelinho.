@@ -104,7 +104,7 @@ export function Tabs({
   return (
     <div
       className={`
-        flex items-center gap-1 border-b border-white/[0.06]
+        flex items-center gap-1
         overflow-x-auto
         ${className}${stickyExtra}
       `}

@@ -1470,13 +1470,13 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.01em; }
    SCROLLBAR - DARK THEME
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/* Q.18.ZIP.design2 — scrollbar matching design package index.html (thumb com border bg-0 dá efeito floating) */
-*::-webkit-scrollbar { width: 10px; height: 10px; }
-*::-webkit-scrollbar-track { background: transparent; }
+/* Q.18.UI.B.4 — scrollbar discreto. Track usa var(--bg-0) (mesma cor do
+   shell) para não revelar elementos atrás como uma faixa clara. */
+*::-webkit-scrollbar { width: 6px; height: 6px; }
+*::-webkit-scrollbar-track { background: var(--bg-0); }
 *::-webkit-scrollbar-thumb {
   background: var(--bd-1);
-  border-radius: 5px;
-  border: 2px solid var(--bg-0);
+  border-radius: 3px;
 }
 *::-webkit-scrollbar-thumb:hover { background: var(--bd-2); }
 
