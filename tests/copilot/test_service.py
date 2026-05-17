@@ -272,3 +272,90 @@ class TestEvidenceEnforcement:
         assert first_fact.citations[0].source_type == "system_data"
         # Generic uses confidence 0.5 (not 0.3 which is for KPI/quality/plan)
         assert first_fact.citations[0].confidence == 0.5
+
+
+# ---------------------------------------------------------------------------
+# Q.31.H — RLM agent wiring for diagnostic intent
+# ---------------------------------------------------------------------------
+
+class TestRlmDiagnostic:
+    async def test_diagnostic_intent_runs_rlm_and_answers(
+        self, fake_session, tenant_id, patched_service_deps, monkeypatch,
+    ):
+        """Uma pergunta diagnóstica corre o RLM agent; a resposta sai
+        como ANSWER, sem tocar no caminho LLM normal (sem Ollama)."""
+        from src.copilot.rlm.agent import AgentTrace
+
+        captured = {}
+
+        async def _fake_rlm(*, question, state_query, llm, max_steps=6):
+            captured["question"] = question
+            captured["max_steps"] = max_steps
+            return AgentTrace(
+                question=question,
+                answer="O OEE caiu porque a fase Laminagem tem 3 moldes em conflito.",
+                steps_used=3,
+                queries_run=[
+                    {"name": "bottlenecks", "params": {}, "result": {}},
+                    {"name": "mold_conflicts", "params": {}, "result": {}},
+                ],
+                terminated_reason="complete",
+            )
+
+        monkeypatch.setattr("src.copilot.rlm.agent.run_rlm_agent", _fake_rlm)
+
+        svc = _make_service(fake_session, tenant_id)
+        req = _make_request("Porque caiu o OEE esta semana?")
+        resp, audit = await svc.process_ask(req)
+
+        assert captured["question"] == "Porque caiu o OEE esta semana?"
+        assert captured["max_steps"] == 6
+        assert resp.type == "ANSWER"
+        assert "Laminagem" in resp.summary
+        assert resp.meta.get("rlm") is True
+        assert resp.meta.get("rlm_queries") == ["bottlenecks", "mold_conflicts"]
+        assert len(resp.facts) == 1
+        assert resp.facts[0].citations[0].source_type == "system_data"
+
+    async def test_rlm_no_answer_falls_back_to_llm(
+        self, fake_session, tenant_id, patched_service_deps, mock_ollama,
+        monkeypatch, valid_llm_response_factory,
+    ):
+        """Se o RLM não chega a uma resposta, cai no caminho LLM normal."""
+        from src.copilot.rlm.agent import AgentTrace
+
+        async def _fake_rlm(*, question, state_query, llm, max_steps=6):
+            return AgentTrace(
+                question=question, answer=None,
+                terminated_reason="max_steps_reached",
+            )
+
+        monkeypatch.setattr("src.copilot.rlm.agent.run_rlm_agent", _fake_rlm)
+        mock_ollama.queue_chat(valid_llm_response_factory(intent="generic"))
+
+        svc = _make_service(fake_session, tenant_id)
+        req = _make_request("Porque atrasaram os barcos?")
+        resp, audit = await svc.process_ask(req)
+
+        # Caiu para o LLM — a resposta saiu na mesma.
+        assert resp.type == "ANSWER"
+        assert resp.meta.get("rlm") is not True
+        assert len(mock_ollama.chat_calls) == 1
+
+    async def test_rlm_exception_falls_back_to_llm(
+        self, fake_session, tenant_id, patched_service_deps, mock_ollama,
+        monkeypatch, valid_llm_response_factory,
+    ):
+        """Se o RLM levanta, o try/except cai no caminho LLM normal."""
+        async def _boom(*, question, state_query, llm, max_steps=6):
+            raise RuntimeError("kernel indisponível")
+
+        monkeypatch.setattr("src.copilot.rlm.agent.run_rlm_agent", _boom)
+        mock_ollama.queue_chat(valid_llm_response_factory(intent="generic"))
+
+        svc = _make_service(fake_session, tenant_id)
+        req = _make_request("Investigar a causa raiz do atraso")
+        resp, audit = await svc.process_ask(req)
+
+        assert resp.type == "ANSWER"
+        assert len(mock_ollama.chat_calls) == 1

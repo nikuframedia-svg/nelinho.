@@ -104,6 +104,27 @@ class CopilotService:
                 logger.warning(f"Erro no fast path, caindo para LLM: {e}")
                 # Continuar para LLM path se fast path falhar
         
+        # 2.6. Q.31.H — DIAGNOSTIC: o RLM agent corre think→query→observe
+        # sobre o estado da fábrica (sub-queries tipadas, sem dump de 200k
+        # tokens). Isolado e com fallback: se levanta, cai no caminho LLM
+        # normal abaixo — os outros intents nunca passam por aqui.
+        if intent == "diagnostic":
+            try:
+                rlm_result = await self._handle_rlm_diagnostic(
+                    request, correlation_id, start_time
+                )
+                if rlm_result is not None:
+                    rlm_response, rlm_audit = rlm_result
+                    perf_metrics["total_ms"] = int((time.time() - start_time) * 1000)
+                    rlm_audit["perf_metrics"] = perf_metrics
+                    logger.info(
+                        f"RLM diagnostic usado. Latency: {perf_metrics['total_ms']}ms"
+                    )
+                    return rlm_response, rlm_audit
+            except Exception as e:
+                logger.warning(f"RLM diagnostic falhou, caindo para LLM: {e}")
+                # Continuar para o caminho LLM normal.
+
         # 3. Se intent é kpi_current, buscar snapshot de KPIs (para contexto do LLM)
         kpi_snapshot = None
         if intent == "kpi_current":
@@ -861,6 +882,141 @@ class CopilotService:
             logger.error(f"Erro no fast path KPI: {e}", exc_info=True)
             return None, {}  # Fallback para LLM
     
+    async def _handle_rlm_diagnostic(
+        self,
+        request: CopilotAskRequest,
+        correlation_id: UUID,
+        start_time: float,
+    ) -> Optional[Tuple[CopilotResponse, Dict[str, Any]]]:
+        """Q.31.H — corre o RLM agent para uma pergunta diagnóstica.
+
+        O agente faz think→query→observe sobre o `FactoryStateQuery`
+        (sub-queries tipadas servidas pelo semantic layer), em vez de
+        receber um dump de 200k tokens do estado da fábrica. Devolve
+        ``None`` quando o agente não chega a uma resposta, para o
+        chamador cair no caminho LLM normal.
+        """
+        from src.copilot.rlm.agent import AgentTurn, run_rlm_agent
+        from src.copilot.rlm.factory_state_query import FactoryStateQuery
+
+        state_query = FactoryStateQuery(
+            state=None, queries=self._resolve_semantic_queries()
+        )
+
+        model = settings.ollama_model
+        ollama_client = get_ollama_client()
+
+        async def _rlm_llm(turns: List[AgentTurn]) -> str:
+            """Adapta o transcript do RLM ao OllamaClient.chat (texto cru).
+
+            O RLM faz o seu próprio parsing de JSON, por isso pedimos
+            ``format=None``: a última turn é o prompt, as anteriores
+            (sem a system) viram history.
+            """
+            system_prompt = next(
+                (t.content for t in turns if t.role == "system"), None
+            )
+            body = [t for t in turns if t.role != "system"]
+            prompt = body[-1].content if body else request.user_query
+            history = [
+                {
+                    "role": "assistant" if t.role == "assistant" else "user",
+                    "content": t.content,
+                }
+                for t in body[:-1]
+            ]
+            resp = await ollama_client.chat(
+                prompt,
+                model,
+                format=None,
+                history=history or None,
+                system_prompt=system_prompt,
+            )
+            if isinstance(resp, dict):
+                return str(resp.get("content", ""))
+            return str(resp)
+
+        trace = await run_rlm_agent(
+            question=request.user_query,
+            state_query=state_query,
+            llm=_rlm_llm,
+            max_steps=6,
+        )
+
+        if not trace.answer:
+            # O agente não produziu resposta — deixa o caminho LLM tentar.
+            return None
+
+        from src.copilot.utils.citations import create_system_data_citation
+
+        answer = trace.answer
+        citation = create_system_data_citation(
+            data_source="rlm_agent",
+            data_id=f"queries:{len(trace.queries_run)}",
+            label=(
+                f"RLM agent — {len(trace.queries_run)} sub-queries "
+                "ao estado da fábrica"
+            ),
+            confidence=0.8,
+            trust_index=0.8,
+        )
+
+        suggestion_id = uuid4()
+        response = CopilotResponse(
+            suggestion_id=suggestion_id,
+            correlation_id=correlation_id,
+            type="ANSWER",
+            intent="generic",
+            summary=answer[:500],
+            facts=[{"text": answer, "citations": [citation]}],
+            actions=[],
+            warnings=[],
+            meta={
+                "model": model,
+                "tokens": 0,
+                "latency_ms": int((time.time() - start_time) * 1000),
+                "validation_passed": True,
+                "rlm": True,
+                "rlm_steps": trace.steps_used,
+                "rlm_queries": [q.get("name") for q in trace.queries_run],
+                "rlm_terminated": trace.terminated_reason,
+            },
+        )
+
+        response_dict = response.model_dump()
+        audit_data = await self._store_audit(
+            correlation_id,
+            suggestion_id,
+            request,
+            f"[RLM diagnostic] {request.user_query}",
+            {"rlm_trace": trace.as_dict()},
+            response_dict,
+            True,
+            [],
+            int((time.time() - start_time) * 1000),
+        )
+        return response, audit_data
+
+    def _resolve_semantic_queries(self):
+        """`SemanticQueriesInMemory` sobre o IngestEngine global, ou None.
+
+        Mesmo padrão best-effort do `AlertsEngine._get_semantic_queries`.
+        ``None`` é aceitável — o `FactoryStateQuery` degrada cada
+        sub-query para um dict "não disponível" que o LLM sabe ler.
+        """
+        try:
+            from src.factory_data_product.api.endpoints import get_engine
+            from src.factory_data_product.services.semantic_queries_inmemory import (
+                SemanticQueriesInMemory,
+            )
+            engine = get_engine()
+            if engine is None:
+                return None
+            return SemanticQueriesInMemory(engine)
+        except Exception as exc:
+            logger.warning(f"RLM: semantic layer indisponível ({exc})")
+            return None
+
     async def _render_prompt(
         self,
         user_query: str,
