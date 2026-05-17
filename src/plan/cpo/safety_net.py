@@ -38,8 +38,8 @@ logger = logging.getLogger(__name__)
 #   * makespan_hours: 1.5× cap (existing rule, kept as-is)
 #   * throughput_eur_day: 5% drop tolerated
 #   * avg_quality_risk: 10% rise tolerated
-#   * total_setup_time_h: 15% rise tolerated
-#   * idle_operators_h: 20% rise tolerated
+#   * setups: 15% rise tolerated
+#   * total_idle_hours: 20% rise tolerated
 #
 # These percentages live here rather than ConfigStore because they are
 # correctness invariants, not tenant policy. A tenant changing them
@@ -83,12 +83,19 @@ def _gather_violations(
             f"tardiness_h={cand_tardy_h:.2f} > baseline={base_tardy_h:.2f}",
         ))
 
-    # `otd_delivery` was a hard guardrail in earlier versions, but the
-    # decoder never emits that key — only `num_late_orders` and
-    # `total_tardiness_hours` (both already enforced above). Removed
-    # because the two existing hard checks already cover the same
-    # regression: any candidate that ships orders later than baseline
-    # necessarily worsens at least one of them.
+    # otd_delivery: on-time-delivery rate, higher is better. Hard
+    # guardrail — any drop vs baseline blocks. The decoder DOES emit
+    # this key (decoder.py — "FASE 1B.6 (CRIT-24): populate otd_delivery
+    # so safety_net can [check it]"); a previous note here wrongly
+    # claimed otherwise and dropped the check.
+    cand_otd = candidate.get("otd_delivery")
+    base_otd = baseline.get("otd_delivery")
+    if cand_otd is not None and base_otd is not None:
+        if float(cand_otd) < float(base_otd) - 1e-6:  # float noise
+            violations.append((
+                "otd_delivery",
+                f"otd={float(cand_otd):.4f} < baseline={float(base_otd):.4f}",
+            ))
 
     # ── Makespan: 1.5× hard cap (Sprint C 4.2 SN1) ────────────────────
 
