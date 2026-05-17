@@ -2936,9 +2936,24 @@ export interface CurrentUser {
   umwelt: 'manager' | 'operator' | 'ceo' | string;
 }
 
+/** Resposta de POST /v1/auth/login — Q.31.G. */
+export interface LoginResponse {
+  access_token: string;
+  refresh_token: string | null;
+  token_type: string;
+  role: string | null;
+  user_id: string | null;
+}
+
 export const authApi = {
   /** Identidade actual (vem de JWT quando existir; dev usa headers X-*). */
   me: () => request<CurrentUser>('/v1/auth/me'),
+  /** Q.31.G — login real por password. */
+  login: (email: string, password: string) =>
+    request<LoginResponse>('/v1/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    }),
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
