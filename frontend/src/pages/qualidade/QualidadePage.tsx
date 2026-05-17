@@ -274,16 +274,18 @@ function ResumoTab() {
   const defectRate = totalOps > 0 ? (totalErrors / totalOps) * 100 : null;
 
   return (
-    <div className="space-y-5">
-      {/* KPI strip */}
+    <div className="space-y-5 page-enter">
+      {/* KPI strip — Q.23.G: 1 hero (taxa de defeito) + 3 compactos */}
       <div
+        className="page-enter"
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(4, 1fr)',
+          gridTemplateColumns: '1.6fr 1fr 1fr 1fr',
           gap: 14,
         }}
       >
         <KPIStrip
+          hero
           label="Taxa de defeito"
           value={defectRate !== null ? defectRate.toFixed(1) : '—'}
           unit="%"
@@ -653,7 +655,7 @@ function OEETab() {
   const worstTypes = types.filter((t) => t.sample_size >= 5).sort((a, b) => a.oee - b.oee).slice(0, 5);
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 page-enter">
       {/* Explainer */}
       <div
         style={{
@@ -1017,20 +1019,24 @@ function KPIStrip({
   unit,
   context,
   tone,
+  hero = false,
 }: {
   label: string;
   value: string;
   unit?: string;
   context: string;
   tone: 'green' | 'yellow' | 'red' | 'blue' | 'gray';
+  /** Q.23.G — variante destacada: valor maior, atmosfera, profundidade. */
+  hero?: boolean;
 }) {
   return (
     <div
       style={{
-        padding: '16px 18px',
-        background: 'var(--bg-1)',
+        padding: hero ? '20px 24px' : '16px 18px',
+        background: hero ? 'var(--atmosphere-card), var(--bg-1)' : 'var(--bg-1)',
         border: '1px solid var(--bd-1)',
         borderRadius: 12,
+        boxShadow: hero ? 'var(--shadow-2)' : undefined,
       }}
     >
       <div
@@ -1048,16 +1054,17 @@ function KPIStrip({
       <div className="flex items-baseline gap-1 tabular-nums">
         <span
           style={{
-            fontSize: 28,
+            fontSize: hero ? 44 : 28,
             fontWeight: 700,
             color: `var(--${tone})`,
             lineHeight: 1,
+            letterSpacing: hero ? '-0.02em' : undefined,
           }}
         >
           {value}
         </span>
         {unit ? (
-          <span style={{ fontSize: 13, color: 'var(--fg-2)' }}>{unit}</span>
+          <span style={{ fontSize: hero ? 16 : 13, color: 'var(--fg-2)' }}>{unit}</span>
         ) : null}
       </div>
       <div
