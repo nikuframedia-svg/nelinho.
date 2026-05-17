@@ -222,10 +222,12 @@ class LearningMetricsService:
 
             created_at = commit.created_at
             if created_at is not None:
-                # Some test doubles use naive datetimes; normalise so the
-                # comparison against tz-aware cutoffs doesn't blow up.
-                if created_at.tzinfo is None:
-                    created_at = created_at.replace(tzinfo=timezone.utc)
+                # cutoff_30/90 are naive-UTC (see the note above — the DB
+                # column is TIMESTAMP WITHOUT TIME ZONE). Test doubles may
+                # pass tz-aware datetimes; normalise to naive-UTC so the
+                # comparison doesn't raise on mixed operands.
+                if created_at.tzinfo is not None:
+                    created_at = created_at.astimezone(timezone.utc).replace(tzinfo=None)
                 if created_at >= cutoff_30:
                     last_30d_commits += 1
                     last_30d_pairs += len(rejected)
