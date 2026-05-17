@@ -88,6 +88,10 @@ def _map_product(row: ProductRow) -> Optional[Dict[str, Any]]:
         "product_name": str(row.product_name or row.product_id),
         "product_type": _classify_product_type(row.product_type_id),
         "status": status,
+        # P_PRECOCUSTO (€) — custo standard do produto. Q.26.A liga-o ao
+        # COGS. Faithful: mapeia tal e qual o ERP (incl. 0 e negativos —
+        # dado sujo a tratar a jusante, nao silenciar aqui).
+        "standard_cost": _to_decimal(row.cost_price, default=Decimal("0")),
     }
 
 
@@ -147,7 +151,7 @@ async def _mirror_products(run: EtlRunner) -> None:
     await run.upsert(
         Product, mapped,
         key_fields=["product_code"],
-        update_fields=["product_name", "product_type", "status"],
+        update_fields=["product_name", "product_type", "status", "standard_cost"],
     )
 
 

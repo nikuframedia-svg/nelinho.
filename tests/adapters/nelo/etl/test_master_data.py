@@ -72,6 +72,18 @@ def test_map_product_inactive_status():
     assert mapped["status"] == ProductStatus.INACTIVE
 
 
+def test_map_product_maps_cost_price_to_standard_cost():
+    """Q.26.A — P_PRECOCUSTO (cost_price) -> core.products.standard_cost."""
+    mapped = _map_product(_product(cost_price=1200.0))
+    assert mapped["standard_cost"] == Decimal("1200.0")
+
+
+def test_map_product_zero_cost_when_erp_cost_missing():
+    """cost_price 0.0 -> standard_cost 0 (faithful; nao inventa custo)."""
+    mapped = _map_product(_product(cost_price=0.0))
+    assert mapped["standard_cost"] == Decimal("0")
+
+
 def _entity(**kw) -> EntityRow:
     base = dict(
         entity_id=42, name="João", active=True, is_internal=True,
