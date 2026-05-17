@@ -9,8 +9,10 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import type { QuarantinedRow } from '@/types';
+import { getApiBase } from '@/lib/api';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// Q.21.A — porta única via api.ts (concorda com VITE_API_URL).
+const API_BASE = getApiBase();
 
 interface QuarantineStats {
   critical: number;

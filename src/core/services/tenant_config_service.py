@@ -33,6 +33,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.models.tenant_configuration import (
     ALLOWED_CATEGORIES,
     ALLOWED_DATA_TYPES,
+    ALLOWED_SOURCES,
+    SOURCE_DEFAULT,
+    SOURCE_MANUAL,
     TenantConfiguration,
 )
 
@@ -219,14 +222,21 @@ class TenantConfigService:
         value: Any,
         user_id: Optional[UUID],
         data_type: str,
+        source: str = SOURCE_MANUAL,
     ) -> TenantConfiguration:
         """Insert a new active version for `(category, key)`.
 
         Any currently-active row for the same `(category, key)` has its
         `valid_to` closed to `now()` first, so the write is history-preserving.
+
+        ``source`` records the provenance of the new value (Plan v4 §4.7):
+        ``manual`` is the API default because every direct call from a UI
+        is by definition operator-driven; the seeder passes ``default`` and
+        the YAML policy ``set_config`` dispatcher passes ``learned_rule``.
         """
         _validate_category(category)
         _validate_data_type(data_type)
+        _validate_source(source)
 
         now = datetime.utcnow()
         current = await self._current_row(category, key)
@@ -249,6 +259,7 @@ class TenantConfigService:
             created_at=now,
             last_modified_by=user_id,
             last_modified_at=now,
+            source=source,
         )
         self.session.add(new_row)
         await self.session.flush()
@@ -262,7 +273,13 @@ class TenantConfigService:
         entries: list[dict],
         user_id: Optional[UUID],
     ) -> list[TenantConfiguration]:
-        """Apply many `set` operations. Each entry must carry category/key/value/data_type."""
+        """Apply many `set` operations. Each entry must carry category/key/value/data_type.
+
+        Optional ``source`` per entry; defaults to ``manual`` so callers
+        without provenance context get the conservative answer (a UI
+        bulk-edit is operator-driven). The seeder passes ``default``
+        explicitly via the same path.
+        """
         written: list[TenantConfiguration] = []
         by_category: dict[str, list[str]] = {}
         for entry in entries:
@@ -272,6 +289,7 @@ class TenantConfigService:
                 value=entry["value"],
                 user_id=user_id,
                 data_type=entry["data_type"],
+                source=entry.get("source", SOURCE_MANUAL),
             )
             written.append(row)
             by_category.setdefault(entry["category"], []).append(entry["key"])
@@ -282,7 +300,12 @@ class TenantConfigService:
         config_id: UUID,
         user_id: Optional[UUID],
     ) -> TenantConfiguration:
-        """Restore a historical version as the new current value."""
+        """Restore a historical version as the new current value.
+
+        A rollback is a deliberate manual operator action — even if the
+        original row was ``learned_rule``, the act of restoring it is
+        manual — so the new row records ``source='manual'``.
+        """
         stmt = select(TenantConfiguration).where(
             and_(
                 TenantConfiguration.id == config_id,
@@ -301,6 +324,7 @@ class TenantConfigService:
             value=target.raw_value,
             user_id=user_id,
             data_type=target.data_type,
+            source=SOURCE_MANUAL,
         )
 
     # ─── snapshot ──────────────────────────────────────────────────────────
@@ -403,4 +427,11 @@ def _validate_data_type(data_type: str) -> None:
     if data_type not in ALLOWED_DATA_TYPES:
         raise TenantConfigValidationError(
             f"Unknown data_type '{data_type}'. Allowed: {sorted(ALLOWED_DATA_TYPES)}"
+        )
+
+
+def _validate_source(source: str) -> None:
+    if source not in ALLOWED_SOURCES:
+        raise TenantConfigValidationError(
+            f"Unknown source '{source}'. Allowed: {sorted(ALLOWED_SOURCES)}"
         )

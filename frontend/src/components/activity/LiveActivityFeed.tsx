@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { pt } from 'date-fns/locale';
+import { getApiBase } from '../../lib/api';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -53,7 +54,8 @@ interface LiveActivityFeedProps {
 // removed because dashboards consuming this would imply factory state
 // that does not exist.)
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// Q.21.A — porta única via api.ts (concorda com VITE_API_URL).
+const API_BASE = getApiBase();
 
 async function fetchRecentActivity(maxItems: number): Promise<ActivityItem[]> {
   const url = new URL(`${API_BASE}/v1/activity/recent`);

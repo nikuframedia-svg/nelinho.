@@ -121,6 +121,7 @@ class ReworkService:
         *,
         of_id: Optional[str] = None,
         phase_id: Optional[str] = None,
+        mold_id: Optional[str] = None,
         since: Optional[datetime] = None,
         until: Optional[datetime] = None,
         limit: int = 100,
@@ -133,6 +134,8 @@ class ReworkService:
                 (ReworkEntry.phase_id_rework == phase_id)
                 | (ReworkEntry.phase_id_causer == phase_id)
             )
+        if mold_id:
+            stmt = stmt.where(ReworkEntry.mold_id == mold_id)
         if since:
             stmt = stmt.where(ReworkEntry.detected_at >= since)
         if until:

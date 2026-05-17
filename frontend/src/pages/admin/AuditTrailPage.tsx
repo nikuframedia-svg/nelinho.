@@ -46,8 +46,10 @@ import {
 } from '../../components/dark';
 import { governanceApi } from '../../lib/factoryApi';
 import type { DecisionRun } from '../../lib/factoryApi';
+import { getApiBase } from '../../lib/api';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// Q.21.A — porta única via api.ts (concorda com VITE_API_URL).
+const API_BASE = getApiBase();
 
 // ============================================================================
 // TYPES
@@ -271,6 +273,7 @@ export function AuditTrailPage() {
 
   return (
     <DarkPageLayout
+      breadcrumbs={[{ label: 'Sistema' }, { label: 'Auditoria' }]}
       title="Audit Trail"
       subtitle="Complete history of all system changes and decisions"
       icon={<History size={20} />}

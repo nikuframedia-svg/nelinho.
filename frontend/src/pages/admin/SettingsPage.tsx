@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQueries, useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import {
-  Settings, Users, Key, Bell, Plug, Loader2, Save, RotateCcw, Truck, HardHat,
+  Settings, Users, Loader2, Save, RotateCcw, Truck, HardHat,
   CalendarClock, Hammer, Box, ShieldCheck, Globe, Brain, Beaker,
 } from 'lucide-react';
 import { configApi, tenantsApi, learningApi } from '../../lib/api';
@@ -16,12 +16,12 @@ import {
   DarkSelect,
 } from '../../components/dark';
 
+// Q.21.E — os separadores 'api', 'notifications' e 'integrations' foram
+// removidos: eram só painéis "Coming Soon" sem funcionalidade. Voltam
+// quando o backend os servir.
 type TabType =
   | 'general'
   | 'tenant'
-  | 'api'
-  | 'notifications'
-  | 'integrations'
   | 'transport'
   | 'workforce'
   | 'scheduling'
@@ -182,9 +182,6 @@ export function SettingsPage() {
     { id: 'trust' as TabType, label: 'Trust Index', icon: ShieldCheck },
     { id: 'learning' as TabType, label: 'Aprendizagem', icon: Brain },
     { id: 'system' as TabType, label: 'Sistema', icon: Globe },
-    { id: 'api' as TabType, label: 'API', icon: Key },
-    { id: 'notifications' as TabType, label: 'Notifications', icon: Bell },
-    { id: 'integrations' as TabType, label: 'Integrations', icon: Plug },
   ];
 
   const handleSave = () => {
@@ -231,6 +228,7 @@ export function SettingsPage() {
 
   return (
     <DarkPageLayout
+      breadcrumbs={[{ label: 'Sistema' }, { label: 'Definições' }]}
       title="Settings"
       subtitle="Manage system and tenant settings"
       icon={<Settings size={20} />}
@@ -371,35 +369,8 @@ export function SettingsPage() {
             </DarkCard>
           )}
 
-          {activeTab === 'api' && (
-            <DarkCard title="API Configuration" subtitle="Manage API keys and access">
-              <div className="text-center py-12">
-                <Key size={40} className="mx-auto mb-3 text-text-tertiary opacity-50" />
-                <p className="text-text-secondary font-medium">Coming Soon</p>
-                <p className="text-text-tertiary text-sm mt-1">API configuration functionality is in development.</p>
-              </div>
-            </DarkCard>
-          )}
-
-          {activeTab === 'notifications' && (
-            <DarkCard title="Notifications" subtitle="Configure notification preferences">
-              <div className="text-center py-12">
-                <Bell size={40} className="mx-auto mb-3 text-text-tertiary opacity-50" />
-                <p className="text-text-secondary font-medium">Coming Soon</p>
-                <p className="text-text-tertiary text-sm mt-1">Notification settings are in development.</p>
-              </div>
-            </DarkCard>
-          )}
-
-          {activeTab === 'integrations' && (
-            <DarkCard title="Integrations" subtitle="Connect with external services">
-              <div className="text-center py-12">
-                <Plug size={40} className="mx-auto mb-3 text-text-tertiary opacity-50" />
-                <p className="text-text-secondary font-medium">Coming Soon</p>
-                <p className="text-text-tertiary text-sm mt-1">Integration with external services is in development.</p>
-              </div>
-            </DarkCard>
-          )}
+          {/* Q.21.E — painéis "Coming Soon" (api/notifications/
+              integrations) removidos com os respectivos separadores. */}
 
           {activeTab === 'transport' && <TransportSettingsPanel />}
 
@@ -1303,8 +1274,8 @@ function SystemSettingsPanel() {
           label="Idioma da UI"
           options={[
             { value: 'pt-PT', label: 'Português (Portugal)' },
-            { value: 'en-US', label: 'English (US) — coming soon' },
-            { value: 'de-DE', label: 'Deutsch — coming soon' },
+            { value: 'en-US', label: 'English (US) — diferido' },
+            { value: 'de-DE', label: 'Deutsch — diferido' },
           ]}
           value={language}
           onChange={(e) => setLanguage(e.target.value as 'pt-PT' | 'en-US' | 'de-DE')}

@@ -14,6 +14,7 @@ from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.shared.auth.headers import require_tenant_header
@@ -188,5 +189,107 @@ async def compare_scenarios(
         return result
     except Exception as e:
         logger.error(f"Error comparing scenarios: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Q.18.ZIP.BE.2 — aliases semânticos (nomes pedidos pelo plano)
+# ════════════════════════════════════════════════════════════════════════════
+# Os endpoints originais (training-recommendations / simulate / dependency-graph)
+# já cobrem o necessário. Estes 3 aliases dão à frontend nomes mais directos
+# e payloads simplificados sem reimplementar lógica nos services.
+
+class AbsenceSimulationRequest(BaseModel):
+    """Body simples para simular ausência de um operador.
+
+    Em vez de pedir array de WorkforceDelta com type='remove_employee',
+    aceita só ``employee_id`` (+ phase_id opcional).
+    """
+    employee_id: str = Field(description="ID do funcionário ausente.")
+    phase_id: str | None = Field(
+        default=None,
+        description="Fase específica a simular ausência (opcional).",
+    )
+
+
+@router.get("/risks/spof", response_model=List[TrainingRecommendationResponse])
+async def workforce_risks_spof(
+    limit: int = Query(default=10, ge=1, le=50),
+    tenant_id: UUID = Depends(require_tenant_header),
+    db: AsyncSession = Depends(get_session_safe),
+):
+    """SPOFs detectados — alias derivado de training-recommendations,
+    filtrado para entries com ``expected_impact.spof_eliminated == True``.
+
+    Plan v4 §4.5. Q.18.ZIP.BE.2.
+    """
+    logger.info("Getting SPOFs (tenant=%s, limit=%d)", tenant_id, limit)
+    service = WorkforceService(db, tenant_id=tenant_id, allow_mock=False)
+    try:
+        recs = await service.get_training_recommendations(limit * 3)
+        spofs = [
+            r for r in recs
+            if getattr(r, "expected_impact", None)
+            and getattr(r.expected_impact, "spof_eliminated", False)
+        ]
+        return spofs[:limit]
+    except Exception as e:
+        logger.error(f"Error getting SPOFs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/simulate/absence", response_model=SimulationResultResponse)
+async def simulate_absence(
+    req: AbsenceSimulationRequest,
+    tenant_id: UUID = Depends(require_tenant_header),
+    db: AsyncSession = Depends(get_session_safe),
+):
+    """Simulate single-employee absence. Wrapper sobre /simulate com
+    delta ``remove_employee`` pré-construído.
+
+    Plan v4 §4.5. Q.18.ZIP.BE.2.
+    """
+    logger.info(
+        "Simulating absence employee=%s phase=%s (tenant=%s)",
+        req.employee_id, req.phase_id, tenant_id,
+    )
+    service = WorkforceService(db, tenant_id=tenant_id, allow_mock=False)
+    delta = {
+        "type": "remove_employee",
+        "employee_id": req.employee_id,
+        "description": (
+            f"Simulated absence of employee {req.employee_id}"
+            + (f" in phase {req.phase_id}" if req.phase_id else "")
+        ),
+    }
+    if req.phase_id:
+        delta["phase_id"] = req.phase_id
+    try:
+        return await service.simulate_workforce([delta])
+    except Exception as e:
+        logger.error(f"Error simulating absence: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get(
+    "/training/suggestions",
+    response_model=List[TrainingRecommendationResponse],
+)
+async def training_suggestions(
+    limit: int = Query(default=10, ge=1, le=50),
+    tenant_id: UUID = Depends(require_tenant_header),
+    db: AsyncSession = Depends(get_session_safe),
+):
+    """Alias 1:1 de /training-recommendations com nome pedido pelo plano.
+    Q.18.ZIP.BE.2.
+    """
+    logger.info(
+        "Getting training suggestions (tenant=%s, limit=%d)", tenant_id, limit,
+    )
+    service = WorkforceService(db, tenant_id=tenant_id, allow_mock=False)
+    try:
+        return await service.get_training_recommendations(limit)
+    except Exception as e:
+        logger.error(f"Error getting training suggestions: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 

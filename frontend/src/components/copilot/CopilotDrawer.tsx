@@ -10,6 +10,10 @@ interface CopilotDrawerProps {
   onClose: () => void;
   initialQuery?: string | null;
   openedViaFab?: boolean;
+  /** Q.18 fix-workforce — quando vem de um drawer entity-aware (ex: employee
+   * detail), enviar entity_type/entity_id ao backend para enriquecer contexto. */
+  initialEntityType?: string;
+  initialEntityId?: string;
 }
 
 interface Message {
@@ -19,7 +23,14 @@ interface Message {
   timestamp: Date;
 }
 
-export function CopilotDrawer({ isOpen, onClose, initialQuery, openedViaFab = false }: CopilotDrawerProps) {
+export function CopilotDrawer({
+  isOpen,
+  onClose,
+  initialQuery,
+  openedViaFab = false,
+  initialEntityType,
+  initialEntityId,
+}: CopilotDrawerProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [modelStatus, setModelStatus] = useState<'ONLINE' | 'OFFLINE'>('ONLINE');
@@ -232,59 +243,46 @@ export function CopilotDrawer({ isOpen, onClose, initialQuery, openedViaFab = fa
 
   const askMutation = useMutation({
     mutationFn: async (query: string) => {
-      console.log('[COPILOT] mutationFn iniciado para query:', query);
       setIsSendingMessage(true);
+      // Onda fix-copilot: idempotency_key (UUID v4) por mutate evita duplicação
+      // backend caso o browser faça retry no timeout (~20s default fetch).
+      const idempotency_key =
+        (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      // Q.18 fix-workforce — entity-aware (ex: employee) enriquece contexto LLM.
+      const entityFields: { entity_type?: string; entity_id?: string } = {};
+      if (initialEntityType && initialEntityId) {
+        entityFields.entity_type = initialEntityType;
+        entityFields.entity_id = initialEntityId;
+      }
       try {
-        let response;
-        // Se há conversa ativa, usar endpoint de conversa
         if (currentConversationId) {
-          console.log('[COPILOT] Tentando usar conversa:', currentConversationId);
           try {
-            response = await copilotApi.sendMessage(currentConversationId, { user_query: query });
-            console.log('[COPILOT] Resposta recebida de sendMessage:', response);
-            return response;
+            return await copilotApi.sendMessage(currentConversationId, {
+              user_query: query,
+              idempotency_key,
+              ...entityFields,
+            });
           } catch (error: any) {
-            console.log('[COPILOT] Erro em sendMessage, tentando ask:', error);
-            // Se erro 401, usar endpoint normal
             if (error?.status === 401) {
               setCurrentConversationId(null);
-              response = await copilotApi.ask({ user_query: query });
-              console.log('[COPILOT] Resposta recebida de ask (fallback):', response);
-              return response;
+              return await copilotApi.ask({ user_query: query, idempotency_key, ...entityFields });
             }
             throw error;
           }
         }
-        // Caso contrário, usar endpoint normal
-        console.log('[COPILOT] Usando endpoint ask diretamente');
-        response = await copilotApi.ask({ user_query: query });
-        console.log('[COPILOT] Resposta recebida de ask:', response);
-        return response;
-      } catch (error: any) {
-        console.error('[COPILOT] Erro em mutationFn:', error);
-        throw error;
+        return await copilotApi.ask({ user_query: query, idempotency_key, ...entityFields });
       } finally {
         setIsSendingMessage(false);
-        console.log('[COPILOT] mutationFn finalizado, isSendingMessage = false');
       }
     },
-  });
-
-  // Handle askMutation success (React Query v5 pattern)
-  useEffect(() => {
-    if (askMutation.isSuccess && askMutation.data) {
-      const response = askMutation.data;
-      // Get the last query that was sent - we need to track this separately
-      // Since we can't access the query parameter from the success handler in v5
-      // We'll use the input state or the last sent message
-      const lastUserMessage = messages.filter(m => m.role === 'user').pop();
-      const query = lastUserMessage?.content as string || '';
-      
-      console.log('[COPILOT] onSuccess chamado:', { response, query });
-      
-      if (!response || typeof response !== 'object' || !response.suggestion_id) {
-        console.error('[COPILOT] Resposta inválida:', response);
-        // Resposta inválida
+    // Onda fix-copilot Bug A: lógica em onSuccess/onError (correm 1×) em vez de
+    // useEffect com deps mutáveis (refetchMessages/createConversationMutation
+    // mudam de identidade em cada render → re-disparam o effect → setMessages
+    // adicionava a resposta 2× no UI, agravado por StrictMode em dev).
+    onSuccess: (response, query) => {
+      if (!response || typeof response !== 'object' || !(response as any).suggestion_id) {
         const errorMsg: Message = {
           id: `error-${Date.now()}`,
           role: 'copilot',
@@ -297,71 +295,34 @@ export function CopilotDrawer({ isOpen, onClose, initialQuery, openedViaFab = fa
             facts: [],
             actions: [],
             warnings: [{ code: 'VALIDATION_FAILED', message: 'Resposta inválida' }],
-            meta: {
-              model: 'unknown',
-              tokens: 0,
-              latency_ms: 0,
-              validation_passed: false,
-            },
+            meta: { model: 'unknown', tokens: 0, latency_ms: 0, validation_passed: false },
           } as CopilotResponse,
           timestamp: new Date(),
         };
-        setMessages((prev) => {
-          console.log('[COPILOT] Adicionando mensagem de erro, estado atual:', prev.length);
-          return [...prev, errorMsg];
-        });
+        setMessages((prev) => [...prev, errorMsg]);
         return;
       }
-      
-      // Adicionar apenas a resposta do COPILOT (a mensagem do user já foi adicionada em handleSend)
+
       const copilotMsg: Message = {
-        id: response.suggestion_id,
+        id: (response as CopilotResponse).suggestion_id,
         role: 'copilot',
-        content: response,
+        content: response as CopilotResponse,
         timestamp: new Date(),
       };
-      
-      console.log('[COPILOT] Adicionando mensagem do COPILOT:', copilotMsg);
-      setMessages((prev) => {
-        console.log('[COPILOT] Estado ANTES de adicionar:', prev.length, 'mensagens', prev.map(m => ({ id: m.id, role: m.role })));
-        const newMessages = [...prev, copilotMsg];
-        console.log('[COPILOT] Estado DEPOIS de adicionar:', newMessages.length, 'mensagens', newMessages.map(m => ({ id: m.id, role: m.role })));
-        return newMessages;
-      });
-      
-      // NÃO criar conversa automaticamente - isso pode causar problemas
-      // Se o utilizador quiser, pode criar manualmente
-      // Se não há conversa, criar uma nova após primeira mensagem (mas com delay maior)
-      if (!currentConversationId && query) {
-        // Aguardar mais tempo para garantir que a mensagem já foi adicionada ao estado
-        setTimeout(() => {
-          console.log('[COPILOT] Criando nova conversa após resposta (delay)');
-          const title = query.substring(0, 50) || "Nova conversa";
-          createConversationMutation.mutate(title);
-        }, 1000); // Delay maior para não interferir
-      }
-      
-      // Refrescar mensagens se há conversa
-      if (currentConversationId) {
-        setTimeout(() => {
-          refetchMessages();
-          refetchConversations();
-        }, 500);
-      }
-    }
-  }, [askMutation.isSuccess, askMutation.data, currentConversationId, refetchMessages, refetchConversations, createConversationMutation]);
+      setMessages((prev) => [...prev, copilotMsg]);
 
-  // Handle askMutation error (React Query v5 pattern)
-  useEffect(() => {
-    if (askMutation.isError && askMutation.error) {
-      const error = askMutation.error as any;
-      console.error('[COPILOT] onError chamado:', error);
-      
-      // Determinar mensagem humana baseada no tipo de erro
+      if (!currentConversationId && query) {
+        const title = query.substring(0, 50) || 'Nova conversa';
+        createConversationMutation.mutate(title);
+      } else if (currentConversationId) {
+        refetchMessages();
+        refetchConversations();
+      }
+    },
+    onError: (error: any) => {
       let userMessage = 'Ocorreu um erro ao comunicar com o COPILOT. Tenta novamente.';
       let warningCode: 'MODEL_OFFLINE' | 'VALIDATION_FAILED' = 'MODEL_OFFLINE';
-      
-      // Verificar se é erro de validação
+
       if (error?.response?.data?.warnings) {
         const warnings = error.response.data.warnings;
         const validationWarning = warnings.find((w: any) => w.code === 'VALIDATION_FAILED');
@@ -370,13 +331,11 @@ export function CopilotDrawer({ isOpen, onClose, initialQuery, openedViaFab = fa
           warningCode = 'VALIDATION_FAILED';
         }
       } else if (error?.response?.data?.summary) {
-        // Se a resposta já tem uma mensagem normalizada, usar essa
         userMessage = error.response.data.summary;
         if (error.response.data.warnings && error.response.data.warnings.length > 0) {
           warningCode = error.response.data.warnings[0].code as any;
         }
       } else if (error?.message) {
-        // Se a mensagem de erro contém stacktrace ou detalhes técnicos, não mostrar
         const errorMsg = error.message;
         if (errorMsg.includes('validation error') || errorMsg.includes('ValidationError') || errorMsg.includes('pydantic')) {
           userMessage = 'Não consegui validar a resposta do COPILOT. Tenta novamente.';
@@ -387,8 +346,7 @@ export function CopilotDrawer({ isOpen, onClose, initialQuery, openedViaFab = fa
           userMessage = 'O serviço COPILOT está temporariamente indisponível. Tenta novamente mais tarde.';
         }
       }
-      
-      // Adicionar mensagem de erro normalizada ao feed
+
       const errorMsg: Message = {
         id: `error-${Date.now()}`,
         role: 'copilot',
@@ -400,33 +358,29 @@ export function CopilotDrawer({ isOpen, onClose, initialQuery, openedViaFab = fa
           summary: userMessage,
           facts: [],
           actions: [],
-          warnings: [{
-            code: warningCode,
-            message: userMessage,
-          }],
-          meta: {
-            model: 'unknown',
-            tokens: 0,
-            latency_ms: 0,
-            validation_passed: false,
-          },
+          warnings: [{ code: warningCode, message: userMessage }],
+          meta: { model: 'unknown', tokens: 0, latency_ms: 0, validation_passed: false },
         } as CopilotResponse,
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, errorMsg]);
-    }
-  }, [askMutation.isError, askMutation.error]);
+    },
+  });
 
-  // Se há initialQuery, enviar automaticamente quando drawer abrir (DEPOIS da definição de askMutation)
+  // Onda fix-copilot Bug B: useRef guard garante single-fire mesmo com StrictMode
+  // duplo-mount em dev. Comparar valor cached vs novo initialQuery faz o reset
+  // implícito quando user fecha drawer e abre com query diferente.
+  const autoSentForQueryRef = useRef<string | null>(null);
   useEffect(() => {
-    if (isOpen && initialQuery) {
+    if (isOpen && initialQuery && autoSentForQueryRef.current !== initialQuery) {
+      autoSentForQueryRef.current = initialQuery;
       setInput(initialQuery);
-      // Enviar automaticamente após um pequeno delay
-      const timer = setTimeout(() => {
-        askMutation.mutate(initialQuery);
-      }, 300);
-      return () => clearTimeout(timer);
+      askMutation.mutate(initialQuery);
     }
+    if (!isOpen) {
+      autoSentForQueryRef.current = null;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, initialQuery]);
 
   const handleSend = () => {

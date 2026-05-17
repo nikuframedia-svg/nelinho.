@@ -112,6 +112,7 @@ async def create_rework(
 async def list_rework(
     of_id: Optional[str] = None,
     phase_id: Optional[str] = None,
+    mold_id: Optional[str] = None,
     since: Optional[datetime] = None,
     until: Optional[datetime] = None,
     limit: int = 100,
@@ -120,7 +121,8 @@ async def list_rework(
 ):
     svc = ReworkService(session, tenant_id)
     rows = await svc.list_rework(
-        of_id=of_id, phase_id=phase_id, since=since, until=until, limit=limit,
+        of_id=of_id, phase_id=phase_id, mold_id=mold_id,
+        since=since, until=until, limit=limit,
     )
     return [_rework_to_dict(r) for r in rows]
 

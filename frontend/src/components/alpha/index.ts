@@ -1,5 +1,5 @@
-export { AlphaHeader } from './AlphaHeader';
-export { NavTab } from './NavTab';
+// Q.18.UI.A.1 — AlphaHeader e NavTab removidos. Layout agora usa Sidebar
+// vertical + TopBar fina (componentes em components/layout/).
 export { GreetingSection } from './GreetingSection';
 export { CardBase } from './CardBase';
 export { StatCard } from './StatCard';

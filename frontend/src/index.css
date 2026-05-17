@@ -1,20 +1,117 @@
 @import "tailwindcss";
+/* Q.18.ZIP.design2 — Geist primary (matching design package index.html) */
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap');
+/* Legacy fonts preserved (páginas antigas ainda referem) */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700;9..40,800&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
+/* Q.18.ZIP.design2 — port literal do design package nelo/project/index.html
+   :root tokens. OKLCH values (modern browsers, hue 250 = cool blue-gray). */
+:root {
+  /* Background scale — deep, neutral, Palantir */
+  --bg-0: oklch(0.158 0.008 250);
+  --bg-1: oklch(0.195 0.008 250);
+  --bg-2: oklch(0.225 0.009 250);
+  --bg-3: oklch(0.265 0.010 250);
+  --bg-4: oklch(0.305 0.011 250); /* extra step para elevated overlay */
+
+  /* Foreground scale */
+  --fg-0: oklch(0.96 0.005 250);
+  --fg-1: oklch(0.82 0.008 250);
+  --fg-2: oklch(0.62 0.012 250);
+  --fg-3: oklch(0.45 0.015 250);
+
+  /* Borders */
+  --bd-1: oklch(0.295 0.011 250);
+  --bd-2: oklch(0.355 0.013 250);
+  --bd-3: oklch(0.420 0.014 250);
+
+  /* Status — desaturated, calm (OKLCH para tone perceptual consistente) */
+  --green:    oklch(0.78 0.14 155);
+  --green-bg: oklch(0.30 0.07 155 / 0.20);
+  --green-bd: oklch(0.45 0.10 155 / 0.40);
+
+  --yellow:    oklch(0.82 0.14 90);
+  --yellow-bg: oklch(0.32 0.08 80 / 0.20);
+  --yellow-bd: oklch(0.50 0.12 80 / 0.40);
+
+  --orange:    oklch(0.74 0.16 50);
+  --orange-bg: oklch(0.32 0.09 50 / 0.20);
+  --orange-bd: oklch(0.50 0.13 50 / 0.40);
+
+  --red:    oklch(0.72 0.18 25);
+  --red-bg: oklch(0.32 0.10 25 / 0.22);
+  --red-bd: oklch(0.50 0.14 25 / 0.40);
+
+  --blue:    oklch(0.72 0.14 245);
+  --blue-bg: oklch(0.32 0.07 245 / 0.20);
+  --blue-bd: oklch(0.50 0.10 245 / 0.40);
+
+  --purple:    oklch(0.72 0.15 295);
+  --purple-bg: oklch(0.32 0.08 295 / 0.20);
+  --purple-bd: oklch(0.50 0.11 295 / 0.40);
+
+  --gray:    oklch(0.62 0.012 250);
+  --gray-bg: oklch(0.30 0.008 250 / 0.30);
+  --gray-bd: oklch(0.45 0.012 250 / 0.40);
+
+  /* Page padding token — DarkPageLayout + pages que querem alinhar
+     consistente (Q.18.UI.B.3). lg breakpoint sobe para 2rem em 1024+ */
+  --page-padding-x: 1.5rem;
+  --page-padding-y: 1.5rem;
+}
+
+@media (min-width: 1024px) {
+  :root {
+    --page-padding-x: 2rem;
+    --page-padding-y: 2rem;
+  }
+}
+
+:root {
+
+  /* Radii — design package: smaller, more refined */
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 10px;
+  --r-xl: 14px;
+
+  /* Shadows */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --shadow-3: 0 12px 32px rgba(0, 0, 0, 0.6);
+
+  /* Legacy preserved (não remover — outras páginas consomem) */
+  --accent-orange: oklch(0.74 0.16 50);
+  --accent-orange-soft: oklch(0.32 0.09 50 / 0.20);
+  --accent-orange-bd: oklch(0.50 0.13 50 / 0.40);
+  --bd-focus: oklch(0.72 0.14 245);
+  --grid-line: rgba(255, 255, 255, 0.025);
+}
+
+/* Opt-in grid background — Palantir trademark (32×32 subtle grid) */
+.with-grid {
+  background-image:
+    linear-gradient(0deg, var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
 
 @theme {
   /* ═══════════════════════════════════════════════════════════════════════════
      ALPHA DASHBOARD THEME
      ═══════════════════════════════════════════════════════════════════════════ */
   
-  /* Background Hierarchy - Alpha Dark */
-  --color-bg-base: #0d0f12;
-  --color-bg-primary: #0d0f12;
-  --color-bg-secondary: #1a1d21;
-  --color-bg-tertiary: #22262b;
-  --color-bg-elevated: #252a30;
-  --color-bg-card: #1a1d21;
-  --color-bg-card-hover: #22262b;
+  /* Background Hierarchy — Q.18.ZIP.design2 aligned com OKLCH --bg-N */
+  --color-bg-base: oklch(0.158 0.008 250);      /* matches --bg-0 */
+  --color-bg-primary: oklch(0.158 0.008 250);
+  --color-bg-secondary: oklch(0.195 0.008 250); /* matches --bg-1 */
+  --color-bg-tertiary: oklch(0.225 0.009 250);  /* matches --bg-2 */
+  --color-bg-elevated: oklch(0.265 0.010 250);  /* matches --bg-3 */
+  --color-bg-card: oklch(0.195 0.008 250);
+  --color-bg-card-hover: oklch(0.225 0.009 250);
   
   /* Accent Colors - Alpha Teal */
   --color-accent: #4fd1c5;
@@ -32,20 +129,20 @@
   --color-amber: #fbbf24;
   --color-coral: #ff6b6b;
   
-  /* Text Colors - Alpha */
-  --color-text-primary: #ffffff;
-  --color-text-secondary: #9ca3af;
-  --color-text-tertiary: #6b7280;
-  --color-text-muted: #4b5563;
-  --color-text-white: #ffffff;
-  --color-text-gray: #9ca3af;
-  
-  /* Border Colors - Alpha (more subtle) */
-  --color-border: rgba(255, 255, 255, 0.06);
-  --color-border-subtle: rgba(255, 255, 255, 0.06);
-  --color-border-hover: rgba(255, 255, 255, 0.12);
-  --color-border-strong: rgba(255, 255, 255, 0.15);
-  --color-border-accent: rgba(79, 209, 197, 0.3);
+  /* Text Colors — Q.18.ZIP.design2 aligned com OKLCH --fg-N */
+  --color-text-primary: oklch(0.96 0.005 250);    /* matches --fg-0 */
+  --color-text-secondary: oklch(0.82 0.008 250);  /* matches --fg-1 */
+  --color-text-tertiary: oklch(0.62 0.012 250);   /* matches --fg-2 */
+  --color-text-muted: oklch(0.45 0.015 250);      /* matches --fg-3 */
+  --color-text-white: oklch(0.96 0.005 250);
+  --color-text-gray: oklch(0.62 0.012 250);
+
+  /* Border Colors — Q.18.ZIP.design2 OKLCH --bd-N */
+  --color-border: oklch(0.295 0.011 250);            /* matches --bd-1 */
+  --color-border-subtle: oklch(0.295 0.011 250);
+  --color-border-hover: oklch(0.355 0.013 250);      /* matches --bd-2 */
+  --color-border-strong: oklch(0.420 0.014 250);     /* matches --bd-3 */
+  --color-border-accent: oklch(0.50 0.10 245 / 0.40);
   
   /* Status Colors */
   --color-success: #22c55e;
@@ -76,7 +173,7 @@
   --radius-card: 1.25rem;
   --radius-full: 9999px;
   
-  --font-family-sans: 'DM Sans', 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-family-sans: 'Geist', 'Inter', 'DM Sans', 'Space Grotesk', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 }
 
 * {
@@ -84,17 +181,47 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Q.18.ZIP.design2 — base 13px Geist matching design package */
+*, *::before, *::after { box-sizing: border-box; }
+html, body, #root { margin: 0; min-height: 100vh; }
+
 html {
   font-family: var(--font-family-sans);
-  font-size: 14px;
-  line-height: 1.6;
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 body {
-  background: #0d0f12;
-  min-height: 100vh;
-  color: var(--color-text-primary);
+  background: var(--bg-0);
+  color: var(--fg-0);
+  font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  line-height: 1.45;
 }
+
+button { font-family: inherit; cursor: pointer; }
+input, textarea, select { font-family: inherit; }
+
+h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.01em; }
+
+.tabular { font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; }
+.mono, code { font-family: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace; }
+
+/* Selection */
+::selection { background: var(--blue-bg); color: var(--fg-0); }
+
+/* Q.18.ZIP.design2 — animations from design package index.html */
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slide-in-right { from { transform: translateX(100%); } to { transform: translateX(0); } }
+@keyframes pulse-design {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.55; transform: scale(0.85); }
+}
+.pulse-dot { animation: pulse-design 2s ease-in-out infinite; }
+.animate-fade-in { animation: fade-in 0.2s ease-out; }
+.animate-slide-in-right { animation: slide-in-right 0.25s ease-out; }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    ALPHA CARD SYSTEM
@@ -621,40 +748,12 @@ body {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   ALPHA HEADER & NAVIGATION
+   ALPHA HEADER & NAVIGATION — Q.18.UI.A.1: removido (AlphaHeader/NavTab
+   apagados; Layout usa Sidebar vertical + TopBar fina). Os outros .alpha-*
+   abaixo (greeting, dashboard, grid, stats, promo, btn-cta) ainda são
+   usados por GreetingSection/PromoCard/IncomeTracker — manter por agora,
+   matar em Q.18.UI.K depois das páginas dependentes serem refactorizadas.
    ═══════════════════════════════════════════════════════════════════════════ */
-
-.alpha-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 1rem 2rem;
-  background: var(--color-bg-base);
-  border-bottom: 1px solid var(--color-border-subtle);
-}
-
-.alpha-nav {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  padding: 0.25rem;
-  background: var(--color-bg-secondary);
-  border-radius: var(--radius-full);
-}
-
-.alpha-nav-tab {
-  padding: 0.625rem 1.25rem;
-  font-size: 0.875rem;
-  font-weight: 500;
-  color: var(--color-text-secondary);
-  border-radius: var(--radius-full);
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.alpha-nav-tab:hover {
-  color: var(--color-text-white);
-}
 
 .alpha-nav-tab.active {
   background: var(--color-bg-elevated);
@@ -1371,23 +1470,15 @@ body {
    SCROLLBAR - DARK THEME
    ═══════════════════════════════════════════════════════════════════════════ */
 
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+/* Q.18.UI.B.4 — scrollbar discreto. Track usa var(--bg-0) (mesma cor do
+   shell) para não revelar elementos atrás como uma faixa clara. */
+*::-webkit-scrollbar { width: 6px; height: 6px; }
+*::-webkit-scrollbar-track { background: var(--bg-0); }
+*::-webkit-scrollbar-thumb {
+  background: var(--bd-1);
+  border-radius: 3px;
 }
-
-::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.02);
-}
-
-::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
-  border-radius: 100px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.25);
-}
+*::-webkit-scrollbar-thumb:hover { background: var(--bd-2); }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    UTILITY CLASSES

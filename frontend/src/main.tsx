@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import App from './App';
 import './index.css';
 import { CapabilitiesProvider } from './providers';
+import { UmweltProvider } from './lib/umwelt';
 
 // Create QueryClient with smart retry logic
 const queryClient = new QueryClient({
@@ -29,7 +30,9 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <CapabilitiesProvider>
-        <App />
+        <UmweltProvider>
+          <App />
+        </UmweltProvider>
       </CapabilitiesProvider>
     </QueryClientProvider>
   </StrictMode>

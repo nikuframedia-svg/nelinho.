@@ -1,0 +1,62 @@
+work_order_id,ordered_at,end_date,delivery_date,transport_date,customer_name,customer_country,reference,product_id,product_name,product_name_en,product_type_id,product_type_name,current_phase_id,warehouse_id,sequence,cost_price,sale_price,discount,paid_amount,coefficient_eur,is_paid,supervised,encomenda_id,encomenda_state,routing_steps,bom_lines,movements
+141820,2026-05-02T00:00:00,2026-05-12T15:49:00,,,,,Karlsruhe (duplicado da of: 135347),42248,C1 Vanquish P 24 L SCS,C1 Vanquish P 24 L SCS,6,Canoe Sprint Ep.,9,1,0,1001.22,2200.0,0.0,0.0,0.0,False,False,,,18,33,86
+141813,2026-04-30T00:00:00,2026-05-07T14:49:00,,,,,Para Order,42337,V1 Vanquish P 24 L SCS,,6,Canoe Sprint Ep.,12,1,0,0.0,2700.0,0.0,0.0,2.0,False,False,,,18,32,79
+141814,2026-04-30T00:00:00,2026-05-07T15:27:00,,,,,Para Order ,42337,V1 Vanquish P 24 L SCS,,6,Canoe Sprint Ep.,12,1,0,0.0,2700.0,0.0,0.0,2.0,False,False,,,18,32,79
+141817,2026-04-30T00:00:00,2026-05-08T15:37:00,,,,,Extra ,43846,V1 Vanquish P 24 M SCS,,6,Canoe Sprint Ep.,12,1,0,1350.5698,2700.0,0.0,0.0,2.0,False,False,,,18,32,82
+141802,2026-04-28T00:00:00,2026-05-12T11:27:00,,,,,Burgo,42411,K1 Vanquish Cinco L SCS,K1 Vanquish Cinco L SCS,6,Canoe Sprint Ep.,9,1,0,1136.2398,2800.0,0.0,0.0,1.5,False,False,,,18,41,106
+141807,2026-04-28T00:00:00,2026-05-12T14:20:00,,,,,,42413,K1 Vanquish Cinco ML SCS,K1 Vanquish Cinco ML SCS,6,Canoe Sprint Ep.,9,1,0,1136.2398,2800.0,0.0,0.0,1.5,False,False,,,18,41,124
+141809,2026-04-28T00:00:00,2026-05-12T12:37:00,,,,,,42567,K1 Vanquish Cinco L F,,6,Canoe Sprint Ep.,9,1,0,1044.9298,1800.0,0.0,0.0,1.5,False,False,,,18,39,115
+141798,2026-04-27T00:00:00,2026-05-12T10:11:00,,,,,,23131,K2 Cinco L SCS,,6,Canoe Sprint Ep.,9,1,0,1904.6098,4050.0,0.0,0.0,2.75,False,False,,,19,43,108
+141800,2026-04-27T00:00:00,2026-05-12T07:41:00,,,,,,22252,K1 Moskito 90 SCS,,6,Canoe Sprint Ep.,9,1,0,1055.4898,2800.0,0.0,0.0,1.5,False,False,,,18,31,105
+141795,2026-04-24T00:00:00,2026-05-12T13:27:00,,,,,"CUS Pavia
+Via Don Enzo Boschetti 1
+27100 Pavia (PV)
+phone Davide Marzani +39 340 921 3976",23127,K2 Cinco L F,,6,Canoe Sprint Ep.,9,1,0,1565.5098,2750.0,0.0,0.0,2.0,False,False,,,19,34,125
+10434214,2026-04-23T11:20:00,2026-04-23T12:14:00,,,,,OF gerada por falta de codigo de barras na peça,52336,Reforço Travessa Icon,Reforço Travessa Icon,291,Icon,9,1,0,2.0,44.7154471544715,0.0,0.0,0.0,False,False,,,3,4,12
+10434215,2026-04-23T11:20:00,2026-04-23T12:14:00,,,,,OF gerada por falta de codigo de barras na peça,52336,Reforço Travessa Icon,Reforço Travessa Icon,291,Icon,9,1,0,2.0,44.7154471544715,0.0,0.0,0.0,False,False,,,3,4,12
+10434216,2026-04-23T11:20:00,2026-04-23T12:14:00,,,,,OF gerada por falta de codigo de barras na peça,52336,Reforço Travessa Icon,Reforço Travessa Icon,291,Icon,9,1,0,2.0,44.7154471544715,0.0,0.0,0.0,False,False,,,3,4,12
+10434201,2026-04-23T08:48:00,2026-04-23T12:14:00,,,,,OF gerada por falta de codigo de barras na peça,30579,Pega lateral,,291,Icon,12,1,0,4.973984,0.0,0.0,0.0,0.0,False,False,,,3,6,9
+141774,2026-04-23T00:00:00,2026-05-04T07:38:00,,,,,,53981,C1 28 M FC Prepreg,C1 28 M FC Prepreg,6,Canoe Sprint Ep.,12,1,0,1161.8098,3000.0,0.0,0.0,0.0,False,False,,,19,33,78
+10433962,2026-04-22T07:52:00,2026-04-23T11:47:00,,,,,OF gerada por falta de codigo de barras na peça,30579,Pega lateral,,291,Icon,12,1,0,4.973984,0.0,0.0,0.0,0.0,False,False,,,3,6,9
+141720,2026-04-22T00:00:00,2026-05-01T15:22:00,,,,,,53707,K1 28 XXL FC Prepreg,K1 28 XXL FC Prepreg,6,Canoe Sprint Ep.,12,1,0,1392.6798,3400.0,0.0,0.0,1.5,False,False,,,21,42,96
+141661,2026-04-21T00:00:00,2026-05-12T09:50:00,,,,,"KAYAK STORE
+ANDREA P. BAGLIONI
+piazza Cesare da Sesto 2
+21018 SESTO CALENDE (VA)
+iTALY
+phone +393356863064",42411,K1 Vanquish Cinco L SCS,K1 Vanquish Cinco L SCS,6,Canoe Sprint Ep.,9,1,0,1136.2398,2800.0,0.0,0.0,1.5,False,False,,,18,41,128
+141662,2026-04-21T00:00:00,2026-05-12T12:47:00,,,,,"Aeroporto “Luigi Bourlot”,
+via Circumlacuale, 41
+00062 Bracciano (ROMA)
+contact Larissa Nevierov +39 349 434 3781",23279,K2 Cinco XXL SCS,,6,Canoe Sprint Ep.,9,1,0,1904.6098,4050.0,0.0,0.0,2.75,False,False,,,19,43,134
+141626,2026-04-20T00:00:00,2026-04-27T14:45:00,,,,Ukraine, (duplicado da of: 126985),28926,C1 8 XL SCS,,6,Canoe Sprint Ep.,12,1,0,934.15,1850.0,0.0,0.0,1.5,False,False,,,18,33,83
+141627,2026-04-20T00:00:00,2026-04-29T13:28:00,,,,, (duplicado da of: 141376) (duplicado da of: 141599),42366,K1 Vanquish 7 M SCS,K1 Vanquish 7 M SCS,6,Canoe Sprint Ep.,12,1,0,1148.77,2800.0,0.0,0.0,1.5,False,False,,,18,42,105
+141629,2026-04-20T00:00:00,2026-05-12T10:36:00,,,,,DEMO 2026,42533,K1 Vanquish Cinco S SCS,K1 Vanquish Cinco S SCS,6,Canoe Sprint Ep.,9,1,0,1136.2398,1900.0,0.0,0.0,1.5,False,False,,,18,41,116
+141630,2026-04-20T00:00:00,2026-05-07T13:42:00,,,,,DEMO 2026,36566,K1 Vanquish 7 S SCS,K1 Vanquish 7 S SCS,6,Canoe Sprint Ep.,12,1,0,1142.6998,1900.0,0.0,0.0,1.5,False,False,,,18,42,115
+141594,2026-04-16T00:00:00,2026-04-27T12:24:00,,,,,,29630,C1 8 M SCS,,6,Canoe Sprint Ep.,12,1,0,931.13,2050.0,0.0,0.0,1.5,False,False,,,18,33,80
+141595,2026-04-16T00:00:00,2026-04-30T14:55:00,,,,,Halifax (duplicado da of: 141241),29778,C2 8 M SCS,,6,Canoe Sprint Ep.,12,1,0,1579.69,2500.0,0.0,0.0,2.75,False,False,,,18,27,75
+141596,2026-04-16T00:00:00,2026-04-27T16:05:00,,,,,,42412,K1 Vanquish Cinco M SCS,K1 Vanquish Cinco M SCS,6,Canoe Sprint Ep.,12,1,0,1140.33,2800.0,0.0,0.0,1.5,False,False,,,18,41,103
+141599,2026-04-16T00:00:00,2026-04-27T15:10:00,,,,, (duplicado da of: 141376),42366,K1 Vanquish 7 M SCS,K1 Vanquish 7 M SCS,6,Canoe Sprint Ep.,12,1,0,1148.77,2800.0,0.0,0.0,1.5,False,False,,,18,42,107
+141600,2026-04-16T00:00:00,2026-04-28T12:22:00,,,,,,42403,K1 Vanquish 7 L SCS,K1 Vanquish 7 L SCS,6,Canoe Sprint Ep.,12,1,0,1148.77,2800.0,0.0,0.0,1.5,False,False,,,18,42,109
+141603,2026-04-16T00:00:00,2026-04-30T10:57:00,,,,, (duplicado da of: 141600) (duplicado da of: 141601) (duplicado da of: 141602),42403,K1 Vanquish 7 L SCS,K1 Vanquish 7 L SCS,6,Canoe Sprint Ep.,12,1,0,1148.77,2800.0,0.0,0.0,1.5,False,False,,,18,42,109
+141604,2026-04-16T00:00:00,2026-04-27T12:11:00,,,,, (duplicado da of: 141600) (duplicado da of: 141601) (duplicado da of: 141602) (duplicado da of: 141603),42403,K1 Vanquish 7 L SCS,K1 Vanquish 7 L SCS,6,Canoe Sprint Ep.,12,1,0,1148.77,2800.0,0.0,0.0,1.5,False,False,,,18,42,103
+141605,2026-04-16T00:00:00,2026-04-25T10:56:00,,,,,,42405,K1 Vanquish 7 XXL SCS,K1 Vanquish 7 XXL SCS,6,Canoe Sprint Ep.,12,1,0,1148.77,2800.0,0.0,0.0,1.5,False,False,,,18,42,107
+141606,2026-04-16T00:00:00,2026-04-27T13:09:00,,,,, (duplicado da of: 141605),42405,K1 Vanquish 7 XXL SCS,K1 Vanquish 7 XXL SCS,6,Canoe Sprint Ep.,12,1,0,1148.77,2800.0,0.0,0.0,1.5,False,False,,,18,42,107
+141607,2026-04-16T00:00:00,2026-04-27T10:02:00,,,,, (duplicado da of: 141605) (duplicado da of: 141606),42405,K1 Vanquish 7 XXL SCS,K1 Vanquish 7 XXL SCS,6,Canoe Sprint Ep.,12,1,0,1148.77,2800.0,0.0,0.0,1.5,False,False,,,18,42,105
+141608,2026-04-16T00:00:00,2026-04-27T16:15:00,,,,,deslaminado Proa,22473,K2 Quattro M SCS,,6,Canoe Sprint Ep.,12,1,0,1306.76,3500.0,0.0,0.0,2.75,False,True,,,16,33,92
+141609,2026-04-16T00:00:00,2026-04-27T13:09:00,,,,, (duplicado da of: 129300),28008,K2 7 L SCS,,6,Canoe Sprint Ep.,12,1,0,1555.39,3500.0,0.0,0.0,2.75,False,False,,,19,46,112
+141610,2026-04-16T00:00:00,2026-04-30T09:13:00,,,,,(duplicado da of: 141277),23302,K4 Cinco L SCS,,6,Canoe Sprint Ep.,12,1,0,0.0,0.0,0.0,0.0,4.0,False,False,,,20,45,115
+141611,2026-04-16T00:00:00,2026-04-29T12:14:00,,,,,,53942,K1 28 ML FC Prepreg,K1 28 ML FC Prepreg,6,Canoe Sprint Ep.,12,1,0,1401.4298,3400.0,0.0,0.0,1.5,False,False,,,21,42,96
+10433414,2026-04-15T15:54:00,2026-04-17T13:56:00,,,,,OF gerada por falta de codigo de barras na peça,30546,Evo Leme Standard,Standard rudder,289,EvolutionCanoe,9,1,0,12.59,28.46,0.0,0.0,0.0,False,False,,,3,8,11
+10433415,2026-04-15T15:54:00,2026-04-17T13:56:00,,,,,OF gerada por falta de codigo de barras na peça,30545,Evo Leme weed,Weedless rudder,289,EvolutionCanoe,9,1,0,12.59,28.46,0.0,0.0,0.0,False,False,,,3,8,11
+10433295,2026-04-14T13:24:00,2026-04-15T20:54:00,,,,,OF gerada por falta de codigo de barras na peça,30545,Evo Leme weed,Weedless rudder,289,EvolutionCanoe,9,1,0,12.59,28.46,0.0,0.0,0.0,False,False,,,3,8,11
+141589,2026-04-14T00:00:00,2026-05-05T08:59:00,,,,,Zsofia Csorba (duplicado da of: 127534),29630,C1 8 M SCS,,6,Canoe Sprint Ep.,12,1,0,931.13,2050.0,0.0,0.0,1.5,False,False,,,18,33,85
+141590,2026-04-14T00:00:00,2026-04-29T09:43:00,,,,,,53974,K1 28 S FC Prepreg,K1 28 S FC Prepreg,6,Canoe Sprint Ep.,12,1,0,1392.6798,3400.0,0.0,0.0,1.5,False,False,,,21,42,96
+10433237,2026-04-13T15:39:00,2026-04-15T20:48:00,,,,,OF gerada por falta de codigo de barras na peça,53507,Leme Icon Elite 10mm,Leme Icon Elite 10mm,291,Icon,9,1,0,26.41,44.7154471544715,0.0,0.0,0.0,False,False,,,3,8,16
+10433238,2026-04-13T15:39:00,2026-04-15T20:49:00,,,,,OF gerada por falta de codigo de barras na peça,53507,Leme Icon Elite 10mm,Leme Icon Elite 10mm,291,Icon,9,1,0,26.41,44.7154471544715,0.0,0.0,0.0,False,False,,,3,8,16
+902210,2026-04-13T00:00:00,2026-05-06T10:20:00,,,,,"BW Niegripp, Burg",36551,Viper 44 A1,,245,Fitness Pl.,12,1,0,638.5398,1000.0,0.0,0.0,1.0,False,False,,,15,32,103
+141587,2026-04-13T00:00:00,2026-04-27T11:44:00,,,,,DEMO,53814,K1 28 L FC Prepreg,K1 28 L FC Prepreg,6,Canoe Sprint Ep.,12,1,0,1392.6798,3400.0,0.0,0.0,1.5,False,False,,,21,42,96
+141585,2026-04-10T00:00:00,2026-04-25T10:34:00,,,,,Halifax (duplicado da of: 141161),28325,K2 7 ML SCS,,6,Canoe Sprint Ep.,12,1,0,1961.6,4050.0,0.0,0.0,2.75,False,False,,,19,46,121
+141578,2026-04-09T00:00:00,2026-05-12T08:34:00,,,,,,42625,K1 Vanquish Quattro ML FC,K1 Vanquish Quattro ML FC,6,Canoe Sprint Ep.,12,1,0,0.0,3000.0,0.0,0.0,1.5,False,False,,,19,42,108
+141579,2026-04-09T00:00:00,2026-05-12T11:22:00,,,,, (duplicado da of: 141578),42625,K1 Vanquish Quattro ML FC,K1 Vanquish Quattro ML FC,6,Canoe Sprint Ep.,12,1,0,0.0,3000.0,0.0,0.0,1.5,False,False,,,19,42,110
+141580,2026-04-09T00:00:00,2026-05-11T10:42:00,,,,,,36566,K1 Vanquish 7 S SCS,K1 Vanquish 7 S SCS,6,Canoe Sprint Ep.,12,1,0,0.0,2800.0,0.0,0.0,1.5,False,False,,,18,42,112

@@ -19,20 +19,11 @@ import type {
   ScenarioComparison,
   WorkforceDelta,
 } from '../components/workforce/types';
+import { apiFetch } from './api';
 
-const API_ROOT = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-const API_BASE = `${API_ROOT}/v1/workforce`;
-
-/**
- * Helper to handle API responses
- */
-async function handleResponse<T>(response: Response): Promise<T> {
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`API Error: ${response.status} - ${errorText}`);
-  }
-  return response.json();
-}
+// Q.21.A — todo o tráfego passa pelo `apiFetch` (api.ts). O `fetch` directo
+// anterior não enviava header `X-Tenant-Id` nenhum, pelo que estes endpoints
+// `/v1/workforce/*` falhavam o `require_tenant_header` do backend.
 
 /**
  * Workforce API client
@@ -40,17 +31,16 @@ async function handleResponse<T>(response: Response): Promise<T> {
 export const workforceApi = {
   /**
    * Get the complete dependency graph
-   * 
+   *
    * Returns nodes (phases, employees) and edges (aptitudes).
    */
   async getDependencyGraph(): Promise<DependencyGraph> {
-    const response = await fetch(`${API_BASE}/dependency-graph`);
-    return handleResponse<DependencyGraph>(response);
+    return apiFetch<DependencyGraph>('/v1/workforce/dependency-graph');
   },
 
   /**
    * Get cascade impact for a phase
-   * 
+   *
    * Shows how workforce issues ripple through:
    * 1. Workforce level
    * 2. Production level
@@ -58,41 +48,41 @@ export const workforceApi = {
    * 4. Economic impact
    */
   async getCascadeImpact(phaseId: string): Promise<CascadeImpact> {
-    const response = await fetch(`${API_BASE}/cascade-impact/${encodeURIComponent(phaseId)}`);
-    return handleResponse<CascadeImpact>(response);
+    return apiFetch<CascadeImpact>(
+      `/v1/workforce/cascade-impact/${encodeURIComponent(phaseId)}`,
+    );
   },
 
   /**
    * Simulate workforce changes
-   * 
+   *
    * @param deltas - List of changes to simulate
    * @returns Before/after comparison with impact metrics
    */
   async simulate(deltas: WorkforceDelta[]): Promise<SimulationResult> {
-    const response = await fetch(`${API_BASE}/simulate`, {
+    return apiFetch<SimulationResult>('/v1/workforce/simulate', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(deltas),
     });
-    return handleResponse<SimulationResult>(response);
   },
 
   /**
    * Get training recommendations
-   * 
+   *
    * Returns recommendations ordered by impact:
    * 1. SPOF elimination
    * 2. Risk reduction
    * 3. Employee proximity
    */
   async getTrainingRecommendations(limit: number = 10): Promise<TrainingRecommendation[]> {
-    const response = await fetch(`${API_BASE}/training-recommendations?limit=${limit}`);
-    return handleResponse<TrainingRecommendation[]>(response);
+    return apiFetch<TrainingRecommendation[]>(
+      `/v1/workforce/training-recommendations?limit=${limit}`,
+    );
   },
 
   /**
    * Compare multiple scenarios
-   * 
+   *
    * Returns side-by-side comparison with:
    * - SPOF count
    * - Risk score
@@ -101,12 +91,10 @@ export const workforceApi = {
    * - Payback period
    */
   async compareScenarios(scenarioIds: string[]): Promise<ScenarioComparison> {
-    const response = await fetch(`${API_BASE}/scenarios/compare`, {
+    return apiFetch<ScenarioComparison>('/v1/workforce/scenarios/compare', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(scenarioIds),
     });
-    return handleResponse<ScenarioComparison>(response);
   },
 };
 

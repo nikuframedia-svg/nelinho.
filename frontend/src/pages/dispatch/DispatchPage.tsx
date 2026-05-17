@@ -18,9 +18,10 @@
  * from the previous batch via the unique constraint on the assignment
  * table).
  *
- * Principle: every rejection forces a *category* (Plan v4 §11 §8 anti-
- * fatigue) — captured via `<RejectionDialog>` and logged. Q.5 wires it
- * into the actual DecisionRun lifecycle.
+ * Q.21.D — o `<RejectionDialog>` foi removido: o registo de rejeições de
+ * sugestão de transporte ainda não tem endpoint, e o dialog antigo só
+ * fazia console.info. As sugestões podem ser aceites (acção real) ou
+ * ignoradas; o explainer continua a mostrar "SE REJEITAR".
  */
 
 import { useMemo, useState } from 'react';
@@ -37,11 +38,9 @@ import {
 import {
   AlertTriangle,
   ArrowRightCircle,
-  Ban,
   CheckCircle2,
   ChevronRight,
   Lock,
-  Plus,
   Send,
   Truck,
   Wrench,
@@ -60,21 +59,11 @@ import {
   type TransportSuggestion,
 } from '../../lib/api';
 
-// ───────────────────────────────────────────────────────────────────────────
-// Rejection categories (mirror src/governance/models.py:RejectionCategory)
-// ───────────────────────────────────────────────────────────────────────────
-
-const REJECTION_CATEGORIES = [
-  { value: 'COST', label: 'Custo' },
-  { value: 'QUALITY', label: 'Qualidade' },
-  { value: 'CUSTOMER', label: 'Cliente' },
-  { value: 'CAPACITY', label: 'Capacidade' },
-  { value: 'MOLD', label: 'Molde' },
-  { value: 'WORKFORCE', label: 'Operadores' },
-  { value: 'OTHER', label: 'Outro' },
-] as const;
-
-type RejectionCategoryValue = (typeof REJECTION_CATEGORIES)[number]['value'];
+// Q.21.D — REJECTION_CATEGORIES + RejectionDialog removidos. Recolhiam
+// categoria/razão de rejeição de uma sugestão de transporte mas o submit
+// só fazia console.info — não há endpoint que persista isto (o backend de
+// transporte não tem rota de rejeição de sugestão; o /decide do CPO é para
+// commits de schedule, outra coisa). Botão que mente → fora.
 
 const STATUS_LABEL: Record<TransportBatchStatus, string> = {
   OPEN: 'Aberto',
@@ -104,10 +93,6 @@ export default function DispatchPage() {
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState<'ALL' | TransportBatchStatus>('ALL');
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
-  const [rejectionTarget, setRejectionTarget] = useState<{
-    suggestionType: string;
-    batchId: string;
-  } | null>(null);
 
   // ── Queries ────────────────────────────────────────────────────────────
   const { data: batches, isLoading: batchesLoading } = useQuery({
@@ -197,11 +182,6 @@ export default function DispatchPage() {
     invalidateAll();
   };
 
-  const handleRejectSuggestion = (s: TransportSuggestion) => {
-    if (!selectedBatchId) return;
-    setRejectionTarget({ suggestionType: s.type, batchId: selectedBatchId });
-  };
-
   // ───────────────────────────────────────────────────────────────────────
   // Render
   // ───────────────────────────────────────────────────────────────────────
@@ -211,15 +191,6 @@ export default function DispatchPage() {
       title="Despacho / Expedição"
       subtitle="Plan v4 §7 — DE01-DE08 · drag-and-drop entre camiões + sugestões com consequências"
       icon={<Truck size={20} />}
-      actions={
-        <DarkButton
-          variant="primary"
-          icon={<Plus size={16} />}
-          onClick={() => alert('TODO Q.2: modal criar batch')}
-        >
-          Novo batch
-        </DarkButton>
-      }
     >
       <DndContext sensors={sensors} onDragEnd={onDragEnd}>
         <div className="grid grid-cols-12 gap-4">
@@ -302,7 +273,6 @@ export default function DispatchPage() {
                       key={`${s.type}-${idx}`}
                       suggestion={s}
                       onAccept={() => handleAcceptSuggestion(s)}
-                      onReject={() => handleRejectSuggestion(s)}
                     />
                   ))}
                 </ul>
@@ -312,26 +282,6 @@ export default function DispatchPage() {
         </div>
       </DndContext>
 
-      {rejectionTarget && (
-        <RejectionDialog
-          suggestionType={rejectionTarget.suggestionType}
-          onClose={() => setRejectionTarget(null)}
-          onSubmit={(category, text) => {
-            // Q.2 stub: Suggestion rejections aren't full DecisionRuns yet
-            // (they have no decision_id). Q.5 will wire this into the
-            // governance Timeline backend with the rejection_category enum
-            // already defined in src/governance/models.py.
-            // eslint-disable-next-line no-console
-            console.info('[suggestion-rejected]', {
-              type: rejectionTarget.suggestionType,
-              batchId: rejectionTarget.batchId,
-              category,
-              reason: text,
-            });
-            setRejectionTarget(null);
-          }}
-        />
-      )}
     </DarkPageLayout>
   );
 }
@@ -564,11 +514,9 @@ function DraggableOrderCard({
 function SuggestionCard({
   suggestion,
   onAccept,
-  onReject,
 }: {
   suggestion: TransportSuggestion;
   onAccept: () => void;
-  onReject: () => void;
 }) {
   // Sprint Q.9 Onda 3.3 — replaces the previous collapsible <details>-
   // style block with the canonical <SuggestionExplainer>: 5 boxes
@@ -608,6 +556,9 @@ function SuggestionCard({
         </div>
       ) : null}
 
+      {/* Q.21.D — só "Aceitar" (acção real: dispara assign/remove
+          mutations). "Rejeitar" abria um dialog cujo submit não persistia
+          nada — removido. O explainer já mostra "SE REJEITAR". */}
       <div className="flex items-center gap-1">
         <DarkButton
           variant="primary"
@@ -617,81 +568,8 @@ function SuggestionCard({
         >
           Aceitar
         </DarkButton>
-        <DarkButton
-          variant="secondary"
-          size="sm"
-          icon={<Ban size={12} />}
-          onClick={onReject}
-        >
-          Rejeitar
-        </DarkButton>
       </div>
     </li>
   );
 }
 
-function RejectionDialog({
-  suggestionType,
-  onClose,
-  onSubmit,
-}: {
-  suggestionType: string;
-  onClose: () => void;
-  onSubmit: (category: RejectionCategoryValue, reason: string) => void;
-}) {
-  const [category, setCategory] = useState<RejectionCategoryValue | ''>('');
-  const [reason, setReason] = useState('');
-  const canSubmit = category !== '';
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <DarkCard className="w-[480px] max-w-[90vw] p-5">
-        <h3 className="text-base font-semibold text-white mb-1">
-          Rejeitar sugestão
-        </h3>
-        <p className="text-xs text-slate-400 mb-4">
-          Tipo: <code className="text-slate-300">{suggestionType}</code>. A categoria é
-          obrigatória para alimentar a Camada 1 de aprendizagem.
-        </p>
-
-        <label className="block text-xs text-slate-400 mb-1">Categoria</label>
-        <select
-          value={category}
-          onChange={(e) => setCategory(e.target.value as RejectionCategoryValue | '')}
-          className="w-full mb-3 px-3 py-2 bg-slate-800 border border-slate-700 rounded text-sm text-white"
-        >
-          <option value="">— escolher —</option>
-          {REJECTION_CATEGORIES.map((c) => (
-            <option key={c.value} value={c.value}>
-              {c.label}
-            </option>
-          ))}
-        </select>
-
-        <label className="block text-xs text-slate-400 mb-1">
-          Porquê? (opcional)
-        </label>
-        <textarea
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-          rows={3}
-          placeholder="Notas para o sistema aprender contigo…"
-          className="w-full mb-4 px-3 py-2 bg-slate-800 border border-slate-700 rounded text-sm text-white"
-        />
-
-        <div className="flex justify-end gap-2">
-          <DarkButton variant="secondary" size="sm" onClick={onClose}>
-            Cancelar
-          </DarkButton>
-          <DarkButton
-            variant="primary"
-            size="sm"
-            onClick={() => canSubmit && onSubmit(category as RejectionCategoryValue, reason)}
-          >
-            Confirmar rejeição
-          </DarkButton>
-        </div>
-      </DarkCard>
-    </div>
-  );
-}

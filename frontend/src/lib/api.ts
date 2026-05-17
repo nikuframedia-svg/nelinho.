@@ -22,7 +22,10 @@ interface AllocationCreateRequest {
   strategy?: 'skill_first' | 'cost_first' | 'balanced';
 }
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// Q.21.A — porta única. O `.env` de dev usa 8001 e o backend arranca em 8001
+// (ver agent_docs/HANDOFF.md §4.7). O fallback aqui tem de concordar com o
+// `.env` para que `npm run dev` sem `.env` continue a falar com o backend.
+const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8001';
 
 // Retry configuration
 const MAX_RETRIES = 1; // Reduced from 3 to 1 to avoid flooding console
@@ -2398,7 +2401,11 @@ export interface ConfigEntry {
   valid_to: string | null;
   last_modified_by: string | null;
   last_modified_at: string;
+  // Sprint X.1 — Plan v4 §4.7 provenance: 'default' | 'manual' | 'learned_rule'
+  source: ConfigSource;
 }
+
+export type ConfigSource = 'default' | 'manual' | 'learned_rule';
 
 export interface ConfigCategoryValues {
   category: string;
@@ -2636,6 +2643,28 @@ export const workforceEmployeesApi = {
       `/v1/workforce/employees/${encodeURIComponent(employeeId)}/soft-delete`,
       { method: 'POST', body: JSON.stringify(payload) },
     ),
+
+  // Q.18 fix-workforce — escala 1-3 derivada do quality score Laplace.
+  levelSummary: (employeeId: string) =>
+    request<{
+      employee_id: string;
+      quality_score: number;
+      derived_level: 1 | 2 | 3;
+      level_label: string;
+      level_description: string;
+      recommended_boats: string[];
+      skills_apt: string[];
+      per_phase_skills: Array<{
+        phase_id: string;
+        phase_name?: string;
+        can_do: boolean;
+        nivel?: number | null;
+        ops_count: number;
+        last_used_at?: string | null;
+      }>;
+    }>(
+      `/v1/workforce/employees/${encodeURIComponent(employeeId)}/level-summary`,
+    ),
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -2832,3 +2861,73 @@ export const yamlPolicyApi = {
       { method: 'POST', body: JSON.stringify({ reason }) },
     ),
 };
+
+// ────────────────────────────────────────────────────────────────────────
+// phaseGapsApi — Sprint X.3 (cura/secagem editável via UI).
+// Wraps GET /v1/plan/phase-gaps (merged DB + SEED view) and PATCH
+// .../{from}/{to} with reason ≥10 chars. Consumed by the new
+// "Cura/Secagem" tab in SettingsPage. The CPO scheduler picks up the
+// new value on the next /v1/plan/cpo/schedule run via the same
+// `state._load_phase_transition_gaps` loader the dispatcher uses.
+// ────────────────────────────────────────────────────────────────────────
+
+export interface PhaseGap {
+  from_phase_code: string;
+  to_phase_code: string;
+  min_gap_hours: number;
+  reason: string | null;
+  n_observations: number | null;
+  active: boolean;
+  /** 'seed' = fallback to NELO_CURING_GAPS_SEED; 'db' = persisted edit */
+  source: 'seed' | 'db' | string;
+}
+
+export const phaseGapsApi = {
+  list: () => request<{ items: PhaseGap[] }>('/v1/plan/phase-gaps'),
+
+  update: (
+    fromPhaseCode: string,
+    toPhaseCode: string,
+    payload: { min_gap_hours: number; reason: string },
+  ) =>
+    request<PhaseGap>(
+      `/v1/plan/phase-gaps/${encodeURIComponent(fromPhaseCode)}/${encodeURIComponent(toPhaseCode)}`,
+      { method: 'PATCH', body: JSON.stringify(payload) },
+    ),
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AUTH (Sprint Q.18.UI.A.1) — minimal /v1/auth/me for the Sidebar user chip.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface CurrentUser {
+  user_id: string | null;
+  tenant_id: string;
+  role: string;
+  name: string;
+  email: string;
+  umwelt: 'manager' | 'operator' | 'ceo' | string;
+}
+
+export const authApi = {
+  /** Identidade actual (vem de JWT quando existir; dev usa headers X-*). */
+  me: () => request<CurrentUser>('/v1/auth/me'),
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Q.21.A — Helper público de fetch
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// `apiFetch` expõe o `request()` interno para que cada chamada à API passe pelo
+// mesmo circuit breaker, política de retry e headers de tenant/user. Chamadas
+// `fetch()` directas que saltam isto perdem os três. O endpoint é relativo
+// (ex: `/v1/plan/orders/active`) — a base URL vem do `VITE_API_URL`.
+//
+// `getApiBase()` devolve a base URL só para casos que precisam de um URL cru
+// (SSE/EventSource, sondas de saúde) — nunca para reconstruir um `fetch` que
+// devia ter passado pelo `apiFetch`.
+export { request as apiFetch };
+
+export function getApiBase(): string {
+  return API_BASE;
+}

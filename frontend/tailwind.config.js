@@ -7,13 +7,14 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Dark theme backgrounds
+        // Dark theme backgrounds — Q.18.ZIP.design2 OKLCH (HEX equivalents)
+        // hue 250 = cool blue-gray neutral (Palantir-like)
         dark: {
-          900: '#0a0f1a',
-          800: '#0f172a',
-          700: '#111827',
-          600: '#1f2937',
-          500: '#374151',
+          900: '#1d2025',   // matches --bg-0 oklch(0.158 0.008 250)
+          800: '#252830',   // matches --bg-1 oklch(0.195 0.008 250)
+          700: '#2c2f37',   // matches --bg-2 oklch(0.225 0.009 250)
+          600: '#373a43',   // matches --bg-3 oklch(0.265 0.010 250)
+          500: '#42454f',   // matches --bg-4 oklch(0.305 0.011 250)
         },
         // Accent - Teal
         accent: {
@@ -41,13 +42,22 @@ export default {
           800: '#075985',
           900: '#0c4a6e',
         },
-        // Text colors for dark theme
+        // Text colors — Q.18.ZIP.design2 OKLCH (HEX equivalents)
         'text-dark': {
-          primary: '#f1f5f9',
-          secondary: '#94a3b8',
-          tertiary: '#64748b',
-          muted: '#475569',
+          primary:   '#f0f1f3',  // matches --fg-0 oklch(0.96 0.005 250)
+          secondary: '#c8cbd0',  // matches --fg-1 oklch(0.82 0.008 250)
+          tertiary:  '#888d96',  // matches --fg-2 oklch(0.62 0.012 250)
+          muted:     '#5a5f68',  // matches --fg-3 oklch(0.45 0.015 250)
         },
+        // Border tokens (--bd-N) accessible as Tailwind utility classes
+        'bd-1': '#3b3e47',  // matches --bd-1 oklch(0.295 0.011 250)
+        'bd-2': '#494d58',  // matches --bd-2 oklch(0.355 0.013 250)
+        'bd-3': '#5a5f68',  // matches --bd-3 oklch(0.420 0.014 250)
+        // Status colors (design2 desaturated calm — HEX approximations)
+        green:  { DEFAULT: '#5fc77e' },  // oklch(0.78 0.14 155)
+        yellow: { DEFAULT: '#d6b146' },  // oklch(0.82 0.14 90)
+        red:    { DEFAULT: '#e76060' },  // oklch(0.72 0.18 25)
+        blue:   { DEFAULT: '#7aa3d8' },  // oklch(0.72 0.14 245)
         // Status colors
         success: {
           DEFAULT: '#10b981',
@@ -64,10 +74,27 @@ export default {
           light: '#f87171',
           dark: '#dc2626',
         },
+        // Q.18.ZIP.A — Palantir industrial accent (additive, não substitui o teal)
+        'accent-orange': {
+          DEFAULT: '#f97316',
+          light: '#fb923c',
+          soft: 'rgba(249, 115, 22, 0.12)',
+          bd: 'rgba(249, 115, 22, 0.35)',
+        },
+        purple: {
+          DEFAULT: '#b780ff',
+          light: '#c89eff',
+          soft: 'rgba(183, 128, 255, 0.12)',
+        },
       },
       fontFamily: {
-        sans: ['Space Grotesk', 'DM Sans', 'Inter', 'system-ui', 'sans-serif'],
-        mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
+        // Q.18.ZIP.design2 — Geist primária matching design package index.html
+        sans: ['Geist', 'Inter', 'Space Grotesk', 'DM Sans', 'system-ui', 'sans-serif'],
+        mono: ['Geist Mono', 'JetBrains Mono', 'Fira Code', 'monospace'],
+      },
+      fontSize: {
+        // Q.18.ZIP.design2 — base 13px (era 14px Tailwind default)
+        base: ['13px', { lineHeight: '1.45' }],
       },
       boxShadow: {
         'card': '0 4px 16px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.2)',
@@ -81,6 +108,11 @@ export default {
         'inner-glow': 'inset 0 0 20px rgba(20, 184, 166, 0.1)',
       },
       borderRadius: {
+        // Q.18.ZIP.design2 — refinado, mais pequeno (matching design package)
+        sm: '4px',    // era 6px
+        md: '6px',    // era 8px
+        lg: '10px',   // era 12px (matching --r-lg do design package)
+        xl: '14px',   // era 16px
         '2xl': '1rem',
         '3xl': '1.5rem',
       },

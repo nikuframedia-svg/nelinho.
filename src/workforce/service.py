@@ -153,7 +153,7 @@ class WorkforceService:
                 CuratedSkillMatrix.funcionario_nome,
                 CuratedSkillMatrix.fase_id,
                 CuratedSkillMatrix.fase_nome,
-                CuratedSkillMatrix.is_active,
+                CuratedSkillMatrix.apto,
             )
             
             if self.ingestion_id:
@@ -203,7 +203,7 @@ class WorkforceService:
         # Count employees per phase
         phase_employee_count: Dict[str, int] = {}
         for skill in skills:
-            if skill.is_active:
+            if skill.apto:
                 phase_id = str(skill.fase_id)
                 phase_employee_count[phase_id] = phase_employee_count.get(phase_id, 0) + 1
         
@@ -233,7 +233,7 @@ class WorkforceService:
                     spof_nodes.append(phase_id)
             
             # Add employee node if not exists
-            if emp_id not in employee_set and skill.is_active:
+            if emp_id not in employee_set and skill.apto:
                 employee_set.add(emp_id)
                 nodes.append({
                     "id": emp_id,
@@ -244,7 +244,7 @@ class WorkforceService:
                 })
             
             # Add edge
-            if skill.is_active:
+            if skill.apto:
                 edges.append({
                     "id": f"apt-{emp_id}-{phase_id}",
                     "source": emp_id,
@@ -294,7 +294,7 @@ class WorkforceService:
             ).where(
                 and_(
                     CuratedSkillMatrix.fase_id == phase_id,
-                    CuratedSkillMatrix.is_active == True,
+                    CuratedSkillMatrix.apto == True,
                 )
             )
             result = await self.db.execute(skills_query)
@@ -467,7 +467,7 @@ class WorkforceService:
                 CuratedSkillMatrix.fase_nome,
                 func.count(CuratedSkillMatrix.funcionario_id).label("emp_count"),
             ).where(
-                CuratedSkillMatrix.is_active == True
+                CuratedSkillMatrix.apto == True
             ).group_by(
                 CuratedSkillMatrix.fase_id,
                 CuratedSkillMatrix.fase_nome,
@@ -604,7 +604,7 @@ class WorkforceService:
                 CuratedSkillMatrix.fase_id,
                 func.count(CuratedSkillMatrix.funcionario_id).label("emp_count")
             ).where(
-                CuratedSkillMatrix.is_active == True
+                CuratedSkillMatrix.apto == True
             ).group_by(
                 CuratedSkillMatrix.fase_id
             ).having(

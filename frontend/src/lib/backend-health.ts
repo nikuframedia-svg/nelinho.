@@ -3,7 +3,12 @@
  * Monitors backend availability and notifies listeners of status changes
  */
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { getApiBase } from './api';
+
+// Q.21.A — porta única via api.ts. Sondas de saúde usam `fetch` cru de
+// propósito (não passam pelo circuit breaker — este é o código que *detecta*
+// o backend em baixo, não pode depender do breaker estar fechado).
+const API_BASE = getApiBase();
 
 export type BackendStatus = 'online' | 'offline' | 'checking';
 

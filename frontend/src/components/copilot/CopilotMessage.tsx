@@ -17,9 +17,12 @@ import { useNavigate } from 'react-router-dom';
 import type { CopilotResponse } from '../../lib/api';
 import { CopilotCitations } from './CopilotCitations';
 import { CopilotActions } from './CopilotActions';
+import { CopilotMascot } from './CopilotMascot';
 
 interface CopilotMessageProps {
   response: CopilotResponse;
+  /** Q.18.ZIP.A — Mostrar header com Nelinho mascote em cima do summary. Default true. */
+  showMascot?: boolean;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -200,7 +203,7 @@ function ActionWrapper({ action }: { action: { action_type: string; label: strin
 // MAIN COMPONENT
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export function CopilotMessage({ response }: CopilotMessageProps) {
+export function CopilotMessage({ response, showMascot = true }: CopilotMessageProps) {
   const [showCitations, setShowCitations] = useState(false);
 
   // Safe fallbacks
@@ -215,6 +218,16 @@ export function CopilotMessage({ response }: CopilotMessageProps) {
 
   return (
     <div className="space-y-4">
+      {/* Q.18.ZIP.A — Avatar Nelinho identifica visualmente que a resposta é do Copilot */}
+      {showMascot ? (
+        <div className="flex items-center gap-2 -mb-1">
+          <CopilotMascot size="sm" className="shrink-0" />
+          <span className="text-xs uppercase tracking-wider text-slate-500 font-semibold">
+            Nelinho · Copilot
+          </span>
+        </div>
+      ) : null}
+
       {/* Summary */}
       <div>
         <p className="font-semibold text-slate-900 mb-2 leading-relaxed text-base">

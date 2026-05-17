@@ -12,6 +12,8 @@ interface DarkButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   iconRight?: ReactNode;
   loading?: boolean;
   fullWidth?: boolean;
+  /** Quando true, aplica shadow-glow subtil no hover (cor derivada da variant). */
+  glow?: boolean;
 }
 
 const variantClasses: Record<ButtonVariant, string> = {
@@ -21,6 +23,15 @@ const variantClasses: Record<ButtonVariant, string> = {
   danger: 'bg-danger text-white hover:bg-danger-light focus:ring-danger/30',
   accent: 'bg-orange text-white hover:bg-orange-light focus:ring-orange/30',
   outline: 'bg-transparent text-text-white border border-border-subtle hover:bg-bg-elevated hover:border-border-hover',
+};
+
+const glowClasses: Record<ButtonVariant, string> = {
+  primary: 'hover:shadow-glow-teal',
+  secondary: '',
+  ghost: '',
+  danger: 'hover:shadow-glow-red',
+  accent: 'hover:shadow-glow-amber',
+  outline: '',
 };
 
 const sizeClasses: Record<ButtonSize, string> = {
@@ -37,6 +48,7 @@ export function DarkButton({
   iconRight,
   loading = false,
   fullWidth = false,
+  glow = false,
   disabled,
   className = '',
   ...props
@@ -52,6 +64,7 @@ export function DarkButton({
         focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-bg-base
         ${variantClasses[variant]}
         ${sizeClasses[size]}
+        ${glow && !isDisabled ? glowClasses[variant] : ''}
         ${fullWidth ? 'w-full' : ''}
         ${isDisabled ? 'opacity-50 cursor-not-allowed' : ''}
         ${className}

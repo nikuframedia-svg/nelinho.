@@ -65,6 +65,25 @@ class Settings(BaseSettings):
     sqlserver_pool_size: int = Field(default=5, ge=1, le=20)
     sqlserver_query_timeout_s: int = Field(default=30, ge=1, le=300)
 
+    # SMTP (Sprint Q.22.F — report email delivery)
+    # `smtp_enabled=False` (the default) is the dev mode: report
+    # deliveries are persisted + logged, no SMTP connection is opened.
+    # Flip to True and set host/credentials to send for real.
+    smtp_enabled: bool = Field(
+        default=False,
+        description="Flip to True to actually send report emails via SMTP",
+    )
+    smtp_host: Optional[str] = Field(default=None, description="SMTP server host")
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_user: Optional[str] = Field(default=None, description="SMTP login user")
+    smtp_password: Optional[str] = Field(
+        default=None, description="SMTP login password",
+    )
+    smtp_from: str = Field(
+        default="prodplan@nelo.local",
+        description="From address for outbound report emails",
+    )
+
     # Security
     secret_key: str = Field(
         default="dev-only-insecure-key-override-in-production-via-env",
@@ -110,9 +129,30 @@ class Settings(BaseSettings):
     environment: str = Field(default="development")
     debug: bool = Field(default=False)
     log_level: str = Field(default="INFO")
+
+    # Sprint Q.18.A.2 — global RBAC enforcement.
+    # Off by default in dev so the existing test client and admin pages
+    # don't have to wear roles in every fixture. main.py forces it on
+    # whenever environment == "production". Flip via env to opt-in
+    # locally: ``PRODPLAN_RBAC_STRICT=true``.
+    rbac_strict: bool = Field(
+        default=False,
+        description=(
+            "Enforce ROUTE_PREFIX_REQUIREMENTS via RBACMiddleware on every "
+            "request. Auto-enabled in production."
+        ),
+    )
     
-    # CORS
-    cors_origins: str = Field(default="http://localhost:3000,http://localhost:5173")
+    # CORS — Windows/Vite serve em 127.0.0.1 por defeito quando arrancado via
+    # --host 127.0.0.1; browsers tratam localhost ≠ 127.0.0.1 como origens
+    # distintas para CORS. Permitir ambas evita "Failed to fetch" silencioso
+    # no boot loader (CapabilitiesProvider).
+    cors_origins: str = Field(
+        default=(
+            "http://localhost:3000,http://localhost:5173,"
+            "http://127.0.0.1:3000,http://127.0.0.1:5173"
+        )
+    )
     
     # COPILOT
     copilot_enabled: bool = Field(default=True)

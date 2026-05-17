@@ -366,6 +366,9 @@ class DashboardMetricsService:
             if value is not None:
                 return float(value)
         except Exception as exc:  # pragma: no cover — defensive
+            # Limpa transacção asyncpg poisoned para que próximas queries
+            # na mesma session não falhem com InFailedSQLTransactionError.
+            await self.session.rollback()
             logger.warning(
                 "backlog_by_client: cost.target.unit_value_eur load failed (%s) "
                 "— using module default %.2f",

@@ -57,10 +57,10 @@ async def list_schedules(
     Sprint Q.9 (2.1) — was a placeholder returning ``{"data": [], "total": 0}``;
     now hits ProductionSchedule directly.
     """
-    if limit < 1 or limit > 1000:
+    if limit < 1 or limit > 100:
         raise HTTPException(
             status_code=400,
-            detail="limit must be between 1 and 1000",
+            detail="limit must be between 1 and 100",
         )
     if offset < 0:
         raise HTTPException(status_code=400, detail="offset must be >= 0")

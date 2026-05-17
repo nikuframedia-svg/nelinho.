@@ -74,10 +74,19 @@ class PolicyResponse(BaseModel):
 # DEPENDENCIES
 # ============================================================================
 
-from src.shared.auth.headers import require_tenant_header, require_user_header
+from src.shared.auth.headers import (
+    AdminContext,
+    require_admin,
+    require_tenant_header,
+    require_user_header,
+)
 
 # Sprint Q.12 Onda 0.1: replaced silent zero-UUID/'api_user' defaults with
 # fail-closed dependencies that return 401 when the header is absent.
+# Sprint Q.18.A.1: irreversible ops below (bulk, payload patch, execute,
+# rollback, kill-switch) now require :func:`require_admin` instead of
+# :func:`require_user_header`. Any authenticated user could previously
+# stop production via /kill-switch — closed with a single dep swap.
 get_tenant_id = require_tenant_header
 get_current_user = require_user_header
 
@@ -254,16 +263,20 @@ async def get_timeline(
 @router.post("/decisions/bulk")
 async def bulk_act(
     body: BulkRequest,
-    user: str = Depends(get_current_user),
+    admin: AdminContext = Depends(require_admin),
     service: GovernanceService = Depends(get_governance_service),
 ):
     """Apply multiple approve/reject/request_changes in a single call.
 
     Per-item response — a SoD violation on one decision does not abort the rest.
+
+    Sprint Q.18.A.1: admin-only. Bulk approve/reject is a privileged
+    operation — single approvals still go through the per-item endpoint
+    where SoD enforces "approver != proposer".
     """
     results = await service.bulk_act(
         items=[item.model_dump() for item in body.items],
-        approved_by=user,
+        approved_by=admin.user_id,
     )
     ok = sum(1 for r in results if r["status"] == "ok")
     return {"ok": ok, "failed": len(results) - ok, "results": results}
@@ -277,14 +290,20 @@ async def bulk_act(
 async def modify_decision_payload(
     decision_id: str,
     body: ModifyPayloadIn,
-    user: str = Depends(get_current_user),
+    admin: AdminContext = Depends(require_admin),
     service: GovernanceService = Depends(get_governance_service),
 ):
+    """Modify a pending decision's payload before approval.
+
+    Sprint Q.18.A.1: admin-only. Editing a proposed decision changes
+    what every subsequent approver votes on — concentrate the trust
+    surface on admins.
+    """
     try:
         return await service.modify_payload(
             decision_id=decision_id,
             patch=body.patch,
-            modified_by=user,
+            modified_by=admin.user_id,
             reason=body.reason,
         )
     except ValueError as exc:
@@ -407,25 +426,28 @@ async def approve_decision(
 @router.post("/decisions/{decision_id}/execute")
 async def execute_decision(
     decision_id: str,
-    user: str = Depends(get_current_user),
+    admin: AdminContext = Depends(require_admin),
     service: GovernanceService = Depends(get_governance_service),
 ):
     """
     Execute an approved decision.
-    
+
     Only approved decisions can be executed.
+
+    Sprint Q.18.A.1: admin-only. Execution writes to the production
+    schedule/inventory/payroll — irreversible without a rollback decision.
     """
     try:
         decision = await service.execute_decision(
             decision_id=decision_id,
-            executed_by=user,
+            executed_by=admin.user_id,
         )
-        
+
         return {
             "success": True,
             "decision_id": decision_id,
             "status": decision["status"],
-            "executed_by": user,
+            "executed_by": admin.user_id,
             "executed_at": decision["executed_at"],
             "outcome_hash": decision.get("outcome_hash"),
         }
@@ -446,26 +468,29 @@ async def execute_decision(
 async def rollback_decision(
     decision_id: str,
     reason: str = Query(..., min_length=10, description="Reason for rollback"),
-    user: str = Depends(get_current_user),
+    admin: AdminContext = Depends(require_admin),
     service: GovernanceService = Depends(get_governance_service),
 ):
     """
     Rollback an executed decision.
-    
+
     Requires a reason (min 10 characters) for audit purposes.
+
+    Sprint Q.18.A.1: admin-only. Rolling back inverts production state
+    — same blast radius as execute.
     """
     try:
         decision = await service.rollback_decision(
             decision_id=decision_id,
-            rolled_back_by=user,
+            rolled_back_by=admin.user_id,
             reason=reason,
         )
-        
+
         return {
             "success": True,
             "decision_id": decision_id,
             "status": decision["status"],
-            "rolled_back_by": user,
+            "rolled_back_by": admin.user_id,
             "rolled_back_at": decision["rolled_back_at"],
             "reason": reason,
         }
@@ -593,28 +618,28 @@ async def get_decision_delta(
 async def activate_kill_switch(
     scope: str = Query(..., description="Scope to kill (e.g., 'all', 'decision_type:X')"),
     reason: str = Query(..., min_length=10, description="Reason for kill switch"),
-    user: str = Depends(get_current_user),
+    admin: AdminContext = Depends(require_admin),
     service: GovernanceService = Depends(get_governance_service),
 ):
     """
     EMERGENCY: Activate kill switch.
-    
+
     This immediately stops execution of decisions in the specified scope.
     No approval required - this is for emergency situations only.
-    
+
     All kill switch activations are logged and audited.
     """
     decision = await service.activate_kill_switch(
         scope=scope,
-        activated_by=user,
+        activated_by=admin.user_id,
         reason=reason,
     )
-    
+
     return {
         "success": True,
         "kill_switch_id": decision["id"],
         "scope": scope,
-        "activated_by": user,
+        "activated_by": admin.user_id,
         "activated_at": decision["executed_at"],
         "reason": reason,
         "warning": "KILL SWITCH ACTIVATED - Decisions in scope are now blocked",
@@ -860,6 +885,56 @@ async def rule_firings_adoption(
     return report.to_dict()
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# Onda 14 N — Activity outbox ledger viewer
+# ──────────────────────────────────────────────────────────────────────────
 
+@router.get("/event-outbox")
+async def list_event_outbox(
+    status_filter: Optional[str] = None,
+    limit: int = 50,
+    tenant_id: UUID = Depends(require_tenant_header),
+    db: AsyncSession = Depends(get_session),
+):
+    """Lista eventos do outbox (pending/sent/failed)."""
+    from sqlalchemy import select as _sa_select
+    from src.shared.outbox_models import EventOutbox
+    stmt = _sa_select(EventOutbox).where(EventOutbox.tenant_id == tenant_id)
+    if status_filter:
+        stmt = stmt.where(EventOutbox.status == status_filter)
+    stmt = stmt.order_by(EventOutbox.created_at.desc()).limit(max(1, min(limit, 200)))
+    rows = (await db.execute(stmt)).scalars().all()
+    return {
+        "items": [
+            {
+                "id": str(r.id),
+                "event_type": r.event_type,
+                "status": r.status,
+                "aggregate_id": str(r.aggregate_id) if getattr(r, "aggregate_id", None) else None,
+                "payload_keys": list(r.payload.keys()) if isinstance(r.payload, dict) else [],
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ],
+        "count": len(rows),
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Onda 14 N — RBAC matrix viewer
+# ──────────────────────────────────────────────────────────────────────────
+
+@router.get("/rbac/matrix")
+async def get_rbac_matrix():
+    """Devolve a matriz roles × permissions actual (Sprint Q.18.N)."""
+    from src.shared.auth.rbac import ROLE_PERMISSIONS, Role, Permission
+    return {
+        "roles": [r.value for r in Role],
+        "permissions": [p.value for p in Permission],
+        "matrix": {
+            role.value: sorted([p.value for p in perms])
+            for role, perms in ROLE_PERMISSIONS.items()
+        },
+    }
 
 

@@ -53,7 +53,27 @@
       "PowerShell($psql = \"$env:USERPROFILE\\\\scoop\\\\apps\\\\postgresql\\\\current\\\\bin\\\\psql.exe\"; & $psql -U postgres -d postgres -c \"DROP DATABASE prodplan_one;\" 2>&1; & $psql -U postgres -d postgres -c \"CREATE DATABASE prodplan_one OWNER prodplan;\" 2>&1; & $psql -U postgres -d prodplan_one -c \"GRANT ALL ON SCHEMA public TO prodplan;\" 2>&1; & $psql -U prodplan -d prodplan_one -f \"c:\\\\Users\\\\User\\\\nelinho\\\\scripts\\\\init-db.sql\" 2>&1 | Select-Object -Last 5)",
       "PowerShell(Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue; \"Killed PID $\\($_.OwningProcess\\) on :8000\" }; $psql = \"$env:USERPROFILE\\\\scoop\\\\apps\\\\postgresql\\\\current\\\\bin\\\\psql.exe\"; & $psql -U postgres -d postgres -c \"SELECT pg_terminate_backend\\(pid\\) FROM pg_stat_activity WHERE datname = 'prodplan_one' AND pid <> pg_backend_pid\\(\\);\" 2>&1 | Select-Object -Last 3; & $psql -U postgres -d postgres -c \"DROP DATABASE prodplan_one;\" 2>&1; & $psql -U postgres -d postgres -c \"CREATE DATABASE prodplan_one OWNER prodplan;\" 2>&1)",
       "PowerShell($psql = \"$env:USERPROFILE\\\\scoop\\\\apps\\\\postgresql\\\\current\\\\bin\\\\psql.exe\"; & $psql -U postgres -d prodplan_one -c \"GRANT ALL ON SCHEMA public TO prodplan;\" 2>&1; & $psql -U prodplan -d prodplan_one -f \"c:\\\\Users\\\\User\\\\nelinho\\\\scripts\\\\init-db.sql\" 2>&1 | Select-Object -Last 5; Write-Output \"---now alembic---\"; Set-Location \"c:\\\\Users\\\\User\\\\nelinho\"; $env:PYTHONPATH = \"c:\\\\Users\\\\User\\\\nelinho\"; & \".\\\\.venv\\\\Scripts\\\\python.exe\" -m alembic upgrade head 2>&1 | Select-Object -Last 30)",
-      "Bash(git checkout *)"
+      "Bash(git checkout *)",
+      "Bash(gh run *)",
+      "Bash(gh pr *)",
+      "Bash(curl -s -o /dev/null -w \"backend 8000: %{http_code}\\\\n\" http://localhost:8000/v1/ping)",
+      "Bash(curl -s -o /dev/null -w \"frontend 5173: %{http_code}\\\\n\" http://localhost:5173/)",
+      "Bash(curl -s -o /dev/null -w \"postgres test \\(psql\\): \" http://localhost:5432/)",
+      "Bash(curl -s -o /dev/null -w \"ollama 11434: %{http_code}\\\\n\" http://localhost:11434/api/tags)",
+      "PowerShell(Get-NetTCPConnection -LocalPort 8000,5173,5432,11434 -ErrorAction SilentlyContinue)",
+      "Bash(ls ~/scoop/apps/postgresql/current/bin/pg_ctl.exe 2>&1; ls frontend/package.json 2>&1; test -f .venv/Scripts/python.exe && echo \"venv ok\" || echo \"venv missing\")",
+      "Read(//c/Users/User/scoop/apps/postgresql/18.3/bin/**)",
+      "PowerShell(Get-NetTCPConnection -LocalPort 8001 -ErrorAction SilentlyContinue | Where-Object State -eq Listen | Select-Object LocalPort,OwningProcess,@{n='Proc';e={\\(Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue\\).ProcessName}} | Format-Table -AutoSize; Write-Host \"\\(empty above means :8001 is free\\)\")",
+      "PowerShell($env:PYTHONPATH = \"c:/Users/User/nelinho\"; & \"c:/Users/User/nelinho/.venv/Scripts/python.exe\" -m uvicorn src.main:app --host 0.0.0.0 --port 8001)",
+      "Bash(curl -s -o /dev/null -w \"health: %{http_code}\\\\n\" http://127.0.0.1:8001/health)",
+      "Bash(curl -s -o /dev/null -w \"capabilities: %{http_code}\\\\n\" -H \"X-Tenant-Id: 00000000-0000-0000-0000-000000000001\" http://127.0.0.1:8001/v1/capabilities/)",
+      "Bash(curl -s -H \"X-Tenant-Id: 00000000-0000-0000-0000-000000000001\" http://127.0.0.1:8001/v1/capabilities/)",
+      "Bash(curl -s -o /dev/null -w \"backend  :8001/health     %{http_code}\\\\n\" http://127.0.0.1:8001/health)",
+      "Bash(curl -s -o /dev/null -w \"frontend :5173/           %{http_code}\\\\n\" http://localhost:5173/)",
+      "Bash(curl -s -o /dev/null -w \"postgres :5432           \" http://localhost:5432/)",
+      "Bash(pg_isready -h localhost -p 5432)",
+      "Bash(curl -s -o /dev/null -w \"ollama   :11434          %{http_code}\\\\n\" http://localhost:11434/api/tags)",
+      "Bash(git commit -m 'chore\\(claude\\): allow common dev/ops commands in settings.local *)"
     ]
   }
 }

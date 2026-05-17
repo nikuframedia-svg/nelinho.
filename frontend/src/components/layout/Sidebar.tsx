@@ -1,361 +1,281 @@
-import { NavLink } from 'react-router-dom';
-import { cn } from '../../lib/utils';
-import {
-  LayoutDashboard,
-  CalendarDays,
-  Package,
-  Users,
-  DollarSign,
-  Settings,
-  ChevronDown,
-  Sparkles,
-  Warehouse,
-  FileCheck,
-  HelpCircle,
-  Info,
-  GitBranch,
-  FlaskConical,
-  Lightbulb,
-  Inbox,
-  Database,
-  Shield,
-  Brain,
-  BookOpen,
-} from 'lucide-react';
-import { useState } from 'react';
-import { useCapabilities } from '../../providers';
+/**
+ * Sidebar — port literal de design/nelo-zip/src/shell.jsx Sidebar.
+ *
+ * 10 itens em 3 grupos:
+ *   OPERAÇÃO  → Direção · Inbox de decisões (badge) · Plano de produção · Atribuição diária (badge)
+ *   ANÁLISE   → OEE · Qualidade · Operadores · Expedição
+ *   SISTEMA   → O que aprendi · Definições
+ *
+ * Sprint Q.18.ZIP.shell.
+ */
 
-interface NavItem {
-  label: string;
-  icon: React.ReactNode;
-  path?: string;
-  children?: { label: string; path: string }[];
-  module?: string; // Optional module requirement
+import { NavLink, useLocation } from 'react-router-dom';
+import {
+  Building2 as Building,
+  Inbox,
+  Calendar,
+  Activity,
+  TrendingUp,
+  Shield,
+  Users,
+  Truck,
+  Brain,
+  Settings,
+  FileCode,
+} from 'lucide-react';
+import type { ReactNode } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { cn } from '../../lib/utils';
+import { authApi, decisionsApi, type CurrentUser } from '../../lib/api';
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 0 || parts[0] === '') return '—';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-const navItems: NavItem[] = [
-  {
-    label: 'Dashboard',
-    icon: <LayoutDashboard size={20} />,
-    path: '/',
-  },
-  {
-    label: 'Ops Inbox',
-    icon: <Inbox size={20} />,
-    path: '/inbox',
-  },
-  {
-    label: 'CORE',
-    icon: <Package size={20} />,
-    module: 'core',
-    children: [
-      { label: 'Products', path: '/core/products' },
-      { label: 'Machines', path: '/core/machines' },
-      { label: 'Employees', path: '/core/employees' },
-      { label: 'Operations', path: '/core/operations' },
-      { label: 'BOM', path: '/core/bom' },
-      { label: 'Customers', path: '/core/customers' },
-      { label: 'Suppliers', path: '/core/suppliers' },
-      { label: 'Rates', path: '/core/rates' },
-      { label: 'Tenants', path: '/core/tenants' },
-    ],
-  },
-  {
-    label: 'Planning',
-    icon: <CalendarDays size={20} />,
-    module: 'plan',
-    children: [
-      { label: 'Scheduling', path: '/plan/scheduling' },
-      { label: 'Timeline', path: '/plan/timeline' },
-      { label: 'MRP', path: '/plan/mrp' },
-      { label: 'Capacity', path: '/plan/capacity' },
-    ],
-  },
-  {
-    label: 'Profit',
-    icon: <DollarSign size={20} />,
-    module: 'profit',
-    children: [
-      { label: 'KPIs', path: '/profit/kpis' },
-      { label: 'OEE', path: '/profit/oee' },
-      { label: 'Quality', path: '/profit/quality' },
-      { label: 'COGS Analysis', path: '/profit/cogs' },
-      { label: 'Pricing', path: '/profit/pricing' },
-      { label: 'Scenarios', path: '/profit/scenarios' },
-    ],
-  },
-  {
-    label: 'HR',
-    icon: <Users size={20} />,
-    module: 'hr',
-    children: [
-      { label: 'Allocations', path: '/hr/allocations' },
-      { label: 'Payroll', path: '/hr/payroll' },
-      { label: 'Productivity', path: '/hr/productivity' },
-    ],
-  },
-  {
-    label: 'Supply',
-    icon: <Warehouse size={20} />,
-    module: 'supply',
-    children: [
-      { label: 'Inventory', path: '/supply/inventory' },
-      { label: 'Forecast', path: '/supply/forecast' },
-      { label: 'ROP', path: '/supply/rop' },
-      { label: 'ABC Analysis', path: '/supply/abc' },
-    ],
-  },
-  {
-    label: 'Decisions',
-    icon: <FileCheck size={20} />,
-    module: 'decisions',
-    path: '/decisions',
-  },
-];
+function roleLabel(role: string): string {
+  const map: Record<string, string> = {
+    manager: 'Gestor',
+    operator: 'Operador',
+    ceo: 'Direção',
+    admin: 'Administrador',
+    admin_platform: 'Administrador',
+    admin_tenant: 'Administrador',
+  };
+  return map[role.toLowerCase()] ?? role;
+}
 
-// New advanced modules
-const advancedNavItems: NavItem[] = [
-  {
-    label: 'Explainability',
-    icon: <Info size={20} />,
-    module: 'explain',
-    path: '/explain',
-  },
-  {
-    label: 'Digital Twin',
-    icon: <GitBranch size={20} />,
-    module: 'twin',
-    path: '/twin',
-  },
-  {
-    label: 'Sandbox',
-    icon: <FlaskConical size={20} />,
-    module: 'sandbox',
-    path: '/sandbox',
-  },
-  {
-    label: 'Suggestions',
-    icon: <Lightbulb size={20} />,
-    module: 'improve',
-    path: '/suggestions',
-  },
-];
-
-// Data Management (Admin)
-const dataNavItems: NavItem[] = [
-  {
-    label: 'Data Ingestion',
-    icon: <Database size={20} />,
-    path: '/admin/data-ingestion',
-  },
-  {
-    label: 'Data Quality',
-    icon: <Shield size={20} />,
-    path: '/admin/data-quality',
-  },
-  {
-    label: 'Regras Aprendidas',
-    icon: <Brain size={20} />,
-    path: '/admin/learned-rules',
-  },
-  {
-    label: 'Regras (NL→YAML)',
-    icon: <BookOpen size={20} />,
-    path: '/admin/regras',
-  },
-];
-
-const bottomNavItems: NavItem[] = [
-  {
-    label: 'Settings',
-    icon: <Settings size={20} />,
-    path: '/settings',
-  },
-];
+interface NavItem {
+  path: string;
+  label: string;
+  icon: ReactNode;
+  badge?: number;
+}
+interface NavGroup {
+  label: string;
+  items: NavItem[];
+}
 
 export function Sidebar() {
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({
-    CORE: true,
-    Planning: true,
-    Profit: true,
-    HR: true,
-    Supply: true,
+  const location = useLocation();
+
+  // Counts dinâmicos para badges Inbox + Atribuição
+  const inboxCountQuery = useQuery({
+    queryKey: ['sidebar', 'inbox-pending'],
+    queryFn: async () => {
+      try {
+        const r: any = await decisionsApi.list({ status: 'PROPOSED', page_size: 1 });
+        return r?.total ?? 0;
+      } catch {
+        return 0;
+      }
+    },
+    staleTime: 30_000,
+    retry: 0,
   });
-  
-  // Get capabilities (with fallback for when provider not available)
-  let hasModule: (module: string) => boolean;
-  try {
-    const capabilities = useCapabilities();
-    hasModule = capabilities.hasModule;
-  } catch {
-    // If CapabilitiesProvider not available, show all items
-    hasModule = () => true;
-  }
 
-  const toggleExpand = (label: string) => {
-    setExpanded((prev) => ({ ...prev, [label]: !prev[label] }));
-  };
+  const inboxBadge = inboxCountQuery.data ?? undefined;
+  // Atribuição badge — sem endpoint dedicado ainda, deixar undefined.
 
-  const renderNavItem = (item: NavItem) => {
-    // Check module requirement
-    if (item.module && !hasModule(item.module)) {
-      return null;
-    }
-    
-    if (item.path) {
+  const NAV: NavGroup[] = [
+    {
+      label: 'Operação',
+      items: [
+        { path: '/direcao', label: 'Direção', icon: <Building size={16} /> },
+        {
+          path: '/inbox',
+          label: 'Inbox de decisões',
+          icon: <Inbox size={16} />,
+          badge: inboxBadge && inboxBadge > 0 ? inboxBadge : undefined,
+        },
+        { path: '/plano-producao', label: 'Plano de produção', icon: <Calendar size={16} /> },
+        { path: '/atribuicao', label: 'Atribuição diária', icon: <Activity size={16} /> },
+      ],
+    },
+    {
+      label: 'Análise',
+      items: [
+        { path: '/oee', label: 'OEE', icon: <TrendingUp size={16} /> },
+        { path: '/qualidade', label: 'Qualidade', icon: <Shield size={16} /> },
+        { path: '/operadores', label: 'Operadores', icon: <Users size={16} /> },
+        { path: '/expedicao', label: 'Expedição', icon: <Truck size={16} /> },
+      ],
+    },
+    {
+      label: 'Sistema',
+      items: [
+        { path: '/aprendizagem', label: 'O que aprendi', icon: <Brain size={16} /> },
+        { path: '/regras', label: 'Regras Q.17 (YAML)', icon: <FileCode size={16} /> },
+        { path: '/definicoes', label: 'Definições', icon: <Settings size={16} /> },
+      ],
+    },
+  ];
+
+  const meQuery = useQuery<CurrentUser>({
+    queryKey: ['auth', 'me'],
+    queryFn: () => authApi.me(),
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+  });
+  const me = meQuery.data;
+
+  const isActive = (path: string): boolean => {
+    if (path === '/direcao') {
       return (
-        <NavLink
-          to={item.path}
-          className={({ isActive }) =>
-            cn(
-              'flex items-center gap-3 px-4 py-3 rounded-xl text-[14px] font-medium transition-all duration-200',
-              isActive
-                ? 'bg-accent-500/15 text-accent-400 border border-accent-500/30 shadow-glow-teal'
-                : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'
-            )
-          }
-        >
-          <span className="text-current opacity-80">{item.icon}</span>
-          <span>{item.label}</span>
-        </NavLink>
+        location.pathname === '/direcao' ||
+        location.pathname === '/' ||
+        location.pathname === '/painel'
       );
     }
-
-    return (
-      <>
-        <button
-          onClick={() => toggleExpand(item.label)}
-          className="w-full flex items-center justify-between px-4 py-3 rounded-xl text-[14px] font-medium text-slate-400 hover:bg-white/5 hover:text-slate-200 transition-all duration-200"
-        >
-          <div className="flex items-center gap-3">
-            <span className="opacity-80">{item.icon}</span>
-            <span>{item.label}</span>
-          </div>
-          <ChevronDown
-            size={16}
-            className={cn(
-              'opacity-50 transition-transform duration-200',
-              expanded[item.label] && 'rotate-180'
-            )}
-          />
-        </button>
-        <div className={cn(
-          "overflow-hidden transition-all duration-200",
-          expanded[item.label] ? "max-h-[400px] opacity-100" : "max-h-0 opacity-0"
-        )}>
-          {item.children && (
-            <div className="ml-10 mt-1 space-y-1">
-              {item.children.map((child) => (
-                <NavLink
-                  key={child.path}
-                  to={child.path}
-                  className={({ isActive }) =>
-                    cn(
-                      'block px-4 py-2.5 rounded-lg text-[13px] transition-all duration-200',
-                      isActive
-                        ? 'text-accent-400 font-semibold bg-accent-500/10'
-                        : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'
-                    )
-                  }
-                >
-                  {child.label}
-                </NavLink>
-              ))}
-            </div>
-          )}
-        </div>
-      </>
-    );
+    return location.pathname === path || location.pathname.startsWith(path + '/');
   };
 
-  // Filter nav items based on capabilities
-  const visibleNavItems = navItems.filter(item => !item.module || hasModule(item.module));
-  const visibleAdvancedItems = advancedNavItems.filter(item => !item.module || hasModule(item.module));
-
   return (
-    <aside className="w-64 h-screen bg-gradient-to-b from-dark-800 to-dark-700 border-r border-white/[0.06] flex flex-col fixed left-0 top-0">
+    <aside
+      className="h-screen flex flex-col fixed left-0 top-0 bg-dark-800"
+      style={{ width: 240 }}
+    >
       {/* Logo */}
-      <div className="h-18 flex items-center px-5 py-6">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-accent-500 to-accent-600 flex items-center justify-center shadow-glow-teal">
-            <Sparkles size={20} className="text-white" />
+      <div
+        className="flex items-center gap-2.5 border-b border-bd-1"
+        style={{ padding: '18px 20px' }}
+      >
+        <div
+          className="flex items-center justify-center text-white font-bold"
+          style={{
+            width: 30,
+            height: 30,
+            background: 'var(--blue)',
+            borderRadius: 'var(--r-md)',
+            fontSize: 14,
+          }}
+        >
+          N
+        </div>
+        <div>
+          <div
+            className="text-text-dark-primary font-semibold leading-tight"
+            style={{ fontSize: 14, letterSpacing: '-0.1px' }}
+          >
+            NELO
           </div>
-          <div>
-            <span className="font-bold text-xl text-white tracking-tight">ProdPlan</span>
-            <span className="block text-[10px] text-accent-400 font-medium tracking-widest uppercase">ONE</span>
+          <div
+            className="text-text-dark-tertiary uppercase font-medium"
+            style={{ fontSize: 10, letterSpacing: '0.4px' }}
+          >
+            ProdPlan ONE
           </div>
         </div>
       </div>
 
-      {/* Navigation */}
-      <nav className="flex-1 px-3 py-4 overflow-y-auto">
-        <ul className="space-y-1">
-          {visibleNavItems.map((item) => {
-            const rendered = renderNavItem(item);
-            return rendered ? <li key={item.label}>{rendered}</li> : null;
-          })}
-        </ul>
-        
-        {/* Advanced Modules Section */}
-        {visibleAdvancedItems.length > 0 && (
-          <>
-            <div className="mt-6 mb-3 px-4">
-              <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">
-                Advanced
-              </p>
+      {/* Nav */}
+      <nav
+        className="flex-1 overflow-y-auto"
+        style={{ padding: '12px 10px' }}
+        aria-label="Navegação principal"
+      >
+        {NAV.map((group) => (
+          <div key={group.label} style={{ marginBottom: 18 }}>
+            <div
+              className="text-text-dark-tertiary uppercase font-semibold"
+              style={{
+                fontSize: 10,
+                letterSpacing: '0.6px',
+                padding: '6px 12px 8px 12px',
+              }}
+            >
+              {group.label}
             </div>
-            <ul className="space-y-1">
-              {visibleAdvancedItems.map((item) => {
-                const rendered = renderNavItem(item);
-                return rendered ? <li key={item.label}>{rendered}</li> : null;
+            <ul className="flex flex-col">
+              {group.items.map((item) => {
+                const active = isActive(item.path);
+                return (
+                  <li key={item.path}>
+                    <NavLink
+                      to={item.path}
+                      className={cn(
+                        'group flex items-center w-full relative transition-colors duration-150',
+                        active
+                          ? 'bg-dark-600 text-text-dark-primary font-medium'
+                          : 'bg-transparent text-text-dark-secondary hover:bg-dark-700 hover:text-text-dark-primary',
+                      )}
+                      style={{
+                        padding: '8px 12px',
+                        fontSize: 13,
+                        gap: 11,
+                        borderRadius: 'var(--r-md)',
+                      }}
+                    >
+                      {active ? (
+                        <span
+                          aria-hidden="true"
+                          className="absolute inset-y-1 left-0 w-1 rounded-r-full bg-blue"
+                        />
+                      ) : null}
+                      <span
+                        className={
+                          active
+                            ? 'text-text-dark-primary'
+                            : 'text-text-dark-tertiary group-hover:text-text-dark-secondary'
+                        }
+                      >
+                        {item.icon}
+                      </span>
+                      <span className="flex-1 truncate">{item.label}</span>
+                      {item.badge !== undefined && item.badge > 0 ? (
+                        <span
+                          className="text-white font-semibold tabular-nums"
+                          style={{
+                            background: 'var(--orange)',
+                            fontSize: 10,
+                            padding: '1px 6px',
+                            borderRadius: 999,
+                            minWidth: 18,
+                            textAlign: 'center',
+                          }}
+                        >
+                          {item.badge}
+                        </span>
+                      ) : null}
+                    </NavLink>
+                  </li>
+                );
               })}
             </ul>
-          </>
-        )}
-        
-        {/* Data Management Section */}
-        {dataNavItems.length > 0 && (
-          <>
-            <div className="mt-6 mb-3 px-4">
-              <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest">
-                Data
-              </p>
-            </div>
-            <ul className="space-y-1">
-              {dataNavItems.map((item) => {
-                const rendered = renderNavItem(item);
-                return rendered ? <li key={item.label}>{rendered}</li> : null;
-              })}
-            </ul>
-          </>
-        )}
+          </div>
+        ))}
       </nav>
 
-      {/* Bottom */}
-      <div className="px-3 py-4 border-t border-white/[0.06]">
-        <ul className="space-y-1">
-          {bottomNavItems.map((item) => (
-            <li key={item.label}>{renderNavItem(item)}</li>
-          ))}
-        </ul>
-        
-        {/* Help Link */}
-        <button className="w-full flex items-center gap-3 px-4 py-3 mt-2 rounded-xl text-[14px] font-medium text-slate-500 hover:bg-white/5 hover:text-slate-300 transition-all duration-200">
-          <HelpCircle size={20} className="opacity-80" />
-          <span>Help & Support</span>
-        </button>
-        
-        {/* User Profile */}
-        <div className="mt-4 pt-4 border-t border-white/[0.06]">
-          <div className="flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-white/5 transition-colors cursor-pointer">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-accent-500/30 to-accent-600/30 border border-accent-500/30 flex items-center justify-center text-sm font-bold text-accent-400">
-              MN
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-slate-200 truncate">Martim N.</p>
-              <p className="text-xs text-slate-500 truncate">Administrator</p>
-            </div>
-            <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-glow-green"></div>
+      {/* User footer */}
+      <div
+        className="flex items-center gap-2.5 border-t border-bd-1"
+        style={{ padding: '14px 16px' }}
+        title={me?.email ?? '—'}
+      >
+        <div
+          className="rounded-full grid place-items-center font-semibold border"
+          style={{
+            width: 32,
+            height: 32,
+            background: 'var(--bg-3)',
+            borderColor: 'var(--bd-2)',
+            fontSize: 12,
+            color: 'var(--fg-1)',
+          }}
+        >
+          {me ? initials(me.name) : '—'}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div
+            className="font-medium text-text-dark-primary truncate"
+            style={{ fontSize: 12 }}
+          >
+            {meQuery.isError ? '—' : me?.name ?? 'A carregar…'}
+          </div>
+          <div className="text-text-dark-tertiary" style={{ fontSize: 10 }}>
+            {me ? `${roleLabel(me.role)} · NELO` : meQuery.isError ? 'sem ligação' : '…'}
           </div>
         </div>
       </div>
