@@ -147,28 +147,33 @@ class CostService:
         if save:
             await self._save_calculation(result, product_id)
         
-        # Publish event
-        await publish_event(
-            Topics.COGS_CALCULATED,
-            COGSCalculatedEvent(
-                tenant_id=self.tenant_id,
-                payload={
-                    "order_id": order_id,
-                    "total_cogs": float(result.total_cogs),
-                    "cogs_per_unit": float(result.cogs_per_unit),
-                    "breakdown": {
-                        "material": float(result.breakdown.material.total),
-                        "labor": float(result.breakdown.labor.total),
-                        "machine": float(result.breakdown.machine.total),
-                        "setup": float(result.breakdown.setup.total),
-                        "overhead": float(result.breakdown.overhead.total),
-                        "scrap": float(result.breakdown.scrap.total),
+        # Publish event — best-effort. O cálculo do COGS já está gravado;
+        # se o broker estiver em baixo não se perde o resultado nem se
+        # devolve 500 (mesmo padrão dos publishes em _simulate/_variance).
+        try:
+            await publish_event(
+                Topics.COGS_CALCULATED,
+                COGSCalculatedEvent(
+                    tenant_id=self.tenant_id,
+                    payload={
+                        "order_id": order_id,
+                        "total_cogs": float(result.total_cogs),
+                        "cogs_per_unit": float(result.cogs_per_unit),
+                        "breakdown": {
+                            "material": float(result.breakdown.material.total),
+                            "labor": float(result.breakdown.labor.total),
+                            "machine": float(result.breakdown.machine.total),
+                            "setup": float(result.breakdown.setup.total),
+                            "overhead": float(result.breakdown.overhead.total),
+                            "scrap": float(result.breakdown.scrap.total),
+                        },
+                        "currency": result.currency,
                     },
-                    "currency": result.currency,
-                },
-            ),
-        )
-        
+                ),
+            )
+        except Exception as exc:  # pragma: no cover — best-effort
+            _logger.warning("COGS_CALCULATED publish failed: %s", exc)
+
         return result
 
     async def calculate_cogs_from_sources(
