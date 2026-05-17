@@ -11,9 +11,11 @@ import { useRef, useState, type DragEvent, type ChangeEvent } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { ThumbsUp, ThumbsDown, Send, Upload, FileText, Sparkles } from 'lucide-react';
 import { Panel, ZipToneBadge } from '../dark';
+import { getApiBase } from '../../lib/api';
 
 const TENANT = { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' };
-const BASE = 'http://127.0.0.1:8001';
+// Q.21.A — porta única via api.ts (concorda com VITE_API_URL).
+const BASE = getApiBase();
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DailyFeedbackForm

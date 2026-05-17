@@ -1,16 +1,13 @@
 /**
- * RelatoriosPage — porto do nelo (1).zip pages-2.jsx:RelatoriosPage.
+ * RelatoriosPage — 5 separadores de relatórios.
  *
- * 5 tabs do brief PROMPT_CLAUDE_CODE.md §3.8:
- *   • KPIs       — wrap KPIsPage existing
- *   • Custos     — wrap COGSPage existing
- *   • Pricing    — wrap PricingPage existing
- *   • Cenários   — wrap ScenariosPage existing
- *   • Exportar   — placeholder até endpoint /v1/reports/generate
- *                  (Q.18.ZIP.BE.3 deferred). Mostra lista de templates
- *                  PDF/Excel disponíveis com botão "Em breve".
- *
- * Sprint Q.18.ZIP.I.
+ *   • KPIs       — wrap KPIsPage
+ *   • Custos     — wrap COGSPage
+ *   • Pricing    — wrap PricingPage
+ *   • Cenários   — wrap ScenariosPage
+ *   • Exportar   — wire real ao POST /v1/reports/generate. Cada template
+ *                  gera e descarrega; os que o backend ainda não serve
+ *                  devolvem `not_implemented` (sem 5xx, estado honesto).
  */
 
 import { lazy, Suspense, useMemo, useState } from 'react';
@@ -26,6 +23,7 @@ import {
 } from 'lucide-react';
 import { PageHeader, Tabs, Panel } from '../../components/dark';
 import { SkeletonLoader } from '../../components/ui/Skeleton';
+import { getApiBase } from '../../lib/api';
 
 const KPIsPage = lazy(() =>
   import('../profit/KPIsPage').then((m) => ({ default: m.KPIsPage }))
@@ -79,7 +77,8 @@ interface ReportResponse {
 }
 
 async function generateReport(template_id: string, format: ReportFormat): Promise<ReportResponse> {
-  const resp = await fetch('http://127.0.0.1:8001/v1/reports/generate', {
+  // Q.21.A — base URL via api.ts (concorda com VITE_API_URL).
+  const resp = await fetch(`${getApiBase()}/v1/reports/generate`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

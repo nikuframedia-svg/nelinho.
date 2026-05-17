@@ -50,7 +50,7 @@ import {
   type ZipSeverity,
 } from '../../components/dark';
 import { LiveActivityFeed } from '../../components/activity/LiveActivityFeed';
-import { ceoDashboardApi, decisionsApi, dqaApi } from '../../lib/api';
+import { ceoDashboardApi, decisionsApi, dqaApi, getApiBase } from '../../lib/api';
 
 // ─── Endpoints auxiliares ───────────────────────────────────────────────────
 
@@ -65,9 +65,10 @@ interface ActiveOrder {
   transport_date: string | null;
 }
 
+// Q.21.A — base URL via api.ts (concorda com VITE_API_URL).
 async function fetchActiveOrders(): Promise<ActiveOrder[]> {
   const resp = await fetch(
-    'http://127.0.0.1:8001/v1/plan/orders/active?limit=500',
+    `${getApiBase()}/v1/plan/orders/active?limit=500`,
     { headers: { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' } },
   );
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -76,7 +77,7 @@ async function fetchActiveOrders(): Promise<ActiveOrder[]> {
 
 async function fetchProfitDashboard() {
   try {
-    const resp = await fetch('http://127.0.0.1:8001/v1/profit/dashboard', {
+    const resp = await fetch(`${getApiBase()}/v1/profit/dashboard`, {
       headers: { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' },
     });
     if (!resp.ok) return null;
@@ -89,7 +90,7 @@ async function fetchProfitDashboard() {
 async function fetchTransportBatches() {
   try {
     const resp = await fetch(
-      'http://127.0.0.1:8001/v1/plan/transport/batches?limit=20',
+      `${getApiBase()}/v1/plan/transport/batches?limit=20`,
       { headers: { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' } },
     );
     if (!resp.ok) return [];

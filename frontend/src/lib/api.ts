@@ -22,7 +22,10 @@ interface AllocationCreateRequest {
   strategy?: 'skill_first' | 'cost_first' | 'balanced';
 }
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// Q.21.A — porta única. O `.env` de dev usa 8001 e o backend arranca em 8001
+// (ver agent_docs/HANDOFF.md §4.7). O fallback aqui tem de concordar com o
+// `.env` para que `npm run dev` sem `.env` continue a falar com o backend.
+const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8001';
 
 // Retry configuration
 const MAX_RETRIES = 1; // Reduced from 3 to 1 to avoid flooding console
@@ -2910,3 +2913,21 @@ export const authApi = {
   /** Identidade actual (vem de JWT quando existir; dev usa headers X-*). */
   me: () => request<CurrentUser>('/v1/auth/me'),
 };
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Q.21.A — Helper público de fetch
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// `apiFetch` expõe o `request()` interno para que cada chamada à API passe pelo
+// mesmo circuit breaker, política de retry e headers de tenant/user. Chamadas
+// `fetch()` directas que saltam isto perdem os três. O endpoint é relativo
+// (ex: `/v1/plan/orders/active`) — a base URL vem do `VITE_API_URL`.
+//
+// `getApiBase()` devolve a base URL só para casos que precisam de um URL cru
+// (SSE/EventSource, sondas de saúde) — nunca para reconstruir um `fetch` que
+// devia ter passado pelo `apiFetch`.
+export { request as apiFetch };
+
+export function getApiBase(): string {
+  return API_BASE;
+}

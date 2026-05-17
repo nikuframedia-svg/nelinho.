@@ -40,6 +40,7 @@ import { DarkCard, DarkButton, DarkStatCard } from '../../components/dark';
 import { TrustBadge } from '../../components/capabilities/TrustGate';
 import { factoryApi } from '../../lib/factoryApi';
 import { workforceApi } from '../../lib/workforceApi';
+import { employeesApi } from '../../lib/api';
 
 // PALANTIR-LEVEL COMPONENTS
 import { ModuleErrorBoundary, ScenarioTemplatesGallery } from '../../components/palantir';
@@ -239,6 +240,26 @@ export function WorkforceDashboard() {
     queryFn: () => workforceApi.compareScenarios(['baseline', 'train-2', 'train-4', 'hire-1']),
     enabled: activeView === 'scenarios',
   });
+
+  // Q.21.D — operadores reais para o WorkforceSimulator. Substitui um
+  // array de 5 nomes hardcoded ("Maria Santos", etc.) que violava ZERO
+  // MOCKS. /v1/core/employees não devolve as fases actuais de cada
+  // operador, por isso `currentPhases` fica vazio (não se inventa).
+  const { data: employeesData } = useQuery({
+    queryKey: ['workforce', 'employees-for-simulator'],
+    queryFn: () => employeesApi.list({ limit: 200 }),
+    enabled: showSimulator,
+    retry: 0,
+  });
+  const simulatorEmployees = useMemo(
+    () =>
+      (Array.isArray(employeesData) ? employeesData : []).map((e: any) => ({
+        id: String(e.id),
+        name: e.employee_name ?? e.name ?? '—',
+        currentPhases: [] as string[],
+      })),
+    [employeesData],
+  );
 
   // Transform REAL API data to component formats
   const phaseRisks = useMemo(() => transformApiToPhaseRisks(skillsRiskData), [skillsRiskData]);
@@ -537,15 +558,15 @@ export function WorkforceDashboard() {
             />
           )}
           {activeView === 'scenarios' && (
+            // Q.21.D — `onExportPDF` removido: não há endpoint de export
+            // PDF e o callback só fazia console.log. O botão "Exportar PDF"
+            // do ScenarioComparisonMatrix só renderiza quando a prop é
+            // passada, por isso omiti-la esconde-o. `onApproveScenario`
+            // mantém-se mas sem o console.log — leva ao Twin para aprovar.
             <ScenarioComparisonMatrix
               comparison={scenarioComparison || null}
               isLoading={isLoadingScenarios}
-              onExportPDF={() => {
-                // TODO: Implement PDF export
-                console.log('Export PDF');
-              }}
-              onApproveScenario={(scenarioId) => {
-                console.log('Approve scenario:', scenarioId);
+              onApproveScenario={() => {
                 navigate('/twin');
               }}
             />
@@ -695,20 +716,14 @@ export function WorkforceDashboard() {
                   phasesAtRisk: summary.phasesAtRisk,
                 }}
                 phases={phaseRisks.map(p => ({ id: p.phaseId, name: p.phaseName, riskLevel: p.riskLevel }))}
-                employees={[
-                  { id: 'emp-1', name: 'Maria Santos', currentPhases: ['Laminagem', 'Acabamento'] },
-                  { id: 'emp-2', name: 'Pedro Ferreira', currentPhases: ['Laminagem', 'Pintura'] },
-                  { id: 'emp-3', name: 'Ana Costa', currentPhases: ['Polimento'] },
-                  { id: 'emp-4', name: 'Carlos Lima', currentPhases: ['Montagem', 'Acabamento'] },
-                  { id: 'emp-5', name: 'João Silva', currentPhases: ['Rotomoldagem'] },
-                ]}
+                employees={simulatorEmployees}
                 onSimulate={handleSimulate}
-                onSave={(result) => {
-                  console.log('Saving scenario:', result);
+                onSave={() => {
+                  // Q.21.D — guardar cenário ainda não tem endpoint; por
+                  // agora fecha o simulador (sem console.log).
                   setShowSimulator(false);
                 }}
-                onApprove={(result) => {
-                  console.log('Approving scenario:', result);
+                onApprove={() => {
                   navigate('/twin');
                 }}
                 trustIndex={trustIndex}

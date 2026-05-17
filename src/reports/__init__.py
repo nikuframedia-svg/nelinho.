@@ -1,9 +1,17 @@
-"""Reports module — Q.18.ZIP.BE.4.
+"""Reports module — Q.18.ZIP.BE.4 · completado em Q.22.D-G.
 
-Centraliza geração de relatórios on-demand. Por agora um único endpoint
-``POST /v1/reports/generate`` que recebe ``template_id`` + ``format``
-e devolve dados estruturados (CSV/JSON inline) prontos para download.
+Geração e entrega de relatórios. Endpoints:
 
-Templates suportados delegam aos services existentes (sem reimplementar
-lógica de agregação): COGS, Quality, Payroll, Inventory, Forecast.
+  * ``POST /v1/reports/generate``  — gera um relatório on-demand
+    (CSV/JSON inline) para download.
+  * ``POST /v1/reports/schedule`` / ``GET`` — agendamentos recorrentes
+    persistidos em ``reports.report_schedule`` (Q.22.D).
+  * ``POST /v1/reports/email``     — gera + entrega por SMTP, persiste
+    cada execução em ``reports.report_run`` (Q.22.F).
+  * ``POST /v1/reports/retention`` — janela de retenção GDPR + limpeza
+    dos runs expirados (Q.22.G).
+
+Templates (closed enum): producao, cliente, qualidade, payroll, cogs,
+inventario. Todos delegam aos generators / services live — sem
+reimplementar lógica de agregação, sem dados mock.
 """

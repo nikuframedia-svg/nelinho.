@@ -26,7 +26,12 @@ from src.plan.cpo.safety_net import (
 
 
 def _baseline_full():
-    """A baseline schedule with all 7 KPIs populated."""
+    """A baseline schedule with all KPIs populated.
+
+    Keys match decoder.compute_kpis output exactly — `setups` (an int
+    count) and `total_idle_hours`, not the `total_setup_time_h` /
+    `idle_operators_h` names earlier drafts of this test used.
+    """
     return {
         "num_late_orders": 2,
         "total_tardiness_hours": 8.0,
@@ -34,8 +39,8 @@ def _baseline_full():
         "makespan_hours": 100.0,
         "throughput_eur_day": 32_000.0,
         "avg_quality_risk": 0.10,
-        "total_setup_time_h": 12.0,
-        "idle_operators_h": 5.0,
+        "setups": 10,
+        "total_idle_hours": 5.0,
     }
 
 
@@ -114,29 +119,29 @@ def test_quality_risk_rise_within_10pct_passes():
 
 def test_setup_time_rise_above_15pct_blocks():
     base = _baseline_full()
-    cand = dict(base, total_setup_time_h=14.0)  # 12 × 1.167 = 14.0
+    cand = dict(base, setups=12)  # 10 × 1.2, beyond the 15% tolerance
     assert is_worse_than_baseline(cand, base) is True
     violations = _gather_violations(cand, base)
-    assert any(v[0] == "total_setup_time_h" for v in violations)
+    assert any(v[0] == "setups" for v in violations)
 
 
 def test_setup_time_rise_within_15pct_passes():
     base = _baseline_full()
-    cand = dict(base, total_setup_time_h=13.5)  # 12 × 1.125, within
+    cand = dict(base, setups=11)  # 10 × 1.1, within the 15% tolerance
     assert is_worse_than_baseline(cand, base) is False
 
 
 def test_idle_operators_rise_above_20pct_blocks():
     base = _baseline_full()
-    cand = dict(base, idle_operators_h=6.5)  # 5 × 1.3, beyond 20%
+    cand = dict(base, total_idle_hours=6.5)  # 5 × 1.3, beyond 20%
     assert is_worse_than_baseline(cand, base) is True
     violations = _gather_violations(cand, base)
-    assert any(v[0] == "idle_operators_h" for v in violations)
+    assert any(v[0] == "total_idle_hours" for v in violations)
 
 
 def test_idle_operators_rise_within_20pct_passes():
     base = _baseline_full()
-    cand = dict(base, idle_operators_h=5.9)  # +18%, within
+    cand = dict(base, total_idle_hours=5.9)  # +18%, within 20% tolerance
     assert is_worse_than_baseline(cand, base) is False
 
 

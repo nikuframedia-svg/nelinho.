@@ -273,17 +273,139 @@ GO
 
 
 /* -----------------------------------------------------------------------------
+   vw_pp1_phases — Production phases (work centres) master.
+
+   One row per phase from FASES_PRODUCAO (71 rows). The phase_id is the
+   join key every routing / operation / skill row references. K1/K2/K4
+   reference hours are class-specific *standards* — the CPO never uses
+   them for time (it mines OF_FP history). Added Q.20.A for master sync.
+   ----------------------------------------------------------------------------- */
+CREATE OR ALTER VIEW dbo.vw_pp1_phases AS
+SELECT
+    fp.FP_ID            AS phase_id,
+    fp.FP_NOME          AS phase_name,
+    fp.FP_DESCRICAO     AS phase_description,
+    fp.FP_SEQUENCIA     AS sequence,
+    fp.FP_PRODUCAO      AS is_production,
+    fp.FP_AUTOMATICA    AS is_automatic,
+    fp.FP_PODE_REPETIR  AS can_repeat,
+    fp.FP_FP_ID         AS parent_phase_id,
+    fp.FP_HORA_COEF     AS hour_coefficient,
+    fp.FP_VALOR_REF_K1  AS k1_reference_hours,
+    fp.FP_VALOR_REF_K2  AS k2_reference_hours,
+    fp.FP_VALOR_REF_K4  AS k4_reference_hours
+FROM dbo.FASES_PRODUCAO fp WITH (NOLOCK);
+GO
+
+
+/* -----------------------------------------------------------------------------
+   vw_pp1_products — Product catalogue.
+
+   One row per PRODUTO (14 016 rows): boats, components, accessories.
+   product_type_id (P_TP_ID → PRODUTO_TIPO) classifies finished vs
+   semi-finished. cost_price is € — never a coefficient. Added Q.20.A.
+   ----------------------------------------------------------------------------- */
+CREATE OR ALTER VIEW dbo.vw_pp1_products AS
+SELECT
+    p.P_ID             AS product_id,
+    p.P_NOME           AS product_name,
+    p.P_NOME_EN        AS product_name_en,
+    p.P_TP_ID          AS product_type_id,
+    p.P_ACTIVO         AS active,
+    p.P_DESCONTINUADO  AS discontinued,
+    p.P_FABRICOINTERNO AS in_house,
+    p.P_PRECOCUSTO     AS cost_price
+FROM dbo.PRODUTO p WITH (NOLOCK);
+GO
+
+
+/* -----------------------------------------------------------------------------
+   vw_pp1_entities — Entities (people, clients, suppliers, operators).
+
+   ENTIDADE is polymorphic (8 936 rows). is_internal (E_NELO) flags a
+   NELO employee — the master-data mirror filters on it to pull the ~122
+   operators. cost_per_hour (E_CUSTOHORA) is € (for COGS, never time).
+   Added Q.20.A.
+   ----------------------------------------------------------------------------- */
+CREATE OR ALTER VIEW dbo.vw_pp1_entities AS
+SELECT
+    e.E_ID            AS entity_id,
+    e.E_NOME          AS name,
+    e.E_ACTIVO        AS active,
+    e.E_NELO          AS is_internal,
+    e.E_TRANSPORTADOR AS is_carrier,
+    e.E_CHEFE         AS is_supervisor,
+    e.E_CUSTOHORA     AS cost_per_hour,
+    e.E_NIVEL         AS level,
+    e.E_PRODUTIVIDADE AS productivity,
+    e.E_ENT_ID        AS entity_type_id,
+    et.ENT_NOME       AS entity_type_name,
+    e.E_DATAENTRADA   AS entry_date,
+    e.E_PAIS          AS country,
+    e.E_EMAIL         AS email
+FROM        dbo.ENTIDADE      e   WITH (NOLOCK)
+LEFT JOIN   dbo.ENTIDADE_TIPO et  WITH (NOLOCK) ON et.ENT_ID = e.E_ENT_ID;
+GO
+
+
+/* -----------------------------------------------------------------------------
+   vw_pp1_entity_phases — Operator × phase competence matrix (skill matrix).
+
+   One row per ENTIDADE_FASE (1 269 rows). qualified (EFP_QUALIFICADO) and
+   proficiency (EFP_PRODUTIVIDADE) drive the Spelke skill-match axiom.
+   Added Q.20.A for the skills mirror.
+   ----------------------------------------------------------------------------- */
+CREATE OR ALTER VIEW dbo.vw_pp1_entity_phases AS
+SELECT
+    ef.EFP_ID            AS entity_phase_id,
+    ef.EFP_E_ID          AS entity_id,
+    ef.EFP_FP_ID         AS phase_id,
+    ef.EFP_PRODUTIVIDADE AS proficiency,
+    ef.EFP_CHEFE         AS is_supervisor,
+    ef.EFP_QUALIFICADO   AS qualified,
+    ef.EFP_DATAINICIO    AS start_date,
+    ef.EFP_DATAFIM       AS end_date
+FROM dbo.ENTIDADE_FASE ef WITH (NOLOCK);
+GO
+
+
+/* -----------------------------------------------------------------------------
+   vw_pp1_molds — ERP-side mold catalogue.
+
+   MOLDES has only 91 rows (the full ~510 production molds live in an
+   Excel workbook). This view is for reconciliation against plan.mold and
+   pocket-count enrichment. MOLDES carries no maintenance columns.
+   Added Q.20.A.
+   ----------------------------------------------------------------------------- */
+CREATE OR ALTER VIEW dbo.vw_pp1_molds AS
+SELECT
+    mld.MLD_ID       AS mold_id,
+    mld.MLD_NOME     AS mold_name,
+    mld.MLD_MLDTP_ID AS mold_type_id,
+    mld.MLD_UTILIZ   AS usage_count,
+    mld.MLD_DATA     AS acquired_at
+FROM dbo.MOLDES mld WITH (NOLOCK);
+GO
+
+
+/* -----------------------------------------------------------------------------
    Grants (template — Nelo IT to review).
 
    Suggested role: a dedicated SQL Server login `pp1_reader` that only has
    SELECT on these views (no direct access to base tables). Once the role
    exists:
 
-      GRANT SELECT ON dbo.vw_pp1_orders     TO pp1_reader;
-      GRANT SELECT ON dbo.vw_pp1_routings   TO pp1_reader;
-      GRANT SELECT ON dbo.vw_pp1_bom        TO pp1_reader;
-      GRANT SELECT ON dbo.vw_pp1_schedule   TO pp1_reader;
-      GRANT SELECT ON dbo.vw_pp1_movements  TO pp1_reader;
+      GRANT SELECT ON dbo.vw_pp1_orders        TO pp1_reader;
+      GRANT SELECT ON dbo.vw_pp1_routings      TO pp1_reader;
+      GRANT SELECT ON dbo.vw_pp1_bom           TO pp1_reader;
+      GRANT SELECT ON dbo.vw_pp1_schedule      TO pp1_reader;
+      GRANT SELECT ON dbo.vw_pp1_operations    TO pp1_reader;
+      GRANT SELECT ON dbo.vw_pp1_movements     TO pp1_reader;
+      GRANT SELECT ON dbo.vw_pp1_phases        TO pp1_reader;
+      GRANT SELECT ON dbo.vw_pp1_products      TO pp1_reader;
+      GRANT SELECT ON dbo.vw_pp1_entities      TO pp1_reader;
+      GRANT SELECT ON dbo.vw_pp1_entity_phases TO pp1_reader;
+      GRANT SELECT ON dbo.vw_pp1_molds         TO pp1_reader;
 
    Current `nikufra` already has read on base tables; views work without
    additional grants for that login.

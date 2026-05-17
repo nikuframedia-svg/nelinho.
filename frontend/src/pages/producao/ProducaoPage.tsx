@@ -1,88 +1,65 @@
 /**
- * ProducaoPage — port literal de design/nelo-zip/src/page-scheduling.jsx.
+ * ProducaoPage — onde está cada barco na fábrica.
  *
- * Estrutura idêntica ao zip:
- *   • Header: "Plano de produção" + "Onde está cada barco · {N} barcos
- *     activos · 41 fases" + SegmentedControl (Por fase / Gantt / Calendário)
- *     + botão "Re-optimizar".
- *   • Por fase (PhasesView): legenda "Como ler" + grid 11 colunas
- *     (PHASES.slice(0,11)) com header F{id} + load{count}/{cap} +
- *     barra load% + cura badge + body com BoatCardZip ou "vazio".
- *   • Gantt (GanttView): tabela sticky cols Barco/Cliente + 10 days
- *     (12 Qua → 22 Sex) com bars phases coloridas.
- *   • Calendário (CalendarView): placeholder.
+ * Estrutura:
+ *   • Header: "Plano de produção" + contagem real de barcos/fases +
+ *     SegmentedControl (Por fase / Gantt / Calendário / CPO). O botão
+ *     "Re-optimizar" abre a tab CPO (onde a re-optimização real vive).
+ *   • Por fase (PhasesView): colunas = fases reais presentes nas ordens,
+ *     cada uma com a contagem de barcos + BoatCardZip.
+ *   • Gantt (GanttView): tabela de barcos activos por expedição (barco ·
+ *     fase actual · expedição · estado).
+ *   • Calendário (CalendarView): placeholder honesto.
  *
- * Wire ao backend: /v1/plan/orders/active (Q.18.ZIP.BE.1) — boats reais
- * com phase mapping para colunas. Sem mocks frontend.
+ * Wire ao backend: /v1/plan/orders/active — barcos reais. Sem mocks.
  *
- * Sprint Q.18.ZIP.PROD (refactor profundo big-bang).
+ * Q.21.C — removidos PHASES/HULL_CLIENT/GANTT_DAYS hardcoded (dados de
+ * demo do zip). Tudo derivado das ordens reais; sem capacidade nem
+ * timeline fabricadas.
  */
 
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Calendar, Clock, Sparkles, RefreshCw } from 'lucide-react';
+import { Calendar, Sparkles, RefreshCw } from 'lucide-react';
 import {
   PageHeader,
   SegmentedControl,
   Panel,
   ZipLegend,
   BoatCardZip,
+  EmptyState,
+  ZipStatusBadge,
   type ZipBoat,
   type ZipBoatStatus,
 } from '../../components/dark';
 import { CPODashboard } from '../../components/cpo/CPOPanels';
+import { getApiBase } from '../../lib/api';
 
-// ─── PHASES canónicas (matching data.jsx PHASES, slice 0,11) ────────────────
+// ─── Fases derivadas das ordens reais ───────────────────────────────────────
+//
+// Q.21.C — a lista `PHASES` estava hardcoded com 11 fases (a fábrica tem 41)
+// e `cap`/`cure` inventados. Não há endpoint que sirva o catálogo de fases
+// com capacidade, por isso derivamos as colunas das fases que realmente
+// aparecem nas ordens (`order.phase`). Sem capacidade fabricada: mostramos a
+// contagem real de barcos por fase, não uma barra load/cap sobre um
+// denominador inventado.
 
-interface PhaseDef {
-  id: number;
-  name: string;
-  short: string;
-  cap: number;
-  cure: number; // hours
+interface PhaseColumn {
+  name: string; // nome da fase tal como vem do backend
 }
 
-const PHASES: PhaseDef[] = [
-  { id: 1, name: 'Prep. Molde', short: 'Prep.', cap: 4, cure: 0 },
-  { id: 2, name: 'Pintura gelcoat', short: 'Gelcoat', cap: 6, cure: 0 },
-  { id: 3, name: 'Laminagem', short: 'Laminagem', cap: 16, cure: 0 },
-  { id: 4, name: 'Cura', short: 'Cura', cap: 20, cure: 15 },
-  { id: 5, name: 'Desmolde', short: 'Desmolde', cap: 6, cure: 0 },
-  { id: 6, name: 'Corte', short: 'Corte', cap: 8, cure: 0 },
-  { id: 7, name: 'Colagem Peças', short: 'Colagem', cap: 10, cure: 0 },
-  { id: 8, name: 'Pintura Acabam.', short: 'Pint. Ac.', cap: 12, cure: 0 },
-  { id: 9, name: 'Lixagem água', short: 'Lixagem', cap: 25, cure: 0 },
-  { id: 10, name: 'Montagem', short: 'Montagem', cap: 8, cure: 0 },
-  { id: 11, name: 'CQ Final', short: 'CQ', cap: 4, cure: 0 },
-];
-
-// Mapping cliente_code → flag emoji (matching data.jsx CLIENTS)
-const CLIENT_FLAGS: Record<string, { code: string; flag: string; name: string }> = {
-  FR: { code: 'FR', flag: '🇫🇷', name: 'Federação Francesa' },
-  DE: { code: 'DE', flag: '🇩🇪', name: 'Cliente Privado DE' },
-  PT: { code: 'PT', flag: '🇵🇹', name: 'Federação Portuguesa' },
-  IT: { code: 'IT', flag: '🇮🇹', name: 'Federação Italiana' },
-  SE: { code: 'SE', flag: '🇸🇪', name: 'Equipa Sueca' },
-  NO: { code: 'NO', flag: '🇳🇴', name: 'Clube Noruega' },
-  AT: { code: 'AT', flag: '🇦🇹', name: 'Federação Áustria' },
-};
-
-// Heurística: mapear hull # ao cliente. Match data.jsx BOATS.
-// 4271 4273 (FR), 4272 4274 4275 6001 6002 6003 (PT), 5103 5105 (DE), 5104 (IT), 6004 (SE).
-const HULL_CLIENT: Record<number, string> = {
-  4271: 'FR',
-  4272: 'PT',
-  4273: 'FR',
-  4274: 'PT',
-  4275: 'PT',
-  5103: 'DE',
-  5104: 'IT',
-  5105: 'DE',
-  6001: 'PT',
-  6002: 'PT',
-  6003: 'NO',
-  6004: 'SE',
-};
+/** Fases distintas presentes nas ordens, pela ordem de primeira aparição. */
+function derivePhaseColumns(orders: ActiveOrder[]): PhaseColumn[] {
+  const seen = new Set<string>();
+  const cols: PhaseColumn[] = [];
+  for (const o of orders) {
+    const name = (o.phase ?? '').trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    cols.push({ name });
+  }
+  return cols;
+}
 
 // ─── Endpoint backend ───────────────────────────────────────────────────────
 
@@ -98,8 +75,9 @@ interface ActiveOrder {
 }
 
 async function fetchActiveOrders(): Promise<ActiveOrder[]> {
+  // Q.21.A — base URL via api.ts (concorda com VITE_API_URL).
   const resp = await fetch(
-    'http://127.0.0.1:8001/v1/plan/orders/active?limit=500',
+    `${getApiBase()}/v1/plan/orders/active?limit=500`,
     { headers: { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' } },
   );
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -107,12 +85,14 @@ async function fetchActiveOrders(): Promise<ActiveOrder[]> {
 }
 
 // ─── Map ActiveOrder → ZipBoat ──────────────────────────────────────────────
+//
+// Q.21.C — sem `HULL_CLIENT` (mapa heurístico hull→cliente que era dados de
+// demo). O endpoint /v1/plan/orders/active não devolve cliente, por isso o
+// cartão não mostra bandeira — `client_*` ficam undefined e o BoatCardZip
+// lida com isso. A fase vem directa da ordem.
 
-function toZipBoat(o: ActiveOrder, phaseId: number, status: ZipBoatStatus): ZipBoat {
+function toZipBoat(o: ActiveOrder, status: ZipBoatStatus): ZipBoat {
   const hull = parseInt(o.hull ?? '0', 10) || 0;
-  const clientCode = HULL_CLIENT[hull];
-  const client = clientCode ? CLIENT_FLAGS[clientCode] : null;
-  const phase = PHASES.find((p) => p.id === phaseId);
   // dx (days to ship) — derive da transport_date
   let dx: number | undefined;
   if (o.transport_date) {
@@ -125,10 +105,8 @@ function toZipBoat(o: ActiveOrder, phaseId: number, status: ZipBoatStatus): ZipB
     id: hull,
     short: o.product_type || '—',
     model: o.product_name,
-    client_code: client?.code,
-    client_flag: client?.flag,
-    phase_short: phase?.short,
-    phase_long: phase?.name,
+    phase_short: o.phase ?? undefined,
+    phase_long: o.phase ?? undefined,
     status,
     workers: [],
     dx,
@@ -164,14 +142,15 @@ export default function ProducaoPage() {
 
   const orders = ordersQuery.data ?? [];
 
-  // Group orders por phase id (1-11). Match phase_name → phase id.
-  const ordersByPhase: Map<number, ZipBoat[]> = useMemo(() => {
-    const m = new Map<number, ZipBoat[]>();
+  // Q.21.C — colunas = fases reais presentes nas ordens (não 11 hardcoded).
+  const phaseColumns = useMemo(() => derivePhaseColumns(orders), [orders]);
+
+  // Agrupa barcos pela fase (string) tal como vem do backend.
+  const ordersByPhase: Map<string, ZipBoat[]> = useMemo(() => {
+    const m = new Map<string, ZipBoat[]>();
     for (const o of orders) {
-      const phase = PHASES.find(
-        (p) => p.name.toLowerCase() === (o.phase ?? '').toLowerCase(),
-      );
-      if (!phase) continue;
+      const phaseName = (o.phase ?? '').trim();
+      if (!phaseName) continue;
       const dx = o.transport_date
         ? Math.max(
             0,
@@ -183,9 +162,9 @@ export default function ProducaoPage() {
           )
         : undefined;
       const status = deriveStatus(dx, o.phase);
-      const zb = toZipBoat(o, phase.id, status);
-      if (!m.has(phase.id)) m.set(phase.id, []);
-      m.get(phase.id)!.push(zb);
+      const zb = toZipBoat(o, status);
+      if (!m.has(phaseName)) m.set(phaseName, []);
+      m.get(phaseName)!.push(zb);
     }
     return m;
   }, [orders]);
@@ -194,7 +173,7 @@ export default function ProducaoPage() {
     <div>
       <PageHeader
         title="Plano de produção"
-        subtitle={`Onde está cada barco · ${orders.length} barcos activos · 41 fases`}
+        subtitle={`Onde está cada barco · ${orders.length} barcos activos · ${phaseColumns.length} fases activas`}
         helpId="plano-producao"
         actions={
           <>
@@ -218,6 +197,9 @@ export default function ProducaoPage() {
               <RefreshCw size={13} />
               Atualizar
             </button>
+            {/* Q.21.C — a re-optimização real (POST /v1/plan/cpo/schedule)
+                vive no CPOReoptimizerCard da tab CPO. Este botão levava só
+                a um alert(); agora abre essa tab em vez de mentir. */}
             <button
               type="button"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-white text-xs font-medium transition-colors"
@@ -225,7 +207,7 @@ export default function ProducaoPage() {
                 background: 'var(--blue)',
                 border: '1px solid var(--blue)',
               }}
-              onClick={() => alert('Re-optimizar — wire ao CPO scheduler em sub-sprint')}
+              onClick={() => setView('cpo')}
             >
               <Sparkles size={13} />
               Re-optimizar
@@ -237,6 +219,7 @@ export default function ProducaoPage() {
       <div className="px-6 py-4">
         {view === 'phases' && (
           <PhasesView
+            phaseColumns={phaseColumns}
             ordersByPhase={ordersByPhase}
             isLoading={ordersQuery.isLoading}
             isError={ordersQuery.isError}
@@ -253,11 +236,13 @@ export default function ProducaoPage() {
 // ─── PhasesView (port literal de page-scheduling.jsx PhasesView) ────────────
 
 function PhasesView({
+  phaseColumns,
   ordersByPhase,
   isLoading,
   isError,
 }: {
-  ordersByPhase: Map<number, ZipBoat[]>;
+  phaseColumns: PhaseColumn[];
+  ordersByPhase: Map<string, ZipBoat[]>;
   isLoading: boolean;
   isError: boolean;
 }) {
@@ -275,13 +260,22 @@ function PhasesView({
       </div>
     );
   }
+  if (phaseColumns.length === 0) {
+    return (
+      <EmptyState
+        title="Sem barcos em produção"
+        hint="O endpoint /v1/plan/orders/active não devolveu ordens com fase atribuída. Verifica se a sincronização do ERP correu."
+        size="md"
+      />
+    );
+  }
 
   return (
     <>
       <div style={{ marginBottom: 16 }}>
         <ZipLegend
           hint="Como ler:"
-          trailing="Cartões = barcos. Arraste entre fases para mover."
+          trailing="Cartões = barcos. Cada coluna é uma fase activa."
           items={[
             { color: 'green', label: 'No prazo' },
             { color: 'yellow', label: 'Em risco' },
@@ -294,20 +288,17 @@ function PhasesView({
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: `repeat(${PHASES.length}, minmax(140px, 1fr))`,
+          gridTemplateColumns: `repeat(${phaseColumns.length}, minmax(140px, 1fr))`,
           gap: 12,
           overflowX: 'auto',
           paddingBottom: 8,
         }}
       >
-        {PHASES.map((p) => {
-          const boats = ordersByPhase.get(p.id) ?? [];
-          const load = (boats.length / p.cap) * 100;
-          const loadColor: 'red' | 'yellow' | 'green' =
-            load > 90 ? 'red' : load > 70 ? 'yellow' : 'green';
+        {phaseColumns.map((p) => {
+          const boats = ordersByPhase.get(p.name) ?? [];
           return (
             <div
-              key={p.id}
+              key={p.name}
               style={{
                 background: 'var(--bg-1)',
                 border: '1px solid var(--bd-1)',
@@ -317,7 +308,9 @@ function PhasesView({
                 flexDirection: 'column',
               }}
             >
-              {/* Header */}
+              {/* Header — Q.21.C: contagem real de barcos. Sem barra
+                  load/cap (a capacidade por fase não é exposta por nenhum
+                  endpoint e não se inventa um denominador). */}
               <div
                 style={{
                   padding: '10px 12px',
@@ -331,68 +324,26 @@ function PhasesView({
                     alignItems: 'baseline',
                   }}
                 >
-                  <span
+                  <div
                     style={{
-                      fontSize: 11,
-                      color: 'var(--fg-3)',
-                      fontWeight: 500,
+                      fontSize: 12,
+                      fontWeight: 600,
+                      color: 'var(--fg-0)',
                     }}
                   >
-                    F{p.id}
-                  </span>
+                    {p.name}
+                  </div>
                   <span
                     className="tabular-nums"
                     style={{
                       fontSize: 11,
-                      color: `var(--${loadColor})`,
+                      color: 'var(--fg-2)',
                       fontWeight: 600,
                     }}
                   >
-                    {boats.length}/{p.cap}
+                    {boats.length} barco{boats.length !== 1 ? 's' : ''}
                   </span>
                 </div>
-                <div
-                  style={{
-                    fontSize: 12,
-                    fontWeight: 600,
-                    color: 'var(--fg-0)',
-                    marginTop: 3,
-                  }}
-                >
-                  {p.name}
-                </div>
-                <div
-                  style={{
-                    height: 3,
-                    background: 'var(--bd-1)',
-                    borderRadius: 2,
-                    marginTop: 6,
-                    overflow: 'hidden',
-                  }}
-                >
-                  <div
-                    style={{
-                      width: `${Math.min(load, 100)}%`,
-                      height: '100%',
-                      background: `var(--${loadColor})`,
-                      transition: 'width 0.3s ease',
-                    }}
-                  />
-                </div>
-                {p.cure > 0 && (
-                  <div
-                    style={{
-                      fontSize: 10,
-                      color: 'var(--fg-3)',
-                      marginTop: 4,
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 4,
-                    }}
-                  >
-                    <Clock size={10} /> Cura {p.cure}h
-                  </div>
-                )}
               </div>
 
               {/* Body */}
@@ -434,109 +385,49 @@ function PhasesView({
 
 // ─── GanttView (port literal page-scheduling.jsx GanttView) ─────────────────
 
-const GANTT_DAYS = [
-  '12 Qua', '13 Qui', '14 Sex', '15 Sáb', '16 Dom',
-  '18 Seg', '19 Ter', '20 Qua', '21 Qui', '22 Sex',
-];
+// Q.21.C — o GanttView original tinha datas fixas (`GANTT_DAYS`) e barras
+// posicionadas por `hull % 4` / `hull % 5` — um Gantt decorativo fabricado.
+// O endpoint /v1/plan/orders/active não devolve início/fim de fase por dia,
+// por isso mostramos uma tabela só com dados reais (barco · fase actual ·
+// expedição · estado), em vez de inventar uma timeline.
 
 function GanttView({ orders }: { orders: ActiveOrder[] }) {
   if (orders.length === 0) {
     return (
-      <div className="px-4 py-12 text-center text-xs text-text-dark-tertiary">
-        Sem barcos para mostrar no Gantt.
-      </div>
+      <EmptyState
+        title="Sem barcos para mostrar"
+        hint="O endpoint /v1/plan/orders/active não devolveu ordens activas."
+        size="md"
+      />
     );
   }
 
-  const stickyCellName = {
-    position: 'sticky' as const,
-    left: 0,
-    background: 'rgba(20, 24, 30, 0.95)',
-    padding: '10px 14px',
-    borderBottom: '1px solid var(--bd-1)',
-    borderRight: '1px solid var(--bd-1)',
-    minWidth: 160,
-    zIndex: 1,
-  };
-  const stickyCellClient = {
-    position: 'sticky' as const,
-    left: 160,
-    background: 'rgba(20, 24, 30, 0.95)',
-    padding: '10px 14px',
-    borderBottom: '1px solid var(--bd-1)',
-    borderRight: '1px solid var(--bd-1)',
-    minWidth: 80,
-    fontSize: 12,
-    color: 'var(--fg-1)',
-    zIndex: 1,
-  };
-  const headSticky = (left: number) => ({
-    position: 'sticky' as const,
-    left,
-    background: 'var(--bg-2)',
-    padding: '10px 14px',
-    textAlign: 'left' as const,
-    borderBottom: '1px solid var(--bd-1)',
-    borderRight: '1px solid var(--bd-1)',
-    fontSize: 11,
-    color: 'var(--fg-2)',
-    fontWeight: 600,
-    textTransform: 'uppercase' as const,
-    letterSpacing: 0.4,
-    zIndex: 2,
+  const sorted = [...orders].sort((a, b) => {
+    const ta = a.transport_date ? new Date(a.transport_date).getTime() : Infinity;
+    const tb = b.transport_date ? new Date(b.transport_date).getTime() : Infinity;
+    return ta - tb;
   });
 
   return (
-    <div
-      style={{
-        background: 'var(--bg-1)',
-        border: '1px solid var(--bd-1)',
-        borderRadius: 8,
-        overflow: 'hidden',
-      }}
+    <Panel
+      title="Barcos activos por expedição"
+      badge={`${orders.length} barcos`}
+      flush
     >
-      <div style={{ overflowX: 'auto' }}>
-        <table
-          style={{
-            width: '100%',
-            borderCollapse: 'separate',
-            borderSpacing: 0,
-            fontSize: 12,
-          }}
-        >
-          <thead>
-            <tr style={{ background: 'var(--bg-2)' }}>
-              <th style={{ ...headSticky(0), minWidth: 160 }}>Barco</th>
-              <th style={{ ...headSticky(160), minWidth: 80 }}>Cliente</th>
-              {GANTT_DAYS.map((d) => (
-                <th
-                  key={d}
-                  style={{
-                    padding: '10px 8px',
-                    textAlign: 'center',
-                    borderBottom: '1px solid var(--bd-1)',
-                    fontSize: 11,
-                    color: 'var(--fg-2)',
-                    fontWeight: 500,
-                    minWidth: 80,
-                  }}
-                >
-                  {d}
-                </th>
-              ))}
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead className="border-b border-white/[0.06]">
+            <tr className="text-left text-[10px] uppercase tracking-wider text-text-dark-tertiary">
+              <th className="px-3 py-2">Barco</th>
+              <th className="px-3 py-2">Modelo</th>
+              <th className="px-3 py-2">Fase actual</th>
+              <th className="px-3 py-2">Expedição</th>
+              <th className="px-3 py-2">Estado</th>
             </tr>
           </thead>
           <tbody>
-            {orders.map((o, idx) => {
+            {sorted.map((o, idx) => {
               const hull = parseInt(o.hull ?? '0', 10) || 0;
-              const clientCode = HULL_CLIENT[hull];
-              const client = clientCode ? CLIENT_FLAGS[clientCode] : null;
-              const phase = PHASES.find(
-                (p) => p.name.toLowerCase() === (o.phase ?? '').toLowerCase(),
-              );
-              // Heurística determinística para spread visual: hash do hull.
-              const start = hull % 4;
-              const len = 4 + (hull % 5);
               const dx = o.transport_date
                 ? Math.max(
                     0,
@@ -548,67 +439,36 @@ function GanttView({ orders }: { orders: ActiveOrder[] }) {
                   )
                 : undefined;
               const status = deriveStatus(dx, o.phase);
-              const tone = {
-                on_time: 'green',
-                at_risk: 'yellow',
-                late: 'red',
-                curing: 'gray',
-                completed: 'blue',
-              }[status];
-
               return (
-                <tr key={o.id ?? idx} style={{ background: 'var(--bg-2)' }}>
-                  <td style={stickyCellName}>
-                    <div style={{ fontWeight: 600, color: 'var(--fg-0)' }}>
-                      {o.product_type} #{hull || '—'}
-                    </div>
-                    <div style={{ fontSize: 11, color: 'var(--fg-3)' }}>
-                      {o.product_name}
-                    </div>
+                <tr
+                  key={o.id ?? idx}
+                  className="border-b border-white/[0.04] hover:bg-white/[0.02]"
+                >
+                  <td className="px-3 py-2 font-medium text-text-dark-primary">
+                    {o.product_type} #{hull || '—'}
                   </td>
-                  <td style={stickyCellClient}>
-                    {client ? `${client.flag} ${client.code}` : '—'}
+                  <td className="px-3 py-2 text-text-dark-secondary">
+                    {o.product_name}
                   </td>
-                  {GANTT_DAYS.map((d, i) => (
-                    <td
-                      key={d}
-                      style={{
-                        borderBottom: '1px solid var(--bd-1)',
-                        borderRight: '1px solid var(--bg-2)',
-                        padding: 4,
-                        height: 36,
-                        position: 'relative',
-                      }}
-                    >
-                      {i === start && (
-                        <div
-                          style={{
-                            height: 22,
-                            width: `calc(${len * 100}% + ${(len - 1) * 1}px)`,
-                            background: `var(--${tone}-bg)`,
-                            border: `1px solid var(--${tone}-bd)`,
-                            borderLeft: `3px solid var(--${tone})`,
-                            borderRadius: 4,
-                            padding: '2px 6px',
-                            fontSize: 10,
-                            color: `var(--${tone})`,
-                            display: 'flex',
-                            alignItems: 'center',
-                            fontWeight: 500,
-                          }}
-                        >
-                          {phase?.short ?? '—'}
-                        </div>
-                      )}
-                    </td>
-                  ))}
+                  <td className="px-3 py-2 text-text-dark-secondary">
+                    {o.phase ?? '—'}
+                  </td>
+                  <td className="px-3 py-2 tabular-nums text-text-dark-secondary">
+                    {o.transport_date
+                      ? `${o.transport_date.slice(8, 10)}/${o.transport_date.slice(5, 7)}`
+                      : '—'}
+                    {dx !== undefined ? ` · D−${dx}` : ''}
+                  </td>
+                  <td className="px-3 py-2">
+                    <ZipStatusBadge status={status} size="sm" />
+                  </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
       </div>
-    </div>
+    </Panel>
   );
 }
 

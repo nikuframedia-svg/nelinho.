@@ -24,7 +24,7 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { workforceEmployeesApi } from '../../lib/api';
+import { workforceEmployeesApi, getApiBase } from '../../lib/api';
 import { EmployeeFormModal } from '../../components/workforce/EmployeeFormModal';
 import { EmployeeDetailDrawer } from '../../components/workforce/EmployeeDetailDrawer';
 import {
@@ -36,7 +36,6 @@ import {
   GraduationCap,
   History,
   RefreshCw,
-  Sparkles,
   Plus,
   ChevronRight,
   GripVertical,
@@ -118,9 +117,10 @@ const HULL_CLIENT: Record<number, string> = {
 
 // ─── Endpoints ──────────────────────────────────────────────────────────────
 
+// Q.21.A — base URL via api.ts (concorda com VITE_API_URL).
 async function fetchEmployees(): Promise<Employee[]> {
   const resp = await fetch(
-    'http://127.0.0.1:8001/v1/core/employees?limit=200',
+    `${getApiBase()}/v1/core/employees?limit=200`,
     { headers: { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' } },
   );
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -130,7 +130,7 @@ async function fetchEmployees(): Promise<Employee[]> {
 async function fetchEmployeeQualityScore(id: string): Promise<{ score: number; defect_rate: number; operations: number } | null> {
   try {
     const resp = await fetch(
-      `http://127.0.0.1:8001/v1/workforce/employees/${id}/quality-score`,
+      `${getApiBase()}/v1/workforce/employees/${id}/quality-score`,
       { headers: { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' } },
     );
     if (!resp.ok) return null;
@@ -142,7 +142,7 @@ async function fetchEmployeeQualityScore(id: string): Promise<{ score: number; d
 
 async function fetchActiveOrders(): Promise<ActiveOrder[]> {
   const resp = await fetch(
-    'http://127.0.0.1:8001/v1/plan/orders/active?limit=500',
+    `${getApiBase()}/v1/plan/orders/active?limit=500`,
     { headers: { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' } },
   );
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -270,25 +270,18 @@ export default function EquipaPage() {
               </button>
             ) : null}
             {activeTab === 'alocacoes' ? (
-              <>
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-transparent text-text-dark-secondary hover:bg-white/5 hover:text-text-dark-primary border border-white/[0.08] text-xs font-medium transition-colors"
-                  onClick={() => window.print()}
-                >
-                  <Printer size={13} />
-                  Imprimir folha
-                </button>
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-white text-xs font-medium transition-colors"
-                  style={{ background: 'var(--blue)', border: '1px solid var(--blue)' }}
-                  onClick={() => alert('Sugerir atribuição — wire ao CPO em sub-sprint')}
-                >
-                  <Sparkles size={13} />
-                  Sugerir atribuição
-                </button>
-              </>
+              // Q.21.D — "Sugerir atribuição" removido: fazia só um alert()
+              // e não há endpoint de sugestão de atribuição de operadores
+              // (o CPO completo é POST /v1/plan/cpo/schedule, outra coisa).
+              // "Imprimir folha" mantém-se — window.print() é uma acção real.
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-transparent text-text-dark-secondary hover:bg-white/5 hover:text-text-dark-primary border border-white/[0.08] text-xs font-medium transition-colors"
+                onClick={() => window.print()}
+              >
+                <Printer size={13} />
+                Imprimir folha
+              </button>
             ) : null}
             <button
               type="button"

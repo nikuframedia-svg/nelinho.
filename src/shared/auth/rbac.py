@@ -219,6 +219,25 @@ ROUTE_PREFIX_REQUIREMENTS: "OrderedDict[str, _RoutePolicy]" = OrderedDict([
 
     # ── Copilot ───────────────────────────────────────────────────────
     ("/v1/copilot",                 ((), [Permission.SCHEDULE_READ])),
+
+    # ── Sprint Q.18.A.3 — close fall-through gaps ─────────────────────
+    # Each prefix here used to fall through the middleware (no entry =
+    # no enforcement). Picked permissions match the dominant verb of the
+    # router: SCENARIO_WRITE for twin/sandbox (both create+publish what-if
+    # scenarios), SCHEDULE_WRITE for improve (approve/reject mutates the
+    # plan), MRP_WRITE for supply (ROP/ABC/forecast write outputs), and
+    # READ for the analyses / catalogues.
+    ("/v1/twin",                    ((), [Permission.SCENARIO_WRITE])),
+    ("/v1/sandbox",                 ((), [Permission.SCENARIO_WRITE])),
+    ("/v1/improve",                 ((), [Permission.SCHEDULE_WRITE])),
+    ("/v1/supply",                  ((), [Permission.MRP_WRITE])),
+    ("/v1/explain",                 (("GET",), [Permission.SCHEDULE_READ])),
+    ("/v1/factory-map",             (("GET",), [Permission.MASTER_DATA_READ])),
+    ("/v1/factory",                 (("GET",), [Permission.MASTER_DATA_READ])),
+    ("/v1/runbooks",                ((), [Permission.SCHEDULE_READ])),
+    ("/v1/tools",                   ((), [Permission.SCHEDULE_READ])),
+    ("/v1/ml",                      ((), [Permission.SCHEDULE_READ])),
+    ("/v1/activity",                (("GET",), [Permission.SCHEDULE_READ])),
 ])
 
 

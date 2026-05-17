@@ -33,7 +33,7 @@ import { useUmwelt } from '../../lib/umwelt';
 const ProfitDashboard = lazy(() =>
   import('../../components/profit/ProfitPanels').then((m) => ({ default: m.ProfitDashboard })),
 );
-import { ceoDashboardApi, decisionsApi } from '../../lib/api';
+import { ceoDashboardApi, decisionsApi, getApiBase } from '../../lib/api';
 
 interface ActiveOrder {
   id: string;
@@ -46,7 +46,8 @@ interface ActiveOrder {
   transport_date: string | null;
 }
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// Q.21.A — porta única via api.ts (concorda com VITE_API_URL).
+const API_BASE = getApiBase();
 const TENANT_HEADER = { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' };
 
 async function fetchActiveOrders(): Promise<ActiveOrder[]> {

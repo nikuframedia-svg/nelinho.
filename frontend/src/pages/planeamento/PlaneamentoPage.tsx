@@ -36,6 +36,7 @@ import {
   EmptyState,
 } from '../../components/dark';
 import { SkeletonLoader } from '../../components/ui/Skeleton';
+import { getApiBase } from '../../lib/api';
 
 // ─── Lazy imports for "Clássica" sub-views ────────────────────────────────
 const AllocationsPage = lazy(() =>
@@ -189,8 +190,9 @@ function MateriaisDetailed() {
     queryKey: ['planeamento', 'mrp-list'],
     queryFn: async () => {
       try {
+        // Q.21.A — base URL via api.ts (concorda com VITE_API_URL).
         const resp = await fetch(
-          'http://127.0.0.1:8001/v1/plan/mrp/runs?limit=8',
+          `${getApiBase()}/v1/plan/mrp/runs?limit=8`,
           { headers: { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' } }
         );
         if (!resp.ok) return null;

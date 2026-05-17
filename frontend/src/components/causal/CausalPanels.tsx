@@ -17,9 +17,11 @@ import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Sparkles, ChevronRight } from 'lucide-react';
 import { Panel, ZipToneBadge, EmptyState } from '../dark';
+import { getApiBase } from '../../lib/api';
 
 const TENANT = { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' };
-const BASE = 'http://127.0.0.1:8001';
+// Q.21.A — porta única via api.ts (concorda com VITE_API_URL).
+const BASE = getApiBase();
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. ErroTreePanel — POST /v1/explain/diagnostics/investigate

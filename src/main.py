@@ -335,6 +335,19 @@ app.add_middleware(
     expose_headers=["X-Request-Id", "X-Correlation-Id"],
 )
 
+# Sprint Q.18.A.2 — global RBAC enforcement.
+# Off in dev so existing tests/frontend mocks keep working; production is
+# fail-closed. Flip locally with PRODPLAN_RBAC_STRICT=true to smoke-test.
+if settings.rbac_strict or settings.is_production:
+    from src.shared.auth.middleware import RBACMiddleware
+
+    app.add_middleware(RBACMiddleware)
+    logger.info(
+        "RBACMiddleware enabled (rbac_strict=%s, env=%s)",
+        settings.rbac_strict,
+        settings.environment,
+    )
+
 # DQA Quality Gates middleware (optional)
 if DQA_ENABLED and not settings.is_development:
     app.add_middleware(QualityGateMiddleware)
@@ -344,6 +357,11 @@ if DQA_ENABLED and not settings.is_development:
 # Histogram that alerts.yml gates on (High5xxRate, High4xxRate).
 from src.shared.http_metrics_middleware import register as _register_http_metrics
 _register_http_metrics(app)
+
+# Q.17.F.9 — enforce pause_writes rule actions: write requests to a
+# paused route prefix get 423 Locked.
+from src.governance.yaml_policy.pause_writes_middleware import register as _register_pause_writes
+_register_pause_writes(app)
 
 
 # Sprint Q.12 — normalize Pydantic 422 errors to a single readable string
