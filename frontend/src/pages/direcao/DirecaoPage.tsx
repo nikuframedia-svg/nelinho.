@@ -274,7 +274,7 @@ export default function DirecaoPage() {
       )}
 
       {tab === 'resumo' && (
-      <div style={{ padding: '24px 28px' }} className="space-y-5">
+      <div style={{ padding: '24px 28px' }} className="space-y-5 page-enter">
         {/* Hero */}
         <div
           className="flex items-center"
@@ -343,6 +343,7 @@ export default function DirecaoPage() {
 
         {/* 4 KPIs */}
         <div
+          className="page-enter"
           style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(4, 1fr)',
@@ -524,10 +525,11 @@ function KPICardZip({
       <div className="flex items-baseline gap-1 tabular-nums">
         <span
           style={{
-            fontSize: 32,
+            fontSize: 38,
             fontWeight: 700,
             color: `var(--${tone})`,
             lineHeight: 1,
+            letterSpacing: '-0.02em',
           }}
         >
           {value}
@@ -796,9 +798,10 @@ function AIPanel() {
   return (
     <div
       style={{
-        background: 'var(--bg-1)',
+        background: 'var(--atmosphere-card), var(--bg-1)',
         border: '1px solid var(--bd-1)',
         borderRadius: 'var(--r-lg)',
+        boxShadow: 'var(--shadow-3)',
         overflow: 'hidden',
       }}
     >
@@ -848,7 +851,7 @@ function AIPanel() {
           >
             <div
               className="tabular-nums text-text-dark-primary"
-              style={{ fontSize: 28, fontWeight: 700, lineHeight: 1 }}
+              style={{ fontSize: 32, fontWeight: 700, lineHeight: 1, letterSpacing: '-0.02em' }}
             >
               {s.value}
             </div>
