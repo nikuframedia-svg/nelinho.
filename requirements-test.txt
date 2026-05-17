@@ -58,17 +58,21 @@ numpy>=1.26,<3
 # Engines exercitados pela suite — antes ausentes daqui (a suite cresceu
 # para além dos unit tests "mock-heavy" originais; `pytest tests/` corre-os
 # a todos):
-#  - pandas         : tests/supply/* (ABC analysis, ROP, shortage detector)
-#  - openpyxl       : tests/factory_data_product/* (ingestão de .xlsx)
-#  - alembic        : tests/shared/test_schema_drift.py (cadeia de migrações)
-#  - scipy/networkx : tests/copilot/test_discovery|attribution (causal)
-# Sem estes, 16 testes falham (colecção ou asserções). Pins alinhados com
-# requirements.txt onde aplicável.
+#  - pandas           : tests/supply/* (ABC analysis, ROP, shortage detector)
+#  - openpyxl         : tests/factory_data_product/* (ingestão de .xlsx)
+#  - alembic          : tests/shared/test_schema_drift.py (cadeia de migrações)
+#  - scipy/networkx   : import directo nos módulos causais
+#  - dowhy/tigramite  : tests/copilot/test_attribution|discovery — contract
+#                       tests dos motores causais (DoWhy-GCM / PCMCI+); pip
+#                       resolve as suas deps transitivas (sympy, statsmodels…).
+# Sem estes, 16 testes falham. Pins alinhados com requirements.txt.
 pandas>=2.2,<4
 openpyxl>=3.1,<4
 alembic==1.13.1
 scipy>=1.12,<2
 networkx>=3,<4
+dowhy>=0.12,<1
+tigramite>=5.2,<6
 
 # Testing
 pytest==7.4.4
