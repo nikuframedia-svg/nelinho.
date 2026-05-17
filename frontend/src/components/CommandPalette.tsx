@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import { runbooksApi } from '../lib/factoryApi';
 import type { Runbook, RunbookExecution } from '../lib/factoryApi';
+import { searchApi } from '../lib/api';
 
 // ============================================================================
 // TYPES
@@ -36,7 +37,7 @@ import type { Runbook, RunbookExecution } from '../lib/factoryApi';
 
 interface CommandItem {
   id: string;
-  type: 'runbook' | 'navigation' | 'action';
+  type: 'runbook' | 'navigation' | 'action' | 'entity';
   title: string;
   description: string;
   icon: React.ReactNode;
@@ -44,6 +45,20 @@ interface CommandItem {
   onSelect?: () => void;
   runbook?: Runbook;
 }
+
+// Q.31.F — para onde navegar quando se escolhe um resultado de pesquisa.
+const ENTITY_ROUTE: Record<string, string> = {
+  barco: '/plano-producao',
+  operador: '/operadores',
+  molde: '/qualidade?tab=moldes',
+  erro: '/qualidade?tab=erros',
+};
+const ENTITY_LABEL: Record<string, string> = {
+  barco: 'Barco',
+  operador: 'Operador',
+  molde: 'Molde',
+  erro: 'Erro',
+};
 
 // ============================================================================
 // COMPONENT
@@ -62,6 +77,14 @@ export function CommandPalette() {
     queryFn: () => runbooksApi.getRunbooks(),
     enabled: open,
     staleTime: 60000,
+  });
+
+  // Q.31.F — pesquisa global (barcos/operadores/moldes/erros), só com ≥2 chars.
+  const { data: searchData } = useQuery({
+    queryKey: ['global-search', search],
+    queryFn: () => searchApi.query(search.trim()),
+    enabled: open && search.trim().length >= 2,
+    staleTime: 15000,
   });
 
   // Execute runbook mutation
@@ -145,17 +168,35 @@ export function CommandPalette() {
     return items;
   }, [runbooks]);
 
-  // Filter items by search
+  // Q.31.F — resultados de pesquisa global como CommandItems. Já vêm
+  // filtrados pelo backend, por isso não passam pelo filtro local.
+  const entityItems: CommandItem[] = useMemo(
+    () =>
+      (searchData?.results ?? []).map((r) => ({
+        id: `entity-${r.type}-${r.id}`,
+        type: 'entity' as const,
+        title: r.label,
+        description: `${ENTITY_LABEL[r.type] ?? r.type} · ${r.sublabel}`,
+        icon: <Search className="w-4 h-4" />,
+        onSelect: () => {
+          window.location.href = ENTITY_ROUTE[r.type] ?? '/';
+        },
+      })),
+    [searchData],
+  );
+
+  // Filter static items by search; prepend the server-filtered entities.
   const filteredItems = useMemo(() => {
-    if (!search.trim()) return commandItems;
-    
-    const searchLower = search.toLowerCase();
-    return commandItems.filter(item =>
-      item.title.toLowerCase().includes(searchLower) ||
-      item.description.toLowerCase().includes(searchLower) ||
-      item.tags?.some(tag => tag.toLowerCase().includes(searchLower))
-    );
-  }, [commandItems, search]);
+    const term = search.trim().toLowerCase();
+    const staticItems = !term
+      ? commandItems
+      : commandItems.filter(item =>
+          item.title.toLowerCase().includes(term) ||
+          item.description.toLowerCase().includes(term) ||
+          item.tags?.some(tag => tag.toLowerCase().includes(term))
+        );
+    return [...entityItems, ...staticItems];
+  }, [commandItems, entityItems, search]);
 
   // Keyboard handling
   useEffect(() => {
@@ -296,15 +337,16 @@ export function CommandPalette() {
             ) : (
               <div className="p-2">
                 {/* Group by type */}
-                {['runbook', 'navigation', 'action'].map(type => {
+                {['entity', 'runbook', 'navigation', 'action'].map(type => {
                   const typeItems = filteredItems.filter(item => item.type === type);
                   if (typeItems.length === 0) return null;
 
                   return (
                     <div key={type} className="mb-4">
                       <div className="px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                        {type === 'runbook' ? 'Runbooks' : 
-                         type === 'navigation' ? 'Navigation' : 
+                        {type === 'runbook' ? 'Runbooks' :
+                         type === 'navigation' ? 'Navigation' :
+                         type === 'entity' ? 'Resultados' :
                          'Quick Actions'}
                       </div>
                       {typeItems.map((item, _index) => {

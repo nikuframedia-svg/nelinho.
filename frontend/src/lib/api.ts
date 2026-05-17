@@ -2957,6 +2957,30 @@ export const authApi = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Q.31.F — Pesquisa global
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface SearchHit {
+  type: 'barco' | 'operador' | 'molde' | 'erro';
+  id: string;
+  label: string;
+  sublabel: string;
+}
+
+export interface SearchResponse {
+  query: string;
+  results: SearchHit[];
+}
+
+export const searchApi = {
+  /** Pesquisa barcos / operadores / moldes / erros num só pedido. */
+  query: (q: string, limit = 5) =>
+    request<SearchResponse>(
+      `/v1/search?q=${encodeURIComponent(q)}&limit=${limit}`,
+    ),
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // Q.21.A — Helper público de fetch
 // ═══════════════════════════════════════════════════════════════════════════════
 //
