@@ -86,6 +86,24 @@ class MoldInfo:
 
 
 @dataclass
+class RoutingTemplateRow:
+    """One phase of a model's routing template, pre-loaded from
+    `plan.routing_template_phase`.
+
+    The `RoutingResolver` is synchronous; it cannot query the DB itself.
+    `FactoryState.load()` joins `model_routing_assignment` to its primary
+    template's phases up-front and stores them here so the resolver has a
+    DB-backed routing source when the curated in-memory layer is empty.
+    """
+    fase_id: str
+    fase_nome: str
+    seq: int
+    duration_p50_h: Optional[float] = None
+    requires_mold: bool = False
+    team_size_default: int = 1
+
+
+@dataclass
 class FactoryState:
     """Read-only snapshot of factory data needed by the CPO scheduler."""
 
@@ -117,6 +135,14 @@ class FactoryState:
 
     # open orders available to schedule
     open_orders: List[Dict[str, Any]] = field(default_factory=list)
+
+    # Sprint Q.dev-stack — routing templates synced from the ERP, keyed by
+    # model business-key. Pre-loaded by `load()` from
+    # `plan.model_routing_assignment ⋈ routing_template_phase`. The
+    # RoutingResolver reads this when the curated in-memory layer has no
+    # history/standards for the model (the `standards` curated bucket is
+    # never populated — `transformer._transform_standards` is a no-op).
+    routing_by_model: Dict[str, List[RoutingTemplateRow]] = field(default_factory=dict)
 
     # min mandatory gap between consecutive phases (curing/drying).
     # Key: (from_phase_code, to_phase_code) — both normalized via
@@ -214,9 +240,11 @@ class FactoryState:
 
         state = cls(tenant_id=tenant_id)
 
-        # Open orders
+        # Open orders. `get_wip` may return `{"data": None}` when the
+        # curated layer is active but has no WIP rows — guard the `.get`
+        # against a None payload (else AttributeError).
         wip = _safe_call(sq, "get_wip")
-        if wip and "data" in wip:
+        if wip and isinstance(wip.get("data"), dict):
             state.open_orders = wip["data"].get("open_orders_list", []) or []
         elif wip and "rows" in wip:
             state.open_orders = list(wip["rows"])
@@ -254,13 +282,27 @@ class FactoryState:
             session, tenant_id,
         )
 
+        # Sprint Q.dev-stack — routing templates synced from the ERP. The
+        # curated in-memory `standards` bucket is never populated, so this
+        # is the only DB-backed routing source for ERP-imported orders.
+        state.routing_by_model = await _load_routing_by_model(
+            session, tenant_id,
+        )
+
+        # Open-orders fallback: the curated WIP layer is empty right after
+        # an ERP sync. When it is, schedule the IN_PROGRESS orders straight
+        # from `plan.production_orders`.
+        if not state.open_orders:
+            state.open_orders = await _load_open_orders(session, tenant_id)
+
         logger.info(
             f"FactoryState loaded: {len(state.open_orders)} orders, "
             f"{len(state.skill_matrix)} phases with skills, "
             f"{len(state.molds)} molds, "
             f"{len(state.historical_durations)} duration medians, "
             f"{len(state.phase_transition_gaps)} curing gaps, "
-            f"{len(state.preference_rules)} confirmed rules"
+            f"{len(state.preference_rules)} confirmed rules, "
+            f"{len(state.routing_by_model)} models with routing templates"
         )
         return state
 
@@ -506,6 +548,117 @@ async def _load_phase_transition_gaps(
     merged: Dict[Tuple[str, str], float] = dict(seed)
     merged.update(db_gaps)
     return merged
+
+
+async def _load_routing_by_model(
+    session: Any,
+    tenant_id: UUID,
+) -> Dict[str, List[RoutingTemplateRow]]:
+    """Pre-load each model's routing template phases from the DB.
+
+    Joins `plan.model_routing_assignment` to the phases of its
+    `primary_template_id`. Returns ``{model_id: [RoutingTemplateRow, ...]}``
+    ordered by phase `seq`. Best-effort — a missing table on a fresh test
+    DB leaves the dict empty and the resolver keeps its curated-layer
+    behaviour.
+    """
+    if session is None:
+        return {}
+    try:
+        from sqlalchemy import select
+
+        from src.plan.models.routing_template import (
+            ModelRoutingAssignment,
+            RoutingTemplatePhase,
+        )
+
+        stmt = (
+            select(
+                ModelRoutingAssignment.model_id,
+                RoutingTemplatePhase.phase_id,
+                RoutingTemplatePhase.phase_name,
+                RoutingTemplatePhase.seq,
+                RoutingTemplatePhase.duration_p50_h,
+                RoutingTemplatePhase.requires_mold,
+                RoutingTemplatePhase.team_size_default,
+            )
+            .join(
+                RoutingTemplatePhase,
+                RoutingTemplatePhase.template_id
+                == ModelRoutingAssignment.primary_template_id,
+            )
+            .where(ModelRoutingAssignment.tenant_id == tenant_id)
+            .order_by(
+                ModelRoutingAssignment.model_id,
+                RoutingTemplatePhase.seq,
+            )
+        )
+        result = await session.execute(stmt)
+        rows = result.all()
+    except Exception as exc:  # pragma: no cover — defensive (table absent etc.)
+        logger.debug(f"routing_template DB load skipped: {exc}")
+        return {}
+
+    by_model: Dict[str, List[RoutingTemplateRow]] = {}
+    for model_id, phase_id, phase_name, seq, p50, requires_mold, team in rows:
+        if not model_id or not phase_id:
+            continue
+        by_model.setdefault(str(model_id), []).append(
+            RoutingTemplateRow(
+                fase_id=str(phase_id),
+                fase_nome=str(phase_name or phase_id),
+                seq=int(seq or 0),
+                duration_p50_h=float(p50) if p50 is not None else None,
+                requires_mold=bool(requires_mold),
+                team_size_default=int(team or 1),
+            )
+        )
+    return by_model
+
+
+async def _load_open_orders(
+    session: Any,
+    tenant_id: UUID,
+) -> List[Dict[str, Any]]:
+    """Load IN_PROGRESS production orders from `plan.production_orders`.
+
+    Used as a fallback when the curated WIP layer is empty (typical right
+    after an ERP sync). Each dict carries the keys `RoutingResolver`
+    expects: `of_id`, `modelo_id`, `produto_id`, `data_entrega_prevista`.
+    Orders without a `product_id` are skipped — the resolver has nothing
+    to map them to.
+    """
+    if session is None:
+        return []
+    try:
+        from sqlalchemy import select
+
+        from src.plan.models.order import OrderStatus, ProductionOrder
+
+        stmt = (
+            select(ProductionOrder)
+            .where(ProductionOrder.tenant_id == tenant_id)
+            .where(ProductionOrder.status == OrderStatus.IN_PROGRESS.value)
+        )
+        result = await session.execute(stmt)
+        orders = result.scalars().all()
+    except Exception as exc:  # pragma: no cover — defensive (table absent etc.)
+        logger.debug(f"production_orders DB load skipped: {exc}")
+        return []
+
+    open_orders: List[Dict[str, Any]] = []
+    for o in orders:
+        if o.product_id is None:
+            continue
+        open_orders.append({
+            "of_id": o.legacy_id,
+            "modelo_id": str(o.product_id),
+            "produto_id": str(o.product_id),
+            "data_entrega_prevista": (
+                o.transport_date.isoformat() if o.transport_date else None
+            ),
+        })
+    return open_orders
 
 
 async def _load_confirmed_preference_rules(

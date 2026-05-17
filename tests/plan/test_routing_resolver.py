@@ -14,7 +14,7 @@ from uuid import UUID
 
 import pytest
 
-from src.plan.cpo.state import FactoryState
+from src.plan.cpo.state import FactoryState, RoutingTemplateRow
 from src.plan.services.routing_resolver import RoutingResolver
 
 
@@ -146,6 +146,72 @@ class TestStandardFallback:
         # Standard 8h × 2 buffer = 16h = 960 min
         assert ops[0].duration_minutes == pytest.approx(16.0 * 60.0)
         assert ops[0].sequence == 1
+
+
+# ---------------------------------------------------------------------------
+# DB routing template (fallback 4 — ERP-synced routing)
+# ---------------------------------------------------------------------------
+
+class TestDbRoutingTemplate:
+    def test_uses_db_routing_when_curated_layer_empty(self, monkeypatch):
+        # Curated layer has nothing — history + standards all empty.
+        stub = _stub_semantic_queries()
+        state = _make_state()
+        state.routing_by_model = {
+            "K1": [
+                RoutingTemplateRow(
+                    fase_id="FASE-LAM", fase_nome="Laminagem", seq=4,
+                    duration_p50_h=8.0, requires_mold=True, team_size_default=2,
+                ),
+                RoutingTemplateRow(
+                    fase_id="FASE-PNT", fase_nome="Pintura Acabamento", seq=9,
+                    duration_p50_h=12.0,
+                ),
+            ]
+        }
+        resolver = RoutingResolver(state)
+        monkeypatch.setattr(resolver, "_semantic_engine", lambda: stub.engine)
+
+        ops = resolver.resolve({"of_id": "O-ERP", "modelo_id": "K1"})
+
+        assert len(ops) == 2
+        assert ops[0].sequence == 4
+        assert ops[0].phase_id == "FASE-LAM"
+        # duration_p50_h used directly — no 2× buffer.
+        assert ops[0].duration_minutes == pytest.approx(8.0 * 60.0)
+        assert ops[1].duration_minutes == pytest.approx(12.0 * 60.0)
+
+    def test_db_routing_falls_back_to_buffer_when_no_p50(self, monkeypatch):
+        # No duration_p50_h and no predictor → fallback_h=1.0.
+        stub = _stub_semantic_queries()
+        state = _make_state()
+        state.routing_by_model = {
+            "K9": [
+                RoutingTemplateRow(
+                    fase_id="FASE-LAM", fase_nome="Laminagem", seq=1,
+                    duration_p50_h=None,
+                ),
+            ]
+        }
+        resolver = RoutingResolver(state)
+        monkeypatch.setattr(resolver, "_semantic_engine", lambda: stub.engine)
+
+        ops = resolver.resolve({"of_id": "O-ERP2", "modelo_id": "K9"})
+
+        assert len(ops) == 1
+        assert ops[0].duration_minutes == pytest.approx(1.0 * 60.0)
+
+    def test_db_routing_unknown_model_returns_empty(self, monkeypatch):
+        stub = _stub_semantic_queries()
+        state = _make_state()
+        state.routing_by_model = {"K1": [
+            RoutingTemplateRow(fase_id="F", fase_nome="F", seq=1, duration_p50_h=2.0),
+        ]}
+        resolver = RoutingResolver(state)
+        monkeypatch.setattr(resolver, "_semantic_engine", lambda: stub.engine)
+
+        ops = resolver.resolve({"of_id": "O-X", "modelo_id": "K-UNKNOWN"})
+        assert ops == []
 
 
 # ---------------------------------------------------------------------------

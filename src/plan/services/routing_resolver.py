@@ -43,7 +43,9 @@ class RoutingRow:
     fase_nome: str
     sequence: int
     duration_hours: float
-    source: str  # "history" | "standard" | "duration_model_p50"
+    # "history" | "standard" | "duration_model_p50"
+    #   | "routing_template_p50" | "routing_template"
+    source: str
     mold_required: bool = False
 
 
@@ -91,6 +93,8 @@ class RoutingResolver:
         2. If none: look up historical phases for any order of the same
            `modelo_id` (template-of-templates).
         3. If none: use `FasesStandardModelos` template with 2x buffer.
+        4. If none: use the ERP-synced routing template pre-loaded into
+           `FactoryState.routing_by_model`.
         """
         horizon_start = horizon_start or datetime.utcnow()
         order_id = str(order.get("of_id") or order.get("order_id") or "")
@@ -107,8 +111,11 @@ class RoutingResolver:
             # 2. Fall back to any historical order of the same model
             rows = self._history_for_model(modelo_id)
         if not rows:
-            # 3. Fall back to standard template
+            # 3. Fall back to standard template (curated in-memory layer)
             rows = self._standard_template(modelo_id)
+        if not rows:
+            # 4. Fall back to the ERP-synced routing template in the DB
+            rows = self._db_routing_template(modelo_id)
 
         if not rows:
             logger.info(
@@ -253,6 +260,46 @@ class RoutingResolver:
                 duration_hours=duration_h,
                 source=source,
                 mold_required=_phase_uses_mold(fase_nome),
+            ))
+        rows.sort(key=lambda r: r.sequence)
+        return rows
+
+    def _db_routing_template(self, modelo_id: str) -> List[RoutingRow]:
+        """Routing from the ERP-synced templates pre-loaded into FactoryState.
+
+        `FactoryState.load()` joins `plan.model_routing_assignment` to its
+        primary template's phases and stores them in
+        `state.routing_by_model`. This is the source that actually has
+        data after an ERP sync — the curated in-memory `standards` layer
+        is never populated (`transformer._transform_standards` is a no-op).
+
+        Duration: the template's `duration_p50_h` when present; otherwise
+        the duration predictor / fallback via
+        `_predicted_or_fallback_duration`.
+        """
+        if not modelo_id:
+            return []
+        template = self.state.routing_by_model.get(modelo_id) or []
+        rows: List[RoutingRow] = []
+        for tr in template:
+            if tr.duration_p50_h and tr.duration_p50_h > 0:
+                duration_h = max(tr.duration_p50_h, 0.1)
+                source = "routing_template_p50"
+            else:
+                duration_h, source = self._predicted_or_fallback_duration(
+                    fase_id=tr.fase_id,
+                    fase_nome=tr.fase_nome,
+                    modelo_id=modelo_id,
+                    fallback_h=1.0,
+                    fallback_source="routing_template",
+                )
+            rows.append(RoutingRow(
+                fase_id=tr.fase_id,
+                fase_nome=tr.fase_nome,
+                sequence=tr.seq,
+                duration_hours=duration_h,
+                source=source,
+                mold_required=tr.requires_mold or _phase_uses_mold(tr.fase_nome),
             ))
         rows.sort(key=lambda r: r.sequence)
         return rows
