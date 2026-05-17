@@ -7,6 +7,9 @@ export default {
   theme: {
     extend: {
       colors: {
+        // Fonte-de-verdade da paleta = index.css @theme (OKLCH). Os HEX aqui
+        // são equivalentes aproximados — Tailwind não lê OKLCH nativo. Ao mudar
+        // uma cor, mudar primeiro no @theme e refletir o HEX aqui (Q.23.A).
         // Dark theme backgrounds — Q.18.ZIP.design2 OKLCH (HEX equivalents)
         // hue 250 = cool blue-gray neutral (Palantir-like)
         dark: {
@@ -88,9 +91,10 @@ export default {
         },
       },
       fontFamily: {
-        // Q.18.ZIP.design2 — Geist primária matching design package index.html
-        sans: ['Geist', 'Inter', 'Space Grotesk', 'DM Sans', 'system-ui', 'sans-serif'],
-        mono: ['Geist Mono', 'JetBrains Mono', 'Fira Code', 'monospace'],
+        // Q.23.A — só Geist + Geist Mono (fontes legacy Inter/JetBrains/DM Sans/
+        // Space Grotesk removidas; nenhum .tsx as referenciava).
+        sans: ['Geist', 'system-ui', 'sans-serif'],
+        mono: ['Geist Mono', 'ui-monospace', 'monospace'],
       },
       fontSize: {
         // Q.18.ZIP.design2 — base 13px (era 14px Tailwind default)

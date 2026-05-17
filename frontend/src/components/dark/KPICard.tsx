@@ -116,7 +116,7 @@ export function KPICard({
         border-2 ${STATUS_BORDER[status]}
         ${STATUS_GLOW[status]}
         transition-all duration-200
-        ${interactive ? 'cursor-pointer hover:border-accent-500/60 hover:shadow-card-hover active:scale-[0.99]' : ''}
+        ${interactive ? 'cursor-pointer hover:border-accent-500/60 hover:shadow-card-hover active:scale-[0.99] focus-visible:outline-none focus-visible:[box-shadow:var(--focus-glow)]' : ''}
         ${className}
       `}
       onClick={onClick}
@@ -160,7 +160,7 @@ export function KPICard({
       {/* Valor + unidade */}
       <div className="flex items-baseline gap-2">
         <span
-          className={`text-4xl font-bold tabular-nums leading-none ${STATUS_VALUE[status]}`}
+          className={`text-5xl font-bold tabular-nums leading-none tracking-tight ${STATUS_VALUE[status]}`}
         >
           {valueStr}
         </span>

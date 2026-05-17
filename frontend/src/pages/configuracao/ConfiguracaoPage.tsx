@@ -146,6 +146,68 @@ const MESTRE_SUB = [
 ] as const;
 type MestreSub = (typeof MESTRE_SUB)[number];
 
+// Q.23.K — pill sub-tabs lifted para consts: usadas no JSX e na resolução
+// do label para o breadcrumb de profundidade.
+const APREND_TABS = [
+  { id: 'resumo', label: 'Resumo' },
+  { id: 'regras', label: 'Regras (NL→DSL Q.17)' },
+  { id: 'aprendidas', label: 'Regras aprendidas (Camada 1)' },
+  { id: 'q17', label: 'Q.17 Avançado' },
+  { id: 'camadas', label: '4 Camadas Aprendizagem' },
+  { id: 'causal', label: 'Causal/Explain' },
+  { id: 'copilot', label: 'Copilot extras' },
+  { id: 'governance', label: 'Governance/Audit' },
+  { id: 'dataproduct', label: 'Factory data product' },
+  { id: 'ml', label: 'ML registry' },
+  { id: 'twin', label: 'Twin sandbox' },
+  { id: 'showcase', label: 'Showcase' },
+];
+const SISTEMA_TABS = [
+  { id: 'saude', label: 'Saúde' },
+  { id: 'ingestao', label: 'Ingestão' },
+  { id: 'rag', label: 'RAG' },
+  { id: 'tools', label: 'Tools' },
+  { id: 'reports', label: 'Reports schedule' },
+  { id: 'ops', label: 'Operations' },
+];
+const MESTRE_TABS = [
+  { id: 'clientes', label: 'Clientes' },
+  { id: 'fornecedores', label: 'Fornecedores' },
+  { id: 'maquinas', label: 'Máquinas' },
+  { id: 'produtos', label: 'Produtos' },
+  { id: 'bom', label: 'BOM' },
+  { id: 'operacoes', label: 'Operações' },
+  { id: 'tarifas', label: 'Tarifas' },
+  { id: 'tenants', label: 'Tenants' },
+];
+
+/** Q.23.K — trilho de profundidade: Configuração › Tab › Sub-tab. */
+function DepthCrumb({ trail }: { trail: string[] }) {
+  return (
+    <nav
+      className="px-6 pt-3 flex items-center gap-1.5 text-xs"
+      aria-label="Trilho de navegação"
+    >
+      {trail.map((crumb, i) => (
+        <span key={i} className="flex items-center gap-1.5">
+          {i > 0 ? (
+            <span className="text-text-dark-tertiary opacity-50">›</span>
+          ) : null}
+          <span
+            className={
+              i === trail.length - 1
+                ? 'text-text-dark-secondary font-medium'
+                : 'text-text-dark-tertiary'
+            }
+          >
+            {crumb}
+          </span>
+        </span>
+      ))}
+    </nav>
+  );
+}
+
 export default function ConfiguracaoPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const tabFromUrl = searchParams.get('tab');
@@ -180,6 +242,18 @@ export default function ConfiguracaoPage() {
     </div>
   );
 
+  // Q.23.K — trilho de profundidade incluindo a sub-tab activa.
+  const mainLabel = tabs.find((t) => t.id === activeTab)?.label ?? '';
+  const subLabel =
+    activeTab === 'aprendizagem'
+      ? APREND_TABS.find((t) => t.id === aprendSub)?.label
+      : activeTab === 'sistema'
+        ? SISTEMA_TABS.find((t) => t.id === sistemaSub)?.label
+        : activeTab === 'mestre'
+          ? MESTRE_TABS.find((t) => t.id === mestreSub)?.label
+          : undefined;
+  const trail = ['Configuração', mainLabel, ...(subLabel ? [subLabel] : [])];
+
   return (
     <div>
       <PageHeader
@@ -210,11 +284,13 @@ export default function ConfiguracaoPage() {
         }
       />
 
+      <DepthCrumb trail={trail} />
+
       <div className="px-6 pt-2">
         <Tabs tabs={tabs} value={activeTab} onChange={handleTabChange} sticky />
       </div>
 
-      <div className="px-2 py-4">
+      <div className="px-2 py-4 page-enter">
         {/* Geral — wrap SettingsPage que tem 13 tabs próprias */}
         {activeTab === 'geral' && (
           <Suspense fallback={fallback}>
@@ -232,20 +308,7 @@ export default function ConfiguracaoPage() {
             <div className="px-4 mb-2">
               <Tabs
                 variant="pills"
-                tabs={[
-                  { id: 'resumo', label: 'Resumo' },
-                  { id: 'regras', label: 'Regras (NL→DSL Q.17)' },
-                  { id: 'aprendidas', label: 'Regras aprendidas (Camada 1)' },
-                  { id: 'q17', label: 'Q.17 Avançado' },
-                  { id: 'camadas', label: '4 Camadas Aprendizagem' },
-                  { id: 'causal', label: 'Causal/Explain' },
-                  { id: 'copilot', label: 'Copilot extras' },
-                  { id: 'governance', label: 'Governance/Audit' },
-                  { id: 'dataproduct', label: 'Factory data product' },
-                  { id: 'ml', label: 'ML registry' },
-                  { id: 'twin', label: 'Twin sandbox' },
-                  { id: 'showcase', label: 'Showcase' },
-                ]}
+                tabs={APREND_TABS}
                 value={aprendSub}
                 onChange={(v) => setAprendSub(v as AprendSub)}
               />
@@ -322,14 +385,7 @@ export default function ConfiguracaoPage() {
             <div className="px-4 mb-2">
               <Tabs
                 variant="pills"
-                tabs={[
-                  { id: 'saude', label: 'Saúde' },
-                  { id: 'ingestao', label: 'Ingestão' },
-                  { id: 'rag', label: 'RAG' },
-                  { id: 'tools', label: 'Tools' },
-                  { id: 'reports', label: 'Reports schedule' },
-                  { id: 'ops', label: 'Operations' },
-                ]}
+                tabs={SISTEMA_TABS}
                 value={sistemaSub}
                 onChange={(v) => setSistemaSub(v as SistemaSub)}
               />
@@ -359,16 +415,7 @@ export default function ConfiguracaoPage() {
             <div className="px-4 mb-2">
               <Tabs
                 variant="pills"
-                tabs={[
-                  { id: 'clientes', label: 'Clientes' },
-                  { id: 'fornecedores', label: 'Fornecedores' },
-                  { id: 'maquinas', label: 'Máquinas' },
-                  { id: 'produtos', label: 'Produtos' },
-                  { id: 'bom', label: 'BOM' },
-                  { id: 'operacoes', label: 'Operações' },
-                  { id: 'tarifas', label: 'Tarifas' },
-                  { id: 'tenants', label: 'Tenants' },
-                ]}
+                tabs={MESTRE_TABS}
                 value={mestreSub}
                 onChange={(v) => setMestreSub(v as MestreSub)}
               />

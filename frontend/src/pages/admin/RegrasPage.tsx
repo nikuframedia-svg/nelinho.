@@ -126,6 +126,60 @@ function payloadToYaml(payload: YamlPolicyRule['payload']): string {
   return lines.join('\n');
 }
 
+// ─── Q.23.J — YAML syntax highlight (CSS-only, regex → spans, zero deps) ───
+
+/** Colore o lado-valor de uma linha key: value. */
+function YamlValue({ text }: { text: string }) {
+  const trimmed = text.trimStart();
+  const lead = text.slice(0, text.length - trimmed.length);
+  let cls = 'text-fg-1';
+  if (/^["'].*["']$/.test(trimmed)) cls = 'text-green';
+  else if (/^-?\d/.test(trimmed)) cls = 'text-blue';
+  else if (['true', 'false', '|', '[]', '{}'].includes(trimmed)) cls = 'text-blue';
+  return (
+    <>
+      {lead}
+      <span className={cls}>{trimmed}</span>
+    </>
+  );
+}
+
+/** YAML do diff colorido: chaves em accent, pontuação muted, strings em
+ * verde, números/bool em azul. Tokenizador linha-a-linha — chega para o
+ * DSL fechado e pequeno do Q.17, sem dependência de highlighting. */
+function YamlHighlight({ yaml }: { yaml: string }) {
+  return (
+    <>
+      {yaml.split('\n').map((line, i) => {
+        const indentLen = line.length - line.trimStart().length;
+        const indent = line.slice(0, indentLen);
+        let rest = line.slice(indentLen);
+        let dash = '';
+        if (rest.startsWith('- ')) {
+          dash = '- ';
+          rest = rest.slice(2);
+        }
+        const kv = rest.match(/^([\w.]+):(.*)$/);
+        return (
+          <div key={i}>
+            {indent}
+            {dash ? <span className="text-fg-3">{dash}</span> : null}
+            {kv ? (
+              <>
+                <span className="text-accent">{kv[1]}</span>
+                <span className="text-fg-3">:</span>
+                {kv[2] ? <YamlValue text={kv[2]} /> : null}
+              </>
+            ) : (
+              <span className="text-fg-1">{rest}</span>
+            )}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
 // ─── Components ───────────────────────────────────────────────────────────
 
 function RuleRow({
@@ -306,8 +360,8 @@ function RuleDetailPanel({
 
       <div>
         <p className="text-xs uppercase tracking-wide text-fg-3 mb-2">YAML produzido pelo LLM</p>
-        <pre className="rounded-md border border-bd-1 bg-bg-0 p-3 text-xs text-fg-1 overflow-auto max-h-96">
-          <code>{yaml}</code>
+        <pre className="rounded-md border border-bd-1 bg-bg-0 p-3 text-xs overflow-auto max-h-96 font-mono leading-relaxed">
+          <code><YamlHighlight yaml={yaml} /></code>
         </pre>
       </div>
 

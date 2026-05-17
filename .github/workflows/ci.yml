@@ -10,7 +10,10 @@ jobs:
   test:
     name: Unit tests
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 20min: a suite cresceu e requirements-test.txt passou a incluir
+    # engines mais pesados (dowhy/tigramite/scipy) — install + run não
+    # cabem nos 10min originais.
+    timeout-minutes: 20
 
     steps:
       - name: Checkout

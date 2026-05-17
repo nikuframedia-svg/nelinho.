@@ -1,11 +1,6 @@
 @import "tailwindcss";
 /* Q.18.ZIP.design2 — Geist primary (matching design package index.html) */
 @import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap');
-/* Legacy fonts preserved (páginas antigas ainda referem) */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700;9..40,800&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap');
 
 /* Q.18.ZIP.design2 — port literal do design package nelo/project/index.html
    :root tokens. OKLCH values (modern browsers, hue 250 = cool blue-gray). */
@@ -78,10 +73,18 @@
   --r-lg: 10px;
   --r-xl: 14px;
 
-  /* Shadows */
-  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-2: 0 4px 12px rgba(0, 0, 0, 0.5);
-  --shadow-3: 0 12px 32px rgba(0, 0, 0, 0.6);
+  /* Shadows — escala em camadas, com profundidade real no topo (Q.23.A) */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-2: 0 2px 6px rgba(0, 0, 0, 0.40), 0 1px 2px rgba(0, 0, 0, 0.30);
+  --shadow-3: 0 8px 20px rgba(0, 0, 0, 0.45), 0 3px 8px rgba(0, 0, 0, 0.35);
+  --shadow-4: 0 20px 48px rgba(0, 0, 0, 0.55), 0 8px 20px rgba(0, 0, 0, 0.40);
+
+  /* Atmosfera — gradientes subtis para fundos deixarem de ser cor sólida (Q.23.A) */
+  --atmosphere-page: radial-gradient(ellipse 80% 50% at 50% 0%, oklch(0.30 0.03 250 / 0.35) 0%, transparent 70%);
+  --atmosphere-card: linear-gradient(180deg, oklch(0.42 0.02 250 / 0.06) 0%, transparent 60%);
+
+  /* Focus — ring de contraste + halo suave (Q.23.A) */
+  --focus-glow: 0 0 0 2px var(--bg-0), 0 0 0 4px oklch(0.72 0.14 245 / 0.55), 0 0 12px oklch(0.72 0.14 245 / 0.30);
 
   /* Legacy preserved (não remover — outras páginas consomem) */
   --accent-orange: oklch(0.74 0.16 50);
@@ -173,7 +176,7 @@
   --radius-card: 1.25rem;
   --radius-full: 9999px;
   
-  --font-family-sans: 'Geist', 'Inter', 'DM Sans', 'Space Grotesk', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-family-sans: 'Geist', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 }
 
 * {
@@ -212,17 +215,6 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.01em; }
 /* Selection */
 ::selection { background: var(--blue-bg); color: var(--fg-0); }
 
-/* Q.18.ZIP.design2 — animations from design package index.html */
-@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
-@keyframes slide-in-right { from { transform: translateX(100%); } to { transform: translateX(0); } }
-@keyframes pulse-design {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50%      { opacity: 0.55; transform: scale(0.85); }
-}
-.pulse-dot { animation: pulse-design 2s ease-in-out infinite; }
-.animate-fade-in { animation: fade-in 0.2s ease-out; }
-.animate-slide-in-right { animation: slide-in-right 0.25s ease-out; }
-
 /* ═══════════════════════════════════════════════════════════════════════════
    ALPHA CARD SYSTEM
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -237,159 +229,6 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.01em; }
 
 .alpha-card:hover {
   border-color: var(--color-border-hover);
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   GLASSMORPHISM EFFECTS
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-.glass-card {
-  background: rgba(26, 29, 33, 0.7);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: var(--radius-card);
-}
-
-.glass-panel {
-  background: rgba(26, 29, 33, 0.5);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-}
-
-.glass-button {
-  background: rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  transition: all 0.2s ease;
-}
-
-.glass-button:hover {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.15);
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   ANIMATED GRADIENTS
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-.gradient-animated {
-  background: linear-gradient(
-    135deg,
-    rgba(79, 209, 197, 0.1) 0%,
-    rgba(59, 130, 246, 0.1) 25%,
-    rgba(167, 139, 250, 0.1) 50%,
-    rgba(249, 115, 22, 0.1) 75%,
-    rgba(79, 209, 197, 0.1) 100%
-  );
-  background-size: 400% 400%;
-  animation: gradientShift 15s ease infinite;
-}
-
-@keyframes gradientShift {
-  0% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
-}
-
-.gradient-accent {
-  background: linear-gradient(135deg, rgba(79, 209, 197, 0.2) 0%, rgba(59, 130, 246, 0.2) 100%);
-}
-
-.gradient-success {
-  background: linear-gradient(135deg, rgba(16, 185, 129, 0.2) 0%, rgba(5, 150, 105, 0.2) 100%);
-}
-
-.gradient-warning {
-  background: linear-gradient(135deg, rgba(245, 158, 11, 0.2) 0%, rgba(217, 119, 6, 0.2) 100%);
-}
-
-.gradient-danger {
-  background: linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(185, 28, 28, 0.2) 100%);
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   GLOW EFFECTS
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-.glow-accent {
-  box-shadow: 0 0 20px rgba(79, 209, 197, 0.2),
-              0 0 40px rgba(79, 209, 197, 0.1);
-}
-
-.glow-accent-strong {
-  box-shadow: 0 0 30px rgba(79, 209, 197, 0.3),
-              0 0 60px rgba(79, 209, 197, 0.15),
-              0 0 100px rgba(79, 209, 197, 0.05);
-}
-
-.glow-success {
-  box-shadow: 0 0 20px rgba(16, 185, 129, 0.2),
-              0 0 40px rgba(16, 185, 129, 0.1);
-}
-
-.glow-warning {
-  box-shadow: 0 0 20px rgba(245, 158, 11, 0.2),
-              0 0 40px rgba(245, 158, 11, 0.1);
-}
-
-.glow-danger {
-  box-shadow: 0 0 20px rgba(239, 68, 68, 0.2),
-              0 0 40px rgba(239, 68, 68, 0.1);
-}
-
-/* Hover glow transition */
-.glow-hover {
-  transition: box-shadow 0.3s ease;
-}
-
-.glow-hover:hover {
-  box-shadow: 0 0 30px rgba(79, 209, 197, 0.25),
-              0 0 60px rgba(79, 209, 197, 0.1);
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   ANIMATED BORDERS
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-.border-animated {
-  position: relative;
-  background: var(--color-bg-card);
-  border-radius: var(--radius-card);
-}
-
-.border-animated::before {
-  content: '';
-  position: absolute;
-  inset: -1px;
-  border-radius: inherit;
-  padding: 1px;
-  background: linear-gradient(
-    90deg,
-    rgba(79, 209, 197, 0.5) 0%,
-    rgba(59, 130, 246, 0.5) 25%,
-    rgba(167, 139, 250, 0.5) 50%,
-    rgba(249, 115, 22, 0.5) 75%,
-    rgba(79, 209, 197, 0.5) 100%
-  );
-  background-size: 200% 100%;
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  animation: borderGradient 4s linear infinite;
-  opacity: 0;
-  transition: opacity 0.3s ease;
-}
-
-.border-animated:hover::before {
-  opacity: 1;
-}
-
-@keyframes borderGradient {
-  0% { background-position: 0% 0%; }
-  100% { background-position: 200% 0%; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -420,74 +259,6 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.01em; }
 @keyframes shimmer {
   0% { left: -100%; }
   100% { left: 100%; }
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   MICRO INTERACTIONS
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-.hover-lift {
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-
-.hover-lift:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
-}
-
-.hover-scale {
-  transition: transform 0.2s ease;
-}
-
-.hover-scale:hover {
-  transform: scale(1.02);
-}
-
-.hover-bright {
-  transition: filter 0.2s ease;
-}
-
-.hover-bright:hover {
-  filter: brightness(1.1);
-}
-
-/* Press effect */
-.press-effect {
-  transition: transform 0.1s ease;
-}
-
-.press-effect:active {
-  transform: scale(0.97);
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   LOADING STATES
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-.skeleton {
-  background: linear-gradient(
-    90deg,
-    var(--color-bg-secondary) 0%,
-    var(--color-bg-tertiary) 50%,
-    var(--color-bg-secondary) 100%
-  );
-  background-size: 200% 100%;
-  animation: skeleton 1.5s ease-in-out infinite;
-  border-radius: var(--radius-md);
-}
-
-@keyframes skeleton {
-  0% { background-position: 200% 0%; }
-  100% { background-position: -200% 0%; }
-}
-
-.skeleton-text {
-  height: 1em;
-  width: 100%;
-}
-
-.skeleton-circle {
-  border-radius: 50%;
 }
 
 .alpha-card-header {
@@ -981,16 +752,8 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.01em; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   GLASSMORPHISM UTILITIES
+   GLASSMORPHISM UTILITIES — só os primitivos em uso (Q.23.A)
    ═══════════════════════════════════════════════════════════════════════════ */
-
-.glass-card {
-  background: rgba(17, 24, 39, 0.6);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: var(--radius-xl);
-}
 
 .glass-card-strong {
   background: rgba(17, 24, 39, 0.8);
@@ -998,13 +761,6 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.01em; }
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: var(--radius-xl);
-}
-
-.glass-surface {
-  background: rgba(15, 23, 42, 0.5);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 .glass-input {
@@ -1022,33 +778,6 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.01em; }
 
 .glass-input::placeholder {
   color: var(--color-text-tertiary);
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   GLOW EFFECTS
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-.glow-teal {
-  box-shadow: var(--shadow-glow-teal);
-}
-
-.glow-blue {
-  box-shadow: var(--shadow-glow-blue);
-}
-
-.glow-green {
-  box-shadow: var(--shadow-glow-green);
-}
-
-.glow-amber {
-  box-shadow: var(--shadow-glow-amber);
-}
-
-.glow-hover:hover {
-  box-shadow: 0 0 32px rgba(20, 184, 166, 0.3);
-  border-color: rgba(20, 184, 166, 0.4);
-  transform: translateY(-2px);
-  transition: all 0.3s ease;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1404,15 +1133,6 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.01em; }
   stroke-dashoffset: 1000;
 }
 
-.animate-fadeIn {
-  animation: fadeIn 0.5s ease forwards;
-}
-
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
 @keyframes scaleIn {
   from { opacity: 0; transform: scale(0.95); }
   to { opacity: 1; transform: scale(1); }
@@ -1450,12 +1170,39 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.01em; }
   animation: shimmer 1.5s infinite;
 }
 
-/* Staggered animations */
-.stagger-1 { animation-delay: 50ms; }
-.stagger-2 { animation-delay: 100ms; }
-.stagger-3 { animation-delay: 150ms; }
-.stagger-4 { animation-delay: 200ms; }
-.stagger-5 { animation-delay: 250ms; }
+/* ═══════════════════════════════════════════════════════════════════════════
+   PAGE-LOAD MOTION — Q.23.B
+   ═══════════════════════════════════════════════════════════════════════════
+   O DarkPageLayout marca o wrapper de conteúdo com .page-enter. Cada filho
+   directo entra em sequência (staggered reveal) — toda a página ganha uma
+   entrada coordenada sem edição página-a-página. .reveal + .stagger-N é a
+   versão manual para grelhas internas (ex: KPI cards).
+   Tudo dentro de prefers-reduced-motion: no-preference — quem desliga
+   animações vê a app instantânea, sem opacity:0 preso. */
+@media (prefers-reduced-motion: no-preference) {
+  .page-enter > * {
+    opacity: 0;
+    animation: fadeInUp 0.42s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+  .page-enter > *:nth-child(1) { animation-delay: 40ms; }
+  .page-enter > *:nth-child(2) { animation-delay: 90ms; }
+  .page-enter > *:nth-child(3) { animation-delay: 140ms; }
+  .page-enter > *:nth-child(4) { animation-delay: 190ms; }
+  .page-enter > *:nth-child(5) { animation-delay: 240ms; }
+  .page-enter > *:nth-child(n+6) { animation-delay: 280ms; }
+
+  .reveal {
+    opacity: 0;
+    animation: fadeInUp 0.42s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+
+  /* Delays — emparelhar com .reveal ou usar dentro de .page-enter. */
+  .stagger-1 { animation-delay: 60ms; }
+  .stagger-2 { animation-delay: 110ms; }
+  .stagger-3 { animation-delay: 160ms; }
+  .stagger-4 { animation-delay: 210ms; }
+  .stagger-5 { animation-delay: 260ms; }
+}
 
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {

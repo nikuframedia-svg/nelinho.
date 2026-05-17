@@ -153,16 +153,18 @@ export default function ExpedicaoPage() {
       )}
 
       {tab === 'expedicoes' && (
-      <div className="px-6 py-4 space-y-5">
-        {/* 3 KPI strip */}
+      <div className="px-6 py-4 space-y-5 page-enter">
+        {/* 3 KPI strip — Q.23.H: "Próxima expedição" em destaque */}
         <div
+          className="page-enter"
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(3, 1fr)',
+            gridTemplateColumns: '1.4fr 1fr 1fr',
             gap: 14,
           }}
         >
           <KPIStrip
+            hero
             label="Próxima expedição"
             value={daysToNext !== null ? daysToNext.toString() : '—'}
             unit="dias"
@@ -233,7 +235,7 @@ export default function ExpedicaoPage() {
             </div>
           </div>
         ) : (
-          <div className="flex flex-col gap-3.5">
+          <div className="flex flex-col gap-3.5 page-enter">
             {sortedBatches.map((s) => (
               <ShipmentDetail key={s.id} shipment={s} />
             ))}
@@ -258,6 +260,11 @@ function ShipmentDetail({ shipment }: { shipment: TransportBatch }) {
   const tone = at_risk > 0 ? 'yellow' : pct >= 100 ? 'green' : 'blue';
   const day = shipmentDayLabel(shipment.transport_date);
   const dx = daysUntil(shipment.transport_date);
+  // Q.23.H — urgência visual: D-0/D-1 destacam-se (vermelho + halo),
+  // D-2/D-3 amarelo, resto neutro.
+  const urgent = dx >= 0 && dx <= 1;
+  const urgencyColor =
+    dx >= 0 && dx <= 1 ? 'var(--red)' : dx >= 0 && dx <= 3 ? 'var(--yellow)' : 'var(--bd-1)';
 
   return (
     <div
@@ -265,7 +272,9 @@ function ShipmentDetail({ shipment }: { shipment: TransportBatch }) {
         padding: 22,
         background: 'var(--bg-1)',
         border: '1px solid var(--bd-1)',
+        borderLeft: `3px solid ${urgencyColor}`,
         borderRadius: 12,
+        boxShadow: urgent ? '0 0 0 1px var(--red-bd)' : undefined,
       }}
     >
       {/* Q.21.D — coluna de acções removida: "Ver barcos" e "Documentos"
@@ -443,20 +452,24 @@ function KPIStrip({
   unit,
   context,
   tone,
+  hero = false,
 }: {
   label: string;
   value: string;
   unit?: string;
   context: string;
   tone: 'green' | 'yellow' | 'red' | 'blue' | 'gray';
+  /** Q.23.H — variante destacada: valor maior, atmosfera, profundidade. */
+  hero?: boolean;
 }) {
   return (
     <div
       style={{
-        padding: '16px 18px',
-        background: 'var(--bg-1)',
+        padding: hero ? '20px 24px' : '16px 18px',
+        background: hero ? 'var(--atmosphere-card), var(--bg-1)' : 'var(--bg-1)',
         border: '1px solid var(--bd-1)',
         borderRadius: 12,
+        boxShadow: hero ? 'var(--shadow-2)' : undefined,
       }}
     >
       <div
@@ -474,16 +487,17 @@ function KPIStrip({
       <div className="flex items-baseline gap-1 tabular-nums">
         <span
           style={{
-            fontSize: 28,
+            fontSize: hero ? 44 : 28,
             fontWeight: 700,
             color: `var(--${tone})`,
             lineHeight: 1,
+            letterSpacing: hero ? '-0.02em' : undefined,
           }}
         >
           {value}
         </span>
         {unit ? (
-          <span style={{ fontSize: 13, color: 'var(--fg-2)' }}>
+          <span style={{ fontSize: hero ? 16 : 13, color: 'var(--fg-2)' }}>
             {unit}
           </span>
         ) : null}

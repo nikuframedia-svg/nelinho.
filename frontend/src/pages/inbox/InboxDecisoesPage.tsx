@@ -107,7 +107,7 @@ export default function InboxDecisoesPage() {
         }
       />
 
-      <div style={{ padding: '24px 28px' }} className="space-y-4">
+      <div style={{ padding: '24px 28px' }} className="space-y-4 page-enter">
         <Tabs
           variant="pills"
           tabs={tabsConfig}
@@ -135,7 +135,7 @@ export default function InboxDecisoesPage() {
                   : 'Sem decisões.'}
           </div>
         ) : (
-          <div className="flex flex-col" style={{ gap: 14 }}>
+          <div className="flex flex-col page-enter" style={{ gap: 14 }}>
             {items.map((d, idx) => (
               <SuggestionCardZip key={d.id ?? idx} decision={d} />
             ))}

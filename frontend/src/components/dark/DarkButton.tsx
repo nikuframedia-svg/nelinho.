@@ -66,7 +66,7 @@ export function DarkButton({
         ${sizeClasses[size]}
         ${glow && !isDisabled ? glowClasses[variant] : ''}
         ${fullWidth ? 'w-full' : ''}
-        ${isDisabled ? 'opacity-50 cursor-not-allowed' : ''}
+        ${isDisabled ? 'opacity-50 cursor-not-allowed' : 'active:scale-[0.97]'}
         ${className}
       `}
       disabled={isDisabled}
