@@ -72,7 +72,7 @@ export function Tabs({
               onClick={() => !tab.disabled && onChange(tab.id)}
               className={`
                 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md
-                text-xs font-medium transition-colors duration-150
+                text-xs font-medium transition-all duration-200 active:scale-[0.98]
                 ${active
                   ? 'bg-accent-500/20 text-accent-400'
                   : 'text-text-dark-secondary hover:bg-white/5 hover:text-text-dark-primary'
@@ -122,7 +122,7 @@ export function Tabs({
             onClick={() => !tab.disabled && onChange(tab.id)}
             className={`
               relative inline-flex items-center gap-2 px-4 py-2.5
-              text-sm font-medium transition-colors duration-150
+              text-sm font-medium transition-all duration-200 active:scale-[0.98]
               border-b-2 -mb-px
               ${active
                 ? 'border-accent-400 text-accent-400'

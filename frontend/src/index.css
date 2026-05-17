@@ -1133,15 +1133,6 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.01em; }
   stroke-dashoffset: 1000;
 }
 
-.animate-fadeIn {
-  animation: fadeIn 0.5s ease forwards;
-}
-
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
 @keyframes scaleIn {
   from { opacity: 0; transform: scale(0.95); }
   to { opacity: 1; transform: scale(1); }
@@ -1179,12 +1170,39 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.01em; }
   animation: shimmer 1.5s infinite;
 }
 
-/* Staggered animations */
-.stagger-1 { animation-delay: 50ms; }
-.stagger-2 { animation-delay: 100ms; }
-.stagger-3 { animation-delay: 150ms; }
-.stagger-4 { animation-delay: 200ms; }
-.stagger-5 { animation-delay: 250ms; }
+/* ═══════════════════════════════════════════════════════════════════════════
+   PAGE-LOAD MOTION — Q.23.B
+   ═══════════════════════════════════════════════════════════════════════════
+   O DarkPageLayout marca o wrapper de conteúdo com .page-enter. Cada filho
+   directo entra em sequência (staggered reveal) — toda a página ganha uma
+   entrada coordenada sem edição página-a-página. .reveal + .stagger-N é a
+   versão manual para grelhas internas (ex: KPI cards).
+   Tudo dentro de prefers-reduced-motion: no-preference — quem desliga
+   animações vê a app instantânea, sem opacity:0 preso. */
+@media (prefers-reduced-motion: no-preference) {
+  .page-enter > * {
+    opacity: 0;
+    animation: fadeInUp 0.42s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+  .page-enter > *:nth-child(1) { animation-delay: 40ms; }
+  .page-enter > *:nth-child(2) { animation-delay: 90ms; }
+  .page-enter > *:nth-child(3) { animation-delay: 140ms; }
+  .page-enter > *:nth-child(4) { animation-delay: 190ms; }
+  .page-enter > *:nth-child(5) { animation-delay: 240ms; }
+  .page-enter > *:nth-child(n+6) { animation-delay: 280ms; }
+
+  .reveal {
+    opacity: 0;
+    animation: fadeInUp 0.42s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+
+  /* Delays — emparelhar com .reveal ou usar dentro de .page-enter. */
+  .stagger-1 { animation-delay: 60ms; }
+  .stagger-2 { animation-delay: 110ms; }
+  .stagger-3 { animation-delay: 160ms; }
+  .stagger-4 { animation-delay: 210ms; }
+  .stagger-5 { animation-delay: 260ms; }
+}
 
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
