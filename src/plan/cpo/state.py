@@ -174,10 +174,20 @@ class FactoryState:
         sq = semantic_queries
         if sq is None:
             try:
+                from src.factory_data_product.api.endpoints import get_engine
                 from src.factory_data_product.services.semantic_queries_inmemory import (
                     SemanticQueriesInMemory,
                 )
-                sq = SemanticQueriesInMemory()
+                # SemanticQueriesInMemory exige o IngestEngine global —
+                # construir sem ele dava TypeError e o FactoryState booting
+                # vazio (mesmo bug que o AlertsEngine FASE 3.6 corrigiu).
+                engine = get_engine()
+                if engine is None:
+                    raise RuntimeError(
+                        "factory IngestEngine indisponível — corre e activa "
+                        "uma ingestão em /v1/factory/ingest"
+                    )
+                sq = SemanticQueriesInMemory(engine)
             except Exception as e:
                 # Sprint Q.8 Fase 1 — booting empty means scheduler runs
                 # with skill_matrix={}, molds_by_model={}: any worker may
