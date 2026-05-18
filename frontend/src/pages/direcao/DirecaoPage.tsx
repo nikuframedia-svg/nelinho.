@@ -33,7 +33,7 @@ import { useUmwelt } from '../../lib/umwelt';
 const ProfitDashboard = lazy(() =>
   import('../../components/profit/ProfitPanels').then((m) => ({ default: m.ProfitDashboard })),
 );
-import { ceoDashboardApi, decisionsApi, getApiBase, profitApi } from '../../lib/api';
+import { ceoDashboardApi, decisionsApi, getApiBase, profitApi, qualityReworkApi } from '../../lib/api';
 
 interface ActiveOrder {
   id: string;
@@ -155,6 +155,13 @@ export default function DirecaoPage() {
   const marginQuery = useQuery({
     queryKey: ['direcao', 'margin-summary', refreshKey],
     queryFn: () => profitApi.marginSummary(30),
+    staleTime: 60_000,
+    retry: 0,
+  });
+  // Q.37.C — € perdido em retrabalho (factory-wide, últimos 90 dias).
+  const reworkCostQuery = useQuery({
+    queryKey: ['direcao', 'rework-cost', refreshKey],
+    queryFn: () => qualityReworkApi.costSummary(),
     staleTime: 60_000,
     retry: 0,
   });
@@ -348,12 +355,12 @@ export default function DirecaoPage() {
           </button>
         </div>
 
-        {/* 4 KPIs */}
+        {/* 5 KPIs */}
         <div
           className="page-enter"
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(4, 1fr)',
+            gridTemplateColumns: 'repeat(5, 1fr)',
             gap: 14,
           }}
         >
@@ -426,6 +433,41 @@ export default function DirecaoPage() {
                   : 'red'
             }
             onClick={() => navigate('/relatorios?tab=lucro')}
+          />
+          {/* Q.37.C — € perdido em retrabalho */}
+          <KPICardZip
+            label="Retrabalho (90 dias)"
+            value={
+              reworkCostQuery.isError
+                ? '—'
+                : reworkCostQuery.data
+                  ? Math.round(reworkCostQuery.data.cost_estimate_eur).toLocaleString('pt-PT')
+                  : '—'
+            }
+            unit="€"
+            context={
+              reworkCostQuery.isError
+                ? 'Erro a obter o custo de retrabalho'
+                : reworkCostQuery.isLoading
+                  ? 'A carregar…'
+                  : reworkCostQuery.data
+                    ? reworkCostQuery.data.events > 0
+                      ? `${reworkCostQuery.data.events} eventos · `
+                        + `${reworkCostQuery.data.affected_orders} ordens · `
+                        + `${Math.round(reworkCostQuery.data.cost_coverage_pct)}% com € estimado`
+                      : 'Sem retrabalho registado no período'
+                    : 'Sem dados de retrabalho'
+            }
+            tone={
+              reworkCostQuery.isError || !reworkCostQuery.data
+                ? 'gray'
+                : reworkCostQuery.data.events === 0
+                  ? 'green'
+                  : reworkCostQuery.data.cost_estimate_eur > 0
+                    ? 'red'
+                    : 'gray'
+            }
+            onClick={() => navigate('/qualidade')}
           />
         </div>
 

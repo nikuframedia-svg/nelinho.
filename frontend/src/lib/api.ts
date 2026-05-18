@@ -2111,12 +2111,42 @@ export interface ReworkCreatePayload {
   notes?: string;
 }
 
+// Q.37.C — custo do retrabalho em € (factory-wide, painel CEO).
+export interface ReworkCostBreakdownRow {
+  key: string;
+  events: number;
+  cost_estimate_eur: number;
+  hours_lost: number;
+}
+
+export interface ReworkCostSummaryResponse {
+  window: { from: string; to: string };
+  events: number;
+  events_with_cost_estimate: number;
+  cost_coverage_pct: number;
+  cost_estimate_eur: number;
+  hours_lost: number;
+  affected_orders: number;
+  group_by: string | null;
+  breakdown: ReworkCostBreakdownRow[];
+}
+
 export const qualityReworkApi = {
   create: (payload: ReworkCreatePayload) =>
     request<any>('/v1/quality/rework', {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+
+  costSummary: (params?: {
+    group_by?: 'error_code' | 'phase' | 'model' | 'of_id';
+    since?: string;
+    until?: string;
+    top_n?: number;
+  }) =>
+    request<ReworkCostSummaryResponse>(
+      `/v1/quality/rework/cost-summary?${new URLSearchParams(filterParams(params))}`,
+    ),
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
