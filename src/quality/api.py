@@ -11,6 +11,7 @@ Endpoints under `/v1/quality/*`:
     GET    /dashboard                      — QA05 rework dashboards by dimension
     GET    /root-cause                     — QA09 statistical correlations
     GET    /impact                         — QA03 cumulative impact per error
+    GET    /rework/cost-summary            — Q.37.A factory-wide rework € rollup
     GET    /quality/by-supplier            — QA04 / O.8 supplier quality analytics
     GET    /quality/by-lot                 — QA04 lot-level quality
 """
@@ -237,6 +238,35 @@ async def impact_analysis(
     return await svc.impact_by_error(
         error_code=error_code, since=since, until=until,
     )
+
+
+# ─── Q.37.A — Rework cost summary (CEO €) ─────────────────────────────────
+
+@router.get("/rework/cost-summary")
+async def rework_cost_summary(
+    group_by: Optional[str] = Query(
+        None, description="error_code|phase|model|of_id",
+    ),
+    since: Optional[datetime] = None,
+    until: Optional[datetime] = None,
+    top_n: int = Query(20, ge=1, le=200),
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Custo total de retrabalho em € no período (factory-wide).
+
+    Responde "quanto custou o retrabalho" — total €, horas perdidas,
+    ordens afectadas, e `cost_coverage_pct` (a fracção dos eventos com €
+    real estimado; baixa cobertura = o total é uma subcontagem). Com
+    `group_by` dá o breakdown por erro, fase, modelo ou ordem.
+    """
+    svc = ImpactService(session, tenant_id)
+    try:
+        return await svc.cost_summary(
+            group_by=group_by, since=since, until=until, top_n=top_n,
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
 # ─── R.8 — Supplier / Lot quality ─────────────────────────────────────────
