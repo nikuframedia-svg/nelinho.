@@ -1936,6 +1936,37 @@ export const profitApi = {
     request<MarginSummaryResponse>(`/v1/profit/orders/margin-summary?days=${days}`),
 };
 
+// ─── Q.47.A — KPI objectivo vs realizado (F9) ────────────────────────────
+
+export type KpiObjectiveStatus = 'hit' | 'near' | 'below' | 'no_objective';
+
+export interface KpiObjectiveRow {
+  kpi_id: number;
+  name: string;
+  description: string | null;
+  display_order: number;
+  has_objective: boolean;
+  value: number | null;
+  objective: number | null;
+  attainment_pct: number | null;
+  status: KpiObjectiveStatus;
+  objective_date: string | null;
+}
+
+export interface KpiObjectivesResponse {
+  erp_available: boolean;
+  reason: string | null;
+  kpi_count: number;
+  with_objective_count: number;
+  hit_count: number;
+  below_count: number;
+  items: KpiObjectiveRow[];
+}
+
+export const kpiObjectivesApi = {
+  list: () => request<KpiObjectivesResponse>('/v1/profit/kpis/objectives'),
+};
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // SPRINT Q.5 — CEO dashboard tiles (OTD / Backlog / Alerts / FPY / Expeditions)
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -2146,6 +2177,35 @@ export const qualityReworkApi = {
   }) =>
     request<ReworkCostSummaryResponse>(
       `/v1/quality/rework/cost-summary?${new URLSearchParams(filterParams(params))}`,
+    ),
+};
+
+// ─── F11 / Q.46.C — defect-by-zone hull map ──────────────────────────────────
+
+export interface DefectZoneRow {
+  zone: string;
+  events: number;
+  share_pct: number;
+  cumulative_pct: number;
+  cost_estimate_eur: number;
+  hours_lost: number;
+  affected_orders: number;
+}
+
+export interface DefectZoneMapResponse {
+  window: { from: string; to: string };
+  total_events: number;
+  events_with_zone: number;
+  events_without_zone: number;
+  zone_coverage_pct: number;
+  distinct_zones: number;
+  zones: DefectZoneRow[];
+}
+
+export const defectZonesApi = {
+  zoneMap: (params?: { since?: string; until?: string; top_n?: number }) =>
+    request<DefectZoneMapResponse>(
+      `/v1/quality/defect-zones?${new URLSearchParams(filterParams(params))}`,
     ),
 };
 
