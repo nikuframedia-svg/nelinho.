@@ -10,6 +10,7 @@ from fastapi import APIRouter
 
 from .tenants import router as tenants_router
 from .tenant_config import router as tenant_config_router
+from .erp_integration import router as erp_integration_router
 from .products import router as products_router
 from .machines import router as machines_router
 from .employees import router as employees_router
@@ -32,9 +33,9 @@ router.include_router(customers_router)
 router.include_router(suppliers_router)
 
 
-# tenant_config lives at /v1/config (not under /v1/core/*) so it's wired
-# directly from main.py via `core_api.tenant_config_router`.
-__all__ = ["router", "tenant_config_router"]
+# tenant_config lives at /v1/config and erp_integration at /v1/erp-integration
+# (not under /v1/core/*) — wired directly from main.py.
+__all__ = ["router", "tenant_config_router", "erp_integration_router"]
 
 
 

@@ -21,6 +21,7 @@ from src.shared.kafka_client import get_producer, shutdown_kafka, check_kafka_he
 # Import API routers
 from src.core.api import router as core_router
 from src.core.api import tenant_config_router
+from src.core.api import erp_integration_router
 from src.plan.api import router as plan_router
 from src.profit.api import router as profit_router
 from src.hr.api import router as hr_router
@@ -545,6 +546,7 @@ async def metrics():
 # Include routers
 app.include_router(core_router)
 app.include_router(tenant_config_router)  # Sprint L.3 — /v1/config/*
+app.include_router(erp_integration_router)  # Q.44.Z — /v1/erp-integration
 
 # Sprint AA.4 — Trust Index v2.0 endpoint
 from src.dqa.api import router as dqa_router

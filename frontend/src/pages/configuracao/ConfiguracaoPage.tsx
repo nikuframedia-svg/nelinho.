@@ -30,6 +30,7 @@ import {
   Database,
   RefreshCw,
   Sparkles,
+  Plug,
 } from 'lucide-react';
 import { PageHeader, Tabs } from '../../components/dark';
 import { SkeletonLoader } from '../../components/ui/Skeleton';
@@ -45,6 +46,7 @@ import { TwinDashboard } from '../../components/twin/TwinPanels';
 import { ReportsAdminDashboard } from '../../components/reports/ReportsAdminPanel';
 import { ComponentsShowcase } from '../../components/showcase/ComponentsShowcase';
 import { OperationsDashboard } from '../../components/ops/OperationsDashboard';
+import { ErpIntegrationPanel } from '../../components/erp/ErpIntegrationPanel';
 
 // ─── Pages wrapped ───
 const SettingsPage = lazy(() =>
@@ -122,6 +124,7 @@ const TAB_IDS = [
   'auditoria',
   'sistema',
   'mestre',
+  'integracao-erp',
 ] as const;
 type TabId = (typeof TAB_IDS)[number];
 function isTabId(v: string | null): v is TabId {
@@ -226,6 +229,11 @@ export default function ConfiguracaoPage() {
       { id: 'auditoria', label: 'Auditoria', icon: <FileSearch size={13} /> },
       { id: 'sistema', label: 'Sistema', icon: <Server size={13} /> },
       { id: 'mestre', label: 'Dados Mestre', icon: <Database size={13} /> },
+      {
+        id: 'integracao-erp',
+        label: 'Integração ERP',
+        icon: <Plug size={13} />,
+      },
     ],
     []
   );
@@ -432,6 +440,9 @@ export default function ConfiguracaoPage() {
             </Suspense>
           </div>
         )}
+
+        {/* Integração ERP — Q.44.Z: colar URL+token da API do ERP */}
+        {activeTab === 'integracao-erp' && <ErpIntegrationPanel />}
       </div>
     </div>
   );
