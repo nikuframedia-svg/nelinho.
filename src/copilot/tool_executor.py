@@ -84,9 +84,18 @@ class ToolExecutor:
         system_prompt: str = "",
         history: Optional[List[Dict[str, str]]] = None,
         format: Optional[str] = "json",
+        final_system_prompt: Optional[str] = None,
     ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
         """
         Run the LLM with tool execution loop.
+
+        Q.37.E — quando ``final_system_prompt`` é dado, a síntese final
+        (a resposta ao utilizador depois de todas as tool calls) corre
+        com esse system prompt em vez do ``TOOL_SYSTEM_PROMPT``. Isto é
+        crítico: o ``system_prompt.md`` original pede um ``CopilotResponse``
+        estruturado; o ``TOOL_SYSTEM_PROMPT`` só ensina o protocolo de
+        tool calls. Sem este passo dedicado a resposta final não passava
+        a validação do schema (regressão que mantinha a flag a False).
 
         Returns:
             (final_llm_response, tool_call_log)
@@ -101,7 +110,7 @@ class ToolExecutor:
                 model=model,
                 format=format,
                 history=history,
-                system_prompt=system_prompt,
+                system_prompt=final_system_prompt or system_prompt,
             )
             return response, tool_log
 
@@ -147,7 +156,16 @@ class ToolExecutor:
             tool_call = self._extract_tool_call(response)
 
             if tool_call is None:
-                # No tool call — this is the final answer
+                # No tool call — esta é a resposta final.
+                # Q.37.E — se já corremos tools e temos um system prompt
+                # de síntese, refazemos a resposta final com o
+                # `system_prompt.md` original (que pede CopilotResponse
+                # estruturado), não o TOOL_SYSTEM_PROMPT.
+                if tool_log and final_system_prompt:
+                    response = await self._synthesize_final(
+                        client, model, final_system_prompt,
+                        current_history, format,
+                    )
                 return response, tool_log
 
             if iteration >= MAX_TOOL_CALLS_PER_TURN:
@@ -216,8 +234,42 @@ class ToolExecutor:
             current_history.append({"role": "user", "content": f"Tool result for {tool_id}:\n{result_text}\n\nNow answer the original question using this data."})
             current_prompt = "Based on the tool result above, provide your final answer."
 
-        # Fallback: return last response
+        # Fallback: limite de tool calls atingido. Q.37.E — mesma
+        # síntese final dedicada se houver tool results acumulados.
+        if tool_log and final_system_prompt:
+            response = await self._synthesize_final(
+                client, model, final_system_prompt, current_history, format,
+            )
         return response, tool_log
+
+    async def _synthesize_final(
+        self,
+        client: Any,
+        model: str,
+        final_system_prompt: str,
+        history: List[Dict[str, str]],
+        format: Optional[str],
+    ) -> Dict[str, Any]:
+        """Passo de síntese final dedicado (Q.37.E).
+
+        Corre uma última chamada ao LLM com o ``system_prompt.md``
+        original — o que define o schema ``CopilotResponse`` — sobre o
+        histórico que já contém os resultados das tools. Devolve o
+        JSON estruturado que o `service.process_ask` sabe validar.
+        """
+        synthesis_prompt = (
+            "Com base nos resultados das ferramentas acima, devolve "
+            "agora a resposta final ao utilizador no formato JSON "
+            "CopilotResponse estruturado definido nas instruções de "
+            "sistema. NÃO faças mais tool calls."
+        )
+        return await client.chat(
+            prompt=synthesis_prompt,
+            model=model,
+            format=format,
+            history=history,
+            system_prompt=final_system_prompt,
+        )
 
     def _extract_tool_call(self, response: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Extract tool_call from LLM response if present."""

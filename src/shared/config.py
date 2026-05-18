@@ -179,12 +179,13 @@ class Settings(BaseSettings):
     # backend serves on :8001 in dev. Override per deploy.
     copilot_tool_api_base_url: str = Field(default="http://localhost:8001")
     # Q.33.B.2 — master switch for the agentic tool-calling loop on
-    # generic-intent questions. Off by default: the registry now loads
-    # (so `/v1/tools` works and the loop *can* run), but the loop's
-    # final-answer synthesis doesn't yet emit a schema-valid
-    # CopilotResponse — activating it regressed generic answers to
-    # VALIDATION_FAILED. Flip to True once that integration lands.
-    copilot_agentic_tools_enabled: bool = Field(default=False)
+    # generic-intent questions.
+    # Q.37.E — flipped to True: the loop now has a dedicated final-answer
+    # synthesis step (`ToolExecutor._synthesize_final`) that uses the
+    # original `system_prompt.md` — which defines the CopilotResponse
+    # schema — instead of the TOOL_SYSTEM_PROMPT. The final answer now
+    # validates. Reverting is a one-liner (default=False).
+    copilot_agentic_tools_enabled: bool = Field(default=True)
     
     @property
     def cors_origins_list(self) -> List[str]:

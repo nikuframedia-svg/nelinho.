@@ -484,6 +484,10 @@ class CopilotService:
         model = settings.ollama_model
         ollama_client = get_ollama_client()
 
+        # Q.37.E — `tool_log` é sempre definido (vazio no caminho sem
+        # loop agêntico) para a injecção de citations mais abaixo não
+        # rebentar com NameError.
+        tool_log: List[Dict[str, Any]] = []
         try:
             llm_start = time.time()
             # For generic intents with tool registry loaded, use agentic tool loop
@@ -509,11 +513,17 @@ class CopilotService:
                 executor = ToolExecutor(
                     registry, auth_headers=self._build_tool_auth_headers(),
                 )
+                # Q.37.E — `final_system_prompt` é o system_prompt.md
+                # original; o passo de síntese final do loop usa-o (em
+                # vez do TOOL_SYSTEM_PROMPT) para emitir um
+                # CopilotResponse que passa a validação do schema.
+                final_system_prompt = await self._render_system_prompt()
                 llm_response, tool_log = await executor.execute_with_tools(
                     user_query=prompt,
                     model=model,
                     history=conversation_history or None,
                     format="json",
+                    final_system_prompt=final_system_prompt,
                 )
                 perf_metrics["tool_calls"] = len(tool_log)
             else:
@@ -818,12 +828,45 @@ class CopilotService:
         
         # 8. Construir CopilotResponse (facts já estão normalizadas no passo 6.5)
         suggestion_id = uuid4()
-        
+
         # Facts já estão normalizadas no passo 6.6
         facts_normalized = llm_response.get("facts", [])
-        
+
         # Warnings já estão normalizados no passo 6.5
         warnings_normalized = llm_response.get("warnings", [])
+
+        # Q.37.E — injecção determinística de citations das tool calls.
+        # Cada entrada do `tool_log` (loop agêntico) gera uma citation
+        # `source_type="calculation"`, `ref="tool:<id>;params_hash:<...>"`.
+        # O hash dos params é determinístico → a mesma tool call produz
+        # sempre a mesma citation (auditável, reproduzível). As citations
+        # são acrescentadas a cada fact, dando proveniência aos números
+        # que vieram das ferramentas.
+        if tool_log:
+            from src.copilot.utils.citations import create_tool_citation
+
+            tool_citations = []
+            seen_refs = set()
+            for entry in tool_log:
+                citation = create_tool_citation(
+                    tool_id=entry.get("tool_id", "unknown"),
+                    params=entry.get("params", {}),
+                )
+                if citation["ref"] not in seen_refs:
+                    seen_refs.add(citation["ref"])
+                    tool_citations.append(citation)
+
+            for fact in facts_normalized:
+                if not isinstance(fact, dict):
+                    continue
+                existing = fact.get("citations") or []
+                existing_refs = {
+                    c.get("ref") for c in existing if isinstance(c, dict)
+                }
+                for tc in tool_citations:
+                    if tc["ref"] not in existing_refs:
+                        existing.append(dict(tc))
+                fact["citations"] = existing
         
         # Garantir que meta é dict
         meta_raw = llm_response.get("meta", {})
@@ -1696,26 +1739,18 @@ class CopilotService:
             logger.warning(f"RLM: semantic layer indisponível ({exc})")
             return None
 
-    async def _render_prompt(
-        self,
-        user_query: str,
-        context_facts: Dict[str, Any],
-        rag_chunks: List[Dict[str, Any]],
-        kpi_snapshot: Optional[Dict[str, Any]] = None,
-        intent: str = "generic",
-        learned_signal: str = "",
-    ) -> str:
-        """Renderizar prompt completo."""
-        # Carregar system prompt
+    async def _render_system_prompt(self) -> str:
+        """Renderiza só o system prompt (system_prompt.md + capabilities).
+
+        Q.37.E — extraído de `_render_prompt` para que o loop agêntico
+        possa passar este system prompt ao passo de síntese final
+        separado do user_query (o `system_prompt.md` é o que define o
+        schema CopilotResponse).
+        """
         prompt_path = Path(__file__).parent / "prompts" / "system_prompt.md"
         system_prompt = prompt_path.read_text(encoding="utf-8")
 
-        # Sprint Q.15.0 — inject the dynamic Capabilities block. This
-        # tells the LLM exactly which diagnostic tools are Wired vs
-        # aspirational on this tenant, so it doesn't pretend to follow
-        # the §10 framework without a real handler. Best-effort: if the
-        # config lookup fails the placeholder gets stripped and the LLM
-        # treats all capabilities as aspirational (the safe default).
+        # Sprint Q.15.0 — inject the dynamic Capabilities block.
         try:
             from src.copilot.prompts.capabilities import (
                 fetch_capability_flags,
@@ -1738,10 +1773,22 @@ class CopilotService:
                 "<!-- CAPABILITIES_PLACEHOLDER -->", capabilities_block,
             )
         else:
-            # Older prompt without the placeholder — prepend the block
-            # at the top so it's always visible to the model.
             system_prompt = capabilities_block + "\n\n---\n\n" + system_prompt
-        
+        return system_prompt
+
+    async def _render_prompt(
+        self,
+        user_query: str,
+        context_facts: Dict[str, Any],
+        rag_chunks: List[Dict[str, Any]],
+        kpi_snapshot: Optional[Dict[str, Any]] = None,
+        intent: str = "generic",
+        learned_signal: str = "",
+    ) -> str:
+        """Renderizar prompt completo."""
+        # Carregar system prompt (system_prompt.md + capabilities block).
+        system_prompt = await self._render_system_prompt()
+
         # Q.35.1.4 — o `context_str` (dump JSON do contexto) é construído
         # mais abaixo, DEPOIS do fact pack, para se poder remover o que já
         # foi renderizado de forma legível e não duplicar tokens no prompt.
