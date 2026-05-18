@@ -211,8 +211,11 @@ async def list_batches(
     Includes `assigned_orders_count` per batch so the UI can render the
     truck-capacity meter without a second round-trip.
 
-    Q.38.A — também devolve `ready`/`in_prod`/`at_risk` por batch. As
-    ordens de cada batch vêm de `transport_batch_assignment`.
+    Q.38.A/B — também devolve `ready`/`in_prod`/`at_risk` por batch. As
+    ordens de cada batch vêm de `transport_batch_assignment`; quando uma
+    batch não tem linhas explícitas lá, derivamos os assignments on-the-fly
+    pelas `production_orders` cujo `transport_date` cai no dia da batch
+    (assignments explícitos têm sempre precedência).
     """
     svc = TransportBatchService(session, tenant_id)
     rows = await svc.list_batches(
@@ -220,8 +223,8 @@ async def list_batches(
     )
     counts = await svc.orders_by_batch()
 
-    # Carrega todas as ordens do tenant uma vez — indexadas por id para
-    # resolver os assignments explícitos.
+    # Carrega todas as ordens do tenant uma vez — indexadas por id (para os
+    # assignments explícitos) e por transport_date (para a derivação Q.38.B).
     all_orders = list(
         (
             await session.execute(
@@ -232,14 +235,25 @@ async def list_batches(
         ).scalars().all()
     )
     orders_by_id = {o.id: o for o in all_orders}
+    orders_by_date: dict[date, list[ProductionOrder]] = {}
+    for o in all_orders:
+        if o.transport_date is not None:
+            orders_by_date.setdefault(o.transport_date, []).append(o)
 
     out: list[TransportBatchOut] = []
     for r in rows:
         explicit_ids = counts.get(r.id, [])
-        batch_orders = [
-            orders_by_id[oid] for oid in explicit_ids if oid in orders_by_id
-        ]
-        assigned_count = len(explicit_ids)
+        if explicit_ids:
+            batch_orders = [
+                orders_by_id[oid] for oid in explicit_ids if oid in orders_by_id
+            ]
+            assigned_count = len(explicit_ids)
+        else:
+            # Q.38.B — as 3 batches seedadas não têm linhas em
+            # transport_batch_assignment. Sem derivação, a UI mostrava 0/50
+            # em tudo. Derivamos pela data de transporte das ordens.
+            batch_orders = orders_by_date.get(r.transport_date, [])
+            assigned_count = len(batch_orders)
         ready, in_prod, at_risk = _batch_state_counts(
             r.transport_date, batch_orders
         )
