@@ -386,7 +386,11 @@ class AlertsEngine:
         """
         dedupe_key = candidate["entity_refs"][0] if candidate.get("entity_refs") else None
         if dedupe_key:
-            since = datetime.now(timezone.utc) - timedelta(minutes=ALERT_DEDUPE_WINDOW_MINUTES)
+            # `copilot_alerts.created_at` é TIMESTAMP WITHOUT TIME ZONE — o
+            # asyncpg recusa um datetime tz-aware. Naive-UTC.
+            since = (
+                datetime.now(timezone.utc) - timedelta(minutes=ALERT_DEDUPE_WINDOW_MINUTES)
+            ).replace(tzinfo=None)
             stmt = select(CopilotAlert.id).where(
                 and_(
                     CopilotAlert.tenant_id == self.tenant_id,

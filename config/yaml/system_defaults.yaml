@@ -373,17 +373,17 @@ categories:
       data_type: int
       description: ''
     - key: diagnostics.erro_tree.enabled
-      value: false
+      value: true
       data_type: bool
-      description: ERRO-TREE handler — flip to True when Sprint Q.15.D.1 lands for this tenant.
+      description: ERRO-TREE handler — wired by Sprint Q.33.A.2.
     - key: diagnostics.reichenbach.enabled
-      value: false
+      value: true
       data_type: bool
-      description: Reichenbach common-cause handler — flip when Sprint Q.15.D.2/D.3 lands.
+      description: Reichenbach common-cause handler — wired by Sprint Q.33.A.2.
     - key: diagnostics.mill_diff.enabled
-      value: false
+      value: true
       data_type: bool
-      description: Mill's method 'what changed' handler — flip when Sprint Q.15.D.4 lands.
+      description: Mill's method 'what changed' handler — wired by Sprint Q.33.A.2.
   llm:
     description: LLM backend selection and parameters.
     settings:

@@ -260,8 +260,23 @@ class CopilotUserFeedback(TenantBase):
     __table_args__ = (
         Index("idx_copilot_user_feedback_tenant", "tenant_id"),
         Index("idx_copilot_user_feedback_thumb", "tenant_id", "thumb"),
+        Index("idx_copilot_user_feedback_suggestion", "suggestion_id"),
     )
 
     thumb: Mapped[str] = mapped_column(String(8), nullable=False)  # up | down
     text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     context: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+
+    # Q.32.B.2 — liga o feedback à sugestão que o originou. Sem isto a
+    # tabela era um sinal órfão: ninguém conseguia juntar feedback↔resposta
+    # nem saber quem avaliou. O serviço de agregação (Q.32.C.1) faz JOIN
+    # por `suggestion_id` para obter o `intent` da resposta avaliada.
+    suggestion_id: Mapped[Optional[UUID]] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True,
+    )
+    correlation_id: Mapped[Optional[UUID]] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True,
+    )
+    actor_id: Mapped[Optional[UUID]] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True,
+    )

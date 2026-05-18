@@ -26,6 +26,8 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 import httpx
 
+from src.shared.config import settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -215,9 +217,14 @@ class ToolRegistry:
     """
     
     tools: Dict[str, Tool] = field(default_factory=dict)
-    
-    # Configuration
-    base_url: str = "http://localhost:8000"
+
+    # Configuration. Q.33.B — default lifted from the wrong-port
+    # ``http://localhost:8000`` to the configured self URL (:8001 in dev).
+    base_url: str = field(
+        default_factory=lambda: getattr(
+            settings, "copilot_tool_api_base_url", "http://localhost:8001",
+        )
+    )
     allowed_categories: Set[ToolCategory] = field(default_factory=lambda: set(ToolCategory))
     
     # Metadata
@@ -505,12 +512,27 @@ class ToolRegistry:
         tools = self.list_tools(category=category)
         return [t.to_function_schema() for t in tools]
     
-    def get_tools_summary(self) -> str:
-        """Get a text summary of available tools (for system prompt)."""
+    def get_tools_summary(
+        self,
+        categories: Optional[Set[ToolCategory]] = None,
+        include_dangerous: bool = True,
+    ) -> str:
+        """Get a text summary of available tools (for system prompt).
+
+        Q.33.B.2 — ``categories`` restricts the summary to the tool
+        groups the caller can actually execute. Advertising a tool the
+        executor will refuse only wastes an agentic-loop iteration (and
+        invites the copilot to over-promise). ``include_dangerous=False``
+        further drops confirmation-gated tools.
+        """
         lines = ["Available tools:"]
-        
+
         for category in ToolCategory:
+            if categories is not None and category not in categories:
+                continue
             cat_tools = self.list_tools(category=category)
+            if not include_dangerous:
+                cat_tools = [t for t in cat_tools if not t.is_dangerous]
             if cat_tools:
                 lines.append(f"\n## {category.value.replace('_', ' ').title()}")
                 for tool in cat_tools:
@@ -518,7 +540,7 @@ class ToolRegistry:
                     if len(tool.parameters) > 3:
                         params += "..."
                     lines.append(f"- {tool.id}({params}): {tool.name}")
-        
+
         return "\n".join(lines)
     
     async def execute_tool(
@@ -611,14 +633,30 @@ class ToolRegistry:
 _registry: Optional[ToolRegistry] = None
 
 
-async def get_tool_registry(base_url: str = "http://localhost:8000") -> ToolRegistry:
-    """Get or create the global tool registry."""
+async def get_tool_registry(
+    base_url: Optional[str] = None,
+    openapi_spec: Optional[Dict[str, Any]] = None,
+) -> ToolRegistry:
+    """Get or create the global tool registry.
+
+    Q.33.B.1 — prefer ``openapi_spec`` (pass ``app.openapi()`` from the
+    startup hook) so the spec is parsed in-process: no HTTP round-trip
+    and no hardcoded port. The previous default fetched
+    ``http://localhost:8000/openapi.json`` — the wrong port (the backend
+    serves on :8001) — so ``_fetch_openapi`` got nothing and the registry
+    loaded 0 tools, leaving the agentic tool loop permanently dormant.
+
+    When ``openapi_spec`` is omitted the registry still falls back to an
+    HTTP fetch, now against the configured ``base_url`` (:8001 default).
+    """
     global _registry
-    
+
     if _registry is None:
         _registry = ToolRegistry()
-        await _registry.load_from_openapi(base_url)
-    
+        if base_url:
+            _registry.base_url = base_url
+        await _registry.load_from_openapi(openapi_spec=openapi_spec)
+
     return _registry
 
 

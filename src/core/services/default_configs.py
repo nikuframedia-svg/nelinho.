@@ -209,17 +209,18 @@ DEFAULT_SEEDS: list[ConfigSeed] = [
     ("copilot", "rate_limit.per_day", 300, "int", ""),
 
     # Sprint Q.15.0 — diagnostic capabilities flags. The system prompt
-    # v2.2 lists tools (`investigate_quality_drop`, `find_common_cause`,
-    # `what_changed`); each is gated by the corresponding flag. False
-    # default = the LLM treats them as aspirational and falls back to
-    # "describe the framework" mode. Operators flip per tenant once the
-    # corresponding handler sprint (Q.15.D.1/D.2-3/D.4) ships.
-    ("copilot", "diagnostics.erro_tree.enabled", False, "bool",
-     "ERRO-TREE handler — flip to True when Sprint Q.15.D.1 lands for this tenant."),
-    ("copilot", "diagnostics.reichenbach.enabled", False, "bool",
-     "Reichenbach common-cause handler — flip when Sprint Q.15.D.2/D.3 lands."),
-    ("copilot", "diagnostics.mill_diff.enabled", False, "bool",
-     "Mill's method 'what changed' handler — flip when Sprint Q.15.D.4 lands."),
+    # lists tools (`investigate_quality_drop`, `find_common_cause`,
+    # `what_changed`); each is gated by the corresponding flag.
+    # Sprint Q.33.A.1 — default flipped to True: the 3 detectors
+    # (`src/explain/diagnostics/{erro_tree,reichenbach,mill_diff}.py`)
+    # shipped and Q.33.A.2 wired the in-process dispatch in the copilot.
+    # Operators can still gate per tenant by flipping a row back to False.
+    ("copilot", "diagnostics.erro_tree.enabled", True, "bool",
+     "ERRO-TREE handler — wired by Sprint Q.33.A.2."),
+    ("copilot", "diagnostics.reichenbach.enabled", True, "bool",
+     "Reichenbach common-cause handler — wired by Sprint Q.33.A.2."),
+    ("copilot", "diagnostics.mill_diff.enabled", True, "bool",
+     "Mill's method 'what changed' handler — wired by Sprint Q.33.A.2."),
 
     ("llm", "backend", "ollama", "string",
      "Sprint S.2 — flip to 'vllm' when vLLM container is ready"),

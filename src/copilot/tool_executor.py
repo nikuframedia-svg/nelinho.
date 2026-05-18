@@ -65,8 +65,17 @@ class ToolExecutor:
         )
     """
 
-    def __init__(self, registry: Optional[ToolRegistry] = None):
+    def __init__(
+        self,
+        registry: Optional[ToolRegistry] = None,
+        auth_headers: Optional[Dict[str, str]] = None,
+    ):
         self.registry = registry or get_tool_registry_sync()
+        # Q.33.B.2 — tool execution is an HTTP call back into this app;
+        # almost every endpoint needs a tenant (`X-Tenant-Id`/JWT).
+        # Without these headers every tool call would 401 — the registry
+        # would advertise tools the copilot could never actually run.
+        self.auth_headers = auth_headers or None
 
     async def execute_with_tools(
         self,
@@ -96,10 +105,21 @@ class ToolExecutor:
             )
             return response, tool_log
 
-        # Inject tool descriptions into system prompt
-        tools_summary = self.registry.get_tools_summary()
-        augmented_system = system_prompt + "\n\n" + TOOL_SYSTEM_PROMPT.format(
-            tools_summary=tools_summary
+        # Inject tool descriptions into system prompt. Q.33.B.2 — only
+        # advertise the categories the executor will actually run, and
+        # drop confirmation-gated tools, so the LLM doesn't burn loop
+        # iterations requesting tools it would be refused.
+        tools_summary = self.registry.get_tools_summary(
+            categories=ALLOWED_CATEGORIES, include_dangerous=False,
+        )
+        # Q.33.B.2 — `.replace`, NOT `.format`: TOOL_SYSTEM_PROMPT embeds
+        # literal JSON (`{"tool_call": ...}`) and str.format reads those
+        # braces as format fields → `KeyError: '"tool_call"'`. The bug
+        # was dormant only because the registry used to load 0 tools and
+        # this branch never ran.
+        augmented_system = (
+            system_prompt + "\n\n"
+            + TOOL_SYSTEM_PROMPT.replace("{tools_summary}", tools_summary)
         )
 
         current_prompt = user_query
@@ -152,7 +172,9 @@ class ToolExecutor:
                 # Execute tool
                 start = time.time()
                 try:
-                    tool_result = await self.registry.execute_tool(tool_id, params)
+                    tool_result = await self.registry.execute_tool(
+                        tool_id, params, headers=self.auth_headers,
+                    )
                 except Exception as e:
                     logger.error(f"Tool execution failed: {tool_id}: {e}")
                     tool_result = {"error": str(e)}

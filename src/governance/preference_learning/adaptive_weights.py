@@ -380,7 +380,10 @@ class AdaptiveFitnessWeights:
     async def _fetch_commits_with_rejections(
         self, window_days: int,
     ) -> List[ScheduleCommit]:
-        since = datetime.now(timezone.utc) - timedelta(days=window_days)
+        # `plan_schedule_commits.created_at` é TIMESTAMP WITHOUT TIME ZONE —
+        # o asyncpg recusa um datetime tz-aware. Naive-UTC, como em
+        # LearningMetricsService.pair_stats.
+        since = (datetime.now(timezone.utc) - timedelta(days=window_days)).replace(tzinfo=None)
         stmt = (
             select(ScheduleCommit)
             .where(

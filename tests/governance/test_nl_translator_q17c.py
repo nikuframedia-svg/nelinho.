@@ -101,21 +101,24 @@ def _valid_rule_json() -> dict[str, Any]:
     }
 
 
-def _make_mock_ollama(*responses: str) -> AsyncMock:
-    """Return a mock client whose .chat() yields given response texts in order."""
+def _make_mock_ollama(*responses: Any) -> AsyncMock:
+    """Return a mock client whose .chat() yields the given responses in order.
+
+    Q.32.A.3 — espelha o contrato REAL de ``OllamaClient.chat(format="json")``:
+    devolve o objecto JSON **já parseado** (``json.loads`` do
+    ``message.content``), não o envelope ``{"message": {"content": ...}}``.
+    O mock antigo devolvia o envelope — e foi por isso que o bug passou
+    despercebido: o translator lia uma chave ``content`` inexistente e
+    concluía sempre "Ollama returned an empty response".
+    """
     client = AsyncMock()
-    client.chat = AsyncMock(
-        side_effect=[
-            {"message": {"content": text}}
-            for text in responses
-        ]
-    )
+    client.chat = AsyncMock(side_effect=list(responses))
     return client
 
 
 @pytest.mark.asyncio
 async def test_translate_happy_path():
-    client = _make_mock_ollama(json.dumps(_valid_rule_json()))
+    client = _make_mock_ollama(_valid_rule_json())
     rule = await translate_nl_to_rule(
         "Quando molde atingir 850 usos, alertar.",
         ollama=client, model="test-model",
@@ -131,18 +134,19 @@ async def test_translate_empty_input_raises():
 
 
 @pytest.mark.asyncio
-async def test_translate_handles_markdown_fenced_response():
+async def test_translate_handles_non_json_wrapper_with_fence():
+    # Caminho defensivo: se chat() correr com format!="json" devolve
+    # {"content": <texto cru>}; o translator tem de extrair na mesma.
     fenced = "```json\n" + json.dumps(_valid_rule_json()) + "\n```"
-    client = _make_mock_ollama(fenced)
+    client = _make_mock_ollama({"content": fenced})
     rule = await translate_nl_to_rule("x", ollama=client, model="m", max_retries=0)
     assert rule.id == "test-mold-cycle-rule"
 
 
 @pytest.mark.asyncio
-async def test_translate_retries_on_invalid_json():
-    invalid = "not json"
-    valid = json.dumps(_valid_rule_json())
-    client = _make_mock_ollama(invalid, valid)
+async def test_translate_retries_on_empty_response():
+    # chat() devolveu um objecto vazio → o translator volta a tentar.
+    client = _make_mock_ollama({}, _valid_rule_json())
     rule = await translate_nl_to_rule("x", ollama=client, model="m", max_retries=1)
     assert rule.id == "test-mold-cycle-rule"
     assert client.chat.await_count == 2
@@ -152,9 +156,7 @@ async def test_translate_retries_on_invalid_json():
 async def test_translate_retries_on_validation_error():
     bad = _valid_rule_json()
     bad["when"]["conditions"][0]["field"] = "not_a_real_field"
-    invalid_first = json.dumps(bad)
-    valid = json.dumps(_valid_rule_json())
-    client = _make_mock_ollama(invalid_first, valid)
+    client = _make_mock_ollama(bad, _valid_rule_json())
     rule = await translate_nl_to_rule("x", ollama=client, model="m", max_retries=1)
     assert rule.id == "test-mold-cycle-rule"
     assert client.chat.await_count == 2
@@ -162,16 +164,16 @@ async def test_translate_retries_on_validation_error():
 
 @pytest.mark.asyncio
 async def test_translate_exhausts_retries_then_raises():
-    invalid = "not json"
-    client = _make_mock_ollama(invalid, invalid)
-    with pytest.raises(RuleTranslationError, match="valid JSON"):
+    client = _make_mock_ollama({}, {})
+    with pytest.raises(RuleTranslationError, match="empty"):
         await translate_nl_to_rule("x", ollama=client, model="m", max_retries=1)
 
 
 @pytest.mark.asyncio
 async def test_translate_llm_self_refusal_surfaces_as_error():
-    refusal = json.dumps({"error": "Não consigo expressar essa regra com este schema"})
-    client = _make_mock_ollama(refusal)
+    client = _make_mock_ollama(
+        {"error": "Não consigo expressar essa regra com este schema"},
+    )
     with pytest.raises(RuleTranslationError, match="LLM refused"):
         await translate_nl_to_rule("x", ollama=client, model="m")
 
@@ -186,7 +188,7 @@ async def test_translate_propagates_ollama_failure():
 
 @pytest.mark.asyncio
 async def test_translate_status_default_is_proposed():
-    client = _make_mock_ollama(json.dumps(_valid_rule_json()))
+    client = _make_mock_ollama(_valid_rule_json())
     rule = await translate_nl_to_rule("x", ollama=client, model="m")
     # Default status from Pydantic is PROPOSED — the LLM doesn't set it.
     assert rule.status.value == "proposed"
