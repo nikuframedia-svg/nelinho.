@@ -194,21 +194,18 @@ async def ask_copilot(
         )
 
 
-@router.post("/action", status_code=status.HTTP_200_OK)
-async def execute_action(
+async def _execute_action(
     request: CopilotActionRequest,
-    user: UserContext = Depends(get_current_user),
-    tenant_id: UUID = Depends(get_tenant_id),
-    session: AsyncSession = Depends(get_session),
-):
-    """
-    Executar ação permitida.
-    
-    Ações suportadas:
-    - CREATE_DECISION_PR: Criar PR de melhoria
-    - DRY_RUN: Simular sem persistir
-    - OPEN_ENTITY: Hint para frontend navegar
-    - RUN_RUNBOOK: Executar runbook
+    user_id: UUID,
+    tenant_id: UUID,
+    session: AsyncSession,
+) -> Dict[str, Any]:
+    """Corpo partilhado do endpoint ``/action``.
+
+    Q.37.A — extraído do handler HTTP para que ``/action`` (com auth) e
+    ``/action-dev`` (dev-only, sem token) reutilizem exactamente a mesma
+    lógica. ``user_id`` é o proponente das acções — fica gravado no
+    Decision PR via a ``CopilotSuggestion`` ligada (ver SoD em Q.37.C).
     """
     # Verificar que suggestion existe
     suggestion = await session.get(CopilotSuggestion, request.suggestion_id)
@@ -217,7 +214,7 @@ async def execute_action(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Suggestion não encontrada",
         )
-    
+
     # Executar ação
     if request.action_type == "CREATE_DECISION_PR":
         # Criar PR
@@ -242,13 +239,14 @@ async def execute_action(
     
     elif request.action_type == "DRY_RUN":
         # Dry run - retornar hint (não executar realmente)
+        # Q.37.B substitui isto por simulação real via Digital Twin.
         return {
             "action_type": "DRY_RUN",
             "status": "simulated",
             "message": "Dry run executado (sem persistência)",
             "payload": request.payload,
         }
-    
+
     elif request.action_type == "OPEN_ENTITY":
         # Hint para frontend
         return {
@@ -311,6 +309,47 @@ async def execute_action(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Ação '{request.action_type}' não suportada",
         )
+
+
+@router.post("/action", status_code=status.HTTP_200_OK)
+async def execute_action(
+    request: CopilotActionRequest,
+    user: UserContext = Depends(get_current_user),
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Executar ação permitida.
+
+    Ações suportadas:
+    - CREATE_DECISION_PR: Criar PR de melhoria
+    - DRY_RUN: Simular sem persistir (via Digital Twin)
+    - OPEN_ENTITY: Hint para frontend navegar
+    - RUN_RUNBOOK: Executar runbook
+    """
+    return await _execute_action(request, user.user_id, tenant_id, session)
+
+
+@router.post(
+    "/action-dev",
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
+    dependencies=[Depends(dev_only)],
+)
+async def execute_action_dev(
+    request: CopilotActionRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Endpoint de desenvolvimento - SEM autenticação.
+
+    Q.37.A — espelha o ``/ask-dev``: tenant/user dev hardcoded, escondido
+    do schema e bloqueado em produção via ``dev_only``. Desbloqueia o
+    fallback de auth do frontend (``copilotApi.action()`` sem token).
+    """
+    dev_tenant_id = UUID("00000000-0000-0000-0000-000000000001")
+    dev_user_id = UUID("00000000-0000-0000-0000-000000000001")
+    return await _execute_action(request, dev_user_id, dev_tenant_id, session)
 
 
 @router.get("/suggestions/{suggestion_id}", response_model=CopilotResponse)

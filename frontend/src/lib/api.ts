@@ -1197,11 +1197,48 @@ export const copilotApi = {
     }
   },
   
-  action: (data: { action_type: string; suggestion_id: string; payload: any }) =>
-    request<any>('/api/copilot/action', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
+  action: async (data: { action_type: string; suggestion_id: string; payload: any }) => {
+    // Q.37.A — mesmo padrão de fallback dev do `ask()`: sem token vai
+    // directo ao endpoint dev; com token tenta o normal e cai no dev
+    // se a auth falhar (401/403).
+    const token = localStorage.getItem('auth_token') || localStorage.getItem('token');
+
+    const callDev = async () => {
+      const url = `${API_BASE}/api/copilot/action-dev`;
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Tenant-Id': '00000000-0000-0000-0000-000000000001', // Tenant dev
+        },
+        body: JSON.stringify(data),
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        const errorMessage = errorData.detail || errorData.message || `HTTP ${response.status}`;
+        const errorObj = new Error(errorMessage);
+        (errorObj as any).status = response.status;
+        throw errorObj;
+      }
+      return await response.json();
+    };
+
+    if (!token) {
+      return await callDev();
+    }
+
+    try {
+      return await request<any>('/api/copilot/action', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+    } catch (error: any) {
+      if (error.status === 401 || error.status === 403 || error.message?.includes('Not authenticated') || error.message?.includes('Unauthorized')) {
+        return await callDev();
+      }
+      throw error;
+    }
+  },
   
   getDailyFeedback: (date?: string) => {
     const endpoint = `/api/copilot/daily-feedback${date ? `?date=${date}` : ''}`;
