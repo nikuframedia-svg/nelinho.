@@ -3,8 +3,11 @@
  *
  *   - DailyFeedbackForm — 👍/👎 + textarea → POST /api/copilot/feedback/user
  *   - RagIngestUploader — drag-drop ficheiro texto → POST /api/copilot/rag/ingest
- *   - InsightsCardWrapper — re-export do CopilotInsightsCard (existe)
  *   - MascotChip — chip pequeno com avatar Nelinho + status
+ *
+ * Q.35.4.4 — `CopilotExtrasDashboard` passa a montar os 4 cards do Copilot
+ * (Insights, Recomendações, Feedback Diário, Histórico de Acções) que
+ * existiam em código mas nunca tinham sido montados em página nenhuma.
  */
 
 import { useRef, useState, type DragEvent, type ChangeEvent } from 'react';
@@ -12,6 +15,10 @@ import { useMutation } from '@tanstack/react-query';
 import { ThumbsUp, ThumbsDown, Send, Upload, FileText, Sparkles } from 'lucide-react';
 import { Panel, ZipToneBadge } from '../dark';
 import { getApiBase } from '../../lib/api';
+import { RecommendationsCard } from './RecommendationsCard';
+import { CopilotInsightsCard } from './CopilotInsightsCard';
+import { DailyCopilotFeedbackCard } from './DailyCopilotFeedbackCard';
+import { ActionHistory } from './ActionHistory';
 
 const TENANT = { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' };
 // Q.21.A — porta única via api.ts (concorda com VITE_API_URL).
@@ -254,6 +261,16 @@ export function CopilotExtrasDashboard() {
         <DailyFeedbackForm />
         <RagIngestUploader />
       </div>
+
+      {/* Q.35.4.4 — cards do Copilot. Cada um faz a sua própria query
+          (retry:false) e devolve null/empty-state quando não há dados —
+          nenhum rebenta a página se o endpoint falhar. */}
+      <CopilotInsightsCard />
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <RecommendationsCard />
+        <DailyCopilotFeedbackCard />
+      </div>
+      <ActionHistory />
     </div>
   );
 }

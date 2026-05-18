@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Cpu, Plus, Play, AlertTriangle, Loader2, Trash2, GitCompare, Copy, Hash, X, Sparkles } from 'lucide-react';
 import { format } from 'date-fns';
@@ -22,8 +23,26 @@ export function TwinPage() {
   const [compareScenario, setCompareScenario] = useState<any | null>(null);
   const [showTemplates, setShowTemplates] = useState(false);
   const [, setSelectedTemplate] = useState<any | null>(null);
+  const [prefillDescription, setPrefillDescription] = useState('');
   const toast = useToastContext();
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Q.35.4.3 — abrir o modal de criação quando se chega via `?action=new`
+  // (botão "Simular" do Copilot, atalho de teclado 'n', OpsInbox...). A
+  // `description` pré-preenche o cenário. Antes os params eram ignorados
+  // em silêncio — a navegação não fazia nada.
+  useEffect(() => {
+    if (searchParams.get('action') === 'new') {
+      setPrefillDescription(searchParams.get('description') || '');
+      setIsCreateModalOpen(true);
+      const next = new URLSearchParams(searchParams);
+      next.delete('action');
+      next.delete('description');
+      next.delete('source');
+      setSearchParams(next, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
 
   const { data: scenarios = [], isLoading, error } = useQuery({
     queryKey: ['twin', 'scenarios'],
@@ -244,7 +263,7 @@ export function TwinPage() {
         </div>
       )}
 
-      <FormModal title="New Twin Scenario" isOpen={isCreateModalOpen} onClose={() => setIsCreateModalOpen(false)} onSubmit={(data) => createMutation.mutate(data)} fields={scenarioFields} isLoading={createMutation.isPending} />
+      <FormModal title="New Twin Scenario" isOpen={isCreateModalOpen} onClose={() => { setIsCreateModalOpen(false); setPrefillDescription(''); }} onSubmit={(data) => createMutation.mutate(data)} fields={scenarioFields} initialData={prefillDescription ? { description: prefillDescription } : undefined} isLoading={createMutation.isPending} />
       <DeleteConfirmDialog isOpen={isDeleteModalOpen} onClose={() => { setIsDeleteModalOpen(false); setDeletingId(null); }} onConfirm={() => { if (deletingId) deleteMutation.mutate(deletingId); }} title="Delete Scenario" message="Are you sure?" isLoading={deleteMutation.isPending} />
     </DarkPageLayout>
     </ModuleErrorBoundary>

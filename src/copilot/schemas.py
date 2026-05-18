@@ -103,7 +103,19 @@ class CopilotResponse(BaseModel):
     suggestion_id: UUID
     correlation_id: UUID
     type: Literal["ANSWER", "RUNBOOK_RESULT", "PROPOSAL", "ERROR"]
-    intent: Literal["explain_oee", "explain_plan_change", "quality_summary", "data_integrity", "generic"]
+    # Q.35.1.3 — `diagnostic` adicionado: o `system_prompt.md` §3 sempre
+    # ofereceu este valor ao LLM, mas faltava aqui — quando o LLM o escolhia
+    # numa pergunta de causa raiz, o `CopilotResponse` rebentava com
+    # ValidationError e a resposta inteira era rejeitada. Esta lista TEM de
+    # ser igual à lista de intents do system prompt.
+    intent: Literal[
+        "explain_oee",
+        "explain_plan_change",
+        "quality_summary",
+        "data_integrity",
+        "diagnostic",
+        "generic",
+    ]
     summary: str = Field(..., min_length=1, max_length=500)
     facts: List[Fact] = Field(default_factory=list)
     actions: List[Action] = Field(default_factory=list)

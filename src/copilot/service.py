@@ -34,6 +34,91 @@ from src.shared.auth.rbac import Role
 logger = logging.getLogger(__name__)
 
 
+def _render_production_fact_pack(production: Dict[str, Any]) -> str:
+    """Q.34.A.4 — bloco de texto com o resumo de produção real, para o
+    prompt. Diz ao LLM o que citar (`table:plan.production_orders`).
+    Devolve "" quando não há dados."""
+    if not production or not production.get("has_data"):
+        return ""
+    qh = production.get("query_hash", "")
+    in_prod = production.get("orders_in_production", 0)
+    delivered = production.get("orders_delivered_or_stored", 0)
+    lines = [
+        f"### PRODUÇÃO (fonte: table:plan.production_orders; query_hash:{qh})",
+        f"- Ordens: {production.get('orders_total', 0)} totais "
+        f"({in_prod} em produção no chão de fábrica, "
+        f"{delivered} já entregues/armazenadas/embaladas)",
+        # Q.35.3.1 — o `status` vem todo IN_PROGRESS do sync; o WIP real é
+        # contado pela fase actual. NÃO chamar "Entregue" um gargalo.
+        f"- WIP real (ordens em fases de produção) = {in_prod}. As fases "
+        "administrativas (Entregue/Armazem/Embalado) não são produção.",
+    ]
+    wip = production.get("wip_by_phase") or []
+    if wip:
+        lines.append("- WIP por fase de produção: " + "; ".join(
+            f"{w['phase']} {w['orders']}" for w in wip[:8]))
+    by_type = production.get("wip_by_product_type") or {}
+    if by_type:
+        lines.append("- Por tipo de produto: " + "; ".join(
+            f"{k} {v}" for k, v in by_type.items()))
+    transp = production.get("orders_by_transport_date") or []
+    if transp:
+        lines.append("- Ordens por data de transporte: " + "; ".join(
+            f"{t['date']}={t['orders']}" for t in transp[:8]))
+    oldest = production.get("oldest_in_progress_created")
+    if oldest:
+        lines.append(f"- Ordem em curso mais antiga (criada): {oldest}")
+    lines.append(
+        'Citar com: source_type="db", '
+        f'ref="table:plan.production_orders;query_hash:{qh}".')
+    return "\n".join(lines) + "\n\n"
+
+
+def _render_quality_fact_pack(quality: Dict[str, Any]) -> str:
+    """Q.34.A.4 — bloco de texto com o resumo de qualidade real
+    (`quality.rework_entry`). Só para o reader DB (`db.rework_entry`); a
+    camada antiga não tem o mesmo contrato. Devolve "" quando não há dados."""
+    if not quality or not quality.get("has_data"):
+        return ""
+    if quality.get("source") != "db.rework_entry":
+        return ""
+    qh = quality.get("query_hash", "")
+    lines = [
+        f"### QUALIDADE (fonte: table:quality.rework_entry; query_hash:{qh})",
+        f"- Erros/retrabalho: {quality.get('total_errors', 0)} registados "
+        f"({quality.get('unresolved_errors', 0)} por resolver)",
+    ]
+    by_phase = quality.get("errors_by_phase") or []
+    if by_phase:
+        lines.append("- Erros por fase: " + "; ".join(
+            f"{e['phase']} {e['errors']}" for e in by_phase[:8]))
+    by_rc = quality.get("errors_by_root_cause") or {}
+    if by_rc:
+        lines.append("- Por causa raiz: " + "; ".join(
+            f"{k} {v}" for k, v in by_rc.items()))
+    # Q.35.3.2 — custo/horas só existem em poucos registos. NÃO apresentar
+    # a soma como "custo total" — dizer explicitamente a cobertura, senão
+    # o copiloto reporta €610 como se fosse o custo dos 3659 erros.
+    total_errors = quality.get("total_errors", 0)
+    cost = quality.get("cost_estimate_eur_known")
+    cost_n = quality.get("cost_known_count", 0)
+    if cost and cost_n:
+        lines.append(
+            f"- Custo de retrabalho conhecido: €{cost:,.0f} — mas só "
+            f"{cost_n} de {total_errors} erros têm custo registado no ERP. "
+            "NÃO apresentar este valor como o custo total da qualidade.")
+    hours = quality.get("hours_lost_known")
+    hours_n = quality.get("hours_known_count", 0)
+    if hours and hours_n:
+        lines.append(
+            f"- Horas perdidas conhecidas: {hours:.0f}h — só em {hours_n} "
+            f"de {total_errors} registos.")
+    lines.append(
+        'Citar com: source_type="db", '
+        f'ref="table:quality.rework_entry;query_hash:{qh}".')
+    return "\n".join(lines) + "\n\n"
+
+
 class CopilotService:
     """Service para orquestração do COPILOT."""
     
@@ -43,7 +128,133 @@ class CopilotService:
         self.actor_id = actor_id
         self.actor_role = actor_role
         self.has_hr_role = actor_role in (Role.HR_MANAGER.value, Role.ADMIN_PLATFORM.value)
-    
+
+    async def _load_conversation_history(
+        self, conversation_id: UUID,
+    ) -> List[Dict[str, str]]:
+        """Histórico multi-turno: Redis (rápido) com fallback durável ao Postgres.
+
+        Q.32.B.1 — o Redis (`ConversationStore`) é cache efémero: 3 turnos,
+        TTL 30 min. Quando expira — ou o Redis está em baixo — o histórico
+        desaparecia por completo. Agora reconstruímos do `copilot_message`,
+        que é a fonte durável de verdade.
+        """
+        try:
+            history = await ConversationStore.get_history(
+                self.tenant_id, conversation_id,
+            )
+            if history:
+                return history
+        except Exception as e:
+            logger.warning(f"Redis conversation history indisponível: {e}")
+
+        # Fallback durável — Postgres `copilot_message`.
+        try:
+            from sqlalchemy import select
+
+            from src.copilot.models import CopilotMessage
+
+            stmt = (
+                select(CopilotMessage)
+                .where(
+                    CopilotMessage.tenant_id == self.tenant_id,
+                    CopilotMessage.conversation_id == conversation_id,
+                )
+                .order_by(CopilotMessage.created_at.desc())
+                .limit(6)  # MAX_TURNS (3) × 2 mensagens por turno
+            )
+            rows = list((await self.session.execute(stmt)).scalars().all())
+            rows.reverse()  # ordem cronológica para o LLM
+            return [
+                {
+                    "role": "assistant" if m.actor_role == "copilot" else "user",
+                    "content": m.content_text or "",
+                }
+                for m in rows
+            ]
+        except Exception as e:
+            logger.warning(f"Postgres conversation history indisponível: {e}")
+            return []
+
+    async def _build_learned_signal(self, *, window_days: int = 90) -> str:
+        """Bloco "sinal aprendido" — feedback 👍/👎 agregado, para o prompt.
+
+        Q.32.C.2 — é assim que o copiloto melhora ao longo do tempo sem
+        retrain: vê a taxa de aprovação histórica das suas respostas
+        (`copilot_user_feedback`, agregado por `FeedbackSignalsService`) e
+        calibra o rigor. Determinístico, derivado de dados. Devolve "" se
+        ainda não há sinal significativo.
+        """
+        try:
+            from src.copilot.feedback_signals import (
+                MIN_SAMPLES_FOR_SIGNAL,
+                FeedbackSignalsService,
+            )
+
+            svc = FeedbackSignalsService(self.session, self.tenant_id)
+            by_intent = await svc.by_intent(window_days=window_days)
+        except Exception as e:
+            logger.warning(f"learned signal indisponível: {e}")
+            # Q.35.2 — mesmo motivo do rollback na recolha de RAG: não
+            # deixar uma query falhada poisonar a transação para o
+            # `_store_audit` que corre a seguir.
+            try:
+                await self.session.rollback()
+            except Exception:
+                pass
+            return ""
+
+        total_up = sum(fb.up for fb in by_intent.values())
+        total_down = sum(fb.down for fb in by_intent.values())
+        total = total_up + total_down
+        if total < MIN_SAMPLES_FOR_SIGNAL:
+            return ""
+
+        overall_pct = round(100.0 * total_up / total, 1)
+        lines = [
+            f"## SINAL APRENDIDO (feedback dos utilizadores — últimos {window_days} dias)",
+            "",
+            "Os utilizadores avaliaram as tuas respostas anteriores. Usa isto "
+            "para calibrar o rigor — NÃO menciones estes números na resposta.",
+            f"- Globalmente: 👍 {overall_pct}% ({total} avaliações)",
+        ]
+        significant = [fb for fb in by_intent.values() if fb.is_significant]
+        if significant:
+            parts = []
+            for fb in sorted(significant, key=lambda f: f.up_pct):
+                note = (
+                    " — abaixo da média, sê mais rigoroso e cita melhor"
+                    if fb.up_pct < 60 else ""
+                )
+                parts.append(f"{fb.intent} 👍 {fb.up_pct}% (N={fb.total}){note}")
+            lines.append("- Por tema: " + "; ".join(parts))
+        return "\n".join(lines)
+
+    def _build_tool_auth_headers(self) -> Dict[str, str]:
+        """Auth headers para as chamadas HTTP dos tools de volta à app.
+
+        Q.33.B.2 — quase todos os endpoints exigem um tenant
+        (`require_tenant_header`). Um access token assinado resolve o
+        tenant em qualquer ambiente (o JWT é lido primeiro); os headers
+        `X-*` são o fallback dev/test. Best-effort: se o minting falhar,
+        ainda enviamos os `X-*` para o dev continuar a funcionar.
+        """
+        headers: Dict[str, str] = {
+            "X-Tenant-Id": str(self.tenant_id),
+            "X-User-Id": str(self.actor_id),
+        }
+        try:
+            from src.shared.auth.jwt_handler import create_access_token
+
+            headers["Authorization"] = "Bearer " + create_access_token(
+                user_id=self.actor_id,
+                tenant_id=self.tenant_id,
+                role=self.actor_role,
+            )
+        except Exception as exc:
+            logger.warning(f"tool auth token minting falhou: {exc}")
+        return headers
+
     async def process_ask(
         self,
         request: CopilotAskRequest,
@@ -72,15 +283,13 @@ class CopilotService:
             logger.warning(f"SECURITY_FLAG detetado para query: {request.user_query[:100]}")
             return self._create_security_flag_response(correlation_id), {}
 
-        # 1.5. Load conversation history for multi-turn context
+        # 1.5. Load conversation history for multi-turn context.
+        # Q.32.B.1 — Redis com fallback durável ao Postgres copilot_message.
         conversation_history: List[Dict[str, str]] = []
         if request.conversation_id:
-            try:
-                conversation_history = await ConversationStore.get_history(
-                    self.tenant_id, request.conversation_id
-                )
-            except Exception as e:
-                logger.warning(f"Failed to load conversation history: {e}")
+            conversation_history = await self._load_conversation_history(
+                request.conversation_id
+            )
         
         # 2. Detectar intent
         intent_start = time.time()
@@ -104,11 +313,49 @@ class CopilotService:
                 logger.warning(f"Erro no fast path, caindo para LLM: {e}")
                 # Continuar para LLM path se fast path falhar
         
-        # 2.6. Q.31.H — DIAGNOSTIC: o RLM agent corre think→query→observe
-        # sobre o estado da fábrica (sub-queries tipadas, sem dump de 200k
-        # tokens). Isolado e com fallback: se levanta, cai no caminho LLM
-        # normal abaixo — os outros intents nunca passam por aqui.
+        # 2.55. FAST PATH: saudações / smalltalk → resposta fixa, zero LLM.
+        if intent == "smalltalk":
+            try:
+                fast_response, fast_audit = self._handle_fast_path_smalltalk(
+                    request, correlation_id, start_time
+                )
+                if fast_response:
+                    perf_metrics["total_ms"] = int((time.time() - start_time) * 1000)
+                    fast_audit["perf_metrics"] = perf_metrics
+                    logger.info(
+                        f"Fast path smalltalk usado. Latency: {perf_metrics['total_ms']}ms"
+                    )
+                    return fast_response, fast_audit
+            except Exception as e:
+                logger.warning(f"Erro no fast path smalltalk, caindo para LLM: {e}")
+
+        # 2.6. DIAGNOSTIC — duas camadas, com fallback em cascata:
+        #   (a) Q.33.A.2 — dispatch directo aos 3 detectores de causa raiz
+        #       (`investigate_quality_drop` / `find_common_cause` /
+        #       `what_changed`). Só engata quando a capability está wired
+        #       para o tenant; corre o detector in-process e compõe a
+        #       resposta. É o caminho preferido — dá uma causa raiz real.
+        #   (b) Q.31.H — o RLM agent corre think→query→observe sobre o
+        #       estado da fábrica (sub-queries tipadas, sem dump de 200k
+        #       tokens). Fallback quando (a) não devolve nada.
+        # Ambos isolados: se levantam ou devolvem None, cai no caminho LLM
+        # normal abaixo. Os outros intents nunca passam por aqui.
         if intent == "diagnostic":
+            try:
+                diag_result = await self._handle_diagnostic_dispatch(
+                    request, correlation_id, start_time
+                )
+                if diag_result is not None:
+                    diag_response, diag_audit = diag_result
+                    perf_metrics["total_ms"] = int((time.time() - start_time) * 1000)
+                    diag_audit["perf_metrics"] = perf_metrics
+                    logger.info(
+                        f"Diagnostic dispatch usado. Latency: {perf_metrics['total_ms']}ms"
+                    )
+                    return diag_response, diag_audit
+            except Exception as e:
+                logger.warning(f"Diagnostic dispatch falhou, a tentar RLM: {e}")
+
             try:
                 rlm_result = await self._handle_rlm_diagnostic(
                     request, correlation_id, start_time
@@ -181,6 +428,16 @@ class CopilotService:
                 perf_metrics["rag_retrieval_ms"] = int((time.time() - rag_start) * 1000)
             except Exception as e:
                 logger.warning(f"Erro ao recuperar RAG chunks: {e}")
+                # Q.35.2 — uma query falhada (ex.: `copilot_rag_chunk` não
+                # existe em dev — pgvector é skipped) deixa a transação
+                # asyncpg ABORTADA. Sem rollback, TODA a query seguinte na
+                # mesma sessão (learned signal, `_store_audit`) rebenta com
+                # InFailedSQLTransactionError → a resposta inteira vira
+                # ERROR/MODEL_OFFLINE falso. Limpar a transação aqui.
+                try:
+                    await self.session.rollback()
+                except Exception:
+                    pass
         
         # 6. Render prompt (com fact pack se kpi_snapshot disponível)
         # Limitar contexto para perguntas simples (reduzir prompt size = resposta mais rápida)
@@ -188,20 +445,30 @@ class CopilotService:
         # Para perguntas curtas, limitar contexto a apenas KPIs essenciais
         limited_context = context_facts
         if intent == "kpi_current" or len(request.user_query.split()) <= 5:
-            # Manter apenas KPIs e métricas essenciais, remover detalhes operacionais
+            # Manter apenas KPIs e métricas essenciais, remover detalhes operacionais.
+            # Q.34.A.4 — manter também `production`/`quality`: são os resumos
+            # de dados reais (production_orders, rework_entry) que o fact pack
+            # usa para responder com números concretos a perguntas curtas.
             limited_context = {
                 "operational_snapshot": context_facts.get("operational_snapshot", {}),
                 "kpis": context_facts.get("kpis", {}),
+                "production": context_facts.get("production", {}),
+                "quality": context_facts.get("quality", {}),
             }
             # Limitar RAG chunks também
             rag_chunks = rag_chunks[:2] if len(rag_chunks) > 2 else rag_chunks
         
+        # Q.32.C.2 — sinal aprendido: feedback 👍/👎 histórico injectado no
+        # prompt para o copiloto calibrar o rigor ao longo do tempo.
+        learned_signal = await self._build_learned_signal()
+
         prompt = await self._render_prompt(
             request.user_query,
             limited_context,
             rag_chunks,
             kpi_snapshot=kpi_snapshot,
             intent=intent,
+            learned_signal=learned_signal,
         )
         perf_metrics["prompt_render_ms"] = int((time.time() - prompt_start) * 1000)
         
@@ -216,15 +483,32 @@ class CopilotService:
         # 7. Call Ollama
         model = settings.ollama_model
         ollama_client = get_ollama_client()
-        
+
         try:
             llm_start = time.time()
             # For generic intents with tool registry loaded, use agentic tool loop
             # so the LLM can call factory data tools (backlog, WIP, bottlenecks, etc.)
+            # Q.33.B.2 — gated behind `copilot_agentic_tools_enabled` (off by
+            # default). The registry now loads in-process (`/v1/tools` works),
+            # but the loop's final-answer step doesn't yet emit a schema-valid
+            # CopilotResponse — running it regressed generic answers to
+            # VALIDATION_FAILED. The loop's own integration is a separate
+            # sub-sprint; until then generic intents take the plain-chat path.
             from src.copilot.tool_registry import get_tool_registry_sync
             registry = get_tool_registry_sync()
-            if intent == "generic" and registry and registry.tools:
-                executor = ToolExecutor(registry)
+            if (
+                settings.copilot_agentic_tools_enabled
+                and intent == "generic"
+                and registry
+                and registry.tools
+            ):
+                # Pass auth so the tool's HTTP call back into this app
+                # resolves the tenant instead of 401-ing. A minted JWT
+                # works in every environment; the X-* headers are the
+                # dev/test fallback path.
+                executor = ToolExecutor(
+                    registry, auth_headers=self._build_tool_auth_headers(),
+                )
                 llm_response, tool_log = await executor.execute_with_tools(
                     user_query=prompt,
                     model=model,
@@ -260,12 +544,24 @@ class CopilotService:
             logger.warning(f"actions não é uma lista: {type(actions_raw).__name__}, convertendo...")
             actions_raw = []
         
+        # Q.35.5.1 — só estes 4 action_type têm handler real no endpoint
+        # /api/copilot/action; e RUN_RUNBOOK só executa runbooks que
+        # carregam mesmo. O LLM por vezes inventa acções (RUN_RUNBOOK de
+        # um runbook inexistente, action_types fora do enum) — propor um
+        # botão que rebenta ao clicar é pior que não o propor.
+        from src.copilot.runbook_executor import loadable_runbooks
+
+        valid_action_types = {
+            "CREATE_DECISION_PR", "DRY_RUN", "OPEN_ENTITY", "RUN_RUNBOOK",
+        }
+        real_runbooks = set(loadable_runbooks())
+
         for action in actions_raw:
             # Se for string, tentar converter para dict
             if isinstance(action, str):
                 logger.warning(f"Ação é string: '{action}', ignorando...")
                 continue
-            
+
             # Se for dict, normalizar
             if isinstance(action, dict):
                 # Se tiver "type" mas não "action_type", converter
@@ -274,9 +570,25 @@ class CopilotService:
                 # Garantir que tem "label" (obrigatório)
                 if "label" not in action:
                     action["label"] = action.get("action_type", "Ação")
-                # Só adicionar se tiver action_type válido
-                if action.get("action_type"):
-                    actions_normalized.append(action)
+                action_type = action.get("action_type")
+                if not action_type:
+                    continue
+                # Q.35.5.1 — descartar acções sem handler real.
+                if action_type not in valid_action_types:
+                    logger.warning(
+                        f"Q.35.5.1 — action_type sem handler descartado: "
+                        f"{action_type!r}"
+                    )
+                    continue
+                if action_type == "RUN_RUNBOOK":
+                    rb_id = (action.get("payload") or {}).get("runbook_id")
+                    if rb_id not in real_runbooks:
+                        logger.warning(
+                            f"Q.35.5.1 — RUN_RUNBOOK descartado: runbook "
+                            f"{rb_id!r} não existe (reais: {sorted(real_runbooks)})"
+                        )
+                        continue
+                actions_normalized.append(action)
             else:
                 logger.warning(f"Ação tem tipo inválido: {type(action).__name__}, ignorando...")
         
@@ -293,9 +605,16 @@ class CopilotService:
                     code = warning.get("code", "")
                     valid_codes = ("INSUFFICIENT_EVIDENCE", "SECURITY_FLAG", "LOW_TRUST_INDEX", "MODEL_OFFLINE", "VALIDATION_FAILED", "EXPLANATION_TOO_SHALLOW", "EXPLANATION_MISSING_CAUSAL_LINK", "EXPLANATION_FALSE_CAUSALITY")
                     if code not in valid_codes:
-                        code = "VALIDATION_FAILED"
-                        logger.warning(f"Warning code inválido: {warning.get('code')}, usando VALIDATION_FAILED")
-                    
+                        # Q.35.2.2 — código de warning inventado pelo LLM:
+                        # DESCARTAR o warning. Antes convertia-se em
+                        # VALIDATION_FAILED, o que punha um badge "Validação
+                        # falhou" assustador numa resposta `ANSWER` que afinal
+                        # passou — desonesto e confundia o utilizador.
+                        logger.info(
+                            f"Warning code inválido descartado: {warning.get('code')}"
+                        )
+                        continue
+
                     # Garantir que tem message
                     message = warning.get("message", "")
                     if not message:
@@ -327,13 +646,18 @@ class CopilotService:
                             # Se source_type é inválido (ex: 'BEST_PRACTICE'), converter para válido
                             valid_source_types = ["db", "rag", "event", "calculation", "recommendation", "system_data"]
                             if source_type not in valid_source_types:
-                                # BEST_PRACTICE ou outros inválidos -> usar 'recommendation' ou 'rag'
-                                if "BEST_PRACTICE" in str(source_type).upper() or "PRACTICE" in str(source_type).upper():
+                                # Q.35.2.1 — `BEST_PRACTICE` mapeia bem para
+                                # `recommendation`; tudo o resto cai em
+                                # `system_data` (a marca honesta de "gerado
+                                # pelo sistema/copiloto"). Antes mapeava-se
+                                # `HEURISTIC`→`rag`, o que mentia sobre a
+                                # origem (sugeria recuperação da base de
+                                # conhecimento quando não houve nenhuma).
+                                orig = str(source_type).upper()
+                                if "PRACTICE" in orig:
                                     source_type = "recommendation"
-                                elif "HEURISTIC" in str(source_type).upper() or "REASONING" in str(source_type).upper():
-                                    source_type = "rag"
                                 else:
-                                    source_type = "system_data"  # Fallback seguro
+                                    source_type = "system_data"
                                 logger.warning(
                                     f"Citation com source_type inválido '{citation.get('source_type')}' "
                                     f"convertido para '{source_type}'. Correlation: {correlation_id}"
@@ -397,53 +721,72 @@ class CopilotService:
                         logger.warning(f"Fact sem texto, ignorando. Correlation: {correlation_id}")
                         continue
                     
-                    # Evidence enforcement: facts without real citations
+                    # Q.35.2.1 — evidence enforcement honesto. Um facto sem
+                    # citação real:
+                    #  - intents de dados (kpi/quality/plan/diagnostic): é um
+                    #    número/afirmação sem fonte → DESCARTAR o facto e
+                    #    sinalizar INSUFFICIENT_EVIDENCE. Antes fabricava-se
+                    #    uma citação "system:copilot:ungrounded" só para o
+                    #    facto passar na validação — o copiloto mostrava um
+                    #    número não verificado como se fosse facto.
+                    #  - generic: é uma afirmação conversacional do próprio
+                    #    copiloto (ex.: auto-descrição) → manter, com a marca
+                    #    honesta "afirmação do COPILOT, sem fonte de dados".
                     if not normalized_citations and not has_insufficient_evidence:
-                        if intent in ("kpi_current", "quality_summary", "plan_summary"):
-                            # KPI/data queries: downgrade confidence and flag as ungrounded
-                            normalized_citations = [{
-                                "source_type": "system_data",
-                                "ref": "system:copilot:ungrounded",
-                                "label": "Sem evidência direta — valor não verificado",
-                                "confidence": 0.3,
-                                "trust_index": 0.3,
-                            }]
-                            if not any(w.get("code") == "INSUFFICIENT_EVIDENCE" for w in llm_response.get("warnings", [])):
-                                warnings_list = llm_response.get("warnings", [])
+                        if intent in ("kpi_current", "quality_summary", "plan_summary", "diagnostic"):
+                            logger.info(
+                                f"Fact sem citation descartado (intent={intent}): "
+                                f"'{fact_text[:80]}'"
+                            )
+                            warnings_list = llm_response.get("warnings", [])
+                            if not any(w.get("code") == "INSUFFICIENT_EVIDENCE" for w in warnings_list):
                                 warnings_list.append({
                                     "code": "INSUFFICIENT_EVIDENCE",
-                                    "message": f"Fact sem citation real: '{fact_text[:80]}...' — confiança reduzida",
+                                    "message": "Algumas afirmações não tinham fonte de dados verificável e foram omitidas.",
                                 })
                                 llm_response["warnings"] = warnings_list
+                            continue  # não adiciona o facto sem fonte
                         else:
-                            # Generic queries: still allow but mark as copilot-generated
+                            # generic — afirmação do próprio copiloto.
                             normalized_citations = [{
                                 "source_type": "system_data",
                                 "ref": "system:copilot:generated",
-                                "label": "Resposta do COPILOT (sem fonte de dados)",
+                                "label": "Afirmação do COPILOT (sem fonte de dados)",
                                 "confidence": 0.5,
                                 "trust_index": 0.5,
                             }]
-                    
+
                     fact_normalized = {
                         "text": fact_text,
                         "citations": normalized_citations,
                     }
                     normalized_facts.append(fact_normalized)
                 elif isinstance(fact, str):
-                    # String fact — no real citations possible
-                    if has_insufficient_evidence:
-                        normalized_facts.append({"text": fact, "citations": []})
+                    # Q.35.2.1 — facto string (sem citação possível). Mesmo
+                    # critério do ramo dict: nos intents de dados é
+                    # descartado (sem fonte → não se mostra); no generic é
+                    # uma afirmação do copiloto, mantida com marca honesta.
+                    # NUNCA `citations: []` — o schema `Fact` exige ≥1.
+                    if intent in ("kpi_current", "quality_summary", "plan_summary", "diagnostic"):
+                        logger.info(
+                            f"Fact string sem fonte descartado (intent={intent})"
+                        )
+                        warnings_list = llm_response.get("warnings", [])
+                        if not any(w.get("code") == "INSUFFICIENT_EVIDENCE" for w in warnings_list):
+                            warnings_list.append({
+                                "code": "INSUFFICIENT_EVIDENCE",
+                                "message": "Algumas afirmações não tinham fonte de dados verificável e foram omitidas.",
+                            })
+                            llm_response["warnings"] = warnings_list
                     else:
-                        confidence = 0.3 if intent in ("kpi_current", "quality_summary", "plan_summary") else 0.5
                         normalized_facts.append({
                             "text": fact,
                             "citations": [{
                                 "source_type": "system_data",
                                 "ref": "system:copilot:generated",
-                                "label": "Resposta do COPILOT (sem fonte de dados)",
-                                "confidence": confidence,
-                                "trust_index": confidence,
+                                "label": "Afirmação do COPILOT (sem fonte de dados)",
+                                "confidence": 0.5,
+                                "trust_index": 0.5,
                             }],
                         })
             llm_response["facts"] = normalized_facts
@@ -498,7 +841,14 @@ class CopilotService:
             response_type = "ANSWER"
         
         response_intent = llm_response.get("intent", "generic")
-        valid_intents = ("explain_oee", "explain_plan_change", "quality_summary", "data_integrity", "generic")
+        # Q.35.1.3 — tem de ser igual ao Literal de `CopilotResponse.intent`
+        # (schemas.py) e à lista do system prompt §3. Antes faltava
+        # `diagnostic` aqui → uma resposta diagnóstica perdia o intent
+        # (reescrito para "generic" em silêncio).
+        valid_intents = (
+            "explain_oee", "explain_plan_change", "quality_summary",
+            "data_integrity", "diagnostic", "generic",
+        )
         if response_intent not in valid_intents:
             logger.warning(f"Intent inválido: {response_intent}, usando generic")
             response_intent = "generic"
@@ -541,7 +891,7 @@ class CopilotService:
             )
             logger.error("Dados que causaram erro:")
             logger.error(f"  type: {response_type} (valid: ANSWER, RUNBOOK_RESULT, PROPOSAL, ERROR)")
-            logger.error(f"  intent: {response_intent} (valid: explain_oee, explain_plan_change, quality_summary, data_integrity, generic)")
+            logger.error(f"  intent: {response_intent} (valid: explain_oee, explain_plan_change, quality_summary, data_integrity, diagnostic, generic)")
             logger.error(f"  summary length: {len(response_summary)} (must be 1-500)")
             logger.error(f"  facts count: {len(facts_normalized)}")
             logger.error(f"  actions count: {len(actions_normalized)}")
@@ -647,6 +997,18 @@ class CopilotService:
         """
         query_lower = user_query.lower().strip()
 
+        # Smalltalk / saudações — resposta fixa, sem LLM. Avaliado primeiro:
+        # uma saudação curta nunca é diagnóstico nem pergunta de KPI. Match
+        # exacto sobre a query limpa de pontuação, por isso "ola" entra mas
+        # "ola, qual o OEE?" não — não rouba perguntas reais.
+        smalltalk_triggers = {
+            "ola", "olá", "oi", "bom dia", "boa tarde", "boa noite",
+            "obrigado", "obrigada", "tudo bem", "como estas", "como estás",
+            "bom trabalho", "adeus", "ate logo", "até logo", "hello", "hi",
+        }
+        if query_lower.strip(" !?.,") in smalltalk_triggers:
+            return "smalltalk"
+
         # Sprint Q.15.0 — Diagnostic intent: causal / "why" questions.
         # Checked BEFORE kpi_current because "porque caiu o OEE?"
         # contains "oee" but is fundamentally a diagnostic question, not
@@ -671,11 +1033,18 @@ class CopilotService:
             if any(noun in query_lower for noun in kpi_nouns):
                 return "diagnostic"
 
-        # Fast detection: perguntas muito curtas sobre KPIs devem ser kpi_current
+        # Fast detection: perguntas muito curtas sobre KPIs devem ser kpi_current.
+        # Q.35.2.3 — só dispara com um NOME de métrica real. Antes a lista
+        # tinha "quanto" e "qual o/é": "Quantos erros de qualidade tivemos?"
+        # contém "quanto" → caía no fast-path de KPI (intent errado,
+        # explain_oee) em vez de ser uma pergunta de qualidade. "throughput"
+        # fica na lista — é nome de métrica, não apanha perguntas de qualidade.
         query_words = query_lower.split()
         if len(query_words) <= 5:
-            # Perguntas curtas: verificar se mencionam KPIs
-            kpi_keywords_short = ["oee", "fpy", "rework", "availability", "performance", "qual é", "qual o", "quanto"]
+            kpi_keywords_short = [
+                "oee", "fpy", "rework", "availability", "performance",
+                "throughput",
+            ]
             if any(kw in query_lower for kw in kpi_keywords_short):
                 return "kpi_current"
         
@@ -881,7 +1250,317 @@ class CopilotService:
         except Exception as e:
             logger.error(f"Erro no fast path KPI: {e}", exc_info=True)
             return None, {}  # Fallback para LLM
-    
+
+    def _handle_fast_path_smalltalk(
+        self,
+        request: CopilotAskRequest,
+        correlation_id: UUID,
+        start_time: float,
+    ) -> Tuple[Optional[CopilotResponse], Dict[str, Any]]:
+        """Fast path para saudações / smalltalk — resposta fixa, sem LLM.
+
+        Uma saudação não precisa do modelo: responde em <50ms em vez dos
+        ~22s de uma geração JSON completa. Espelha _handle_fast_path_kpi.
+        """
+        try:
+            from src.copilot.utils.citations import create_system_data_citation
+
+            latency_ms = int((time.time() - start_time) * 1000)
+            summary = (
+                "Olá! Sou o copiloto de produção da NELO. Em que te posso "
+                "ajudar — KPIs, plano, qualidade ou atribuições?"
+            )
+            citation = create_system_data_citation(
+                data_source="copilot",
+                data_id="greeting",
+                label="Copiloto de produção NELO",
+                confidence=1.0,
+                trust_index=1.0,
+            )
+            response = CopilotResponse(
+                suggestion_id=uuid4(),
+                correlation_id=correlation_id,
+                type="ANSWER",
+                intent="generic",
+                summary=summary,
+                facts=[{"text": summary, "citations": [citation]}],
+                actions=[],
+                warnings=[],
+                meta={
+                    "model": "fast_path",
+                    "tokens": 0,
+                    "latency_ms": latency_ms,
+                    "validation_passed": True,
+                    "fast_path": True,
+                },
+            )
+            audit_data = {
+                "latency_ms": latency_ms,
+                "fast_path": True,
+                "intent": "smalltalk",
+            }
+            logger.info(f"Fast path smalltalk: {latency_ms}ms")
+            return response, audit_data
+        except Exception as e:
+            logger.error(f"Erro no fast path smalltalk: {e}", exc_info=True)
+            return None, {}  # Fallback para LLM
+
+    @staticmethod
+    def _hypothesis_to_dict(hypothesis: Any) -> Optional[Dict[str, Any]]:
+        """Serializa uma `Hypothesis` dos detectores para dict JSON-safe."""
+        if hypothesis is None:
+            return None
+        ci: Optional[List[float]] = None
+        try:
+            low, high = hypothesis.credible_interval()
+            ci = [round(float(low), 3), round(float(high), 3)]
+        except Exception:
+            ci = None
+        return {
+            "type": hypothesis.type,
+            "entity": hypothesis.entity,
+            "confidence": round(float(hypothesis.confidence), 3),
+            "credible_interval": ci,
+            "evidence": list(hypothesis.evidence or []),
+        }
+
+    async def _dispatch_diagnostic_detector(
+        self, tool_name: str, params: Dict[str, Any],
+    ) -> Optional[Dict[str, Any]]:
+        """Corre o detector certo in-process e devolve o resultado em dict.
+
+        Async, com a própria `self.session` — sem HTTP. Devolve ``None``
+        quando os parâmetros não chegam ou o detector não produz nada de
+        útil (o chamador cai no fallback).
+        """
+        from datetime import date as _date
+
+        try:
+            if tool_name == "investigate_quality_drop":
+                from src.explain.diagnostics.erro_tree import ErroTreeDetector
+                from src.explain.diagnostics.types import TriggerType
+
+                trigger = TriggerType(params.get("trigger", "quality_drop"))
+                detector = ErroTreeDetector(self.session, self.tenant_id)
+                result = await detector.investigate(
+                    trigger=trigger,
+                    period_days=int(params.get("period_days", 7)),
+                    phase_id=params.get("phase_id"),
+                )
+                return {
+                    "detector": "erro_tree",
+                    "root_cause": self._hypothesis_to_dict(result.root_cause),
+                    "chain": list(result.chain or []),
+                    "steps_checked": list(result.steps_checked or []),
+                    "recommendation": dict(result.recommendation or {}),
+                }
+
+            if tool_name == "find_common_cause":
+                from src.explain.diagnostics.reichenbach import ReichenbachDetector
+
+                phases = [str(p) for p in (params.get("deviating_phases") or [])]
+                if len(phases) < 2:
+                    return None
+                detector = ReichenbachDetector(self.session, self.tenant_id)
+                result = await detector.find_common_cause(
+                    deviating_phases=phases,
+                    period_days=int(params.get("period_days", 7)),
+                )
+                return {
+                    "detector": "reichenbach",
+                    "verdict": result.verdict,
+                    "common_causes": [
+                        self._hypothesis_to_dict(h) for h in result.common_causes
+                    ],
+                    "independent_causes": [
+                        self._hypothesis_to_dict(h) for h in result.independent_causes
+                    ],
+                    "checks_run": list(result.checks_run or []),
+                }
+
+            if tool_name == "what_changed":
+                from src.explain.diagnostics.mill_diff import MillDiffDetector
+
+                detector = MillDiffDetector(self.session, self.tenant_id)
+                result = await detector.what_changed(
+                    good_start=_date.fromisoformat(params["good_period_start"]),
+                    good_end=_date.fromisoformat(params["good_period_end"]),
+                    bad_start=_date.fromisoformat(params["bad_period_start"]),
+                    bad_end=_date.fromisoformat(params["bad_period_end"]),
+                    metric=params.get("metric", "error_rate"),
+                    phase_id=params.get("phase_id"),
+                )
+                out = result.to_dict()
+                out["detector"] = "mill_diff"
+                return out
+        except Exception as exc:
+            logger.warning(
+                f"diagnostic detector '{tool_name}' falhou: {exc}"
+            )
+            return None
+        return None
+
+    async def _handle_diagnostic_dispatch(
+        self,
+        request: CopilotAskRequest,
+        correlation_id: UUID,
+        start_time: float,
+    ) -> Optional[Tuple[CopilotResponse, Dict[str, Any]]]:
+        """Q.33.A.2 — corre um dos 3 detectores de causa raiz in-process.
+
+        Os detectores (`src/explain/diagnostics/{erro_tree,reichenbach,
+        mill_diff}.py`) já existiam mas o copiloto não tinha caminho para
+        os chamar — o RLM agent não os conhece. Este handler fecha a
+        lacuna:
+
+          1. lê as capability flags do tenant; se nenhuma estiver wired,
+             devolve ``None`` (cai no RLM / LLM normal).
+          2. uma chamada LLM escolhe a tool + params (`format="json"`
+             devolve o dict já parseado — contrato Q.32.A.3).
+          3. despacha in-process para o detector certo.
+          4. uma segunda chamada LLM compõe a resposta PT-PT a partir do
+             `DiagnosticResult`, com citação `calculation` real.
+
+        Qualquer falha → ``None`` → o comportamento anterior preservado.
+        """
+        from datetime import date as _date
+
+        from src.copilot.prompts.capabilities import fetch_capability_flags
+        from src.copilot.tools.diagnostic_tools import (
+            TOOL_CAPABILITY_MAP,
+            tools_for_wired_capabilities,
+        )
+
+        flags = await fetch_capability_flags(self.session, self.tenant_id)
+        wired_tools = tools_for_wired_capabilities(flags)
+        if not wired_tools:
+            # Nenhuma capability wired — deixa o RLM / LLM tentar.
+            return None
+
+        model = settings.ollama_model
+        ollama_client = get_ollama_client()
+
+        # --- 1. Selecção da tool ------------------------------------------
+        selection_prompt = (
+            "És o despachante de diagnósticos do copiloto de produção da "
+            "NELO. O gestor fez esta pergunta:\n\n"
+            f"\"{request.user_query}\"\n\n"
+            "Tens estas ferramentas de diagnóstico de causa raiz "
+            "disponíveis (JSON Schema):\n\n"
+            f"{json.dumps(wired_tools, ensure_ascii=False, indent=2)}\n\n"
+            f"Hoje é {_date.today().isoformat()}. Escolhe UMA ferramenta e "
+            "preenche os parâmetros respeitando os campos `required` e os "
+            "`enum`. Responde APENAS com JSON:\n"
+            '{"tool": "<nome da ferramenta>", "params": { ... }}\n'
+            'Se nenhuma ferramenta servir a pergunta, responde {"tool": null}.'
+        )
+        selection = await ollama_client.chat(
+            selection_prompt, model, format="json",
+        )
+        if not isinstance(selection, dict):
+            return None
+        tool_name = selection.get("tool")
+        params = selection.get("params") or {}
+        if not tool_name or not isinstance(params, dict):
+            return None
+        if tool_name not in TOOL_CAPABILITY_MAP:
+            logger.info(f"diagnostic dispatch: tool desconhecida '{tool_name}'")
+            return None
+        if not flags.get(TOOL_CAPABILITY_MAP[tool_name], False):
+            # Capability não wired para este tenant — fallback honesto.
+            logger.info(
+                f"diagnostic dispatch: '{tool_name}' não wired neste tenant"
+            )
+            return None
+
+        # --- 2. Dispatch in-process ---------------------------------------
+        result_dict = await self._dispatch_diagnostic_detector(tool_name, params)
+        if result_dict is None:
+            return None
+
+        # --- 3. Composição da resposta PT-PT ------------------------------
+        composition_prompt = (
+            "És o copiloto de produção da NELO (fábrica de kayaks, Vila do "
+            "Conde). Corri o diagnóstico `" + tool_name + "` sobre os dados "
+            "reais da fábrica e obtive este resultado estruturado:\n\n"
+            f"{json.dumps(result_dict, ensure_ascii=False, indent=2, default=str)}\n\n"
+            f"Pergunta do gestor: \"{request.user_query}\"\n\n"
+            "Compõe uma resposta curta em PT-PT informal (tu, números "
+            "concretos, sem rodeios) que explique a causa raiz encontrada, "
+            "a confiança, e a recomendação. Se o diagnóstico não encontrou "
+            "causa clara, di-lo honestamente. Responde APENAS com JSON:\n"
+            '{"summary": "<1 frase>", "answer": "<resposta completa>"}'
+        )
+        composed = await ollama_client.chat(
+            composition_prompt, model, format="json",
+        )
+        if not isinstance(composed, dict):
+            return None
+        answer = (composed.get("answer") or composed.get("summary") or "").strip()
+        if not answer:
+            return None
+        summary = (composed.get("summary") or answer[:200]).strip()
+
+        # --- 4. Citação + resposta ----------------------------------------
+        from src.copilot.utils.citations import create_calculation_citation
+
+        root = result_dict.get("root_cause")
+        if root is None:
+            common = result_dict.get("common_causes") or []
+            root = common[0] if common else None
+        confidence = 0.75
+        if isinstance(root, dict) and root.get("confidence"):
+            try:
+                confidence = float(root["confidence"])
+            except (TypeError, ValueError):
+                confidence = 0.75
+
+        citation = create_calculation_citation(
+            calculation_type=f"diagnostic:{tool_name}",
+            inputs=params,
+            label=(
+                f"Diagnóstico `{tool_name}` — cascata determinística sobre "
+                "dados reais da fábrica"
+            ),
+            confidence=confidence,
+            trust_index=min(confidence, 0.85),
+        )
+
+        suggestion_id = uuid4()
+        response = CopilotResponse(
+            suggestion_id=suggestion_id,
+            correlation_id=correlation_id,
+            type="ANSWER",
+            intent="generic",
+            summary=summary[:500],
+            facts=[{"text": answer, "citations": [citation]}],
+            actions=[],
+            warnings=[],
+            meta={
+                "model": model,
+                "tokens": 0,
+                "latency_ms": int((time.time() - start_time) * 1000),
+                "validation_passed": True,
+                "diagnostic_tool": tool_name,
+                "diagnostic_params": params,
+                "diagnostic_detector": result_dict.get("detector"),
+            },
+        )
+
+        response_dict = response.model_dump()
+        audit_data = await self._store_audit(
+            correlation_id,
+            suggestion_id,
+            request,
+            f"[diagnostic:{tool_name}] {request.user_query}",
+            {"diagnostic_result": result_dict},
+            response_dict,
+            True,
+            [],
+            int((time.time() - start_time) * 1000),
+        )
+        return response, audit_data
+
     async def _handle_rlm_diagnostic(
         self,
         request: CopilotAskRequest,
@@ -1024,6 +1703,7 @@ class CopilotService:
         rag_chunks: List[Dict[str, Any]],
         kpi_snapshot: Optional[Dict[str, Any]] = None,
         intent: str = "generic",
+        learned_signal: str = "",
     ) -> str:
         """Renderizar prompt completo."""
         # Carregar system prompt
@@ -1062,9 +1742,10 @@ class CopilotService:
             # at the top so it's always visible to the model.
             system_prompt = capabilities_block + "\n\n---\n\n" + system_prompt
         
-        # Construir contexto estruturado
-        context_str = json.dumps(context_facts, indent=2, ensure_ascii=False)
-        
+        # Q.35.1.4 — o `context_str` (dump JSON do contexto) é construído
+        # mais abaixo, DEPOIS do fact pack, para se poder remover o que já
+        # foi renderizado de forma legível e não duplicar tokens no prompt.
+
         # Construir RAG chunks
         rag_str = ""
         if rag_chunks:
@@ -1099,7 +1780,45 @@ class CopilotService:
                         fact_pack_str += f"- **{kpi_name.upper()}**: Não disponível ({reason})\n"
             
             fact_pack_str += "\n**IMPORTANTE**: Usa APENAS estes valores do FACT PACK. Se um KPI tem valor, usa-o. Se tem reason='NO_SOURCE_DATA', então não há dados disponíveis.\n\n"
-        
+
+        # Q.34.A.4 — FACT PACK de produção + qualidade (dados reais de
+        # plan.production_orders / quality.rework_entry, via os readers do
+        # context_builder). Renderizado para os intents que NÃO são o
+        # fast-path de KPI, para o copiloto responder a "estado da fábrica"
+        # / "dados de produção" com números concretos e citação real, em vez
+        # de INSUFFICIENT_EVIDENCE.
+        prod_rendered = False
+        qual_rendered = False
+        if intent in ("generic", "quality_summary", "plan_summary", "diagnostic"):
+            prod_block = _render_production_fact_pack(
+                context_facts.get("production") or {}
+            )
+            qual_block = _render_quality_fact_pack(
+                context_facts.get("quality") or {}
+            )
+            if prod_block or qual_block:
+                fact_pack_str += (
+                    "\n## FACT PACK (Produção & Qualidade — Source of Truth)\n\n"
+                    "Valores REAIS da base de dados. Responde com estes números "
+                    "e cita-os; não inventes nem digas que não tens dados.\n\n"
+                )
+                fact_pack_str += prod_block + qual_block
+                prod_rendered = bool(prod_block)
+                qual_rendered = bool(qual_block)
+
+        # Q.35.1.4 — contexto estruturado: emagrecer o prompt removendo o que
+        # já foi para o FACT PACK de forma legível (produção/qualidade), em
+        # vez de o duplicar no dump JSON. `default=str` é uma rede de
+        # segurança caso algo não-serializável escape para o contexto.
+        context_for_dump = dict(context_facts)
+        if prod_rendered:
+            context_for_dump.pop("production", None)
+        if qual_rendered:
+            context_for_dump.pop("quality", None)
+        context_str = json.dumps(
+            context_for_dump, indent=2, ensure_ascii=False, default=str,
+        )
+
         # Schema JSON esperado
         schema_example = {
             "suggestion_id": "uuid",
@@ -1202,6 +1921,8 @@ NOTA CRÍTICA:
         prompt = f"""{system_prompt}
 
 {fact_pack_str}
+
+{learned_signal}
 
 ## CONTEXTO OPERACIONAL
 

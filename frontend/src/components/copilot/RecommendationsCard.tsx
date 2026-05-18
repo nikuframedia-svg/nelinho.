@@ -90,8 +90,8 @@ export function RecommendationsCard() {
 
   if (isLoading) {
     return (
-      <div className="bg-white rounded-2xl p-6 border border-slate-100">
-        <div className="flex items-center gap-2 text-slate-500">
+      <div className="bg-gradient-to-br from-slate-800 via-slate-900 to-slate-800 rounded-2xl p-6 border border-slate-700">
+        <div className="flex items-center gap-2 text-slate-400">
           <Loader2 size={20} className="animate-spin" />
           <span>A carregar recomendações...</span>
         </div>

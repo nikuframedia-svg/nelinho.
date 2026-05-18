@@ -177,6 +177,12 @@ class OllamaClient:
             "model": model,
             "messages": messages,
             "stream": False,
+            # gemma4:e4b é um modelo de raciocínio: por default gera um bloco
+            # `thinking` longo ANTES do `content`. Esse thinking é descartado
+            # (só consumimos `message.content`) mas era a maior fatia dos ~22s
+            # de latência — e, com num_predict apertado, chegava a consumir
+            # todo o orçamento e deixar o `content` vazio. Desligado.
+            "think": False,
             "keep_alive": getattr(settings, "ollama_keep_alive", "30m"),
             "options": {
                 "temperature": getattr(settings, "ollama_temperature", 0.1),

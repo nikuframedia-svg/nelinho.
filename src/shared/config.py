@@ -158,14 +158,33 @@ class Settings(BaseSettings):
     copilot_enabled: bool = Field(default=True)
     ollama_base_url: str = Field(default="http://localhost:11434")
     ollama_model: str = Field(default="gemma4:e4b")
-    ollama_num_ctx: int = Field(default=4096, ge=2048, le=131072, description="Context window size")
+    # Q.35.1 — num_ctx 4096→16384: o prompt montado em `_render_prompt`
+    # (system prompt + context + fact packs + schema + instruções) excede
+    # 4096 tokens, e o Ollama trunca o fim em silêncio → o LLM nunca via o
+    # schema/instruções → JSON mau. 16384 dá folga; gemma4:e4b suporta-o.
+    ollama_num_ctx: int = Field(default=16384, ge=2048, le=131072, description="Context window size")
     ollama_keep_alive: str = Field(default="30m", description="How long to keep model in VRAM")
     ollama_temperature: float = Field(default=0.1, ge=0.0, le=2.0, description="LLM temperature (low = deterministic)")
-    ollama_num_predict: int = Field(default=512, ge=64, le=8192, description="Max tokens to generate")
+    # Q.35.1 — num_predict 512→2048: 512 tokens cortavam o JSON de resposta
+    # a meio (um CopilotResponse completo não cabe). Não baixar este valor.
+    ollama_num_predict: int = Field(default=2048, ge=64, le=8192, description="Max tokens to generate")
     copilot_embeddings_model: str = Field(default="nomic-embed-text")
     copilot_rate_limit_per_hour: int = Field(default=60, ge=1)
     copilot_rate_limit_per_day: int = Field(default=300, ge=1)
     copilot_trust_index_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
+    # Q.33.B — base URL the copilot tool registry uses to *execute* tools
+    # (HTTP back into this app). The OpenAPI *spec* is loaded in-process
+    # from `app.openapi()`, but tool execution still goes over HTTP. The
+    # old hardcoded ``http://localhost:8000`` was the wrong port — the
+    # backend serves on :8001 in dev. Override per deploy.
+    copilot_tool_api_base_url: str = Field(default="http://localhost:8001")
+    # Q.33.B.2 — master switch for the agentic tool-calling loop on
+    # generic-intent questions. Off by default: the registry now loads
+    # (so `/v1/tools` works and the loop *can* run), but the loop's
+    # final-answer synthesis doesn't yet emit a schema-valid
+    # CopilotResponse — activating it regressed generic answers to
+    # VALIDATION_FAILED. Flip to True once that integration lands.
+    copilot_agentic_tools_enabled: bool = Field(default=False)
     
     @property
     def cors_origins_list(self) -> List[str]:

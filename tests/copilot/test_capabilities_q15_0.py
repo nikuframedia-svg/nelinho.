@@ -51,7 +51,9 @@ def test_block_marks_all_aspirational_when_no_flags():
     for cap in KNOWN_CAPABILITIES:
         assert cap.tool_name in block
     # And the "improvising" fallback wording is present.
-    assert "não está activo" in block
+    # Q.33.C — wording made honest: "existe no sistema mas não está
+    # activada para este tenant" (em vez de soar a handler inexistente).
+    assert "não está activada para este tenant" in block
 
 
 def test_block_promotes_one_capability_when_flag_set():
@@ -75,11 +77,17 @@ def test_block_no_aspirational_section_when_all_wired():
 
 
 def test_always_wired_block_present_regardless_of_flags():
-    """`facto` + `cenário` are always Wired (foundational). They must
-    appear in the output even when no diagnostic flags are set."""
+    """The foundational capabilities are always Wired and must appear
+    even when no diagnostic flags are set.
+
+    Q.33.C — `cenário: simulação CPO via POETIQ` was dropped from the
+    always-wired list: POETIQ isn't invoked from the `/ask` flow, so
+    advertising it here over-promised an end-to-end simulation."""
     block = render_capabilities_block({})
     assert "facto:" in block
-    assert "cenário:" in block
+    assert "tools de leitura:" in block
+    # POETIQ já não é prometido como always-wired no fluxo de /ask.
+    assert "simulação CPO via POETIQ" not in block
 
 
 def test_is_diagnostic_capability_wired_returns_false_when_empty():
@@ -267,4 +275,17 @@ def test_generic_intent_for_unrecognised():
     from src.copilot.service import CopilotService
 
     svc = CopilotService.__new__(CopilotService)
-    assert svc._detect_intent("olá") == "generic"
+    # Pergunta que não casa com nenhum intent específico → generic.
+    assert svc._detect_intent("conta-me sobre os kayaks") == "generic"
+
+
+def test_smalltalk_intent_for_greetings():
+    """Saudações curtas são intent 'smalltalk' (fast-path sem LLM)."""
+    from src.copilot.service import CopilotService
+
+    svc = CopilotService.__new__(CopilotService)
+    assert svc._detect_intent("olá") == "smalltalk"
+    assert svc._detect_intent("bom dia") == "smalltalk"
+    assert svc._detect_intent("obrigado!") == "smalltalk"
+    # Saudação + pergunta real NÃO é smalltalk.
+    assert svc._detect_intent("olá, qual o OEE?") != "smalltalk"

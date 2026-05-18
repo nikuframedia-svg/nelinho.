@@ -1,17 +1,36 @@
 id: oee_diagnosis
 name: "Diagnóstico OEE & FPY"
-description: "Analisa perdas OEE e drivers de FPY"
+description: "Analisa o volume de retrabalho e as fases que mais erros geram, a partir de quality.rework_entry."
+# Q.35.5.2 — o SQL antigo apontava a tabelas inexistentes (`orders`,
+# `errors`). Agora lê as tabelas reais sincronizadas do ERP. Todas as
+# queries são tenant-scoped (:tenant_id) e read-only.
 inputs:
   date_range:
     type: date_range
-    default: 24h
+    default: 90d
 queries:
-  - name: rework_rate
-    sql: "SELECT AVG(rework_rate) as avg_rework FROM orders WHERE created_at >= :start_date"
-  - name: top_losses
-    sql: "SELECT phase_name, COUNT(*) as error_count FROM errors WHERE severity >= 2 AND created_at >= :start_date GROUP BY phase_name ORDER BY error_count DESC LIMIT 5"
+  - name: rework_volume
+    sql: >
+      SELECT COUNT(*) AS rework_count
+      FROM quality.rework_entry
+      WHERE tenant_id = :tenant_id AND detected_at >= :start_date
+  - name: top_error_phases
+    sql: >
+      SELECT COALESCE(context->>'phase_name', phase_id_rework) AS phase,
+             COUNT(*) AS error_count
+      FROM quality.rework_entry
+      WHERE tenant_id = :tenant_id AND detected_at >= :start_date
+      GROUP BY 1
+      ORDER BY error_count DESC
+      LIMIT 5
+  - name: top_error_codes
+    sql: >
+      SELECT error_code, COUNT(*) AS error_count
+      FROM quality.rework_entry
+      WHERE tenant_id = :tenant_id AND detected_at >= :start_date
+      GROUP BY error_code
+      ORDER BY error_count DESC
+      LIMIT 5
 output_schema:
   type: RUNBOOK_RESULT
   facts_required: true
-
-

@@ -57,10 +57,15 @@ export function DailyCopilotFeedbackCard() {
     return classes[severity as keyof typeof classes] || classes.INFO;
   };
 
+  // Q.35.4.4 — abrir o drawer do Copilot (mesmo evento que o resto da app).
+  const openInCopilot = (query: string) => {
+    window.dispatchEvent(new CustomEvent('copilot:open', { detail: { query } }));
+  };
+
   if (isLoading) {
     return (
-      <div className="bg-white rounded-2xl p-6 border border-slate-100">
-        <div className="flex items-center gap-2 text-slate-500">
+      <div className="bg-slate-900 rounded-2xl p-6 border border-slate-800">
+        <div className="flex items-center gap-2 text-slate-400">
           <Bot size={20} className="animate-pulse" />
           <span>A carregar feedback...</span>
         </div>
@@ -78,15 +83,15 @@ export function DailyCopilotFeedbackCard() {
   }
 
   return (
-    <div className="bg-white rounded-2xl p-6 border border-slate-100 hover:shadow-lg transition-all">
+    <div className="bg-slate-900 rounded-2xl p-6 border border-slate-800 hover:border-slate-700 transition-all">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-[#FF6B6B]/10 flex items-center justify-center">
+          <div className="w-10 h-10 rounded-xl bg-[#FF6B6B]/15 flex items-center justify-center">
             <Bot size={20} className="text-[#FF6B6B]" />
           </div>
           <div>
-            <h3 className="font-bold text-lg text-[#1a2744]">Feedback COPILOT Diário</h3>
-            <p className="text-sm text-slate-500">
+            <h3 className="font-bold text-lg text-slate-100">Feedback COPILOT Diário</h3>
+            <p className="text-sm text-slate-400">
               {lastUpdated && `Última atualização: ${lastUpdated}`}
             </p>
           </div>
@@ -94,12 +99,12 @@ export function DailyCopilotFeedbackCard() {
         <button
           onClick={() => refreshMutation.mutate()}
           disabled={refreshMutation.isPending}
-          className="p-2 hover:bg-slate-100 rounded-lg transition-colors disabled:opacity-50"
+          className="p-2 hover:bg-slate-800 rounded-lg transition-colors disabled:opacity-50"
           title="Atualizar"
         >
           <RefreshCw
             size={18}
-            className={`text-slate-600 ${refreshMutation.isPending ? 'animate-spin' : ''}`}
+            className={`text-slate-400 ${refreshMutation.isPending ? 'animate-spin' : ''}`}
           />
         </button>
       </div>
@@ -108,7 +113,7 @@ export function DailyCopilotFeedbackCard() {
         {feedback.bullets.map((bullet, idx) => (
           <div
             key={idx}
-            className="p-3 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors"
+            className="p-3 rounded-lg border border-slate-800 hover:bg-slate-800/50 transition-colors"
           >
             <div className="flex items-start gap-3">
               {getSeverityIcon(bullet.severity)}
@@ -121,26 +126,29 @@ export function DailyCopilotFeedbackCard() {
                   >
                     {bullet.severity}
                   </span>
-                  <h4 className="font-semibold text-sm text-slate-900">{bullet.title}</h4>
+                  <h4 className="font-semibold text-sm text-slate-100">{bullet.title}</h4>
                 </div>
-                <p className="text-sm text-slate-700">{bullet.text}</p>
-                
+                <p className="text-sm text-slate-300">{bullet.text}</p>
+
                 {bullet.citations.length > 0 && (
                   <div className="mt-2 flex flex-wrap gap-1">
                     {bullet.citations.map((citation, cIdx) => (
                       <span
                         key={cIdx}
-                        className="text-xs px-2 py-0.5 bg-slate-100 rounded text-slate-600"
+                        className="text-xs px-2 py-0.5 bg-slate-800 rounded text-slate-400"
                       >
                         {citation.label}
                       </span>
                     ))}
                   </div>
                 )}
-                
+
                 {bullet.suggested_runbooks.length > 0 && (
                   <div className="mt-2">
-                    <button className="text-xs text-[#1a2744] hover:underline">
+                    <button
+                      onClick={() => openInCopilot(`Detalha este ponto do feedback diário: "${bullet.title}". ${bullet.text}`)}
+                      className="text-xs text-[#FF6B6B] hover:underline"
+                    >
                       Abrir no Copilot →
                     </button>
                   </div>
