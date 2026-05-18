@@ -18,11 +18,16 @@ from src.adapters.nelo.etl.quality import (
     _crew_index,
     _error_code,
     _is_mold_related,
+    _zone_by_checklist,
     build_catalog,
     build_rework,
     mirror_quality,
 )
-from src.adapters.nelo.schemas import ChecklistRow, OperationCrewRow
+from src.adapters.nelo.schemas import (
+    ChecklistLocationRow,
+    ChecklistRow,
+    OperationCrewRow,
+)
 from src.core.models.employee import Employee, EmploymentStatus
 from src.quality.models.rework import ErrorCatalog, ReworkEntry
 
@@ -182,6 +187,60 @@ def test_crew_index_prefers_chefe():
     assert index[5].operator_id == 11
 
 
+# ── pure: defect zone (F11 / Q.46.A) ──────────────────────────────────────
+
+
+def _loc(**kw) -> ChecklistLocationRow:
+    base = dict(checklist_id=1, location_id=10, location_description="Proa")
+    base.update(kw)
+    return ChecklistLocationRow(**base)
+
+
+def test_zone_by_checklist_maps_checklist_to_zone():
+    index = _zone_by_checklist([_loc(checklist_id=7, location_description="Convés")])
+    assert index == {7: "Convés"}
+
+
+def test_zone_by_checklist_joins_multiple_zones():
+    """Um incidente com várias zonas → uma etiqueta única juntada."""
+    index = _zone_by_checklist([
+        _loc(checklist_id=3, location_id=10, location_description="Proa"),
+        _loc(checklist_id=3, location_id=20, location_description="Casco"),
+    ])
+    assert index == {3: "Proa / Casco"}
+
+
+def test_zone_by_checklist_dedupes_repeated_zone():
+    index = _zone_by_checklist([
+        _loc(checklist_id=3, location_id=10, location_description="Proa"),
+        _loc(checklist_id=3, location_id=11, location_description="Proa"),
+    ])
+    assert index == {3: "Proa"}
+
+
+def test_zone_by_checklist_skips_blank_description():
+    """Localização sem PROBSL_DSCR é ignorada — sem inventar uma zona."""
+    index = _zone_by_checklist([
+        _loc(checklist_id=3, location_description=None),
+        _loc(checklist_id=3, location_id=11, location_description="  "),
+    ])
+    assert index == {}
+
+
+def test_build_rework_carries_location_zone():
+    rows = build_rework(
+        [_chk(checklist_id=9)],
+        zone_by_checklist={9: "Convés traseiro"},
+    )
+    assert rows[0]["location_zone"] == "Convés traseiro"
+
+
+def test_build_rework_location_zone_none_when_no_zone():
+    """Incidente sem zona marcada fica None — honesto."""
+    rows = build_rework([_chk(checklist_id=9)])
+    assert rows[0]["location_zone"] is None
+
+
 def test_build_rework_detected_at_falls_back_to_verified_at():
     rows = build_rework([_chk(checklist_id=1, detected_at=None,
                               verified_at=datetime(2025, 3, 4, 9, 0))])
@@ -203,6 +262,10 @@ async def test_mirror_quality_imports_checklist_incidents(monkeypatch, recording
     )
     monkeypatch.setattr(
         quality_mod.services, "list_operation_crew",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        quality_mod.services, "list_checklist_locations",
         AsyncMock(return_value=[]),
     )
     result = await mirror_quality(session=recording_session, tenant_id=TENANT, since=None)
@@ -238,10 +301,42 @@ async def test_mirror_quality_resolves_causer_from_crew(monkeypatch, recording_s
                              operator_id=42, is_chefe=False),
         ]),
     )
+    monkeypatch.setattr(
+        quality_mod.services, "list_checklist_locations",
+        AsyncMock(return_value=[]),
+    )
     await mirror_quality(session=recording_session, tenant_id=TENANT, since=None)
     rework = [o for o in recording_session.added if isinstance(o, ReworkEntry)]
     assert len(rework) == 1
     assert rework[0].causer_employee_id == emp.id
+
+
+async def test_mirror_quality_populates_location_zone(monkeypatch, recording_session):
+    """F11 (Q.46.A) — o mirror liga OFCH_LOCAL à zona do casco."""
+    monkeypatch.setattr(
+        quality_mod.services, "list_checklist_incidents",
+        AsyncMock(return_value=[
+            _chk(checklist_id=1, description="Risco na pintura"),
+            _chk(checklist_id=2, description="Bolha"),
+        ]),
+    )
+    monkeypatch.setattr(
+        quality_mod.services, "list_operation_crew",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        quality_mod.services, "list_checklist_locations",
+        AsyncMock(return_value=[
+            ChecklistLocationRow(checklist_id=1, location_id=10,
+                                 location_description="Proa"),
+        ]),
+    )
+    await mirror_quality(session=recording_session, tenant_id=TENANT, since=None)
+    rework = [o for o in recording_session.added if isinstance(o, ReworkEntry)]
+    by_id = {r.context["erp_ofch_id"]: r for r in rework}
+    assert by_id["1"].location_zone == "Proa"
+    # Incidente sem localização → zona None, sem inventar.
+    assert by_id["2"].location_zone is None
 
 
 async def test_mirror_quality_empty_window_is_noop(monkeypatch, recording_session):
@@ -251,6 +346,10 @@ async def test_mirror_quality_empty_window_is_noop(monkeypatch, recording_sessio
     )
     monkeypatch.setattr(
         quality_mod.services, "list_operation_crew",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        quality_mod.services, "list_checklist_locations",
         AsyncMock(return_value=[]),
     )
     result = await mirror_quality(session=recording_session, tenant_id=TENANT, since=None)

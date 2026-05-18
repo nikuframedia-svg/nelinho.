@@ -39,7 +39,11 @@ from uuid import NAMESPACE_DNS, UUID, uuid5
 from sqlalchemy import select
 
 from src.adapters.nelo import services
-from src.adapters.nelo.schemas import ChecklistRow, OperationCrewRow
+from src.adapters.nelo.schemas import (
+    ChecklistLocationRow,
+    ChecklistRow,
+    OperationCrewRow,
+)
 from src.core.models.employee import Employee
 from src.factory_data_product.ingest.gravidade import map_gravidade_to_severity
 from src.quality.models.rework import ErrorCatalog, ReworkEntry
@@ -113,6 +117,27 @@ def _crew_index(crew: List[OperationCrewRow]) -> Dict[int, OperationCrewRow]:
     return index
 
 
+def _zone_by_checklist(
+    locations: List[ChecklistLocationRow],
+) -> Dict[int, str]:
+    """``{checklist_id: zona do casco}`` — F11 (Q.46.A).
+
+    ``OFCH_LOCAL`` é (checklist_id, location_id): um incidente pode marcar
+    mais do que uma zona. Junta-se as descrições distintas por ``" / "``
+    para uma única etiqueta legível. Localizações sem descrição
+    (``PROBSL_DSCR`` NULL) são ignoradas — sem inventar uma zona.
+    """
+    by_checklist: Dict[int, List[str]] = {}
+    for loc in locations:
+        zone = (loc.location_description or "").strip()
+        if not zone:
+            continue
+        zones = by_checklist.setdefault(loc.checklist_id, [])
+        if zone not in zones:
+            zones.append(zone)
+    return {cid: " / ".join(zones) for cid, zones in by_checklist.items() if zones}
+
+
 def build_catalog(incidents: List[ChecklistRow]) -> List[Dict[str, Any]]:
     """Vocabulário distinto de defeitos sobre a janela de checklist.
 
@@ -147,6 +172,7 @@ def build_rework(
     *,
     crew_by_op: Optional[Dict[int, OperationCrewRow]] = None,
     employee_by_code: Optional[Dict[str, UUID]] = None,
+    zone_by_checklist: Optional[Dict[int, str]] = None,
 ) -> List[Dict[str, Any]]:
     """Uma linha de ``rework_entry`` por incidente de checklist.
 
@@ -154,9 +180,12 @@ def build_rework(
     faça upsert em vez de duplicar. ``causer_employee_id`` é resolvido
     via a operação culpada → ``OFFP_EQ`` → ``core.employees``; quando não
     resolve fica ``None`` (honesto — sem inventar um causador).
+    ``location_zone`` vem de ``OFCH_LOCAL`` (F11); quando o incidente não
+    tem zona marcada fica ``None``.
     """
     crew_by_op = crew_by_op or {}
     employee_by_code = employee_by_code or {}
+    zone_by_checklist = zone_by_checklist or {}
     rows: List[Dict[str, Any]] = []
     for chk in incidents:
         detected = (
@@ -190,6 +219,7 @@ def build_rework(
                 str(chk.operation_mold_id)
                 if chk.operation_mold_id is not None else None
             ),
+            "location_zone": zone_by_checklist.get(chk.checklist_id),
             "detected_at": detected,
             "context": {
                 "erp_ofch_id": str(chk.checklist_id),
@@ -243,6 +273,10 @@ async def mirror_quality(
         crew_by_op = _crew_index(crew)
         employee_by_code = await _employee_by_code(session, tenant_id)
 
+        # F11 (Q.46.A) — zona do casco por incidente (OFCH_LOCAL).
+        locations = await services.list_checklist_locations()
+        zone_by_checklist = _zone_by_checklist(locations)
+
         # 1. Catálogo de erros — vocabulário distinto dos defeitos.
         catalog = build_catalog(incidents)
         await run.upsert(
@@ -256,6 +290,7 @@ async def mirror_quality(
             incidents,
             crew_by_op=crew_by_op,
             employee_by_code=employee_by_code,
+            zone_by_checklist=zone_by_checklist,
         )
         await run.upsert(
             ReworkEntry, rework,
@@ -264,15 +299,16 @@ async def mirror_quality(
                 "of_id", "model_id", "causer_employee_id",
                 "phase_id_causer", "phase_id_rework",
                 "error_code", "error_description", "mold_id",
-                "detected_at", "context",
+                "location_zone", "detected_at", "context",
             ],
         )
         resolved_causer = sum(1 for r in rework if r["causer_employee_id"])
+        resolved_zone = sum(1 for r in rework if r["location_zone"])
         logger.info(
             "quality mirror — janela=%s..%s incidentes=%d catálogo=%d "
-            "causador-resolvido=%d/%d",
+            "causador-resolvido=%d/%d zona-resolvida=%d/%d",
             date_from, date_to, len(incidents), len(catalog),
-            resolved_causer, len(rework),
+            resolved_causer, len(rework), resolved_zone, len(rework),
         )
     return run.result
 

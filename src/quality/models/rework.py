@@ -77,6 +77,7 @@ class ReworkEntry(TenantBase):
         Index("ix_rework_entry_error_code", "error_code"),
         Index("ix_rework_entry_mold", "mold_id"),
         Index("ix_rework_entry_tenant_detected", "tenant_id", "detected_at"),
+        Index("ix_rework_entry_location_zone", "location_zone"),
         {"schema": "quality"},
     )
 
@@ -107,6 +108,12 @@ class ReworkEntry(TenantBase):
 
     mold_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     material_lot_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+
+    # F11 (Q.46) — zona do casco onde o defeito foi marcado, vinda de
+    # `OFCH_LOCAL`×`PROBS_LOCAL` (`PROBSL_DSCR`). NULLABLE porque os
+    # eventos legados não têm localização e nem toda a checklist liga a
+    # uma zona — quando não resolve fica None, sem inventar uma zona.
+    location_zone: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     supplier_id: Mapped[Optional[UUID]] = mapped_column(
         PG_UUID(as_uuid=True),
         nullable=True,
