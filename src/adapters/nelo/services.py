@@ -41,11 +41,13 @@ from datetime import date
 
 from .schemas import (
     BomRow,
+    ChecklistRow,
     EntityPhaseRow,
     EntityRow,
     HealthCheckResult,
     MoldRow,
     MovementRow,
+    OperationCrewRow,
     OperationRow,
     OrderLaborRow,
     OrderRow,
@@ -211,6 +213,7 @@ SELECT
     of_.OF_P_ID                 AS product_id,
     of_.OF_TURN_ID              AS shift_id,
     of_.OF_OF_ID_MLD            AS mold_work_order_id,
+    offp.OFFP_OF_ID_MLD         AS operation_mold_id,
     pt.TP_NOME                  AS product_type_name,
     fp.FP_AUTOMATICA            AS phase_is_automatic
 FROM        dbo.OF_FP            offp WITH (NOLOCK)
@@ -243,6 +246,54 @@ FROM        dbo.OF_FP          offp WITH (NOLOCK)
 INNER JOIN  dbo.OFFP_EQ        eq   WITH (NOLOCK) ON eq.OFFPEQ_OFFP_ID = offp.OFFP_ID
 INNER JOIN  dbo.FASES_PRODUCAO fp   WITH (NOLOCK) ON fp.FP_ID = offp.OFFP_FP_ID
 WHERE offp.OFFP_OF_ID = :work_order_id
+"""
+
+
+# Q.36.A — quality checklist. `OF_CHECKLIST` (≈3 M rows) is the REAL
+# rework/defect record in MAR-KAYAKS; the old mirror read the empty
+# `OFFP_PROBS_*` columns. Joined to `OF_FP` (the flagged operation) for
+# the per-operation mold + execution dates, and to `FASES_PRODUCAO` for
+# the phase name. `OFCH_RESOLVIDO` is nullable → COALESCE to 0.
+_VW_CHECKLIST_SQL = """
+SELECT
+    chk.OFCH_ID                  AS checklist_id,
+    chk.OFCH_OF_ID               AS work_order_id,
+    chk.OFCH_OFFP_ID             AS operation_id,
+    chk.OFCH_FP_ID               AS phase_id,
+    fp.FP_NOME                   AS phase_name,
+    chk.OFCH_DESCR               AS description,
+    chk.OFCH_DESCR_EN            AS description_en,
+    chk.OFCH_GRAVIDADE           AS severity,
+    chk.OFCH_MOLDE_REPARAR       AS mold_repair,
+    chk.OFCH_CULPA_CHEFE         AS blame_chefe,
+    chk.OFCH_OFFP_ID_CULPA       AS blame_operation_id,
+    COALESCE(chk.OFCH_RESOLVIDO, 0) AS resolved,
+    chk.OFCH_ESTADO              AS state,
+    chk.OFCH_DATA_VERIFICACAO    AS verified_at,
+    chk.OFCH_DATA_ACTUALIZACAO   AS updated_at,
+    COALESCE(offp.OFFP_DATAFIM, offp.OFFP_DATAINICIO, chk.OFCH_DATA_VERIFICACAO)
+                                 AS detected_at,
+    offp.OFFP_OF_ID_MLD          AS operation_mold_id
+FROM        dbo.OF_CHECKLIST    chk  WITH (NOLOCK)
+LEFT JOIN   dbo.OF_FP           offp WITH (NOLOCK) ON offp.OFFP_ID = chk.OFCH_OFFP_ID
+LEFT JOIN   dbo.FASES_PRODUCAO  fp   WITH (NOLOCK) ON fp.FP_ID = chk.OFCH_FP_ID
+"""
+
+
+# Q.36.A — operation crew, windowed. `_VW_ORDER_LABOR_SQL` has the same
+# OF_FP×OFFP_EQ join but is scoped to one work order; the curated ETL
+# needs the whole crew surface over a date window.
+_VW_OPERATION_CREW_SQL = """
+SELECT
+    offp.OFFP_ID         AS operation_id,
+    offp.OFFP_OF_ID      AS work_order_id,
+    offp.OFFP_FP_ID      AS phase_id,
+    offp.OFFP_DATAINICIO AS start_at,
+    offp.OFFP_DATAFIM    AS end_at,
+    eq.OFFPEQ_E_ID       AS operator_id,
+    eq.OFFPEQ_CHEFE      AS is_chefe
+FROM        dbo.OF_FP    offp WITH (NOLOCK)
+INNER JOIN  dbo.OFFP_EQ  eq   WITH (NOLOCK) ON eq.OFFPEQ_OFFP_ID = offp.OFFP_ID
 """
 
 
@@ -488,6 +539,65 @@ async def list_order_labor(work_order_id: int) -> list[OrderLaborRow]:
     return [OrderLaborRow(**r) for r in rows]
 
 
+# ─── Quality checklist + crew (Q.36 — curated ETL source) ───────────────
+
+
+def _window_params(date_from: date, date_to: date) -> dict[str, Any]:
+    """Full-day inclusive bounds for a `[date_from, date_to]` window."""
+    from datetime import datetime, timedelta
+    return {
+        "date_from": datetime.combine(date_from, datetime.min.time()),
+        "date_to_plus_one": datetime.combine(
+            date_to + timedelta(days=1), datetime.min.time(),
+        ),
+    }
+
+
+async def list_checklist_incidents(
+    date_from: date,
+    date_to: date,
+    limit: int = 200_000,
+) -> list[ChecklistRow]:
+    """`OF_CHECKLIST` rows verified within `[date_from, date_to]`.
+
+    Q.36.A — the real rework/defect source (≈3 M rows total). Always
+    pass a tight window. Windowed on `OFCH_DATA_VERIFICACAO`, falling
+    back to `OFCH_DATA_ACTUALIZACAO` when verification is NULL.
+    """
+    sql = f"""
+    SELECT TOP {int(limit)} v.* FROM (
+        {_VW_CHECKLIST_SQL}
+    ) v
+    WHERE COALESCE(v.verified_at, v.updated_at) >= :date_from
+      AND COALESCE(v.verified_at, v.updated_at) <  :date_to_plus_one
+    ORDER BY v.checklist_id
+    """
+    rows = await _fetch_all(sql, _window_params(date_from, date_to))
+    return [ChecklistRow(**r) for r in rows]
+
+
+async def list_operation_crew(
+    date_from: date,
+    date_to: date,
+    limit: int = 300_000,
+) -> list[OperationCrewRow]:
+    """OF_FP×OFFP_EQ rows for operations started in `[date_from, date_to]`.
+
+    Q.36.A — the operator-per-operation surface (`OFFP_EQ` ≈1.4 M rows),
+    windowed for the curated ETL. Heavy — always pass a tight window.
+    """
+    sql = f"""
+    SELECT TOP {int(limit)} v.* FROM (
+        {_VW_OPERATION_CREW_SQL}
+    ) v
+    WHERE v.start_at >= :date_from
+      AND v.start_at <  :date_to_plus_one
+    ORDER BY v.operation_id
+    """
+    rows = await _fetch_all(sql, _window_params(date_from, date_to))
+    return [OperationCrewRow(**r) for r in rows]
+
+
 # ─── Master data (for the ERP→Postgres ETL mirrors) ─────────────────────
 
 
@@ -652,11 +762,13 @@ __all__: Sequence[str] = (
     "health_check",
     "list_all_bom",
     "list_all_routings",
+    "list_checklist_incidents",
     "list_current_schedule",
     "list_entities",
     "list_entity_phases",
     "list_molds",
     "list_open_orders",
+    "list_operation_crew",
     "list_operations",
     "list_phases",
     "list_products",

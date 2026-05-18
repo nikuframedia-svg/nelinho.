@@ -183,8 +183,69 @@ class OperationRow(_Frozen):
     product_id: int
     shift_id: Optional[int] = None
     mold_work_order_id: Optional[int] = None
+    # Q.36.A — `OFFP_OF_ID_MLD`: the mold (itself an OF) used on THIS
+    # operation. Distinct from `mold_work_order_id` (`OF.OF_OF_ID_MLD`,
+    # order-level). The causal detectors need the per-operation mold.
+    operation_mold_id: Optional[int] = None
     product_type_name: Optional[str] = None
     phase_is_automatic: bool = False
+
+
+# ─── Quality checklist (OF_CHECKLIST) — REAL rework detail ─────────────
+
+
+class ChecklistRow(_Frozen):
+    """One `dbo.OF_CHECKLIST` row — the real rework/defect record.
+
+    Q.36.A — `OF_CHECKLIST` (≈3 M rows) is where MAR-KAYAKS records the
+    actual defects: a free-text description, a severity, the operation to
+    blame, whether the mold needs repair. The old quality mirror read the
+    `OFFP_PROBS_*` columns / `OFFP_PROBLEMA` table, both empty here — so
+    `rework_entry` ended up 99% uncategorised `RETURN`. This is the
+    correct source.
+
+    `operation_mold_id` is resolved by joining the flagged operation
+    (`OFCH_OFFP_ID`) to `OF_FP.OFFP_OF_ID_MLD`.
+    """
+
+    checklist_id: int  # OFCH_ID
+    work_order_id: Optional[int] = None  # OFCH_OF_ID
+    operation_id: Optional[int] = None  # OFCH_OFFP_ID
+    phase_id: Optional[int] = None  # OFCH_FP_ID
+    phase_name: Optional[str] = None
+    description: str  # OFCH_DESCR — the defect text
+    description_en: Optional[str] = None
+    severity: int  # OFCH_GRAVIDADE
+    mold_repair: bool  # OFCH_MOLDE_REPARAR — defect attributable to the mold
+    blame_chefe: bool  # OFCH_CULPA_CHEFE
+    blame_operation_id: Optional[int] = None  # OFCH_OFFP_ID_CULPA
+    resolved: bool  # OFCH_RESOLVIDO
+    state: Optional[int] = None  # OFCH_ESTADO
+    verified_at: Optional[datetime] = None  # OFCH_DATA_VERIFICACAO
+    updated_at: Optional[datetime] = None  # OFCH_DATA_ACTUALIZACAO
+    detected_at: Optional[datetime] = None  # operation end/start fallback
+    operation_mold_id: Optional[int] = None  # OF_FP.OFFP_OF_ID_MLD
+
+
+# ─── Operation crew (OF_FP × OFFP_EQ, windowed) ────────────────────────
+
+
+class OperationCrewRow(_Frozen):
+    """One (operation × operator) row, windowed by date.
+
+    Q.36.A — `OrderLaborRow` carries the same shape but is scoped to a
+    single work order. The curated ETL needs the whole crew surface over
+    a date window, so this row comes from a windowed `OF_FP × OFFP_EQ`
+    join (`OFFP_EQ` ≈1.4 M rows — the operator-per-operation link).
+    """
+
+    operation_id: int  # OFFP_ID
+    work_order_id: int  # OFFP_OF_ID
+    phase_id: int  # OFFP_FP_ID
+    start_at: Optional[datetime] = None
+    end_at: Optional[datetime] = None
+    operator_id: int  # OFFPEQ_E_ID
+    is_chefe: bool  # OFFPEQ_CHEFE
 
 
 # ─── Order labour (OF_FP × OFFP_EQ) — per-order labour cost source ─────
