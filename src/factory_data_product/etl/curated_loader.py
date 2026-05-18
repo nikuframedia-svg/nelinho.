@@ -133,35 +133,85 @@ def operations_to_order_phases(
 ) -> List[Dict[str, Any]]:
     """``OF_FP`` (``OperationRow``) → linhas de ``CuratedOrderPhase``.
 
-    ``fase_of_id`` = ``OFFP_ID`` (a operação) — a mesma chave que a
-    ``CuratedAllocation`` usa. Linhas sem ``of_id`` ou ``fase_id`` (a
-    business key composta) são deixadas de fora.
+    UMA linha por ``(of_id, fase_id)``. Uma OF pode passar pela mesma
+    fase mais que uma vez (retrabalho) → várias `OF_FP` para o mesmo par;
+    o constraint unique ``(ingestion_id, of_id, fase_id)`` obriga a
+    colapsá-las. As operações do par são agregadas: `horas_reais` somadas
+    (tempo total, incluindo reworks), `data_inicio` = mais cedo,
+    `data_fim` = mais tarde (None se alguma operação ainda está aberta),
+    e o molde/`fase_nome` vêm da operação mais recente.
+
+    `fase_of_id` = ``"of_id::fase_id"`` — chave estável e determinística,
+    a MESMA que :func:`crew_to_allocations` reconstrói (não o `OFFP_ID`,
+    que é por-operação e não sobreviveria ao colapso).
+
+    Linhas sem ``of_id`` ou ``fase_id`` são deixadas de fora.
     """
-    rows: List[Dict[str, Any]] = []
+    grouped: Dict[tuple, Dict[str, Any]] = {}
     for op in operations:
         of_id = str(op.work_order_id) if op.work_order_id else ""
         fase_id = str(op.phase_id) if op.phase_id else ""
         if not of_id or not fase_id:
             continue
-        rows.append({
-            "ingestion_id": ingestion_id,
-            "of_id": of_id,
-            "fase_id": fase_id,
-            "fase_of_id": str(op.operation_id),
-            "fase_nome": op.phase_name,
-            "horas_reais": _elapsed_hours(op.start_at, op.end_at),
-            "horas_standard": (
-                Decimal(str(op.standard_time_hours))
-                if op.standard_time_hours is not None else None
-            ),
-            "estado": "concluida" if op.end_at is not None else "aberta",
-            "data_inicio": _as_date(op.start_at),
-            "data_fim": _as_date(op.end_at),
-            "molde_id": (
-                str(op.operation_mold_id)
-                if op.operation_mold_id is not None else None
-            ),
-        })
+        key = (of_id, fase_id)
+        hrs = _elapsed_hours(op.start_at, op.end_at)
+        di = _as_date(op.start_at)
+        df = _as_date(op.end_at)
+        is_open = op.end_at is None
+
+        g = grouped.get(key)
+        if g is None:
+            grouped[key] = {
+                "ingestion_id": ingestion_id,
+                "of_id": of_id,
+                "fase_id": fase_id,
+                "fase_of_id": f"{of_id}::{fase_id}",
+                "fase_nome": op.phase_name,
+                "horas_reais": hrs,
+                "horas_standard": (
+                    Decimal(str(op.standard_time_hours))
+                    if op.standard_time_hours is not None else None
+                ),
+                "data_inicio": di,
+                "data_fim": df,
+                "molde_id": (
+                    str(op.operation_mold_id)
+                    if op.operation_mold_id is not None else None
+                ),
+                "_any_open": is_open,
+                "_last_end": op.end_at,
+            }
+            continue
+
+        # Operação adicional do mesmo (of, fase) — agregar.
+        if hrs is not None:
+            g["horas_reais"] = (g["horas_reais"] or Decimal("0")) + hrs
+        if di and (g["data_inicio"] is None or di < g["data_inicio"]):
+            g["data_inicio"] = di
+        if df and (g["data_fim"] is None or df > g["data_fim"]):
+            g["data_fim"] = df
+        g["_any_open"] = g["_any_open"] or is_open
+        # Representante = operação mais recente (molde + nome da fase).
+        if op.end_at is not None and (
+            g["_last_end"] is None or op.end_at > g["_last_end"]
+        ):
+            g["_last_end"] = op.end_at
+            g["fase_nome"] = op.phase_name
+            if op.operation_mold_id is not None:
+                g["molde_id"] = str(op.operation_mold_id)
+
+    rows: List[Dict[str, Any]] = []
+    for g in grouped.values():
+        any_open = g.pop("_any_open")
+        g.pop("_last_end", None)
+        # Fase aberta → data_fim NULL (o `current_wip` do repository
+        # conta data_inicio NOT NULL + data_fim NULL).
+        if any_open:
+            g["data_fim"] = None
+            g["estado"] = "aberta"
+        else:
+            g["estado"] = "concluida"
+        rows.append(g)
     return rows
 
 
@@ -171,21 +221,39 @@ def crew_to_allocations(
 ) -> List[Dict[str, Any]]:
     """``OFFP_EQ`` (``OperationCrewRow``) → linhas de ``CuratedAllocation``.
 
-    ``fase_of_id`` = ``OFFP_ID`` da operação — liga directamente à
-    ``CuratedOrderPhase`` produzida por :func:`operations_to_order_phases`.
-    Linhas sem operação ou sem operador são deixadas de fora.
+    ``fase_of_id`` = ``"of_id::fase_id"`` — a MESMA chave que
+    :func:`operations_to_order_phases` constrói, para a allocation ligar
+    à ``CuratedOrderPhase`` certa no ``DiagnosticsRepository``. NÃO o
+    ``OFFP_ID`` por-operação, que não sobreviveria ao colapso de reworks.
+
+    UMA linha por ``(fase_of_id, funcionario_id)`` — uma OF pode passar
+    pela mesma fase várias vezes (retrabalho), cada passagem com a sua
+    `OFFP_EQ`; colapsam-se para não contar o mesmo operador em duplicado.
+    ``is_chefe`` fica ``True`` se o operador foi chefe em qualquer das
+    passagens.
+
+    Linhas sem ordem, fase ou operador são deixadas de fora.
     """
-    rows: List[Dict[str, Any]] = []
+    seen: Dict[tuple, Dict[str, Any]] = {}
     for row in crew:
-        if not row.operation_id or not row.operator_id:
+        of_id = str(row.work_order_id) if row.work_order_id else ""
+        fase_id = str(row.phase_id) if row.phase_id else ""
+        if not of_id or not fase_id or not row.operator_id:
             continue
-        rows.append({
-            "ingestion_id": ingestion_id,
-            "fase_of_id": str(row.operation_id),
-            "funcionario_id": str(row.operator_id),
-            "is_chefe": bool(row.is_chefe),
-        })
-    return rows
+        fase_of_id = f"{of_id}::{fase_id}"
+        funcionario_id = str(row.operator_id)
+        key = (fase_of_id, funcionario_id)
+        existing = seen.get(key)
+        if existing is None:
+            seen[key] = {
+                "ingestion_id": ingestion_id,
+                "fase_of_id": fase_of_id,
+                "funcionario_id": funcionario_id,
+                "is_chefe": bool(row.is_chefe),
+            }
+        elif row.is_chefe:
+            existing["is_chefe"] = True
+    return list(seen.values())
 
 
 def checklist_to_quality_events(

@@ -59,10 +59,27 @@ def _chk(**kw) -> ChecklistRow:
 # ── order_phase de OF_FP ──────────────────────────────────────────────────
 
 
-def test_order_phase_uses_operation_id_as_fase_of_id():
-    """fase_of_id = OFFP_ID — a chave que liga à CuratedAllocation."""
-    rows = operations_to_order_phases([_op(operation_id=88)], INGESTION)
-    assert rows[0]["fase_of_id"] == "88"
+def test_order_phase_fase_of_id_is_of_fase_composite():
+    """fase_of_id = "of_id::fase_id" — chave estável que sobrevive ao
+    colapso de reworks e liga à CuratedAllocation."""
+    rows = operations_to_order_phases(
+        [_op(work_order_id=5000, phase_id=18)], INGESTION,
+    )
+    assert rows[0]["fase_of_id"] == "5000::18"
+
+
+def test_order_phase_collapses_rework_passes():
+    """Uma OF que passa 2× pela mesma fase (retrabalho) → UMA linha,
+    horas somadas, sem violar uq_(ingestion, of_id, fase_id)."""
+    rows = operations_to_order_phases([
+        _op(operation_id=88, start_at=datetime(2025, 6, 1, 8, 0),
+            end_at=datetime(2025, 6, 1, 14, 0)),   # 6h
+        _op(operation_id=99, start_at=datetime(2025, 6, 3, 8, 0),
+            end_at=datetime(2025, 6, 3, 11, 0)),   # 3h, rework
+    ], INGESTION)
+    assert len(rows) == 1
+    assert float(rows[0]["horas_reais"]) == 9.0
+    assert rows[0]["fase_of_id"] == "5000::18"
 
 
 def test_order_phase_derives_horas_reais_from_dates():
@@ -97,9 +114,13 @@ def test_order_phase_carries_mold():
 
 def test_allocation_fase_of_id_matches_order_phase():
     """A consistência de chaves: order_phase.fase_of_id == allocation.fase_of_id."""
-    op_rows = operations_to_order_phases([_op(operation_id=88)], INGESTION)
-    alloc_rows = crew_to_allocations([_crew(operation_id=88)], INGESTION)
-    assert op_rows[0]["fase_of_id"] == alloc_rows[0]["fase_of_id"] == "88"
+    op_rows = operations_to_order_phases(
+        [_op(work_order_id=5000, phase_id=18)], INGESTION,
+    )
+    alloc_rows = crew_to_allocations(
+        [_crew(work_order_id=5000, phase_id=18)], INGESTION,
+    )
+    assert op_rows[0]["fase_of_id"] == alloc_rows[0]["fase_of_id"] == "5000::18"
 
 
 def test_allocation_carries_chefe_flag():
@@ -109,6 +130,22 @@ def test_allocation_carries_chefe_flag():
 
 def test_allocation_skips_rows_without_operator():
     rows = crew_to_allocations([_crew(operator_id=0)], INGESTION)
+    assert rows == []
+
+
+def test_allocation_dedupes_operator_across_rework_passes():
+    """O mesmo operador em 2 operações do mesmo (of, fase) → UMA linha;
+    is_chefe fica True se foi chefe nalguma passagem."""
+    rows = crew_to_allocations([
+        _crew(operation_id=88, operator_id=42, is_chefe=False),
+        _crew(operation_id=99, operator_id=42, is_chefe=True),
+    ], INGESTION)
+    assert len(rows) == 1
+    assert rows[0]["is_chefe"] is True
+
+
+def test_allocation_skips_rows_without_phase():
+    rows = crew_to_allocations([_crew(phase_id=0)], INGESTION)
     assert rows == []
 
 
