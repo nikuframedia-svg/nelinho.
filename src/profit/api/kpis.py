@@ -521,3 +521,29 @@ async def get_otd_heatmap(
         "end_date": end_date.isoformat(),
     }
 
+
+# ─── /kpis/objectives (Q.47.A — F9) ──────────────────────────────────────
+
+@router.get("/objectives")
+async def get_kpi_objectives(
+    tenant_id: UUID = Depends(get_tenant_id),
+):
+    """Q.47.A (F9) — KPI objectivo vs realizado para o painel CEO.
+
+    Junta o catálogo de KPIs do ERP (`dbo.KPI`) com os registos de
+    objectivo (`dbo.KPI_OBJECTIVO`, ~267 objectivos já definidos pela
+    NELO) e devolve, por KPI, o valor realizado contra a meta.
+
+    Degrada honestamente: quando o adapter SQL Server está desligado
+    (`sqlserver_enabled=False`), responde `erp_available=false` com a
+    razão explícita — nunca inventa números.
+
+    `tenant_id` é exigido (header) por consistência mas os dados ERP são
+    tenant-agnósticos — o adapter lê a única BD MAR-KAYAKS.
+    """
+    from src.profit.services.kpi_objective_service import KpiObjectiveService
+
+    svc = KpiObjectiveService()
+    result = await svc.objectives()
+    return result.to_dict()
+
