@@ -223,6 +223,7 @@ def _import_all_models() -> None:
     from src.plan.cpo import commits as _plan_commits  # noqa: F401
     from src.plan.models import (  # noqa: F401
         transport, routing_template, mold, schedule, order, mrp, phase_gap,
+        factory_calendar,
     )
     from src.profit.models import pricing as _profit_pricing  # noqa: F401
     from src.profit.models import cost as _profit_cost  # noqa: F401

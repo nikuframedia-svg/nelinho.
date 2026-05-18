@@ -50,6 +50,7 @@ def _import_all_models() -> None:
     from src.plan.models import order as plan_order_models  # noqa: F401
     from src.plan.models import mrp as plan_mrp_models  # noqa: F401
     from src.plan.models import phase_gap as plan_phase_gap_models  # noqa: F401
+    from src.plan.models import factory_calendar as plan_factory_calendar_models  # noqa: F401
     from src.factory_data_product.models import curated as factory_curated_models  # noqa: F401
     from src.sandbox import models as sandbox_models  # noqa: F401
     from src.improve import models as improve_models  # noqa: F401
