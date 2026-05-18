@@ -121,10 +121,13 @@ async def lifespan(app: FastAPI):
 
         # Pre-warm the Copilot tool registry so the first /v1/tools call
         # doesn't incur an OpenAPI parse round-trip.
+        # Q.33.B.1 — feed the app's own `app.openapi()` spec in-process.
+        # The old no-arg call fetched `http://localhost:8000/openapi.json`
+        # (wrong port) → 0 tools → the agentic loop never engaged.
         try:
             from src.copilot.tool_registry import get_tool_registry
-            await get_tool_registry()
-            logger.info("Tool registry pre-warmed")
+            registry = await get_tool_registry(openapi_spec=app.openapi())
+            logger.info(f"Tool registry pre-warmed: {len(registry.tools)} tools")
         except Exception as tr_error:
             logger.warning(f"Tool registry pre-warm failed: {tr_error}")
 
@@ -178,6 +181,27 @@ async def lifespan(app: FastAPI):
                         tenant_lookup_error,
                     )
                 register_ml_retrain_jobs(scheduler_instance, tenants=active_tenant_ids)
+
+                # Q.32.C.4 — registar os jobs por-tenant (alerts scan +
+                # Camadas 1-3 de aprendizagem). Sem este loop o scheduler
+                # arrancava com "0 tenant(s)" e os jobs nocturnos
+                # (preference_rule_detector, preference_weights_retrain,
+                # dpo_finetune, abl_feedback) nunca corriam.
+                from src.shared.scheduler import register_tenant
+
+                registered = 0
+                for tid in active_tenant_ids:
+                    try:
+                        register_tenant(tid)
+                        registered += 1
+                    except Exception as reg_error:
+                        logger.warning(
+                            "register_tenant(%s) failed: %s", tid, reg_error,
+                        )
+                logger.info(
+                    "Scheduler: per-tenant jobs registered for %d/%d active tenant(s)",
+                    registered, len(active_tenant_ids),
+                )
             except Exception as ml_error:
                 logger.warning(f"ML retrain job registration failed: {ml_error}")
 
