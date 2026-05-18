@@ -384,6 +384,27 @@ class MoldRow(_Frozen):
     acquired_at: Optional[datetime] = None
 
 
+# ─── Mold movements (vw_pp1_mold_movements) ────────────────────────────
+
+
+class MoldMovementRow(_Frozen):
+    """One `dbo.MOLDES_MOV` row — the mold-movement ledger.
+
+    Q.38.A — `MOLDES_MOV` (~3.7 k rows) records every movement of a mold
+    (the resource): a movement type, when it happened, and the entity
+    (`MLDU_E_ID`) involved. `mold_id` (`MLDU_MLD_ID`) is the FK back to
+    `MOLDES.MLD_ID` — the ERP-side mold catalogue. The movement-type
+    dictionary (`MLDU_TP_ID`) is not yet confirmed by the CEO, so it is
+    surfaced as the raw int; no derived label is invented here.
+    """
+
+    mold_movement_id: int  # MLDU_ID
+    moved_at: Optional[datetime] = None  # MLDU_DATA
+    movement_type_id: int  # MLDU_TP_ID
+    mold_id: int  # MLDU_MLD_ID → MOLDES.MLD_ID
+    entity_id: int  # MLDU_E_ID
+
+
 # ─── Aggregate helpers ──────────────────────────────────────────────────
 
 

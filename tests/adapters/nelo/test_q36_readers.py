@@ -8,13 +8,18 @@ schemas + que o SQL das views aponta às tabelas certas.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from unittest.mock import AsyncMock
 
 import pytest
 
 from src.adapters.nelo import services
-from src.adapters.nelo.schemas import ChecklistRow, OperationCrewRow, OperationRow
+from src.adapters.nelo.schemas import (
+    ChecklistRow,
+    MoldMovementRow,
+    OperationCrewRow,
+    OperationRow,
+)
 
 
 def test_checklist_row_from_erp_mapping():
@@ -116,3 +121,65 @@ async def test_list_operations_include_open_brings_wip(monkeypatch):
     sql = captured["sql"]
     assert "v.end_at IS NULL" in sql
     assert "v.start_at >= :date_from" in sql
+
+
+# ─── Q.38.A — MOLDES_MOV reader ────────────────────────────────────────
+
+
+def test_mold_movement_row_from_erp_mapping():
+    """Uma linha de `MOLDES_MOV` (column→value) constrói a MoldMovementRow."""
+    row = {
+        "mold_movement_id": 12,
+        "moved_at": datetime(2024, 3, 1, 9, 30),
+        "movement_type_id": 2,
+        "mold_id": 70004,
+        "entity_id": 815,
+    }
+    mov = MoldMovementRow(**row)
+    assert mov.mold_movement_id == 12
+    assert mov.mold_id == 70004
+    assert mov.entity_id == 815
+    assert mov.moved_at == datetime(2024, 3, 1, 9, 30)
+
+
+def test_mold_movement_view_targets_real_erp_table():
+    """O SQL aponta a `MOLDES_MOV` e usa os nomes de coluna `MLDU_*`
+    verificados no schema discovery — sem nomes inventados."""
+    sql = services._VW_MOLD_MOVEMENTS_SQL
+    assert "dbo.MOLDES_MOV" in sql
+    assert "MLDU_ID" in sql
+    assert "MLDU_DATA" in sql
+    assert "MLDU_TP_ID" in sql
+    assert "MLDU_MLD_ID" in sql  # FK → MOLDES.MLD_ID
+    assert "MLDU_E_ID" in sql
+
+
+def test_list_mold_movements_is_exported():
+    assert "list_mold_movements" in services.__all__
+
+
+@pytest.mark.asyncio
+async def test_list_mold_movements_orders_recent_first(monkeypatch):
+    """O reader ordena por `moved_at` DESC — movimento mais recente
+    primeiro — e constrói schemas frozen a partir das row mappings."""
+    captured = {}
+
+    async def fake(sql, params=None):
+        captured["sql"] = sql
+        return [
+            {
+                "mold_movement_id": 1,
+                "moved_at": datetime(2024, 1, 5, 8, 0),
+                "movement_type_id": 1,
+                "mold_id": 70004,
+                "entity_id": 815,
+            },
+        ]
+
+    monkeypatch.setattr(services, "_fetch_all", fake)
+    rows = await services.list_mold_movements()
+
+    assert "ORDER BY v.moved_at DESC" in captured["sql"]
+    assert len(rows) == 1
+    assert isinstance(rows[0], MoldMovementRow)
+    assert rows[0].mold_id == 70004

@@ -45,6 +45,7 @@ from .schemas import (
     EntityPhaseRow,
     EntityRow,
     HealthCheckResult,
+    MoldMovementRow,
     MoldRow,
     MovementRow,
     OperationCrewRow,
@@ -393,6 +394,20 @@ SELECT
 FROM dbo.MOLDES mld WITH (NOLOCK)
 """
 
+# Q.38.A — mold-movement ledger. `MOLDES_MOV` (~3.7 k rows) is the
+# history of mold movements (the resource being used / moved). Columns
+# verified against agent_docs/mar_kayaks_schema_discovery.md
+# (`MOLDES_MOV` — MLDU_*). No guessed names.
+_VW_MOLD_MOVEMENTS_SQL = """
+SELECT
+    mov.MLDU_ID     AS mold_movement_id,
+    mov.MLDU_DATA   AS moved_at,
+    mov.MLDU_TP_ID  AS movement_type_id,
+    mov.MLDU_MLD_ID AS mold_id,
+    mov.MLDU_E_ID   AS entity_id
+FROM dbo.MOLDES_MOV mov WITH (NOLOCK)
+"""
+
 
 async def _fetch_all(sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Run a SELECT and return list of row dicts (column → value)."""
@@ -690,6 +705,23 @@ async def list_molds() -> list[MoldRow]:
     return [MoldRow(**r) for r in rows]
 
 
+async def list_mold_movements(limit: int = 50_000) -> list[MoldMovementRow]:
+    """Mold-movement ledger (`MOLDES_MOV`, ~3.7 k rows).
+
+    Q.38.A — the history of mold movements (`MLDU_MLD_ID` is the FK to
+    `MOLDES.MLD_ID`). Ordered by `moved_at` DESC (most recent first).
+    Light table — the `limit` is a safety cap, not a paging window.
+    """
+    sql = f"""
+    SELECT TOP {int(limit)} * FROM (
+        {_VW_MOLD_MOVEMENTS_SQL}
+    ) v
+    ORDER BY v.moved_at DESC, v.mold_movement_id DESC
+    """
+    rows = await _fetch_all(sql)
+    return [MoldMovementRow(**r) for r in rows]
+
+
 async def list_all_routings(limit: int = 200_000) -> list[RoutingRow]:
     """Every product routing row (`PRODUTO_FASE` joined to `FASES_PRODUCAO`).
 
@@ -788,6 +820,7 @@ __all__: Sequence[str] = (
     "list_current_schedule",
     "list_entities",
     "list_entity_phases",
+    "list_mold_movements",
     "list_molds",
     "list_open_orders",
     "list_operation_crew",
