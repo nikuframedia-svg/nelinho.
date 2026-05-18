@@ -178,6 +178,10 @@ class ActionExecutor:
         self.tenant_id = tenant_id
         self.user_id = user_id
         self.kafka_producer = kafka_producer
+        # Q.37.D — modo da execução em curso. Os handlers de scheduling
+        # ramificam por isto (SANDBOX → Twin, EXECUTE → CPO real). É
+        # definido no início de `execute_action` e fica `None` fora dela.
+        self.current_mode: Optional["ActionMode"] = None
     
     async def execute_action(
         self,
@@ -199,7 +203,9 @@ class ActionExecutor:
         logger.info(
             f"Executing action: id={action.id}, type={action.type}, mode={mode.value}"
         )
-        
+        # Q.37.D — expõe o modo aos handlers (ver `current_mode`).
+        self.current_mode = mode
+
         if mode == ActionMode.PREVIEW:
             return await self._execute_preview(action)
         elif mode == ActionMode.SANDBOX:

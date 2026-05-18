@@ -131,6 +131,16 @@ async def lifespan(app: FastAPI):
         except Exception as tr_error:
             logger.warning(f"Tool registry pre-warm failed: {tr_error}")
 
+        # Q.37.D — regista os handlers reais das acções do copiloto
+        # (inventário + scheduling). Sem isto, EXECUTE/SANDBOX de uma
+        # acção CPO/inventário devolve 501. Idempotente (overwrite).
+        try:
+            from src.copilot.action_handlers import register_all_action_handlers
+            _n_handlers = register_all_action_handlers()
+            logger.info(f"Copilot action handlers registados: {_n_handlers}")
+        except Exception as handler_error:
+            logger.warning(f"Action handler registration failed: {handler_error}")
+
         # Q.17.D — load active YAML policy rules into the runtime engine
         # so they start firing on the first matching event without a
         # cold-start refresh. Best-effort: failure here doesn't block
