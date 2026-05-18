@@ -48,6 +48,9 @@ from .schemas import (
     HealthCheckResult,
     HolidayDefinitionRow,
     HolidayRow,
+    IotSensorDataRow,
+    KpiObjectiveRow,
+    KpiRow,
     MoldMovementRow,
     MoldRow,
     MovementRow,
@@ -474,6 +477,55 @@ SELECT
     th.TH_SONDA      AS probe_id,
     th.TH_DATA_UPDT  AS updated_at
 FROM dbo.TH th WITH (NOLOCK)
+"""
+
+
+# Q.45.C — IoT sensor data. `IOT_SENSOR_DATA` (~3.6 M rows) carries the
+# three-phase power/current samples that feed the energy-cost computation.
+# Enormous table — the reader windows on `SD_DATE` (mandatory).
+_VW_IOT_SENSOR_DATA_SQL = """
+SELECT
+    sd.SD_ID          AS sample_id,
+    sd.SD_SENSOR_ID   AS sensor_id,
+    sd.SD_DATE        AS sampled_at,
+    sd.SD_POWER_1     AS power_1,
+    sd.SD_POWER_2     AS power_2,
+    sd.SD_POWER_3     AS power_3,
+    sd.SD_CURRENT_1   AS current_1,
+    sd.SD_CURRENT_2   AS current_2,
+    sd.SD_CURRENT_3   AS current_3,
+    sd.SD_TEMPERATURE AS temperature,
+    sd.SD_HUM         AS humidity,
+    sd.SD_PRESSURE    AS pressure
+FROM dbo.IOT_SENSOR_DATA sd WITH (NOLOCK)
+"""
+
+
+# Q.45.C — KPI catalogue + objectives. `KPI` (~115 rows) is the catalogue
+# of KPIs the ERP tracks; `KPI_OBJECTIVO` (~267 rows) records value vs
+# objective per date. Light tables — no date window needed.
+_VW_KPI_SQL = """
+SELECT
+    k.KPI_ID         AS kpi_id,
+    k.KPI_DATA       AS kpi_date,
+    k.KPI_NOME       AS name,
+    k.KPI_DESCRICAO  AS description,
+    k.KPI_KPI_ID     AS parent_kpi_id,
+    k.KPI_ORDEM      AS display_order,
+    k.KPI_AUTOMATICO AS is_automatic,
+    k.KPI_ROLE       AS role
+FROM dbo.KPI k WITH (NOLOCK)
+"""
+
+_VW_KPI_OBJECTIVES_SQL = """
+SELECT
+    ko.KPIO_ID             AS objective_id,
+    ko.KPIO_KPI_ID         AS kpi_id,
+    ko.KPIO_DATA           AS objective_date_logged,
+    ko.KPIO_VALOR          AS value,
+    ko.KPIO_OBJECTIVO      AS objective,
+    ko.KPIO_OBJECTIVO_DATA AS objective_date
+FROM dbo.KPI_OBJECTIVO ko WITH (NOLOCK)
 """
 
 
@@ -912,6 +964,65 @@ async def list_temperature_humidity(
     return [TempHumidityRow(**r) for r in rows]
 
 
+# ─── IoT sensors (Q.45.C — energy cost) ─────────────────────────────────
+
+
+async def list_iot_sensor_data(
+    date_from: date,
+    date_to: date,
+    limit: int = 500_000,
+) -> list[IotSensorDataRow]:
+    """IoT sensor samples (`IOT_SENSOR_DATA`) within `[date_from, date_to]`.
+
+    Q.45.C — three-phase power/current samples that feed the energy-cost
+    computation. Enormous table (~3.6 M rows) — the date window
+    (`SD_DATE`) is mandatory. Ordered by `sampled_at` DESC.
+    """
+    sql = f"""
+    SELECT TOP {int(limit)} v.* FROM (
+        {_VW_IOT_SENSOR_DATA_SQL}
+    ) v
+    WHERE v.sampled_at >= :date_from
+      AND v.sampled_at <  :date_to_plus_one
+    ORDER BY v.sampled_at DESC
+    """
+    rows = await _fetch_all(sql, _window_params(date_from, date_to))
+    return [IotSensorDataRow(**r) for r in rows]
+
+
+# ─── KPI catalogue + objectives (Q.45.C) ────────────────────────────────
+
+
+async def list_kpi_definitions() -> list[KpiRow]:
+    """KPI catalogue defined in the ERP (`KPI`, ~115 rows).
+
+    Q.45.C — ordered by `display_order`, `kpi_id`. Light table.
+    """
+    sql = f"""
+    SELECT * FROM (
+        {_VW_KPI_SQL}
+    ) v
+    ORDER BY v.display_order, v.kpi_id
+    """
+    rows = await _fetch_all(sql)
+    return [KpiRow(**r) for r in rows]
+
+
+async def list_kpi_objectives() -> list[KpiObjectiveRow]:
+    """KPI value-vs-objective records (`KPI_OBJECTIVO`, ~267 rows).
+
+    Q.45.C — ordered by `kpi_id`, `objective_date_logged`. Light table.
+    """
+    sql = f"""
+    SELECT * FROM (
+        {_VW_KPI_OBJECTIVES_SQL}
+    ) v
+    ORDER BY v.kpi_id, v.objective_date_logged
+    """
+    rows = await _fetch_all(sql)
+    return [KpiObjectiveRow(**r) for r in rows]
+
+
 # ─── Aggregations for health-check ──────────────────────────────────────
 
 
@@ -983,6 +1094,9 @@ __all__: Sequence[str] = (
     "list_entity_phases",
     "list_holiday_definitions",
     "list_holidays",
+    "list_iot_sensor_data",
+    "list_kpi_definitions",
+    "list_kpi_objectives",
     "list_mold_movements",
     "list_molds",
     "list_open_orders",

@@ -491,6 +491,69 @@ class TempHumidityRow(_Frozen):
     updated_at: Optional[datetime] = None  # TH_DATA_UPDT
 
 
+# ─── IoT sensors (IOT_SENSOR_DATA) ─────────────────────────────────────
+
+
+class IotSensorDataRow(_Frozen):
+    """One `dbo.IOT_SENSOR_DATA` row — a three-phase power/energy sample.
+
+    Q.45.C — `IOT_SENSOR_DATA` (~3.6 M rows) carries the trifásica power
+    readings (`SD_POWER_1..3` watts, `SD_CURRENT_1..3` amps) plus ambient
+    temperature/humidity/pressure. Feeds the energy-cost computation.
+    Enormous table — readers MUST window by date.
+    """
+
+    sample_id: int  # SD_ID
+    sensor_id: int  # SD_SENSOR_ID → IOT_SENSOR.SENSOR_ID
+    sampled_at: datetime  # SD_DATE
+    power_1: Optional[int] = None  # SD_POWER_1
+    power_2: Optional[int] = None  # SD_POWER_2
+    power_3: Optional[int] = None  # SD_POWER_3
+    current_1: Optional[float] = None  # SD_CURRENT_1
+    current_2: Optional[float] = None  # SD_CURRENT_2
+    current_3: Optional[float] = None  # SD_CURRENT_3
+    temperature: Optional[float] = None  # SD_TEMPERATURE
+    humidity: Optional[float] = None  # SD_HUM
+    pressure: Optional[float] = None  # SD_PRESSURE
+
+
+# ─── KPI definitions / objectives (KPI / KPI_OBJECTIVO) ────────────────
+
+
+class KpiRow(_Frozen):
+    """One `dbo.KPI` row — a KPI already defined in the ERP.
+
+    Q.45.C — `KPI` (~115 rows) is the catalogue of KPIs the NELO ERP
+    tracks. `parent_kpi_id` (`KPI_KPI_ID`) lets KPIs nest; `is_automatic`
+    marks an auto-computed KPI; `role` scopes a KPI to a user role.
+    """
+
+    kpi_id: int  # KPI_ID
+    kpi_date: date  # KPI_DATA
+    name: str  # KPI_NOME
+    description: Optional[str] = None  # KPI_DESCRICAO
+    parent_kpi_id: Optional[int] = None  # KPI_KPI_ID → KPI.KPI_ID
+    display_order: int  # KPI_ORDEM
+    is_automatic: bool  # KPI_AUTOMATICO
+    role: Optional[str] = None  # KPI_ROLE
+
+
+class KpiObjectiveRow(_Frozen):
+    """One `dbo.KPI_OBJECTIVO` row — a KPI value vs its objective.
+
+    Q.45.C — `KPI_OBJECTIVO` (~267 rows) records, per date, the realised
+    `value` against the `objective` target for a KPI. `objective_date` is
+    the date the objective is set for (nullable).
+    """
+
+    objective_id: int  # KPIO_ID
+    kpi_id: int  # KPIO_KPI_ID → KPI.KPI_ID
+    objective_date_logged: date  # KPIO_DATA
+    value: float  # KPIO_VALOR
+    objective: float  # KPIO_OBJECTIVO
+    objective_date: Optional[date] = None  # KPIO_OBJECTIVO_DATA
+
+
 # ─── Aggregate helpers ──────────────────────────────────────────────────
 
 
