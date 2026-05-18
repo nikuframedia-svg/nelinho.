@@ -351,12 +351,49 @@ async def _mold_health_scan_job(tenant_id: UUID) -> None:
 
 
 async def _quality_risk_scoring_job(tenant_id: UUID) -> None:
-    """Stub for Sprint R.2 — real scoring wired when ProductionSchedule flow
-    has enough data. The job logs today so observability is consistent."""
-    logger.info(
-        "quality_risk_scoring tenant=%s (stub — wire scoring model when ready)",
-        tenant_id,
-    )
+    """Sprint Q.41.A — score pending schedule rows with the QualityRiskModel.
+
+    Loads the active ``quality_risk`` artifact and writes
+    ``plan.production_schedules.quality_risk_score`` (+ scored_at) for every
+    SCHEDULED/IN_PROGRESS row. Complements the CPO fitness hook, which
+    consults the model *during* planning — this job keeps the score on the
+    rows that already exist *at rest* so auditoria / copilot can read it.
+
+    Honest degradation: when no model is trained yet, or there are no
+    pending rows, the job logs the reason and no-ops. It does NOT report a
+    false success — the previous Sprint R.2 stub did neither score nor
+    admit it; this job does the real work or says why it couldn't.
+
+    Best-effort: any exception is swallowed + logged; the next tick retries.
+    """
+    try:
+        from src.ml.scoring.quality_risk_scoring import score_quality_risk
+    except ImportError:
+        logger.debug(
+            "quality_risk_scoring module missing — skipping tenant=%s",
+            tenant_id,
+        )
+        return
+
+    from src.shared.database import get_session_context
+
+    started = datetime.utcnow()
+    try:
+        async with get_session_context() as session:
+            result = await score_quality_risk(session, tenant_id)
+            await session.commit()
+        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        logger.info(
+            "quality_risk_scoring tenant=%s status=%s considered=%s scored=%s "
+            "model=v%s elapsed_ms=%s",
+            tenant_id, result.status, result.rows_considered,
+            result.rows_scored, result.model_version, elapsed_ms,
+        )
+    except Exception as exc:
+        logger.error(
+            "quality_risk_scoring tenant=%s failed: %s",
+            tenant_id, exc, exc_info=True,
+        )
 
 
 async def _multivariate_drift_job(tenant_id: UUID) -> None:
