@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import unicodedata
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 from typing import Any, Dict, List, Optional, Set, Tuple
 from uuid import UUID
 
@@ -151,6 +152,17 @@ class FactoryState:
     # back to NELO_CURING_GAPS_SEED when the table is empty or missing.
     phase_transition_gaps: Dict[Tuple[str, str], float] = field(default_factory=dict)
 
+    # Sprint Q.48.B (F10) — the factory capacity calendar. Set of dates
+    # the factory operates on, loaded from `plan.factory_calendar_day`.
+    # An EMPTY set means "no calendar known" — the scheduler then treats
+    # every day as a working day (the pre-Q.48 idealised behaviour), so a
+    # fresh DB or a tenant without an ERP sync never gets a blank plan.
+    # When the set is non-empty, the decoder refuses to start an operation
+    # on a date NOT in this set: a closed day has zero capacity (Spelke
+    # axiom 1), exactly like an operator without a matching skill is
+    # unavailable for a slot (axiom 5).
+    working_days: Set[date] = field(default_factory=set)
+
     # Sprint E.4 — confirmed PreferenceRule rows (Camada 1 learning).
     # Each entry is a plain dict with `type` + `predicate` (+ optional
     # `description`/`confidence` for debugging). Populated by
@@ -275,6 +287,11 @@ class FactoryState:
             session, tenant_id,
         )
 
+        # Sprint Q.48.B (F10) — factory capacity calendar. Best-effort:
+        # a missing table on a fresh test DB leaves the set empty and the
+        # decoder keeps the pre-Q.48 every-day-is-working behaviour.
+        state.working_days = await _load_factory_calendar(session, tenant_id)
+
         # Sprint E.4 — confirmed preference rules (Camada 1). Best-effort:
         # a missing governance schema / table (tests / legacy dbs) leaves
         # the list empty and the scheduler keeps its defaults.
@@ -302,7 +319,8 @@ class FactoryState:
             f"{len(state.historical_durations)} duration medians, "
             f"{len(state.phase_transition_gaps)} curing gaps, "
             f"{len(state.preference_rules)} confirmed rules, "
-            f"{len(state.routing_by_model)} models with routing templates"
+            f"{len(state.routing_by_model)} models with routing templates, "
+            f"{len(state.working_days)} working days in calendar"
         )
         return state
 
@@ -322,6 +340,37 @@ class FactoryState:
         if not a or not b:
             return 0.0
         return float(self.phase_transition_gaps.get((a, b), 0.0))
+
+    def is_working_day(self, day: date) -> bool:
+        """Whether the factory operates on `day` (Sprint Q.48.B / F10).
+
+        Returns `True` for any date when the calendar is empty — an
+        unknown calendar must NOT block scheduling (a fresh DB or a
+        tenant without an ERP sync keeps the pre-Q.48 behaviour where
+        every day counts). When the calendar IS populated, only the
+        registered working days return `True`.
+        """
+        if not self.working_days:
+            return True
+        return day in self.working_days
+
+    def next_working_day(self, day: date, *, max_skip: int = 60) -> date:
+        """First working day on or after `day` (Sprint Q.48.B / F10).
+
+        Walks forward at most `max_skip` days. When the calendar is empty
+        the input date is returned unchanged. `max_skip` is a safety stop
+        so a pathologically empty calendar (e.g. only past dates) never
+        loops forever — beyond it the original date is returned and the
+        decoder logs the schedule as it would pre-Q.48.
+        """
+        if not self.working_days:
+            return day
+        candidate = day
+        for _ in range(max_skip + 1):
+            if candidate in self.working_days:
+                return candidate
+            candidate = candidate + timedelta(days=1)
+        return day
 
     def can_perform(self, fase_id: str, funcionario_id: str) -> bool:
         return funcionario_id in self.skill_matrix.get(fase_id, set())
@@ -548,6 +597,39 @@ async def _load_phase_transition_gaps(
     merged: Dict[Tuple[str, str], float] = dict(seed)
     merged.update(db_gaps)
     return merged
+
+
+async def _load_factory_calendar(
+    session: Any,
+    tenant_id: UUID,
+) -> Set[date]:
+    """Load the set of working days from `plan.factory_calendar_day`.
+
+    Sprint Q.48.B (F10) — returns the dates where `is_working_day` is
+    `True`. Best-effort: a missing table on a fresh test DB (or no ERP
+    sync yet) returns an empty set, which `FactoryState.is_working_day`
+    treats as "calendar unknown → every day works". So the scheduler
+    never produces a blank plan just because the calendar isn't loaded.
+    """
+    if session is None:
+        return set()
+    try:
+        from sqlalchemy import select
+
+        from src.plan.models.factory_calendar import FactoryCalendarDay
+
+        stmt = (
+            select(FactoryCalendarDay.calendar_date)
+            .where(FactoryCalendarDay.tenant_id == tenant_id)
+            .where(FactoryCalendarDay.is_working_day.is_(True))
+        )
+        result = await session.execute(stmt)
+        rows = result.scalars().all()
+    except Exception as exc:  # pragma: no cover — defensive (table absent etc.)
+        logger.debug(f"factory_calendar DB load skipped: {exc}")
+        return set()
+
+    return {d for d in rows if d is not None}
 
 
 async def _load_routing_by_model(

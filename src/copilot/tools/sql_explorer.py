@@ -25,7 +25,11 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Dict, List
+import unicodedata
+from datetime import date, datetime, time
+from decimal import Decimal
+from typing import Any, Dict, List, Optional, Tuple
+from uuid import UUID
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +65,25 @@ _FORBIDDEN = re.compile(
 
 class UnsafeQueryError(ValueError):
     """A query proposta não é um SELECT read-only seguro."""
+
+
+def _json_safe(value: Any) -> Any:
+    """Coage um valor de célula da BD para algo JSON-serializável.
+
+    As linhas devolvidas vão parar a `json.dumps` (prompt de composição
+    e audit trail). Datas, `Decimal`, `UUID` e `bytes` rebentavam o dump
+    — daí esta coerção no ponto de leitura, para o resultado ser sempre
+    seguro a jusante.
+    """
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (datetime, date, time)):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value).hex()
+    return str(value)
 
 
 def validate_readonly_sql(sql: str) -> str:
@@ -165,6 +188,58 @@ async def _list_schema_erp() -> List[Dict[str, Any]]:
         }
         for r in rows
     ]
+
+
+def _norm(text: str) -> str:
+    """Minúsculas, sem acentos, só alfanumérico separado por espaço."""
+    decomposed = unicodedata.normalize("NFKD", text.lower())
+    stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
+    return re.sub(r"[^a-z0-9]+", " ", stripped).strip()
+
+
+def _token_match(a: str, b: str) -> bool:
+    """Dois tokens casam por prefixo (≥4 chars) — apanha plurais
+    (`batch`↔`batches`, `template`↔`templates`)."""
+    if len(a) < 4 or len(b) < 4:
+        return a == b
+    return a.startswith(b) or b.startswith(a)
+
+
+async def lexical_table_match(
+    question: str,
+) -> Tuple[Optional[str], List[str]]:
+    """Rede de segurança quando o LLM não consegue escolher tabelas.
+
+    Faz correspondência léxica entre as palavras da pergunta e os nomes
+    das tabelas — apanha exactamente o caso em que o utilizador escreve
+    o nome técnico da tabela (`production_schedules`, `transport
+    batches`). Devolve ``(source, tables)`` ou ``(None, [])``.
+    """
+    q_tokens = set(_norm(question).split())
+    if not q_tokens:
+        return None, []
+    for source in ("postgres", "erp"):
+        hits: List[str] = []
+        try:
+            catalog = await list_schema(source)
+        except Exception:
+            continue
+        for t in catalog:
+            name_tokens = [
+                tok for tok in _norm(t["table"]).split() if len(tok) >= 3
+            ]
+            if not name_tokens:
+                continue
+            # Casa quando TODOS os tokens do nome da tabela aparecem na
+            # pergunta — estrito o suficiente para não casar por acaso.
+            if all(
+                any(_token_match(nt, qt) for qt in q_tokens)
+                for nt in name_tokens
+            ):
+                hits.append(f"{t['schema']}.{t['table']}")
+        if hits:
+            return source, hits[:6]
+    return None, []
 
 
 async def describe_tables(
@@ -279,7 +354,7 @@ async def _run_postgres(sql: str, max_rows: int) -> Dict[str, Any]:
         fetched = result.fetchmany(max_rows + 1)
 
     truncated = len(fetched) > max_rows
-    rows = [list(r) for r in fetched[:max_rows]]
+    rows = [[_json_safe(c) for c in r] for r in fetched[:max_rows]]
     return {
         "columns": columns,
         "rows": rows,
@@ -313,7 +388,7 @@ async def _run_erp(sql: str, max_rows: int) -> Dict[str, Any]:
     columns = list(rows[0].keys()) if rows else []
     truncated = len(rows) > max_rows
     data = [
-        [row[c] for c in columns] for row in rows[:max_rows]
+        [_json_safe(row[c]) for c in columns] for row in rows[:max_rows]
     ]
     return {
         "columns": columns,
@@ -328,6 +403,7 @@ __all__ = [
     "VALID_SOURCES",
     "UnsafeQueryError",
     "describe_tables",
+    "lexical_table_match",
     "list_schema",
     "run_query",
     "validate_readonly_sql",

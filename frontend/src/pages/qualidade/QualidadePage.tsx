@@ -40,6 +40,7 @@ import {
   Eye,
   Boxes,
   CheckCircle2,
+  Crosshair,
 } from 'lucide-react';
 import {
   PageHeader,
@@ -51,9 +52,11 @@ import {
 } from '../../components/dark';
 import { SkeletonLoader } from '../../components/ui/Skeleton';
 import {
+  defectZonesApi,
   employeesApi,
   getApiBase,
   qualityReworkApi,
+  type DefectZoneMapResponse,
   type ReworkCreatePayload,
 } from '../../lib/api';
 
@@ -71,7 +74,7 @@ function askCopilot(query: string) {
   window.dispatchEvent(new CustomEvent('copilot:open', { detail: { query } }));
 }
 
-const TAB_IDS = ['resumo', 'erros', 'moldes', 'retrabalho', 'diagnostico', 'oee', 'trust', 'inteligencia'] as const;
+const TAB_IDS = ['resumo', 'erros', 'moldes', 'zonas', 'retrabalho', 'diagnostico', 'oee', 'trust', 'inteligencia'] as const;
 type TabId = (typeof TAB_IDS)[number];
 function isTabId(v: string | null): v is TabId {
   return v !== null && (TAB_IDS as readonly string[]).includes(v);
@@ -135,6 +138,7 @@ export default function QualidadePage() {
       { id: 'resumo', label: 'Resumo', icon: <ShieldCheck size={13} /> },
       { id: 'erros', label: 'Erros', icon: <AlertCircle size={13} /> },
       { id: 'moldes', label: 'Moldes', icon: <Wrench size={13} /> },
+      { id: 'zonas', label: 'Zonas', icon: <Crosshair size={13} /> },
       { id: 'retrabalho', label: 'Retrabalho', icon: <Repeat size={13} /> },
       { id: 'diagnostico', label: 'Diagnóstico', icon: <Brain size={13} /> },
       { id: 'oee', label: 'OEE', icon: <Activity size={13} /> },
@@ -206,6 +210,7 @@ export default function QualidadePage() {
         {activeTab === 'resumo' && <ResumoTab />}
         {activeTab === 'erros' && <ReworkListTab filter="open" />}
         {activeTab === 'moldes' && <MoldsTab />}
+        {activeTab === 'zonas' && <ZonasTab />}
         {activeTab === 'retrabalho' && (
           <div className="space-y-4">
             <NovoRetrabalhoForm />
@@ -1542,5 +1547,216 @@ function MoldsTab() {
         onClose={() => setDrawer({ id: null })}
       />
     </Panel>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ZonasTab — F11 / Q.46.C: mapa de defeitos do barco por zona do casco
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Heatmap / Pareto de retrabalho por zona do casco. Diz *onde* no barco a
+// fábrica falha, não só *quanto*. Lê GET /v1/quality/defect-zones, que
+// agrega `rework_entry.location_zone` (Q.46.A, vindo de OFCH_LOCAL).
+// ZERO MOCKS — estados loading / erro / vazio explícitos.
+
+function zoneTone(sharePct: number): 'red' | 'yellow' | 'green' {
+  return sharePct >= 25 ? 'red' : sharePct >= 10 ? 'yellow' : 'green';
+}
+
+function ZonasTab() {
+  const zonesQuery = useQuery<DefectZoneMapResponse>({
+    queryKey: ['qualidade', 'defect-zones'],
+    queryFn: () => defectZonesApi.zoneMap({ top_n: 30 }),
+    staleTime: 60_000,
+    retry: 0,
+  });
+
+  if (zonesQuery.isLoading) {
+    return (
+      <Panel title="Mapa de defeitos por zona" badge="F11">
+        <div className="px-4 py-8 text-center text-xs text-text-dark-tertiary">
+          A carregar zonas…
+        </div>
+      </Panel>
+    );
+  }
+
+  if (zonesQuery.isError) {
+    return (
+      <Panel title="Mapa de defeitos por zona" badge="F11" flush>
+        <EmptyState
+          title="Endpoint /v1/quality/defect-zones indisponível"
+          hint="Quando wired, esta aba mostra o Pareto de defeitos por zona do casco."
+          mascot
+          size="md"
+        />
+      </Panel>
+    );
+  }
+
+  const data = zonesQuery.data;
+  const zones = data?.zones ?? [];
+  const maxEvents = zones.length > 0 ? zones[0].events : 0;
+
+  return (
+    <div className="space-y-5 page-enter">
+      {/* Explainer */}
+      <div
+        style={{
+          padding: '14px 18px',
+          background: 'var(--bg-1)',
+          border: '1px solid var(--bd-1)',
+          borderRadius: 12,
+          fontSize: 13,
+          color: 'var(--fg-1)',
+          lineHeight: 1.6,
+        }}
+      >
+        <strong style={{ color: 'var(--fg-0)' }}>Mapa de defeitos por zona.</strong>{' '}
+        Mostra em que zona do casco os defeitos foram marcados — diz <em>onde</em>{' '}
+        no barco a fábrica falha, não só quanto. Vem de <code>OFCH_LOCAL</code>{' '}
+        (a localização registada na checklist de qualidade).
+      </div>
+
+      {/* KPI strip — total / com zona / sem zona / cobertura */}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '1fr 1fr 1fr 1fr',
+          gap: 14,
+        }}
+      >
+        <KPIStrip
+          label="Eventos de retrabalho"
+          value={(data?.total_events ?? 0).toLocaleString('pt-PT')}
+          context="Janela de 90 dias"
+          tone="blue"
+        />
+        <KPIStrip
+          label="Zonas distintas"
+          value={(data?.distinct_zones ?? 0).toString()}
+          context="Zonas do casco com defeito marcado"
+          tone="blue"
+        />
+        <KPIStrip
+          label="Eventos sem zona"
+          value={(data?.events_without_zone ?? 0).toLocaleString('pt-PT')}
+          context="Sem localização registada na checklist"
+          tone={(data?.events_without_zone ?? 0) > 0 ? 'yellow' : 'green'}
+        />
+        <KPIStrip
+          label="Cobertura de zona"
+          value={(data?.zone_coverage_pct ?? 0).toFixed(1)}
+          unit="%"
+          context={
+            (data?.zone_coverage_pct ?? 0) < 50
+              ? 'Cobertura baixa — o Pareto é parcial'
+              : 'Fracção dos eventos com zona marcada'
+          }
+          tone={
+            (data?.zone_coverage_pct ?? 0) >= 75
+              ? 'green'
+              : (data?.zone_coverage_pct ?? 0) >= 40
+                ? 'yellow'
+                : 'red'
+          }
+        />
+      </div>
+
+      {/* Heatmap / Pareto por zona */}
+      <Panel title="Pareto de defeitos por zona" badge={`${zones.length} zonas`} flush>
+        {zones.length === 0 ? (
+          <EmptyState
+            title="Sem defeitos com zona registada"
+            hint={
+              (data?.total_events ?? 0) > 0
+                ? 'Há retrabalho na janela, mas nenhum tem zona do casco marcada (OFCH_LOCAL).'
+                : 'Sem retrabalho registado na janela de 90 dias.'
+            }
+            mascot
+            size="sm"
+          />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="border-b border-white/[0.06]">
+                <tr className="text-left text-[10px] uppercase tracking-wider text-text-dark-tertiary">
+                  <th className="px-3 py-2">Zona do casco</th>
+                  <th className="px-3 py-2">Eventos</th>
+                  <th className="px-3 py-2" style={{ minWidth: 160 }}>
+                    Quota
+                  </th>
+                  <th className="px-3 py-2">Cumulativo</th>
+                  <th className="px-3 py-2">Custo €</th>
+                  <th className="px-3 py-2">Horas</th>
+                  <th className="px-3 py-2">Ordens</th>
+                </tr>
+              </thead>
+              <tbody>
+                {zones.map((z) => {
+                  const tone = zoneTone(z.share_pct);
+                  const barPct =
+                    maxEvents > 0 ? (z.events / maxEvents) * 100 : 0;
+                  return (
+                    <tr
+                      key={z.zone}
+                      className="border-b border-white/[0.04] hover:bg-white/[0.02]"
+                    >
+                      <td className="px-3 py-2 text-text-dark-primary font-medium">
+                        {z.zone}
+                      </td>
+                      <td className="px-3 py-2 tabular-nums text-text-dark-secondary">
+                        {z.events.toLocaleString('pt-PT')}
+                      </td>
+                      <td className="px-3 py-2">
+                        <div className="flex items-center gap-2">
+                          <div
+                            style={{
+                              flex: 1,
+                              height: 6,
+                              background: 'var(--bd-1)',
+                              borderRadius: 3,
+                              overflow: 'hidden',
+                            }}
+                          >
+                            <div
+                              style={{
+                                width: `${barPct}%`,
+                                height: '100%',
+                                background: `var(--${tone})`,
+                              }}
+                            />
+                          </div>
+                          <span
+                            className="tabular-nums"
+                            style={{ color: `var(--${tone})`, minWidth: 44, textAlign: 'right' }}
+                          >
+                            {z.share_pct.toFixed(1)}%
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 tabular-nums text-text-dark-tertiary">
+                        {z.cumulative_pct.toFixed(1)}%
+                      </td>
+                      <td className="px-3 py-2 tabular-nums text-text-dark-secondary">
+                        {z.cost_estimate_eur > 0
+                          ? `€${Math.round(z.cost_estimate_eur).toLocaleString('pt-PT')}`
+                          : '—'}
+                      </td>
+                      <td className="px-3 py-2 tabular-nums text-text-dark-secondary">
+                        {z.hours_lost > 0 ? z.hours_lost.toFixed(1) : '—'}
+                      </td>
+                      <td className="px-3 py-2 tabular-nums text-text-dark-secondary">
+                        {z.affected_orders}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Panel>
+    </div>
   );
 }

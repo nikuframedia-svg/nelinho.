@@ -2209,6 +2209,35 @@ export const defectZonesApi = {
     ),
 };
 
+// ─── F11 / Q.46.C — defect-by-zone hull map ──────────────────────────────────
+
+export interface DefectZoneRow {
+  zone: string;
+  events: number;
+  share_pct: number;
+  cumulative_pct: number;
+  cost_estimate_eur: number;
+  hours_lost: number;
+  affected_orders: number;
+}
+
+export interface DefectZoneMapResponse {
+  window: { from: string; to: string };
+  total_events: number;
+  events_with_zone: number;
+  events_without_zone: number;
+  zone_coverage_pct: number;
+  distinct_zones: number;
+  zones: DefectZoneRow[];
+}
+
+export const defectZonesApi = {
+  zoneMap: (params?: { since?: string; until?: string; top_n?: number }) =>
+    request<DefectZoneMapResponse>(
+      `/v1/quality/defect-zones?${new URLSearchParams(filterParams(params))}`,
+    ),
+};
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // CPO COMMITS API (Sprint E.1) — Timeline + MAP-Elites alternatives + decide
 // ═══════════════════════════════════════════════════════════════════════════════

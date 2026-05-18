@@ -1096,6 +1096,19 @@ class CopilotService:
             if any(noun in query_lower for noun in kpi_nouns):
                 return "diagnostic"
 
+        # Q.39 — data_query GRUPO A: contagem / listagem explícita.
+        # Avaliado ANTES do KPI: uma pergunta que começa por "quantos"/
+        # "quantas" ou pede uma "lista" é sempre uma consulta à BD, nunca
+        # um KPI-atual de fast-path — mesmo que mencione "rework"/"oee"
+        # (ex. "quantos rework entries existem?" não é o rework rate).
+        data_query_strong = (
+            "quantos ", "quantas ", "lista ", "listar", "lista-me",
+            "lista de", "lista todos", "lista todas", "lista os",
+            "lista as",
+        )
+        if any(trigger in query_lower for trigger in data_query_strong):
+            return "data_query"
+
         # Fast detection: perguntas muito curtas sobre KPIs devem ser kpi_current.
         # Q.35.2.3 — só dispara com um NOME de métrica real. Antes a lista
         # tinha "quanto" e "qual o/é": "Quantos erros de qualidade tivemos?"
@@ -1111,32 +1124,34 @@ class CopilotService:
             if any(kw in query_lower for kw in kpi_keywords_short):
                 return "kpi_current"
         
-        # KPI current: perguntas sobre KPIs atuais
-        kpi_keywords = ["oee", "fpy", "rework", "availability", "performance", "quality"]
-        kpi_question_patterns = ["qual é", "qual o", "quanto é", "atual", "current", "agora"]
-        
-        has_kpi_keyword = any(keyword in query_lower for keyword in kpi_keywords)
-        has_kpi_question = any(pattern in query_lower for pattern in kpi_question_patterns)
-        
-        if has_kpi_keyword or (has_kpi_question and any(kw in query_lower for kw in ["oee", "fpy", "rework", "taxa", "rate", "percentagem", "%"])):
-            return "kpi_current"
-
-        # Q.39 — data_query: perguntas de consulta/exploração da BD que
-        # não são KPI nem diagnóstico. O copiloto traduz para SQL
-        # read-only e corre contra o Postgres OU o ERP NELO. Avaliado
-        # depois de diagnostic/kpi (uma pergunta causal continua
-        # diagnostic) e antes dos *_summary fixos.
+        # Q.39 — data_query GRUPO B: agregações / explorações (rankings,
+        # médias, contagens por dimensão). Avaliado ANTES do KPI longo —
+        # senão o nome literal de uma tabela ("quality_event", "rework
+        # entry") fazia a query cair no fast-path de KPI. As perguntas de
+        # KPI-atual a sério são curtas e já foram apanhadas acima.
         data_query_triggers = (
-            "quantos", "quantas", "lista ", "listar", "lista-me",
-            "lista de", "mostra ", "mostra-me", "mostrar", "indica-me",
-            "top ", "ranking", "os 10", "as 10", "quais os", "quais as",
-            "quais são", "média de", "soma de", "total de", "máximo de",
-            "mínimo de", "contagem", "histórico de", "histórico do",
-            "na base de dados", "stock de", "stock da", "stock do",
-            "consulta ", "consultar",
+            "mostra ", "mostra-me", "mostrar", "indica-me", "top ",
+            "ranking", "os 10", "as 10", "os 5", "as 5", "quais os",
+            "quais as", "quais são", "com mais", "com menos", " mais ",
+            "média", "médi", "soma de", "total de", "máximo", "mínimo",
+            "contagem", "histórico de", "histórico do", "na base de dados",
+            "stock de", "stock da", "stock do", "consulta ", "consultar",
+            "por mês", "por ano", "por categoria", "por estado",
+            "por sensor", "por fase", "por molde", "distintos",
+            "distintas", "agrupado", "agrupada",
         )
         if any(trigger in query_lower for trigger in data_query_triggers):
             return "data_query"
+
+        # KPI current: perguntas sobre KPIs atuais
+        kpi_keywords = ["oee", "fpy", "rework", "availability", "performance", "quality"]
+        kpi_question_patterns = ["qual é", "qual o", "quanto é", "atual", "current", "agora"]
+
+        has_kpi_keyword = any(keyword in query_lower for keyword in kpi_keywords)
+        has_kpi_question = any(pattern in query_lower for pattern in kpi_question_patterns)
+
+        if has_kpi_keyword or (has_kpi_question and any(kw in query_lower for kw in ["oee", "fpy", "rework", "taxa", "rate", "percentagem", "%"])):
+            return "kpi_current"
 
         # Quality summary
         if any(word in query_lower for word in ["qualidade", "quality", "erros", "errors", "defeitos", "defects"]):
@@ -1691,27 +1706,48 @@ class CopilotService:
             "`postgres` = a BD do sistema (KPIs, curated, planeamento, "
             "qualidade). `erp` = o ERP NELO ao vivo (histórico completo "
             "de fabrico, movimentos, transportes).\n"
-            "Escolhe UMA fonte e as 1-6 tabelas que precisas para "
-            "responder. Responde APENAS com JSON:\n"
-            '{"source": "postgres"|"erp", "tables": ["schema.tabela", ...]}\n'
-            'Se a pergunta não for de consulta de dados, responde '
-            '{"source": null}.'
+            "A pergunta JÁ foi classificada como pergunta de dados — a "
+            "tua função é SÓ escolher onde ir buscá-los. Escolhe UMA "
+            "fonte e as 1-6 tabelas que precisas para responder. Escolhe "
+            "sempre — se hesitares, escolhe a tabela cujo nome mais se "
+            "aproxima do tema. Responde APENAS com JSON:\n"
+            '{"source": "postgres"|"erp", "tables": ["schema.tabela", ...]}'
         )
-        selection = await ollama_client.chat(
-            selection_prompt, model, format="json",
-        )
-        if not isinstance(selection, dict):
-            logger.info("data_query: selecção não devolveu JSON")
-            return None
-        source = selection.get("source")
-        tables = selection.get("tables") or []
-        if source not in sx.VALID_SOURCES or not isinstance(tables, list) or not tables:
-            # Não é pergunta de dados ou o LLM não escolheu — fallback.
-            logger.info(
-                f"data_query: sem fonte/tabelas (source={source!r}, "
-                f"tables={tables!r})"
+        # O gemma é pequeno e às vezes devolve uma selecção vazia mesmo
+        # com tabelas óbvias no catálogo — uma 2ª tentativa resolve a
+        # maioria. O intent já decidiu que isto é uma pergunta de dados.
+        source: Optional[str] = None
+        tables: List[Any] = []
+        for sel_attempt in range(2):
+            selection = await ollama_client.chat(
+                selection_prompt, model, format="json",
             )
-            return None
+            if isinstance(selection, dict):
+                source = selection.get("source")
+                tables = selection.get("tables") or []
+                if (
+                    source in sx.VALID_SOURCES
+                    and isinstance(tables, list) and tables
+                ):
+                    break
+            source, tables = None, []
+        if source not in sx.VALID_SOURCES or not tables:
+            # Rede de segurança — o LLM não escolheu, mas a pergunta pode
+            # nomear a tabela à letra ("quantos production_schedules…").
+            lex_source, lex_tables = await sx.lexical_table_match(
+                request.user_query
+            )
+            if lex_source and lex_tables:
+                source, tables = lex_source, lex_tables
+                logger.info(
+                    f"data_query: selecção léxica → {source} {tables}"
+                )
+            else:
+                logger.info(
+                    f"data_query: sem fonte/tabelas após retry + léxico "
+                    f"(source={source!r}, tables={tables!r})"
+                )
+                return None
         tables = [str(t) for t in tables][:6]
         logger.info(f"data_query: source={source} tables={tables}")
 
