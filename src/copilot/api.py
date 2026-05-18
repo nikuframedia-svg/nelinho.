@@ -238,14 +238,17 @@ async def _execute_action(
         }
     
     elif request.action_type == "DRY_RUN":
-        # Dry run - retornar hint (não executar realmente)
-        # Q.37.B substitui isto por simulação real via Digital Twin.
-        return {
-            "action_type": "DRY_RUN",
-            "status": "simulated",
-            "message": "Dry run executado (sem persistência)",
-            "payload": request.payload,
-        }
+        # Q.37.B — DRY_RUN real via Digital Twin: cria cenário efémero,
+        # aplica payload.twin_delta, simula e compara contra o baseline.
+        # Sem delta mapeável devolve `insufficient_input` honesto.
+        from src.copilot.dry_run import run_dry_run
+
+        return await run_dry_run(
+            payload=request.payload,
+            tenant_id=tenant_id,
+            session=session,
+            user_id=user_id,
+        )
 
     elif request.action_type == "OPEN_ENTITY":
         # Hint para frontend
