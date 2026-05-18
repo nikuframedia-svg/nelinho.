@@ -99,28 +99,69 @@ async def calculate_kpis(
         )
         orders_completed_result = await session.execute(orders_completed_query)
         orders_completed = orders_completed_result.scalar() or 0
-        
+
+        # Q.34.A.5 — fallback de contagem de ordens. O `production_schedules`
+        # pode estar vazio (o CPO ainda não correu para o tenant) enquanto
+        # `plan.production_orders` tem as ordens reais sincronizadas do ERP.
+        # Quando a contagem baseada em schedules é 0, conta directamente das
+        # production_orders para o copiloto não dizer "sem ordens" tendo 521.
+        # NÃO se mexe em oee/availability/performance/quality_fpy — esses
+        # precisam de actuals que não existem; ficam None com razão honesta.
+        orders_source_table = "plan.production_schedules"
+        if orders_total == 0:
+            try:
+                from src.plan.models.order import OrderStatus, ProductionOrder
+
+                po_total = (await session.execute(
+                    select(func.count()).where(
+                        ProductionOrder.tenant_id == tenant_id
+                    )
+                )).scalar() or 0
+                if po_total > 0:
+                    po_in_progress = (await session.execute(
+                        select(func.count()).where(and_(
+                            ProductionOrder.tenant_id == tenant_id,
+                            ProductionOrder.status
+                            == OrderStatus.IN_PROGRESS.value,
+                        ))
+                    )).scalar() or 0
+                    po_completed = (await session.execute(
+                        select(func.count()).where(and_(
+                            ProductionOrder.tenant_id == tenant_id,
+                            ProductionOrder.status
+                            == OrderStatus.COMPLETED.value,
+                        ))
+                    )).scalar() or 0
+                    orders_total = po_total
+                    orders_in_progress = po_in_progress
+                    orders_completed = po_completed
+                    orders_source_table = "plan.production_orders"
+            except Exception as exc:
+                logger.warning(
+                    f"Q.34.A.5 production_orders fallback falhou: {exc}"
+                )
+
         # Query hash para citations
         query_hash = hashlib.sha256(f"orders_stats_{tenant_id}".encode()).hexdigest()[:16]
-        
+
         kpis["orders_total"] = KPIMetric(
             value=float(orders_total) if orders_total > 0 else None,
             updated_at=datetime.utcnow(),
-            citations=[create_db_citation("plan.production_schedules", query_hash, f"Total de ordens: {orders_total}")] if orders_total > 0 else [],
+            citations=[create_db_citation(orders_source_table, query_hash, f"Total de ordens: {orders_total}")] if orders_total > 0 else [],
             reason="NO_SOURCE_DATA" if orders_total == 0 else None,
         )
-        
+
         kpis["orders_in_progress"] = KPIMetric(
             value=float(orders_in_progress) if orders_in_progress > 0 else None,
             updated_at=datetime.utcnow(),
-            citations=[create_db_citation("plan.production_schedules", query_hash, f"Ordens em progresso: {orders_in_progress}")] if orders_in_progress > 0 else [],
+            citations=[create_db_citation(orders_source_table, query_hash, f"Ordens em progresso: {orders_in_progress}")] if orders_in_progress > 0 else [],
             reason="NO_SOURCE_DATA" if orders_in_progress == 0 else None,
         )
-        
+
         kpis["orders_completed"] = KPIMetric(
             value=float(orders_completed) if orders_completed > 0 else None,
             updated_at=datetime.utcnow(),
-            citations=[create_db_citation("plan.production_schedules", query_hash, f"Ordens completadas: {orders_completed}")] if orders_completed > 0 else [],
+            citations=[create_db_citation(orders_source_table, query_hash, f"Ordens completadas: {orders_completed}")] if orders_completed > 0 else [],
             reason="NO_SOURCE_DATA" if orders_completed == 0 else None,
         )
         
