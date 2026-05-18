@@ -372,6 +372,26 @@ class CopilotService:
                 logger.warning(f"RLM diagnostic falhou, caindo para LLM: {e}")
                 # Continuar para o caminho LLM normal.
 
+        # 2.7. DATA QUERY (Q.39) — pergunta de consulta/exploração da BD.
+        # O copiloto traduz para SQL read-only e corre contra o Postgres
+        # ou o ERP NELO. Isolado: se levanta ou devolve None, cai no
+        # caminho LLM normal abaixo.
+        if intent == "data_query":
+            try:
+                dq_result = await self._handle_data_query_dispatch(
+                    request, correlation_id, start_time
+                )
+                if dq_result is not None:
+                    dq_response, dq_audit = dq_result
+                    perf_metrics["total_ms"] = int((time.time() - start_time) * 1000)
+                    dq_audit["perf_metrics"] = perf_metrics
+                    logger.info(
+                        f"Data query dispatch usado. Latency: {perf_metrics['total_ms']}ms"
+                    )
+                    return dq_response, dq_audit
+            except Exception as e:
+                logger.warning(f"Data query dispatch falhou, caindo para LLM: {e}")
+
         # 3. Se intent é kpi_current, buscar snapshot de KPIs (para contexto do LLM)
         kpi_snapshot = None
         if intent == "kpi_current":
@@ -1100,7 +1120,24 @@ class CopilotService:
         
         if has_kpi_keyword or (has_kpi_question and any(kw in query_lower for kw in ["oee", "fpy", "rework", "taxa", "rate", "percentagem", "%"])):
             return "kpi_current"
-        
+
+        # Q.39 — data_query: perguntas de consulta/exploração da BD que
+        # não são KPI nem diagnóstico. O copiloto traduz para SQL
+        # read-only e corre contra o Postgres OU o ERP NELO. Avaliado
+        # depois de diagnostic/kpi (uma pergunta causal continua
+        # diagnostic) e antes dos *_summary fixos.
+        data_query_triggers = (
+            "quantos", "quantas", "lista ", "listar", "lista-me",
+            "lista de", "mostra ", "mostra-me", "mostrar", "indica-me",
+            "top ", "ranking", "os 10", "as 10", "quais os", "quais as",
+            "quais são", "média de", "soma de", "total de", "máximo de",
+            "mínimo de", "contagem", "histórico de", "histórico do",
+            "na base de dados", "stock de", "stock da", "stock do",
+            "consulta ", "consultar",
+        )
+        if any(trigger in query_lower for trigger in data_query_triggers):
+            return "data_query"
+
         # Quality summary
         if any(word in query_lower for word in ["qualidade", "quality", "erros", "errors", "defeitos", "defects"]):
             if any(word in query_lower for word in ["resumo", "summary", "overview", "visão"]):
@@ -1597,6 +1634,226 @@ class CopilotService:
             request,
             f"[diagnostic:{tool_name}] {request.user_query}",
             {"diagnostic_result": result_dict},
+            response_dict,
+            True,
+            [],
+            int((time.time() - start_time) * 1000),
+        )
+        return response, audit_data
+
+    async def _handle_data_query_dispatch(
+        self,
+        request: CopilotAskRequest,
+        correlation_id: UUID,
+        start_time: float,
+    ) -> Optional[Tuple[CopilotResponse, Dict[str, Any]]]:
+        """Q.39 — o copiloto consulta a BD TODA com SQL read-only.
+
+        Em vez de só os readers fixos, o LLM ganha acesso à base de
+        dados do sistema (`postgres`) e ao ERP NELO ao vivo (`erp`).
+        Fluxo de 3 chamadas — espelha `_handle_diagnostic_dispatch`, por
+        isso é limitado e não dispara o circuit breaker do Ollama:
+
+          1. escolher a fonte + as tabelas relevantes (vê o catálogo);
+          2. escrever o `SELECT` (vê as colunas das tabelas escolhidas);
+          3. compor a resposta PT-PT a partir das linhas reais.
+
+        Tudo read-only via `sql_explorer.run_query`. Qualquer falha →
+        ``None`` → cai no caminho LLM normal.
+        """
+        from src.copilot.tools import sql_explorer as sx
+        from src.copilot.utils.citations import create_calculation_citation
+
+        model = settings.ollama_model
+        ollama_client = get_ollama_client()
+
+        # --- 1. Catálogo + escolha de tabelas -----------------------------
+        try:
+            pg_tables = await sx.list_schema("postgres")
+            erp_tables = await sx.list_schema("erp")
+        except Exception as exc:
+            logger.warning(f"data_query: catálogo de schema falhou ({exc})")
+            return None
+
+        catalog = "\n".join(
+            [f"[postgres] {t['schema']}.{t['table']} — {t['rows']} linhas"
+             for t in pg_tables]
+            + [f"[erp] {t['schema']}.{t['table']} — {t['rows']} linhas"
+               for t in erp_tables]
+        )
+        selection_prompt = (
+            "És o explorador de dados do copiloto de produção da NELO "
+            "(fábrica de kayaks). O gestor perguntou:\n\n"
+            f"\"{request.user_query}\"\n\n"
+            "Tens DUAS bases de dados. Catálogo de tabelas (fonte, "
+            "schema.tabela, nº de linhas):\n\n"
+            f"{catalog}\n\n"
+            "`postgres` = a BD do sistema (KPIs, curated, planeamento, "
+            "qualidade). `erp` = o ERP NELO ao vivo (histórico completo "
+            "de fabrico, movimentos, transportes).\n"
+            "Escolhe UMA fonte e as 1-6 tabelas que precisas para "
+            "responder. Responde APENAS com JSON:\n"
+            '{"source": "postgres"|"erp", "tables": ["schema.tabela", ...]}\n'
+            'Se a pergunta não for de consulta de dados, responde '
+            '{"source": null}.'
+        )
+        selection = await ollama_client.chat(
+            selection_prompt, model, format="json",
+        )
+        if not isinstance(selection, dict):
+            logger.info("data_query: selecção não devolveu JSON")
+            return None
+        source = selection.get("source")
+        tables = selection.get("tables") or []
+        if source not in sx.VALID_SOURCES or not isinstance(tables, list) or not tables:
+            # Não é pergunta de dados ou o LLM não escolheu — fallback.
+            logger.info(
+                f"data_query: sem fonte/tabelas (source={source!r}, "
+                f"tables={tables!r})"
+            )
+            return None
+        tables = [str(t) for t in tables][:6]
+        logger.info(f"data_query: source={source} tables={tables}")
+
+        # --- 2. Colunas + geração do SELECT -------------------------------
+        try:
+            table_schemas = await sx.describe_tables(source, tables)
+        except Exception as exc:
+            logger.warning(f"data_query: describe_tables falhou ({exc})")
+            return None
+        schema_text = "\n".join(
+            f"{name}: "
+            + ", ".join(f"{c['col']}({c['tipo']})" for c in cols)
+            for name, cols in table_schemas.items()
+            if cols
+        )
+        if not schema_text:
+            logger.info(f"data_query: tabelas sem colunas legíveis ({tables})")
+            return None
+
+        result_dict: Optional[Dict[str, Any]] = None
+        sql = ""
+        last_error = ""
+        for attempt in range(3):
+            retry_hint = ""
+            if attempt > 0 and last_error:
+                retry_hint = (
+                    f"\n\n⚠ A TUA QUERY ANTERIOR FALHOU:\n{last_error}\n"
+                    f"SQL anterior: {sql}\n"
+                    "Corrige. Usa SÓ os nomes de coluna EXACTOS da lista "
+                    "acima — não inventes colunas nem reutilizes colunas "
+                    "de outra tabela. Verifica cada coluna do JOIN e do "
+                    "WHERE contra a lista."
+                )
+            gen_prompt = (
+                "Escreve UMA query SQL read-only (só SELECT) que "
+                "responda à pergunta do gestor da NELO.\n\n"
+                f"Pergunta: \"{request.user_query}\"\n\n"
+                f"Base de dados: {source} "
+                + ("(PostgreSQL)" if source == "postgres" else "(SQL Server)")
+                + "\nColunas das tabelas disponíveis:\n"
+                f"{schema_text}\n\n"
+                "Regras: só SELECT (nada de INSERT/UPDATE/DELETE); uma só "
+                "instrução; usa nomes qualificados schema.tabela; limita "
+                "o resultado (LIMIT no Postgres, TOP no SQL Server) a no "
+                "máximo 100 linhas. IMPORTANTE: usa SÓ colunas que estão "
+                "EXACTAMENTE na lista acima — cada tabela tem o seu "
+                "prefixo de coluna (ex. ORDEMFABRICO usa `OF_…`, PRODUTO "
+                "usa `P_…`); não assumas que duas tabelas partilham o "
+                "nome da coluna de junção. Responde APENAS com JSON:\n"
+                '{"sql": "<a query>"}'
+                + retry_hint
+            )
+            gen = await ollama_client.chat(gen_prompt, model, format="json")
+            if not isinstance(gen, dict):
+                logger.info("data_query: geração de SQL não devolveu JSON")
+                return None
+            sql = (gen.get("sql") or "").strip()
+            if not sql:
+                logger.info("data_query: LLM não produziu SQL")
+                return None
+            try:
+                result_dict = await sx.run_query(source, sql)
+                logger.info(
+                    f"data_query: SQL ok ({result_dict['row_count']} linhas) — {sql[:160]}"
+                )
+                break
+            except sx.UnsafeQueryError as exc:
+                last_error = f"query recusada (não é read-only): {exc}"
+            except Exception as exc:
+                last_error = f"erro a executar: {exc}"
+            result_dict = None
+
+        if result_dict is None:
+            logger.info(f"data_query: SQL falhou após retry — {last_error}")
+            return None
+
+        # --- 3. Composição da resposta PT-PT ------------------------------
+        preview = {
+            "columns": result_dict["columns"],
+            "rows": result_dict["rows"][:50],
+            "row_count": result_dict["row_count"],
+            "truncated": result_dict["truncated"],
+        }
+        composition_prompt = (
+            "És o copiloto de produção da NELO. Corri esta query SQL "
+            f"sobre a base `{source}`:\n\n{sql}\n\n"
+            "Resultado real (JSON):\n"
+            f"{json.dumps(preview, ensure_ascii=False, default=str)}\n\n"
+            f"Pergunta do gestor: \"{request.user_query}\"\n\n"
+            "Compõe uma resposta curta em PT-PT informal (tu, números "
+            "concretos, sem rodeios) a partir DESTES dados. Se o "
+            "resultado vier vazio, di-lo honestamente. Responde APENAS "
+            'com JSON:\n{"summary": "<1 frase>", "answer": "<resposta>"}'
+        )
+        composed = await ollama_client.chat(
+            composition_prompt, model, format="json",
+        )
+        if not isinstance(composed, dict):
+            return None
+        answer = (composed.get("answer") or composed.get("summary") or "").strip()
+        if not answer:
+            return None
+        summary = (composed.get("summary") or answer[:200]).strip()
+
+        citation = create_calculation_citation(
+            calculation_type=f"sql_query:{source}",
+            inputs={"sql": sql},
+            label=(
+                f"Consulta SQL read-only à BD `{source}` — "
+                f"{result_dict['row_count']} linhas"
+            ),
+            confidence=0.9,
+            trust_index=0.85,
+        )
+
+        suggestion_id = uuid4()
+        response = CopilotResponse(
+            suggestion_id=suggestion_id,
+            correlation_id=correlation_id,
+            type="ANSWER",
+            intent="generic",
+            summary=summary[:500],
+            facts=[{"text": answer, "citations": [citation]}],
+            actions=[],
+            warnings=[],
+            meta={
+                "model": model,
+                "tokens": 0,
+                "latency_ms": int((time.time() - start_time) * 1000),
+                "validation_passed": True,
+                "data_query_source": source,
+                "data_query_sql": sql,
+                "data_query_rows": result_dict["row_count"],
+            },
+        )
+        response_dict = response.model_dump()
+        audit_data = await self._store_audit(
+            correlation_id,
+            suggestion_id,
+            request,
+            f"[data_query:{source}] {request.user_query}",
+            {"sql": sql, "result": preview},
             response_dict,
             True,
             [],
