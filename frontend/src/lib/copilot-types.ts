@@ -61,3 +61,27 @@ export interface DailyFeedbackResponse {
 }
 
 
+
+// Q.37.C — Decision PR (ciclo de vida do CREATE_DECISION_PR)
+export type DecisionPRStatus =
+  | "PENDING"
+  | "APPROVED"
+  | "REJECTED"
+  | "EXECUTED";
+
+export interface DecisionPR {
+  id: string;
+  suggestion_id: string;
+  title: string;
+  description: string;
+  status: DecisionPRStatus;
+  action_type: string | null;
+  payload: Record<string, any>;
+  approved_by: string | null;
+  approved_at: string | null;
+  rejected_by: string | null;
+  rejected_at: string | null;
+  executed_by: string | null;
+  execution_result: Record<string, any> | null;
+  created_at: string | null;
+}

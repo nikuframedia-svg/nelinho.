@@ -1129,10 +1129,10 @@ export const healthApi = {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // Import types from separate file (import before using)
-import type { CopilotAskRequest, CopilotResponse, DailyFeedbackResponse } from './copilot-types';
+import type { CopilotAskRequest, CopilotResponse, DailyFeedbackResponse, DecisionPR, DecisionPRStatus } from './copilot-types';
 
 // Re-export types for external use
-export type { CopilotAskRequest, CopilotResponse, DailyFeedbackResponse };
+export type { CopilotAskRequest, CopilotResponse, DailyFeedbackResponse, DecisionPR, DecisionPRStatus };
 
 export const copilotApi = {
   ask: async (data: CopilotAskRequest) => {
@@ -1240,6 +1240,30 @@ export const copilotApi = {
     }
   },
   
+  // Q.37.C — Decision PRs (ciclo de vida: listar/aprovar/rejeitar/executar)
+  listDecisionPRs: (statusFilter?: string) => {
+    const qs = statusFilter ? `?status=${encodeURIComponent(statusFilter)}` : '';
+    return request<DecisionPR[]>(`/api/copilot/decision-prs${qs}`);
+  },
+
+  getDecisionPR: (id: string) =>
+    request<DecisionPR>(`/api/copilot/decision-prs/${id}`),
+
+  approveDecisionPR: (id: string) =>
+    request<DecisionPR>(`/api/copilot/decision-prs/${id}/approve`, {
+      method: 'POST',
+    }),
+
+  rejectDecisionPR: (id: string) =>
+    request<DecisionPR>(`/api/copilot/decision-prs/${id}/reject`, {
+      method: 'POST',
+    }),
+
+  executeDecisionPR: (id: string) =>
+    request<DecisionPR>(`/api/copilot/decision-prs/${id}/execute`, {
+      method: 'POST',
+    }),
+
   getDailyFeedback: (date?: string) => {
     const endpoint = `/api/copilot/daily-feedback${date ? `?date=${date}` : ''}`;
     const devEndpoint = `/api/copilot/daily-feedback-dev${date ? `?date=${date}` : ''}`;

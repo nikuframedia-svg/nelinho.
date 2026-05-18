@@ -37,6 +37,7 @@ from src.improve.api import router as improve_router
 from src.factory_data_product import factory_router
 from src.copilot.api_endpoints.runbooks_api import router as runbooks_router
 from src.copilot.api_endpoints.tools_api import router as tools_router
+from src.copilot.api_endpoints.decision_pr_api import router as decision_pr_router
 from src.governance.api import router as governance_router
 from src.governance.api_preference_rules import router as preference_rules_router
 from src.governance.api_learning_metrics import router as learning_metrics_router  # Sprint R.1
@@ -576,6 +577,7 @@ app.include_router(improve_router)  # Improvement Suggestions API
 app.include_router(factory_router)  # Factory Data Product API (C10)
 app.include_router(runbooks_router) # Runbooks API (P2 Enterprise)
 app.include_router(tools_router)    # Tool Registry API (P2 Enterprise)
+app.include_router(decision_pr_router)  # Q.37.C — ciclo de vida dos Decision PRs
 app.include_router(governance_router)  # Governance API (Approvals, SoD)
 app.include_router(preference_rules_router)  # Sprint E.3 — learned rules review
 app.include_router(learning_metrics_router)  # Sprint R.1 — learning visibility (pairs/rules/weights)
