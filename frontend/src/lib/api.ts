@@ -1936,6 +1936,37 @@ export const profitApi = {
     request<MarginSummaryResponse>(`/v1/profit/orders/margin-summary?days=${days}`),
 };
 
+// ─── Q.47.A — KPI objectivo vs realizado (F9) ────────────────────────────
+
+export type KpiObjectiveStatus = 'hit' | 'near' | 'below' | 'no_objective';
+
+export interface KpiObjectiveRow {
+  kpi_id: number;
+  name: string;
+  description: string | null;
+  display_order: number;
+  has_objective: boolean;
+  value: number | null;
+  objective: number | null;
+  attainment_pct: number | null;
+  status: KpiObjectiveStatus;
+  objective_date: string | null;
+}
+
+export interface KpiObjectivesResponse {
+  erp_available: boolean;
+  reason: string | null;
+  kpi_count: number;
+  with_objective_count: number;
+  hit_count: number;
+  below_count: number;
+  items: KpiObjectiveRow[];
+}
+
+export const kpiObjectivesApi = {
+  list: () => request<KpiObjectivesResponse>('/v1/profit/kpis/objectives'),
+};
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // SPRINT Q.5 — CEO dashboard tiles (OTD / Backlog / Alerts / FPY / Expeditions)
 // ═══════════════════════════════════════════════════════════════════════════════
