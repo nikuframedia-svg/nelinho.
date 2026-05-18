@@ -8,6 +8,11 @@ schemas + que o SQL das views aponta às tabelas certas.
 
 from __future__ import annotations
 
+from datetime import date
+from unittest.mock import AsyncMock
+
+import pytest
+
 from src.adapters.nelo import services
 from src.adapters.nelo.schemas import ChecklistRow, OperationCrewRow, OperationRow
 
@@ -73,3 +78,41 @@ def test_operation_crew_view_joins_offp_eq():
 def test_q36_readers_are_exported():
     assert "list_checklist_incidents" in services.__all__
     assert "list_operation_crew" in services.__all__
+
+
+@pytest.mark.asyncio
+async def test_list_operations_default_excludes_open_wip(monkeypatch):
+    """Sem `include_open` a janela filtra só por `end_at` — o contrato
+    histórico que o time_mining/oee dependem (operações concluídas)."""
+    captured = {}
+
+    async def fake(sql, params=None):
+        captured["sql"] = sql
+        return []
+
+    monkeypatch.setattr(services, "_fetch_all", fake)
+    await services.list_operations(
+        date_from=date(2026, 4, 1), date_to=date(2026, 5, 1),
+    )
+    assert "v.end_at IS NULL" not in captured["sql"]
+    assert "v.end_at >= :date_from" in captured["sql"]
+
+
+@pytest.mark.asyncio
+async def test_list_operations_include_open_brings_wip(monkeypatch):
+    """`include_open=True` acrescenta as operações em curso (`end_at`
+    NULL, `start_at` na janela) — o WIP que o OverloadDetector precisa."""
+    captured = {}
+
+    async def fake(sql, params=None):
+        captured["sql"] = sql
+        return []
+
+    monkeypatch.setattr(services, "_fetch_all", fake)
+    await services.list_operations(
+        date_from=date(2026, 4, 1), date_to=date(2026, 5, 1),
+        include_open=True,
+    )
+    sql = captured["sql"]
+    assert "v.end_at IS NULL" in sql
+    assert "v.start_at >= :date_from" in sql

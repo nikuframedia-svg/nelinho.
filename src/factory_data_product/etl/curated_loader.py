@@ -334,6 +334,16 @@ async def load_curated(
     await session.flush()  # garante run.id
 
     # 2. Ler as 3 fontes do ERP.
+    # NOTA — só operações CONCLUÍDAS (include_open=False).
+    # `OF_FP.OFFP_DATAFIM IS NULL` no ERP MAR-KAYAKS NÃO é um sinal
+    # fiável de "em curso": 21258 de 22375 OFs (95%) têm pelo menos uma
+    # operação por fechar — falhas de registo, não WIP real. Alimentar
+    # essas linhas como `estado="aberta"` faz o `current_wip` saltar
+    # para ~21.5k e o `OverloadDetector` disparar um falso "23× de
+    # sobrecarga". `services.list_operations` já sabe trazer WIP
+    # (`include_open=True`), mas só deve ser usado quando o ERP tiver
+    # `OFFP_DATAFIM` fiável — uma diagnose confiante e errada é pior do
+    # que um "sem causa" honesto.
     operations = await services.list_operations(
         date_from=date_from, date_to=date_to,
     )

@@ -499,6 +499,8 @@ async def list_operations(
     date_from: date,
     date_to: date,
     limit: int = 100_000,
+    *,
+    include_open: bool = False,
 ) -> list[OperationRow]:
     """Operations executed within `[date_from, date_to]` window (filter by `end_at`).
 
@@ -506,16 +508,36 @@ async def list_operations(
     Default limit 100 k covers ~3 months at NELO's current cadence.
     Replace inline subquery with `dbo.vw_pp1_operations` once views are
     deployed.
+
+    `include_open=False` (default) keeps the historical contract: only
+    *completed* operations (`end_at` no intervalo). Consumidores que
+    derivam duração (`time_mining`, `oee_service`) dependem disto e não
+    são afectados. `include_open=True` acrescenta as operações **em
+    curso** (`end_at IS NULL`, `start_at` na janela) — é o WIP que o
+    `curated_loader` precisa para o `OverloadDetector` ter o que ver.
     """
-    sql = f"""
-    SELECT TOP {int(limit)} v.* FROM (
-        {_VW_OPERATIONS_SQL}
-    ) v
+    if include_open:
+        window_clause = """
+    WHERE v.start_at IS NOT NULL
+      AND (
+            (v.end_at >= :date_from AND v.end_at < :date_to_plus_one)
+         OR (v.end_at IS NULL
+             AND v.start_at >= :date_from
+             AND v.start_at < :date_to_plus_one)
+          )
+    ORDER BY COALESCE(v.end_at, v.start_at) DESC
+    """
+    else:
+        window_clause = """
     WHERE v.end_at >= :date_from
       AND v.end_at <  :date_to_plus_one
       AND v.start_at IS NOT NULL
     ORDER BY v.end_at DESC
     """
+    sql = f"""
+    SELECT TOP {int(limit)} v.* FROM (
+        {_VW_OPERATIONS_SQL}
+    ) v{window_clause}"""
     # NELO data has datetimes; pass full-day bounds to be inclusive.
     from datetime import datetime, timedelta
     params = {
