@@ -361,6 +361,11 @@ categories:
       data_type: currency
       description: Sprint Q.8 — €/order used for backlog estimates (€35K/day ÷ 14.9 boats/day). Lift to
         ProductPricing in Q.9.
+    - key: energy.tariff_eur_per_kwh
+      value: 0.18
+      data_type: currency
+      description: Sprint Q.50 (F8) — €/kWh tariff applied to the real IoT power readings (IOT_SENSOR_DATA)
+        to turn measured kWh into € of energy. Override per-tenant with the real electricity contract rate.
   copilot:
     description: Conversational copilot rate limits and diagnostic capabilities.
     settings:

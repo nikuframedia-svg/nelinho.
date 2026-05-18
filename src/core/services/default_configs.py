@@ -203,6 +203,10 @@ DEFAULT_SEEDS: list[ConfigSeed] = [
     ("cost", "target.unit_value_eur", 2350.0, "currency",
      "Sprint Q.8 — €/order used for backlog estimates "
      "(€35K/day ÷ 14.9 boats/day). Lift to ProductPricing in Q.9."),
+    ("cost", "energy.tariff_eur_per_kwh", 0.18, "currency",
+     "Sprint Q.50 (F8) — €/kWh tariff applied to the real IoT power "
+     "readings (IOT_SENSOR_DATA) to turn measured kWh into € of energy. "
+     "Override per-tenant with the real electricity contract rate."),
 
     # ───────────────────────── copilot / llm ────────────────────────────────
     ("copilot", "rate_limit.per_hour", 60, "int", ""),
