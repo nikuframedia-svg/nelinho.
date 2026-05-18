@@ -450,6 +450,47 @@ class HolidayDefinitionRow(_Frozen):
     description: Optional[str] = None  # DFF_DESCRICAO
 
 
+# ─── Checklist defect location (OFCH_LOCAL × PROBS_LOCAL) ──────────────
+
+
+class ChecklistLocationRow(_Frozen):
+    """One `dbo.OFCH_LOCAL` row — where on the hull a defect sits.
+
+    Q.45.B — `OFCH_LOCAL` (~58 k rows) links a quality-checklist incident
+    (`OFCH_ID`) to a defect location code (`PROBS_LOCAL`). Joined to
+    `PROBS_LOCAL` for the human-readable zone description — the input for
+    the defect-by-zone hull map. The composite PK is (checklist_id,
+    location_id).
+    """
+
+    checklist_id: int  # OFPROBS_OFCH_ID
+    location_id: int  # OFPROBS_PROBSL_ID → PROBS_LOCAL.PROBSL_ID
+    location_description: Optional[str] = None  # PROBS_LOCAL.PROBSL_DSCR
+
+
+# ─── Environment sensors (TH) ──────────────────────────────────────────
+
+
+class TempHumidityRow(_Frozen):
+    """One `dbo.TH` row — a temperature/humidity sensor reading.
+
+    Q.45.B — `TH` (~586 k rows) records ambient temperature/humidity per
+    phase/probe. Feeds the cure environmental validation (resin cure is
+    chemistry — humidity/temperature out of band ruins the boat).
+    `phase_id` (`TH_FASE`) is nullable; `probe_id` (`TH_SONDA`) identifies
+    the physical probe.
+    """
+
+    reading_id: int  # TH_ID
+    measured_at: datetime  # TH_DATA (smalldatetime)
+    temperature: float  # TH_TEMP
+    humidity: Optional[float] = None  # TH_HUM
+    registered_at: Optional[datetime] = None  # TH_DATA_REG
+    phase_id: Optional[int] = None  # TH_FASE
+    probe_id: int  # TH_SONDA
+    updated_at: Optional[datetime] = None  # TH_DATA_UPDT
+
+
 # ─── Aggregate helpers ──────────────────────────────────────────────────
 
 

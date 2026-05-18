@@ -41,6 +41,7 @@ from datetime import date
 
 from .schemas import (
     BomRow,
+    ChecklistLocationRow,
     ChecklistRow,
     EntityPhaseRow,
     EntityRow,
@@ -59,6 +60,7 @@ from .schemas import (
     ProductRow,
     RoutingRow,
     ScheduleRow,
+    TempHumidityRow,
     WorkDayRow,
 )
 
@@ -441,6 +443,37 @@ SELECT
     dff.DFF_FERIADO   AS is_holiday,
     dff.DFF_DESCRICAO AS description
 FROM dbo.DIAS_FERIADOS_FERIAS dff WITH (NOLOCK)
+"""
+
+
+# Q.45.B — checklist defect location. `OFCH_LOCAL` (~58 k rows) links a
+# quality-checklist incident (`OFPROBS_OFCH_ID`) to a defect-location code
+# (`OFPROBS_PROBSL_ID`); joined to `PROBS_LOCAL` for the zone description
+# (`PROBSL_DSCR`) — the input for the defect-by-zone hull map.
+_VW_CHECKLIST_LOCATIONS_SQL = """
+SELECT
+    ol.OFPROBS_OFCH_ID   AS checklist_id,
+    ol.OFPROBS_PROBSL_ID AS location_id,
+    pl.PROBSL_DSCR       AS location_description
+FROM        dbo.OFCH_LOCAL  ol  WITH (NOLOCK)
+LEFT JOIN   dbo.PROBS_LOCAL pl  WITH (NOLOCK) ON pl.PROBSL_ID = ol.OFPROBS_PROBSL_ID
+"""
+
+
+# Q.45.B — temperature/humidity sensors. `TH` (~586 k rows) records the
+# ambient temperature/humidity per phase/probe. Heavy table — the reader
+# windows on `TH_DATA`.
+_VW_TEMP_HUMIDITY_SQL = """
+SELECT
+    th.TH_ID         AS reading_id,
+    th.TH_DATA       AS measured_at,
+    th.TH_TEMP       AS temperature,
+    th.TH_HUM        AS humidity,
+    th.TH_DATA_REG   AS registered_at,
+    th.TH_FASE       AS phase_id,
+    th.TH_SONDA      AS probe_id,
+    th.TH_DATA_UPDT  AS updated_at
+FROM dbo.TH th WITH (NOLOCK)
 """
 
 
@@ -833,6 +866,52 @@ async def list_holiday_definitions() -> list[HolidayDefinitionRow]:
     return [HolidayDefinitionRow(**r) for r in rows]
 
 
+# ─── Checklist defect location (Q.45.B — defect-by-zone hull map) ───────
+
+
+async def list_checklist_locations(limit: int = 100_000) -> list[ChecklistLocationRow]:
+    """Defect-location links (`OFCH_LOCAL`×`PROBS_LOCAL`, ~58 k rows).
+
+    Q.45.B — each row places a quality-checklist incident at a hull zone.
+    Joined to `PROBS_LOCAL` for the zone description. Ordered by
+    `checklist_id`. `limit` is a safety cap.
+    """
+    sql = f"""
+    SELECT TOP {int(limit)} * FROM (
+        {_VW_CHECKLIST_LOCATIONS_SQL}
+    ) v
+    ORDER BY v.checklist_id, v.location_id
+    """
+    rows = await _fetch_all(sql)
+    return [ChecklistLocationRow(**r) for r in rows]
+
+
+# ─── Environment sensors (Q.45.B — cure validation) ────────────────────
+
+
+async def list_temperature_humidity(
+    date_from: date,
+    date_to: date,
+    limit: int = 200_000,
+) -> list[TempHumidityRow]:
+    """Temperature/humidity readings (`TH`) within `[date_from, date_to]`.
+
+    Q.45.B — feeds the cure environmental validation. Heavy table
+    (~586 k rows) — the date window (`TH_DATA`) is mandatory. Ordered by
+    `measured_at` DESC.
+    """
+    sql = f"""
+    SELECT TOP {int(limit)} v.* FROM (
+        {_VW_TEMP_HUMIDITY_SQL}
+    ) v
+    WHERE v.measured_at >= :date_from
+      AND v.measured_at <  :date_to_plus_one
+    ORDER BY v.measured_at DESC
+    """
+    rows = await _fetch_all(sql, _window_params(date_from, date_to))
+    return [TempHumidityRow(**r) for r in rows]
+
+
 # ─── Aggregations for health-check ──────────────────────────────────────
 
 
@@ -898,6 +977,7 @@ __all__: Sequence[str] = (
     "list_all_bom",
     "list_all_routings",
     "list_checklist_incidents",
+    "list_checklist_locations",
     "list_current_schedule",
     "list_entities",
     "list_entity_phases",
@@ -911,6 +991,7 @@ __all__: Sequence[str] = (
     "list_phases",
     "list_products",
     "list_recent_movements",
+    "list_temperature_humidity",
     "list_work_days",
     "top_products_by_orders",
 )
