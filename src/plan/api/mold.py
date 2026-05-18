@@ -11,6 +11,7 @@ Endpoints under `/v1/molds/*`:
     GET    /v1/molds/calendar                — planned events
     GET    /v1/molds/health-report           — red-flagged molds
     POST   /v1/molds/scan-alerts             — emit MOLD_MAINT_DUE alerts
+    POST   /v1/molds/sync-usage              — feed usage counters from ERP
     POST   /v1/molds/propose-preventive      — create PLANNED events for reds
 """
 
@@ -164,6 +165,18 @@ async def mold_scan_alerts(
     svc = MoldService(session, tenant_id)
     created = await svc.emit_maintenance_alerts()
     return {"alerts_created": created}
+
+
+@router.post("/molds/sync-usage")
+async def mold_sync_usage(
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Q.42.A — alimenta os contadores de uso de molde com o histórico
+    real de movimentos da ERP (`MOLDES_MOV`)."""
+    svc = MoldService(session, tenant_id)
+    summary = await svc.sync_usage_from_erp_movements()
+    return summary
 
 
 @router.post("/molds/propose-preventive")

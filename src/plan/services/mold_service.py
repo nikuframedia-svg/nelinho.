@@ -18,7 +18,7 @@ MoldUsageCounter. Used by:
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Optional
@@ -53,6 +53,57 @@ DEFAULT_MAINT_THRESHOLD_CYCLES = 0
 
 class MoldNotFoundError(Exception):
     pass
+
+
+@dataclass
+class MovementCycleCount:
+    """Q.42.A — real cycle counts derived from the ERP `MOLDES_MOV` ledger.
+
+    `total` is every movement ever recorded for the mold (→
+    `MoldUsageCounter.shot_count_total`); `since_reset` is the subset
+    that happened strictly after `reset_at` (→ `cycles_since_last_maint`).
+    When the mold was never maintained, `reset_at` is `None` and
+    `since_reset == total`.
+    """
+
+    total: int = 0
+    since_reset: int = 0
+
+
+def aggregate_movement_cycles(
+    movements: list[Any],
+    reset_at_by_mold: dict[int, Optional[datetime]],
+) -> dict[int, MovementCycleCount]:
+    """Pure: count `MOLDES_MOV` rows per ERP mold id into cycle counts.
+
+    Each movement is one real use cycle. `reset_at_by_mold` maps an ERP
+    mold id to the timestamp of its last completed maintenance (or
+    `None`). Movements with no `moved_at` count toward `total` but never
+    toward `since_reset` (an undated movement cannot be placed relative
+    to a reset). The function never touches the DB — it is unit-testable
+    in isolation.
+    """
+    counts: dict[int, MovementCycleCount] = {}
+    for mov in movements:
+        erp_mold_id = getattr(mov, "mold_id", None)
+        if erp_mold_id is None:
+            continue
+        bucket = counts.setdefault(int(erp_mold_id), MovementCycleCount())
+        bucket.total += 1
+        moved_at = getattr(mov, "moved_at", None)
+        reset_at = reset_at_by_mold.get(int(erp_mold_id))
+        if moved_at is None:
+            continue
+        if moved_at.tzinfo is None:
+            moved_at = moved_at.replace(tzinfo=timezone.utc)
+        if reset_at is None:
+            bucket.since_reset += 1
+            continue
+        if reset_at.tzinfo is None:
+            reset_at = reset_at.replace(tzinfo=timezone.utc)
+        if moved_at > reset_at:
+            bucket.since_reset += 1
+    return counts
 
 
 class MoldService:
@@ -324,6 +375,101 @@ class MoldService:
             counter.last_updated_at = datetime.now(timezone.utc)
         await self.session.flush()
         return counter
+
+    async def sync_usage_from_erp_movements(self) -> dict[str, int]:
+        """Q.42.A — feed the usage counters from the real `MOLDES_MOV` ledger.
+
+        Reads the read-only ERP mold-movement history
+        (`src/adapters/nelo/services.list_mold_movements`), counts the
+        movements per ERP mold id (one movement = one use cycle), and
+        writes those real counts onto the matching `MoldUsageCounter`
+        rows so the health score runs on actual use rather than zeros.
+
+        Match key: `plan.mold.mold_code == str(erp_mold_id)` — the
+        convention the ERP mirror (`adapters/nelo/etl/molds.py`) writes.
+        Excel-only molds (the ~70000+ `MoldeId` space) have no ERP
+        movements and are simply left untouched.
+
+        `shot_count_total` becomes the all-time movement count;
+        `cycles_since_last_maint` counts only movements after the mold's
+        last completed maintenance, so a finished maintenance still
+        resets the cycle window correctly. This does NOT change the
+        maintenance-threshold policy (still 0 / disabled — CEO
+        2026-04-26): it only supplies real data to the counters.
+
+        Returns a small summary: molds matched, counters updated, ERP
+        movements read.
+        """
+        from src.adapters.nelo import services as erp
+
+        movements = await erp.list_mold_movements()
+
+        # Last completed-maintenance timestamp per plan.mold — the reset
+        # boundary for `cycles_since_last_maint`.
+        molds = await self.list_molds(active_only=False)
+        mold_by_erp_id: dict[int, Mold] = {}
+        for mold in molds:
+            try:
+                mold_by_erp_id[int(mold.mold_code)] = mold
+            except (TypeError, ValueError):
+                # Excel molds carry a non-int business key — no ERP
+                # movements reference them, so skip silently.
+                continue
+
+        reset_at_by_mold: dict[int, Optional[datetime]] = {}
+        for erp_id, mold in mold_by_erp_id.items():
+            stmt = select(MoldUsageCounter).where(
+                and_(
+                    MoldUsageCounter.tenant_id == self.tenant_id,
+                    MoldUsageCounter.mold_id == mold.id,
+                )
+            )
+            counter = (await self.session.execute(stmt)).scalar_one_or_none()
+            reset_at_by_mold[erp_id] = counter.last_reset_at if counter else None
+
+        counts = aggregate_movement_cycles(movements, reset_at_by_mold)
+
+        now = datetime.now(timezone.utc)
+        matched = 0
+        updated = 0
+        for erp_id, mold in mold_by_erp_id.items():
+            count = counts.get(erp_id)
+            if count is None:
+                continue
+            matched += 1
+            stmt = select(MoldUsageCounter).where(
+                and_(
+                    MoldUsageCounter.tenant_id == self.tenant_id,
+                    MoldUsageCounter.mold_id == mold.id,
+                )
+            )
+            counter = (await self.session.execute(stmt)).scalar_one_or_none()
+            if counter is None:
+                counter = MoldUsageCounter(
+                    id=uuid4(),
+                    tenant_id=self.tenant_id,
+                    mold_id=mold.id,
+                    shot_count_total=count.total,
+                    cycles_since_last_maint=count.since_reset,
+                    last_updated_at=now,
+                )
+                self.session.add(counter)
+            else:
+                counter.shot_count_total = count.total
+                counter.cycles_since_last_maint = count.since_reset
+                counter.last_updated_at = now
+            updated += 1
+
+        await self.session.flush()
+        logger.info(
+            "mold usage sync tenant=%s movements=%s matched=%s updated=%s",
+            self.tenant_id, len(movements), matched, updated,
+        )
+        return {
+            "movements_read": len(movements),
+            "molds_matched": matched,
+            "counters_updated": updated,
+        }
 
     # ─── Alerts (AL08 / CG12) ─────────────────────────────────────────────
 
