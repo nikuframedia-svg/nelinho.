@@ -35,6 +35,32 @@ $psql = "$env:USERPROFILE\scoop\apps\postgresql\current\bin\psql.exe"
 
 5 minutos do início ao fim. Idempotent — corridas múltiplas convergem para o mesmo estado.
 
+## Ordem dev — popular dados do ERP (Q.36)
+
+`bootstrap_dev_full.py` cria as tabelas + tenant + configs, mas as tabelas de dados
+operacionais e curados arrancam **vazias**. Para que o copiloto e os 3 detectores causais
+(`erro_tree`, `reichenbach`, `mill_diff`) tenham dados reais, corre o sync do ERP a seguir
+ao bootstrap, **nesta ordem**:
+
+```powershell
+# A. master data (produtos, operadores, routings, BOM) — TEM de correr primeiro:
+#    o curated_loader resolve o causador via core.employees.
+.\.venv\Scripts\python.exe scripts/sync_nelo_erp.py --only master
+
+# B. factory_curated.* + quality.rework_entry (Q.36) — corre o mirror de
+#    qualidade (OF_CHECKLIST) + o curated_loader (OF_FP/OF_CHECKLIST/OFFP_EQ).
+.\.venv\Scripts\python.exe scripts/populate_curated.py
+# --since YYYY-MM-DD limita a janela (default: 365 dias).
+```
+
+O `bootstrap_dev_full.py` já chama o passo B automaticamente **quando `SQLSERVER_ENABLED=true`**
+no `.env` (ver `populate_curated_if_erp_available`). Sem ERP acessível é um no-op silencioso —
+o bootstrap continua a correr numa máquina sem ligação ao SQL Server, e os detectores causais
+devolvem "sem causa" honesto até o `populate_curated.py` correr.
+
+Verificação: uma pergunta causal ("porque caiu a qualidade?") deve devolver uma causa raiz com
+`chain` real, não "sem causa significativa".
+
 ## Why not Alembic?
 
 `init_db()` em [src/shared/database.py:198](src/shared/database.py#L198) faz
