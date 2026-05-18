@@ -180,12 +180,17 @@ class Settings(BaseSettings):
     copilot_tool_api_base_url: str = Field(default="http://localhost:8001")
     # Q.33.B.2 — master switch for the agentic tool-calling loop on
     # generic-intent questions.
-    # Q.37.E — flipped to True: the loop now has a dedicated final-answer
-    # synthesis step (`ToolExecutor._synthesize_final`) that uses the
-    # original `system_prompt.md` — which defines the CopilotResponse
-    # schema — instead of the TOOL_SYSTEM_PROMPT. The final answer now
-    # validates. Reverting is a one-liner (default=False).
-    copilot_agentic_tools_enabled: bool = Field(default=True)
+    # Q.37.E — added a dedicated final-answer synthesis step
+    # (`ToolExecutor._synthesize_final`) that uses the original
+    # `system_prompt.md` so the loop's final answer validates against the
+    # CopilotResponse schema (passes the unit tests with a mocked Ollama).
+    # Q.37 integration — kept OFF: live against gemma the loop fires
+    # several Ollama calls per question, trips the Ollama circuit breaker,
+    # and every subsequent copilot question fails in cascade (harness
+    # regressed 20→16 PASS, 5 scenarios VALIDATION_FAILED). The synthesis
+    # fix stays as dormant-correct code; flip to True only once the loop
+    # is hardened against the breaker (batch/limit the Ollama calls).
+    copilot_agentic_tools_enabled: bool = Field(default=False)
     
     @property
     def cors_origins_list(self) -> List[str]:
