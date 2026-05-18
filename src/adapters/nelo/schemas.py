@@ -405,6 +405,51 @@ class MoldMovementRow(_Frozen):
     entity_id: int  # MLDU_E_ID
 
 
+# ─── Work calendar (vw_pp1_work_days / FERIAS / DIAS_FERIADOS_FERIAS) ───
+
+
+class WorkDayRow(_Frozen):
+    """One `dbo.DIAS_TRABALHO` row — a registered working day.
+
+    Q.45.A — `DIAS_TRABALHO` (~15.6 k rows) is the factory's calendar of
+    actual working days. Only two columns: the id and the date. Feeds the
+    capacity calendar (which days count towards available capacity).
+    """
+
+    work_day_id: int  # DTRB_ID
+    work_date: datetime  # DTRB_DATA (smalldatetime)
+
+
+class HolidayRow(_Frozen):
+    """One `dbo.FERIAS` row — a holiday / vacation day.
+
+    Q.45.A — `FERIAS` (~29 rows) lists individual non-working dates with
+    a free-text `kind` ("Férias", "Feriado"). `kind` is the raw ERP value
+    — no enum is invented (the dictionary is not formally confirmed).
+    """
+
+    holiday_date: datetime  # DATA (smalldatetime)
+    kind: str  # TIPO — raw text: "Férias" / "Feriado"
+
+
+class HolidayDefinitionRow(_Frozen):
+    """One `dbo.DIAS_FERIADOS_FERIAS` row — a recurring holiday rule.
+
+    Q.45.A — `DIAS_FERIADOS_FERIAS` (~14 rows) is the month/day definition
+    of recurring holidays (e.g. 1 Jan = Ano Novo). `is_fixed` marks a
+    fixed-date holiday vs a movable one; the `holiday`/`vacation` bits say
+    which calendar a row belongs to.
+    """
+
+    definition_id: int  # DFF_ID
+    month: int  # DFF_MES
+    day: int  # DFF_DIA
+    is_fixed: bool  # DFF_FIXO
+    is_vacation: bool  # DFF_FERIAS
+    is_holiday: bool  # DFF_FERIADO
+    description: Optional[str] = None  # DFF_DESCRICAO
+
+
 # ─── Aggregate helpers ──────────────────────────────────────────────────
 
 

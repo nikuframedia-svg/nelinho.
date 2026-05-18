@@ -45,6 +45,8 @@ from .schemas import (
     EntityPhaseRow,
     EntityRow,
     HealthCheckResult,
+    HolidayDefinitionRow,
+    HolidayRow,
     MoldMovementRow,
     MoldRow,
     MovementRow,
@@ -57,6 +59,7 @@ from .schemas import (
     ProductRow,
     RoutingRow,
     ScheduleRow,
+    WorkDayRow,
 )
 
 # ─── Engine ─────────────────────────────────────────────────────────────
@@ -409,6 +412,38 @@ FROM dbo.MOLDES_MOV mov WITH (NOLOCK)
 """
 
 
+# Q.45.A — work calendar. `DIAS_TRABALHO` (~15.6 k rows) is the registered
+# working-day calendar; `FERIAS` (~29 rows) lists individual holiday dates;
+# `DIAS_FERIADOS_FERIAS` (~14 rows) is the recurring-holiday definition.
+# Column names verified against agent_docs/mar_kayaks_schema_discovery.md +
+# nelo_deepscan_2.md. No guessed names.
+_VW_WORK_DAYS_SQL = """
+SELECT
+    dt.DTRB_ID   AS work_day_id,
+    dt.DTRB_DATA AS work_date
+FROM dbo.DIAS_TRABALHO dt WITH (NOLOCK)
+"""
+
+_VW_HOLIDAYS_SQL = """
+SELECT
+    f.DATA AS holiday_date,
+    f.TIPO AS kind
+FROM dbo.FERIAS f WITH (NOLOCK)
+"""
+
+_VW_HOLIDAY_DEFS_SQL = """
+SELECT
+    dff.DFF_ID        AS definition_id,
+    dff.DFF_MES       AS month,
+    dff.DFF_DIA       AS day,
+    dff.DFF_FIXO      AS is_fixed,
+    dff.DFF_FERIAS    AS is_vacation,
+    dff.DFF_FERIADO   AS is_holiday,
+    dff.DFF_DESCRICAO AS description
+FROM dbo.DIAS_FERIADOS_FERIAS dff WITH (NOLOCK)
+"""
+
+
 async def _fetch_all(sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Run a SELECT and return list of row dicts (column → value)."""
     engine = get_engine()
@@ -752,6 +787,52 @@ async def list_all_bom(limit: int = 200_000) -> list[BomRow]:
     return [BomRow(**r) for r in rows]
 
 
+# ─── Work calendar (Q.45.A — capacity calendar) ─────────────────────────
+
+
+async def list_work_days(limit: int = 50_000) -> list[WorkDayRow]:
+    """Registered working days (`DIAS_TRABALHO`, ~15.6 k rows).
+
+    Q.45.A — feeds the capacity calendar. Ordered by `work_date` ASC.
+    Light table; `limit` is a safety cap.
+    """
+    sql = f"""
+    SELECT TOP {int(limit)} * FROM (
+        {_VW_WORK_DAYS_SQL}
+    ) v
+    ORDER BY v.work_date
+    """
+    rows = await _fetch_all(sql)
+    return [WorkDayRow(**r) for r in rows]
+
+
+async def list_holidays() -> list[HolidayRow]:
+    """Holiday / vacation dates (`FERIAS`, ~29 rows).
+
+    Q.45.A — individual non-working dates with a raw text `kind`
+    ("Férias" / "Feriado"). Ordered by `holiday_date` ASC.
+    """
+    sql = f"SELECT * FROM ({_VW_HOLIDAYS_SQL}) v ORDER BY v.holiday_date"
+    rows = await _fetch_all(sql)
+    return [HolidayRow(**r) for r in rows]
+
+
+async def list_holiday_definitions() -> list[HolidayDefinitionRow]:
+    """Recurring-holiday definitions (`DIAS_FERIADOS_FERIAS`, ~14 rows).
+
+    Q.45.A — the month/day rules of recurring holidays (e.g. 1 Jan).
+    Ordered by month, day.
+    """
+    sql = f"""
+    SELECT * FROM (
+        {_VW_HOLIDAY_DEFS_SQL}
+    ) v
+    ORDER BY v.month, v.day
+    """
+    rows = await _fetch_all(sql)
+    return [HolidayDefinitionRow(**r) for r in rows]
+
+
 # ─── Aggregations for health-check ──────────────────────────────────────
 
 
@@ -820,6 +901,8 @@ __all__: Sequence[str] = (
     "list_current_schedule",
     "list_entities",
     "list_entity_phases",
+    "list_holiday_definitions",
+    "list_holidays",
     "list_mold_movements",
     "list_molds",
     "list_open_orders",
@@ -828,5 +911,6 @@ __all__: Sequence[str] = (
     "list_phases",
     "list_products",
     "list_recent_movements",
+    "list_work_days",
     "top_products_by_orders",
 )
