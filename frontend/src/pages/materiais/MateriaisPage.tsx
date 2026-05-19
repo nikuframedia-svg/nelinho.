@@ -1,18 +1,21 @@
 /**
  * MateriaisPage — Q.52.K · reconstrução do design NELO.
  *
- * 4 tabs: Stock · Prospeção · Entregas · Fornecedores.
+ * 4 tabs: Catálogo · Prospeção · Entregas · Fornecedores.
  *
  * ZERO MOCKS:
- *   - Stock     → /v1/supply/materials (master) + .../position (on-hand,
- *                 PARTIAL: posições degradadas mostram "—").
+ *   - Catálogo  → /v1/supply/materials/from-bom (REAL). O `supply.material_master`
+ *                 está vazio nesta instalação; os materiais reais da NELO são
+ *                 os componentes-folha das BOMs (`core.bom_items` × `core.products`),
+ *                 com nome, unidade, custo padrão e nº de BOMs que os consomem.
  *   - Prospeção → /v1/factory-map/shortage-risks (REAL) +
  *                 /v1/supply/reconciliation (REAL).
  *   - Entregas  → SEM endpoint de tracking de PO → empty state explícito.
  *   - Fornecedores → /v1/core/suppliers (REAL).
  *
- * Mutações de stock vivem no MaterialDetailSheet e invalidam a query
- * ['materiais'].
+ * Nota: não há leitura de stock (on-hand) — `supply.inventory_ledger`
+ * está vazio. O catálogo mostra a verdade que existe (custo + uso em BOM),
+ * sem inventar níveis de stock.
  */
 
 import { useMemo, useState } from 'react';
@@ -25,6 +28,7 @@ import {
   Truck,
   AlertTriangle,
   Star,
+  Search,
 } from 'lucide-react';
 import { DarkPageLayout } from '../../layouts/DarkPageLayout';
 import { Segmented } from '../../components/dark/Segmented';
@@ -33,22 +37,15 @@ import { EmptyState } from '../../components/dark/EmptyState';
 import { SkeletonLoader } from '../../components/ui/Skeleton';
 import {
   materiaisApi,
-  type MaterialPosition,
+  type BomMaterial,
   type ShortageRisk,
   type Supplier,
 } from '../../components/materiais/materiaisApi';
-import {
-  StockRow,
-  StockRowHeader,
-  stateFor,
-  type StockRowData,
-} from '../../components/materiais/StockRow';
-import { MaterialDetailSheet } from '../../components/materiais/MaterialDetailSheet';
 
 type TabId = 'stock' | 'prospecao' | 'entregas' | 'fornecedores';
 
 const TABS: Array<{ value: TabId; label: string; icon: ReactNode }> = [
-  { value: 'stock', label: 'Stock', icon: <Boxes size={13} /> },
+  { value: 'stock', label: 'Catálogo', icon: <Boxes size={13} /> },
   { value: 'prospecao', label: 'Prospeção', icon: <Target size={13} /> },
   { value: 'entregas', label: 'Entregas', icon: <Truck size={13} /> },
   { value: 'fornecedores', label: 'Fornecedores', icon: <Building2 size={13} /> },
@@ -80,68 +77,52 @@ export default function MateriaisPage(): ReactNode {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// TAB · STOCK
+// TAB · CATÁLOGO  (materiais derivados da BOM)
 // ═══════════════════════════════════════════════════════════════════════════
 
+const CATALOG_GRID = '2.4fr 0.8fr 1fr 1.1fr';
+
 function StockTab(): ReactNode {
-  const [selectedSku, setSelectedSku] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
 
   const materialsQuery = useQuery({
-    queryKey: ['materiais', 'list'],
-    queryFn: () => materiaisApi.listMaterials({ active_only: true }),
+    queryKey: ['materiais', 'from-bom'],
+    queryFn: () => materiaisApi.listMaterialsFromBom({ limit: 2000 }),
   });
 
-  const materials = useMemo(
+  const all = useMemo(
     () => materialsQuery.data ?? [],
     [materialsQuery.data],
   );
 
-  // Posições de todos os SKUs — PARTIAL: o backend pode degradar.
-  const positionsQuery = useQuery({
-    queryKey: ['materiais', 'positions', materials.map((m) => m.sku_id)],
-    queryFn: async () => {
-      const entries = await Promise.all(
-        materials.map(async (m) => {
-          try {
-            const p = await materiaisApi.getPosition(m.sku_id);
-            return [m.sku_id, p] as const;
-          } catch {
-            return [m.sku_id, null] as const;
-          }
-        }),
-      );
-      return Object.fromEntries(entries) as Record<string, MaterialPosition | null>;
-    },
-    enabled: materials.length > 0,
-    retry: 0,
-  });
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return all;
+    return all.filter(
+      (m) =>
+        m.product_name.toLowerCase().includes(q) ||
+        m.product_code.toLowerCase().includes(q),
+    );
+  }, [all, search]);
 
-  const rows: StockRowData[] = useMemo(
-    () =>
-      materials.map((m) => ({
-        material: m,
-        position: positionsQuery.data?.[m.sku_id] ?? null,
-      })),
-    [materials, positionsQuery.data],
-  );
-
-  const counts = useMemo(() => {
-    let ok = 0;
-    let low = 0;
-    let crit = 0;
-    let unknown = 0;
-    for (const r of rows) {
-      const s = stateFor(r);
-      if (s === 'ok') ok += 1;
-      else if (s === 'low') low += 1;
-      else if (s === 'critical' || s === 'out') crit += 1;
-      else unknown += 1;
+  const stats = useMemo(() => {
+    let withCost = 0;
+    let costSum = 0;
+    let widelyUsed = 0;
+    for (const m of all) {
+      if (m.standard_cost !== null && m.standard_cost > 0) {
+        withCost += 1;
+        costSum += m.standard_cost;
+      }
+      if (m.used_in_n_boms >= 10) widelyUsed += 1;
     }
-    return { ok, low, crit, unknown };
-  }, [rows]);
-
-  const selectedMaterial =
-    materials.find((m) => m.sku_id === selectedSku) ?? null;
+    return {
+      total: all.length,
+      withCost,
+      avgCost: withCost > 0 ? costSum / withCost : 0,
+      widelyUsed,
+    };
+  }, [all]);
 
   if (materialsQuery.isLoading) {
     return <SkeletonLoader count={6} />;
@@ -149,8 +130,8 @@ function StockTab(): ReactNode {
   if (materialsQuery.isError) {
     return (
       <EmptyState
-        title="Não foi possível carregar os materiais"
-        hint="O endpoint /v1/supply/materials falhou. Verifica se o backend está a correr."
+        title="Não foi possível carregar o catálogo de materiais"
+        hint="O endpoint /v1/supply/materials/from-bom falhou. Verifica se o backend está a correr."
         icon={<Boxes size={28} />}
         action={
           <button
@@ -164,11 +145,11 @@ function StockTab(): ReactNode {
       />
     );
   }
-  if (materials.length === 0) {
+  if (all.length === 0) {
     return (
       <EmptyState
-        title="Sem materiais registados"
-        hint="Ainda não há materiais no master de stock para este tenant. Cria materiais ou confirma a sincronização do ERP."
+        title="Sem materiais no catálogo"
+        hint="Não há componentes-folha nas BOMs deste tenant. Confirma a sincronização do ERP (core.bom_items)."
         icon={<Boxes size={28} />}
       />
     );
@@ -179,35 +160,63 @@ function StockTab(): ReactNode {
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(4, 1fr)',
+          gridTemplateColumns: 'repeat(3, 1fr)',
           gap: 12,
           marginBottom: 18,
         }}
       >
         <KPIBig
-          label="Materiais OK"
-          value={counts.ok}
-          unit={`/ ${materials.length}`}
+          label="Materiais no catálogo"
+          value={stats.total}
+          context="Componentes-folha das BOMs"
+          status="gray"
+        />
+        <KPIBig
+          label="Usados em ≥10 BOMs"
+          value={stats.widelyUsed}
+          context="Materiais de uso transversal"
           status="green"
           accent="green"
         />
-        <KPIBig label="Baixos" value={counts.low} status="yellow" accent="yellow" />
         <KPIBig
-          label="Críticos / esgotados"
-          value={counts.crit}
-          status="red"
-          accent="red"
-        />
-        <KPIBig
-          label="Sem leitura de posição"
-          value={counts.unknown}
-          context={
-            counts.unknown > 0
-              ? 'Posição PARTIAL — on-hand indisponível'
-              : 'Todas as posições disponíveis'
-          }
+          label="Custo padrão médio"
+          value={`€${stats.avgCost.toFixed(2)}`}
+          context={`${stats.withCost} de ${stats.total} com custo > 0`}
           status="gray"
         />
+      </div>
+
+      {/* ── Pesquisa ───────────────────────────────────────────────────── */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          background: 'var(--bg-1)',
+          border: '1px solid var(--bd-1)',
+          borderRadius: 'var(--r-md)',
+          padding: '8px 12px',
+          marginBottom: 12,
+        }}
+      >
+        <Search size={14} color="var(--fg-3)" />
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Procurar por nome ou código…"
+          style={{
+            flex: 1,
+            background: 'transparent',
+            border: 'none',
+            outline: 'none',
+            color: 'var(--fg-0)',
+            fontSize: 12.5,
+          }}
+        />
+        <span style={{ fontSize: 11, color: 'var(--fg-3)' }}>
+          {filtered.length} de {all.length}
+        </span>
       </div>
 
       <div
@@ -218,27 +227,98 @@ function StockTab(): ReactNode {
           overflow: 'hidden',
         }}
       >
-        <StockRowHeader />
-        {rows.map((r) => (
-          <StockRow
-            key={r.material.sku_id}
-            data={r}
-            onSelect={setSelectedSku}
-            onOrder={setSelectedSku}
-          />
-        ))}
-      </div>
-
-      {positionsQuery.isLoading && (
-        <div style={{ fontSize: 11, color: 'var(--fg-3)', marginTop: 10 }}>
-          A ler posições de stock…
+        {/* header */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: CATALOG_GRID,
+            alignItems: 'center',
+            gap: 14,
+            padding: '12px 16px',
+            borderBottom: '1px solid var(--bd-1)',
+            background: 'var(--bg-2)',
+            fontSize: 10.5,
+            color: 'var(--fg-3)',
+            textTransform: 'uppercase',
+            letterSpacing: 0.4,
+            fontWeight: 600,
+          }}
+        >
+          <div>Material</div>
+          <div>Unidade</div>
+          <div style={{ textAlign: 'right' }}>Custo padrão</div>
+          <div style={{ textAlign: 'right' }}>Usado em</div>
         </div>
-      )}
+        {filtered.length === 0 ? (
+          <div
+            style={{
+              padding: '24px 16px',
+              fontSize: 12,
+              color: 'var(--fg-3)',
+              textAlign: 'center',
+            }}
+          >
+            Nenhum material corresponde a “{search}”.
+          </div>
+        ) : (
+          filtered.map((m) => <CatalogRow key={m.id} material={m} />)
+        )}
+      </div>
+    </div>
+  );
+}
 
-      <MaterialDetailSheet
-        material={selectedMaterial}
-        onClose={() => setSelectedSku(null)}
-      />
+function CatalogRow({ material: m }: { material: BomMaterial }): ReactNode {
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: CATALOG_GRID,
+        alignItems: 'center',
+        gap: 14,
+        padding: '11px 16px',
+        borderBottom: '1px solid var(--bd-1)',
+      }}
+    >
+      <div>
+        <div style={{ fontSize: 12.5, color: 'var(--fg-0)', fontWeight: 500 }}>
+          {m.product_name}
+        </div>
+        <div style={{ fontSize: 10.5, color: 'var(--fg-3)', marginTop: 3 }}>
+          {m.product_code}
+          {m.category ? ` · ${m.category}` : ''}
+        </div>
+      </div>
+      <div style={{ fontSize: 12, color: 'var(--fg-2)' }}>
+        {m.unit_of_measure}
+      </div>
+      <div
+        className="tabular"
+        style={{
+          fontSize: 12.5,
+          color: m.standard_cost && m.standard_cost > 0 ? 'var(--fg-0)' : 'var(--fg-3)',
+          fontWeight: 600,
+          textAlign: 'right',
+        }}
+      >
+        {m.standard_cost !== null && m.standard_cost > 0
+          ? `€${m.standard_cost.toLocaleString('pt-PT', {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })}`
+          : '—'}
+      </div>
+      <div
+        className="tabular"
+        style={{
+          fontSize: 12,
+          color: 'var(--fg-2)',
+          textAlign: 'right',
+        }}
+      >
+        {m.used_in_n_boms.toLocaleString('pt-PT')}{' '}
+        <span style={{ fontSize: 10, color: 'var(--fg-3)' }}>BOMs</span>
+      </div>
     </div>
   );
 }

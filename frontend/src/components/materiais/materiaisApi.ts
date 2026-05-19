@@ -28,6 +28,25 @@ export interface Material {
   active: boolean;
 }
 
+/**
+ * Material derivado da BOM — componente-folha de `core.bom_items`.
+ *
+ * `supply.material_master` está vazio nesta instalação. Os materiais reais
+ * da NELO são os componentes-folha das BOMs (`component_product_id` que
+ * nunca é `parent_product_id`), cruzados com `core.products`.
+ */
+export interface BomMaterial {
+  id: string;
+  product_code: string;
+  product_name: string;
+  unit_of_measure: string;
+  standard_cost: number | null;
+  category: string | null;
+  product_type: string;
+  used_in_n_boms: number;
+  total_qty_per: number | null;
+}
+
 /** Prospeção material (MR02) — payload livre do backend. */
 export interface MaterialPosition {
   sku_id: string;
@@ -113,6 +132,21 @@ export const materiaisApi = {
     if (params?.category) qs.set('category', params.category);
     const q = qs.toString();
     return apiFetch<Material[]>(`/v1/supply/materials${q ? `?${q}` : ''}`);
+  },
+
+  listMaterialsFromBom: (params?: {
+    search?: string;
+    category?: string;
+    limit?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.search) qs.set('search', params.search);
+    if (params?.category) qs.set('category', params.category);
+    if (params?.limit) qs.set('limit', String(params.limit));
+    const q = qs.toString();
+    return apiFetch<BomMaterial[]>(
+      `/v1/supply/materials/from-bom${q ? `?${q}` : ''}`,
+    );
   },
 
   createMaterial: (data: {

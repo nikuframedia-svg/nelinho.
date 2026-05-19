@@ -21,8 +21,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
+from sqlalchemy import distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.models.bom import BOMItem
+from src.core.models.product import Product
 from src.shared.auth.headers import require_tenant_header
 from src.shared.database import get_session
 
@@ -173,6 +176,27 @@ class MaterialResponse(BaseModel):
     safety_stock_days: Optional[int] = None
     critical_flag: bool
     active: bool
+
+
+class BomMaterialResponse(BaseModel):
+    """Material derivado da BOM — componente-folha de `core.bom_items`.
+
+    Os materiais reais da NELO não vivem em `supply.material_master` (vazio),
+    mas como produtos componente de uma BOM que nunca são, eles próprios,
+    produto-pai. Este endpoint expõe esses componentes-folha.
+    """
+
+    id: str
+    product_code: str
+    product_name: str
+    unit_of_measure: str
+    standard_cost: Optional[float] = None
+    category: Optional[str] = None
+    product_type: str
+    used_in_n_boms: int = Field(description="Nº de BOMs distintas que consomem este material")
+    total_qty_per: Optional[float] = Field(
+        default=None, description="Soma de quantity_per em todas as BOMs"
+    )
 
 
 class ReconciliationResponse(BaseModel):
@@ -380,6 +404,89 @@ async def list_materials(
     svc = MaterialService(session, tenant_id)
     rows = await svc.list_materials(active_only=active_only, category=category)
     return [_material_to_dict(r) for r in rows]
+
+
+@router.get("/materials/from-bom", response_model=List[BomMaterialResponse])
+async def list_materials_from_bom(
+    search: Optional[str] = None,
+    category: Optional[str] = None,
+    limit: int = 500,
+    tenant_id: UUID = Depends(require_tenant_header),
+    session: AsyncSession = Depends(get_session),
+):
+    """Lista os materiais reais derivados da BOM.
+
+    `supply.material_master` está vazio nesta instalação — os materiais reais
+    da NELO são os componentes-folha de `core.bom_items` (um
+    `component_product_id` que nunca aparece como `parent_product_id`),
+    cruzados com `core.products` para nome, unidade e custo padrão.
+    Ordenado por nº de BOMs que o consomem (os mais usados primeiro).
+    """
+    limit = max(1, min(limit, 5000))
+
+    # Produtos que são pai de alguma BOM → não são folha.
+    parents = (
+        select(BOMItem.parent_product_id)
+        .where(BOMItem.tenant_id == tenant_id)
+        .distinct()
+    )
+
+    # Componentes-folha + estatísticas de uso.
+    leaf = (
+        select(
+            BOMItem.component_product_id.label("cid"),
+            func.count(distinct(BOMItem.parent_product_id)).label("used_in_n_boms"),
+            func.sum(BOMItem.quantity_per).label("total_qty_per"),
+        )
+        .where(BOMItem.tenant_id == tenant_id)
+        .where(BOMItem.component_product_id.notin_(parents))
+        .group_by(BOMItem.component_product_id)
+        .subquery()
+    )
+
+    stmt = (
+        select(
+            Product.id,
+            Product.product_code,
+            Product.product_name,
+            Product.base_unit,
+            Product.standard_cost,
+            Product.category,
+            Product.product_type,
+            leaf.c.used_in_n_boms,
+            leaf.c.total_qty_per,
+        )
+        .join(leaf, leaf.c.cid == Product.id)
+        .order_by(leaf.c.used_in_n_boms.desc(), Product.product_name)
+    )
+    if search:
+        like = f"%{search.strip()}%"
+        stmt = stmt.where(
+            Product.product_name.ilike(like) | Product.product_code.ilike(like)
+        )
+    if category:
+        stmt = stmt.where(Product.category == category)
+    stmt = stmt.limit(limit)
+
+    rows = (await session.execute(stmt)).all()
+    return [
+        BomMaterialResponse(
+            id=str(r.id),
+            product_code=r.product_code,
+            product_name=r.product_name,
+            unit_of_measure=r.base_unit or "UN",
+            standard_cost=float(r.standard_cost) if r.standard_cost is not None else None,
+            category=r.category,
+            product_type=(
+                r.product_type.value
+                if hasattr(r.product_type, "value")
+                else str(r.product_type)
+            ),
+            used_in_n_boms=int(r.used_in_n_boms or 0),
+            total_qty_per=float(r.total_qty_per) if r.total_qty_per is not None else None,
+        )
+        for r in rows
+    ]
 
 
 @router.post(
