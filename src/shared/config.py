@@ -161,7 +161,7 @@ class Settings(BaseSettings):
     ollama_num_ctx: int = Field(default=4096, ge=2048, le=131072, description="Context window size")
     ollama_keep_alive: str = Field(default="30m", description="How long to keep model in VRAM")
     ollama_temperature: float = Field(default=0.1, ge=0.0, le=2.0, description="LLM temperature (low = deterministic)")
-    ollama_num_predict: int = Field(default=512, ge=64, le=8192, description="Max tokens to generate")
+    ollama_num_predict: int = Field(default=2048, ge=64, le=8192, description="Max tokens to generate — a resposta estruturada de diagnóstico (CausalChain + facts + citations) trunca abaixo de ~2k")
     ollama_think: bool = Field(
         default=False,
         description="Permitir 'thinking' do modelo. False para gemma4:e4b — o "
