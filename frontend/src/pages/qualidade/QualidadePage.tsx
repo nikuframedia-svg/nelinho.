@@ -1,129 +1,140 @@
 /**
- * QualidadePage — port literal de design/nelo-zip/src/page-quality.jsx
- * (tab Resumo) + page-oee.jsx (tab OEE).
+ * QualidadePage — página "Qualidade" · Q.52.I.
  *
- * Tabs:
- *   • Resumo      — page-quality.jsx port literal: 4 KPI strip + 2-col
- *                   (Erros recentes / Estado dos moldes).
- *   • Erros       — ReworkListTab filter=open (existing).
- *   • Moldes      — MoldsTab grid (existing, wired BE.3).
- *   • Retrabalho  — ReworkListTab filter=rework (existing).
- *   • Diagnóstico — ExplainPage existing (CausalChain Q.15.D).
- *   • OEE         — page-oee.jsx port literal: explainer + OEE Global +
- *                   3 breakdown cards + Throughput SVG chart + Impacto
- *                   financeiro 4 rows.
+ * Reconstrução fiel do protótipo NELO.html (page-qualidade.jsx): 10
+ * tabs — Resumo, Predições, Mapa do casco, Erros, Moldes, Retrabalho,
+ * Aderência, Diagnóstico, OEE, Custos vs Ganhos.
  *
- * Wire ao backend real:
- *   - /v1/quality/rework → erros recentes
- *   - /v1/plan/molds/health-report → moldes (BE.3 wired)
- *   - /v1/quality/dashboard → KPIs Resumo
+ * ZERO MOCKS — cada tab liga a endpoints REAIS:
+ *   /v1/quality/{dashboard,first-pass-yield,by-supplier,by-lot,
+ *               workers/ranking,rework,root-cause,impact}
+ *   /v1/profit/oee?group_by=phase · /v1/plan/molds/{*}
+ * Endpoints sem fonte (defect-zones, plan/adherence, curing-validation,
+ * risco preditivo por barco, ROI de qualidade) degradam com empty state
+ * honesto via useHonestEmptyState — nunca placeholder.
  *
- * ZERO MOCKS. OEE breakdown ainda mostra placeholders honestos
- * (endpoint OEE real pendente).
- *
- * Sprint Q.18.ZIP.QUAL (refactor profundo big-bang).
+ * Átomos da Onda 0 (KPIBig, OEERing, RiskBadge) reutilizados; primitivas
+ * locais (Card, SectionHeader, MiniBar, HullHeatmap, Banner) em
+ * components/qualidade/QualidadeBits.tsx.
  */
 
-import { lazy, Suspense, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
+import {
+  useQuery,
+  useMutation,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { MoldDefectDrawer } from '../../components/molds/MoldDefectDrawer';
 import {
   ShieldCheck,
+  AlertCircle,
+  Wrench,
+  Repeat,
   Brain,
   Activity,
-  Wrench,
-  AlertCircle,
-  Repeat,
+  TrendingUp,
+  Layers,
+  Target,
+  Euro,
   RefreshCw,
-  Sparkles,
-  Eye,
-  Boxes,
-  CheckCircle2,
 } from 'lucide-react';
 import {
   PageHeader,
   Tabs,
-  Panel,
+  KPIBig,
+  OEERing,
   EmptyState,
-  ZipSevBadge,
-  type ZipSeverity,
 } from '../../components/dark';
-import { SkeletonLoader } from '../../components/ui/Skeleton';
 import {
+  Card,
+  SectionHeader,
+  MiniBar,
+  Banner,
+} from '../../components/qualidade/QualidadeBits';
+import { useHonestEmptyState } from '../../hooks/useHonestEmptyState';
+import {
+  apiFetch,
+  moldsApi,
   employeesApi,
-  getApiBase,
   qualityReworkApi,
+  type Mold,
   type ReworkCreatePayload,
 } from '../../lib/api';
 
-const ExplainPage = lazy(() =>
-  import('../explain/ExplainPage').then((m) => ({ default: m.ExplainPage })),
-);
-const TrustDqaDashboard = lazy(() =>
-  import('../../components/dqa/TrustDqaDashboard').then((m) => ({ default: m.TrustDqaDashboard })),
-);
-const QualityIntelDashboard = lazy(() =>
-  import('../../components/quality/QualityIntelPanels').then((m) => ({ default: m.QualityIntelDashboard })),
-);
+// ─── Tabs ────────────────────────────────────────────────────────────────
 
-function askCopilot(query: string) {
-  window.dispatchEvent(new CustomEvent('copilot:open', { detail: { query } }));
-}
-
-const TAB_IDS = ['resumo', 'erros', 'moldes', 'retrabalho', 'diagnostico', 'oee', 'trust', 'inteligencia'] as const;
+const TAB_IDS = [
+  'resumo',
+  'predicoes',
+  'mapa',
+  'erros',
+  'moldes',
+  'retrabalho',
+  'aderencia',
+  'diagnostico',
+  'oee',
+  'custos',
+] as const;
 type TabId = (typeof TAB_IDS)[number];
+
 function isTabId(v: string | null): v is TabId {
   return v !== null && (TAB_IDS as readonly string[]).includes(v);
 }
 
-// ─── Endpoints ──────────────────────────────────────────────────────────────
+// ─── Tipos das respostas REAIS ──────────────────────────────────────────
 
-// Q.21.A/B — base URL via api.ts (concorda com VITE_API_URL).
-async function fetchQualityRework(filter?: 'open' | 'rework') {
-  try {
-    const url = filter
-      ? `${getApiBase()}/v1/quality/rework?filter=${filter}&limit=20`
-      : `${getApiBase()}/v1/quality/rework?limit=20`;
-    const resp = await fetch(url, {
-      headers: { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' },
-    });
-    if (!resp.ok) return null;
-    return await resp.json();
-  } catch {
-    return null;
-  }
+interface QualityDashboardItem {
+  key: string;
+  events: number;
+  share_pct: number;
+}
+interface QualityDashboardResponse {
+  group_by: string;
+  window: { from: string; to: string };
+  total_events: number;
+  items: QualityDashboardItem[];
 }
 
-async function fetchMoldsHealthReport() {
-  try {
-    const resp = await fetch(
-      `${getApiBase()}/v1/plan/molds/health-report?limit=24`,
-      { headers: { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' } },
-    );
-    if (!resp.ok) return null;
-    return await resp.json();
-  } catch {
-    return null;
-  }
+interface ReworkRow {
+  id: string;
+  of_id: string;
+  error_code: string;
+  error_description: string | null;
+  phase_id_causer: string | null;
+  causer_employee_id: string | null;
+  detected_at: string | null;
+  resolved_at: string | null;
+  cost_estimate_eur: number | null;
 }
 
-async function fetchQualityDashboard() {
-  try {
-    const resp = await fetch(
-      `${getApiBase()}/v1/quality/dashboard?group_by=phase&top_n=10`,
-      { headers: { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' } },
-    );
-    if (!resp.ok) return null;
-    return await resp.json();
-  } catch {
-    return null;
-  }
+interface OeeItem {
+  group_value: string;
+  availability: number;
+  performance: number;
+  quality: number;
+  oee: number;
+  sample_size: number;
+  sample_excluded: number;
+}
+interface OeeResponse {
+  date_from: string;
+  date_to: string;
+  group_by: string;
+  overall: OeeItem;
+  breakdown: OeeItem[];
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// PAGE
-// ═══════════════════════════════════════════════════════════════════════════
+interface SupplierLotRow {
+  supplier_id?: string;
+  lot_id?: string;
+  events: number;
+}
+interface SupplierLotResponse {
+  items: SupplierLotRow[];
+  count: number;
+}
+
+// ─── Página ─────────────────────────────────────────────────────────────
 
 export default function QualidadePage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -133,13 +144,15 @@ export default function QualidadePage() {
   const tabs = useMemo(
     () => [
       { id: 'resumo', label: 'Resumo', icon: <ShieldCheck size={13} /> },
+      { id: 'predicoes', label: 'Predições', icon: <Brain size={13} /> },
+      { id: 'mapa', label: 'Mapa do casco', icon: <Layers size={13} /> },
       { id: 'erros', label: 'Erros', icon: <AlertCircle size={13} /> },
       { id: 'moldes', label: 'Moldes', icon: <Wrench size={13} /> },
       { id: 'retrabalho', label: 'Retrabalho', icon: <Repeat size={13} /> },
+      { id: 'aderencia', label: 'Aderência', icon: <Target size={13} /> },
       { id: 'diagnostico', label: 'Diagnóstico', icon: <Brain size={13} /> },
       { id: 'oee', label: 'OEE', icon: <Activity size={13} /> },
-      { id: 'trust', label: 'Trust + DQA', icon: <ShieldCheck size={13} /> },
-      { id: 'inteligencia', label: 'Inteligência', icon: <Brain size={13} /> },
+      { id: 'custos', label: 'Custos vs Ganhos', icon: <Euro size={13} /> },
     ],
     [],
   );
@@ -150,953 +163,704 @@ export default function QualidadePage() {
     setSearchParams(next, { replace: true });
   };
 
-  const fallback = (
-    <div className="p-8">
-      <SkeletonLoader count={5} />
-    </div>
-  );
-
-  const titleByTab = (tab: TabId) =>
-    tab === 'oee'
-      ? 'OEE — Eficácia da fábrica'
-      : tab === 'diagnostico'
-        ? 'Diagnóstico causal'
-        : 'Qualidade & Defeitos';
-  const subtitleByTab = (tab: TabId) =>
-    tab === 'oee'
-      ? 'Disponibilidade × Performance × Qualidade · 14 dias'
-      : tab === 'diagnostico'
-        ? 'Causal chains · ERRO-TREE · Reichenbach · Mill'
-        : 'Erros recentes · estado dos moldes · padrões aprendidos';
-
   return (
     <div>
       <PageHeader
-        title={titleByTab(activeTab)}
-        subtitle={subtitleByTab(activeTab)}
+        icon={<ShieldCheck size={18} />}
+        title="Qualidade"
+        subtitle="Erros, retrabalho, OEE, diagnóstico causal · ROI de cada acção"
         helpId={activeTab === 'oee' ? 'oee' : 'qualidade'}
         actions={
-          <>
-            <button
-              type="button"
-              onClick={() => window.location.reload()}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-transparent text-text-dark-secondary hover:bg-white/5 hover:text-text-dark-primary border border-white/[0.08] text-xs font-medium transition-colors"
-            >
-              <RefreshCw size={13} />
-              Atualizar
-            </button>
-            <button
-              type="button"
-              onClick={() => askCopilot(`Quais são as causas-raiz mais frequentes na qualidade hoje?`)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-white text-xs font-medium transition-colors"
-              style={{ background: 'var(--blue)', border: '1px solid var(--blue)' }}
-            >
-              <Sparkles size={13} />
-              Pedir ao Copilot
-            </button>
-          </>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="inline-flex items-center gap-1.5 text-text-dark-secondary hover:text-text-dark-primary transition-colors"
+            style={{
+              padding: '6px 12px',
+              height: 32,
+              background: 'var(--bg-2)',
+              border: '1px solid var(--bd-2)',
+              borderRadius: 9,
+              fontSize: 12.5,
+            }}
+          >
+            <RefreshCw size={13} />
+            Atualizar
+          </button>
         }
       />
 
-      <div className="px-6 pt-2">
+      <div style={{ padding: '8px 28px 0 28px' }}>
         <Tabs tabs={tabs} value={activeTab} onChange={handleTabChange} sticky />
       </div>
 
-      <div className="px-6 py-4">
+      <div style={{ padding: '20px 28px' }} className="page-enter">
         {activeTab === 'resumo' && <ResumoTab />}
-        {activeTab === 'erros' && <ReworkListTab filter="open" />}
-        {activeTab === 'moldes' && <MoldsTab />}
-        {activeTab === 'retrabalho' && (
-          <div className="space-y-4">
-            <NovoRetrabalhoForm />
-            <ReworkListTab filter="rework" />
-          </div>
-        )}
-        {activeTab === 'diagnostico' && (
-          <Suspense fallback={fallback}>
-            <ExplainPage />
-          </Suspense>
-        )}
-        {activeTab === 'oee' && <OEETab />}
-        {activeTab === 'trust' && (
-          <Suspense fallback={fallback}>
-            <TrustDqaDashboard />
-          </Suspense>
-        )}
-        {activeTab === 'inteligencia' && (
-          <Suspense fallback={fallback}>
-            <QualityIntelDashboard />
-          </Suspense>
-        )}
+        {activeTab === 'predicoes' && <PredicoesTab />}
+        {activeTab === 'mapa' && <MapaTab />}
+        {activeTab === 'erros' && <ErrosTab />}
+        {activeTab === 'moldes' && <MoldesTab />}
+        {activeTab === 'retrabalho' && <RetrabalhoTab />}
+        {activeTab === 'aderencia' && <AderenciaTab />}
+        {activeTab === 'diagnostico' && <DiagnosticoTab />}
+        {activeTab === 'oee' && <OeeTab />}
+        {activeTab === 'custos' && <CustosTab />}
       </div>
     </div>
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// ResumoTab — port literal page-quality.jsx
-// ═══════════════════════════════════════════════════════════════════════════
+// ─── Hooks de dados partilhados ──────────────────────────────────────────
+
+function useFpy() {
+  return useQuery({
+    queryKey: ['qualidade', 'fpy'],
+    queryFn: () =>
+      apiFetch<{
+        window_days: number;
+        orders_total: number;
+        orders_with_rework: number;
+        first_pass_yield_pct: number;
+      }>('/v1/quality/first-pass-yield?window_days=30'),
+    staleTime: 60_000,
+    retry: 0,
+  });
+}
+
+function useReworkList() {
+  return useQuery<ReworkRow[]>({
+    queryKey: ['qualidade', 'rework'],
+    queryFn: () => apiFetch<ReworkRow[]>('/v1/quality/rework?limit=100'),
+    staleTime: 60_000,
+    retry: 0,
+  });
+}
+
+function useMolds() {
+  return useQuery<Mold[]>({
+    queryKey: ['qualidade', 'molds-health'],
+    queryFn: () => moldsApi.healthReport({ limit: 30 }),
+    staleTime: 60_000,
+    retry: 0,
+  });
+}
+
+// ─── ResumoTab ───────────────────────────────────────────────────────────
 
 function ResumoTab() {
-  const reworkQuery = useQuery({
-    queryKey: ['qualidade', 'rework', 'all'],
-    queryFn: () => fetchQualityRework(),
-    staleTime: 60_000,
-    retry: 0,
-  });
-  const moldsQuery = useQuery({
-    queryKey: ['qualidade', 'molds-health'],
-    queryFn: fetchMoldsHealthReport,
-    staleTime: 60_000,
-    retry: 0,
-  });
-  const dashboardQuery = useQuery({
-    queryKey: ['qualidade', 'dashboard'],
-    queryFn: fetchQualityDashboard,
+  const fpyQuery = useFpy();
+  const reworkQuery = useReworkList();
+  const moldsQuery = useMolds();
+  const dashboardQuery = useQuery<QualityDashboardResponse>({
+    queryKey: ['qualidade', 'dashboard-phase'],
+    queryFn: () =>
+      apiFetch<QualityDashboardResponse>(
+        '/v1/quality/dashboard?group_by=phase&top_n=10',
+      ),
     staleTime: 60_000,
     retry: 0,
   });
 
-  const reworkItems: any[] = useMemo(() => {
-    const data: any = reworkQuery.data;
-    if (!data) return [];
-    if (Array.isArray(data)) return data;
-    return data.items ?? data.reworks ?? [];
-  }, [reworkQuery.data]);
-
-  const moldsItems: any[] = useMemo(() => {
-    const data: any = moldsQuery.data;
-    if (!data) return [];
-    if (Array.isArray(data)) return data;
-    return data.items ?? [];
-  }, [moldsQuery.data]);
-
-  // KPIs derivados
-  const totalErrors = reworkItems.length;
-  const totalCostEur = reworkItems.reduce(
-    (sum, r) => sum + (Number(r.cost_estimate_eur) || 0),
+  const rework = reworkQuery.data ?? [];
+  const totalCost = rework.reduce(
+    (s, r) => s + (r.cost_estimate_eur ?? 0),
     0,
   );
-  const dashboardItems = dashboardQuery.data?.items ?? [];
-  const totalOps = dashboardItems.reduce(
-    (sum: number, it: any) => sum + (Number(it.total_ops) || 0),
-    0,
-  );
-  const defectRate = totalOps > 0 ? (totalErrors / totalOps) * 100 : null;
+  const activeErrors = rework.filter((r) => !r.resolved_at).length;
+  const molds = moldsQuery.data ?? [];
+  const criticalMolds = molds.filter(
+    (m) => m.health?.risk_category === 'red',
+  ).length;
+  const fpy = fpyQuery.data?.first_pass_yield_pct ?? null;
 
   return (
-    <div className="space-y-5 page-enter">
-      {/* KPI strip — Q.23.G: 1 hero (taxa de defeito) + 3 compactos */}
+    <>
       <div
-        className="page-enter"
         style={{
           display: 'grid',
-          gridTemplateColumns: '1.6fr 1fr 1fr 1fr',
-          gap: 14,
+          gridTemplateColumns: 'repeat(4, 1fr)',
+          gap: 12,
+          marginBottom: 18,
         }}
       >
-        <KPIStrip
-          hero
-          label="Taxa de defeito"
-          value={defectRate !== null ? defectRate.toFixed(1) : '—'}
-          unit="%"
+        <KPIBig
+          label="1ª passagem"
+          value={fpy !== null ? Number(fpy.toFixed(1)) : '—'}
+          unit={fpy !== null ? '%' : undefined}
           context={
-            defectRate !== null
-              ? `${totalErrors} erros em ${totalOps.toLocaleString('pt-PT')} operações`
-              : 'Sem operações registadas para baseline'
+            fpy !== null
+              ? `${fpyQuery.data?.orders_total ?? 0} ordens (30d)`
+              : fpyQuery.isLoading
+                ? 'A carregar…'
+                : 'Sem ordens concluídas'
           }
-          tone={defectRate === null ? 'gray' : defectRate < 3 ? 'green' : defectRate < 6 ? 'yellow' : 'red'}
+          status={fpy === null ? 'gray' : fpy >= 95 ? 'green' : fpy >= 90 ? 'yellow' : 'red'}
+          accent={fpy === null ? 'gray' : fpy >= 95 ? 'green' : fpy >= 90 ? 'yellow' : 'red'}
         />
-        <KPIStrip
+        <KPIBig
           label="Erros activos"
-          value={totalErrors.toString()}
+          value={reworkQuery.isLoading ? '—' : activeErrors}
           context={
-            totalErrors === 0
-              ? 'Sem rework registado'
-              : 'Ordenados por gravidade abaixo'
+            reworkQuery.isLoading
+              ? 'A carregar…'
+              : `${rework.length} registos de retrabalho`
           }
-          tone={totalErrors === 0 ? 'green' : totalErrors < 5 ? 'yellow' : 'red'}
+          status={activeErrors > 8 ? 'red' : activeErrors > 0 ? 'orange' : 'green'}
+          accent={activeErrors > 8 ? 'red' : activeErrors > 0 ? 'orange' : 'green'}
         />
-        <KPIStrip
-          label="Custo de retrabalho"
-          value={totalCostEur > 0 ? `€${Math.round(totalCostEur).toLocaleString('pt-PT')}` : '€0'}
-          context="Soma cost_estimate_eur dos rework registados"
-          tone={totalCostEur === 0 ? 'green' : totalCostEur < 1000 ? 'yellow' : 'red'}
+        <KPIBig
+          label="Custo retrabalho"
+          value={reworkQuery.isLoading ? '—' : Math.round(totalCost)}
+          prefix={reworkQuery.isLoading ? undefined : '€'}
+          context="Soma de cost_estimate_eur dos registos"
+          status="red"
+          accent="red"
         />
-        <KPIStrip
+        <KPIBig
           label="Moldes críticos"
-          value={moldsItems.filter((m) => m.health?.risk_category === 'red').length.toString()}
-          context={`${moldsItems.length} moldes monitorizados (BE.3)`}
-          tone={
-            moldsItems.filter((m) => m.health?.risk_category === 'red').length > 0
-              ? 'red'
-              : 'green'
+          value={moldsQuery.isLoading ? '—' : criticalMolds}
+          unit={moldsQuery.isLoading ? undefined : `/ ${molds.length}`}
+          context={
+            moldsQuery.isLoading
+              ? 'A carregar…'
+              : criticalMolds > 0
+                ? 'Moldes com health RED'
+                : 'Todos os moldes monitorizados OK'
           }
+          status={criticalMolds > 0 ? 'red' : 'green'}
+          accent={criticalMolds > 0 ? 'red' : 'green'}
         />
       </div>
 
-      {/* 2-col: Erros recentes + Moldes */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 22 }}>
-        {/* Erros recentes */}
-        <div
-          style={{
-            background: 'var(--bg-1)',
-            border: '1px solid var(--bd-1)',
-            borderRadius: 12,
-            overflow: 'hidden',
-          }}
-        >
-          <div
-            style={{
-              padding: '18px 22px',
-              borderBottom: '1px solid var(--bd-1)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-            }}
-          >
-            <div
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: 6,
-                background: 'var(--orange-bg)',
-                color: 'var(--orange)',
-                display: 'grid',
-                placeItems: 'center',
-                border: '1px solid var(--orange-bd)',
-              }}
-            >
-              <AlertCircle size={16} />
-            </div>
-            <div>
-              <div className="text-sm font-semibold text-text-dark-primary">
-                Erros recentes
-              </div>
-              <div className="text-xs text-text-dark-tertiary mt-0.5">
-                Últimas 24h · ordenados por gravidade
-              </div>
-            </div>
-          </div>
+      <div
+        style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}
+      >
+        <Card padding={18}>
+          <SectionHeader
+            icon={<AlertCircle size={14} />}
+            title="Erros recentes"
+            subtitle="Retrabalho registado · ReworkEntry"
+          />
           {reworkQuery.isLoading ? (
-            <div className="px-4 py-8 text-center text-xs text-text-dark-tertiary">
-              A carregar erros…
-            </div>
-          ) : reworkItems.length === 0 ? (
-            <div className="px-4 py-8 text-center text-xs text-text-dark-tertiary">
-              Sem erros recentes — tudo limpo.
-            </div>
+            <LoadingLine />
+          ) : rework.length === 0 ? (
+            <EmptyState
+              size="sm"
+              title="Sem retrabalho registado"
+              hint="Quando houver registos de retrabalho, aparecem aqui ordenados por data."
+            />
           ) : (
-            <div>
-              {reworkItems.slice(0, 8).map((e: any, i: number) => {
-                const sev: ZipSeverity =
-                  (e.context?.severity as ZipSeverity) ??
-                  (e.severity as ZipSeverity) ??
-                  'medium';
-                return (
-                  <div
-                    key={e.id ?? i}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {rework.slice(0, 8).map((e) => (
+                <div
+                  key={e.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    padding: '8px 10px',
+                    background: 'var(--bg-2)',
+                    borderRadius: 'var(--r-sm)',
+                  }}
+                >
+                  <span
                     style={{
-                      padding: '12px 22px',
-                      borderBottom:
-                        i < Math.min(reworkItems.length, 8) - 1
-                          ? '1px solid var(--bd-1)'
-                          : 'none',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 14,
+                      width: 3,
+                      height: 24,
+                      background: e.resolved_at
+                        ? 'var(--green)'
+                        : 'var(--red)',
+                      borderRadius: 2,
                     }}
-                  >
-                    <ZipSevBadge severity={sev} size="sm" />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div
-                        className="text-sm font-medium text-text-dark-primary truncate"
-                        title={`${e.of_id ?? ''} · ${e.error_description ?? e.error_code}`}
-                      >
-                        {e.of_id ? `#${e.of_id}` : ''} ·{' '}
-                        {e.error_description ?? e.error_code}
-                      </div>
-                      <div className="text-[11px] text-text-dark-secondary mt-0.5">
-                        {e.phase_id_causer ?? '—'}
-                        {e.cost_estimate_eur
-                          ? ` · €${Math.round(Number(e.cost_estimate_eur)).toLocaleString('pt-PT')}`
-                          : ''}
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs text-text-dark-secondary hover:text-text-dark-primary hover:bg-white/5"
+                  />
+                  <div style={{ flex: 1 }}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                      }}
                     >
-                      <Eye size={12} /> Ver
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* Moldes */}
-        <div
-          style={{
-            background: 'var(--bg-1)',
-            border: '1px solid var(--bd-1)',
-            borderRadius: 12,
-            overflow: 'hidden',
-          }}
-        >
-          <div
-            style={{
-              padding: '18px 22px',
-              borderBottom: '1px solid var(--bd-1)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-            }}
-          >
-            <div
-              style={{
-                width: 32,
-                height: 32,
-                borderRadius: 6,
-                background: 'var(--blue-bg)',
-                color: 'var(--blue)',
-                display: 'grid',
-                placeItems: 'center',
-                border: '1px solid var(--blue-bd)',
-              }}
-            >
-              <Boxes size={16} />
-            </div>
-            <div>
-              <div className="text-sm font-semibold text-text-dark-primary">
-                Estado dos moldes
-              </div>
-              <div className="text-xs text-text-dark-tertiary mt-0.5">
-                Score 0-100 + risco · /v1/plan/molds/health-report
-              </div>
-            </div>
-          </div>
-          {moldsQuery.isLoading ? (
-            <div className="px-4 py-8 text-center text-xs text-text-dark-tertiary">
-              A carregar moldes…
-            </div>
-          ) : moldsItems.length === 0 ? (
-            <div className="px-4 py-8 text-center text-xs text-text-dark-tertiary">
-              Sem moldes registados.
-            </div>
-          ) : (
-            <div>
-              {moldsItems.slice(0, 6).map((m: any, i: number) => {
-                const health = m.health ?? {};
-                const score = health.score_0_100 ?? null;
-                const risk = health.risk_category ?? 'green';
-                const tone = risk === 'red' ? 'red' : risk === 'yellow' ? 'yellow' : 'green';
-                const cycles = health.components ?? {};
-                const uses = cycles.cycles_used ?? null;
-                const max = cycles.cycles_max ?? null;
-                const errWeek = cycles.err_rate_week;
-                const errNormal = cycles.err_rate_normal;
-                const pct =
-                  uses !== null && max !== null && max > 0
-                    ? Math.min(100, (uses / max) * 100)
-                    : score !== null
-                      ? 100 - score
-                      : 0;
-                return (
-                  <div
-                    key={m.id ?? i}
-                    style={{
-                      padding: '12px 22px',
-                      borderBottom:
-                        i < Math.min(moldsItems.length, 6) - 1
-                          ? '1px solid var(--bd-1)'
-                          : 'none',
-                    }}
-                  >
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm font-medium text-text-dark-primary">
-                        {m.name ?? m.mold_code}
-                      </span>
                       <span
-                        className="text-xs tabular-nums"
-                        style={{ color: `var(--${tone})` }}
+                        style={{
+                          fontSize: 12,
+                          color: 'var(--fg-0)',
+                          fontWeight: 500,
+                        }}
                       >
-                        {uses !== null && max !== null ? `${uses}/${max}` : `score ${score}/100`}
+                        {e.of_id}
                       </span>
+                      {e.cost_estimate_eur ? (
+                        <span
+                          className="tabular"
+                          style={{ fontSize: 11, color: 'var(--red)' }}
+                        >
+                          −€{Math.round(e.cost_estimate_eur)}
+                        </span>
+                      ) : null}
                     </div>
                     <div
                       style={{
-                        height: 4,
-                        background: 'var(--bd-1)',
-                        borderRadius: 2,
-                        marginTop: 6,
-                        overflow: 'hidden',
+                        fontSize: 11,
+                        color: 'var(--fg-2)',
+                        marginTop: 1,
                       }}
                     >
-                      <div
+                      {e.error_description ?? e.error_code} ·{' '}
+                      {e.phase_id_causer ?? 'fase n/d'}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+
+        <Card padding={18}>
+          <SectionHeader
+            icon={<Wrench size={14} />}
+            title="Estado dos moldes"
+            subtitle="Health report · vermelhos primeiro"
+          />
+          {moldsQuery.isLoading ? (
+            <LoadingLine />
+          ) : molds.length === 0 ? (
+            <EmptyState
+              size="sm"
+              title="Sem moldes"
+              hint="Quando houver moldes sincronizados, o estado de saúde aparece aqui."
+            />
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {molds.slice(0, 8).map((m) => {
+                const score = m.health?.score_0_100 ?? 0;
+                const tone =
+                  m.health?.risk_category === 'red'
+                    ? 'red'
+                    : m.health?.risk_category === 'yellow'
+                      ? 'yellow'
+                      : 'green';
+                return (
+                  <div key={m.id}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'baseline',
+                        marginBottom: 5,
+                      }}
+                    >
+                      <span
                         style={{
-                          width: `${pct}%`,
-                          height: '100%',
-                          background: `var(--${tone})`,
+                          fontSize: 12,
+                          color: 'var(--fg-0)',
+                          fontWeight: 500,
                         }}
-                      />
+                      >
+                        {m.name ?? m.mold_code}
+                      </span>
+                      <span
+                        className="tabular"
+                        style={{ fontSize: 11, color: `var(--${tone})` }}
+                      >
+                        health {score.toFixed(0)}
+                      </span>
                     </div>
-                    <div className="flex justify-between text-[11px] text-text-dark-secondary mt-1.5">
-                      {errWeek !== undefined ? (
-                        <span>
-                          Erro:{' '}
-                          <span
-                            className="tabular-nums font-semibold"
-                            style={{ color: `var(--${tone})` }}
-                          >
-                            {Math.round(Number(errWeek) * 100)}%
-                          </span>{' '}
-                          esta semana{' '}
-                          <span className="text-text-dark-tertiary">
-                            (normal {Math.round(Number(errNormal ?? 0) * 100)}%)
-                          </span>
-                        </span>
-                      ) : (
-                        <span className="text-text-dark-tertiary">
-                          Score {score}/100
-                        </span>
-                      )}
-                      {risk === 'red' ? (
-                        <span style={{ color: 'var(--red)' }}>● Manutenção</span>
-                      ) : null}
-                    </div>
+                    <MiniBar
+                      value={score}
+                      max={100}
+                      color={`var(--${tone})`}
+                      height={4}
+                    />
                   </div>
                 );
               })}
             </div>
           )}
-        </div>
+        </Card>
       </div>
-    </div>
+
+      <Card padding={18} style={{ marginTop: 14 }}>
+        <SectionHeader
+          icon={<Repeat size={14} />}
+          title="Retrabalho por fase"
+          subtitle="QualityDashboardService · group_by=phase · 30 dias"
+        />
+        {dashboardQuery.isLoading ? (
+          <LoadingLine />
+        ) : (dashboardQuery.data?.items ?? []).length === 0 ? (
+          <EmptyState
+            size="sm"
+            title="Sem retrabalho por fase"
+            hint="Não há registos de retrabalho agrupáveis por fase na janela."
+          />
+        ) : (
+          (dashboardQuery.data?.items ?? []).map((it, i, arr) => {
+            const tone =
+              it.share_pct > 30
+                ? 'red'
+                : it.share_pct > 15
+                  ? 'yellow'
+                  : 'green';
+            return (
+              <div
+                key={it.key}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '180px 1fr 90px 70px',
+                  alignItems: 'center',
+                  gap: 14,
+                  padding: '9px 0',
+                  borderBottom:
+                    i < arr.length - 1 ? '1px solid var(--bd-1)' : 'none',
+                  fontSize: 12,
+                }}
+              >
+                <span style={{ color: 'var(--fg-0)', fontWeight: 500 }}>
+                  {it.key}
+                </span>
+                <MiniBar
+                  value={it.share_pct}
+                  max={60}
+                  color={`var(--${tone})`}
+                  height={5}
+                />
+                <span
+                  className="tabular"
+                  style={{ color: `var(--${tone})`, fontWeight: 600 }}
+                >
+                  {it.share_pct.toFixed(1)}%
+                </span>
+                <span
+                  className="tabular"
+                  style={{ color: 'var(--fg-2)', textAlign: 'right' }}
+                >
+                  {it.events} ev.
+                </span>
+              </div>
+            );
+          })
+        )}
+      </Card>
+    </>
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// OEETab — port literal page-oee.jsx
-// ═══════════════════════════════════════════════════════════════════════════
+// ─── PredicoesTab ────────────────────────────────────────────────────────
 
-// Q.21.A/B — base URL via api.ts (concorda com VITE_API_URL).
-const TENANT_OEE = { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' };
-
-interface OEEItem {
-  group_value: string | null;
-  availability: number;
-  performance: number;
-  quality: number;
-  oee: number;
-  sample_size: number;
-  sample_excluded: number;
-}
-interface OEEResponse {
-  date_from: string;
-  date_to: string;
-  group_by: string;
-  overall: OEEItem;
-  breakdown: OEEItem[];
+function PredicoesTab() {
+  // O risco preditivo de defeito por barco precisa de um endpoint de
+  // orquestração ML que ainda não existe (gap Q.53). Empty state honesto.
+  return (
+    <Card padding={20}>
+      <SectionHeader
+        icon={<Brain size={14} />}
+        title="Risco preditivo de defeito por barco"
+        subtitle="QualityRiskModel · scoring por barco em produção"
+      />
+      <EmptyState
+        title="Predições por barco ainda não disponíveis"
+        hint="O scoring de risco preditivo por barco precisa de um endpoint de orquestração do QualityRiskModel que ainda não está exposto. Até lá, o risco não é mostrado para não inventar números. O modelo continua ligado ao fitness do CPO."
+      />
+    </Card>
+  );
 }
 
-async function fetchOEE(group_by?: string): Promise<OEEResponse | null> {
-  const qs = group_by ? `?group_by=${group_by}` : '';
-  try {
-    const r = await fetch(`${getApiBase()}/v1/profit/oee${qs}`, { headers: TENANT_OEE });
-    return r.ok ? r.json() : null;
-  } catch { return null; }
+// ─── MapaTab ─────────────────────────────────────────────────────────────
+
+function MapaTab() {
+  // O mapa de defeitos por zona do casco precisa do endpoint
+  // /v1/quality/defect-zones, que ainda não existe. Empty state honesto.
+  return (
+    <Card padding={20}>
+      <SectionHeader
+        icon={<Layers size={14} />}
+        title="Mapa de defeitos por zona do casco"
+        subtitle="OFCH_LOCAL · onde o defeito ocorre, não só quanto"
+      />
+      <EmptyState
+        title="Mapa do casco ainda não disponível"
+        hint="A agregação de defeitos por zona do casco (endpoint /v1/quality/defect-zones) ainda não está ligada. Assim que a fonte OFCH_LOCAL for exposta, a silhueta com heatmap aparece aqui."
+      />
+    </Card>
+  );
 }
 
-// Throughput diário real (€/dia) — GET /v1/profit/dashboard devolve
-// `trend_14d` (14 pontos densificados) + targets. Q.21.B substitui o
-// array de 14 números que estava hardcoded.
-interface ThroughputDashboard {
-  throughput_eur: { target_min: number; target_max: number };
-  trend_14d: Array<{ date: string; eur: number }>;
-}
+// ─── ErrosTab ────────────────────────────────────────────────────────────
 
-async function fetchThroughputDashboard(): Promise<ThroughputDashboard | null> {
-  try {
-    const r = await fetch(`${getApiBase()}/v1/profit/dashboard`, { headers: TENANT_OEE });
-    return r.ok ? r.json() : null;
-  } catch { return null; }
-}
-
-function toneFor(oee: number): 'green' | 'yellow' | 'red' {
-  return oee >= 0.60 ? 'green' : oee >= 0.40 ? 'yellow' : 'red';
-}
-
-function OEETab() {
-  const overallQuery = useQuery({
-    queryKey: ['oee', 'overall'],
-    queryFn: () => fetchOEE(),
-    staleTime: 5 * 60_000,
+function ErrosTab() {
+  const dashboardQuery = useQuery<QualityDashboardResponse>({
+    queryKey: ['qualidade', 'dashboard-sku'],
+    queryFn: () =>
+      apiFetch<QualityDashboardResponse>(
+        '/v1/quality/dashboard?group_by=sku&top_n=15',
+      ),
+    staleTime: 60_000,
+    retry: 0,
   });
-  const byPhaseQuery = useQuery({
-    queryKey: ['oee', 'phase'],
-    queryFn: () => fetchOEE('phase'),
-    staleTime: 5 * 60_000,
-  });
-  const byTypeQuery = useQuery({
-    queryKey: ['oee', 'product_type'],
-    queryFn: () => fetchOEE('product_type'),
-    staleTime: 5 * 60_000,
-  });
-  const throughputQuery = useQuery({
-    queryKey: ['oee', 'throughput-14d'],
-    queryFn: fetchThroughputDashboard,
-    staleTime: 5 * 60_000,
+  const supplierQuery = useQuery<SupplierLotResponse>({
+    queryKey: ['qualidade', 'by-supplier'],
+    queryFn: () =>
+      apiFetch<SupplierLotResponse>('/v1/quality/by-supplier?top_n=10'),
+    staleTime: 60_000,
     retry: 0,
   });
 
-  const overall = overallQuery.data?.overall;
-  const phases = byPhaseQuery.data?.breakdown ?? [];
-  const types = byTypeQuery.data?.breakdown ?? [];
-  // Throughput diário real, em milhares de € (€28.4K → 28.4). A meta é o
-  // limite inferior da banda NELO (target_min) na mesma escala.
-  const throughput = throughputQuery.data;
-  const throughputData = (throughput?.trend_14d ?? []).map((p) => p.eur / 1000);
-  const throughputTarget = throughput
-    ? throughput.throughput_eur.target_min / 1000
-    : 0;
-  const worstPhases = phases.slice(0, 8);
-  const bestTypes = types.filter((t) => t.sample_size >= 5).sort((a, b) => b.oee - a.oee).slice(0, 10);
-  const worstTypes = types.filter((t) => t.sample_size >= 5).sort((a, b) => a.oee - b.oee).slice(0, 5);
-
   return (
-    <div className="space-y-5 page-enter">
-      {/* Explainer */}
-      <div
-        style={{
-          padding: '14px 18px',
-          background: 'var(--bg-1)',
-          border: '1px solid var(--bd-1)',
-          borderRadius: 12,
-          fontSize: 13,
-          color: 'var(--fg-1)',
-          lineHeight: 1.6,
-        }}
-      >
-        <strong style={{ color: 'var(--fg-0)' }}>O que é OEE?</strong>{' '}
-        Mede que percentagem do tempo a fábrica está realmente a produzir bem.
-        Calculado em tempo real a partir das operações executadas em <code>OF_FP</code>{' '}
-        (janela: 30 dias).{' '}
-        <span style={{ color: 'var(--fg-2)' }}>
-          Meta NELO: 60%+ (world-class: 85%+).
-        </span>
-      </div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <Card padding={18}>
+        <SectionHeader
+          title="Erros por modelo"
+          subtitle="QualityDashboardService · group_by=sku · 30 dias"
+        />
+        {dashboardQuery.isLoading ? (
+          <LoadingLine />
+        ) : (dashboardQuery.data?.items ?? []).length === 0 ? (
+          <EmptyState
+            size="sm"
+            title="Sem erros por modelo"
+            hint="Não há registos de retrabalho agrupáveis por modelo na janela."
+          />
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {(dashboardQuery.data?.items ?? []).map((it) => {
+              const tone =
+                it.share_pct > 25
+                  ? 'red'
+                  : it.share_pct > 12
+                    ? 'orange'
+                    : 'yellow';
+              return (
+                <div
+                  key={it.key}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '2fr 1fr 90px',
+                    alignItems: 'center',
+                    gap: 12,
+                    padding: '10px 12px',
+                    background: 'var(--bg-2)',
+                    borderRadius: 'var(--r-sm)',
+                  }}
+                >
+                  <span style={{ fontSize: 12.5, color: 'var(--fg-0)' }}>
+                    {it.key}
+                  </span>
+                  <MiniBar
+                    value={it.events}
+                    max={Math.max(
+                      ...(dashboardQuery.data?.items ?? []).map(
+                        (x) => x.events,
+                      ),
+                      1,
+                    )}
+                    color={`var(--${tone})`}
+                    height={4}
+                    label={`${it.events} ocorrências`}
+                  />
+                  <span
+                    className="tabular"
+                    style={{
+                      fontSize: 12,
+                      color: `var(--${tone})`,
+                      fontWeight: 600,
+                      textAlign: 'right',
+                    }}
+                  >
+                    {it.share_pct.toFixed(1)}%
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Card>
 
-      {/* OEE breakdown — 4 cards (1.4fr 1fr 1fr 1fr) */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: '1.4fr 1fr 1fr 1fr',
-          gap: 14,
-        }}
-      >
-        {/* OEE Global */}
-        <div
-          style={{
-            padding: 22,
-            background: 'var(--bg-1)',
-            border: '1px solid var(--bd-1)',
-            borderRadius: 12,
-          }}
-        >
-          <div className="text-sm font-semibold text-text-dark-primary mb-1">
-            OEE Global
-          </div>
-          <div className="text-xs text-text-dark-tertiary mb-3">
-            {overall
-              ? `${overall.sample_size.toLocaleString('pt-PT')} ops · 30 dias`
-              : overallQuery.isLoading ? 'A carregar…' : 'sem dados'}
-          </div>
-          <div className="flex items-baseline gap-2">
-            <span
-              className="tabular-nums"
+      <Card padding={18}>
+        <SectionHeader
+          title="Erros por fornecedor"
+          subtitle="SupplierQualityService · top 10"
+        />
+        {supplierQuery.isLoading ? (
+          <LoadingLine />
+        ) : (supplierQuery.data?.items ?? []).length === 0 ? (
+          <EmptyState
+            size="sm"
+            title="Sem erros atribuídos a fornecedor"
+            hint="Não há registos de retrabalho com fornecedor associado."
+          />
+        ) : (
+          (supplierQuery.data?.items ?? []).map((it, i, arr) => (
+            <div
+              key={(it.supplier_id ?? '') + i}
               style={{
-                fontSize: 56,
-                fontWeight: 700,
-                color: overall ? `var(--${toneFor(overall.oee)})` : 'var(--fg-3)',
-                lineHeight: 1,
+                display: 'grid',
+                gridTemplateColumns: '1fr 90px',
+                alignItems: 'center',
+                gap: 12,
+                padding: '9px 0',
+                borderBottom:
+                  i < arr.length - 1 ? '1px solid var(--bd-1)' : 'none',
+                fontSize: 12,
               }}
             >
-              {overall ? (overall.oee * 100).toFixed(1).replace('.', ',') : '—'}
-            </span>
-            <span style={{ fontSize: 18, color: 'var(--fg-2)' }}>%</span>
-          </div>
-          {overall && (
-            <div className="mt-3 text-xs text-text-dark-tertiary">
-              Excluídos {overall.sample_excluded} outliers
+              <span style={{ color: 'var(--fg-1)' }}>
+                {it.supplier_id ?? '—'}
+              </span>
+              <span
+                className="tabular"
+                style={{
+                  color: 'var(--orange)',
+                  fontWeight: 600,
+                  textAlign: 'right',
+                }}
+              >
+                {it.events} ev.
+              </span>
             </div>
-          )}
-        </div>
-
-        <OEEBlock
-          label="Disponibilidade"
-          value={overall ? Math.round(overall.availability * 100).toString() : '—'}
-          target="—"
-          tone={overall ? toneFor(overall.availability) : 'blue'}
-          detail="Tempo a produzir vs tempo planeado"
-          loss={overall && overall.availability >= 0.99 ? 'Cap a 100% (paralelismo de operadores)' : undefined}
-        />
-        <OEEBlock
-          label="Performance"
-          value={overall ? Math.round(overall.performance * 100).toString() : '—'}
-          target="—"
-          tone={overall ? toneFor(overall.performance) : 'blue'}
-          detail="Velocidade real vs standard"
-          loss={overall && overall.performance < 0.6 ? 'Acabamento + Pintura lentos vs PRODF_TEMPO' : undefined}
-        />
-        <OEEBlock
-          label="Qualidade"
-          value={overall ? Math.round(overall.quality * 100).toString() : '—'}
-          target="—"
-          tone={overall ? toneFor(overall.quality) : 'blue'}
-          detail="First-pass yield (OFFP_PROBS_* sem registo)"
-          loss={overall && overall.quality < 0.95 ? `${((1 - overall.quality) * overall.sample_size).toFixed(0)} ops com problema inline` : undefined}
-        />
-      </div>
-
-      {/* Worst phases + best types */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 22 }}>
-        <Panel title="Piores fases por OEE" badge={`${phases.length} fases`}>
-          <div className="flex flex-col" style={{ gap: 8 }}>
-            {worstPhases.length === 0 ? (
-              <div className="text-xs text-text-dark-tertiary py-2">A carregar…</div>
-            ) : worstPhases.map((p) => (
-              <div key={p.group_value} className="flex items-center" style={{ gap: 12, padding: '6px 8px', borderRadius: 6, background: 'var(--bg-0)' }}>
-                <div className="flex-1 min-w-0">
-                  <div className="text-xs text-text-dark-primary truncate">{p.group_value}</div>
-                  <div className="text-[10px] text-text-dark-tertiary">{p.sample_size} ops</div>
-                </div>
-                <div className="tabular-nums font-semibold" style={{ fontSize: 14, color: `var(--${toneFor(p.oee)})`, minWidth: 56, textAlign: 'right' }}>
-                  {(p.oee * 100).toFixed(1)}%
-                </div>
-                <div className="flex flex-col" style={{ gap: 1, fontSize: 9, color: 'var(--fg-2)', minWidth: 100, textAlign: 'right' }}>
-                  <span>Pf {Math.round(p.performance * 100)}%</span>
-                  <span>Ql {Math.round(p.quality * 100)}%</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </Panel>
-
-        <Panel title="OEE por tipo de produto" badge={`${types.length} tipos`}>
-          <div className="flex flex-col" style={{ gap: 6 }}>
-            <div className="text-[10px] uppercase text-text-dark-tertiary mb-1">Piores (≥5 ops)</div>
-            {worstTypes.length === 0 ? (
-              <div className="text-xs text-text-dark-tertiary py-2">A carregar…</div>
-            ) : worstTypes.map((t) => (
-              <div key={t.group_value} className="flex items-center justify-between text-xs" style={{ padding: '4px 6px' }}>
-                <span className="text-text-dark-primary truncate" style={{ maxWidth: 160 }}>{t.group_value}</span>
-                <span className="tabular-nums font-semibold" style={{ color: `var(--${toneFor(t.oee)})` }}>
-                  {(t.oee * 100).toFixed(0)}%
-                </span>
-              </div>
-            ))}
-            <div className="text-[10px] uppercase text-text-dark-tertiary mt-3 mb-1">Melhores (≥5 ops)</div>
-            {bestTypes.slice(0, 5).map((t) => (
-              <div key={t.group_value} className="flex items-center justify-between text-xs" style={{ padding: '4px 6px' }}>
-                <span className="text-text-dark-primary truncate" style={{ maxWidth: 160 }}>{t.group_value}</span>
-                <span className="tabular-nums font-semibold" style={{ color: `var(--${toneFor(t.oee)})` }}>
-                  {(t.oee * 100).toFixed(0)}%
-                </span>
-              </div>
-            ))}
-          </div>
-        </Panel>
-      </div>
-
-      {/* Throughput chart + Impacto financeiro */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr', gap: 22 }}>
-        <Panel title="Throughput diário" badge="14 dias">
-          {throughputQuery.isLoading ? (
-            <div className="px-4 py-8 text-center text-xs text-text-dark-tertiary">
-              A carregar throughput…
-            </div>
-          ) : throughputData.length === 0 ? (
-            <EmptyState
-              title="Sem throughput registado"
-              hint="O endpoint /v1/profit/dashboard não devolveu série de receita. Verifica se há order_revenue para os últimos 14 dias."
-              size="sm"
-            />
-          ) : (
-            <ThroughputChart data={throughputData} target={throughputTarget} />
-          )}
-        </Panel>
-        <Panel title="Impacto financeiro" badge="€/sem">
-          {/* Q.21.B — os 4 valores € + total €4.780 eram hardcoded (ZERO
-              MOCKS). Não há endpoint que decomponha o custo de perda por
-              causa, por isso mostramos um EmptyState honesto em vez de
-              números fabricados. Wire quando o backend o servir. */}
-          <EmptyState
-            title="Decomposição de perdas indisponível"
-            hint="Ainda não há endpoint que atribua o custo de perda às causas (paragem de molde, lentidão de fase, retrabalho). O custo de retrabalho real está no separador Retrabalho."
-            size="sm"
-          />
-        </Panel>
-      </div>
+          ))
+        )}
+      </Card>
     </div>
   );
 }
 
-// ─── OEEBlock ───────────────────────────────────────────────────────────────
+// ─── MoldesTab ───────────────────────────────────────────────────────────
 
-function OEEBlock({
-  label,
-  value,
-  target,
-  tone,
-  detail,
-  loss,
-}: {
-  label: string;
-  value: string;
-  target: string;
-  tone: 'green' | 'yellow' | 'red' | 'blue';
-  detail: string;
-  loss?: string;
-}) {
+function MoldesTab() {
+  const moldsQuery = useMolds();
+  const molds = moldsQuery.data ?? [];
+
   return (
-    <div
-      style={{
-        padding: 22,
-        background: 'var(--bg-1)',
-        border: '1px solid var(--bd-1)',
-        borderRadius: 12,
-      }}
-    >
-      <div
-        style={{
-          fontSize: 11,
-          color: 'var(--fg-2)',
-          textTransform: 'uppercase',
-          letterSpacing: 0.4,
-          fontWeight: 600,
-        }}
-      >
-        {label}
-      </div>
-      <div className="flex items-baseline gap-1 mt-2">
-        <span
-          className="tabular-nums"
-          style={{
-            fontSize: 32,
-            fontWeight: 700,
-            color: `var(--${tone})`,
-            lineHeight: 1,
-          }}
-        >
-          {value}
-        </span>
-        <span style={{ fontSize: 14, color: 'var(--fg-2)' }}>%</span>
-      </div>
-      <div className="text-[11px] text-text-dark-tertiary mt-1">Meta: {target}%</div>
-      <div className="text-xs text-text-dark-secondary mt-2.5 leading-relaxed">
-        {detail}
-      </div>
-      {loss ? (
+    <>
+      <Card padding={18} style={{ marginBottom: 14 }}>
+        <SectionHeader
+          icon={<Wrench size={14} />}
+          title="Saúde dos moldes"
+          subtitle="MoldHealthService · ordenado por risco"
+        />
+      </Card>
+      {moldsQuery.isLoading ? (
+        <Card padding={18}>
+          <LoadingLine />
+        </Card>
+      ) : molds.length === 0 ? (
+        <Card padding={18}>
+          <EmptyState
+            size="sm"
+            title="Sem moldes sincronizados"
+            hint="Quando houver moldes na base de dados, o estado de saúde de cada um aparece aqui."
+          />
+        </Card>
+      ) : (
         <div
           style={{
-            marginTop: 10,
-            padding: '8px 10px',
-            background: 'var(--bg-2)',
-            borderRadius: 6,
-            borderLeft: `2px solid var(--${tone})`,
-            fontSize: 11,
-            color: 'var(--fg-1)',
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+            gap: 10,
           }}
         >
-          <strong
-            className="text-text-dark-tertiary"
-            style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.4 }}
-          >
-            Maior perda:
-          </strong>
-          <div className="mt-0.5">{loss}</div>
+          {molds.map((m) => {
+            const score = m.health?.score_0_100 ?? 0;
+            const tone =
+              m.health?.risk_category === 'red'
+                ? 'red'
+                : m.health?.risk_category === 'yellow'
+                  ? 'yellow'
+                  : 'green';
+            const label =
+              tone === 'red' ? 'Crítico' : tone === 'yellow' ? 'Aviso' : 'OK';
+            return (
+              <Card key={m.id} padding={14}>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'baseline',
+                    marginBottom: 12,
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: 13,
+                      color: 'var(--fg-0)',
+                      fontWeight: 600,
+                    }}
+                  >
+                    {m.name ?? m.mold_code}
+                  </span>
+                  <span
+                    style={{
+                      padding: '1px 7px',
+                      fontSize: 10.5,
+                      borderRadius: 999,
+                      color: `var(--${tone})`,
+                      background: `var(--${tone}-bg)`,
+                      border: `1px solid var(--${tone}-bd)`,
+                    }}
+                  >
+                    {label}
+                  </span>
+                </div>
+                <div
+                  className="tabular display"
+                  style={{
+                    fontSize: 22,
+                    color: 'var(--fg-0)',
+                    fontWeight: 600,
+                    marginBottom: 6,
+                  }}
+                >
+                  {score.toFixed(0)}
+                  <span
+                    style={{
+                      fontSize: 12,
+                      color: 'var(--fg-3)',
+                      fontWeight: 400,
+                    }}
+                  >
+                    /100 health
+                  </span>
+                </div>
+                <MiniBar
+                  value={score}
+                  max={100}
+                  color={`var(--${tone})`}
+                  height={4}
+                />
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    marginTop: 10,
+                    fontSize: 11,
+                    color: 'var(--fg-2)',
+                  }}
+                >
+                  <span>
+                    Pockets:{' '}
+                    <strong style={{ color: 'var(--fg-1)' }}>
+                      {m.pocket_count}
+                    </strong>
+                  </span>
+                  <span>
+                    Vida:{' '}
+                    <strong style={{ color: 'var(--fg-1)' }}>
+                      {m.expected_life_cycles ?? '—'}
+                    </strong>
+                  </span>
+                </div>
+              </Card>
+            );
+          })}
         </div>
-      ) : null}
-    </div>
+      )}
+    </>
   );
 }
 
-// ─── ThroughputChart (port literal page-oee.jsx) ────────────────────────────
+// ─── RetrabalhoTab ───────────────────────────────────────────────────────
 
-function ThroughputChart({ data, target }: { data: number[]; target: number }) {
-  const w = 600;
-  const h = 200;
-  const pad = { l: 32, r: 12, t: 12, b: 28 };
-  const cw = w - pad.l - pad.r;
-  const ch = h - pad.t - pad.b;
-  const max = Math.max(...data, target) * 1.1;
-  const dx = cw / (data.length - 1);
-
-  return (
-    <div className="px-2 py-1">
-      <svg viewBox={`0 0 ${w} ${h}`} style={{ width: '100%', height: 200 }}>
-        {/* grid */}
-        {[0, 0.25, 0.5, 0.75, 1].map((t) => (
-          <line
-            key={t}
-            x1={pad.l}
-            x2={w - pad.r}
-            y1={pad.t + ch * (1 - t)}
-            y2={pad.t + ch * (1 - t)}
-            stroke="var(--bd-1)"
-            strokeDasharray={t === 0 ? '0' : '2 3'}
-          />
-        ))}
-        {[0, 0.25, 0.5, 0.75, 1].map((t) => (
-          <text
-            key={t}
-            x={pad.l - 6}
-            y={pad.t + ch * (1 - t) + 3}
-            fontSize="9"
-            fill="var(--fg-3)"
-            textAnchor="end"
-          >
-            {Math.round(max * t)}
-          </text>
-        ))}
-        {/* target line */}
-        <line
-          x1={pad.l}
-          x2={w - pad.r}
-          y1={pad.t + ch * (1 - target / max)}
-          y2={pad.t + ch * (1 - target / max)}
-          stroke="var(--green)"
-          strokeWidth="1.2"
-          strokeDasharray="3 3"
-        />
-        <text
-          x={w - pad.r - 4}
-          y={pad.t + ch * (1 - target / max) - 4}
-          fontSize="9"
-          fill="var(--green)"
-          textAnchor="end"
-        >
-          Meta {target}
-        </text>
-        {/* line */}
-        <path
-          d={data
-            .map(
-              (v, i) =>
-                `${i === 0 ? 'M' : 'L'} ${pad.l + i * dx} ${pad.t + ch * (1 - v / max)}`,
-            )
-            .join(' ')}
-          fill="none"
-          stroke="var(--blue)"
-          strokeWidth="2"
-        />
-        {/* dots */}
-        {data.map((v, i) => (
-          <circle
-            key={i}
-            cx={pad.l + i * dx}
-            cy={pad.t + ch * (1 - v / max)}
-            r="3"
-            fill="var(--blue)"
-          />
-        ))}
-        {/* x-axis */}
-        {data.map((_, i) =>
-          i % 2 === 0 ? (
-            <text
-              key={i}
-              x={pad.l + i * dx}
-              y={h - 8}
-              fontSize="9"
-              fill="var(--fg-3)"
-              textAnchor="middle"
-            >
-              D−{data.length - 1 - i}
-            </text>
-          ) : null,
-        )}
-      </svg>
-    </div>
-  );
-}
-
-// ─── KPIStrip (reusable) ────────────────────────────────────────────────────
-
-function KPIStrip({
-  label,
-  value,
-  unit,
-  context,
-  tone,
-  hero = false,
-}: {
-  label: string;
-  value: string;
-  unit?: string;
-  context: string;
-  tone: 'green' | 'yellow' | 'red' | 'blue' | 'gray';
-  /** Q.23.G — variante destacada: valor maior, atmosfera, profundidade. */
-  hero?: boolean;
-}) {
-  return (
-    <div
-      style={{
-        padding: hero ? '20px 24px' : '16px 18px',
-        background: hero ? 'var(--atmosphere-card), var(--bg-1)' : 'var(--bg-1)',
-        border: '1px solid var(--bd-1)',
-        borderRadius: 12,
-        boxShadow: hero ? 'var(--shadow-2)' : undefined,
-      }}
-    >
-      <div
-        style={{
-          fontSize: 11,
-          color: 'var(--fg-2)',
-          fontWeight: 500,
-          textTransform: 'uppercase',
-          letterSpacing: 0.4,
-          marginBottom: 6,
-        }}
-      >
-        {label}
-      </div>
-      <div className="flex items-baseline gap-1 tabular-nums">
-        <span
-          style={{
-            fontSize: hero ? 44 : 28,
-            fontWeight: 700,
-            color: `var(--${tone})`,
-            lineHeight: 1,
-            letterSpacing: hero ? '-0.02em' : undefined,
-          }}
-        >
-          {value}
-        </span>
-        {unit ? (
-          <span style={{ fontSize: hero ? 16 : 13, color: 'var(--fg-2)' }}>{unit}</span>
-        ) : null}
-      </div>
-      <div
-        style={{
-          fontSize: 11,
-          color: 'var(--fg-3)',
-          marginTop: 6,
-          lineHeight: 1.4,
-        }}
-      >
-        {context}
-      </div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// NovoRetrabalhoForm — Q.30.D: lançar retrabalho (POST /v1/quality/rework)
-// ═══════════════════════════════════════════════════════════════════════════
-
-const REWORK_ERROR_CODES: Array<{ code: string; label: string }> = [
+const REWORK_ERROR_CODES = [
   { code: 'RESIN_BUBBLE', label: 'Bolha na resina' },
   { code: 'PAINT_SCRATCH', label: 'Risco na pintura' },
   { code: 'COLAGEM_FAIL', label: 'Falha na colagem' },
@@ -1104,7 +868,6 @@ const REWORK_ERROR_CODES: Array<{ code: string; label: string }> = [
   { code: 'DIMENSION_OFF', label: 'Dimensão fora de tolerância' },
   { code: 'OTHER', label: 'Outro' },
 ];
-
 const ROOT_CAUSE_CATEGORIES = [
   'Erro de operador',
   'Molde danificado',
@@ -1115,12 +878,18 @@ const ROOT_CAUSE_CATEGORIES = [
 ];
 
 const FIELD_CLASS =
-  'w-full px-3 py-2 rounded-md bg-dark-700 border border-white/10 text-sm ' +
-  'text-text-dark-primary placeholder:text-text-dark-tertiary focus:outline-none ' +
-  'focus:ring-2 focus:ring-accent-500/40 focus:border-accent-500/60';
+  'mt-1 w-full px-3 py-2 rounded-md text-sm outline-none ' +
+  'text-slate-900 placeholder:text-slate-400';
+const FIELD_STYLE = {
+  background: '#f1f5f9',
+  border: '1px solid var(--bd-2)',
+} as const;
 
-function NovoRetrabalhoForm() {
+function RetrabalhoTab() {
   const queryClient = useQueryClient();
+  const reworkQuery = useReworkList();
+  const rework = reworkQuery.data ?? [];
+
   const [ofId, setOfId] = useState('');
   const [errorCode, setErrorCode] = useState('');
   const [phaseCauser, setPhaseCauser] = useState('');
@@ -1128,37 +897,39 @@ function NovoRetrabalhoForm() {
   const [costEur, setCostEur] = useState('');
   const [description, setDescription] = useState('');
   const [causerEmployeeId, setCauserEmployeeId] = useState('');
-  const [savedBanner, setSavedBanner] = useState(false);
+  const [saved, setSaved] = useState(false);
 
-  // Picker de operador — degrada para vazio se a lista não responder.
   const employeesQuery = useQuery({
     queryKey: ['qualidade', 'rework-employees'],
     queryFn: () => employeesApi.list({ limit: 200 }),
     staleTime: 5 * 60_000,
-    retry: false,
+    retry: 0,
   });
-  const employees: Array<{ id: string; label: string }> = useMemo(() => {
-    const raw = (employeesQuery.data as any)?.data ?? employeesQuery.data;
+  const employees: { id: string; label: string }[] = useMemo(() => {
+    const raw =
+      (employeesQuery.data as { data?: unknown } | undefined)?.data ??
+      employeesQuery.data;
     if (!Array.isArray(raw)) return [];
     return raw
-      .map((e: any) => {
+      .map((e: Record<string, unknown>) => {
         const id = e.id ?? e.employee_id;
         if (!id) return null;
         const name =
           [e.first_name, e.last_name].filter(Boolean).join(' ') ||
-          e.full_name ||
-          e.name ||
+          (e.full_name as string) ||
+          (e.name as string) ||
           String(id).slice(0, 8);
-        return { id: String(id), label: name };
+        return { id: String(id), label: String(name) };
       })
-      .filter(Boolean) as Array<{ id: string; label: string }>;
+      .filter((x): x is { id: string; label: string } => x !== null);
   }, [employeesQuery.data]);
 
   const mutation = useMutation({
-    mutationFn: (payload: ReworkCreatePayload) => qualityReworkApi.create(payload),
+    mutationFn: (payload: ReworkCreatePayload) =>
+      qualityReworkApi.create(payload),
     onSuccess: () => {
-      setSavedBanner(true);
-      setTimeout(() => setSavedBanner(false), 3_000);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3_000);
       setOfId('');
       setErrorCode('');
       setPhaseCauser('');
@@ -1167,14 +938,17 @@ function NovoRetrabalhoForm() {
       setDescription('');
       setCauserEmployeeId('');
       queryClient.invalidateQueries({ queryKey: ['qualidade', 'rework'] });
+      queryClient.invalidateQueries({
+        queryKey: ['qualidade', 'dashboard-phase'],
+      });
     },
   });
 
-  function handleSubmit(event: React.FormEvent) {
-    event.preventDefault();
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
     if (!ofId.trim() || !errorCode) return;
     const cost = Number(costEur);
-    const payload: ReworkCreatePayload = {
+    mutation.mutate({
       of_id: ofId.trim(),
       error_code: errorCode,
       detected_at: new Date().toISOString(),
@@ -1184,363 +958,795 @@ function NovoRetrabalhoForm() {
       causer_employee_id: causerEmployeeId || undefined,
       cost_estimate_eur:
         costEur.trim() !== '' && Number.isFinite(cost) ? cost : undefined,
-    };
-    mutation.mutate(payload);
+    });
   }
 
   const disabled = !ofId.trim() || !errorCode || mutation.isPending;
 
   return (
-    <Panel title="Registar novo retrabalho" badge="QA01">
-      <form onSubmit={handleSubmit} className="space-y-3 p-1">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <label className="block">
-            <span className="text-xs text-text-dark-secondary">Ordem (OF) *</span>
-            <input
-              type="text"
-              value={ofId}
-              onChange={(e) => setOfId(e.target.value.toUpperCase())}
-              placeholder="OF-12345"
-              className={`mt-1 ${FIELD_CLASS}`}
-              required
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs text-text-dark-secondary">Tipo de defeito *</span>
-            <select
-              value={errorCode}
-              onChange={(e) => setErrorCode(e.target.value)}
-              className={`mt-1 ${FIELD_CLASS}`}
-              required
-            >
-              <option value="">Escolher…</option>
-              {REWORK_ERROR_CODES.map((e) => (
-                <option key={e.code} value={e.code}>
-                  {e.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="block">
-            <span className="text-xs text-text-dark-secondary">Fase onde ocorreu</span>
-            <input
-              type="text"
-              value={phaseCauser}
-              onChange={(e) => setPhaseCauser(e.target.value)}
-              placeholder="Ex: Laminagem"
-              className={`mt-1 ${FIELD_CLASS}`}
-            />
-          </label>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <label className="block">
-            <span className="text-xs text-text-dark-secondary">Causa-raiz</span>
-            <select
-              value={rootCause}
-              onChange={(e) => setRootCause(e.target.value)}
-              className={`mt-1 ${FIELD_CLASS}`}
-            >
-              <option value="">Escolher…</option>
-              {ROOT_CAUSE_CATEGORIES.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="block">
-            <span className="text-xs text-text-dark-secondary">Operador responsável</span>
-            <select
-              value={causerEmployeeId}
-              onChange={(e) => setCauserEmployeeId(e.target.value)}
-              className={`mt-1 ${FIELD_CLASS}`}
-              disabled={employees.length === 0}
-            >
-              <option value="">
-                {employees.length === 0 ? 'Lista indisponível' : '— sem atribuir —'}
-              </option>
-              {employees.map((e) => (
-                <option key={e.id} value={e.id}>
-                  {e.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="block">
-            <span className="text-xs text-text-dark-secondary">Custo estimado €</span>
-            <input
-              type="number"
-              inputMode="decimal"
-              min={0}
-              value={costEur}
-              onChange={(e) => setCostEur(e.target.value)}
-              placeholder="0"
-              className={`mt-1 ${FIELD_CLASS}`}
-            />
-          </label>
-        </div>
-        <label className="block">
-          <span className="text-xs text-text-dark-secondary">Descrição (opcional)</span>
-          <textarea
-            rows={2}
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="Ex: bolha de 3 mm no pavilhão lateral direito"
-            className={`mt-1 ${FIELD_CLASS} resize-none`}
-          />
-        </label>
-
-        {savedBanner ? (
-          <div className="flex items-center gap-2 text-xs text-success bg-success/10 border border-success/30 rounded-md px-3 py-2">
-            <CheckCircle2 size={14} /> Retrabalho registado.
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <Card padding={18}>
+        <SectionHeader
+          icon={<Repeat size={14} />}
+          title="Registar novo retrabalho"
+          subtitle="POST /v1/quality/rework · QA01"
+        />
+        {saved ? (
+          <div
+            style={{
+              padding: '8px 12px',
+              marginBottom: 12,
+              background: 'var(--green-bg)',
+              border: '1px solid var(--green-bd)',
+              borderRadius: 'var(--r-sm)',
+              color: 'var(--green)',
+              fontSize: 12,
+            }}
+          >
+            Retrabalho registado com sucesso.
           </div>
         ) : null}
         {mutation.isError ? (
-          <div className="text-xs text-danger" role="alert">
-            Não foi possível registar o retrabalho. Tenta outra vez.
+          <div
+            style={{
+              padding: '8px 12px',
+              marginBottom: 12,
+              background: 'var(--red-bg)',
+              border: '1px solid var(--red-bd)',
+              borderRadius: 'var(--r-sm)',
+              color: 'var(--red)',
+              fontSize: 12,
+            }}
+          >
+            Não foi possível registar o retrabalho. Tenta de novo.
           </div>
         ) : null}
-
-        <button
-          type="submit"
-          disabled={disabled}
-          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md text-white text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          style={{ background: 'var(--blue)', border: '1px solid var(--blue)' }}
+        <form
+          onSubmit={handleSubmit}
+          style={{ display: 'flex', flexDirection: 'column', gap: 12 }}
         >
-          <Repeat size={14} />
-          {mutation.isPending ? 'A registar…' : 'Registar retrabalho'}
-        </button>
-      </form>
-    </Panel>
-  );
-}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(3, 1fr)',
+              gap: 12,
+            }}
+          >
+            <label style={{ display: 'block' }}>
+              <span style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>
+                Ordem (OF) *
+              </span>
+              <input
+                type="text"
+                value={ofId}
+                onChange={(e) => setOfId(e.target.value.toUpperCase())}
+                placeholder="OF-12345"
+                className={`${FIELD_CLASS}`}
+                style={FIELD_STYLE}
+                required
+              />
+            </label>
+            <label style={{ display: 'block' }}>
+              <span style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>
+                Tipo de defeito *
+              </span>
+              <select
+                value={errorCode}
+                onChange={(e) => setErrorCode(e.target.value)}
+                className={`${FIELD_CLASS}`}
+                style={FIELD_STYLE}
+                required
+              >
+                <option value="">Escolher…</option>
+                {REWORK_ERROR_CODES.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ display: 'block' }}>
+              <span style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>
+                Fase onde ocorreu
+              </span>
+              <input
+                type="text"
+                value={phaseCauser}
+                onChange={(e) => setPhaseCauser(e.target.value)}
+                placeholder="Ex: Laminagem"
+                className={`${FIELD_CLASS}`}
+                style={FIELD_STYLE}
+              />
+            </label>
+          </div>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(3, 1fr)',
+              gap: 12,
+            }}
+          >
+            <label style={{ display: 'block' }}>
+              <span style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>
+                Causa-raiz
+              </span>
+              <select
+                value={rootCause}
+                onChange={(e) => setRootCause(e.target.value)}
+                className={`${FIELD_CLASS}`}
+                style={FIELD_STYLE}
+              >
+                <option value="">Escolher…</option>
+                {ROOT_CAUSE_CATEGORIES.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ display: 'block' }}>
+              <span style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>
+                Operador responsável
+              </span>
+              <select
+                value={causerEmployeeId}
+                onChange={(e) => setCauserEmployeeId(e.target.value)}
+                className={`${FIELD_CLASS}`}
+                style={FIELD_STYLE}
+              >
+                <option value="">Escolher…</option>
+                {employees.map((emp) => (
+                  <option key={emp.id} value={emp.id}>
+                    {emp.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ display: 'block' }}>
+              <span style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>
+                Custo estimado (€)
+              </span>
+              <input
+                type="number"
+                value={costEur}
+                onChange={(e) => setCostEur(e.target.value)}
+                placeholder="0"
+                min="0"
+                step="0.01"
+                className={`${FIELD_CLASS}`}
+                style={FIELD_STYLE}
+              />
+            </label>
+          </div>
+          <label style={{ display: 'block' }}>
+            <span style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>
+              Descrição
+            </span>
+            <input
+              type="text"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="O que aconteceu…"
+              className={`${FIELD_CLASS}`}
+              style={FIELD_STYLE}
+            />
+          </label>
+          <div>
+            <button
+              type="submit"
+              disabled={disabled}
+              style={{
+                padding: '8px 16px',
+                height: 36,
+                background: disabled ? 'var(--bg-3)' : 'var(--blue)',
+                color: disabled ? 'var(--fg-3)' : '#fff',
+                border: 'none',
+                borderRadius: 9,
+                fontSize: 12.5,
+                fontWeight: 500,
+                cursor: disabled ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {mutation.isPending ? 'A registar…' : 'Registar retrabalho'}
+            </button>
+          </div>
+        </form>
+      </Card>
 
-// ═══════════════════════════════════════════════════════════════════════════
-// ReworkListTab + MoldsTab — preserved from Onda 4
-// ═══════════════════════════════════════════════════════════════════════════
-
-function ReworkListTab({ filter }: { filter: 'open' | 'rework' }) {
-  const isReworkTab = filter === 'rework';
-  const reworkQuery = useQuery({
-    queryKey: ['qualidade', 'rework', filter],
-    queryFn: () => fetchQualityRework(filter),
-    staleTime: 30_000,
-    retry: 0,
-  });
-
-  const items: any[] = useMemo(() => {
-    const data: any = reworkQuery.data;
-    if (!data) return [];
-    if (Array.isArray(data)) return data;
-    return data.items ?? data.reworks ?? [];
-  }, [reworkQuery.data]);
-
-  const title = isReworkTab ? 'Retrabalho em curso' : 'Erros abertos';
-
-  return (
-    <Panel title={title} badge={items.length || '—'} flush>
-      {reworkQuery.isLoading ? (
-        <div className="px-4 py-6 text-center text-xs text-text-dark-tertiary">
-          A carregar…
-        </div>
-      ) : reworkQuery.isError || reworkQuery.data === null ? (
-        <EmptyState
-          title="Endpoint /v1/quality/rework indisponível"
-          hint={
-            isReworkTab
-              ? 'Quando wired, esta tab listará retrabalhos em curso.'
-              : 'Quando wired, esta tab listará defeitos abertos.'
-          }
-          mascot
-          size="md"
+      <Card padding={18}>
+        <SectionHeader
+          title="Retrabalho registado"
+          subtitle={`${rework.length} registos`}
         />
-      ) : items.length === 0 ? (
-        <EmptyState
-          title={isReworkTab ? 'Sem retrabalho em curso' : 'Sem erros abertos'}
-          hint="Tudo limpo no chão de fábrica."
-          mascot
-          size="sm"
-        />
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead className="border-b border-white/[0.06]">
-              <tr className="text-left text-[10px] uppercase tracking-wider text-text-dark-tertiary">
-                <th className="px-3 py-2">ID</th>
-                <th className="px-3 py-2">Hull</th>
-                <th className="px-3 py-2">Fase</th>
-                <th className="px-3 py-2">Tipo</th>
-                <th className="px-3 py-2">Severidade</th>
-                <th className="px-3 py-2">Custo €</th>
-                <th className="px-3 py-2">Estado</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.slice(0, 20).map((r, idx) => (
-                <tr
-                  key={r.id ?? idx}
-                  className="border-b border-white/[0.04] hover:bg-white/[0.02]"
+        {reworkQuery.isLoading ? (
+          <LoadingLine />
+        ) : rework.length === 0 ? (
+          <EmptyState
+            size="sm"
+            title="Sem retrabalho registado"
+            hint="Usa o formulário acima para registar o primeiro retrabalho."
+          />
+        ) : (
+          <>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '110px 1fr 130px 100px 90px',
+                padding: '10px 6px',
+                borderBottom: '1px solid var(--bd-1)',
+                background: 'var(--bg-2)',
+                fontSize: 10.5,
+                color: 'var(--fg-3)',
+                textTransform: 'uppercase',
+                letterSpacing: 0.4,
+                fontWeight: 600,
+              }}
+            >
+              <div>OF</div>
+              <div>Defeito</div>
+              <div>Fase</div>
+              <div style={{ textAlign: 'right' }}>Custo</div>
+              <div style={{ textAlign: 'right' }}>Estado</div>
+            </div>
+            {rework.slice(0, 30).map((r, i, arr) => (
+              <div
+                key={r.id}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '110px 1fr 130px 100px 90px',
+                  alignItems: 'center',
+                  padding: '10px 6px',
+                  borderBottom:
+                    i < arr.length - 1 ? '1px solid var(--bd-1)' : 'none',
+                  fontSize: 12,
+                }}
+              >
+                <span style={{ color: 'var(--fg-0)', fontWeight: 500 }}>
+                  {r.of_id}
+                </span>
+                <span style={{ color: 'var(--fg-2)' }}>
+                  {r.error_description ?? r.error_code}
+                </span>
+                <span style={{ color: 'var(--fg-2)' }}>
+                  {r.phase_id_causer ?? '—'}
+                </span>
+                <span
+                  className="tabular"
+                  style={{ color: 'var(--red)', textAlign: 'right' }}
                 >
-                  <td className="px-3 py-2 font-mono text-text-dark-primary">
-                    {(r.id ?? '—').toString().slice(0, 8)}
-                  </td>
-                  <td className="px-3 py-2 text-text-dark-secondary">{r.of_id ?? '—'}</td>
-                  <td className="px-3 py-2 text-text-dark-secondary">
-                    {r.phase_id_causer ?? '—'}
-                  </td>
-                  <td className="px-3 py-2 text-text-dark-secondary">
-                    {r.error_description ?? r.error_code ?? '—'}
-                  </td>
-                  <td className="px-3 py-2">
-                    <ZipSevBadge
-                      severity={(r.context?.severity as ZipSeverity) ?? 'medium'}
-                      size="sm"
-                    />
-                  </td>
-                  <td className="px-3 py-2 tabular-nums text-text-dark-secondary">
-                    {r.cost_estimate_eur ? `€${Math.round(Number(r.cost_estimate_eur))}` : '—'}
-                  </td>
-                  <td className="px-3 py-2 text-text-dark-secondary">
-                    {r.resolved_at ? 'Resolvido' : 'Aberto'}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </Panel>
+                  {r.cost_estimate_eur
+                    ? `−€${Math.round(r.cost_estimate_eur)}`
+                    : '—'}
+                </span>
+                <span
+                  style={{
+                    justifySelf: 'end',
+                    fontSize: 10.5,
+                    padding: '1px 7px',
+                    borderRadius: 999,
+                    color: r.resolved_at ? 'var(--green)' : 'var(--orange)',
+                    background: r.resolved_at
+                      ? 'var(--green-bg)'
+                      : 'var(--orange-bg)',
+                    border: `1px solid ${r.resolved_at ? 'var(--green-bd)' : 'var(--orange-bd)'}`,
+                  }}
+                >
+                  {r.resolved_at ? 'Resolvido' : 'Aberto'}
+                </span>
+              </div>
+            ))}
+          </>
+        )}
+      </Card>
+    </div>
   );
 }
 
-function MoldsTab() {
-  const moldsQuery = useQuery({
-    queryKey: ['qualidade', 'molds', 'health-report'],
-    queryFn: () => fetchMoldsHealthReport(),
+// ─── AderenciaTab ────────────────────────────────────────────────────────
+
+function AderenciaTab() {
+  // /v1/plan/adherence é PARTIAL — degrada com honestidade.
+  const adherenceQuery = useQuery({
+    queryKey: ['qualidade', 'adherence'],
+    queryFn: () =>
+      apiFetch<unknown>('/v1/plan/adherence').catch(() => ({
+        status: 'sem_execucao_real',
+      })),
     staleTime: 60_000,
     retry: 0,
   });
-
-  const [drawer, setDrawer] = useState<{ id: string | null; code?: string }>({ id: null });
-
-  const items: any[] = useMemo(() => {
-    const data: any = moldsQuery.data;
-    if (!data) return [];
-    if (Array.isArray(data)) return data;
-    return data.items ?? [];
-  }, [moldsQuery.data]);
-
-  const reds = items.filter((m) => m.health?.risk_category === 'red').length;
-  const yellows = items.filter((m) => m.health?.risk_category === 'yellow').length;
+  const honest = useHonestEmptyState(adherenceQuery.data);
 
   return (
-    <Panel title="Moldes — health report" badge={items.length || '—'} flush>
-      {moldsQuery.isLoading ? (
-        <div className="px-4 py-6 text-center text-xs text-text-dark-tertiary">
-          A carregar moldes…
-        </div>
-      ) : moldsQuery.isError || moldsQuery.data === null ? (
-        <EmptyState
-          title="Endpoint /v1/plan/molds/health-report indisponível"
-          hint="Quando wired, mostra grid de moldes com score de saúde."
-          mascot
-          size="md"
+    <Card padding={20}>
+      <SectionHeader
+        icon={<Target size={14} />}
+        title="Aderência ao plano · ScheduleCommit × OF_FP"
+        subtitle="Fecha o ciclo: planeei → aconteceu → aprendi"
+      />
+      <EmptyState
+        title="Aderência ao plano indisponível"
+        hint={
+          honest.degraded
+            ? honest.reason
+            : 'O cálculo de aderência (plano vs realizado por fase) ainda não tem execução real registada. Aparece assim que houver ScheduleCommits cruzáveis com OF_FP.'
+        }
+      />
+    </Card>
+  );
+}
+
+// ─── DiagnosticoTab ──────────────────────────────────────────────────────
+
+function DiagnosticoTab() {
+  const [errorCode, setErrorCode] = useState('RESIN_BUBBLE');
+  const rootCauseQuery = useQuery({
+    queryKey: ['qualidade', 'root-cause', errorCode],
+    queryFn: () =>
+      apiFetch<Record<string, unknown>>(
+        `/v1/quality/root-cause?error_code=${encodeURIComponent(errorCode)}`,
+      ),
+    staleTime: 60_000,
+    retry: 0,
+    enabled: errorCode.length > 0,
+  });
+  const impactQuery = useQuery({
+    queryKey: ['qualidade', 'impact', errorCode],
+    queryFn: () =>
+      apiFetch<Record<string, unknown>>(
+        `/v1/quality/impact?error_code=${encodeURIComponent(errorCode)}`,
+      ),
+    staleTime: 60_000,
+    retry: 0,
+    enabled: errorCode.length > 0,
+  });
+
+  const rc = rootCauseQuery.data;
+  const dimensions =
+    rc && typeof rc === 'object'
+      ? (rc as { dimensions?: Record<string, unknown> }).dimensions
+      : undefined;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <Card padding={18}>
+        <SectionHeader
+          icon={<Brain size={14} />}
+          title="Diagnóstico causal · RootCauseAnalyzer"
+          subtitle="Causa comum por dimensão · escolhe o código de erro"
         />
-      ) : items.length === 0 ? (
-        <EmptyState
-          title="Sem moldes registados"
-          hint="O endpoint respondeu mas devolveu lista vazia."
-          mascot
-          size="sm"
+        <label style={{ display: 'block', maxWidth: 280 }}>
+          <span style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>
+            Código de erro
+          </span>
+          <select
+            value={errorCode}
+            onChange={(e) => setErrorCode(e.target.value)}
+            className={FIELD_CLASS}
+            style={FIELD_STYLE}
+          >
+            {REWORK_ERROR_CODES.map((c) => (
+              <option key={c.code} value={c.code}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </Card>
+
+      <Card padding={18}>
+        <SectionHeader
+          title="Causa-raiz por dimensão"
+          subtitle="RootCauseAnalyzer · top causas por fase / molde / operador"
         />
-      ) : (
-        <>
-          <div className="px-4 py-2 border-b border-white/[0.06] flex items-center gap-3 text-[11px] text-text-dark-tertiary">
-            <span>
-              <span className="font-semibold text-danger">{reds}</span> red
-            </span>
-            <span>
-              <span className="font-semibold text-warning">{yellows}</span> yellow
-            </span>
-            <span className="ml-auto">{items.length} moldes</span>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 p-3">
-            {items.slice(0, 24).map((m, idx) => {
-              const score = m.health?.score_0_100 ?? 100;
-              const cat = m.health?.risk_category ?? 'green';
-              const tone = cat === 'red' ? 'red' : cat === 'yellow' ? 'yellow' : 'green';
-              return (
-                <button
-                  key={m.id ?? idx}
-                  type="button"
-                  onClick={() => setDrawer({ id: m.id ?? m.mold_id ?? null, code: m.mold_code })}
+        {rootCauseQuery.isLoading ? (
+          <LoadingLine />
+        ) : rootCauseQuery.isError ? (
+          <EmptyState
+            size="sm"
+            title="Diagnóstico indisponível"
+            hint="O serviço de causa-raiz não respondeu para este código de erro."
+          />
+        ) : !dimensions || Object.keys(dimensions).length === 0 ? (
+          <EmptyState
+            size="sm"
+            title="Sem dados de causa-raiz"
+            hint="Não há retrabalho suficiente com este código de erro para diagnosticar uma causa-raiz."
+          />
+        ) : (
+          <pre
+            style={{
+              margin: 0,
+              fontFamily: 'Geist Mono, ui-monospace, monospace',
+              fontSize: 11.5,
+              lineHeight: 1.7,
+              color: 'var(--fg-1)',
+              background: 'var(--bg-2)',
+              borderRadius: 'var(--r-sm)',
+              padding: 12,
+              overflowX: 'auto',
+            }}
+          >
+            {JSON.stringify(dimensions, null, 2)}
+          </pre>
+        )}
+      </Card>
+
+      <Card padding={18}>
+        <SectionHeader
+          title="Impacto do erro"
+          subtitle="ImpactService · custo e horas perdidas"
+        />
+        {impactQuery.isLoading ? (
+          <LoadingLine />
+        ) : impactQuery.isError || !impactQuery.data ? (
+          <EmptyState
+            size="sm"
+            title="Sem dados de impacto"
+            hint="Não há registos com este código de erro para calcular o impacto."
+          />
+        ) : (
+          <pre
+            style={{
+              margin: 0,
+              fontFamily: 'Geist Mono, ui-monospace, monospace',
+              fontSize: 11.5,
+              lineHeight: 1.7,
+              color: 'var(--fg-1)',
+              background: 'var(--bg-2)',
+              borderRadius: 'var(--r-sm)',
+              padding: 12,
+              overflowX: 'auto',
+            }}
+          >
+            {JSON.stringify(impactQuery.data, null, 2)}
+          </pre>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+// ─── OeeTab ──────────────────────────────────────────────────────────────
+
+function OeeTab() {
+  const oeeQuery = useQuery<OeeResponse>({
+    queryKey: ['qualidade', 'oee-phase'],
+    queryFn: () =>
+      apiFetch<OeeResponse>('/v1/profit/oee?group_by=phase'),
+    staleTime: 5 * 60_000,
+    retry: 0,
+  });
+
+  const overall = oeeQuery.data?.overall;
+  const breakdown = oeeQuery.data?.breakdown ?? [];
+
+  return (
+    <>
+      <Card padding={20} style={{ marginBottom: 14 }}>
+        <SectionHeader
+          icon={<TrendingUp size={14} />}
+          title="OEE global"
+          subtitle="Disponibilidade × Performance × Qualidade · OF_FP"
+        />
+        {oeeQuery.isLoading ? (
+          <LoadingLine />
+        ) : !overall ? (
+          <EmptyState
+            size="sm"
+            title="Sem dados de OEE"
+            hint="Não há operações suficientes no histórico para calcular o OEE."
+          />
+        ) : (
+          <>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(4, 1fr)',
+                gap: 14,
+                marginBottom: 16,
+              }}
+            >
+              {[
+                { v: overall.oee, l: 'OEE Global' },
+                { v: overall.availability, l: 'Disponibilidade' },
+                { v: overall.performance, l: 'Performance' },
+                { v: overall.quality, l: 'Qualidade' },
+              ].map((r) => (
+                <div
+                  key={r.l}
                   style={{
-                    borderRadius: 8,
-                    border: `1px solid var(--${tone}-bd)`,
-                    background: 'var(--bg-2)',
-                    padding: 12,
-                    textAlign: 'left',
-                    cursor: 'pointer',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    gap: 8,
                   }}
                 >
-                  <div className="flex items-start justify-between gap-2 mb-2">
-                    <div className="min-w-0">
-                      <div className="text-xs font-mono text-text-dark-primary truncate">
-                        {m.mold_code ?? '—'}
-                      </div>
-                      <div className="text-[10px] text-text-dark-tertiary truncate">
-                        {m.model_id ?? '—'}
-                      </div>
-                    </div>
-                    <span
-                      className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold"
-                      style={{
-                        background: `var(--${tone}-bg)`,
-                        color: `var(--${tone})`,
-                        border: `1px solid var(--${tone}-bd)`,
-                      }}
-                    >
-                      {cat}
-                    </span>
+                  <OEERing value={r.v * 100} />
+                  <div style={{ fontSize: 11, color: 'var(--fg-2)' }}>
+                    {r.l}
                   </div>
-                  <div className="flex items-baseline gap-1">
-                    <span
-                      className="text-2xl font-semibold tabular-nums"
-                      style={{ color: `var(--${tone})` }}
-                    >
-                      {score}
-                    </span>
-                    <span className="text-[10px] text-text-dark-tertiary">/100</span>
-                  </div>
-                  <div
-                    style={{
-                      marginTop: 8,
-                      height: 6,
-                      background: 'var(--bd-1)',
-                      borderRadius: 3,
-                      overflow: 'hidden',
-                    }}
-                  >
-                    <div
-                      style={{
-                        height: '100%',
-                        width: `${score}%`,
-                        background: `var(--${tone})`,
-                      }}
-                    />
-                  </div>
-                </button>
-              );
-            })}
+                </div>
+              ))}
+            </div>
+            <Banner tone="orange">
+              <AlertCircle size={18} color="var(--orange)" />
+              <div>
+                <div
+                  style={{
+                    fontSize: 13,
+                    color: 'var(--fg-0)',
+                    fontWeight: 500,
+                  }}
+                >
+                  OEE calculado de {overall.sample_size} operações reais (
+                  {overall.sample_excluded} excluídas)
+                </div>
+                <div
+                  style={{
+                    fontSize: 11.5,
+                    color: 'var(--fg-2)',
+                    marginTop: 3,
+                  }}
+                >
+                  Os tempos vêm do histórico real (FaseOf_Inicio→Fim). Os
+                  tempos standard divergem até 25× do real e não são usados na
+                  baseline.
+                </div>
+              </div>
+            </Banner>
+          </>
+        )}
+      </Card>
+
+      <Card padding={0}>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1.6fr 80px 1fr 1fr 1fr 80px',
+            alignItems: 'center',
+            gap: 12,
+            padding: '12px 18px',
+            borderBottom: '1px solid var(--bd-1)',
+            background: 'var(--bg-2)',
+            fontSize: 10.5,
+            color: 'var(--fg-3)',
+            textTransform: 'uppercase',
+            letterSpacing: 0.4,
+            fontWeight: 600,
+          }}
+        >
+          <div>Fase</div>
+          <div>OEE</div>
+          <div>Disp.</div>
+          <div>Perf.</div>
+          <div>Qual.</div>
+          <div style={{ textAlign: 'right' }}>Amostra</div>
+        </div>
+        {oeeQuery.isLoading ? (
+          <div style={{ padding: 18 }}>
+            <LoadingLine />
           </div>
-        </>
-      )}
-      <MoldDefectDrawer
-        open={!!drawer.id}
-        moldId={drawer.id}
-        moldCode={drawer.code}
-        onClose={() => setDrawer({ id: null })}
-      />
-    </Panel>
+        ) : breakdown.length === 0 ? (
+          <div style={{ padding: 18 }}>
+            <EmptyState
+              size="sm"
+              title="Sem OEE por fase"
+              hint="Não há operações agrupáveis por fase no histórico."
+            />
+          </div>
+        ) : (
+          breakdown.map((p, i, arr) => {
+            const oeePct = p.oee * 100;
+            const tone =
+              oeePct >= 60
+                ? 'green'
+                : oeePct >= 40
+                  ? 'yellow'
+                  : oeePct >= 20
+                    ? 'orange'
+                    : 'red';
+            return (
+              <div
+                key={p.group_value + i}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1.6fr 80px 1fr 1fr 1fr 80px',
+                  alignItems: 'center',
+                  gap: 12,
+                  padding: '12px 18px',
+                  borderBottom:
+                    i < arr.length - 1 ? '1px solid var(--bd-1)' : 'none',
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: 12.5,
+                    color: 'var(--fg-0)',
+                    fontWeight: 500,
+                  }}
+                >
+                  {p.group_value}
+                </span>
+                <span
+                  className="tabular display"
+                  style={{
+                    fontSize: 16,
+                    color: `var(--${tone})`,
+                    fontWeight: 600,
+                  }}
+                >
+                  {oeePct.toFixed(1)}%
+                </span>
+                <MiniBar
+                  value={p.availability * 100}
+                  color="var(--green)"
+                  height={3}
+                />
+                <MiniBar
+                  value={p.performance * 100}
+                  color={
+                    p.performance < 0.3 ? 'var(--red)' : 'var(--yellow)'
+                  }
+                  height={3}
+                />
+                <MiniBar
+                  value={p.quality * 100}
+                  color="var(--blue)"
+                  height={3}
+                />
+                <span
+                  className="tabular"
+                  style={{
+                    fontSize: 11,
+                    color: 'var(--fg-3)',
+                    textAlign: 'right',
+                  }}
+                >
+                  {p.sample_size}
+                </span>
+              </div>
+            );
+          })
+        )}
+      </Card>
+    </>
+  );
+}
+
+// ─── CustosTab ───────────────────────────────────────────────────────────
+
+function CustosTab() {
+  const reworkQuery = useReworkList();
+  const rework = reworkQuery.data ?? [];
+  const totalCost = rework.reduce(
+    (s, r) => s + (r.cost_estimate_eur ?? 0),
+    0,
+  );
+  const resolvedCost = rework
+    .filter((r) => r.resolved_at)
+    .reduce((s, r) => s + (r.cost_estimate_eur ?? 0), 0);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <Card padding={18}>
+        <SectionHeader
+          icon={<Euro size={14} />}
+          title="Custo de retrabalho registado"
+          subtitle="Soma de cost_estimate_eur · ReworkEntry"
+        />
+        {reworkQuery.isLoading ? (
+          <LoadingLine />
+        ) : rework.length === 0 ? (
+          <EmptyState
+            size="sm"
+            title="Sem custos de retrabalho"
+            hint="Quando houver registos de retrabalho com custo, o total aparece aqui."
+          />
+        ) : (
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(3, 1fr)',
+              gap: 12,
+            }}
+          >
+            <KpiTile
+              label="Custo total registado"
+              value={`€${Math.round(totalCost).toLocaleString('pt-PT')}`}
+              tone="red"
+            />
+            <KpiTile
+              label="Custo de itens resolvidos"
+              value={`€${Math.round(resolvedCost).toLocaleString('pt-PT')}`}
+              tone="green"
+            />
+            <KpiTile
+              label="Registos"
+              value={`${rework.length}`}
+              tone="neutral"
+            />
+          </div>
+        )}
+      </Card>
+
+      <Card padding={20}>
+        <SectionHeader
+          title="ROI de acções de qualidade"
+          subtitle="Investido vs poupado por acção"
+        />
+        <EmptyState
+          title="ROI de qualidade ainda não disponível"
+          hint="O cálculo de retorno (investido vs poupado) de cada acção de qualidade precisa de um endpoint dedicado que ainda não existe. Até lá, não inventamos os números — o custo de retrabalho real está acima."
+        />
+      </Card>
+    </div>
+  );
+}
+
+// ─── Helpers de UI ───────────────────────────────────────────────────────
+
+function LoadingLine() {
+  return (
+    <div
+      style={{
+        padding: '20px 0',
+        textAlign: 'center',
+        color: 'var(--fg-3)',
+        fontSize: 12,
+      }}
+    >
+      A carregar…
+    </div>
+  );
+}
+
+function KpiTile({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: 'red' | 'green' | 'neutral';
+}) {
+  const color =
+    tone === 'red'
+      ? 'var(--red)'
+      : tone === 'green'
+        ? 'var(--green)'
+        : 'var(--fg-0)';
+  return (
+    <div
+      style={{
+        padding: 14,
+        background: 'var(--bg-2)',
+        borderRadius: 'var(--r-md)',
+        border: '1px solid var(--bd-1)',
+      }}
+    >
+      <div
+        style={{
+          fontSize: 10.5,
+          color: 'var(--fg-3)',
+          textTransform: 'uppercase',
+          letterSpacing: 0.4,
+          fontWeight: 600,
+        }}
+      >
+        {label}
+      </div>
+      <div
+        className="tabular display"
+        style={{
+          fontSize: 22,
+          color,
+          fontWeight: 600,
+          marginTop: 6,
+        }}
+      >
+        {value}
+      </div>
+    </div>
   );
 }
