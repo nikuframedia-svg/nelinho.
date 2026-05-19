@@ -75,52 +75,51 @@ async def calculate_kpis(
     kpis = {}
     
     try:
-        # 1. Orders stats
-        orders_total_query = select(func.count(func.distinct(ProductionSchedule.order_id))).where(
-            ProductionSchedule.tenant_id == tenant_id
-        )
-        orders_total_result = await session.execute(orders_total_query)
-        orders_total = orders_total_result.scalar() or 0
-        
-        orders_in_progress_query = select(func.count(func.distinct(ProductionSchedule.order_id))).where(
-            and_(
-                ProductionSchedule.tenant_id == tenant_id,
-                ProductionSchedule.status == ScheduleStatus.IN_PROGRESS,
+        # 1. Orders stats — Q.55.B.3: contar `plan.production_orders` (a
+        # tabela real, 521 ordens) em vez de `plan.production_schedules`
+        # (output do scheduler, 159 linhas esparsas → contagens a zero,
+        # e era daí que vinha o "não tenho dados" do copiloto).
+        from src.plan.models.order import ProductionOrder
+
+        orders_total = (await session.execute(
+            select(func.count()).where(ProductionOrder.tenant_id == tenant_id)
+        )).scalar() or 0
+
+        orders_in_progress = (await session.execute(
+            select(func.count()).where(
+                ProductionOrder.tenant_id == tenant_id,
+                ProductionOrder.status == "IN_PROGRESS",
             )
-        )
-        orders_in_progress_result = await session.execute(orders_in_progress_query)
-        orders_in_progress = orders_in_progress_result.scalar() or 0
-        
-        orders_completed_query = select(func.count(func.distinct(ProductionSchedule.order_id))).where(
-            and_(
-                ProductionSchedule.tenant_id == tenant_id,
-                ProductionSchedule.status == ScheduleStatus.COMPLETED,
+        )).scalar() or 0
+
+        orders_completed = (await session.execute(
+            select(func.count()).where(
+                ProductionOrder.tenant_id == tenant_id,
+                ProductionOrder.status == "COMPLETED",
             )
-        )
-        orders_completed_result = await session.execute(orders_completed_query)
-        orders_completed = orders_completed_result.scalar() or 0
-        
+        )).scalar() or 0
+
         # Query hash para citations
         query_hash = hashlib.sha256(f"orders_stats_{tenant_id}".encode()).hexdigest()[:16]
         
         kpis["orders_total"] = KPIMetric(
             value=float(orders_total) if orders_total > 0 else None,
             updated_at=datetime.utcnow(),
-            citations=[create_db_citation("plan.production_schedules", query_hash, f"Total de ordens: {orders_total}")] if orders_total > 0 else [],
+            citations=[create_db_citation("plan.production_orders", query_hash, f"Total de ordens: {orders_total}")] if orders_total > 0 else [],
             reason="NO_SOURCE_DATA" if orders_total == 0 else None,
         )
         
         kpis["orders_in_progress"] = KPIMetric(
             value=float(orders_in_progress) if orders_in_progress > 0 else None,
             updated_at=datetime.utcnow(),
-            citations=[create_db_citation("plan.production_schedules", query_hash, f"Ordens em progresso: {orders_in_progress}")] if orders_in_progress > 0 else [],
+            citations=[create_db_citation("plan.production_orders", query_hash, f"Ordens em progresso: {orders_in_progress}")] if orders_in_progress > 0 else [],
             reason="NO_SOURCE_DATA" if orders_in_progress == 0 else None,
         )
         
         kpis["orders_completed"] = KPIMetric(
             value=float(orders_completed) if orders_completed > 0 else None,
             updated_at=datetime.utcnow(),
-            citations=[create_db_citation("plan.production_schedules", query_hash, f"Ordens completadas: {orders_completed}")] if orders_completed > 0 else [],
+            citations=[create_db_citation("plan.production_orders", query_hash, f"Ordens completadas: {orders_completed}")] if orders_completed > 0 else [],
             reason="NO_SOURCE_DATA" if orders_completed == 0 else None,
         )
         
@@ -144,8 +143,12 @@ async def calculate_kpis(
         phases_total_result = await session.execute(phases_total_query)
         phases_total = phases_total_result.scalar() or 0
         
+        # Q.55.B.3 — exigir `phases_started > 0`. Com `production_schedules`
+        # esparso (159 linhas, nenhuma iniciada) isto dava 0/total = 0.0,
+        # e o copiloto reportava "Disponibilidade: 0,00%" como se fosse uma
+        # leitura real. Sem fases iniciadas não há dado — devolver None.
         availability = None
-        if phases_total > 0:
+        if phases_total > 0 and phases_started > 0:
             availability = (phases_started / phases_total) * 100.0
         
         kpis["availability"] = KPIMetric(
