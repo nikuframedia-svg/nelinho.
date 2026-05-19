@@ -85,6 +85,10 @@ lerna-debug.log*
 wheels/
 *.whl
 
+# ML registry artifacts — joblib pickles written by the training jobs;
+# the registry row is in the DB, the binary is regenerable, not versioned.
+ml_artifacts/
+
 # Testing
 .pytest_cache/
 .coverage

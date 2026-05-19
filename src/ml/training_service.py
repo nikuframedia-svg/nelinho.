@@ -31,9 +31,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.ml.models.registry import ModelRegistry
 from src.ml.models_domain.duration import DurationModel
+from src.ml.models_domain.otd_risk import OTDRiskModel
 from src.ml.models_domain.quality_risk import QualityRiskModel
 from src.ml.models_domain.training_data import (
     build_duration_dataset,
+    build_otd_risk_dataset,
     build_quality_risk_dataset,
 )
 
@@ -146,6 +148,59 @@ async def train_duration(
     }
 
 
+async def train_otd_risk(
+    session: AsyncSession,
+    tenant_id: UUID,
+    *,
+    trained_by: str = "training_service",
+    promote: bool = True,
+) -> Dict[str, Any]:
+    """Train `OTDRiskModel` from the DB and register the artifact.
+
+    Sprint Q.54.F. Mirrors `train_quality_risk` — DB-backed dataset,
+    register, promote-on-first-seed.
+    """
+    started = time.time()
+    rows = await build_otd_risk_dataset(session, tenant_id)
+    if not rows:
+        raise TrainingError(
+            "otd_risk: no training rows — plan.production_orders has no "
+            "completed orders with a transport date. Run the ERP sync first."
+        )
+
+    model = OTDRiskModel()
+    try:
+        metrics = model.train(rows)
+    except ValueError as exc:
+        raise TrainingError(f"otd_risk: {exc}") from exc
+
+    registry = ModelRegistry(session, tenant_id)
+    artifact = await registry.save(
+        model_name="otd_risk",
+        model=model,
+        metrics=metrics,
+        trained_by=trained_by,
+        training_duration_sec=round(time.time() - started, 3),
+        training_samples=int(metrics.get("samples", len(rows))),
+    )
+    promoted = False
+    if promote:
+        await registry.promote(artifact.id, decision_id=None, promoted_by=trained_by)
+        promoted = True
+
+    logger.info(
+        "train_otd_risk: v%s registered (auc=%s, samples=%s, promoted=%s)",
+        artifact.version, metrics.get("auc"), metrics.get("samples"), promoted,
+    )
+    return {
+        "model_name": "otd_risk",
+        "version": artifact.version,
+        "artifact_id": str(artifact.id),
+        "metrics": metrics,
+        "promoted": promoted,
+    }
+
+
 async def ensure_quality_risk_model(
     session: AsyncSession,
     tenant_id: UUID,
@@ -167,5 +222,31 @@ async def ensure_quality_risk_model(
         return summary
     except TrainingError as exc:
         logger.warning("ensure_quality_risk_model: %s", exc)
+        await session.rollback()
+        return None
+
+
+async def ensure_otd_risk_model(
+    session: AsyncSession,
+    tenant_id: UUID,
+) -> Optional[Dict[str, Any]]:
+    """Train + promote `otd_risk` only if no active version exists yet.
+
+    Sprint Q.54.F — used by the OTD-risk service so the Painel / Direção
+    layer bootstraps the model on first use instead of staring at an
+    empty registry. Returns the training summary when it trained,
+    ``None`` when a model was already active or the data layer is too
+    thin (caller degrades honestly).
+    """
+    registry = ModelRegistry(session, tenant_id)
+    active = await registry.get_active("otd_risk")
+    if active is not None:
+        return None
+    try:
+        summary = await train_otd_risk(session, tenant_id)
+        await session.commit()
+        return summary
+    except TrainingError as exc:
+        logger.warning("ensure_otd_risk_model: %s", exc)
         await session.rollback()
         return None

@@ -25,6 +25,33 @@ Honesty rules (ZERO MOCKS):
 Confidence is a function of (a) how many days of history we have and
 (b) how steady the consumption is (coefficient of variation). It is *not*
 a probability — it is a coarse trust label for the UI.
+
+Sprint Q.54.F — why this stays a heuristic, not an ML model
+-----------------------------------------------------------
+The Q.54 brief asked: train an ML model on `InventoryLedgerEntry` if
+viable, otherwise improve the heuristic and document why. We chose to
+improve the heuristic, deliberately:
+
+* The target (`days_to_stockout`) is *deterministic*, not learned —
+  `on_hand / consumption_rate`. An ML model would only ever be
+  predicting the consumption rate, and per-SKU consumption history is
+  short and sparse (a single material's `consume` rows over 90 days),
+  far below the ≥20-with-signal floor the GBM models in `src/ml/`
+  need. Fitting one per SKU would overfit; one global model can't
+  capture per-material seasonality.
+* The honest gain over a flat trailing average is *recency weighting*:
+  if a material's consumption is trending up, the last fortnight should
+  count more than day 1. So `predict()` now estimates the daily rate
+  with an exponentially-weighted moving average (EWMA) over the
+  per-day consumption series — recent days weigh more, but every day
+  still contributes. No data is invented; it is the same ledger rows,
+  weighted by age. The flat mean is kept as `avg_daily_consumption_flat`
+  for transparency, and a `trend` label ("rising"/"falling"/"steady")
+  is surfaced so the UI can flag accelerating depletion.
+
+If per-SKU history ever grows enough (multi-year, dense), a forecasting
+model (`SupplyForecast` already has the table) becomes worthwhile — but
+that is a separate, data-gated sprint, not this one.
 """
 
 from __future__ import annotations
@@ -55,6 +82,16 @@ _MEDIUM_CONF_MIN_DAYS = 14
 # drops it one notch.
 _STEADY_CV = 0.5
 _VOLATILE_CV = 1.2
+
+# Sprint Q.54.F — EWMA half-life (days). The weight of a day's
+# consumption halves every `_EWMA_HALFLIFE_DAYS` days into the past, so
+# the trailing fortnight dominates a 90-day window without discarding
+# the older rows entirely. 14 days ≈ NELO's material reorder rhythm.
+_EWMA_HALFLIFE_DAYS = 14.0
+
+# Relative gap between the recency-weighted rate and the flat mean
+# before we label the consumption a trend rather than steady noise.
+_TREND_THRESHOLD = 0.15  # 15%
 
 
 class StockoutPredictor:
@@ -137,7 +174,26 @@ class StockoutPredictor:
         # consuming days so a burst on a single day cannot inflate the rate.
         observed_span = (max(per_day) - min(per_day)).days + 1
         span = max(observed_span, consuming_days)
-        avg_daily = total_consumed / span
+        avg_daily_flat = total_consumed / span
+
+        # Sprint Q.54.F — recency-weighted (EWMA) daily rate. We build a
+        # dense per-calendar-day series across the observed span (idle
+        # days contribute zero consumption) and weight each day by its
+        # age: weight = 0.5 ** (age_days / half_life). The rate is the
+        # weighted mean. A material whose consumption is accelerating
+        # gets a higher rate (earlier stockout) than the flat mean would
+        # give; a decelerating one gets a lower rate. No invented data —
+        # same ledger rows, weighted by age.
+        avg_daily = _ewma_daily_rate(
+            per_day, span_end=max(per_day), span_days=span,
+        )
+        if avg_daily <= 0:
+            avg_daily = avg_daily_flat  # degenerate guard — fall back to flat
+
+        # Trend label — is the recency-weighted rate materially above or
+        # below the flat mean? Surfaced so the UI can flag accelerating
+        # depletion ("rising") vs a tapering material ("falling").
+        trend = _classify_trend(avg_daily, avg_daily_flat)
 
         # Confidence: history depth × steadiness.
         confidence = _grade_confidence(
@@ -170,6 +226,8 @@ class StockoutPredictor:
             window_days=self.window_days,
             reason=None,
             days_to_stockout=round(days_left, 2),
+            avg_daily_consumption_flat=round(avg_daily_flat, 4),
+            trend=trend,
         )
 
     async def predict_many(
@@ -189,6 +247,57 @@ class StockoutPredictor:
                 sku_id=sku_id, on_hand=on_hand, as_of=as_of,
             )
         return out
+
+
+def _ewma_daily_rate(
+    per_day: dict[date, Decimal],
+    *,
+    span_end: date,
+    span_days: int,
+) -> float:
+    """Recency-weighted mean daily consumption (Sprint Q.54.F).
+
+    `per_day` maps a calendar day to that day's consumed quantity. We
+    build a dense series across the whole observed span — every day in
+    `[span_end - span_days + 1, span_end]` — so idle days correctly
+    contribute zero. Each day is weighted by `0.5 ** (age / half_life)`
+    where `age` is days before `span_end`. The result is the
+    weight-normalised mean: ``Σ(weight·qty) / Σ(weight)``.
+
+    A flat series returns the same number as the plain mean; an
+    accelerating series returns a higher rate (recent high days weigh
+    more), a tapering one returns a lower rate.
+    """
+    if not per_day or span_days <= 0:
+        return 0.0
+
+    weighted_sum = 0.0
+    weight_total = 0.0
+    for age in range(span_days):
+        day = span_end - timedelta(days=age)
+        qty = float(per_day.get(day, Decimal("0")))
+        weight = 0.5 ** (age / _EWMA_HALFLIFE_DAYS)
+        weighted_sum += weight * qty
+        weight_total += weight
+
+    if weight_total <= 0:  # pragma: no cover — span_days>0 guarantees >0
+        return 0.0
+    return weighted_sum / weight_total
+
+
+def _classify_trend(rate_weighted: float, rate_flat: float) -> str:
+    """Label the consumption trend by comparing the recency-weighted
+    rate against the flat mean. "rising" = depleting faster than the
+    window average; "falling" = tapering off; "steady" otherwise.
+    """
+    if rate_flat <= 0:
+        return "steady"
+    delta = (rate_weighted - rate_flat) / rate_flat
+    if delta > _TREND_THRESHOLD:
+        return "rising"
+    if delta < -_TREND_THRESHOLD:
+        return "falling"
+    return "steady"
 
 
 def _grade_confidence(*, history_days: int, daily_values: list[float]) -> str:
@@ -234,6 +343,8 @@ def _result(
     window_days: int,
     reason: Optional[str],
     days_to_stockout: Optional[float] = None,
+    avg_daily_consumption_flat: Optional[float] = None,
+    trend: str = "steady",
 ) -> dict[str, Any]:
     return {
         "sku_id": sku_id,
@@ -241,11 +352,21 @@ def _result(
             predicted_stockout_date.isoformat() if predicted_stockout_date else None
         ),
         "confidence": confidence,
+        # Sprint Q.54.F — `avg_daily_consumption` is now the recency-
+        # weighted (EWMA) rate; `avg_daily_consumption_flat` keeps the
+        # plain trailing mean for transparency, and `trend` flags
+        # accelerating vs tapering depletion.
         "avg_daily_consumption": avg_daily_consumption,
+        "avg_daily_consumption_flat": (
+            avg_daily_consumption_flat
+            if avg_daily_consumption_flat is not None
+            else avg_daily_consumption
+        ),
+        "trend": trend,
         "history_days": history_days,
         "total_consumed": total_consumed,
         "window_days": window_days,
         "days_to_stockout": days_to_stockout,
         "reason": reason,
-        "method": "consumption_ledger_trailing_avg",
+        "method": "consumption_ledger_ewma",
     }

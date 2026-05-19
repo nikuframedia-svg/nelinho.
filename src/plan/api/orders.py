@@ -110,3 +110,23 @@ async def list_active_orders(
 
     active = [o for o in rows if not is_completed_phase(o.current_phase_name)]
     return [_order_to_card(o) for o in active[:limit]]
+
+
+@router.get("/orders/otd-risk")
+async def orders_otd_risk(
+    top_n: int = Query(50, ge=1, le=200),
+    tenant_id: UUID = Depends(require_tenant_header),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Q.54.F — risco de atraso por encomenda (Painel / Direção).
+
+    P(atraso) de cada ordem aberta segundo o `OTDRiskModel` activo.
+    Treina+promove um modelo no primeiro acesso quando o registry está
+    vazio; degrada com ``model_available=false`` quando o histórico de
+    entregas é demasiado fino para treinar. Avisa que um barco vai
+    falhar a data antes do dia do transporte.
+    """
+    from src.plan.services.otd_risk_service import OTDRiskService
+
+    svc = OTDRiskService(session, tenant_id)
+    return await svc.otd_risk(top_n=top_n)

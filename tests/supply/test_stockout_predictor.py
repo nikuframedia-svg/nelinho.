@@ -116,9 +116,13 @@ class TestPrediction:
         fake_session.queue_scalars(rows)
         predictor = StockoutPredictor(fake_session, TEST_TENANT_ID)
         result = await predictor.predict(sku_id="MAT-001", on_hand=200.0)
-        # 200 / 20 per day = 10 days.
+        # 200 / 20 per day = 10 days. Flat consumption → EWMA equals the
+        # plain mean, so the recency weighting doesn't shift the estimate.
         assert result["days_to_stockout"] == pytest.approx(10.0, abs=1.0)
-        assert result["method"] == "consumption_ledger_trailing_avg"
+        # Sprint Q.54.F — method renamed; EWMA fields surfaced.
+        assert result["method"] == "consumption_ledger_ewma"
+        assert result["trend"] == "steady"
+        assert result["avg_daily_consumption_flat"] == pytest.approx(20.0, abs=0.5)
 
 
 class TestPredictMany:

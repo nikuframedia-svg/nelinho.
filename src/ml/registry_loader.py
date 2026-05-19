@@ -23,6 +23,9 @@ logger = logging.getLogger(__name__)
 
 QualityRiskPredictor = Callable[[List[Dict[str, Any]]], List[float]]
 DurationPredictor = Callable[[List[Dict[str, Any]]], List[Dict[str, float]]]
+# Sprint Q.54.F — OTD-risk shares the quality-risk shape: a batch of
+# order feature rows → a batch of P(late) floats in [0, 1].
+OTDRiskPredictor = Callable[[List[Dict[str, Any]]], List[float]]
 
 
 def _instrumented_predictor(fn: Callable, *, model_name: str) -> Callable:
@@ -105,6 +108,46 @@ async def load_active_quality_risk_predictor(
         return None
     return _instrumented_predictor(
         model.predict_proba_batch, model_name="quality_risk",
+    )
+
+
+async def load_active_otd_risk_predictor(
+    session: AsyncSession,
+    tenant_id: UUID,
+) -> Optional[OTDRiskPredictor]:
+    """Return a callable OTD-risk predictor or None when no active
+    artifact exists.
+
+    Sprint Q.54.F. The callable adapts ``OTDRiskModel.predict_proba_batch``
+    so the Painel / Direção layer can call ``predictor(order_rows) ->
+    List[float]`` (P(late) per order) without touching ML internals.
+    Mirrors ``load_active_quality_risk_predictor`` exactly — same
+    instrumentation, same graceful-None fallbacks.
+    """
+    registry = ModelRegistry(session, tenant_id)
+    try:
+        active = await registry.get_active("otd_risk")
+    except Exception as exc:
+        logger.warning("otd_risk: get_active failed (%s) — predictor disabled", exc)
+        return None
+    if active is None:
+        return None
+    try:
+        model = registry.load(active.storage_uri)
+    except Exception as exc:
+        logger.warning(
+            "otd_risk: load failed for v%s (%s) — predictor disabled",
+            active.version, exc,
+        )
+        return None
+    if not hasattr(model, "predict_proba_batch"):
+        logger.warning(
+            "otd_risk: artifact v%s has no predict_proba_batch — skip",
+            active.version,
+        )
+        return None
+    return _instrumented_predictor(
+        model.predict_proba_batch, model_name="otd_risk",
     )
 
 

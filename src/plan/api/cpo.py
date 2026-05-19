@@ -225,14 +225,22 @@ async def schedule_cpo(
             ),
         )
 
-    # FASE 0.3 (DEVA-02) — wire the active DurationModel into the routing
-    # resolver. When the model exists, the standard-template fallback uses
-    # `predict(...).p50_hours` instead of the legacy `horas_standard * 2.0`
-    # buffer. With no active artifact, behaviour is identical to before.
-    from src.ml.registry_loader import load_active_duration_predictor
-    duration_predictor = await load_active_duration_predictor(db, tenant_id)
-    if duration_predictor is not None:
-        logger.info("CPO schedule: DurationModel active — wired into RoutingResolver")
+    # FASE 0.3 (DEVA-02) / Sprint Q.54.F — wire the active ML models into
+    # this scheduling run. `apply_ml_to_cpo` is the shared chokepoint
+    # (also used by the copilot's POETIQ path) so both planners wire the
+    # DurationModel + QualityRiskModel identically. When no artifact is
+    # active, the predictors are None and behaviour is identical to
+    # before (history / 2× standard templates, zero quality-risk term).
+    #
+    # Sprint Q.9 Onda 1.2 — fitness_config carries the per-tenant adaptive
+    # Camada-2 weights; `apply_ml_to_cpo` mutates it to attach the
+    # QualityRiskModel predictor. Built here (before the ML wiring) so the
+    # helper has something to attach to.
+    fitness_config = await FitnessConfig.from_tenant_config(db, tenant_id)
+    from src.plan.cpo.ml_wiring import apply_ml_to_cpo
+    duration_predictor, ml_report = await apply_ml_to_cpo(
+        db, tenant_id, fitness_config=fitness_config,
+    )
     resolver = RoutingResolver(state, duration_predictor=duration_predictor)
     operations = resolver.resolve_many(orders, horizon_start=horizon_start)
 
@@ -287,22 +295,10 @@ async def schedule_cpo(
     else:
         machines = [SchedulingMachine(machine_id="MANUAL", name="Manual pool")]
 
-    # Sprint Q.9 Onda 1.2 — Camada 2 wire. Build the fitness config via
-    # `from_tenant_config` so per-tenant adaptive weights (learned from
-    # ≥50 commits' rejected_alternatives) drive the GA. When the tenant
-    # has no learned weights yet, this returns the same defaults as
-    # `FitnessConfig()` — silent fallback by design.
-    fitness_config = await FitnessConfig.from_tenant_config(db, tenant_id)
-
-    # FASE 0.2 (DEVA-01) — wire the active QualityRiskModel into the GA.
-    # Without this, Sprint H.1 trained but the predictor was always None
-    # and the 0.10 quality_risk weight resolved to 0 every generation.
-    from src.ml.registry_loader import load_active_quality_risk_predictor
-    quality_risk_predictor = await load_active_quality_risk_predictor(db, tenant_id)
-    if quality_risk_predictor is not None:
-        fitness_config.quality_risk_predictor = quality_risk_predictor
-        logger.info("CPO schedule: QualityRiskModel active — predictor wired into fitness")
-
+    # Sprint Q.9 Onda 1.2 / Q.54.F — `fitness_config` was built above with
+    # the adaptive Camada-2 weights and already carries the QualityRiskModel
+    # predictor attached by `apply_ml_to_cpo`. The engine constructor also
+    # copies `state.preference_rules` into it (Camada 1 wire).
     engine = CPOv4Engine(
         state=state,
         config=CPOConfig(
@@ -323,10 +319,9 @@ async def schedule_cpo(
         product_price_eur=product_price_eur,
     )
 
-    # FASE 0.3 — surface duration model wiring for observability/E2E asserts
-    result.setdefault("cpo_meta", {})["duration_model_used"] = (
-        duration_predictor is not None
-    )
+    # FASE 0.3 / Q.54.F — surface ML wiring (duration + quality-risk) for
+    # observability and E2E asserts.
+    result.setdefault("cpo_meta", {}).update(ml_report.as_meta())
 
     # Q.17.F.2 — yaml_policy SCHEDULE_PROPOSE hook. Fire any tenant rules
     # that subscribe to this event; if any ``block`` action triggers,

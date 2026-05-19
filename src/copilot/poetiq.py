@@ -159,7 +159,20 @@ async def propose(
             message="Sem ordens abertas — corre uma ingestão primeiro.",
         )
 
-    resolver = RoutingResolver(state)
+    # Sprint Q.54.F — wire the active ML models into this scheduling run.
+    # Until now the POETIQ path (copilot proposals) built a bare
+    # RoutingResolver and never set a quality-risk predictor, so a
+    # schedule proposed through the copilot used 2× buffer templates and
+    # a zero quality-risk term — while the same schedule through
+    # /v1/plan/cpo/schedule used the trained models. `apply_ml_to_cpo`
+    # is the shared chokepoint; both planners now wire identically.
+    fitness_config = await FitnessConfig.from_tenant_config(db, tenant_id)
+    from src.plan.cpo.ml_wiring import apply_ml_to_cpo
+    duration_predictor, ml_report = await apply_ml_to_cpo(
+        db, tenant_id, fitness_config=fitness_config,
+    )
+
+    resolver = RoutingResolver(state, duration_predictor=duration_predictor)
     operations = resolver.resolve_many(orders, horizon_start=horizon_start)
     if not operations:
         return POETIQProposeResponse(
@@ -177,11 +190,11 @@ async def propose(
     # through /v1/plan/cpo/schedule with explicit machines.
     machines = [SchedulingMachine(machine_id="MANUAL", name="Manual pool")]
 
-    # Sprint Q.9 Onda 1.2 — Camada 2 wire (mirror of plan/api/cpo.py).
-    # Adaptive weights merged in; the engine constructor will also copy
-    # `state.preference_rules` into the fitness config (Camada 1 wire).
-    fitness_config = await FitnessConfig.from_tenant_config(db, tenant_id)
-
+    # Sprint Q.9 Onda 1.2 — Camada 2 wire (mirror of plan/api/cpo.py):
+    # `fitness_config` was built above with adaptive weights merged in and
+    # the QualityRiskModel already attached by `apply_ml_to_cpo`. The
+    # engine constructor will also copy `state.preference_rules` into it
+    # (Camada 1 wire).
     engine = CPOv4Engine(
         state=state,
         config=CPOConfig(
@@ -235,6 +248,11 @@ async def propose(
         result["poetiq_final_score"] = round(loop_result.final_score, 4)
     else:
         result = engine.schedule(operations, machines, horizon_start, horizon_end)
+
+    # Sprint Q.54.F — surface which ML models were live for this POETIQ
+    # run, same shape as /v1/plan/cpo/schedule's cpo_meta, so observability
+    # and E2E asserts can tell the copilot path wired the models too.
+    result.setdefault("cpo_meta", {}).update(ml_report.as_meta())
 
     # Persist a commit with the delta attached
     delta_dict = request.delta.model_dump()

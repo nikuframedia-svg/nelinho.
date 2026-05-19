@@ -23,7 +23,7 @@ def register_ml_retrain_jobs(
     tenants: Optional[List[UUID]] = None,
 ) -> int:
     """
-    Add Duration + QualityRisk retrain jobs to the scheduler.
+    Add Duration + QualityRisk + OTDRisk retrain jobs to the scheduler.
 
     Returns the number of jobs registered. No-op if the scheduler is None
     (APScheduler unavailable) or the tenant list is empty.
@@ -45,11 +45,13 @@ def register_ml_retrain_jobs(
         return 0
 
     from src.ml.models_domain.duration import DurationRetrainJob
+    from src.ml.models_domain.otd_risk import OTDRiskRetrainJob
     from src.ml.models_domain.quality_risk import QualityRiskRetrainJob
 
     job_specs = [
         ("duration", DurationRetrainJob, DurationRetrainJob.schedule_cron),
         ("quality_risk", QualityRiskRetrainJob, QualityRiskRetrainJob.schedule_cron),
+        ("otd_risk", OTDRiskRetrainJob, OTDRiskRetrainJob.schedule_cron),
     ]
 
     count = 0
@@ -95,12 +97,14 @@ async def _run_retrain_job(job_name: str, tenant_id_str: str) -> None:
     try:
         from src.governance.service import GovernanceService
         from src.ml.models_domain.duration import DurationRetrainJob
+        from src.ml.models_domain.otd_risk import OTDRiskRetrainJob
         from src.ml.models_domain.quality_risk import QualityRiskRetrainJob
         from src.shared.database import get_session_context
 
         job_cls_map = {
             "duration": DurationRetrainJob,
             "quality_risk": QualityRiskRetrainJob,
+            "otd_risk": OTDRiskRetrainJob,
         }
         job_cls = job_cls_map.get(job_name)
         if job_cls is None:

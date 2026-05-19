@@ -18,6 +18,7 @@ import pytest
 from src.ml.models_domain.training_data import (
     _normalise_phase_key,
     build_duration_dataset,
+    build_otd_risk_dataset,
     build_quality_risk_dataset,
 )
 
@@ -165,3 +166,82 @@ def build_quality_risk_dataset_sync(session) -> list[dict[str, Any]]:
 def build_duration_dataset_sync(session) -> list[dict[str, Any]]:
     import asyncio
     return asyncio.run(build_duration_dataset(session, TENANT))
+
+
+# ─── OTD-risk dataset (Sprint Q.54.F) ─────────────────────────────────────
+
+def _otd_session(order_rows, phase_rows, rework_rows) -> _ScriptedSession:
+    """build_otd_risk_dataset executes 3 queries in order:
+    order_sql (.mappings), phase_sql (.mappings), rework_sql (.all)."""
+    return _ScriptedSession([order_rows, phase_rows, rework_rows])
+
+
+def test_otd_risk_dataset_labels_late_orders():
+    """An order whose completed_date is after its transport_date must be
+    labelled is_late=1 with negative slack; an on-time one is_late=0."""
+    from datetime import date
+
+    order_rows = [
+        # O1 — finished 3 days late
+        {"legacy_id": 1, "product_type": "K1",
+         "completed_date": date(2026, 5, 10),
+         "transport_date": date(2026, 5, 7)},
+        # O2 — finished 5 days early
+        {"legacy_id": 2, "product_type": "K2",
+         "completed_date": date(2026, 5, 2),
+         "transport_date": date(2026, 5, 7)},
+    ]
+    phase_rows = [
+        {"of_id": "1", "fase_id": "36", "horas_reais": 8.0},
+        {"of_id": "1", "fase_id": "40", "horas_reais": 3.0},
+        {"of_id": "2", "fase_id": "36", "horas_reais": 7.5},
+    ]
+    rework_rows: list[Any] = []
+
+    rows = __import__("asyncio").run(
+        build_otd_risk_dataset(
+            _otd_session(order_rows, phase_rows, rework_rows), TENANT,
+        )
+    )
+    assert len(rows) == 2
+    o1 = next(r for r in rows if r["modelo_id"] == "K1")
+    o2 = next(r for r in rows if r["modelo_id"] == "K2")
+    assert o1["is_late"] == 1
+    assert o1["slack_days"] == -3.0
+    assert o1["n_phases"] == 2
+    assert o1["total_planned_hours"] == 11.0
+    assert o2["is_late"] == 0
+    assert o2["slack_days"] == 5.0
+
+
+def test_otd_risk_dataset_empty_when_no_completed_orders():
+    rows = __import__("asyncio").run(
+        build_otd_risk_dataset(_otd_session([], [], []), TENANT)
+    )
+    assert rows == []
+
+
+def test_otd_risk_dataset_folds_in_phase_error_rate():
+    """The per-fase rework rate is averaged into phase_error_rate_mean."""
+    from datetime import date
+
+    order_rows = [
+        {"legacy_id": 1, "product_type": "K1",
+         "completed_date": date(2026, 5, 10),
+         "transport_date": date(2026, 5, 7)},
+    ]
+    # fase 36 appears 10× with 4 rework events → rate 0.4
+    phase_rows = [{"of_id": "1", "fase_id": "36", "horas_reais": 5.0}]
+    phase_rows += [
+        {"of_id": f"X{i}", "fase_id": "36", "horas_reais": 5.0}
+        for i in range(9)
+    ]
+    rework_rows = [("36", 4)]
+
+    rows = __import__("asyncio").run(
+        build_otd_risk_dataset(
+            _otd_session(order_rows, phase_rows, rework_rows), TENANT,
+        )
+    )
+    assert len(rows) == 1
+    assert rows[0]["phase_error_rate_mean"] == pytest.approx(0.4, abs=0.001)

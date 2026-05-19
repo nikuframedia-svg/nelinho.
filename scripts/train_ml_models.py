@@ -1,12 +1,15 @@
-"""Q.53.A — Seed the ML registry from the durable DB tables.
+"""Q.53.A / Q.54.F — Seed the ML registry from the durable DB tables.
 
-Trains `QualityRiskModel` + `DurationModel` against the real factory
-history (`factory_curated.order_phase` ⋈ `quality.rework_entry`), registers
-both artifacts and promotes them to ACTIVE so:
+Trains `QualityRiskModel` + `DurationModel` + `OTDRiskModel` against the
+real factory history (`factory_curated.order_phase` ⋈
+`quality.rework_entry` ⋈ `plan.production_orders`), registers the
+artifacts and promotes them to ACTIVE so:
 
-  * `load_active_quality_risk_predictor()` stops returning ``None``;
-  * the CPO fitness function picks up the quality-risk term;
-  * `GET /v1/quality/defect-risk` has a model to orchestrate.
+  * `load_active_quality_risk_predictor()` / `..._duration_predictor()` /
+    `..._otd_risk_predictor()` stop returning ``None``;
+  * the CPO fitness + routing resolver pick up the trained models;
+  * `GET /v1/quality/defect-risk` and `GET /v1/plan/orders/otd-risk`
+    have a model to orchestrate.
 
 This is the one-shot seed. The cron `RetrainJob` keeps retraining weekly /
 daily through the governed path afterwards.
@@ -36,6 +39,7 @@ async def _run(tenant_id: UUID) -> int:
     from src.ml.training_service import (
         TrainingError,
         train_duration,
+        train_otd_risk,
         train_quality_risk,
     )
     from src.shared.database import get_session_context
@@ -45,6 +49,7 @@ async def _run(tenant_id: UUID) -> int:
         for label, fn in (
             ("quality_risk", train_quality_risk),
             ("duration", train_duration),
+            ("otd_risk", train_otd_risk),
         ):
             try:
                 summary = await fn(session, tenant_id)
