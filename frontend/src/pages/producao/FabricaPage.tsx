@@ -52,9 +52,8 @@ import type { ActiveOrderCard, OptimizedOrderCard } from './fabricaApi';
 import { FabricaPhaseColumn } from './FabricaPhaseColumn';
 import type { PhaseColumnModel } from './FabricaPhaseColumn';
 import type { AssignedWorker } from './BoatAssignCard';
-import { WorkersStrip } from './WorkersStrip';
 import type { WorkerProfile } from './fabricaScoring';
-import { BoatDetailSheet } from './BoatDetailSheet';
+import { BoatDetailPanel } from './BoatDetailPanel';
 import { MoveBoatConfirm } from './MoveBoatConfirm';
 import { ImpactToast } from './ImpactToast';
 import type { ImpactToastData } from './ImpactToast';
@@ -262,7 +261,6 @@ export function FabricaPage(): ReactNode {
   }, [orders, snapshotQuery.data, view]);
 
   // ─── Helpers de derivação ───────────────────────────────────────────────
-  const activeBoat = orders.find((o) => o.id === activeBoatId) ?? null;
   const sheetBoat = orders.find((o) => o.id === sheetBoatId) ?? null;
 
   const assignedWorkersByBoat: Record<string, AssignedWorker[]> = useMemo(() => {
@@ -563,6 +561,34 @@ export function FabricaPage(): ReactNode {
             </div>
           )}
 
+          {/* Painel de detalhe do barco — inline, sem modal (Q.54.N).
+              Substitui o BoatDetailSheet: o modal aplicava um
+              backdrop-filter de ecrã inteiro que congelava ao abrir.
+              Fica ACIMA das colunas — visível sem scroll ao clicar. */}
+          {sheetBoat && (
+            <div style={{ marginBottom: 12 }}>
+              <BoatDetailPanel
+                boat={sheetBoat}
+                workers={workerProfiles}
+                assignedIds={(assignedWorkersByBoat[sheetBoat.id] ?? []).map(
+                  (w) => w.id,
+                )}
+                phaseName={phaseOf(sheetBoat)}
+                loadingProfiles={profilesLoading || employeesQuery.isLoading}
+                onAssign={
+                  view === 'estado'
+                    ? (workerId) =>
+                        allocateMutation.mutate({
+                          boatId: sheetBoat.id,
+                          workerId,
+                        })
+                    : undefined
+                }
+                onClose={() => setSheetBoatId(null)}
+              />
+            </div>
+          )}
+
           {/* Colunas Kanban */}
           <div style={{ marginBottom: 12 }}>
             {isLoading ? (
@@ -614,6 +640,11 @@ export function FabricaPage(): ReactNode {
                   gap: 10,
                   paddingBottom: 12,
                   overflowX: 'auto',
+                  // Sem isto, o grid estica TODAS as colunas à altura da
+                  // mais cheia — uma fase com 300 barcos fazia colunas
+                  // vazias gigantes. `start` deixa cada coluna no seu
+                  // tamanho; o scroll vive dentro da coluna.
+                  alignItems: 'start',
                 }}
               >
                 {columns.map((col) => (
@@ -639,42 +670,8 @@ export function FabricaPage(): ReactNode {
             )}
           </div>
 
-          {/* Rail de operadores com fit-scoring */}
-          {employeesQuery.isError ? (
-            <EmptyState
-              mascot={false}
-              title="Operadores indisponíveis"
-              hint="A lista de empregados não respondeu — não é possível mostrar o rail de atribuição."
-              action={
-                <DarkButton
-                  size="sm"
-                  onClick={() => employeesQuery.refetch()}
-                >
-                  Tentar novamente
-                </DarkButton>
-              }
-            />
-          ) : (
-            <WorkersStrip
-              workers={workerProfiles}
-              activeBoat={activeBoat}
-              assignedToActive={
-                activeBoatId ? assignments[activeBoatId] ?? [] : []
-              }
-              loadingProfiles={profilesLoading || employeesQuery.isLoading}
-            />
-          )}
         </>
       )}
-
-      {/* Painel de detalhe do barco */}
-      <BoatDetailSheet
-        boat={sheetBoat}
-        workers={
-          sheetBoat ? assignedWorkersByBoat[sheetBoat.id] ?? [] : []
-        }
-        onClose={() => setSheetBoatId(null)}
-      />
 
       {/* Confirmação de movimento de fase */}
       {pendingMove && (

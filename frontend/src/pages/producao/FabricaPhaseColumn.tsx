@@ -167,6 +167,10 @@ export function FabricaPhaseColumn({
           gap: 6,
           flex: 1,
           minHeight: 80,
+          // A coluna nunca cresce além disto — uma fase com muitos
+          // barcos faz scroll DENTRO da coluna, não estica a página.
+          maxHeight: '56vh',
+          overflowY: 'auto',
         }}
       >
         {boats.length === 0 ? (
