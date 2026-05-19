@@ -1,36 +1,6 @@
-/**
- * CrisisSimulator — tab "Crise · agora" da página Simulações.
- *
- * Fluxo de 3 passos do design NELO.html (page-simulacoes.jsx):
- *   1. Escolher um dos 6 cenários de crise pré-definidos.
- *   2. Confirmar · correr no digital twin sandbox.
- *   3. Ver cascata, axiomas Spelke e opções de mitigação.
- *
- * O "correr" é REAL: cria um twin scenario, aplica os deltas
- * pré-definidos e simula. O `scenario_hash` e o `simulation_result`
- * que voltam do backend provam que a sandbox correu — a cascata e as
- * opções vêm da configuração do cenário (descrevem o problema).
- *
- * Sprint Q.52.M.
- */
-
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import {
-  AlertTriangle,
-  Box,
-  Boxes,
-  Check,
-  ChevronLeft,
-  Clock,
-  Hash,
-  Loader2,
-  PlayCircle,
-  Sparkles,
-  Truck,
-  User,
-  Zap,
-} from 'lucide-react';
+import { AlertTriangle, Check, ChevronLeft, Clock, Hash, Loader2, PlayCircle, Sparkles } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { twinApi } from '../../lib/api';
 import { useToastContext } from '../ToastProvider';
@@ -38,109 +8,7 @@ import { Card, SectionHeader, Tag, fmtEuro, toneBd, toneBg, toneVar } from './at
 import type { Tone } from './atoms';
 import { CRISIS_SCENARIOS } from './crisisScenarios';
 import type { CrisisScenario } from './crisisScenarios';
-
-const ICONS: Record<CrisisScenario['icon'], ReactNode> = {
-  Box: <Box size={16} />,
-  User: <User size={16} />,
-  Boxes: <Boxes size={16} />,
-  AlertTriangle: <AlertTriangle size={16} />,
-  Zap: <Zap size={16} />,
-  Truck: <Truck size={16} />,
-};
-
-const SPELKE_AXIOMS = [
-  'Capacidade ≥ 0',
-  'Precedência das fases',
-  'Molde exclusivo',
-  'Dual-resource Laminagem',
-  'Compatibilidade de skill',
-  'Cura · 16 transições',
-  'Safety net ≥ baseline',
-];
-
-const SEVERITY_TONE: Record<CrisisScenario['severity'], Tone> = {
-  critical: 'red',
-  high: 'orange',
-  medium: 'yellow',
-};
-
-const CASCADE_LABEL: Record<Tone, string> = {
-  red: 'crítico',
-  orange: 'alto',
-  yellow: 'aviso',
-  green: 'estabilizado',
-  blue: 'info',
-  purple: 'info',
-  teal: 'info',
-  gray: 'info',
-};
-
-interface TwinRunResult {
-  scenarioId: string;
-  scenarioHash: string | null;
-  simulationStatus: string;
-}
-
-function CrisisCard({
-  scenario,
-  onSelect,
-}: {
-  scenario: CrisisScenario;
-  onSelect: () => void;
-}): ReactNode {
-  const tone = SEVERITY_TONE[scenario.severity];
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      style={{
-        padding: 14,
-        background: 'var(--bg-1)',
-        border: '1px solid var(--bd-1)',
-        borderRadius: 'var(--r-md)',
-        cursor: 'pointer',
-        textAlign: 'left',
-      }}
-    >
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-          marginBottom: 8,
-        }}
-      >
-        <div
-          style={{
-            width: 30,
-            height: 30,
-            borderRadius: 7,
-            background: toneBg(tone),
-            color: toneVar(tone),
-            display: 'grid',
-            placeItems: 'center',
-            border: `1px solid ${toneBd(tone)}`,
-          }}
-        >
-          {ICONS[scenario.icon]}
-        </div>
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--fg-0)' }}>
-            {scenario.label}
-          </div>
-          <Tag tone={tone} size="sm">
-            {scenario.severity}
-          </Tag>
-        </div>
-      </div>
-      <div
-        style={{ fontSize: 11.5, color: 'var(--fg-2)', lineHeight: 1.5 }}
-      >
-        {scenario.detail}
-      </div>
-    </button>
-  );
-}
+import { ICONS, SPELKE_AXIOMS, SEVERITY_TONE, CASCADE_LABEL, CrisisCard, type TwinRunResult } from './crisisSimulatorBits';
 
 export function CrisisSimulator(): ReactNode {
   const toast = useToastContext();

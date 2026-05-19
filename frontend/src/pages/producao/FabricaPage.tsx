@@ -1,52 +1,10 @@
-/**
- * FabricaPage — war room: Kanban de fases + atribuição dinâmica (Q.52.F).
- *
- * Onda 1 · T1 · Q.54.C/D. Reconstrução fiel do `page-fabrica.jsx` do
- * design NELO: strip de KPIs, colunas-fase Kanban com drag-drop
- * bidirecional e o rail de operadores com fit-scoring. Ligada a
- * endpoints REAIS:
- *   - /v1/plan/orders/active            (cartões de barco, com
- *                                        phase_sequence p/ ordenar)
- *   - /v1/plan/cpo/commits/latest/orders (plano optimizado do CPO)
- *   - /v1/factory-map/snapshot          (score de gargalo por fase)
- *   - /v1/core/employees                (operadores)
- *   - POST /v1/workforce/employees/profiles (perfis em LOTE — uma só
- *                                        chamada substitui o fan-out
- *                                        de ~3×N pedidos que congelava)
- *   - /v1/plan/schedule/preview-delta   (consequência do drag)
- *   - /v1/plan/schedule/apply-move      (persistir o movimento)
- *   - /v1/hr/allocations/daily          (atribuir operador → barco)
- *
- * Q.54.C — colunas ordenadas pela sequência de routing NELO
- * (`phase_sequence`), não alfabética; perfis de operador pré-carregados
- * em lote → atribuição instantânea.
- * Q.54.D — toggle "Plano sugerido" alterna estado cru ↔ plano CPO.
- *
- * DnD bidirecional via HTML5 dataTransfer (MIME application/x-nelo-dnd):
- * `boat` arrasta entre colunas-fase; `worker` arrasta para os cartões.
- *
- * ZERO MOCKS: as colunas derivam das fases reais presentes nas ordens +
- * scores de gargalo do snapshot. Sem ordens / sem operadores → empty
- * state honesto. O movimento de barco passa SEMPRE pelo preview antes
- * de persistir — nunca aplica às cegas.
- */
-
 import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Factory, Layers, Sparkles, X } from 'lucide-react';
 import { DarkPageLayout } from '../../layouts';
 import { DarkButton, EmptyState, LiveBadge } from '../../components/dark';
-import {
-  allocationsApi,
-  employeesApi,
-  schedulePreviewApi,
-  type PreviewDeltaResult,
-} from '../../lib/api';
+import { allocationsApi, employeesApi, schedulePreviewApi, type PreviewDeltaResult } from '../../lib/api';
 import { fabricaApi } from './fabricaApi';
 import type { ActiveOrderCard, OptimizedOrderCard } from './fabricaApi';
 import { FabricaPhaseColumn } from './FabricaPhaseColumn';
@@ -57,26 +15,7 @@ import { BoatDetailPanel } from './BoatDetailPanel';
 import { MoveBoatConfirm } from './MoveBoatConfirm';
 import { ImpactToast } from './ImpactToast';
 import type { ImpactToastData } from './ImpactToast';
-
-interface PendingMove {
-  boat: ActiveOrderCard;
-  targetPhase: string;
-}
-
-interface EmployeeRow {
-  id: string;
-  name: string;
-}
-
-function deriveInitials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return '—';
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
-
-/** Vista da Fábrica: estado cru vs plano optimizado do CPO. */
-type FabricaView = 'estado' | 'plano';
+import { deriveInitials, KpiTile, type PendingMove, type EmployeeRow, type FabricaView } from './fabricaBits';
 
 export function FabricaPage(): ReactNode {
   const queryClient = useQueryClient();
@@ -706,49 +645,6 @@ export function FabricaPage(): ReactNode {
       {/* Toast de impacto */}
       <ImpactToast toast={toast} onClose={() => setToast(null)} />
     </DarkPageLayout>
-  );
-}
-
-function KpiTile({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: number;
-  tone?: 'green' | 'yellow' | 'red';
-}): ReactNode {
-  return (
-    <div
-      style={{
-        background: 'var(--bg-1)',
-        border: '1px solid var(--bd-1)',
-        borderRadius: 'var(--r-md)',
-        padding: 12,
-      }}
-    >
-      <div
-        style={{
-          fontSize: 10.5,
-          color: 'var(--fg-3)',
-          textTransform: 'uppercase',
-          letterSpacing: 0.4,
-        }}
-      >
-        {label}
-      </div>
-      <div
-        className="display tabular"
-        style={{
-          fontSize: 22,
-          fontWeight: 500,
-          color: tone ? `var(--${tone})` : 'var(--fg-0)',
-          marginTop: 4,
-        }}
-      >
-        {value}
-      </div>
-    </div>
   );
 }
 
