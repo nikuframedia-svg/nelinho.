@@ -1,590 +1,598 @@
 /**
- * PlaneamentoPage — Q.18.ZIP.M.4 (revisão profunda).
+ * PlaneamentoPage — Q.52.G · reconstrução do design NELO.
  *
- * 4 tabs do brief PROMPT_CLAUDE_CODE.md §3.3 com layouts portados do
- * pages-1.jsx do nelo zip. Cada tab tem 2 vistas (segmented):
- *   • Detalhada (port do zip — tabela/SVG/cards específicos)
- *   • Clássica (wrap das pages existentes do projecto)
+ * 3 tabs: Barcos · Pessoas · Materiais. Substitui POR COMPLETO os dados
+ * DEMO/fake das sub-tabs anteriores (Materiais/Forecast/Simulador) — agora
+ * tudo vem de endpoints reais. ZERO MOCKS.
  *
- * Vistas detalhadas usam dados reais onde existem (mrpApi, supplyApi),
- * placeholders explícitos onde não. Sem mocks silenciosos.
- *
- * Sprint Q.18.ZIP.M.4abcd.
+ * - Barcos:    timeline arrastável das operações do último commit do CPO
+ *              (cpoCommitsApi + schedulePreviewApi preview-delta/apply-move).
+ *              "Replanear" → POST /v1/plan/cpo/schedule.
+ * - Pessoas:   cobertura por fase derivada das operações reais + relatório
+ *              de prioridade (alinhamento receita ↔ scheduler).
+ * - Materiais: viabilidade do plano com stock actual — /v1/supply/materials
+ *              + .../position (PARTIAL → "—" honesto).
  */
 
-import { lazy, Suspense, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   CalendarRange,
   Boxes,
-  TrendingUp,
-  FlaskConical,
+  Users,
   RefreshCw,
-  Sparkles,
-  Eye,
-  Plus,
+  Cuboid,
   AlertTriangle,
-  CheckCircle2,
-  Clock,
 } from 'lucide-react';
-import {
-  PageHeader,
-  Tabs,
-  Panel,
-  SegmentedControl,
-  EmptyState,
-} from '../../components/dark';
+import { DarkPageLayout } from '../../layouts/DarkPageLayout';
+import { Segmented } from '../../components/dark/Segmented';
+import { KPIBig } from '../../components/dark/KPIBig';
+import { EmptyState } from '../../components/dark/EmptyState';
 import { SkeletonLoader } from '../../components/ui/Skeleton';
-import { getApiBase } from '../../lib/api';
+import { cpoCommitsApi } from '../../lib/api';
+import {
+  BarcosTimeline,
+  CpoGhostSuggestion,
+} from '../../components/planeamento/BarcosTimeline';
+import type { CpoOperation } from '../../components/planeamento/planeamentoApi';
+import { planeamentoApi } from '../../components/planeamento/planeamentoApi';
+import {
+  materiaisApi,
+  type Material,
+  type MaterialPosition,
+} from '../../components/materiais/materiaisApi';
+import { stateFor } from '../../components/materiais/StockRow';
 
-// ─── Lazy imports for "Clássica" sub-views ────────────────────────────────
-const AllocationsPage = lazy(() =>
-  import('../hr/AllocationsPage').then((m) => ({ default: m.AllocationsPage }))
-);
-const MRPPage = lazy(() =>
-  import('../plan/MRPPage').then((m) => ({ default: m.MRPPage }))
-);
-const InventoryPage = lazy(() =>
-  import('../supply/InventoryPage').then((m) => ({ default: m.InventoryPage }))
-);
-const ForecastPage = lazy(() =>
-  import('../supply/ForecastPage').then((m) => ({ default: m.ForecastPage }))
-);
-const TwinPage = lazy(() =>
-  import('../twin/TwinPage').then((m) => ({ default: m.TwinPage }))
-);
+type TabId = 'barcos' | 'pessoas' | 'materiais';
 
-function askCopilot(query: string) {
-  window.dispatchEvent(new CustomEvent('copilot:open', { detail: { query } }));
-}
+const TABS: Array<{ value: TabId; label: string; icon: ReactNode }> = [
+  { value: 'barcos', label: 'Barcos', icon: <Cuboid size={13} /> },
+  { value: 'pessoas', label: 'Pessoas', icon: <Users size={13} /> },
+  { value: 'materiais', label: 'Materiais', icon: <Boxes size={13} /> },
+];
 
-const TAB_IDS = ['atribuicao', 'materiais', 'forecast', 'simulador'] as const;
-type TabId = (typeof TAB_IDS)[number];
-function isTabId(v: string | null): v is TabId {
-  return v !== null && (TAB_IDS as readonly string[]).includes(v);
-}
+// ═══════════════════════════════════════════════════════════════════════════
+// PAGE
+// ═══════════════════════════════════════════════════════════════════════════
 
-const fallback = (
-  <div className="p-8">
-    <SkeletonLoader count={5} />
-  </div>
-);
+export default function PlaneamentoPage(): ReactNode {
+  const [tab, setTab] = useState<TabId>('barcos');
+  const queryClient = useQueryClient();
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// M.4a — ATRIBUIÇÃO (operador → barco com skill match heatmap)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-function AssignmentTab() {
-  const [view, setView] = useState<'detalhada' | 'classica'>('detalhada');
-
-  return (
-    <div className="space-y-3">
-      <div className="flex justify-end">
-        <SegmentedControl
-          size="sm"
-          value={view}
-          onChange={(v) => setView(v as any)}
-          options={[
-            { id: 'detalhada', label: 'Tabela detalhada' },
-            { id: 'classica', label: 'Vista clássica' },
-          ]}
-        />
-      </div>
-      {view === 'detalhada' ? <AssignmentDetailed /> : (
-        <Suspense fallback={fallback}><AllocationsPage /></Suspense>
-      )}
-    </div>
-  );
-}
-
-function AssignmentDetailed() {
-  // Endpoint dedicado /v1/hr/allocations/skills-coverage não existe ainda
-  // (Q.18.ZIP.BE.2 deferred). Tabela mostra estrutura do zip mas sem
-  // dados reais — empty state honesto.
-  return (
-    <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4">
-      <Panel
-        title="Atribuição operador → barco · semana actual"
-        action={
-          <div className="flex items-center gap-2 text-[10px]">
-            <span className="inline-flex items-center px-2 py-0.5 rounded bg-warning/15 text-warning border border-warning/40">
-              — pares incompletos
-            </span>
-            <span className="inline-flex items-center px-2 py-0.5 rounded bg-success/15 text-success border border-success/40">
-              — SPOFs cobertos
-            </span>
-          </div>
-        }
-        flush
-      >
-        <EmptyState
-          title="Tabela operador → barco com skill heatmap"
-          hint={
-            'Endpoint /v1/hr/allocations/skills-coverage ainda não está exposto. ' +
-            'Quando wired, esta tabela mostra: Hull · Fase próxima · Skill req (heatmap 4 cells) · Operador 1 · Operador 2 · Match · Risco. ' +
-            'Para já, usa a vista clássica (AllocationsPage Q.X) para gerir alocações.'
-          }
-          mascot
-          size="md"
-        />
-      </Panel>
-      <Panel title="Cobertura de skills" flush>
-        <div className="px-4 py-3 space-y-2">
-          {['Laminagem', 'Pintura', 'CQ', 'Embalagem', 'Cura'].map((skill, i) => {
-            const pct = ['82%', '71%', '58%', '94%', '66%'][i];
-            const color = i === 2 ? 'bg-danger' : i === 4 ? 'bg-warning' : 'bg-success';
-            return (
-              <div key={skill} className="flex items-center gap-2">
-                <div className="flex-1 text-xs text-text-dark-secondary truncate">{skill}</div>
-                <div className="w-24 h-1.5 bg-dark-900 rounded-full overflow-hidden">
-                  <div className={`h-full ${color}`} style={{ width: pct }} />
-                </div>
-                <span className="w-10 text-right text-[10px] tabular-nums text-text-dark-tertiary">
-                  {pct}
-                </span>
-              </div>
-            );
-          })}
-          <div className="text-[10px] text-text-dark-tertiary mt-3 pt-3 border-t border-white/[0.06]">
-            (Demo até /v1/hr/allocations/skills-coverage existir)
-          </div>
-        </div>
-      </Panel>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// M.4b — MATERIAIS (MRP table detalhada)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-function MateriaisTab() {
-  const [view, setView] = useState<'detalhada' | 'classica'>('detalhada');
-
-  return (
-    <div className="space-y-3">
-      <div className="flex justify-end">
-        <SegmentedControl
-          size="sm"
-          value={view}
-          onChange={(v) => setView(v as any)}
-          options={[
-            { id: 'detalhada', label: 'MRP detalhada' },
-            { id: 'classica', label: 'Vista clássica' },
-          ]}
-        />
-      </div>
-      {view === 'detalhada' ? <MateriaisDetailed /> : (
-        <Suspense fallback={fallback}>
-          <div className="space-y-6"><MRPPage /><InventoryPage /></div>
-        </Suspense>
-      )}
-    </div>
-  );
-}
-
-function MateriaisDetailed() {
-  // Tabela MRP — dados via mrpApi.list() se existir, senão demo rows
-  const mrpQuery = useQuery({
-    queryKey: ['planeamento', 'mrp-list'],
-    queryFn: async () => {
-      try {
-        // Q.21.A — base URL via api.ts (concorda com VITE_API_URL).
-        const resp = await fetch(
-          `${getApiBase()}/v1/plan/mrp/runs?limit=8`,
-          { headers: { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' } }
-        );
-        if (!resp.ok) return null;
-        return await resp.json();
-      } catch {
-        return null;
-      }
+  const replanMutation = useMutation({
+    mutationFn: () => planeamentoApi.runSchedule({ horizon_days: 7 }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['planeamento'] });
     },
-    staleTime: 60_000,
-    retry: 0,
   });
 
-  // Demo rows quando endpoint indisponível, sempre marcado
-  const demoRows = useMemo(
-    () =>
-      Array.from({ length: 8 }).map((_, i) => ({
-        sku: `MAT-${String(1000 + i * 3).padStart(4, '0')}`,
-        material: '— · ▮▮▮▮▮▮',
-        stock: '—',
-        rop: '—',
-        procura: '—',
-        disponibilidade: ['92%', '45%', '12%', '67%', '83%', '29%', '58%', '75%'][i],
-        leadTime: '—',
-        estado: i === 2 ? 'RUPTURA' : i === 5 || i === 1 ? 'ABAIXO' : 'OK',
-      })),
-    []
-  );
-
-  const isLive = mrpQuery.data !== null && mrpQuery.data !== undefined;
-
   return (
-    <Panel
-      title="MRP · próximos 14 dias"
-      action={
-        <div className="flex items-center gap-2 text-[10px]">
-          <span className="inline-flex items-center px-2 py-0.5 rounded bg-danger/15 text-danger border border-danger/40">
-            — em ruptura
-          </span>
-          <span className="inline-flex items-center px-2 py-0.5 rounded bg-warning/15 text-warning border border-warning/40">
-            — abaixo ROP
-          </span>
-          <button
-            type="button"
-            className="inline-flex items-center gap-1 px-2 py-1 rounded bg-accent-500 text-white text-[10px] font-semibold hover:bg-accent-400"
-          >
-            <Plus size={10} /> Encomendar
-          </button>
-        </div>
+    <DarkPageLayout
+      title="Planeamento"
+      subtitle="Plano dia/dia · 15 min · barcos, pessoas e materiais"
+      icon={<CalendarRange size={18} />}
+      actions={
+        <button
+          type="button"
+          onClick={() => replanMutation.mutate()}
+          disabled={replanMutation.isPending}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '6px 14px',
+            fontSize: 12,
+            fontWeight: 500,
+            borderRadius: 'var(--r-sm)',
+            background: 'var(--accent)',
+            color: '#fff',
+            border: 'none',
+            cursor: replanMutation.isPending ? 'wait' : 'pointer',
+            opacity: replanMutation.isPending ? 0.7 : 1,
+          }}
+        >
+          <RefreshCw size={13} />
+          {replanMutation.isPending ? 'A replanear…' : 'Replanear'}
+        </button>
       }
-      flush
     >
-      {!isLive && (
-        <div className="px-4 py-2 text-[10px] text-warning bg-warning/10 border-b border-warning/30">
-          Demo — endpoint /v1/plan/mrp/* ainda não está wired no client.
+      <div style={{ marginBottom: 16 }}>
+        <Segmented options={TABS} value={tab} onChange={setTab} />
+      </div>
+
+      {replanMutation.isError && (
+        <div
+          style={{
+            marginBottom: 14,
+            fontSize: 11.5,
+            color: 'var(--red)',
+            background: 'var(--red-bg)',
+            border: '1px solid var(--red-bd)',
+            borderRadius: 'var(--r-sm)',
+            padding: '8px 12px',
+          }}
+        >
+          Falha a replanear:{' '}
+          {replanMutation.error instanceof Error
+            ? replanMutation.error.message
+            : 'erro desconhecido'}
         </div>
       )}
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs">
-          <thead className="border-b border-white/[0.06]">
-            <tr className="text-left text-[10px] uppercase tracking-wider text-text-dark-tertiary">
-              <th className="px-3 py-2 font-semibold">SKU</th>
-              <th className="px-3 py-2 font-semibold">Material</th>
-              <th className="px-3 py-2 font-semibold text-right">Stock</th>
-              <th className="px-3 py-2 font-semibold text-right">ROP</th>
-              <th className="px-3 py-2 font-semibold text-right">Procura 14d</th>
-              <th className="px-3 py-2 font-semibold">Disponibilidade</th>
-              <th className="px-3 py-2 font-semibold text-right">Lead time</th>
-              <th className="px-3 py-2 font-semibold">Estado</th>
-              <th className="px-3 py-2"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {demoRows.map((r) => {
-              const stateColor =
-                r.estado === 'RUPTURA'
-                  ? 'bg-danger/15 text-danger border-danger/40'
-                  : r.estado === 'ABAIXO'
-                  ? 'bg-warning/15 text-warning border-warning/40'
-                  : 'bg-success/15 text-success border-success/40';
-              const dispColor = r.estado === 'RUPTURA' ? 'bg-danger' : r.estado === 'ABAIXO' ? 'bg-warning' : 'bg-success';
-              return (
-                <tr key={r.sku} className="border-b border-white/[0.04] hover:bg-white/[0.02]">
-                  <td className="px-3 py-2 font-mono text-text-dark-primary">{r.sku}</td>
-                  <td className="px-3 py-2 text-text-dark-secondary">{r.material}</td>
-                  <td className="px-3 py-2 text-right tabular-nums text-text-dark-secondary">{r.stock} kg</td>
-                  <td className="px-3 py-2 text-right tabular-nums text-text-dark-secondary">{r.rop} kg</td>
-                  <td className="px-3 py-2 text-right tabular-nums text-text-dark-secondary">{r.procura} kg</td>
-                  <td className="px-3 py-2">
-                    <div className="w-20 h-1.5 bg-dark-900 rounded-full overflow-hidden">
-                      <div className={`h-full ${dispColor}`} style={{ width: r.disponibilidade }} />
-                    </div>
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-text-dark-secondary">{r.leadTime} d</td>
-                  <td className="px-3 py-2">
-                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold border ${stateColor}`}>
-                      {r.estado}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2">
-                    <button type="button" className="text-text-dark-tertiary hover:text-text-dark-secondary">
-                      <Eye size={12} />
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </Panel>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// M.4c — FORECAST (SVG 30-90d + heatmap sazonalidade)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-function ForecastTab() {
-  const [view, setView] = useState<'detalhada' | 'classica'>('detalhada');
-
-  return (
-    <div className="space-y-3">
-      <div className="flex justify-end">
-        <SegmentedControl
-          size="sm"
-          value={view}
-          onChange={(v) => setView(v as any)}
-          options={[
-            { id: 'detalhada', label: 'Visual 30-90d' },
-            { id: 'classica', label: 'Vista clássica' },
-          ]}
-        />
-      </div>
-      {view === 'detalhada' ? <ForecastDetailed /> : (
-        <Suspense fallback={fallback}><ForecastPage /></Suspense>
-      )}
-    </div>
-  );
-}
-
-function ForecastDetailed() {
-  // SVG demo — endpoint /v1/supply/forecast pode existir mas sem
-  // série temporal disponível. Mostra estrutura do zip com aviso.
-  return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-      <Panel title="Previsão por cliente · próximos 90 dias">
-        <div className="px-4 py-2">
-          <svg width="100%" height="220" viewBox="0 0 600 220" className="block">
-            <defs>
-              <linearGradient id="forecastGrad" x1="0" x2="0" y1="0" y2="1">
-                <stop offset="0" stopColor="#3b82f6" stopOpacity="0.4" />
-                <stop offset="1" stopColor="#3b82f6" stopOpacity="0" />
-              </linearGradient>
-            </defs>
-            {[40, 80, 120, 160, 200].map((y) => (
-              <line key={y} x1="0" y1={y} x2="600" y2={y} stroke="rgba(255,255,255,0.04)" />
-            ))}
-            <path
-              d="M0,180 L60,160 L120,170 L180,140 L240,150 L300,110 L360,120 L420,90 L480,100 L540,70 L600,80 L600,220 L0,220 Z"
-              fill="url(#forecastGrad)"
-            />
-            <path
-              d="M0,180 L60,160 L120,170 L180,140 L240,150 L300,110 L360,120 L420,90 L480,100 L540,70 L600,80"
-              fill="none"
-              stroke="#3b82f6"
-              strokeWidth="2"
-            />
-            {/* uncertainty band */}
-            <path
-              d="M300,110 L360,115 L420,80 L480,90 L540,55 L600,65 L600,95 L540,85 L480,115 L420,100 L360,135 L300,130 Z"
-              fill="#3b82f6"
-              opacity="0.1"
-            />
-          </svg>
-          <div className="text-[10px] text-text-dark-tertiary font-mono mt-2">
-            DEMO · ±—% intervalo confiança · modelo —— v—.—
-          </div>
+      {replanMutation.isSuccess && (
+        <div
+          style={{
+            marginBottom: 14,
+            fontSize: 11.5,
+            color: 'var(--green)',
+            background: 'var(--green-bg)',
+            border: '1px solid var(--green-bd)',
+            borderRadius: 'var(--r-sm)',
+            padding: '8px 12px',
+          }}
+        >
+          Plano regenerado · {replanMutation.data.operations.length} operações ·
+          makespan {replanMutation.data.makespan_hours.toFixed(1)}h
+          {replanMutation.data.degraded
+            ? ` · ATENÇÃO: plano degradado (${replanMutation.data.fallback_reason ?? 'fallback'})`
+            : ''}
         </div>
-      </Panel>
-      <Panel title="Sazonalidade · histórico 24m">
-        <div className="px-4 py-3">
-          <div className="grid grid-cols-12 gap-0.5 mb-3">
-            {Array.from({ length: 24 }).map((_, i) => {
-              const v = Math.sin(i * 0.5) * 0.5 + 0.5;
-              return (
-                <div
-                  key={i}
-                  className="h-8 rounded-sm"
-                  style={{ backgroundColor: `rgba(59, 130, 246, ${v})` }}
-                  title={`Mês ${i + 1}: ${(v * 100).toFixed(0)}%`}
-                />
-              );
-            })}
-          </div>
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <div>
-              <span className="text-text-dark-tertiary">Pico</span>
-              <span className="block text-text-dark-primary">— · semana —</span>
-            </div>
-            <div>
-              <span className="text-text-dark-tertiary">Vale</span>
-              <span className="block text-text-dark-primary">— · semana —</span>
-            </div>
-            <div>
-              <span className="text-text-dark-tertiary">Tendência</span>
-              <span className="block text-text-dark-primary">+— %/ano</span>
-            </div>
-          </div>
-          <div className="text-[10px] text-warning mt-3 pt-3 border-t border-white/[0.06]">
-            Demo visual — endpoint /v1/supply/forecast com série histórica deferred.
-          </div>
-        </div>
-      </Panel>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// M.4d — SIMULADOR (3 cenários)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-function SimuladorTab() {
-  const [view, setView] = useState<'detalhada' | 'classica'>('detalhada');
-
-  return (
-    <div className="space-y-3">
-      <div className="flex justify-end">
-        <SegmentedControl
-          size="sm"
-          value={view}
-          onChange={(v) => setView(v as any)}
-          options={[
-            { id: 'detalhada', label: '3 cenários' },
-            { id: 'classica', label: 'Vista clássica (Twin)' },
-          ]}
-        />
-      </div>
-      {view === 'detalhada' ? <SimuladorDetailed /> : (
-        <Suspense fallback={fallback}><TwinPage /></Suspense>
       )}
-    </div>
+
+      {tab === 'barcos' && <BarcosTabView />}
+      {tab === 'pessoas' && <PessoasTabView />}
+      {tab === 'materiais' && <MateriaisViabilityTab />}
+    </DarkPageLayout>
   );
 }
 
-function SimuladorDetailed() {
-  const scenarios = [
-    {
-      name: 'Cenário A · base',
-      status: 'ACTIVO',
-      icon: <CheckCircle2 size={12} />,
-      eurDay: '—',
-      atrasos: '—',
-      risco: 'BAIXO',
-      confianca: '—',
-      tone: 'success' as const,
-    },
-    {
-      name: 'Cenário B · acelerar Pintura',
-      status: 'SIMULADO',
-      icon: <Clock size={12} />,
-      eurDay: '+— €',
-      atrasos: '—',
-      risco: 'MÉDIO',
-      confianca: '82%',
-      tone: 'warning' as const,
-    },
-    {
-      name: 'Cenário C · adiar #———',
-      status: 'SIMULADO',
-      icon: <AlertTriangle size={12} />,
-      eurDay: '−— €',
-      atrasos: '—',
-      risco: 'ALTO',
-      confianca: '67%',
-      tone: 'danger' as const,
-    },
-  ];
-  const toneColor = {
-    success: 'text-success bg-success/15 border-success/40',
-    warning: 'text-warning bg-warning/15 border-warning/40',
-    danger: 'text-danger bg-danger/15 border-danger/40',
-  };
+// ═══════════════════════════════════════════════════════════════════════════
+// TAB · BARCOS
+// ═══════════════════════════════════════════════════════════════════════════
 
-  return (
-    <Panel title="Cenários what-if" flush>
-      <div className="px-4 py-2 text-[10px] text-warning bg-warning/10 border-b border-warning/30">
-        Demo — endpoint /v1/twin/scenarios/simulate connection deferred. Estes
-        cenários são exemplo do layout do zip. Para simulação real usa a vista clássica (Twin).
-      </div>
-      <div className="px-4 py-4 grid grid-cols-1 md:grid-cols-3 gap-3">
-        {scenarios.map((s, i) => (
-          <div
-            key={i}
-            className="flex flex-col gap-3 p-4 rounded-md bg-dark-900/40 border border-white/[0.06]"
-          >
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] uppercase tracking-wider text-text-dark-tertiary font-mono">
-                CENÁRIO
-              </span>
-              <span
-                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border ${toneColor[s.tone]}`}
-              >
-                {s.icon}
-                {s.status}
-              </span>
-            </div>
-            <div className="text-sm font-semibold text-text-dark-primary">{s.name}</div>
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div className="text-text-dark-tertiary">€/dia</div>
-              <div className="text-right tabular-nums text-text-dark-primary font-mono">{s.eurDay}</div>
-              <div className="text-text-dark-tertiary">Atrasos</div>
-              <div className="text-right tabular-nums text-text-dark-primary font-mono">{s.atrasos}</div>
-              <div className="text-text-dark-tertiary">Risco</div>
-              <div className="text-right tabular-nums text-text-dark-primary font-mono">{s.risco}</div>
-              <div className="text-text-dark-tertiary">Confiança</div>
-              <div className="text-right tabular-nums text-text-dark-primary font-mono">{s.confianca}</div>
-            </div>
-            <button
-              type="button"
-              className="px-3 py-1.5 rounded-md bg-white/[0.06] text-text-dark-secondary hover:bg-white/[0.10] hover:text-text-dark-primary text-xs font-medium transition-colors"
-            >
-              Comparar
-            </button>
-          </div>
-        ))}
-      </div>
-    </Panel>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// PAGE
-// ═══════════════════════════════════════════════════════════════════════════════
-
-export default function PlaneamentoPage() {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const tabFromUrl = searchParams.get('tab');
-  const activeTab: TabId = isTabId(tabFromUrl) ? tabFromUrl : 'atribuicao';
-
-  const tabs = useMemo(
-    () => [
-      { id: 'atribuicao', label: 'Atribuição', icon: <CalendarRange size={13} /> },
-      { id: 'materiais', label: 'Materiais', icon: <Boxes size={13} /> },
-      { id: 'forecast', label: 'Previsão', icon: <TrendingUp size={13} /> },
-      { id: 'simulador', label: 'Simulador', icon: <FlaskConical size={13} /> },
-    ],
-    []
-  );
-
-  const handleTabChange = (id: string) => {
-    const next = new URLSearchParams(searchParams);
-    next.set('tab', id);
-    setSearchParams(next, { replace: true });
-  };
+function BarcosTabView(): ReactNode {
+  const commitsQuery = useQuery({
+    queryKey: ['planeamento', 'cpo-commits'],
+    queryFn: () => cpoCommitsApi.list({ limit: 1 }),
+  });
+  const latest = commitsQuery.data?.[0];
 
   return (
     <div>
-      <PageHeader
-        title="Planeamento"
-        subtitle="ATRIBUIÇÕES · MRP · FORECAST · CENÁRIOS"
-        actions={
-          <>
-            <button
-              type="button"
-              onClick={() => window.location.reload()}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-transparent text-text-dark-secondary hover:bg-white/5 hover:text-text-dark-primary border border-white/[0.08] text-xs font-medium transition-colors"
+      <div style={{ marginBottom: 12 }}>
+        <h2 style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-0)' }}>
+          Plano actual do CPO
+        </h2>
+        <p style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 2 }}>
+          Granularidade 15 min · arrasta uma operação para outra fase para ver a
+          consequência
+        </p>
+      </div>
+      <BarcosTimeline />
+      <CpoGhostSuggestion commit={latest} />
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TAB · PESSOAS  (cobertura por fase derivada das operações reais)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function PessoasTabView(): ReactNode {
+  const commitsQuery = useQuery({
+    queryKey: ['planeamento', 'cpo-commits'],
+    queryFn: () => cpoCommitsApi.list({ limit: 1 }),
+  });
+  const latestSha = commitsQuery.data?.[0]?.commit_sha256;
+
+  const commitQuery = useQuery({
+    queryKey: ['planeamento', 'cpo-commit', latestSha],
+    queryFn: () =>
+      cpoCommitsApi.get(latestSha as string, { include_operations: true }),
+    enabled: latestSha !== undefined,
+  });
+
+  const priorityQuery = useQuery({
+    queryKey: ['planeamento', 'priority-report', latestSha],
+    queryFn: () => planeamentoApi.priorityReport(latestSha),
+    enabled: latestSha !== undefined,
+    retry: 0,
+  });
+
+  const operations = useMemo<CpoOperation[]>(
+    () => (commitQuery.data?.operations as CpoOperation[] | undefined) ?? [],
+    [commitQuery.data],
+  );
+
+  // Cobertura por fase: nº de operadores distintos atribuídos a cada fase.
+  const coverage = useMemo(() => {
+    const byPhase = new Map<string, { workers: Set<string>; ops: number }>();
+    for (const op of operations) {
+      const phase = op.phase_id ?? 'sem fase';
+      const entry = byPhase.get(phase) ?? { workers: new Set(), ops: 0 };
+      for (const w of op.workers) entry.workers.add(w);
+      entry.ops += 1;
+      byPhase.set(phase, entry);
+    }
+    return Array.from(byPhase.entries())
+      .map(([phase, e]) => ({ phase, workers: e.workers.size, ops: e.ops }))
+      .sort((a, b) => b.ops - a.ops);
+  }, [operations]);
+
+  if (commitsQuery.isLoading || (latestSha && commitQuery.isLoading)) {
+    return <SkeletonLoader count={5} />;
+  }
+  if (latestSha === undefined) {
+    return (
+      <EmptyState
+        title="Sem plano para analisar cobertura"
+        hint="Corre o CPO (botão Replanear) para gerar um plano com atribuições de operadores."
+        icon={<Users size={28} />}
+      />
+    );
+  }
+  if (operations.length === 0) {
+    return (
+      <EmptyState
+        title="Plano sem operações"
+        hint="O último commit do CPO não tem operações com atribuição de pessoas."
+        icon={<Users size={28} />}
+      />
+    );
+  }
+
+  const opsWithoutWorker = operations.filter((o) => o.workers.length === 0).length;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <section
+        style={{
+          background: 'var(--bg-1)',
+          border: '1px solid var(--bd-1)',
+          borderRadius: 'var(--r-lg)',
+          padding: 18,
+        }}
+      >
+        <SectionTitle
+          icon={<Users size={14} />}
+          title="Cobertura de pessoas por fase"
+          subtitle="Operadores distintos atribuídos no plano actual do CPO"
+        />
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
+            gap: 10,
+          }}
+        >
+          {coverage.map((c) => (
+            <div
+              key={c.phase}
+              style={{
+                background: 'var(--bg-2)',
+                border: '1px solid var(--bd-1)',
+                borderLeft: `2px solid ${c.workers === 0 ? 'var(--orange)' : 'var(--green)'}`,
+                borderRadius: 'var(--r-sm)',
+                padding: 12,
+              }}
             >
-              <RefreshCw size={13} />
-              Atualizar
-            </button>
-            <button
-              type="button"
-              onClick={() => askCopilot(`Que decisões de planeamento são mais críticas hoje em ${activeTab}?`)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-accent-500 text-white hover:bg-accent-400 text-xs font-medium transition-colors"
-            >
-              <Sparkles size={13} />
-              Pedir ao Copilot
-            </button>
-          </>
+              <div style={{ fontSize: 11.5, color: 'var(--fg-1)', fontWeight: 500 }}>
+                {c.phase}
+              </div>
+              <div
+                className="display tabular"
+                style={{
+                  fontSize: 20,
+                  fontWeight: 600,
+                  marginTop: 4,
+                  color: c.workers === 0 ? 'var(--orange)' : 'var(--green)',
+                }}
+              >
+                {c.workers}
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--fg-3)', marginTop: 2 }}>
+                {c.workers === 1 ? 'operador' : 'operadores'} · {c.ops} ops
+              </div>
+            </div>
+          ))}
+        </div>
+        {opsWithoutWorker > 0 && (
+          <div
+            style={{
+              marginTop: 12,
+              fontSize: 11.5,
+              color: 'var(--orange)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+            }}
+          >
+            <AlertTriangle size={13} />
+            {opsWithoutWorker} operações ainda sem operador atribuído.
+          </div>
+        )}
+      </section>
+
+      <section
+        style={{
+          background: 'var(--bg-1)',
+          border: '1px solid var(--bd-1)',
+          borderRadius: 'var(--r-lg)',
+          padding: 18,
+        }}
+      >
+        <SectionTitle
+          title="Relatório de prioridade"
+          subtitle="O scheduler está a servir as ordens de maior receita primeiro?"
+        />
+        {priorityQuery.isLoading ? (
+          <div style={{ fontSize: 12, color: 'var(--fg-3)' }}>A carregar…</div>
+        ) : priorityQuery.isError ? (
+          <EmptyState
+            title="Relatório de prioridade indisponível"
+            hint="O endpoint /v1/plan/priority-report falhou para este commit."
+            size="sm"
+          />
+        ) : priorityQuery.data ? (
+          <div>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+              <span
+                className="display tabular"
+                style={{
+                  fontSize: 30,
+                  fontWeight: 600,
+                  color:
+                    priorityQuery.data.alignment_pct >= 80
+                      ? 'var(--green)'
+                      : priorityQuery.data.alignment_pct >= 50
+                        ? 'var(--yellow)'
+                        : 'var(--red)',
+                }}
+              >
+                {priorityQuery.data.alignment_pct.toFixed(0)}%
+              </span>
+              <span style={{ fontSize: 12, color: 'var(--fg-2)' }}>
+                alinhamento receita ↔ ordem do scheduler
+              </span>
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--fg-3)', marginTop: 4 }}>
+              {priorityQuery.data.inversions} inversões de{' '}
+              {priorityQuery.data.max_inversions} possíveis ·{' '}
+              {priorityQuery.data.items.length} ordens
+            </div>
+          </div>
+        ) : null}
+      </section>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TAB · MATERIAIS  (viabilidade do plano com stock actual)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function MateriaisViabilityTab(): ReactNode {
+  const materialsQuery = useQuery({
+    queryKey: ['planeamento', 'materials'],
+    queryFn: () => materiaisApi.listMaterials({ active_only: true }),
+  });
+  const materials = useMemo(
+    () => materialsQuery.data ?? [],
+    [materialsQuery.data],
+  );
+
+  const positionsQuery = useQuery({
+    queryKey: ['planeamento', 'material-positions', materials.map((m) => m.sku_id)],
+    queryFn: async () => {
+      const entries = await Promise.all(
+        materials.map(async (m) => {
+          try {
+            return [m.sku_id, await materiaisApi.getPosition(m.sku_id)] as const;
+          } catch {
+            return [m.sku_id, null] as const;
+          }
+        }),
+      );
+      return Object.fromEntries(entries) as Record<string, MaterialPosition | null>;
+    },
+    enabled: materials.length > 0,
+    retry: 0,
+  });
+
+  if (materialsQuery.isLoading) {
+    return <SkeletonLoader count={4} />;
+  }
+  if (materialsQuery.isError) {
+    return (
+      <EmptyState
+        title="Não foi possível verificar a viabilidade"
+        hint="O endpoint /v1/supply/materials falhou."
+        icon={<Boxes size={28} />}
+        action={
+          <button
+            type="button"
+            onClick={() => materialsQuery.refetch()}
+            style={{
+              padding: '6px 14px',
+              fontSize: 12,
+              borderRadius: 'var(--r-sm)',
+              background: 'var(--accent)',
+              color: '#fff',
+              border: 'none',
+              cursor: 'pointer',
+            }}
+          >
+            Tentar novamente
+          </button>
         }
       />
+    );
+  }
+  if (materials.length === 0) {
+    return (
+      <EmptyState
+        title="Sem materiais para verificar"
+        hint="Não há materiais no master de stock para este tenant."
+        icon={<Boxes size={28} />}
+      />
+    );
+  }
 
-      <div className="px-6 pt-2">
-        <Tabs tabs={tabs} value={activeTab} onChange={handleTabChange} sticky />
+  const rows = materials.map((m: Material) => ({
+    material: m,
+    position: positionsQuery.data?.[m.sku_id] ?? null,
+  }));
+  const critical = rows.filter((r) => {
+    const s = stateFor(r);
+    return s === 'critical' || s === 'out';
+  });
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(3, 1fr)',
+          gap: 12,
+        }}
+      >
+        <KPIBig
+          label="Materiais verificados"
+          value={materials.length}
+          status="accent"
+        />
+        <KPIBig
+          label="Em risco"
+          value={critical.length}
+          status={critical.length > 0 ? 'red' : 'green'}
+          accent={critical.length > 0 ? 'red' : 'green'}
+        />
+        <KPIBig
+          label="Viabilidade do plano"
+          value={critical.length === 0 ? 'OK' : 'Em risco'}
+          context={
+            critical.length === 0
+              ? 'Stock cobre o plano actual'
+              : `${critical.length} materiais podem bloquear barcos`
+          }
+          status={critical.length === 0 ? 'green' : 'red'}
+        />
       </div>
 
-      <div className="px-2 py-4">
-        {activeTab === 'atribuicao' && <AssignmentTab />}
-        {activeTab === 'materiais' && <MateriaisTab />}
-        {activeTab === 'forecast' && <ForecastTab />}
-        {activeTab === 'simulador' && <SimuladorTab />}
+      <section
+        style={{
+          background: 'var(--bg-1)',
+          border: '1px solid var(--bd-1)',
+          borderRadius: 'var(--r-lg)',
+          padding: 18,
+        }}
+      >
+        <SectionTitle
+          icon={<Boxes size={14} />}
+          title="O plano é viável com o stock actual?"
+          subtitle="Verificação por material — ligado à página Materiais"
+        />
+        {positionsQuery.isLoading ? (
+          <div style={{ fontSize: 12, color: 'var(--fg-3)' }}>
+            A ler posições de stock…
+          </div>
+        ) : (
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))',
+              gap: 10,
+            }}
+          >
+            {rows.map((r) => {
+              const s = stateFor(r);
+              const tone =
+                s === 'out' || s === 'critical'
+                  ? 'red'
+                  : s === 'low'
+                    ? 'yellow'
+                    : s === 'unknown'
+                      ? 'gray'
+                      : 'green';
+              return (
+                <div
+                  key={r.material.sku_id}
+                  style={{
+                    background: 'var(--bg-2)',
+                    border: '1px solid var(--bd-1)',
+                    borderLeft: `2px solid var(--${tone})`,
+                    borderRadius: 'var(--r-sm)',
+                    padding: 11,
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 11,
+                      color: 'var(--fg-1)',
+                      fontWeight: 500,
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}
+                  >
+                    {r.material.name}
+                  </div>
+                  <div
+                    className="tabular"
+                    style={{
+                      fontSize: 13,
+                      fontWeight: 600,
+                      marginTop: 3,
+                      color: tone === 'gray' ? 'var(--fg-3)' : `var(--${tone})`,
+                    }}
+                  >
+                    {r.position
+                      ? `${r.position.on_hand} ${r.material.unit_of_measure}`
+                      : '—'}
+                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--fg-3)', marginTop: 2 }}>
+                    {r.position?.days_to_stockout != null
+                      ? `acaba ~${Math.round(r.position.days_to_stockout)}d`
+                      : r.position
+                        ? 'sem estimativa'
+                        : 'posição indisponível'}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════════════════════════
+
+function SectionTitle({
+  icon,
+  title,
+  subtitle,
+}: {
+  icon?: ReactNode;
+  title: string;
+  subtitle?: string;
+}): ReactNode {
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+        {icon && <span style={{ color: 'var(--fg-2)' }}>{icon}</span>}
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-0)' }}>
+          {title}
+        </span>
       </div>
+      {subtitle && (
+        <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 3 }}>
+          {subtitle}
+        </div>
+      )}
     </div>
   );
 }
