@@ -1,27 +1,40 @@
 /**
- * Sidebar — port literal de design/nelo-zip/src/shell.jsx Sidebar.
+ * Sidebar — navegação NELO (Q.52.S).
  *
- * 10 itens em 3 grupos:
- *   OPERAÇÃO  → Direção · Inbox de decisões (badge) · Plano de produção · Atribuição diária (badge)
- *   ANÁLISE   → OEE · Qualidade · Operadores · Expedição
- *   SISTEMA   → O que aprendi · Definições
+ * Estrutura do design `shell.jsx`:
+ *   PRINCIPAL        → 12 itens: Painel · Planeamento · Fábrica · Expedição ·
+ *                      Equipa · Qualidade · Materiais · Simulações · Regras ·
+ *                      O que aprendi · Copilot · Configuração
+ *   VISTAS ESPECIAIS → Direção (ceo) · Operador (tablet fullscreen)
+ *   SISTEMA          → 5 páginas órfãs preservadas: Inbox de decisões ·
+ *                      Relatórios · Dados-mestre · Saúde · RBAC
  *
- * Sprint Q.18.ZIP.shell.
+ * Badge dinâmico no Inbox = decisões PROPOSED por aprovar.
+ *
+ * Sprint Q.52.S (substitui o shell Q.18.ZIP de 10 itens).
  */
 
 import { NavLink, useLocation } from 'react-router-dom';
 import {
-  Building2 as Building,
-  Inbox,
+  Home,
   Calendar,
-  Activity,
-  TrendingUp,
-  Shield,
-  Users,
+  Factory,
   Truck,
+  Users,
+  Shield,
+  Boxes,
+  FlaskConical,
+  BookOpen,
   Brain,
+  Sparkles,
   Settings,
-  FileCode,
+  Building2 as Building,
+  Tablet,
+  Inbox,
+  FileText,
+  Database,
+  HeartPulse,
+  Lock,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -61,13 +74,13 @@ interface NavGroup {
 export function Sidebar() {
   const location = useLocation();
 
-  // Counts dinâmicos para badges Inbox + Atribuição
+  // Badge dinâmico para o Inbox de decisões (decisões PROPOSED).
   const inboxCountQuery = useQuery({
     queryKey: ['sidebar', 'inbox-pending'],
     queryFn: async () => {
       try {
-        const r: any = await decisionsApi.list({ status: 'PROPOSED', page_size: 1 });
-        return r?.total ?? 0;
+        const r = await decisionsApi.list({ status: 'PROPOSED', page_size: 1 });
+        return r.total ?? 0;
       } catch {
         return 0;
       }
@@ -77,38 +90,45 @@ export function Sidebar() {
   });
 
   const inboxBadge = inboxCountQuery.data ?? undefined;
-  // Atribuição badge — sem endpoint dedicado ainda, deixar undefined.
 
   const NAV: NavGroup[] = [
     {
-      label: 'Operação',
+      label: 'Principal',
+      items: [
+        { path: '/painel', label: 'Painel', icon: <Home size={16} /> },
+        { path: '/planeamento', label: 'Planeamento', icon: <Calendar size={16} /> },
+        { path: '/fabrica', label: 'Fábrica', icon: <Factory size={16} /> },
+        { path: '/expedicao', label: 'Expedição', icon: <Truck size={16} /> },
+        { path: '/equipa', label: 'Equipa', icon: <Users size={16} /> },
+        { path: '/qualidade', label: 'Qualidade', icon: <Shield size={16} /> },
+        { path: '/materiais', label: 'Materiais', icon: <Boxes size={16} /> },
+        { path: '/simulacoes', label: 'Simulações', icon: <FlaskConical size={16} /> },
+        { path: '/regras', label: 'Regras', icon: <BookOpen size={16} /> },
+        { path: '/aprendi', label: 'O que aprendi', icon: <Brain size={16} /> },
+        { path: '/copilot', label: 'Copilot', icon: <Sparkles size={16} /> },
+        { path: '/configuracao', label: 'Configuração', icon: <Settings size={16} /> },
+      ],
+    },
+    {
+      label: 'Vistas especiais',
       items: [
         { path: '/direcao', label: 'Direção', icon: <Building size={16} /> },
+        { path: '/operador', label: 'Operador', icon: <Tablet size={16} /> },
+      ],
+    },
+    {
+      label: 'Sistema',
+      items: [
         {
           path: '/inbox',
           label: 'Inbox de decisões',
           icon: <Inbox size={16} />,
           badge: inboxBadge && inboxBadge > 0 ? inboxBadge : undefined,
         },
-        { path: '/plano-producao', label: 'Plano de produção', icon: <Calendar size={16} /> },
-        { path: '/atribuicao', label: 'Atribuição diária', icon: <Activity size={16} /> },
-      ],
-    },
-    {
-      label: 'Análise',
-      items: [
-        { path: '/oee', label: 'OEE', icon: <TrendingUp size={16} /> },
-        { path: '/qualidade', label: 'Qualidade', icon: <Shield size={16} /> },
-        { path: '/operadores', label: 'Operadores', icon: <Users size={16} /> },
-        { path: '/expedicao', label: 'Expedição', icon: <Truck size={16} /> },
-      ],
-    },
-    {
-      label: 'Sistema',
-      items: [
-        { path: '/aprendizagem', label: 'O que aprendi', icon: <Brain size={16} /> },
-        { path: '/regras', label: 'Regras Q.17 (YAML)', icon: <FileCode size={16} /> },
-        { path: '/definicoes', label: 'Definições', icon: <Settings size={16} /> },
+        { path: '/relatorios', label: 'Relatórios', icon: <FileText size={16} /> },
+        { path: '/dados-mestre', label: 'Dados-mestre', icon: <Database size={16} /> },
+        { path: '/saude', label: 'Saúde', icon: <HeartPulse size={16} /> },
+        { path: '/rbac', label: 'RBAC', icon: <Lock size={16} /> },
       ],
     },
   ];
@@ -122,12 +142,8 @@ export function Sidebar() {
   const me = meQuery.data;
 
   const isActive = (path: string): boolean => {
-    if (path === '/direcao') {
-      return (
-        location.pathname === '/direcao' ||
-        location.pathname === '/' ||
-        location.pathname === '/painel'
-      );
+    if (path === '/painel') {
+      return location.pathname === '/painel' || location.pathname === '/';
     }
     return location.pathname === path || location.pathname.startsWith(path + '/');
   };
