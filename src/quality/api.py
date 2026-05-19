@@ -147,6 +147,75 @@ async def resolve_rework(
     return _rework_to_dict(row)
 
 
+# ─── Q.54.S — qualidade dos moldes (camada curada) ────────────────────────
+
+@router.get("/molds")
+async def list_mold_quality(
+    limit: int = Query(60, ge=1, le=510),
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Moldes reais com o seu histórico de defeitos.
+
+    Junta o master curado (``factory_curated.mold``, 510 moldes) com os
+    eventos de qualidade (``quality_event``), agregados por molde e
+    ordenados pelos que mais defeitos causam.
+
+    Distinto de ``/v1/plan/molds/*`` — esse serve o catálogo de
+    planeamento (``plan.mold``), num espaço de IDs (``MLD_ID``) que não
+    casa com os dados de defeitos. Este expõe os moldes que a fábrica
+    realmente usou, keyed por ``molde_id`` — o mesmo das tabelas de
+    qualidade. Read-only.
+    """
+    from sqlalchemy import desc, func, select
+
+    from src.factory_data_product.models.curated import (
+        CuratedMold,
+        CuratedQualityEvent,
+    )
+
+    stmt = (
+        select(
+            CuratedMold.molde_id,
+            CuratedMold.molde_nome,
+            CuratedMold.tipo,
+            CuratedMold.em_manutencao,
+            func.count(CuratedQualityEvent.id).label("defect_events"),
+            func.coalesce(
+                func.sum(CuratedQualityEvent.quantidade), 0
+            ).label("defect_qty"),
+            func.max(CuratedQualityEvent.data_evento).label("last_defect"),
+        )
+        .select_from(CuratedMold)
+        .join(
+            CuratedQualityEvent,
+            CuratedQualityEvent.molde_id == CuratedMold.molde_id,
+            isouter=True,
+        )
+        .group_by(
+            CuratedMold.molde_id,
+            CuratedMold.molde_nome,
+            CuratedMold.tipo,
+            CuratedMold.em_manutencao,
+        )
+        .order_by(desc("defect_qty"), desc("defect_events"))
+        .limit(limit)
+    )
+    rows = (await session.execute(stmt)).all()
+    return [
+        {
+            "molde_id": r[0],
+            "nome": r[1],
+            "tipo": r[2],
+            "em_manutencao": bool(r[3]),
+            "defect_events": int(r[4] or 0),
+            "defect_qty": int(r[5] or 0),
+            "last_defect": r[6].isoformat() if r[6] else None,
+        }
+        for r in rows
+    ]
+
+
 # ─── R.3 — Worker ranking ─────────────────────────────────────────────────
 
 @router.get("/workers/ranking")

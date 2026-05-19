@@ -260,6 +260,31 @@ function useMolds() {
   });
 }
 
+/** Q.54.S — molde real do ERP com o seu histórico de defeitos. */
+interface MoldQuality {
+  molde_id: string;
+  nome: string | null;
+  tipo: string | null;
+  em_manutencao: boolean;
+  defect_events: number;
+  defect_qty: number;
+  last_defect: string | null;
+}
+
+/**
+ * Q.54.S — moldes reais (factory_curated.mold) cruzados com os eventos de
+ * qualidade. Distinto de `useMolds`, que serve o catálogo de planeamento
+ * (`plan.mold`) cujo espaço de IDs não casa com os dados de defeitos.
+ */
+function useMoldQuality() {
+  return useQuery<MoldQuality[]>({
+    queryKey: ['qualidade', 'mold-quality'],
+    queryFn: () => apiFetch<MoldQuality[]>('/v1/quality/molds?limit=60'),
+    staleTime: 60_000,
+    retry: 0,
+  });
+}
+
 // ─── ResumoTab ───────────────────────────────────────────────────────────
 
 function ResumoTab() {
@@ -1028,16 +1053,17 @@ function ErrosTab() {
 // ─── MoldesTab ───────────────────────────────────────────────────────────
 
 function MoldesTab() {
-  const moldsQuery = useMolds();
+  const moldsQuery = useMoldQuality();
   const molds = moldsQuery.data ?? [];
+  const maxQty = molds.reduce((acc, m) => Math.max(acc, m.defect_qty), 0);
 
   return (
     <>
       <Card padding={18} style={{ marginBottom: 14 }}>
         <SectionHeader
           icon={<Wrench size={14} />}
-          title="Saúde dos moldes"
-          subtitle="MoldHealthService · ordenado por risco"
+          title="Defeitos por molde"
+          subtitle="Moldes reais do ERP × eventos de qualidade · pior primeiro"
         />
       </Card>
       {moldsQuery.isLoading ? (
@@ -1048,8 +1074,8 @@ function MoldesTab() {
         <Card padding={18}>
           <EmptyState
             size="sm"
-            title="Sem moldes sincronizados"
-            hint="Quando houver moldes na base de dados, o estado de saúde de cada um aparece aqui."
+            title="Sem moldes com histórico de defeitos"
+            hint="Os moldes aparecem aqui quando há eventos de qualidade associados."
           />
         </Card>
       ) : (
@@ -1061,23 +1087,22 @@ function MoldesTab() {
           }}
         >
           {molds.map((m) => {
-            const score = m.health?.score_0_100 ?? 0;
+            // Tom relativo: o molde com mais defeitos puxa a escala.
             const tone =
-              m.health?.risk_category === 'red'
+              maxQty > 0 && m.defect_qty >= maxQty * 0.6
                 ? 'red'
-                : m.health?.risk_category === 'yellow'
+                : maxQty > 0 && m.defect_qty >= maxQty * 0.25
                   ? 'yellow'
                   : 'green';
-            const label =
-              tone === 'red' ? 'Crítico' : tone === 'yellow' ? 'Aviso' : 'OK';
             return (
-              <Card key={m.id} padding={14}>
+              <Card key={m.molde_id} padding={14}>
                 <div
                   style={{
                     display: 'flex',
                     justifyContent: 'space-between',
                     alignItems: 'baseline',
                     marginBottom: 12,
+                    gap: 6,
                   }}
                 >
                   <span
@@ -1085,33 +1110,40 @@ function MoldesTab() {
                       fontSize: 13,
                       color: 'var(--fg-0)',
                       fontWeight: 600,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
                     }}
+                    title={m.tipo ?? m.nome ?? m.molde_id}
                   >
-                    {m.name ?? m.mold_code}
+                    {m.tipo ?? m.nome ?? `Molde ${m.molde_id}`}
                   </span>
-                  <span
-                    style={{
-                      padding: '1px 7px',
-                      fontSize: 10.5,
-                      borderRadius: 999,
-                      color: `var(--${tone})`,
-                      background: `var(--${tone}-bg)`,
-                      border: `1px solid var(--${tone}-bd)`,
-                    }}
-                  >
-                    {label}
-                  </span>
+                  {m.em_manutencao && (
+                    <span
+                      style={{
+                        padding: '1px 7px',
+                        fontSize: 10.5,
+                        borderRadius: 999,
+                        color: 'var(--yellow)',
+                        background: 'var(--yellow-bg)',
+                        border: '1px solid var(--yellow-bd)',
+                        flexShrink: 0,
+                      }}
+                    >
+                      Manutenção
+                    </span>
+                  )}
                 </div>
                 <div
                   className="tabular display"
                   style={{
                     fontSize: 22,
-                    color: 'var(--fg-0)',
+                    color: `var(--${tone})`,
                     fontWeight: 600,
                     marginBottom: 6,
                   }}
                 >
-                  {score.toFixed(0)}
+                  {m.defect_qty.toLocaleString('pt-PT')}
                   <span
                     style={{
                       fontSize: 12,
@@ -1119,12 +1151,13 @@ function MoldesTab() {
                       fontWeight: 400,
                     }}
                   >
-                    /100 health
+                    {' '}
+                    defeitos
                   </span>
                 </div>
                 <MiniBar
-                  value={score}
-                  max={100}
+                  value={m.defect_qty}
+                  max={maxQty || 1}
                   color={`var(--${tone})`}
                   height={4}
                 />
@@ -1138,17 +1171,27 @@ function MoldesTab() {
                   }}
                 >
                   <span>
-                    Pockets:{' '}
+                    Eventos:{' '}
                     <strong style={{ color: 'var(--fg-1)' }}>
-                      {m.pocket_count}
+                      {m.defect_events}
                     </strong>
                   </span>
                   <span>
-                    Vida:{' '}
+                    Último:{' '}
                     <strong style={{ color: 'var(--fg-1)' }}>
-                      {m.expected_life_cycles ?? '—'}
+                      {m.last_defect
+                        ? new Date(m.last_defect).toLocaleDateString('pt-PT', {
+                            day: '2-digit',
+                            month: 'short',
+                          })
+                        : '—'}
                     </strong>
                   </span>
+                </div>
+                <div
+                  style={{ marginTop: 6, fontSize: 10, color: 'var(--fg-3)' }}
+                >
+                  molde {m.molde_id}
                 </div>
               </Card>
             );
