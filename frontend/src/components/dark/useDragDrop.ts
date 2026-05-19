@@ -13,7 +13,7 @@
  * Sprint Q.52.B.
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { DragEvent } from 'react';
 
 /** Tipos de payload arrastáveis no NELO. */
@@ -29,6 +29,20 @@ const MIME = 'application/x-nelo-dnd';
 /**
  * Handlers para um elemento ARRASTÁVEL (origem).
  * Espalhar em `<div {...dragProps} draggable>`.
+ *
+ * Q.54.K — robustez do estado `dragging`:
+ *   1. O `dragend` do HTML5 nem sempre chega ao handler React: se a barra
+ *      arrastada for re-renderizada/remontada durante o arrasto (ex.: o
+ *      `onDrop` invalida queries → a lista de barras volta a montar), o nó
+ *      DOM que começou o arrasto desaparece e o `dragend` perde-se → o
+ *      estado `dragging` ficava preso a `true` para sempre, deixando a
+ *      barra a 40% de opacidade e a BLOQUEAR o `onClick`. Resolvido com um
+ *      listener global de `dragend`/`drop` na `window` que repõe sempre
+ *      `dragging=false`, mesmo que o `dragend` local nunca dispare (drop
+ *      fora de zona válida, ESC, remontagem).
+ *   2. `wasDragging()` dá ao chamador uma forma fiável de distinguir um
+ *      clique de um arrasto sem depender do estado `dragging` (que pode
+ *      estar a meio de uma transição de render).
  */
 export function useDraggable<T>(
   payload: DragPayload<T>,
@@ -43,27 +57,66 @@ export function useDraggable<T>(
     onDragEnd: (e: DragEvent<HTMLElement>) => void;
   };
   dragging: boolean;
+  /** `true` durante a janela curta a seguir a um arrasto — para o chamador
+   * ignorar o `click` sintético que se segue ao `dragend`. */
+  wasDragging: () => boolean;
 } {
   const [dragging, setDragging] = useState(false);
+  // Ref para handlers estáveis e para o `wasDragging()` ler sem re-render.
+  const draggingRef = useRef(false);
+  const dragEndedAtRef = useRef(0);
+  const optsRef = useRef(opts);
+  optsRef.current = opts;
+
+  const stopDragging = useCallback((): void => {
+    if (!draggingRef.current) return;
+    draggingRef.current = false;
+    dragEndedAtRef.current = Date.now();
+    setDragging(false);
+    optsRef.current?.onDragEnd?.();
+  }, []);
+
+  // Rede de segurança: o `dragend`/`drop` borbulha até à window mesmo que
+  // o nó de origem tenha sido remontado. Garante que `dragging` nunca fica
+  // preso a `true`.
+  useEffect(() => {
+    if (!dragging) return;
+    const reset = (): void => stopDragging();
+    window.addEventListener('dragend', reset, true);
+    window.addEventListener('drop', reset, true);
+    return () => {
+      window.removeEventListener('dragend', reset, true);
+      window.removeEventListener('drop', reset, true);
+    };
+  }, [dragging, stopDragging]);
 
   const onDragStart = useCallback(
     (e: DragEvent<HTMLElement>): void => {
       e.dataTransfer.setData(MIME, JSON.stringify(payload));
       e.dataTransfer.effectAllowed = 'move';
+      draggingRef.current = true;
       setDragging(true);
-      opts?.onDragStart?.();
+      optsRef.current?.onDragStart?.();
     },
-    [payload, opts],
+    [payload],
   );
 
   const onDragEnd = useCallback((): void => {
-    setDragging(false);
-    opts?.onDragEnd?.();
-  }, [opts]);
+    stopDragging();
+  }, [stopDragging]);
+
+  // O `click` sintético dispara logo a seguir ao `dragend` na mesma barra.
+  // Uma janela curta (250ms) distingue-o de um clique genuíno.
+  const wasDragging = useCallback(
+    (): boolean =>
+      draggingRef.current || Date.now() - dragEndedAtRef.current < 250,
+    [],
+  );
 
   return {
     dragProps: { draggable: true, onDragStart, onDragEnd },
     dragging,
+    wasDragging,
   };
 }
 

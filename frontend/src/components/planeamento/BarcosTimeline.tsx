@@ -442,7 +442,7 @@ function OpBarView({
   fromPhase: string;
   onSelectOp: (op: CpoOperation) => void;
 }): ReactNode {
-  const { dragProps, dragging } = useDraggable<DragData>({
+  const { dragProps, dragging, wasDragging } = useDraggable<DragData>({
     kind: 'boat',
     data: { operationId: bar.op.operation_id, fromPhase },
   });
@@ -457,10 +457,12 @@ function OpBarView({
       {...dragProps}
       role="button"
       tabIndex={0}
-      // O click nativo não dispara depois de um drag HTML5 (termina em
-      // `dragend`) — arrastar e clicar coexistem sem se interferirem.
+      // Clicar abre o detalhe do barco; arrastar move a operação. O `click`
+      // sintético que se segue a um `dragend` é filtrado por `wasDragging()`
+      // (Q.54.K) — não fica refém do estado `dragging`, que podia ficar
+      // preso a `true` se a barra fosse remontada durante o arrasto.
       onClick={() => {
-        if (!dragging) onSelectOp(bar.op);
+        if (!wasDragging()) onSelectOp(bar.op);
       }}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
