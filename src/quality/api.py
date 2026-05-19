@@ -265,3 +265,55 @@ async def quality_by_lot(
     svc = SupplierQualityService(session, tenant_id)
     items = await svc.by_lot(since=since, until=until, top_n=top_n)
     return {"items": items, "count": len(items)}
+
+
+# ─── Q.53.A — ML defect risk + hull zones + ROI (Qualidade page tabs) ─────
+
+@router.get("/defect-risk")
+async def defect_risk(
+    top_n: int = Query(50, ge=1, le=200),
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Tab "Predições" — P(defeito) per in-progress order from the active
+    `QualityRiskModel`. Trains+promotes a model on first use when the
+    registry is empty; degrades with `model_available=false` when the
+    quality history is too thin to train.
+    """
+    from src.quality.services.defect_risk_service import DefectRiskService
+
+    svc = DefectRiskService(session, tenant_id)
+    return await svc.defect_risk(top_n=top_n)
+
+
+@router.get("/defect-zones")
+async def defect_zones(
+    since: Optional[datetime] = None,
+    until: Optional[datetime] = None,
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Tab "Mapa do casco" — rework events aggregated by hull zone for the
+    SVG. Always returns every canonical zone (count 0 when clean).
+    """
+    from src.quality.services.defect_zone_service import DefectZoneService
+
+    svc = DefectZoneService(session, tenant_id)
+    return await svc.zones(since=since, until=until)
+
+
+@router.get("/roi-actions")
+async def roi_actions(
+    since: Optional[datetime] = None,
+    until: Optional[datetime] = None,
+    top_n: int = Query(25, ge=1, le=100),
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Tab "Custos-ROI" — € saved vs invested per quality action, ranked by
+    net return, from `quality.rework_entry` + the error catalog.
+    """
+    from src.quality.services.roi_service import ROIService
+
+    svc = ROIService(session, tenant_id)
+    return await svc.roi_by_action(since=since, until=until, top_n=top_n)
