@@ -235,7 +235,17 @@ class CopilotService:
                 perf_metrics["rag_retrieval_ms"] = int((time.time() - rag_start) * 1000)
             except Exception as e:
                 logger.warning(f"Erro ao recuperar RAG chunks: {e}")
-        
+                # Q.55.B.2.1 — uma falha no RAG (ex.: a tabela
+                # `copilot_rag_chunk` não existe quando o pgvector não
+                # está instalado) aborta a transação asyncpg. Sem
+                # rollback, TODAS as queries seguintes da mesma sessão
+                # falham com InFailedSQLTransactionError. O RAG é
+                # opcional — recuperar a sessão para o resto do pedido.
+                try:
+                    await self.session.rollback()
+                except Exception:
+                    pass
+
         # 6. Render prompt (com fact pack se kpi_snapshot disponível)
         # Limitar contexto para perguntas simples (reduzir prompt size = resposta mais rápida)
         prompt_start = time.time()
