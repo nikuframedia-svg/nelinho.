@@ -52,17 +52,32 @@ from src.plan.services.phase_classification import (
     is_completed_phase,
     phase_sequence,
 )
+from src.plan.services.phase_ordering import (
+    PhaseOrderingService,
+    resolve_phase_sequence,
+)
 from src.shared.auth.headers import require_tenant_header
 from src.shared.database import get_session
 
 router = APIRouter(tags=["PLAN.Orders"])
 
 
-def _order_to_card(o: ProductionOrder) -> dict[str, Any]:
+def _order_to_card(
+    o: ProductionOrder,
+    order_map: dict[str, int],
+) -> dict[str, Any]:
     # Q.53.I — cliente é exposto a partir do atributo `customer_name` se a
     # sincronização ERP já o tiver populado; caso contrário `null` honesto
     # (sem mock). O modelo legacy ainda não tem coluna dedicada.
     customer = getattr(o, "customer_name", None)
+    # Q.54.O — `phase_sequence` vem da ordem real do routing
+    # (`routing_template_phase`) quando o routing está semeado; só cai no
+    # dicionário estático `NELO_PHASE_ORDER` se `order_map` vier vazio.
+    # Misturar as duas escalas daria colunas mal ordenadas.
+    if order_map:
+        seq = resolve_phase_sequence(o.current_phase_name, order_map)
+    else:
+        seq = phase_sequence(o.current_phase_name)
     return {
         "id": str(o.id),
         "hull": str(o.legacy_id) if o.legacy_id is not None else None,
@@ -72,7 +87,7 @@ def _order_to_card(o: ProductionOrder) -> dict[str, Any]:
         # Q.54.B — `phase` traz sempre o NOME da fase; `phase_sequence` dá
         # a posição canónica no routing NELO (None se a fase é desconhecida).
         "phase": o.current_phase_name,
-        "phase_sequence": phase_sequence(o.current_phase_name),
+        "phase_sequence": seq,
         "status": o.status.value if hasattr(o.status, "value") else str(o.status),
         "created_date": o.created_date.isoformat() if o.created_date else None,
         "transport_date": o.transport_date.isoformat() if o.transport_date else None,
@@ -108,8 +123,13 @@ async def list_active_orders(
     result = await session.execute(stmt)
     rows = result.scalars().all()
 
+    # Q.54.O — ordem canónica das fases derivada do routing real. Mapa
+    # vazio (routing não-semeado) → `_order_to_card` cai no dicionário
+    # estático. Uma só query agregada — `/orders/active` não é hot.
+    order_map = await PhaseOrderingService(session, tenant_id).phase_order_map()
+
     active = [o for o in rows if not is_completed_phase(o.current_phase_name)]
-    return [_order_to_card(o) for o in active[:limit]]
+    return [_order_to_card(o, order_map) for o in active[:limit]]
 
 
 @router.get("/orders/otd-risk")

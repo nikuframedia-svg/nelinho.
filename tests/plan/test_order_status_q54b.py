@@ -255,12 +255,27 @@ async def test_reconcile_never_touches_cancelled_orders():
 
 
 class _EndpointSession:
-    """Sessão que devolve uma lista fixa de ordens para o endpoint."""
+    """Sessão que devolve ordens para a query principal e, para a query de
+    ordenação de fases (Q.54.O), as linhas de routing.
 
-    def __init__(self, orders):
+    `routing` é uma lista de tuplos ``(phase_name, posição_média)``; vazia
+    (default) → o endpoint cai no dicionário estático ``NELO_PHASE_ORDER``.
+    """
+
+    def __init__(self, orders, routing=None):
         self._orders = list(orders)
+        self._routing = list(routing or [])
 
-    async def execute(self, _stmt):
+    async def execute(self, stmt):
+        if "routing_template_phase" in str(stmt).lower():
+            rows = self._routing
+
+            class _RoutingResult:
+                def all(self_inner):
+                    return list(rows)
+
+            return _RoutingResult()
+
         orders = self._orders
 
         class _R:
