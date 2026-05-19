@@ -13,6 +13,7 @@
  */
 
 import { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import { X } from 'lucide-react';
 
@@ -57,7 +58,14 @@ export function Sheet({
 
   if (!open) return null;
 
-  return (
+  // Q.57 — renderizado num portal para `document.body`. Um overlay
+  // `position: fixed` não pode ser filho do contentor da página: o
+  // `DarkPageLayout` marca-o com `.page-enter`, cujo `.page-enter > *`
+  // dava ao backdrop um `opacity: 0` base — a janela fazia fade-in e
+  // depois revertia para invisível ("abre e desaparece logo"). O portal
+  // tira o Sheet dessa árvore e de qualquer containing-block de um
+  // ancestral com transform/filter.
+  return createPortal(
     <div
       onClick={onClose}
       role="dialog"
@@ -154,6 +162,7 @@ export function Sheet({
           </div>
         ) : null}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
