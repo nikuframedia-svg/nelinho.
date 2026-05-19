@@ -56,6 +56,12 @@ export interface BomMaterial {
   on_hand: number | null;
   /** Repartição do stock por armazém (ERP NELO). */
   warehouses: WarehouseStockBreakdown[];
+  /** Q.53.D — data prevista de rutura (ISO) a partir do consumo histórico. */
+  predicted_stockout_date: string | null;
+  /** Q.53.D — confiança da previsão: high/medium/low/none. */
+  stockout_confidence: 'high' | 'medium' | 'low' | 'none' | null;
+  /** Q.53.D — consumo médio diário (unidades) usado na previsão. */
+  avg_daily_consumption: number | null;
 }
 
 /** Envelope de `/v1/supply/materials/from-bom` — catálogo + estado do stock. */
@@ -66,6 +72,64 @@ export interface BomMaterialsEnvelope {
   stock_synced_at: string | null;
   stock_source: 'erp_nelo_warehouse_stock' | 'indisponivel';
   unavailable_reason: string | null;
+}
+
+// ─── Q.53.D — encomendas a fornecedor (tab Entregas) ─────────────────────
+/** Uma encomenda a fornecedor — uma linha de `supply.purchase_orders`. */
+export interface PurchaseOrder {
+  id: string;
+  po_number: string | null;
+  erp_movement_id: number | null;
+  supplier_name: string;
+  supplier_erp_id: number | null;
+  product_code: string;
+  product_name: string | null;
+  qty_ordered: number;
+  qty_received: number;
+  qty_outstanding: number;
+  unit_of_measure: string;
+  ordered_at: string | null;
+  eta: string | null;
+  received_at: string | null;
+  status: string;
+  is_overdue: boolean;
+  days_to_eta: number | null;
+  source: string;
+  notes: string | null;
+}
+
+export interface PurchaseOrdersSummary {
+  open: number;
+  overdue: number;
+  received: number;
+  cancelled: number;
+  total_outstanding_qty: number;
+}
+
+/** Envelope de `/v1/supply/purchase-orders` — tracking de entregas. */
+export interface PurchaseOrdersEnvelope {
+  items: PurchaseOrder[];
+  count: number;
+  data_available: boolean;
+  source: 'supply_purchase_orders' | 'indisponivel';
+  last_synced_at: string | null;
+  unavailable_reason: string | null;
+  summary: PurchaseOrdersSummary;
+}
+
+/** Resposta de `/v1/supply/materials/{sku_id}/stockout-forecast`. */
+export interface StockoutForecast {
+  sku_id: string;
+  predicted_stockout_date: string | null;
+  confidence: 'high' | 'medium' | 'low' | 'none';
+  avg_daily_consumption: number;
+  history_days: number;
+  total_consumed: number;
+  window_days: number;
+  days_to_stockout: number | null;
+  on_hand: number;
+  reason: string | null;
+  method: string;
 }
 
 /** Prospeção material (MR02) — payload livre do backend. */
@@ -241,4 +305,30 @@ export const materiaisApi = {
 
   listSuppliers: () =>
     apiFetch<Supplier[]>('/v1/core/suppliers?limit=200'),
+
+  /** Q.53.D — tracking de encomendas a fornecedor (tab Entregas). */
+  listPurchaseOrders: (params?: {
+    status?: 'OPEN' | 'PARTIAL' | 'RECEIVED' | 'CANCELLED';
+    product_code?: string;
+    supplier?: string;
+    open_only?: boolean;
+    limit?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set('status_filter', params.status);
+    if (params?.product_code) qs.set('product_code', params.product_code);
+    if (params?.supplier) qs.set('supplier', params.supplier);
+    if (params?.open_only) qs.set('open_only', String(params.open_only));
+    if (params?.limit) qs.set('limit', String(params.limit));
+    const q = qs.toString();
+    return apiFetch<PurchaseOrdersEnvelope>(
+      `/v1/supply/purchase-orders${q ? `?${q}` : ''}`,
+    );
+  },
+
+  /** Q.53.D — data prevista de rutura a partir do consumo histórico real. */
+  stockoutForecast: (skuId: string, windowDays = 90) =>
+    apiFetch<StockoutForecast>(
+      `/v1/supply/materials/${encodeURIComponent(skuId)}/stockout-forecast?window_days=${windowDays}`,
+    ),
 };
