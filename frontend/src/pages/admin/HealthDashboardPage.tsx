@@ -209,7 +209,7 @@ export function HealthDashboardPage() {
               {data.infrastructure.items.map((c) => (
                 <div
                   key={c.component}
-                  className="flex items-center justify-between p-2 bg-slate-800/40 rounded"
+                  className="flex items-center justify-between p-2 rounded-lg border border-bd-1 bg-dark-700"
                 >
                   <div className="flex items-center gap-2">
                     {c.healthy ? (
@@ -324,7 +324,7 @@ function SummaryTile({
     success: 'bg-emerald-500/10 border-emerald-500/30',
     warning: 'bg-amber-500/10 border-amber-500/30',
     danger: 'bg-red-500/10 border-red-500/30',
-    neutral: 'bg-slate-800/40 border-slate-700/40',
+    neutral: 'bg-dark-700 border-bd-1',
   }[tone];
   return (
     <div className={`rounded-xl border ${bg} p-4`}>

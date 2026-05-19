@@ -24,7 +24,11 @@ import {
 } from 'lucide-react';
 import { PageHeader, Tabs, Panel } from '../../components/dark';
 import { SkeletonLoader } from '../../components/ui/Skeleton';
-import { getApiBase } from '../../lib/api';
+import {
+  reportsApi,
+  type ReportFormat,
+  type ReportTemplateId,
+} from '../../lib/api';
 
 const KPIsPage = lazy(() =>
   import('../profit/KPIsPage').then((m) => ({ default: m.KPIsPage }))
@@ -52,10 +56,8 @@ function isTabId(v: string | null): v is TabId {
   return v !== null && (TAB_IDS as readonly string[]).includes(v);
 }
 
-type ReportFormat = 'csv' | 'json';
-
 interface ReportTemplate {
-  id: 'producao' | 'cliente' | 'qualidade' | 'payroll' | 'cogs' | 'inventario';
+  id: ReportTemplateId;
   label: string;
   format: ReportFormat;
 }
@@ -68,31 +70,6 @@ const REPORT_TEMPLATES: ReportTemplate[] = [
   { id: 'cogs', label: 'COGS detalhado', format: 'csv' },
   { id: 'inventario', label: 'Inventário & ABC', format: 'csv' },
 ];
-
-interface ReportResponse {
-  template_id: string;
-  status: 'ready' | 'not_implemented';
-  format: ReportFormat;
-  filename: string;
-  content: string;
-  row_count: number;
-  generated_at: string;
-  message?: string | null;
-}
-
-async function generateReport(template_id: string, format: ReportFormat): Promise<ReportResponse> {
-  // Q.21.A — base URL via api.ts (concorda com VITE_API_URL).
-  const resp = await fetch(`${getApiBase()}/v1/reports/generate`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Tenant-Id': '00000000-0000-0000-0000-000000000001',
-    },
-    body: JSON.stringify({ template_id, format }),
-  });
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-  return resp.json();
-}
 
 function downloadFile(filename: string, content: string, format: ReportFormat) {
   const mime = format === 'csv' ? 'text/csv;charset=utf-8' : 'application/json';
@@ -215,10 +192,13 @@ interface RowState {
 function ExportTab() {
   const [state, setState] = useState<Record<string, RowState>>({});
 
-  const handleGenerate = async (template_id: string, format: ReportFormat) => {
+  const handleGenerate = async (
+    template_id: ReportTemplateId,
+    format: ReportFormat,
+  ) => {
     setState((s) => ({ ...s, [template_id]: { status: 'loading' } }));
     try {
-      const resp = await generateReport(template_id, format);
+      const resp = await reportsApi.generate({ template_id, format });
       if (resp.status === 'not_implemented') {
         setState((s) => ({
           ...s,
@@ -259,7 +239,11 @@ function ExportTab() {
             return (
               <div
                 key={t.id}
-                className="flex flex-col gap-2 p-3 rounded-md bg-dark-900/40 border border-white/[0.06]"
+                className="flex flex-col gap-2 p-3 rounded-lg border"
+                style={{
+                  background: 'var(--bg-2)',
+                  borderColor: 'var(--bd-1)',
+                }}
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
@@ -299,8 +283,15 @@ function ExportTab() {
             );
           })}
         </div>
-        <div className="mt-4 px-3 py-2 rounded-md bg-primary-500/10 border border-primary-500/30 text-xs text-primary-300">
-          Endpoint <code className="font-mono">POST /v1/reports/generate</code> live (Q.18.ZIP.BE.4). Templates <em>producao</em>, <em>cliente</em> e <em>qualidade</em> delegam aos services existentes; restantes retornam <em>not_implemented</em> sem 5xx.
+        <div
+          className="mt-4 px-3 py-2 rounded-lg border text-xs"
+          style={{
+            background: 'var(--accent-bg)',
+            borderColor: 'var(--accent-bd)',
+            color: 'var(--accent)',
+          }}
+        >
+          Endpoint <code className="font-mono">POST /v1/reports/generate</code> está live. Os templates <em>producao</em>, <em>cliente</em> e <em>qualidade</em> delegam aos services existentes; os restantes devolvem <em>not_implemented</em> com honestidade (sem 5xx). O agendamento e envio por email (<code className="font-mono">/v1/reports/schedule</code> · <code className="font-mono">/email</code>) chegam quando o SMTP estiver ligado.
         </div>
       </Panel>
     </div>

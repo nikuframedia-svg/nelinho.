@@ -76,7 +76,7 @@ export function RBACPage() {
           <div>
             <h4 className="text-sm font-medium text-blue-400">Static Configuration</h4>
             <p className="text-xs text-slate-400 mt-1">
-              Roles and permissions are defined in <code className="text-blue-300 bg-slate-800 px-1.5 py-0.5 rounded">src/shared/auth/rbac.py</code>.
+              Roles and permissions are defined in <code className="text-accent-300 bg-dark-700 px-1.5 py-0.5 rounded">src/shared/auth/rbac.py</code>.
               Changes require code deployment. This page displays the current RBAC configuration.
             </p>
           </div>
@@ -226,7 +226,7 @@ export function RBACPage() {
       )}
 
       {/* Footer with source info */}
-      <div className="mt-6 px-4 py-3 bg-slate-800/30 border border-slate-700/30 rounded-xl">
+      <div className="mt-6 px-4 py-3 bg-dark-700 border border-bd-1 rounded-xl">
         <div className="flex items-center gap-2 text-xs text-slate-500">
           <Info size={12} />
           <span>
