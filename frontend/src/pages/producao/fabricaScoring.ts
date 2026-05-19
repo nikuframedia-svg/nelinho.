@@ -64,10 +64,13 @@ export function scoreFor(
   const reasons: FitReason[] = [];
   let impact = 0;
 
-  // ── Base: quality-score 0-1 → 0-10 ──────────────────────────────────────
-  // Sem quality-score → base neutra 5.0 + razão honesta.
+  // ── Base: quality-score já vem em [1,10] ────────────────────────────────
+  // O backend (`employee_extras_service.quality_score`) devolve `score`
+  // na escala 0-10 (`DEFAULT_SCORE = 9.0`, clamp final a [1,10]). Usá-lo
+  // directamente — multiplicar por 10 saturava tudo no clamp e achatava
+  // o ranking ("10.0/10" para todos). Sem quality-score → base neutra 5.0.
   const q = worker.quality;
-  let fit = q ? Math.max(0, Math.min(10, q.score * 10)) : 5;
+  let fit = q ? Math.max(0, Math.min(10, q.score)) : 5;
   if (!q || q.method === 'default_no_history') {
     reasons.push({
       text: 'Sem histórico de qualidade',
