@@ -16,7 +16,8 @@ import type { ReactNode } from 'react';
 import { FileText, AlertTriangle, Check, Play, ExternalLink } from 'lucide-react';
 import { DarkBadge } from '../dark';
 import type { CopilotResponse } from '../../lib/copilot-types';
-import type { ChatMessage } from './copilotPageHelpers';
+import { CopilotChart } from './CopilotChart';
+import type { ChatMessage, CopilotResponseWithCharts } from './copilotPageHelpers';
 import { WARNING_LABELS } from './copilotPageHelpers';
 
 const ACTION_ICON: Record<string, ReactNode> = {
@@ -31,10 +32,11 @@ function ResponseBody({
   onAction,
   actionPending,
 }: {
-  response: CopilotResponse;
+  response: CopilotResponseWithCharts;
   onAction: (action: CopilotResponse['actions'][number]) => void;
   actionPending: boolean;
 }): ReactNode {
+  const charts = response.charts ?? [];
   return (
     <div className="mt-2 flex flex-col gap-3">
       {/* Factos com citações */}
@@ -62,6 +64,15 @@ function ResponseBody({
                 </div>
               )}
             </div>
+          ))}
+        </div>
+      )}
+
+      {/* Gráficos gerados pelo copiloto (Q.53.L) */}
+      {charts.length > 0 && (
+        <div className="flex flex-col gap-2">
+          {charts.map((chart, i) => (
+            <CopilotChart key={i} spec={chart} />
           ))}
         </div>
       )}

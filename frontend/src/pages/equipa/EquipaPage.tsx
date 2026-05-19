@@ -56,10 +56,26 @@ import {
   WorkerProfile,
   type WorkerProfileEmployee,
 } from '../../components/equipa/WorkerProfile';
+import { LevelBadge, LevelScaleLegend } from '../../components/equipa/LevelScale';
 import type {
   TrainingRecommendation,
   SimulationResult,
 } from '../../components/workforce/types';
+
+/**
+ * Mapeia o quality score Laplace [1-10] para o nível global na escala
+ * invertida (3.0 = melhor). Espelha `quality_to_level` de
+ * `src/workforce/levels.py` — Q.53.E. Mantido em sincronia de propósito:
+ * evita N pedidos /level-summary só para a coluna de nível da lista; o
+ * detalhe por grupo de área vive no perfil do operador.
+ */
+function qualityToLevel(score: number): number {
+  if (score >= 9.0) return 3.0;
+  if (score >= 8.0) return 2.5;
+  if (score >= 6.5) return 2.0;
+  if (score >= 5.0) return 1.5;
+  return 1.0;
+}
 
 // ─── Tipos ──────────────────────────────────────────────────────────────────
 
@@ -241,7 +257,7 @@ export default function EquipaPage() {
 // ListaTab — KPIs + tabela densa ordenável
 // ═══════════════════════════════════════════════════════════════════════════
 
-type SortKey = 'name' | 'tier' | 'score' | 'err' | 'ops' | 'status';
+type SortKey = 'name' | 'tier' | 'score' | 'nivel' | 'err' | 'ops' | 'status';
 
 function ListaTab({
   employees,
@@ -294,6 +310,9 @@ function ListaTab({
           cmp = a.status.localeCompare(b.status);
           break;
         case 'score':
+          cmp = (a.score ?? -1) - (b.score ?? -1);
+          break;
+        case 'nivel':
           cmp = (a.score ?? -1) - (b.score ?? -1);
           break;
         case 'err':
@@ -458,9 +477,12 @@ function ListaTab({
               { value: 'inactive', label: 'Inactivos' },
             ]}
           />
-          <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--fg-3)' }}>
-            {filtered.length} de {employees.length}
-          </span>
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
+            <LevelScaleLegend />
+            <span style={{ fontSize: 11, color: 'var(--fg-3)' }}>
+              {filtered.length} de {employees.length}
+            </span>
+          </div>
         </div>
 
         <div style={{ overflowX: 'auto' }}>
@@ -471,6 +493,7 @@ function ListaTab({
                 <SortHeader label="Skill principal" col={null} />
                 <SortHeader label="Tier" col="tier" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} align="right" />
                 <SortHeader label="Score" col="score" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} align="right" />
+                <SortHeader label="Nível" col="nivel" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} align="right" />
                 <SortHeader label="Erro" col="err" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} align="right" />
                 <SortHeader label="Ops" col="ops" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} align="right" />
                 <SortHeader label="Estado" col="status" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort} align="right" />
@@ -528,6 +551,13 @@ function ListaTab({
                       }}
                     >
                       {w.score !== null ? `★${w.score.toFixed(1)}` : '—'}
+                    </td>
+                    <td style={{ padding: '10px 14px', textAlign: 'right' }}>
+                      {w.score !== null ? (
+                        <LevelBadge level={qualityToLevel(w.score)} />
+                      ) : (
+                        <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>—</span>
+                      )}
                     </td>
                     <td
                       className="tabular"
@@ -628,6 +658,11 @@ function ComparePanel({
       label: 'Score',
       value: (e) => (e.score !== null ? `★${e.score.toFixed(1)}` : '—'),
       color: (e) => `var(--${scoreTone(e.score)})`,
+    },
+    {
+      label: 'Nível (1–3)',
+      value: (e) =>
+        e.score !== null ? qualityToLevel(e.score).toFixed(1) : '—',
     },
     {
       label: 'Taxa de erro',

@@ -54,14 +54,27 @@ export const COPILOT_MODES: CopilotModeDef[] = [
   },
 ];
 
+/**
+ * `CopilotResponseWithCharts` — Q.53.L.
+ *
+ * O backend (Q.53.F) acrescentou `charts: ChartSpec[]` à `CopilotResponse`
+ * mas o tipo partilhado em `lib/copilot-types.ts` (off-limits neste
+ * sub-sprint) ainda não o declara. Estendemo-lo localmente para a UI do
+ * copiloto poder ler os gráficos com type-safety, sem `any`.
+ */
+export type CopilotResponseWithCharts =
+  import('../../lib/copilot-types').CopilotResponse & {
+    charts?: import('./CopilotChart').ChartSpec[];
+  };
+
 /** Mensagem de UI — `user` é o que foi escrito; `copilot` carrega a resposta rica. */
 export interface ChatMessage {
   id: string;
   role: 'user' | 'copilot';
   text: string;
   when: string;
-  /** Resposta estruturada do copiloto (factos/citações/acções/avisos). */
-  response?: import('../../lib/copilot-types').CopilotResponse;
+  /** Resposta estruturada do copiloto (factos/citações/acções/avisos/gráficos). */
+  response?: CopilotResponseWithCharts;
   /** True enquanto o copiloto "escreve" (pré-resposta). */
   typing?: boolean;
 }

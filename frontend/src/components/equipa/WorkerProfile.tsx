@@ -6,12 +6,13 @@
  *   • Perfil    — quality-score (ML vs override) + skills aptas
  *   • Skills    — skill-matrix por fase, toggle real via PATCH .../skills
  *   • Histórico — operações recentes (/history)
- *   • Nível     — level-summary (1-3) + barcos recomendados
+ *   • Nível     — level-summary por grupo de área (escala 3=melhor) +
+ *     barcos recomendados (Q.53.L)
  *   • Notas     — campo livre (não persiste — não há endpoint de notas)
  *
  * ZERO MOCKS — secções sem dados mostram empty state honesto.
  *
- * Sprint Q.52.H.
+ * Sprints Q.52.H · Q.53.L.
  */
 
 import { useState } from 'react';
@@ -25,6 +26,8 @@ import {
   type SkillMatrixResult,
   type OperationHistoryResult,
 } from '../../lib/api';
+import { equipaApi, type LevelSummary } from './equipaApi';
+import { LevelGauge, levelTone } from './LevelScale';
 
 export interface WorkerProfileEmployee {
   id: string;
@@ -71,7 +74,7 @@ export function WorkerProfile({
   });
   const levelQuery = useQuery({
     queryKey: ['equipa', 'profile', 'level', id],
-    queryFn: () => workforceEmployeesApi.levelSummary(id),
+    queryFn: () => equipaApi.levelSummary(id),
     enabled: !!employee && tab === 'nivel',
     retry: 0,
   });
@@ -306,6 +309,8 @@ function PerfilTab({
 
 // ─── Sub-tab: Skills ────────────────────────────────────────────────────────
 
+const LEVEL_STEPS = [1.0, 1.5, 2.0, 2.5, 3.0];
+
 function SkillsTab({
   employeeId,
   skills,
@@ -319,11 +324,17 @@ function SkillsTab({
 }) {
   const queryClient = useQueryClient();
   const toggleMutation = useMutation({
-    mutationFn: (payload: { phase_id: string; can_do: boolean }) =>
-      workforceEmployeesApi.toggleSkill(employeeId, payload),
+    mutationFn: (payload: {
+      phase_id: string;
+      can_do: boolean;
+      nivel?: number;
+    }) => equipaApi.toggleSkill(employeeId, payload),
     onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: ['equipa', 'profile', 'skills', employeeId],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ['equipa', 'profile', 'level', employeeId],
       });
     },
   });
@@ -336,48 +347,100 @@ function SkillsTab({
 
   return (
     <div>
-      <SectionLabel>Skills por fase · clica para alternar a aptidão</SectionLabel>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6 }}>
-        {skills.phases.map((p) => (
-          <button
-            key={p.phase_id}
-            type="button"
-            onClick={() =>
-              toggleMutation.mutate({ phase_id: p.phase_id, can_do: !p.can_do })
-            }
-            disabled={toggleMutation.isPending}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              padding: '8px 11px',
-              background: p.can_do ? 'var(--accent-bg)' : 'var(--bg-2)',
-              border: `1px solid ${p.can_do ? 'var(--accent-bd)' : 'var(--bd-1)'}`,
-              borderRadius: 6,
-              fontSize: 12,
-              color: 'var(--fg-1)',
-              cursor: 'pointer',
-              textAlign: 'left',
-            }}
-          >
-            <span
+      <SectionLabel>
+        Skills por fase · clica na caixa para alternar a aptidão · ajusta o
+        nível (escala 1.0–3.0, 3.0 = melhor)
+      </SectionLabel>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {skills.phases.map((p) => {
+          // O nível curado vem na escala ERP (1-5, 1=melhor); na UI
+          // mostramos a escala invertida. O backend faz a conversão e
+          // clamp — aqui só precisamos do valor a propor.
+          const currentLevel =
+            p.nivel !== null && p.nivel >= 1 && p.nivel <= 3
+              ? p.nivel
+              : null;
+          return (
+            <div
+              key={p.phase_id}
               style={{
-                width: 14,
-                height: 14,
-                borderRadius: 4,
-                border: `1px solid ${p.can_do ? 'var(--accent)' : 'var(--bd-2)'}`,
-                background: p.can_do ? 'var(--accent)' : 'transparent',
-                flexShrink: 0,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '8px 11px',
+                background: p.can_do ? 'var(--accent-bg)' : 'var(--bg-2)',
+                border: `1px solid ${p.can_do ? 'var(--accent-bd)' : 'var(--bd-1)'}`,
+                borderRadius: 6,
+                fontSize: 12,
+                color: 'var(--fg-1)',
               }}
-            />
-            <span style={{ flex: 1 }}>{p.phase_name ?? p.phase_id}</span>
-            {p.ops_count > 0 ? (
-              <span className="tabular" style={{ fontSize: 10, color: 'var(--fg-3)' }}>
-                {p.ops_count} ops
-              </span>
-            ) : null}
-          </button>
-        ))}
+            >
+              <button
+                type="button"
+                onClick={() =>
+                  toggleMutation.mutate({
+                    phase_id: p.phase_id,
+                    can_do: !p.can_do,
+                  })
+                }
+                disabled={toggleMutation.isPending}
+                aria-label={`Alternar aptidão de ${p.phase_name ?? p.phase_id}`}
+                style={{
+                  width: 14,
+                  height: 14,
+                  borderRadius: 4,
+                  border: `1px solid ${p.can_do ? 'var(--accent)' : 'var(--bd-2)'}`,
+                  background: p.can_do ? 'var(--accent)' : 'transparent',
+                  flexShrink: 0,
+                  cursor: 'pointer',
+                  padding: 0,
+                }}
+              />
+              <span style={{ flex: 1 }}>{p.phase_name ?? p.phase_id}</span>
+              {p.ops_count > 0 ? (
+                <span
+                  className="tabular"
+                  style={{ fontSize: 10, color: 'var(--fg-3)' }}
+                >
+                  {p.ops_count} ops
+                </span>
+              ) : null}
+              {/* Selector de nível — só faz sentido quando o operador é apto */}
+              {p.can_do ? (
+                <select
+                  value={currentLevel ?? ''}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (!v) return;
+                    toggleMutation.mutate({
+                      phase_id: p.phase_id,
+                      can_do: true,
+                      nivel: Number(v),
+                    });
+                  }}
+                  disabled={toggleMutation.isPending}
+                  aria-label={`Nível em ${p.phase_name ?? p.phase_id}`}
+                  className="text-slate-900"
+                  style={{
+                    fontSize: 11,
+                    padding: '2px 4px',
+                    background: '#fff',
+                    border: '1px solid var(--bd-2)',
+                    borderRadius: 4,
+                    outline: 'none',
+                  }}
+                >
+                  <option value="">nível…</option>
+                  {LEVEL_STEPS.map((s) => (
+                    <option key={s} value={s}>
+                      {s.toFixed(1)}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -442,15 +505,6 @@ function HistoricoTab({
 
 // ─── Sub-tab: Nível ─────────────────────────────────────────────────────────
 
-interface LevelSummary {
-  derived_level: 1 | 2 | 3;
-  level_label: string;
-  level_description: string;
-  quality_score: number;
-  recommended_boats: string[];
-  skills_apt: string[];
-}
-
 function NivelTab({
   data,
   loading,
@@ -464,32 +518,96 @@ function NivelTab({
   if (isError) return <EmptyHint text="Erro a carregar o nível derivado." />;
   if (!data) return <EmptyHint text="Sem nível derivado para este operador." />;
 
-  const tone =
-    data.derived_level === 1
-      ? 'green'
-      : data.derived_level === 2
-        ? 'yellow'
-        : 'red';
+  const tone = levelTone(data.derived_level);
+  const metrics = data.qualification_metrics;
 
   return (
     <div className="space-y-3">
       <Card>
-        <SectionLabel>Nível derivado (escala 1-3)</SectionLabel>
+        <SectionLabel>Nível global · escala 1.0–3.0 (3.0 = melhor)</SectionLabel>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
           <span
             className="display tabular"
             style={{ fontSize: 30, fontWeight: 600, color: `var(--${tone})` }}
           >
-            {data.derived_level}
+            {data.derived_level.toFixed(1)}
           </span>
           <span style={{ fontSize: 13, color: 'var(--fg-1)', fontWeight: 500 }}>
             {data.level_label}
           </span>
         </div>
-        <div style={{ fontSize: 12, color: 'var(--fg-2)', marginTop: 6, lineHeight: 1.5 }}>
+        <div style={{ marginTop: 10 }}>
+          <LevelGauge level={data.derived_level} />
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--fg-2)', marginTop: 8, lineHeight: 1.5 }}>
           {data.level_description}
         </div>
       </Card>
+
+      {/* Nível por grupo de área — o coração da escala nova */}
+      <Card>
+        <SectionLabel>
+          Nível por grupo de área ({data.per_area_levels.length})
+        </SectionLabel>
+        {data.per_area_levels.length === 0 ? (
+          <div style={{ fontSize: 12, color: 'var(--fg-3)' }}>
+            Sem fases aptas — nenhum grupo de área avaliado ainda.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+            {data.per_area_levels.map((area) => (
+              <div key={area.area_group}>
+                <LevelGauge level={area.level} label={area.area_group} />
+                <div
+                  style={{
+                    fontSize: 9.5,
+                    color: 'var(--fg-4)',
+                    marginLeft: 106,
+                    marginTop: 1,
+                  }}
+                >
+                  {area.phases_apt} fase{area.phases_apt === 1 ? '' : 's'} apta
+                  {area.phases_apt === 1 ? '' : 's'}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      {/* Sinais de qualificação (Q.53.E) */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+        <Card>
+          <SectionLabel>Recência</SectionLabel>
+          <span
+            className="tabular"
+            style={{ fontSize: 17, fontWeight: 600, color: 'var(--fg-0)' }}
+          >
+            {metrics.recency_days !== null ? `${metrics.recency_days}d` : '—'}
+          </span>
+        </Card>
+        <Card>
+          <SectionLabel>Versatilidade</SectionLabel>
+          <span
+            className="tabular"
+            style={{ fontSize: 17, fontWeight: 600, color: 'var(--fg-0)' }}
+          >
+            {metrics.versatility} fases
+          </span>
+        </Card>
+        <Card>
+          <SectionLabel>Produtividade</SectionLabel>
+          <span
+            className="tabular"
+            style={{ fontSize: 17, fontWeight: 600, color: 'var(--fg-0)' }}
+          >
+            {metrics.productivity !== null
+              ? `${metrics.productivity.toFixed(1)}/d`
+              : '—'}
+          </span>
+        </Card>
+      </div>
+
       {data.recommended_boats.length > 0 ? (
         <Card>
           <SectionLabel>Barcos recomendados</SectionLabel>
