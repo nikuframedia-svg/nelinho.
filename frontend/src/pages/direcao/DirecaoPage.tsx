@@ -1,898 +1,836 @@
 /**
- * DirecaoPage — port literal de design/nelo-zip/src/page-ceo.jsx (PageCEO).
+ * DirecaoPage — página "Direção" (CEO) · Q.52.E.
  *
- * Hero "A fábrica está {NO PLANO|EM RISCO|EM ATRASO}" + 4 KPIs + 2-col
- * Atenção necessária + Próximas expedições + AI panel "O que o sistema
- * fez por si esta semana".
+ * Reconstrução fiel do protótipo NELO.html (page-ceo.jsx): status da
+ * NELO em 30 segundos para o CEO. 4 KPIs grandes, banda objetivo (5
+ * objetivos), gráfico €/dia com banda-alvo, Impacto PP1, margem por
+ * país/agente e tabela CTP de encomendas activas.
  *
- * Standalone (sem Inbox embutida — Inbox vive em /inbox).
- *
- * Sprint Q.18.ZIP.shell.
+ * ZERO MOCKS — cada secção liga a um endpoint REAL. Endpoints PARTIAL
+ * (objetivos do CEO, margem por agente, CTP) degradam com honestidade
+ * via empty states explícitos. Os átomos (KPIBig, ObjectiveBar) vêm de
+ * components/dark/ (Onda 0 · Q.52.B).
  */
 
-import { lazy, Suspense, useMemo, useState, type ReactNode } from 'react';
+import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   Building2,
-  RefreshCw,
-  Sparkles,
-  ArrowRight,
-  Truck,
-  AlertTriangle,
-  CheckCircle2,
-  Brain,
-  Activity,
+  Download,
+  Target,
   Euro,
+  Sparkles,
+  TrendingUp,
+  Flag,
 } from 'lucide-react';
-import { PageHeader, Tabs, ZipSevBadge, EmptyState, type ZipSeverity } from '../../components/dark';
-import { SkeletonLoader } from '../../components/ui/Skeleton';
-import { ReportExportButton } from '../../components/reports/ReportExportButton';
-import { useUmwelt } from '../../lib/umwelt';
+import { PageHeader, KPIBig, ObjectiveBar, EmptyState } from '../../components/dark';
+import {
+  Card,
+  SectionHeader,
+  EuroBandChart,
+  MarginRow,
+} from '../../components/ceo/CeoBits';
+import { useHonestEmptyState } from '../../hooks/useHonestEmptyState';
+import {
+  apiFetch,
+  kpisApi,
+  ceoDashboardApi,
+  profitApi,
+  type BacklogResponse,
+} from '../../lib/api';
 
-const ProfitDashboard = lazy(() =>
-  import('../../components/profit/ProfitPanels').then((m) => ({ default: m.ProfitDashboard })),
-);
-import { ceoDashboardApi, decisionsApi, getApiBase, profitApi } from '../../lib/api';
+// ─── Tipos das respostas REAIS ──────────────────────────────────────────
 
-interface ActiveOrder {
+interface KpiMetric {
+  value: number | null;
+  reason?: string | null;
+}
+
+interface KpiSnapshot {
+  oee: KpiMetric;
+  availability: KpiMetric;
+  performance: KpiMetric;
+  quality_fpy: KpiMetric;
+  rework_rate: KpiMetric;
+  orders_total: KpiMetric;
+  orders_in_progress: KpiMetric;
+  orders_completed: KpiMetric;
+  updated_at: string;
+}
+
+interface ThroughputDashboard {
+  date: string;
+  throughput_eur: {
+    today: number;
+    mtd: number;
+    ytd: number;
+    target_min: number;
+    target_max: number;
+    on_target: boolean;
+  };
+  trend_14d: { date: string; eur: number }[];
+  currency: string;
+  source: string;
+}
+
+interface OtdResponse {
+  window_days: number;
+  otd_pct: number;
+  on_time: number;
+  late: number;
+  total: number;
+}
+
+interface TransportBatch {
   id: string;
-  hull: string | null;
-  product_name: string;
-  product_type: string;
-  phase: string | null;
-  status: string;
-  created_date: string | null;
-  transport_date: string | null;
+  code?: string;
+  status?: string;
+  transport_date?: string | null;
+  destination?: string | null;
+  truck_capacity_units?: number;
+  assigned_orders?: number;
 }
 
-// Q.21.A — porta única via api.ts (concorda com VITE_API_URL).
-const API_BASE = getApiBase();
-const TENANT_HEADER = { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' };
+const STATUS_LABEL: Record<string, { label: string; tone: string }> = {
+  draft: { label: 'Rascunho', tone: 'neutral' },
+  planned: { label: 'Planeado', tone: 'info' },
+  frozen: { label: 'Congelado', tone: 'warning' },
+  dispatched: { label: 'Expedido', tone: 'success' },
+};
 
-async function fetchActiveOrders(): Promise<ActiveOrder[]> {
-  const resp = await fetch(
-    `${API_BASE}/v1/plan/orders/active?limit=500`,
-    { headers: TENANT_HEADER },
-  );
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-  return resp.json();
+function fmtDate(iso?: string | null): string {
+  if (!iso) return '—';
+  return `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
 }
 
-async function fetchProfitDashboard() {
-  try {
-    const resp = await fetch(`${API_BASE}/v1/profit/dashboard`, {
-      headers: TENANT_HEADER,
-    });
-    if (!resp.ok) return null;
-    return await resp.json();
-  } catch {
-    return null;
-  }
-}
-
-async function fetchTransportBatches() {
-  try {
-    const resp = await fetch(
-      `${API_BASE}/v1/plan/transport/batches?limit=20`,
-      { headers: TENANT_HEADER },
-    );
-    if (!resp.ok) return [];
-    return await resp.json();
-  } catch {
-    return [];
-  }
-}
-
-function deriveStatus(transport_date: string | null, phase: string | null): string {
-  if (phase === 'Cura') return 'curing';
-  if (!transport_date) return 'on_time';
-  const dx = Math.round(
-    (new Date(transport_date).getTime() - new Date().setHours(0, 0, 0, 0)) /
-      (1000 * 60 * 60 * 24),
-  );
-  if (dx < 0) return 'late';
-  if (dx <= 2) return 'at_risk';
-  return 'on_time';
-}
-
-function relativeTime(iso?: string): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  const diff = (Date.now() - d.getTime()) / 60000;
-  if (diff < 1) return 'agora';
-  if (diff < 60) return `há ${Math.round(diff)} min`;
-  if (diff < 60 * 24) return `há ${Math.round(diff / 60)}h`;
-  return `há ${Math.round(diff / (60 * 24))} dias`;
-}
-
-function shipmentDayLabel(iso: string): string {
-  const d = new Date(iso + 'T00:00:00');
-  const days = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
-  return days[d.getDay()];
-}
+// ─── Página ─────────────────────────────────────────────────────────────
 
 export default function DirecaoPage() {
   const navigate = useNavigate();
-  const [refreshKey, setRefreshKey] = useState(0);
-  const [tab, setTab] = useState<'resumo' | 'profit'>('resumo');
-  const { isReadOnly } = useUmwelt();
 
-  const ordersQuery = useQuery({
-    queryKey: ['direcao', 'orders', refreshKey],
-    queryFn: fetchActiveOrders,
-    staleTime: 30_000,
-    retry: 0,
-  });
-  const profitQuery = useQuery({
-    queryKey: ['direcao', 'profit', refreshKey],
-    queryFn: fetchProfitDashboard,
+  const kpiQuery = useQuery<KpiSnapshot>({
+    queryKey: ['direcao', 'kpis-snapshot'],
+    queryFn: () => kpisApi.getSnapshot() as Promise<KpiSnapshot>,
     staleTime: 60_000,
     retry: 0,
   });
-  const alertsQuery = useQuery({
-    queryKey: ['direcao', 'alerts', refreshKey],
-    queryFn: () => ceoDashboardApi.activeAlerts({ limit: 8 }),
-    staleTime: 30_000,
-    retry: 1,
-  });
-  const transportQuery = useQuery({
-    queryKey: ['direcao', 'transport', refreshKey],
-    queryFn: fetchTransportBatches,
+
+  const throughputQuery = useQuery<ThroughputDashboard | null>({
+    queryKey: ['direcao', 'throughput'],
+    queryFn: () => apiFetch<ThroughputDashboard>('/v1/profit/dashboard'),
     staleTime: 60_000,
     retry: 0,
   });
-  const oeeQuery = useQuery({
-    queryKey: ['direcao', 'oee', refreshKey],
-    queryFn: async () => {
-      const r = await fetch(`${API_BASE}/v1/profit/oee`, { headers: TENANT_HEADER });
-      return r.ok ? r.json() : null;
-    },
-    staleTime: 5 * 60_000,
+
+  const otdQuery = useQuery<OtdResponse>({
+    queryKey: ['direcao', 'otd'],
+    queryFn: () => ceoDashboardApi.otd({ window_days: 30 }) as Promise<OtdResponse>,
+    staleTime: 60_000,
     retry: 0,
   });
-  // Q.31.A — agregado de margem para o KPI "Margem por barco".
+
+  const fpyQuery = useQuery({
+    queryKey: ['direcao', 'fpy'],
+    queryFn: () => ceoDashboardApi.firstPassYield({ window_days: 30 }),
+    staleTime: 60_000,
+    retry: 0,
+  });
+
   const marginQuery = useQuery({
-    queryKey: ['direcao', 'margin-summary', refreshKey],
+    queryKey: ['direcao', 'margin-summary'],
     queryFn: () => profitApi.marginSummary(30),
     staleTime: 60_000,
     retry: 0,
   });
 
-  const orders = ordersQuery.data ?? [];
-  const totalActive = orders.length;
-  const ordersWithStatus = useMemo(
-    () => orders.map((o) => ({ ...o, _status: deriveStatus(o.transport_date, o.phase) })),
-    [orders],
+  const backlogQuery = useQuery<BacklogResponse>({
+    queryKey: ['direcao', 'backlog'],
+    queryFn: () => ceoDashboardApi.backlogByClient({ limit: 8 }),
+    staleTime: 60_000,
+    retry: 0,
+  });
+
+  // Objetivos do CEO — endpoint não existe (PARTIAL): degrada honesto.
+  const objectivesQuery = useQuery({
+    queryKey: ['direcao', 'objectives'],
+    queryFn: () =>
+      apiFetch<unknown>('/v1/profit/kpis/objectives').catch(() => ({
+        erp_available: false,
+      })),
+    staleTime: 5 * 60_000,
+    retry: 0,
+  });
+
+  // Margem por país — endpoint margin-by-segment não existe (PARTIAL).
+  const marginCountryQuery = useQuery({
+    queryKey: ['direcao', 'margin-country'],
+    queryFn: () =>
+      apiFetch<unknown>(
+        '/v1/profit/margin-by-segment?dimension=country',
+      ).catch(() => ({ erp_available: false })),
+    staleTime: 5 * 60_000,
+    retry: 0,
+  });
+
+  const transportQuery = useQuery<TransportBatch[]>({
+    queryKey: ['direcao', 'transport'],
+    queryFn: () =>
+      apiFetch<TransportBatch[]>('/v1/plan/transport/batches?limit=20'),
+    staleTime: 60_000,
+    retry: 0,
+  });
+
+  // ─── Derivações ───────────────────────────────────────────────────────
+
+  const throughput = throughputQuery.data?.throughput_eur ?? null;
+  const trend = useMemo(
+    () => (throughputQuery.data?.trend_14d ?? []).map((p) => p.eur),
+    [throughputQuery.data],
   );
-  const onTime = ordersWithStatus.filter((o) => o._status === 'on_time').length;
-  const atRisk = ordersWithStatus.filter((o) => o._status === 'at_risk').length;
-  const late = ordersWithStatus.filter((o) => o._status === 'late').length;
 
-  const throughputToday = profitQuery.data?.throughput_eur?.today ?? null;
-  const throughputTrend = profitQuery.data?.trend_14d?.map((p: any) => p.eur) ?? [];
+  const fpyValue =
+    typeof fpyQuery.data?.first_pass_yield_pct === 'number'
+      ? fpyQuery.data.first_pass_yield_pct
+      : null;
 
-  const alertsItems = useMemo<any[]>(() => {
-    const data: any = alertsQuery.data;
-    if (!data) return [];
-    if (Array.isArray(data)) return data;
-    if (Array.isArray(data.items)) return data.items;
-    if (Array.isArray(data.alerts)) return data.alerts;
-    return [];
-  }, [alertsQuery.data]);
+  const otd = otdQuery.data ?? null;
+  const reworkRate = kpiQuery.data?.rework_rate?.value ?? null;
+
+  const objectivesHonest = useHonestEmptyState(objectivesQuery.data);
+  const marginCountryHonest = useHonestEmptyState(marginCountryQuery.data);
+
+  const backlogTotal = useMemo(
+    () =>
+      (backlogQuery.data?.items ?? []).reduce(
+        (sum, r) => sum + (r.pending_value_eur ?? 0),
+        0,
+      ),
+    [backlogQuery.data],
+  );
 
   const transportBatches = transportQuery.data ?? [];
-
-  const hero = (() => {
-    if (totalActive === 0)
-      return {
-        tone: 'gray' as const,
-        Icon: Activity,
-        head: 'Sem barcos activos',
-        sub: 'Nenhuma ordem em produção neste momento.',
-      };
-    if (late > 0)
-      return {
-        tone: 'red' as const,
-        Icon: AlertTriangle,
-        head: 'em atraso',
-        sub: `${late} ${late === 1 ? 'barco atrasado' : 'barcos atrasados'} · ${atRisk} em risco · ${onTime} no prazo. Há decisões a aguardar a sua aprovação.`,
-      };
-    if (atRisk > 0)
-      return {
-        tone: 'yellow' as const,
-        Icon: AlertTriangle,
-        head: 'em risco',
-        sub: `${atRisk} ${atRisk === 1 ? 'barco em risco' : 'barcos em risco'} · ${onTime} no prazo. Vamos cumprir as próximas expedições com margem apertada.`,
-      };
-    return {
-      tone: 'green' as const,
-      Icon: CheckCircle2,
-      head: 'no plano',
-      sub: `${onTime} dos ${totalActive} barcos no prazo. Sem alertas críticos. Continuar a executar.`,
-    };
-  })();
 
   return (
     <div>
       <PageHeader
-        icon={<Building2 size={20} />}
-        title="Bom dia, Luis."
-        subtitle="Resumo do dia"
+        icon={<Building2 size={18} />}
+        title="Direção"
+        subtitle="Status NELO em 30 segundos · meta €30–35K/dia"
         helpId="direcao"
         actions={
-          <>
-            <button
-              type="button"
-              onClick={() => setRefreshKey((k) => k + 1)}
-              className="inline-flex items-center gap-1.5 text-text-dark-secondary hover:text-text-dark-primary transition-colors"
-              style={{
-                padding: '6px 12px',
-                height: 32,
-                background: 'var(--bg-2)',
-                border: '1px solid var(--bd-1)',
-                borderRadius: 'var(--r-md)',
-                fontSize: 12,
-              }}
-            >
-              <RefreshCw size={13} />
-              Actualizar
-            </button>
-            <ReportExportButton defaultTemplate="producao" />
-            {!isReadOnly && (
-            <button
-              type="button"
-              onClick={() => navigate('/inbox')}
-              className="inline-flex items-center gap-1.5 text-white font-medium transition-colors"
-              style={{
-                padding: '6px 12px',
-                height: 32,
-                background: 'var(--blue)',
-                border: '1px solid var(--blue)',
-                borderRadius: 'var(--r-md)',
-                fontSize: 12,
-              }}
-            >
-              <Sparkles size={13} />
-              Sugestões
-            </button>
-            )}
-          </>
+          <button
+            type="button"
+            onClick={() => navigate('/relatorios')}
+            className="inline-flex items-center gap-1.5 text-text-dark-primary transition-colors"
+            style={{
+              padding: '6px 12px',
+              height: 32,
+              background: 'var(--bg-2)',
+              border: '1px solid var(--bd-2)',
+              borderRadius: 9,
+              fontSize: 12.5,
+            }}
+          >
+            <Download size={13} />
+            Relatório PDF
+          </button>
         }
       />
 
-      <div className="px-7 pt-2">
-        <Tabs
-          tabs={[
-            { id: 'resumo', label: 'Resumo do dia', icon: <Building2 size={13} /> },
-            { id: 'profit', label: 'Profit Intelligence', icon: <Euro size={13} /> },
-          ]}
-          value={tab}
-          onChange={(id) => setTab(id as 'resumo' | 'profit')}
-        />
-      </div>
-
-      {tab === 'profit' && (
-        <div style={{ padding: '24px 28px' }}>
-          <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
-            <ProfitDashboard />
-          </Suspense>
-        </div>
-      )}
-
-      {tab === 'resumo' && (
-      <div style={{ padding: '24px 28px' }} className="space-y-5 page-enter">
-        {/* Hero */}
+      <div style={{ padding: '24px 28px' }} className="page-enter">
+        {/* ─── 4 KPIs grandes ─────────────────────────────────────────── */}
         <div
-          className="flex items-center"
-          style={{
-            padding: '22px 26px',
-            background: 'var(--bg-1)',
-            border: '1px solid var(--bd-1)',
-            borderRadius: 'var(--r-lg)',
-            gap: 18,
-          }}
-        >
-          <div
-            className={`grid place-items-center shrink-0 ${hero.tone === 'red' || hero.tone === 'yellow' ? 'animate-pulse motion-reduce:animate-none' : ''}`}
-            style={{
-              width: 44,
-              height: 44,
-              background: `var(--${hero.tone}-bg)`,
-              border: `1px solid var(--${hero.tone}-bd)`,
-              color: `var(--${hero.tone})`,
-              borderRadius: 'var(--r-md)',
-              boxShadow:
-                hero.tone === 'red'
-                  ? '0 0 24px oklch(0.50 0.14 25 / 0.45)'
-                  : hero.tone === 'yellow'
-                    ? '0 0 24px oklch(0.50 0.12 80 / 0.45)'
-                    : undefined,
-            }}
-            aria-label={`Estado: ${hero.head}`}
-          >
-            <hero.Icon size={22} />
-          </div>
-          <div style={{ flex: 1 }}>
-            <div
-              className="text-text-dark-primary"
-              style={{ fontSize: 18, fontWeight: 500, lineHeight: 1.4 }}
-            >
-              A fábrica está{' '}
-              <span style={{ color: `var(--${hero.tone})`, fontWeight: 600 }}>
-                {hero.head}
-              </span>
-              .
-            </div>
-            <div
-              className="text-text-dark-tertiary"
-              style={{ fontSize: 13, marginTop: 6 }}
-            >
-              {hero.sub}
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => navigate('/plano-producao')}
-            className="inline-flex items-center gap-1.5 font-medium transition-colors"
-            style={{
-              padding: '8px 12px',
-              background: 'var(--blue-bg)',
-              color: 'var(--blue)',
-              border: '1px solid var(--blue-bd)',
-              borderRadius: 'var(--r-md)',
-              fontSize: 12,
-            }}
-          >
-            Ver detalhe <ArrowRight size={14} />
-          </button>
-        </div>
-
-        {/* 4 KPIs */}
-        <div
-          className="page-enter"
           style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(4, 1fr)',
-            gap: 14,
+            gap: 12,
+            marginBottom: 12,
           }}
         >
-          <KPICardZip
-            label="Barcos em produção"
-            value={totalActive.toString()}
-            unit=""
-            context={`${onTime} no prazo · ${atRisk} em risco · ${late} atrasados`}
-            tone={late > 0 ? 'red' : atRisk > 0 ? 'yellow' : 'green'}
-            onClick={() => navigate('/plano-producao')}
-          />
-          <KPICardZip
-            label="OEE da fábrica"
-            value={
-              oeeQuery.data?.overall
-                ? Math.round(oeeQuery.data.overall.oee * 100).toString()
-                : '—'
-            }
-            unit="%"
+          <KPIBig
+            label="€/dia hoje"
+            value={throughput ? throughput.today : '—'}
+            prefix={throughput ? '€' : undefined}
+            format={(n) => `${(n / 1000).toFixed(1).replace('.', ',')}K`}
             context={
-              oeeQuery.data?.overall
-                ? `Disp ${Math.round(oeeQuery.data.overall.availability * 100)}% · `
-                  + `Perf ${Math.round(oeeQuery.data.overall.performance * 100)}% · `
-                  + `Qual ${Math.round(oeeQuery.data.overall.quality * 100)}% `
-                  + `(${oeeQuery.data.overall.sample_size} ops)`
-                : oeeQuery.isLoading ? 'A carregar…' : 'Sem dados de OEE'
-            }
-            tone={
-              !oeeQuery.data?.overall ? 'gray'
-                : oeeQuery.data.overall.oee >= 0.60 ? 'green'
-                : oeeQuery.data.overall.oee >= 0.40 ? 'yellow'
-                : 'red'
-            }
-            onClick={() => navigate('/qualidade?tab=oee')}
-          />
-          <KPICardZip
-            label="Throughput hoje"
-            value={throughputToday !== null ? Math.round(throughputToday).toString() : '—'}
-            unit="€"
-            context={
-              throughputToday !== null
-                ? 'Receita reconhecida hoje · /v1/profit/dashboard'
-                : 'Sem dados de revenue hoje'
-            }
-            tone={throughputToday !== null && throughputToday > 0 ? 'green' : 'gray'}
-            sparkline={throughputTrend}
-            onClick={() => navigate('/oee')}
-          />
-          <KPICardZip
-            label="Margem por barco"
-            value={
-              marginQuery.data?.avg_margin_eur != null
-                ? Math.round(marginQuery.data.avg_margin_eur).toLocaleString('pt-PT')
-                : '—'
-            }
-            unit="€"
-            context={
-              marginQuery.data && marginQuery.data.order_count > 0
-                ? `Média de ${marginQuery.data.order_count} ordens · `
-                  + `${marginQuery.data.negative_count} negativas (30 dias)`
-                : marginQuery.isLoading
+              throughput
+                ? `meta €${Math.round(throughput.target_min / 1000)}K–${Math.round(throughput.target_max / 1000)}K`
+                : throughputQuery.isLoading
                   ? 'A carregar…'
-                  : 'Sem ordens com COGS calculado'
+                  : 'Sem receita reconhecida hoje'
             }
-            tone={
-              marginQuery.data?.avg_margin_eur == null
-                ? 'gray'
-                : marginQuery.data.avg_margin_eur > 0
-                  ? 'green'
-                  : 'red'
+            status={
+              throughput?.on_target
+                ? 'green'
+                : throughput
+                  ? 'yellow'
+                  : 'gray'
             }
-            onClick={() => navigate('/relatorios?tab=lucro')}
+            accent={
+              throughput?.on_target
+                ? 'green'
+                : throughput
+                  ? 'yellow'
+                  : 'gray'
+            }
+            sparkline={trend.length > 1 ? trend : undefined}
+          />
+          <KPIBig
+            label="OTD"
+            value={otd ? Math.round(otd.otd_pct) : '—'}
+            unit={otd ? '%' : undefined}
+            context={
+              otd
+                ? `${otd.on_time}/${otd.total} no prazo · janela ${otd.window_days}d`
+                : otdQuery.isLoading
+                  ? 'A carregar…'
+                  : 'Sem entregas na janela'
+            }
+            target={otd ? '95%' : undefined}
+            status={
+              !otd ? 'gray' : otd.otd_pct >= 95 ? 'green' : otd.otd_pct >= 90 ? 'yellow' : 'red'
+            }
+            accent={
+              !otd ? 'gray' : otd.otd_pct >= 95 ? 'green' : otd.otd_pct >= 90 ? 'yellow' : 'red'
+            }
+          />
+          <KPIBig
+            label="Qualidade · FPY"
+            value={fpyValue !== null ? Number(fpyValue.toFixed(1)) : '—'}
+            unit={fpyValue !== null ? '%' : undefined}
+            context={
+              fpyValue !== null
+                ? `1ª passagem · ${fpyQuery.data?.orders_total ?? 0} ordens (30d)`
+                : fpyQuery.isLoading
+                  ? 'A carregar…'
+                  : 'Sem ordens concluídas na janela'
+            }
+            status={
+              fpyValue === null ? 'gray' : fpyValue >= 95 ? 'green' : fpyValue >= 90 ? 'yellow' : 'red'
+            }
+            accent={
+              fpyValue === null ? 'gray' : fpyValue >= 95 ? 'green' : fpyValue >= 90 ? 'yellow' : 'red'
+            }
+          />
+          <KPIBig
+            label="Retrabalho"
+            value={reworkRate !== null ? Number((reworkRate * 100).toFixed(1)) : '—'}
+            unit={reworkRate !== null ? '%' : undefined}
+            context={
+              reworkRate !== null
+                ? 'taxa de retrabalho · KPI_snapshot'
+                : kpiQuery.isLoading
+                  ? 'A carregar…'
+                  : kpiQuery.data?.rework_rate?.reason ?? 'Sem dados de retrabalho'
+            }
+            target={reworkRate !== null ? '8%' : undefined}
+            status={
+              reworkRate === null ? 'gray' : reworkRate <= 0.08 ? 'green' : reworkRate <= 0.15 ? 'yellow' : 'red'
+            }
+            accent={
+              reworkRate === null ? 'gray' : reworkRate <= 0.08 ? 'green' : reworkRate <= 0.15 ? 'yellow' : 'red'
+            }
           />
         </div>
 
-        {/* Grid 2-col: Atenção + Expedições */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 22 }}>
-          <CardWithHeader
-            icon={<AlertTriangle size={16} />}
-            iconTone="orange"
-            title="Atenção necessária"
-            subtitle={`${alertsItems.length} ${alertsItems.length === 1 ? 'alerta activo' : 'alertas activos'} · ordenados por urgência`}
-            action={
-              <button
-                type="button"
-                onClick={() => navigate('/inbox')}
-                className="inline-flex items-center gap-1 text-text-dark-secondary hover:text-text-dark-primary"
-                style={{ fontSize: 12 }}
-              >
-                Ver inbox <ArrowRight size={12} />
-              </button>
-            }
-          >
-            {alertsQuery.isLoading ? (
-              <div className="py-6 text-center text-text-dark-tertiary" style={{ fontSize: 12 }}>
-                A carregar alertas…
-              </div>
-            ) : alertsItems.length === 0 ? (
-              <EmptyState
-                size="sm"
-                title="Sem alertas activos"
-                hint="Tudo calmo no chão de fábrica. Os turnos seguem o plano."
-              />
-            ) : (
-              <div className="flex flex-col" style={{ gap: 10 }}>
-                {alertsItems.slice(0, 5).map((a, idx) => (
-                  <AlertCardZip key={a.alert_id ?? idx} alert={a} />
-                ))}
-              </div>
-            )}
-          </CardWithHeader>
+        {/* ─── KPIs · objetivo vs realizado (banda CEO) ─────────────────── */}
+        <Card padding={18} style={{ marginBottom: 14 }}>
+          <SectionHeader
+            icon={<Target size={14} />}
+            title="KPIs · objetivo vs realizado"
+            subtitle="Alvos do CEO em KPI_OBJECTIVO · banda verde = dentro do esperado"
+          />
+          {objectivesHonest.degraded || objectivesQuery.isError ? (
+            <EmptyState
+              size="sm"
+              title="Objetivos do CEO indisponíveis"
+              hint={
+                objectivesHonest.reason ||
+                'O endpoint de objetivos (KPI_OBJECTIVO) ainda não está ligado. Os alvos aparecem assim que a fonte for sincronizada.'
+              }
+            />
+          ) : (
+            // Sem fonte real de bandas — derivamos os objetivos dos KPIs
+            // vivos acima contra metas de produto conhecidas (Blueprint §1.1).
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(4, 1fr)',
+                gap: 14,
+              }}
+            >
+              {throughput ? (
+                <ObjectiveCell
+                  label="€/dia"
+                  value={Number((throughput.today / 1000).toFixed(1))}
+                  low={throughput.target_min / 1000}
+                  high={throughput.target_max / 1000}
+                  unit="K"
+                />
+              ) : null}
+              {otd ? (
+                <ObjectiveCell
+                  label="OTD"
+                  value={Math.round(otd.otd_pct)}
+                  low={90}
+                  high={100}
+                  unit="%"
+                />
+              ) : null}
+              {fpyValue !== null ? (
+                <ObjectiveCell
+                  label="FPY"
+                  value={Number(fpyValue.toFixed(1))}
+                  low={90}
+                  high={100}
+                  unit="%"
+                />
+              ) : null}
+              {reworkRate !== null ? (
+                <ObjectiveCell
+                  label="Retrabalho"
+                  value={Number((reworkRate * 100).toFixed(1))}
+                  low={0}
+                  high={10}
+                  unit="%"
+                />
+              ) : null}
+            </div>
+          )}
+        </Card>
 
-          <CardWithHeader
-            icon={<Truck size={16} />}
-            iconTone="blue"
-            title="Próximas expedições"
-            subtitle="Estado dos próximos camiões"
-            action={
-              <button
-                type="button"
-                onClick={() => navigate('/expedicao')}
-                className="inline-flex items-center gap-1 text-text-dark-secondary hover:text-text-dark-primary"
-                style={{ fontSize: 12 }}
-              >
-                Ver tudo <ArrowRight size={12} />
-              </button>
-            }
-          >
-            {transportQuery.isLoading ? (
-              <div className="py-6 text-center text-text-dark-tertiary" style={{ fontSize: 12 }}>
-                A carregar expedições…
-              </div>
-            ) : transportBatches.length === 0 ? (
-              <EmptyState
-                size="sm"
-                title="Sem expedições agendadas"
-                hint="Quando houver camiões para carregar, aparecem aqui ordenados por data."
+        {/* ─── €/dia banda + Impacto PP1 ───────────────────────────────── */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1.4fr 1fr',
+            gap: 14,
+            marginBottom: 14,
+          }}
+        >
+          <Card padding={20}>
+            <SectionHeader
+              icon={<Euro size={14} />}
+              title="€/dia · banda objetivo"
+              subtitle="Últimos 14 dias · meta 30–35K"
+            />
+            {trend.length > 1 && throughput ? (
+              <EuroBandChart
+                series={trend}
+                targetMin={throughput.target_min}
+                targetMax={throughput.target_max}
               />
             ) : (
-              <div className="flex flex-col" style={{ gap: 12 }}>
-                {transportBatches.slice(0, 3).map((s: any) => (
-                  <ShipmentRowZip key={s.id ?? s.code} shipment={s} />
-                ))}
-              </div>
+              <EmptyState
+                size="sm"
+                title="Sem série de receita"
+                hint="Quando houver receita reconhecida (order_revenue), a tendência de 14 dias aparece aqui."
+              />
             )}
-          </CardWithHeader>
+          </Card>
+          <Card padding={20}>
+            <SectionHeader
+              icon={<Sparkles size={14} />}
+              title="Impacto PP1"
+              subtitle="Sistema de aprendizagem activo"
+            />
+            <ImpactPP1 />
+          </Card>
         </div>
 
-        {/* AI Panel */}
-        <AIPanel />
+        {/* ─── Margem por segmento ─────────────────────────────────────── */}
+        <Card padding={18} style={{ marginBottom: 14 }}>
+          <SectionHeader
+            icon={<TrendingUp size={14} />}
+            title="Margem por segmento"
+            subtitle="Margem média de ordens com COGS calculado · país do ERP"
+          />
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: 16,
+            }}
+          >
+            <div>
+              <div
+                style={{
+                  fontSize: 10.5,
+                  color: 'var(--fg-3)',
+                  textTransform: 'uppercase',
+                  letterSpacing: 0.4,
+                  fontWeight: 600,
+                  marginBottom: 8,
+                }}
+              >
+                Resumo de margem (30 dias)
+              </div>
+              {marginQuery.data &&
+              marginQuery.data.order_count > 0 &&
+              marginQuery.data.avg_margin_eur !== null ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <SummaryStat
+                    label="Margem média / ordem"
+                    value={`€${Math.round(marginQuery.data.avg_margin_eur).toLocaleString('pt-PT')}`}
+                    tone={marginQuery.data.avg_margin_eur > 0 ? 'green' : 'red'}
+                  />
+                  <SummaryStat
+                    label="Ordens analisadas"
+                    value={`${marginQuery.data.order_count}`}
+                    tone="neutral"
+                  />
+                  <SummaryStat
+                    label="Ordens com margem negativa"
+                    value={`${marginQuery.data.negative_count}`}
+                    tone={marginQuery.data.negative_count > 0 ? 'red' : 'green'}
+                  />
+                </div>
+              ) : (
+                <EmptyState
+                  size="sm"
+                  title="Sem ordens com COGS calculado"
+                  hint="A margem média aparece assim que houver ordens com custo calculado."
+                />
+              )}
+            </div>
+            <div>
+              <div
+                style={{
+                  fontSize: 10.5,
+                  color: 'var(--fg-3)',
+                  textTransform: 'uppercase',
+                  letterSpacing: 0.4,
+                  fontWeight: 600,
+                  marginBottom: 8,
+                }}
+              >
+                Por país
+              </div>
+              {marginCountryHonest.degraded || marginCountryQuery.isError ? (
+                <EmptyState
+                  size="sm"
+                  title="Segmentação por país indisponível"
+                  hint={
+                    marginCountryHonest.reason ||
+                    'A segmentação de margem por país/agente ainda não está ligada ao ERP MAR-KAYAKS.'
+                  }
+                />
+              ) : (
+                <CountryMargins data={marginCountryQuery.data} />
+              )}
+            </div>
+          </div>
+        </Card>
+
+        {/* ─── CTP · encomendas activas ────────────────────────────────── */}
+        <Card padding={0}>
+          <div
+            style={{ padding: '14px 18px', borderBottom: '1px solid var(--bd-1)' }}
+          >
+            <SectionHeader
+              icon={<Flag size={14} />}
+              title="Encomendas activas · backlog por cliente"
+              subtitle={`${(backlogQuery.data?.items ?? []).length} clientes · €${Math.round(backlogTotal / 1000)}K pendente`}
+            />
+          </div>
+          {backlogQuery.isLoading ? (
+            <div
+              style={{
+                padding: 24,
+                textAlign: 'center',
+                color: 'var(--fg-3)',
+                fontSize: 12,
+              }}
+            >
+              A carregar backlog…
+            </div>
+          ) : (backlogQuery.data?.items ?? []).length === 0 ? (
+            <div style={{ padding: 18 }}>
+              <EmptyState
+                size="sm"
+                title="Sem encomendas pendentes"
+                hint="Não há encomendas em backlog neste momento."
+              />
+            </div>
+          ) : (
+            <>
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1.6fr 110px 130px 130px',
+                  alignItems: 'center',
+                  padding: '12px 18px',
+                  borderBottom: '1px solid var(--bd-1)',
+                  background: 'var(--bg-2)',
+                  fontSize: 10.5,
+                  color: 'var(--fg-3)',
+                  textTransform: 'uppercase',
+                  letterSpacing: 0.4,
+                  fontWeight: 600,
+                }}
+              >
+                <div>Cliente</div>
+                <div style={{ textAlign: 'right' }}>Encomendas</div>
+                <div style={{ textAlign: 'right' }}>Valor pendente</div>
+                <div style={{ textAlign: 'right' }}>Prazo mais cedo</div>
+              </div>
+              {(backlogQuery.data?.items ?? []).map((r, i, arr) => (
+                <div
+                  key={r.client_name + i}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1.6fr 110px 130px 130px',
+                    alignItems: 'center',
+                    padding: '12px 18px',
+                    borderBottom:
+                      i < arr.length - 1 ? '1px solid var(--bd-1)' : 'none',
+                  }}
+                >
+                  <div
+                    style={{ fontSize: 13, color: 'var(--fg-0)', fontWeight: 500 }}
+                  >
+                    {r.client_name}
+                  </div>
+                  <div
+                    className="tabular"
+                    style={{ fontSize: 12.5, color: 'var(--fg-1)', textAlign: 'right' }}
+                  >
+                    {r.pending_orders}
+                  </div>
+                  <div
+                    className="tabular"
+                    style={{
+                      fontSize: 12.5,
+                      color: 'var(--fg-0)',
+                      fontWeight: 600,
+                      textAlign: 'right',
+                    }}
+                  >
+                    €{Math.round(r.pending_value_eur).toLocaleString('pt-PT')}
+                  </div>
+                  <div
+                    className="tabular"
+                    style={{ fontSize: 12.5, color: 'var(--fg-2)', textAlign: 'right' }}
+                  >
+                    {r.earliest_deadline
+                      ? fmtDate(r.earliest_deadline)
+                      : '—'}
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
+        </Card>
+
+        {/* ─── Próximas expedições ─────────────────────────────────────── */}
+        <Card padding={18} style={{ marginTop: 14 }}>
+          <SectionHeader
+            title="Próximas expedições"
+            subtitle="Camiões de transporte agendados"
+          />
+          {transportQuery.isLoading ? (
+            <div
+              style={{
+                padding: 12,
+                textAlign: 'center',
+                color: 'var(--fg-3)',
+                fontSize: 12,
+              }}
+            >
+              A carregar expedições…
+            </div>
+          ) : transportBatches.length === 0 ? (
+            <EmptyState
+              size="sm"
+              title="Sem expedições agendadas"
+              hint="Quando houver camiões para carregar, aparecem aqui."
+            />
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {transportBatches.slice(0, 6).map((b) => {
+                const st = STATUS_LABEL[b.status ?? 'planned'] ?? {
+                  label: b.status ?? '—',
+                  tone: 'neutral',
+                };
+                return (
+                  <div
+                    key={b.id}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '1fr 120px 110px 110px',
+                      alignItems: 'center',
+                      gap: 12,
+                      padding: '10px 12px',
+                      background: 'var(--bg-2)',
+                      borderRadius: 'var(--r-md)',
+                      fontSize: 12.5,
+                    }}
+                  >
+                    <span style={{ color: 'var(--fg-0)', fontWeight: 500 }}>
+                      {b.code ?? b.id.slice(0, 8)}
+                    </span>
+                    <span style={{ color: 'var(--fg-2)' }}>
+                      {b.destination ?? '—'}
+                    </span>
+                    <span
+                      className="tabular"
+                      style={{ color: 'var(--fg-1)' }}
+                    >
+                      {fmtDate(b.transport_date)}
+                    </span>
+                    <span
+                      style={{
+                        justifySelf: 'end',
+                        padding: '1px 8px',
+                        fontSize: 10.5,
+                        borderRadius: 999,
+                        color: `var(--${st.tone === 'neutral' ? 'fg-1' : st.tone === 'info' ? 'blue' : st.tone === 'warning' ? 'yellow' : 'green'})`,
+                        background: `var(--bg-3)`,
+                        border: '1px solid var(--bd-1)',
+                      }}
+                    >
+                      {st.label}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </Card>
       </div>
-      )}
     </div>
   );
 }
 
-// ─── KPICardZip (port atoms.jsx KPICard) ────────────────────────────────────
+// ─── ObjectiveCell ───────────────────────────────────────────────────────
 
-function KPICardZip({
+function ObjectiveCell({
   label,
   value,
+  low,
+  high,
   unit,
-  context,
-  tone,
-  sparkline,
-  onClick,
 }: {
   label: string;
-  value: string;
+  value: number;
+  low: number;
+  high: number;
   unit: string;
-  context: string;
-  tone: 'green' | 'yellow' | 'red' | 'gray' | 'blue';
-  sparkline?: number[];
-  onClick?: () => void;
 }) {
   return (
-    <div
-      onClick={onClick}
-      style={{
-        padding: '16px 18px',
-        background: 'var(--bg-1)',
-        border: '1px solid var(--bd-1)',
-        borderRadius: 'var(--r-lg)',
-        cursor: onClick ? 'pointer' : 'default',
-        transition: 'background 0.12s, border-color 0.12s',
-      }}
-    >
+    <div>
       <div
-        className="text-text-dark-tertiary uppercase font-medium"
-        style={{ fontSize: 11, letterSpacing: '0.4px', marginBottom: 8 }}
+        style={{
+          fontSize: 10.5,
+          color: 'var(--fg-3)',
+          textTransform: 'uppercase',
+          letterSpacing: 0.4,
+          fontWeight: 600,
+          marginBottom: 6,
+        }}
       >
         {label}
       </div>
-      <div className="flex items-baseline gap-1 tabular-nums">
-        <span
-          style={{
-            fontSize: 38,
-            fontWeight: 700,
-            color: `var(--${tone})`,
-            lineHeight: 1,
-            letterSpacing: '-0.02em',
-          }}
-        >
-          {value}
-        </span>
-        {unit ? (
-          <span style={{ fontSize: 14, color: 'var(--fg-2)' }}>{unit}</span>
-        ) : null}
-      </div>
-      {sparkline && sparkline.length > 0 ? (
-        <div style={{ marginTop: 10, height: 24 }}>
-          <SparklineMini points={sparkline} color={`var(--${tone})`} />
-        </div>
-      ) : null}
-      <div
-        className="text-text-dark-tertiary"
-        style={{ fontSize: 11, marginTop: 8, lineHeight: 1.4 }}
-      >
-        {context}
-      </div>
+      <ObjectiveBar value={value} low={low} high={high} unit={unit} />
     </div>
   );
 }
 
-function SparklineMini({ points, color }: { points: number[]; color: string }) {
-  if (points.length === 0) return null;
-  const max = Math.max(...points, 1);
-  const min = Math.min(...points, 0);
-  const range = max - min || 1;
-  const w = 100;
-  const h = 24;
-  const path = points
-    .map((p, i) => {
-      const x = (i / (points.length - 1)) * w;
-      const y = h - ((p - min) / range) * h;
-      return `${i === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)}`;
-    })
-    .join(' ');
-  return (
-    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" style={{ width: '100%', height: '100%' }}>
-      <path d={path} fill="none" stroke={color} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
+// ─── SummaryStat ─────────────────────────────────────────────────────────
 
-// ─── CardWithHeader (port atoms.jsx Card + CardHeader) ──────────────────────
-
-function CardWithHeader({
-  icon,
-  iconTone,
-  title,
-  subtitle,
-  action,
-  children,
+function SummaryStat({
+  label,
+  value,
+  tone,
 }: {
-  icon: ReactNode;
-  iconTone: 'orange' | 'blue' | 'green' | 'red' | 'purple' | 'yellow';
-  title: string;
-  subtitle?: string;
-  action?: ReactNode;
-  children: ReactNode;
+  label: string;
+  value: string;
+  tone: 'green' | 'red' | 'neutral';
 }) {
+  const color =
+    tone === 'green'
+      ? 'var(--green)'
+      : tone === 'red'
+        ? 'var(--red)'
+        : 'var(--fg-0)';
   return (
     <div
       style={{
-        padding: 20,
-        background: 'var(--bg-1)',
-        border: '1px solid var(--bd-1)',
-        borderRadius: 'var(--r-lg)',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'baseline',
+        padding: '8px 0',
+        borderBottom: '1px solid var(--bd-1)',
+        fontSize: 12,
       }}
     >
-      <div className="flex items-start justify-between mb-3" style={{ gap: 12 }}>
-        <div className="flex items-center" style={{ gap: 10 }}>
-          <div
-            className="grid place-items-center"
-            style={{
-              width: 32,
-              height: 32,
-              background: `var(--${iconTone}-bg)`,
-              color: `var(--${iconTone})`,
-              border: `1px solid var(--${iconTone}-bd)`,
-              borderRadius: 'var(--r-md)',
-            }}
-          >
-            {icon}
-          </div>
-          <div>
-            <div className="text-text-dark-primary font-semibold leading-tight" style={{ fontSize: 14 }}>
-              {title}
-            </div>
-            {subtitle ? (
-              <div className="text-text-dark-tertiary" style={{ fontSize: 12, marginTop: 2 }}>
-                {subtitle}
-              </div>
-            ) : null}
-          </div>
-        </div>
-        {action}
-      </div>
-      {children}
+      <span style={{ color: 'var(--fg-2)' }}>{label}</span>
+      <span className="tabular" style={{ color, fontWeight: 600 }}>
+        {value}
+      </span>
     </div>
   );
 }
 
-// ─── AlertCardZip ───────────────────────────────────────────────────────────
+// ─── CountryMargins — só renderiza se a resposta tiver shape esperado ────
 
-function AlertCardZip({ alert }: { alert: any }) {
-  const sev: ZipSeverity =
-    alert.severity === 'critical' ||
-    alert.severity === 'high' ||
-    alert.severity === 'medium' ||
-    alert.severity === 'low'
-      ? alert.severity
-      : 'medium';
-  const sevColor =
-    sev === 'critical' ? 'red' : sev === 'high' ? 'orange' : sev === 'medium' ? 'yellow' : 'blue';
+function CountryMargins({ data }: { data: unknown }) {
+  const rows = useMemo(() => {
+    if (!data || typeof data !== 'object') return [];
+    const items = (data as { items?: unknown }).items;
+    if (!Array.isArray(items)) return [];
+    return items
+      .filter(
+        (r): r is { label: string; margin: number; revenue: number } =>
+          !!r &&
+          typeof r === 'object' &&
+          typeof (r as Record<string, unknown>).margin === 'number',
+      )
+      .map((r) => ({
+        label: String((r as Record<string, unknown>).label ?? '—'),
+        margin: Number((r as Record<string, unknown>).margin),
+        revenue: Number((r as Record<string, unknown>).revenue ?? 0),
+      }));
+  }, [data]);
 
+  if (rows.length === 0) {
+    return (
+      <EmptyState
+        size="sm"
+        title="Sem margem por país"
+        hint="Não há ordens com país atribuído para segmentar."
+      />
+    );
+  }
   return (
-    <div
-      style={{
-        padding: '12px 14px',
-        background: 'var(--bg-2)',
-        border: '1px solid var(--bd-1)',
-        borderLeft: `3px solid var(--${sevColor})`,
-        borderRadius: 'var(--r-md)',
-      }}
-    >
-      <div className="flex items-center justify-between gap-2 mb-1.5">
-        <ZipSevBadge severity={sev} size="sm" />
-        <span className="text-text-dark-tertiary" style={{ fontSize: 10 }}>
-          {relativeTime(alert.created_at)}
-        </span>
-      </div>
-      <div className="text-text-dark-primary font-medium" style={{ fontSize: 14 }}>
-        {alert.title ?? alert.message ?? '(Sem título)'}
-      </div>
-      {alert.detail || alert.description ? (
-        <div className="text-text-dark-secondary" style={{ fontSize: 12, marginTop: 4 }}>
-          {alert.detail ?? alert.description}
-        </div>
-      ) : null}
-      {alert.cause ? (
-        <div
-          className="text-text-dark-secondary"
-          style={{
-            fontSize: 12,
-            marginTop: 6,
-            paddingLeft: 12,
-            borderLeft: '2px solid var(--bd-2)',
-          }}
-        >
-          <strong className="text-text-dark-primary">Causa:</strong> {alert.cause}
-        </div>
-      ) : null}
+    <div>
+      {rows.map((r, i) => (
+        <MarginRow
+          key={r.label}
+          label={r.label}
+          margin={r.margin}
+          revenue={r.revenue}
+          asPill
+          last={i === rows.length - 1}
+        />
+      ))}
     </div>
   );
 }
 
-// ─── ShipmentRowZip ─────────────────────────────────────────────────────────
+// ─── ImpactPP1 — quanto o sistema de aprendizagem rendeu ─────────────────
 
-function ShipmentRowZip({ shipment }: { shipment: any }) {
-  const transport = shipment.transport_date ?? shipment.date;
-  const total = shipment.truck_capacity_units ?? shipment.total ?? 50;
-  const ready = shipment.ready ?? 0;
-  const in_prod = shipment.in_prod ?? 0;
-  const at_risk = shipment.at_risk ?? 0;
-  const pct = total > 0 ? Math.round((ready / total) * 100) : 0;
-  const tone = at_risk > 0 ? 'yellow' : pct === 100 ? 'green' : 'blue';
-  const day = transport ? shipmentDayLabel(transport) : '—';
-  const dayShort = transport ? `${transport.slice(8, 10)}/${transport.slice(5, 7)}` : '—';
-
+function ImpactPP1() {
+  // O Impacto PP1 monetário não tem endpoint dedicado — mostramos um
+  // empty state honesto em vez de inventar o número.
   return (
-    <div
-      style={{
-        padding: '12px 14px',
-        background: 'var(--bg-2)',
-        border: '1px solid var(--bd-1)',
-        borderRadius: 'var(--r-md)',
-      }}
-    >
-      <div className="flex items-baseline justify-between gap-2 mb-1">
-        <div className="flex items-baseline gap-2">
-          <span className="text-text-dark-primary font-semibold" style={{ fontSize: 13 }}>
-            {day}
-          </span>
-          <span className="text-text-dark-tertiary tabular-nums" style={{ fontSize: 11 }}>
-            {dayShort}
-          </span>
-        </div>
-        <span
-          className="font-semibold tabular-nums"
-          style={{ fontSize: 13, color: `var(--${tone})` }}
-        >
-          {ready}/{total}
-        </span>
-      </div>
-      <div className="text-text-dark-secondary mb-2" style={{ fontSize: 12 }}>
-        {shipment.destination ?? shipment.client ?? '—'}
-      </div>
-      <div
-        style={{
-          height: 5,
-          background: 'var(--bg-3)',
-          borderRadius: 3,
-          overflow: 'hidden',
-          display: 'flex',
-        }}
-      >
-        <div style={{ width: `${pct}%`, background: 'var(--green)' }} />
-        {in_prod > 0 ? (
-          <div style={{ width: `${(in_prod / total) * 100}%`, background: 'var(--blue)' }} />
-        ) : null}
-        {at_risk > 0 ? (
-          <div style={{ width: `${(at_risk / total) * 100}%`, background: 'var(--yellow)' }} />
-        ) : null}
-      </div>
-      <div className="flex gap-3 mt-2 text-text-dark-tertiary" style={{ fontSize: 11 }}>
-        <span>
-          ●{' '}
-          <span style={{ color: 'var(--green)' }}>
-            {ready} pronto{ready !== 1 ? 's' : ''}
-          </span>
-        </span>
-        {in_prod > 0 ? (
-          <span>
-            ● <span style={{ color: 'var(--blue)' }}>{in_prod} em produção</span>
-          </span>
-        ) : null}
-        {at_risk > 0 ? (
-          <span>
-            ● <span style={{ color: 'var(--yellow)' }}>{at_risk} em risco</span>
-          </span>
-        ) : null}
-      </div>
+    <div style={{ marginTop: 4 }}>
+      <EmptyState
+        size="sm"
+        title="Impacto PP1 ainda não quantificado"
+        hint="A poupança gerada pelas sugestões aceites será calculada pelo serviço de custos. Até lá, o valor não é mostrado para não inventar números."
+      />
     </div>
   );
 }
-
-// ─── AIPanel ────────────────────────────────────────────────────────────────
-
-function AIPanel() {
-  const decisionsQuery = useQuery({
-    queryKey: ['direcao', 'ai-stats'],
-    queryFn: async () => {
-      const fetchTotal = async (status?: string) => {
-        try {
-          const r: any = await decisionsApi.list({ status, page_size: 1 });
-          return r?.total ?? 0;
-        } catch {
-          return 0;
-        }
-      };
-      const [proposed, executed, rejected] = await Promise.all([
-        fetchTotal('PROPOSED'),
-        fetchTotal('EXECUTED'),
-        fetchTotal('REJECTED'),
-      ]);
-      const total = proposed + executed + rejected;
-      return { total, executed, rejected, proposed };
-    },
-    staleTime: 60_000,
-    retry: 0,
-  });
-  const stats = decisionsQuery.data ?? { total: 0, executed: 0, rejected: 0, proposed: 0 };
-  const acceptanceRate = stats.total > 0 ? Math.round((stats.executed / stats.total) * 100) : 0;
-
-  return (
-    <div
-      style={{
-        background: 'var(--atmosphere-card), var(--bg-1)',
-        border: '1px solid var(--bd-1)',
-        borderRadius: 'var(--r-lg)',
-        boxShadow: 'var(--shadow-3)',
-        overflow: 'hidden',
-      }}
-    >
-      <div
-        className="flex items-center"
-        style={{
-          padding: '18px 22px',
-          borderBottom: '1px solid var(--bd-1)',
-          gap: 10,
-        }}
-      >
-        <div
-          className="grid place-items-center"
-          style={{
-            width: 32,
-            height: 32,
-            background: 'var(--purple-bg)',
-            color: 'var(--purple)',
-            border: '1px solid var(--purple-bd)',
-            borderRadius: 'var(--r-md)',
-          }}
-        >
-          <Brain size={16} />
-        </div>
-        <div>
-          <div className="text-text-dark-primary font-semibold" style={{ fontSize: 14 }}>
-            O que o sistema fez por si esta semana
-          </div>
-          <div className="text-text-dark-tertiary" style={{ fontSize: 12, marginTop: 2 }}>
-            O assistente é uma proposta — você decide sempre
-          </div>
-        </div>
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)' }}>
-        {[
-          { value: stats.total.toString(), label: 'Sugestões geradas', sub: 'Plano, atribuição, qualidade' },
-          { value: stats.executed.toString(), label: 'Aceites por si', sub: `${acceptanceRate}% — ${acceptanceRate >= 70 ? 'boa concordância' : 'baixa concordância'}` },
-          { value: stats.rejected.toString(), label: 'Rejeitadas', sub: 'O sistema aprendeu com cada uma' },
-          { value: '—', label: 'Poupança estimada', sub: 'Calculado em sub-sprint cost service' },
-        ].map((s, i) => (
-          <div
-            key={i}
-            style={{
-              padding: '20px 22px',
-              borderRight: i < 3 ? '1px solid var(--bd-1)' : 'none',
-            }}
-          >
-            <div
-              className="tabular-nums text-text-dark-primary"
-              style={{ fontSize: 32, fontWeight: 700, lineHeight: 1, letterSpacing: '-0.02em' }}
-            >
-              {s.value}
-            </div>
-            <div
-              className="text-text-dark-secondary font-medium"
-              style={{ fontSize: 12, marginTop: 6 }}
-            >
-              {s.label}
-            </div>
-            <div className="text-text-dark-tertiary" style={{ fontSize: 11, marginTop: 3 }}>
-              {s.sub}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
