@@ -32,6 +32,8 @@ import {
   MarginRow,
 } from '../../components/ceo/CeoBits';
 import { useHonestEmptyState } from '../../hooks/useHonestEmptyState';
+import { OtdRiskCard } from '../../components/painel/OtdRiskCard';
+import { painelApi } from '../painel/painelApi';
 import {
   apiFetch,
   kpisApi,
@@ -180,6 +182,14 @@ export default function DirecaoPage() {
     queryFn: () =>
       apiFetch<TransportBatch[]>('/v1/plan/transport/batches?limit=20'),
     staleTime: 60_000,
+    retry: 0,
+  });
+
+  // Risco de atraso de encomendas (Q.54.F) — partilhado com o Painel.
+  const otdRiskQuery = useQuery({
+    queryKey: ['painel', 'otd-risk'],
+    queryFn: () => painelApi.otdRisk(50),
+    staleTime: 5 * 60_000,
     retry: 0,
   });
 
@@ -629,6 +639,18 @@ export default function DirecaoPage() {
             </>
           )}
         </Card>
+
+        {/* ─── Encomendas em risco de atraso (Q.54.F) ──────────────────── */}
+        <div style={{ marginTop: 14 }}>
+          <OtdRiskCard
+            query={{
+              data: otdRiskQuery.data ?? null,
+              isLoading: otdRiskQuery.isLoading,
+              isError: otdRiskQuery.isError,
+            }}
+            onRetry={() => otdRiskQuery.refetch()}
+          />
+        </div>
 
         {/* ─── Próximas expedições ─────────────────────────────────────── */}
         <Card padding={18} style={{ marginTop: 14 }}>

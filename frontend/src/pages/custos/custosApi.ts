@@ -144,6 +144,46 @@ export interface ScenarioSimulateResult {
   recommendation: string;
 }
 
+// ─── /cost-reduction-suggestions — sugestões accionáveis (Q.54.H) ──────────
+
+/** Uma sugestão de redução de custo — outlier de custo de um barco. */
+export interface CostReductionSuggestion {
+  order_id: string;
+  hull: string;
+  product_type: string;
+  product_name: string | null;
+  cost_center: string;
+  cost_center_label: string;
+  boat_cost_eur: number;
+  baseline_cost_eur: number;
+  overspend_eur: number;
+  overspend_ratio: number;
+  sample_size: number;
+  title: string;
+  explanation: string;
+  decision_type: string;
+}
+
+export interface CostReductionResponse {
+  date_from: string | null;
+  date_to: string | null;
+  count: number;
+  total_opportunity_eur: number;
+  suggestions: CostReductionSuggestion[];
+  reason: string | null;
+  currency: string;
+  source: string;
+}
+
+/** Resposta da promoção de uma sugestão a Decisão (DecisionRun). */
+export interface SuggestionDecisionResult {
+  id: string;
+  decision_type: string;
+  title: string;
+  status: string;
+  [k: string]: unknown;
+}
+
 export const custosApi = {
   /** Ledger de custos consolidado — COGS por centro de custo + por barco. */
   costLedger: (params?: { from?: string; to?: string; limit?: number }) => {
@@ -171,4 +211,35 @@ export const custosApi = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+
+  /** Sugestões accionáveis de redução de custo (outliers de COGS). */
+  costReductionSuggestions: (params?: {
+    from?: string;
+    to?: string;
+    limit?: number;
+  }) =>
+    apiFetch<CostReductionResponse>(
+      '/v1/profit/cost-reduction-suggestions',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          date_from: params?.from ?? null,
+          date_to: params?.to ?? null,
+          limit: params?.limit ?? 20,
+        }),
+      },
+    ),
+
+  /** Promove uma sugestão a Decisão no Inbox de governança. */
+  createSuggestionDecision: (suggestion: CostReductionSuggestion) =>
+    apiFetch<SuggestionDecisionResult>(
+      '/v1/profit/cost-reduction-suggestions/decision',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          suggestion,
+          proposed_by: 'custos-ui',
+        }),
+      },
+    ),
 };

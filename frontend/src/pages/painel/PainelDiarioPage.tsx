@@ -48,6 +48,7 @@ import { painelApi } from './painelApi';
 import type { CopilotAlert } from './painelApi';
 import { PainelGargalo } from './PainelGargalo';
 import { PainelAlertCard } from './PainelAlertCard';
+import { OtdRiskCard } from '../../components/painel/OtdRiskCard';
 import { fmtEuroK, normalizeBottleneck } from './painelHelpers';
 
 type TabId = 'alertas' | 'aprovacoes' | 'feed';
@@ -94,6 +95,14 @@ export function PainelDiarioPage(): ReactNode {
     staleTime: 60_000,
   });
 
+  // ─── Risco de atraso de encomendas (Q.54.F) ─────────────────────────────
+  const otdRiskQuery = useQuery({
+    queryKey: ['painel', 'otd-risk'],
+    queryFn: () => painelApi.otdRisk(50),
+    refetchOnWindowFocus: false,
+    staleTime: 5 * 60_000,
+  });
+
   // ─── Mutações dos alertas ───────────────────────────────────────────────
   const [busyAlertId, setBusyAlertId] = useState<string | null>(null);
   const invalidateAlerts = () =>
@@ -134,6 +143,9 @@ export function PainelDiarioPage(): ReactNode {
   // Aderência ao plano — % do plano do CPO que já se realizou.
   const adherence = adherenceQuery.data;
   const adherencePct = adherence?.summary.adherence_pct ?? null;
+
+  // Risco de atraso — ordenado pelo backend, prob. decrescente.
+  const otdRisk = otdRiskQuery.data ?? null;
 
   // €/dia — sai do snapshot quando o ThroughputService está ligado.
   const throughput = snap?.kpis.throughput_eur_day;
@@ -227,12 +239,29 @@ export function PainelDiarioPage(): ReactNode {
               label="Taxa de defeito"
               value={
                 typeof snap?.kpis.defect_rate === 'number'
-                  ? `${(snap.kpis.defect_rate * 100).toFixed(1)}%`
+                  ? snap.kpis.defect_rate.toFixed(2)
                   : 'indisponível'
               }
-              context="Erros por ordem · serviço de qualidade"
-              status="orange"
-              accent="orange"
+              unit={
+                typeof snap?.kpis.defect_rate === 'number'
+                  ? 'erros/ordem'
+                  : undefined
+              }
+              context="Retrabalho registado por ordem · últimos 90 dias"
+              status={
+                typeof snap?.kpis.defect_rate !== 'number'
+                  ? 'gray'
+                  : snap.kpis.defect_rate <= 1
+                    ? 'green'
+                    : 'orange'
+              }
+              accent={
+                typeof snap?.kpis.defect_rate !== 'number'
+                  ? 'gray'
+                  : snap.kpis.defect_rate <= 1
+                    ? 'green'
+                    : 'orange'
+              }
             />
             <KPIBig
               label="Aprovações pendentes"
@@ -297,6 +326,18 @@ export function PainelDiarioPage(): ReactNode {
             ) : (
               <PainelGargalo phases={phases} />
             )}
+          </div>
+
+          {/* ─── Encomendas em risco de atraso (Q.54.F) ────────────────── */}
+          <div style={{ marginBottom: 24 }}>
+            <OtdRiskCard
+              query={{
+                data: otdRisk,
+                isLoading: otdRiskQuery.isLoading,
+                isError: otdRiskQuery.isError,
+              }}
+              onRetry={() => otdRiskQuery.refetch()}
+            />
           </div>
         </>
       )}

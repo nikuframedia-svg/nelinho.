@@ -16,17 +16,24 @@ import { apiFetch } from '../../lib/api';
 // ─── Factory-map snapshot ──────────────────────────────────────────────────
 
 export interface FactoryBottleneck {
-  /** Identificador da operação/fase. */
+  /** Identificador da operação/fase (serviço semântico). */
   operation_id?: string | null;
   phase?: string | null;
-  /** Nome legível da fase. */
+  /** Identificador da fase (fallback DB — Q.54.E). */
+  fase_id?: string | null;
+  /** Nome legível da fase (serviço semântico ou fallback DB). */
   name?: string | null;
-  /** Carga agendada vs capacidade. */
+  fase_nome?: string | null;
+  /** Carga agendada vs capacidade (serviço semântico). */
   load?: number | null;
   capacity?: number | null;
-  /** Score 0-100 de gargalo (pode vir do serviço semântico). */
+  /** Backlog vs capacidade em horas (fallback DB — Q.54.E). */
+  backlog_horas?: number | null;
+  capacidade_horas?: number | null;
+  /** Score de gargalo (dias de backlog no fallback DB). */
   score?: number | null;
   open_phases?: number | null;
+  is_critical?: boolean | null;
   [k: string]: unknown;
 }
 
@@ -119,6 +126,31 @@ export interface ActivityResponse {
   items: ActivityItem[];
 }
 
+// ─── OTD risk — risco de atraso de encomendas (Q.54.F) ─────────────────────
+
+export type OtdRiskBand = 'alto' | 'medio' | 'baixo' | string;
+
+export interface OtdRiskOrder {
+  of_id: string;
+  product_name: string | null;
+  product_type: string | null;
+  current_phase_id: string | null;
+  current_phase_name: string | null;
+  transport_date: string | null;
+  late_probability: number;
+  risk_band: OtdRiskBand;
+  features?: Record<string, unknown>;
+}
+
+export interface OtdRiskResponse {
+  /** false quando ainda não há modelo treinado — degrada com `reason`. */
+  model_available: boolean;
+  reason?: string | null;
+  total_orders?: number;
+  high_risk_count?: number;
+  orders: OtdRiskOrder[];
+}
+
 // ─── API ───────────────────────────────────────────────────────────────────
 
 export const painelApi = {
@@ -157,4 +189,8 @@ export const painelApi = {
   /** Feed de actividade recente (REAL — outbox poll). */
   activity: (limit = 25) =>
     apiFetch<ActivityResponse>(`/v1/activity/recent?limit=${limit}`),
+
+  /** Risco de atraso de entrega por encomenda (REAL — Q.54.F). */
+  otdRisk: (topN = 50) =>
+    apiFetch<OtdRiskResponse>(`/v1/plan/orders/otd-risk?top_n=${topN}`),
 };

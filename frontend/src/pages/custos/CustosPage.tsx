@@ -27,6 +27,7 @@ import {
   Panel,
 } from '../../components/dark';
 import { CostCenterBars } from '../../components/custos/CostCenterBars';
+import { CostSuggestionsPanel } from '../../components/custos/CostSuggestionsPanel';
 import { ScenarioSimulator } from '../../components/custos/ScenarioSimulator';
 import { custosApi } from './custosApi';
 import type { BoatCostRow } from './custosApi';
@@ -304,6 +305,11 @@ export function CustosPage(): ReactNode {
                 </table>
               )}
             </Panel>
+          </div>
+
+          {/* Sugestões de redução de custo (Q.54.H) */}
+          <div style={{ marginBottom: 12 }}>
+            <CostSuggestionsPanel />
           </div>
 
           {/* Simulador de cenários */}

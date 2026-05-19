@@ -61,17 +61,39 @@ export function normalizeBottleneck(
 ): PhaseLoad {
   const id =
     (typeof b.operation_id === 'string' && b.operation_id) ||
+    (typeof b.fase_id === 'string' && b.fase_id) ||
     (typeof b.phase === 'string' && b.phase) ||
     `fase-${index}`;
   const short =
     (typeof b.name === 'string' && b.name) ||
+    (typeof b.fase_nome === 'string' && b.fase_nome) ||
     (typeof b.phase === 'string' && b.phase) ||
     id;
-  const load = typeof b.load === 'number' ? b.load : null;
-  const cap = typeof b.capacity === 'number' ? b.capacity : null;
-  // Score directo do serviço, ou derivado de load/cap quando ambos existem.
-  let score = typeof b.score === 'number' ? b.score : 0;
-  if (score === 0 && load !== null && cap !== null && cap > 0) {
+  // Carga/capacidade — do serviço semântico (`load`/`capacity`) ou do
+  // fallback DB Q.54.E (`backlog_horas`/`capacidade_horas`).
+  const load =
+    typeof b.load === 'number'
+      ? b.load
+      : typeof b.backlog_horas === 'number'
+        ? b.backlog_horas
+        : null;
+  const cap =
+    typeof b.capacity === 'number'
+      ? b.capacity
+      : typeof b.capacidade_horas === 'number'
+        ? b.capacidade_horas
+        : null;
+  // Score 0-100 para a ScoreBar. O fallback DB devolve o score em DIAS
+  // de backlog (crítico > 5 dias) — escala-se para 0-100 (5d ≈ 100).
+  // O serviço semântico já devolve 0-100. Sem score directo, deriva de
+  // load/cap.
+  let score = 0;
+  if (typeof b.score === 'number') {
+    score =
+      b.score > 0 && b.score <= 20
+        ? Math.min(100, Math.round((b.score / 5) * 100))
+        : Math.min(100, Math.round(b.score));
+  } else if (load !== null && cap !== null && cap > 0) {
     score = Math.min(100, Math.round((load / cap) * 100));
   }
   return { id, short, load, cap, score };
