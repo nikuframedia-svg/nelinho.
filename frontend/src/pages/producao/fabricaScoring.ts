@@ -205,3 +205,42 @@ export function fitTone(fit: number): 'green' | 'yellow' | 'red' {
   if (fit > 5) return 'yellow';
   return 'red';
 }
+
+// ── Classificação de fase para o painel de operadores (Q.55.D) ────────────
+//
+// Espelha `src/plan/services/phase_classification.py` — fases terminais e
+// "por começar" não são fases de trabalho, não faz sentido pontuar
+// operadores para elas. Markers normalizados (lower-case, sem acentos).
+const _TERMINAL_MARKERS = ['entregue', 'armazem', 'embalado'];
+const _PENDING_MARKERS = ['pendente', 'nao laminado'];
+
+/** Estado de trabalhabilidade de uma fase. */
+export type PhaseWorkability = 'workable' | 'pending' | 'terminal';
+
+function normalizePhase(phaseName: string | null): string {
+  if (!phaseName) return '';
+  // ̀-ͯ — bloco de diacríticos combinantes; remove acentos
+  // depois do NFKD para casar 'Armazém' com 'armazem'.
+  return phaseName
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * Classifica uma fase quanto a poder receber operadores.
+ *
+ * - `terminal` — barco já fora do chão de fábrica ("Entregue"/"Armazém"/
+ *   "Embalado");
+ * - `pending` — ordem ainda não arrancou ("Pendente"/"Não Laminado"), ou
+ *   sem fase definida;
+ * - `workable` — fase de trabalho real; faz sentido pontuar adequação.
+ */
+export function phaseWorkability(phaseName: string | null): PhaseWorkability {
+  const norm = normalizePhase(phaseName);
+  if (!norm) return 'pending';
+  if (_TERMINAL_MARKERS.some((m) => norm.includes(m))) return 'terminal';
+  if (_PENDING_MARKERS.some((m) => norm.includes(m))) return 'pending';
+  return 'workable';
+}

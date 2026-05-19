@@ -25,7 +25,7 @@ import type { ReactNode } from 'react';
 import { X, Sparkles, Users } from 'lucide-react';
 import { DarkBadge, NeloWorkerAvatar } from '../../components/dark';
 import { fmtEuro } from '../painel/painelHelpers';
-import { fitTone, scoreFor } from './fabricaScoring';
+import { fitTone, phaseWorkability, scoreFor } from './fabricaScoring';
 import type { WorkerProfile } from './fabricaScoring';
 import type { ActiveOrderCard, OptimizedOrderCard } from './fabricaApi';
 
@@ -137,10 +137,16 @@ export function BoatDetailPanel({
 
   const assigned = useMemo(() => new Set(assignedIds), [assignedIds]);
 
+  // Q.55.D — fases terminais e "por começar" não recebem operadores; não
+  // há tarefa a que atribuir. Não pontuamos adequação nesse caso (seria
+  // um ranking sem sentido — todos "sem skill nesta fase").
+  const workability = phaseWorkability(phaseName);
+
   // Operadores DISPONÍVEIS (não atribuídos a este barco), ranqueados por
   // adequação à fase. `scoreFor` penaliza quem não tem skill na fase, por
   // isso os aptos sobem naturalmente.
   const ranked = useMemo(() => {
+    if (workability !== 'workable') return [];
     return workers
       .filter((w) => !assigned.has(w.id))
       .map((w) => {
@@ -149,7 +155,7 @@ export function BoatDetailPanel({
         return { worker: w, ...score, level };
       })
       .sort((a, b) => b.fit - a.fit);
-  }, [workers, assigned, phaseName]);
+  }, [workers, assigned, phaseName, workability]);
 
   const visible = ranked.slice(0, VISIBLE_CAP);
   const hiddenCount = ranked.length - visible.length;
@@ -291,6 +297,28 @@ export function BoatDetailPanel({
             Operadores para esta tarefa
           </span>
         </div>
+        {workability !== 'workable' ? (
+          <div
+            style={{
+              fontSize: 12,
+              color: 'var(--fg-2)',
+              lineHeight: 1.5,
+              background: 'var(--bg-2)',
+              border: '1px solid var(--bd-1)',
+              borderRadius: 'var(--r-md)',
+              padding: '10px 12px',
+            }}
+          >
+            {workability === 'terminal'
+              ? `Este barco já saiu do chão de fábrica${
+                  phaseName ? ` (fase «${phaseName}»)` : ''
+                }. Não há tarefa a que atribuir operadores.`
+              : `Esta ordem ainda não arrancou${
+                  phaseName ? ` (fase «${phaseName}»)` : ''
+                }. Os operadores são atribuídos quando o barco entra numa fase de trabalho.`}
+          </div>
+        ) : (
+        <>
         <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginBottom: 12 }}>
           Fase{' '}
           <span style={{ color: 'var(--accent)', fontWeight: 500 }}>
@@ -543,6 +571,8 @@ export function BoatDetailPanel({
               </div>
             )}
           </>
+        )}
+        </>
         )}
       </div>
     </div>

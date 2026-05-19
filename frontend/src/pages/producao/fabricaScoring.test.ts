@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { scoreFor, fitTone } from './fabricaScoring';
+import { scoreFor, fitTone, phaseWorkability } from './fabricaScoring';
 import type { WorkerProfile } from './fabricaScoring';
 import type { QualityScoreResult, SkillMatrixResult } from '../../lib/api';
 
@@ -138,5 +138,29 @@ describe('fitTone', () => {
     expect(fitTone(8)).toBe('green');
     expect(fitTone(6)).toBe('yellow');
     expect(fitTone(3)).toBe('red');
+  });
+});
+
+describe('phaseWorkability (Q.55.D)', () => {
+  it('fases de trabalho do chão de fábrica são workable', () => {
+    expect(phaseWorkability('Laminagem')).toBe('workable');
+    expect(phaseWorkability('Pintura Acabamento')).toBe('workable');
+    expect(phaseWorkability('Cura')).toBe('workable');
+  });
+
+  it('"Pendente" e "Não Laminado" são pending — ordem não arrancou', () => {
+    expect(phaseWorkability('Pendente')).toBe('pending');
+    expect(phaseWorkability('Não Laminado')).toBe('pending');
+  });
+
+  it('fases terminais são terminal — barco fora do chão de fábrica', () => {
+    expect(phaseWorkability('Entregue')).toBe('terminal');
+    expect(phaseWorkability('Armazém')).toBe('terminal'); // com acento
+    expect(phaseWorkability('Embalado')).toBe('terminal');
+  });
+
+  it('fase nula conta como pending (nada a que atribuir)', () => {
+    expect(phaseWorkability(null)).toBe('pending');
+    expect(phaseWorkability('')).toBe('pending');
   });
 });
