@@ -92,14 +92,42 @@ class Warning(BaseModel):
     message: str = Field(..., min_length=1)
 
 
+class ChartSpec(BaseModel):
+    """Especificação de um gráfico emitido pelo COPILOT.
+
+    O LLM emite blocos ``<chart>...JSON...</chart>`` no output; o pipeline
+    parseia-os e valida-os contra este schema (à imagem de actions/facts).
+    O frontend recebe a spec e renderiza-a — o backend não desenha nada.
+
+    REGRA CRÍTICA: ``data`` usa SEMPRE factos reais já recolhidos no
+    contexto. O LLM nunca inventa números para encher um gráfico — se não
+    tem dados, não emite o gráfico.
+    """
+
+    type: Literal["line", "bar", "gauge", "scatter", "heatmap"]
+    title: str = Field(..., min_length=1, max_length=200)
+    data: List[Dict[str, Any]] = Field(
+        ...,
+        min_items=1,
+        description=(
+            "Pontos de dados. line/bar/scatter: [{x, y, ...}]; "
+            "gauge: [{value, min, max}]; heatmap: [{x, y, value}]."
+        ),
+    )
+    config: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Eixos, unidades, cores — ex: {x_label, y_label, unit}.",
+    )
+
+
 class CopilotResponse(BaseModel):
     """
     Resposta estruturada do COPILOT.
-    
+
     REGRA CRÍTICA: facts[] NÃO pode estar vazio quando type=ANSWER/PROPOSAL
     (exceto se warnings incluir INSUFFICIENT_EVIDENCE).
     """
-    
+
     suggestion_id: UUID
     correlation_id: UUID
     type: Literal["ANSWER", "RUNBOOK_RESULT", "PROPOSAL", "ERROR"]
@@ -108,6 +136,7 @@ class CopilotResponse(BaseModel):
     facts: List[Fact] = Field(default_factory=list)
     actions: List[Action] = Field(default_factory=list)
     warnings: List[Warning] = Field(default_factory=list)
+    charts: List[ChartSpec] = Field(default_factory=list)
     meta: Dict[str, Any] = Field(default_factory=dict)  # model, tokens, latency_ms, validation_passed
     
     def model_post_init(self, __context: Any) -> None:

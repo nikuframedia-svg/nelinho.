@@ -24,6 +24,7 @@ from src.copilot.ollama_client import get_ollama_client
 from src.copilot.tool_executor import ToolExecutor
 from src.copilot.guardrails import (
     check_security_flag,
+    normalize_charts,
     validate_response_structure,
 )
 from src.copilot.utils.hashing import sha256_hash
@@ -32,6 +33,59 @@ from src.shared.config import settings
 from src.shared.auth.rbac import Role
 
 logger = logging.getLogger(__name__)
+
+
+# Regex para extrair blocos <chart>...JSON...</chart> que o LLM possa emitir
+# dentro de campos de texto (summary, facts) em vez do campo charts[].
+import re as _re
+
+_CHART_BLOCK_RE = _re.compile(r"<chart>\s*(.*?)\s*</chart>", _re.DOTALL | _re.IGNORECASE)
+
+
+def extract_chart_blocks(llm_response: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Recolher gráficos da resposta do LLM.
+
+    O LLM tem duas formas de emitir gráficos:
+      1. campo ``charts[]`` no JSON (forma preferida);
+      2. blocos ``<chart>{...}</chart>`` embebidos em texto (summary/facts).
+
+    Esta função reúne ambas as fontes e devolve uma lista de dicts brutos
+    — a validação Pydantic acontece em :func:`normalize_charts`. Os blocos
+    ``<chart>`` extraídos são removidos do texto para não aparecerem crus.
+    """
+    charts: List[Dict[str, Any]] = []
+
+    raw_charts = llm_response.get("charts")
+    if isinstance(raw_charts, list):
+        charts.extend(c for c in raw_charts if isinstance(c, dict))
+
+    def _harvest_from_text(text: str) -> str:
+        if not isinstance(text, str) or "<chart>" not in text.lower():
+            return text
+        for match in _CHART_BLOCK_RE.finditer(text):
+            payload = match.group(1).strip()
+            try:
+                parsed = json.loads(payload)
+            except (ValueError, TypeError):
+                logger.warning("Bloco <chart> com JSON inválido — ignorado")
+                continue
+            if isinstance(parsed, dict):
+                charts.append(parsed)
+            elif isinstance(parsed, list):
+                charts.extend(c for c in parsed if isinstance(c, dict))
+        return _CHART_BLOCK_RE.sub("", text).strip()
+
+    summary = llm_response.get("summary")
+    if isinstance(summary, str):
+        llm_response["summary"] = _harvest_from_text(summary)
+
+    facts = llm_response.get("facts")
+    if isinstance(facts, list):
+        for fact in facts:
+            if isinstance(fact, dict) and isinstance(fact.get("text"), str):
+                fact["text"] = _harvest_from_text(fact["text"])
+
+    return charts
 
 
 class CopilotService:
@@ -478,10 +532,23 @@ class CopilotService:
         
         # Facts já estão normalizadas no passo 6.6
         facts_normalized = llm_response.get("facts", [])
-        
+
         # Warnings já estão normalizados no passo 6.5
         warnings_normalized = llm_response.get("warnings", [])
-        
+
+        # 8.1. Gráficos (Q.53.F) — recolher do campo charts[] e de blocos
+        # <chart> embebidos em texto, depois validar com Pydantic. Gráficos
+        # malformados são descartados (mesmo princípio de actions): nunca
+        # rebentam a resposta. extract_chart_blocks também limpa os blocos
+        # <chart> do summary/facts in-place, por isso corre ANTES de ler o
+        # summary abaixo.
+        raw_charts = extract_chart_blocks(llm_response)
+        charts_normalized, chart_warnings = normalize_charts(raw_charts)
+        for cw in chart_warnings:
+            logger.warning(f"Gráfico descartado: {cw}")
+        # facts_normalized aponta para a mesma lista que llm_response["facts"];
+        # extract_chart_blocks mutou os textos in-place, nada a re-ler.
+
         # Garantir que meta é dict
         meta_raw = llm_response.get("meta", {})
         meta_normalized = {
@@ -524,6 +591,7 @@ class CopilotService:
                 facts=facts_normalized,
                 actions=actions_normalized,  # Já normalizadas no passo 6
                 warnings=warnings_normalized,
+                charts=charts_normalized,  # Q.53.F — validados no passo 8.1
                 meta=meta_normalized,
             )
         except ValidationError as e:
@@ -1130,6 +1198,14 @@ class CopilotService:
                 }
             ],
             "warnings": [],
+            "charts": [
+                {
+                    "type": "line",
+                    "title": "Throughput por dia",
+                    "data": [{"x": "Seg", "y": 31200}, {"x": "Ter", "y": 28400}],
+                    "config": {"x_label": "Dia", "y_label": "Throughput", "unit": "€"},
+                }
+            ],
             "meta": {"model": "llama3.2", "tokens": 0, "latency_ms": 0, "validation_passed": True},
         }
         
