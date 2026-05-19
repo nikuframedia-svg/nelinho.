@@ -35,7 +35,11 @@ export function useDecisionsState() {
       page: currentPage,
       page_size: itemsPerPage,
     }),
-    refetchInterval: 30000, // Refresh every 30 seconds
+    // Q.59.G.1 — SSE `governance` já dispara DECISION_EXECUTED /
+    // _ROLLED_BACK em tempo real. 30 s era poll redundante; 60 s mantém
+    // safety-net (PROPOSED novos ainda sem evento SSE direto) sem
+    // duplicação de carga.
+    refetchInterval: 60_000,
   });
 
   // Approve mutation

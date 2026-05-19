@@ -84,7 +84,10 @@ export function PainelDiarioPage(): ReactNode {
     queryKey: ['painel', 'activity'],
     queryFn: () => painelApi.activity(25),
     refetchOnWindowFocus: false,
-    refetchInterval: 30_000,
+    // Q.59.G.1 — SSE (`dashboard` + `timeline`) já dispara em cada
+    // mudança real. 30 s era polling-belt-and-braces; 60 s mantém
+    // safety-net em modo degraded sem martelar o backend.
+    refetchInterval: 60_000,
   });
 
   // ─── Aderência ao plano (Q.53.B) ────────────────────────────────────────

@@ -169,7 +169,10 @@ export function KPIsPage() {
   const { data: kpiSnapshotData, isLoading, error } = useQuery({
     queryKey: ['kpis', 'snapshot-explained'],
     queryFn: () => kpisApi.getSnapshotExplained(),
-    refetchInterval: 60000,
+    // Q.59.G.1 — KPIs só mudam em eventos discretos (MRP_CALCULATED,
+    // COGS_CALCULATED), que o SSE `dashboard` já dispara. 60 s era poll
+    // de 1× por minuto sem evento real. 180 s mantém a rede de segurança.
+    refetchInterval: 180_000,
   });
 
   const kpiSnapshot = kpiSnapshotData?.snapshot;

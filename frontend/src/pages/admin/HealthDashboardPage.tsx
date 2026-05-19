@@ -101,7 +101,11 @@ export function HealthDashboardPage() {
     queryKey: ['diagnostics', 'full'],
     queryFn: () => diagnosticsApi.full(),
     refetchInterval: 30_000,
-    refetchOnWindowFocus: true,
+    // Q.59.G.1 — era `true`, único page do projeto a fazê-lo. O default
+    // global (main.tsx) é `false`. Refetch a cada tab-focus em cima do
+    // poll de 30 s era duplicação; o ganho de "frescura" no foco não
+    // compensa o churn de pedidos.
+    refetchOnWindowFocus: false,
   });
 
   return (
