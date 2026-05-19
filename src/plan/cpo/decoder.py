@@ -505,10 +505,24 @@ def decode(
                         start = batch_target
                         backwards_shifts += len(batch_peers)
 
+            # Q.53.B — factory calendar. When the FactoryState carries a
+            # working calendar, snap the start into a working shift and
+            # walk durations through productive hours only, so an op
+            # never lands on a weekend / public holiday. `None` calendar
+            # keeps the legacy 24/7 behaviour for old callers and tests.
+            calendar = getattr(state, "calendar", None)
+            if calendar is not None:
+                start = calendar.add_working_hours(start, 0.0)
+
             # The batch occupies the mould for max(durations); individual ops
             # finish at start + their own duration.
             peer_duration_min = [max(1.0, float(p.duration_minutes)) for p in batch_peers]
-            batch_end = start + timedelta(minutes=max(peer_duration_min))
+            if calendar is not None:
+                batch_end = calendar.add_working_hours(
+                    start, max(peer_duration_min) / 60.0,
+                )
+            else:
+                batch_end = start + timedelta(minutes=max(peer_duration_min))
 
             # Emit one ScheduledOp per peer; each peer's end is start + own duration,
             # but the mould stays busy until batch_end so the next batch waits.
@@ -516,7 +530,10 @@ def decode(
             for peer, slot_workers, peer_dur in zip(
                 batch_peers, batch_workers, peer_duration_min
             ):
-                peer_end = start + timedelta(minutes=peer_dur)
+                if calendar is not None:
+                    peer_end = calendar.add_working_hours(start, peer_dur / 60.0)
+                else:
+                    peer_end = start + timedelta(minutes=peer_dur)
                 if peer_end > horizon_end:
                     infeasible.append(peer.operation_id)
                     warnings.append(

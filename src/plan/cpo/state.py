@@ -125,6 +125,13 @@ class FactoryState:
     # back to NELO_CURING_GAPS_SEED when the table is empty or missing.
     phase_transition_gaps: Dict[Tuple[str, str], float] = field(default_factory=dict)
 
+    # Q.53.B — factory working calendar. When populated (load() reads
+    # `plan.factory_calendar_day`), the decoder walks op durations
+    # through it so work never lands on a weekend or public holiday.
+    # `None` means "no calendar" — decoder keeps the legacy 24/7
+    # behaviour, so old callers and tests are unaffected.
+    calendar: Optional[Any] = None
+
     # Sprint E.4 — confirmed PreferenceRule rows (Camada 1 learning).
     # Each entry is a plain dict with `type` + `predicate` (+ optional
     # `description`/`confidence` for debugging). Populated by
@@ -243,6 +250,16 @@ class FactoryState:
         state.preference_rules = await _load_confirmed_preference_rules(
             session, tenant_id,
         )
+
+        # Q.53.B — factory working calendar. Best-effort: a missing /
+        # empty table leaves `calendar` falling back to Mon-Fri; only an
+        # unexpected error leaves it None (legacy 24/7 decoder behaviour).
+        try:
+            from src.plan.services.factory_calendar import FactoryCalendar
+            state.calendar = await FactoryCalendar.load(session, tenant_id)
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.debug("FactoryCalendar load skipped: %s", exc)
+            state.calendar = None
 
         logger.info(
             f"FactoryState loaded: {len(state.open_orders)} orders, "

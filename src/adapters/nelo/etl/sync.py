@@ -52,6 +52,7 @@ def _load_mirror_modules() -> None:
         "quality",       # Q.20.E
         "time_mining",   # Q.20.F
         "stock",         # Q.52.K
+        "calendar",      # Q.53.B
     ):
         try:
             __import__(f"src.adapters.nelo.etl.{mod}")
