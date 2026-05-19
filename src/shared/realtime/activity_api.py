@@ -157,17 +157,99 @@ class ActivityResponse(BaseModel):
     items: List[ActivityItem]
 
 
+# Map audit-log `entity_type` → UI `type` icon family, used by the
+# audit-log fallback below. Audit rows are the authoritative trail of
+# every state change (project invariant #7) — so the feed is never empty
+# when the factory has actually done something.
+_AUDIT_TYPE_MAP: Dict[str, str] = {
+    "production_order": "scenario",
+    "production_schedule": "scenario",
+    "schedule_commit": "scenario",
+    "decision": "user",
+    "decision_pr": "user",
+    "rework_entry": "quality",
+    "employee": "user",
+    "mold": "alert",
+    "ingestion_run": "ingest",
+    "yaml_rule": "system",
+    "preference_rule": "system",
+}
+
+_AUDIT_ACTION_LABEL: Dict[str, str] = {
+    "INSERT": "criado",
+    "UPDATE": "actualizado",
+    "DELETE": "removido",
+}
+
+
+async def _from_audit_log(
+    session: AsyncSession, limit: int,
+) -> List[ActivityItem]:
+    """Fallback feed built from `core.audit_log`.
+
+    Used when `event_outbox` has no rows (the common case in dev and
+    whenever the outbox dispatcher has drained it). The audit log is
+    written in the same transaction as every state change, so it's the
+    honest source of "what the factory did recently".
+    """
+    stmt = text(
+        """
+        SELECT id, entity_type, entity_id, action, reason,
+               actor_role, created_at
+        FROM core.audit_log
+        ORDER BY created_at DESC
+        LIMIT :limit
+        """
+    )
+    try:
+        rows = (await session.execute(stmt, {"limit": limit})).fetchall()
+    except (ProgrammingError, OperationalError) as exc:
+        logger.info(
+            "activity/recent: core.audit_log unavailable (%s)",
+            type(exc).__name__,
+        )
+        return []
+
+    items: List[ActivityItem] = []
+    for row in rows:
+        try:
+            entity_type = str(row[1] or "")
+            action = str(row[3] or "")
+            reason = row[4]
+            created_at = row[6]
+            if isinstance(created_at, datetime) and created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
+            human_entity = entity_type.replace("_", " ").capitalize()
+            action_label = _AUDIT_ACTION_LABEL.get(action, action.lower())
+            items.append(
+                ActivityItem(
+                    id=str(row[0]),
+                    type=_AUDIT_TYPE_MAP.get(entity_type, "system"),
+                    title=f"{human_entity} {action_label}",
+                    description=reason or None,
+                    timestamp=created_at,
+                    status="success" if action == "INSERT" else None,
+                    link=None,
+                    metadata={"source": "audit_log", "entity_id": str(row[2])},
+                )
+            )
+        except Exception:
+            logger.exception("activity/recent: skipping malformed audit row")
+            continue
+    return items
+
+
 @router.get("/recent", response_model=ActivityResponse)
 async def recent_activity(
     limit: int = Query(20, ge=1, le=100),
     session: AsyncSession = Depends(get_session),
 ) -> ActivityResponse:
-    """Return the most recent events from `event_outbox`.
+    """Return the most recent events for the LiveActivityFeed.
 
-    Returns an empty list (not a 5xx) when the outbox table is empty or
-    not yet provisioned. The intent is that this endpoint is *always*
-    safe to call from the dashboard, even right after fresh bringup
-    when no events have been emitted yet.
+    Primary source is `event_outbox`. Q.54.E — when the outbox is empty
+    (dev, or after the dispatcher drained it) we fall back to
+    `core.audit_log`, which records every state change. Only a genuinely
+    quiet factory with zero audit history returns `{"items": []}`.
     """
     stmt = text(
         """
@@ -182,14 +264,12 @@ async def recent_activity(
         rows = result.fetchall()
     except (ProgrammingError, OperationalError) as exc:
         # Table missing (UndefinedTable from postgres) or transient DB
-        # error — return empty so the frontend shows the empty state
-        # cleanly. Logged at INFO so the absence is visible without
-        # being scary.
+        # error — try the audit-log fallback before giving up.
         logger.info(
-            "activity/recent: event_outbox unavailable (%s); returning empty list",
+            "activity/recent: event_outbox unavailable (%s); trying audit_log",
             type(exc).__name__,
         )
-        return ActivityResponse(items=[])
+        return ActivityResponse(items=await _from_audit_log(session, limit))
 
     items: List[ActivityItem] = []
     for row in rows:
@@ -215,4 +295,10 @@ async def recent_activity(
             # One bad row shouldn't kill the feed.
             logger.exception("activity/recent: skipping malformed row")
             continue
+
+    # Q.54.E — outbox present but empty → fall back to the audit log so
+    # the feed reflects real factory activity instead of a blank panel.
+    if not items:
+        items = await _from_audit_log(session, limit)
+
     return ActivityResponse(items=items)
