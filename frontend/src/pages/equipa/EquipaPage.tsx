@@ -202,7 +202,6 @@ export default function EquipaPage() {
       <PageHeader
         title="Equipa"
         subtitle="Operadores · tabela filtrável · pares de Laminagem · simulador de ausência"
-        helpId="operadores"
         actions={
           <button
             type="button"

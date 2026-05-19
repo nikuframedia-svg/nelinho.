@@ -1349,7 +1349,6 @@ export default function ConfiguracaoPage() {
         title="Configuração"
         subtitle="Parâmetros, regras e aprendizagem — cada valor com quem definiu, quando e botão reset"
         icon={<Settings size={18} />}
-        helpId="definicoes"
       />
 
       <div className="px-6 pt-3">

@@ -1,24 +1,37 @@
 /**
- * pageHelp.ts — conteúdo estático do botão "?" em cada page do shell.
+ * pageHelp.ts — conteúdo do botão "?" em cada página (Q.56).
  *
- * Luis: "quando a pessoa clica nesse ? tem um resumo e um exemplo de como
- * funcionar com a página em questão". PT-PT informal, concreto, sem jargão.
+ * Luis: "uma ? em cada página com uma explicação em linguagem simples mas
+ * bastante explicativa da página e do que faz." PT-PT informal, concreto,
+ * sem jargão. Conteúdo instantâneo (sem LLM).
  *
- * Adicionar entry para nova page → `PageHelpId` union + dicionário abaixo.
+ * As chaves são os NOMES DE ROTA actuais (ex: `fabrica`, `planeamento`) —
+ * o `DarkPageLayout` deriva o `helpId` do URL, por isso a chave tem de
+ * bater certo com o segmento da rota. Adicionar página nova → entrada no
+ * union `PageHelpId` + no dicionário.
  */
 
 export type PageHelpId =
+  | 'painel'
+  | 'planeamento'
+  | 'fabrica'
+  | 'expedicao'
+  | 'equipa'
+  | 'qualidade'
+  | 'materiais'
+  | 'simulacoes'
+  | 'custos'
+  | 'regras'
+  | 'aprendi'
+  | 'copilot'
+  | 'configuracao'
   | 'direcao'
   | 'inbox'
-  | 'plano-producao'
-  | 'atribuicao'
-  | 'oee'
-  | 'qualidade'
-  | 'operadores'
-  | 'expedicao'
-  | 'aprendizagem'
-  | 'regras'
-  | 'definicoes';
+  | 'relatorios'
+  | 'saude'
+  | 'rbac'
+  | 'conexao-erp'
+  | 'ligacoes';
 
 export interface PageHelpEntry {
   /** Título humano (não a URL). */
@@ -31,336 +44,541 @@ export interface PageHelpEntry {
   howToUse: { title: string; steps: string[] };
   /** Dicas opcionais. */
   tips?: string[];
-  /** Pages relacionadas com razão. */
+  /** Páginas relacionadas com razão. */
   relatedPages?: { id: PageHelpId; reason: string }[];
 }
 
+/**
+ * Deriva o `PageHelpId` do primeiro segmento do URL (ex: `/qualidade?tab=oee`
+ * → `qualidade`). Devolve `undefined` se o segmento não tiver entrada de
+ * ajuda. Usado pelo `DarkPageLayout` e pelo `PageHeader` para mostrar o "?"
+ * em todas as páginas sem cada uma ter de declarar o `helpId`. Q.56.
+ */
+export function helpIdFromPath(pathname: string): PageHelpId | undefined {
+  const seg = pathname.split('/').filter(Boolean)[0];
+  if (seg && seg in PAGE_HELP) return seg as PageHelpId;
+  return undefined;
+}
+
 export const PAGE_HELP: Record<PageHelpId, PageHelpEntry> = {
-  direcao: {
-    title: 'Direção — Resumo do dia',
+  painel: {
+    title: 'Painel diário',
     purpose:
-      'Visão de 10 segundos para CEO/gestor: a fábrica está no plano, em risco ou em atraso? Quantos barcos? Que decisões aguardam aprovação?',
+      'A vista de 5 segundos: olhas para aqui e sabes se a fábrica está bem ou se há fogo para apagar. É o sítio por onde começas o dia.',
     whatYouSee: [
-      'Hero "A fábrica está NO PLANO / EM RISCO / EM ATRASO" com cor por estado',
-      '4 KPIs hero (throughput €/dia, OTD, em curso, atrasos)',
-      'Atenção necessária — alertas pendentes ordenados por severidade',
-      'Próximas expedições — o que sai esta semana',
-      'Tab "Profit Intelligence" — pricing, COGS, what-if scenarios, margem',
+      'KPIs do dia — barcos em produção, throughput, gargalos',
+      'Gargalo por fase — qual a fase que está a travar a fábrica',
+      'Alertas activos — o que o sistema detectou e precisa de atenção',
+      'Aprovações pendentes — decisões à espera de um sim/não teu',
     ],
     howToUse: {
       title: 'Cenário: começar o dia',
       steps: [
-        'Abre /direcao logo de manhã',
-        'Lê o hero: se diz "no plano" e KPIs verdes → focar noutras coisas',
-        'Se "em risco/atraso" → click "Sugestões" canto superior direito → vai para /inbox',
-        'Para análise financeira → click tab "Profit Intelligence"',
-        'Para exportar relatório → click "Exportar Produção" e escolhe template',
+        'Abre o Painel logo de manhã',
+        'Lê os KPIs no topo — se está tudo verde, segue para o teu trabalho',
+        'Se há um gargalo destacado, clica para perceber que fase está a travar',
+        'Vê os alertas e as aprovações — trata primeiro os de severidade alta',
       ],
     },
     tips: [
-      'O hero refresca quando clicas Actualizar (não há refresh automático)',
-      'Vista CEO read-only (TopBar) esconde botões de escrita — útil para mostrar',
+      'O painel não actualiza sozinho — usa o botão actualizar quando quiseres dados frescos',
     ],
     relatedPages: [
-      { id: 'inbox', reason: 'Aprovar/rejeitar decisões propostas' },
-      { id: 'plano-producao', reason: 'Detalhe do que cada barco está a fazer' },
-      { id: 'expedicao', reason: 'Calendário completo de expedições' },
+      { id: 'inbox', reason: 'Tratar as decisões que aguardam aprovação' },
+      { id: 'fabrica', reason: 'Ver o chão de fábrica fase a fase' },
     ],
   },
 
-  inbox: {
-    title: 'Inbox de decisões',
+  planeamento: {
+    title: 'Planeamento',
     purpose:
-      'Onde o sistema te pede aprovação humana antes de fazer mudanças que mexem com o plano (ex: alterar atribuição, mover barco entre semanas, ajustar pricing).',
+      'O plano da fábrica nos próximos dias: que barco faz o quê, quando, e com quem. Mexes no plano e vês logo a consequência antes de a aplicar.',
     whatYouSee: [
-      'Lista de decisões pendentes ordenadas por urgência',
-      'Cada cartão mostra: o que muda, porquê, se aceitar/rejeitar consequências, alternativa',
-      'Botões Aceitar / Rejeitar (com razão) / Modificar',
-      'Filtros por tipo de decisão e estado',
+      'Barcos — timeline (Gantt) das operações do último plano do CPO',
+      'Pessoas — cobertura de operadores por fase',
+      'Materiais — se o stock actual chega para o plano',
+      'Botão Replanear — corre o optimizador (CPO) outra vez',
     ],
     howToUse: {
-      title: 'Cenário: aprovar uma sugestão de re-atribuição',
+      title: 'Cenário: mudar uma operação de fase',
       steps: [
-        'Abre /inbox — lista as decisões em "Pendentes"',
-        'Lê uma sugestão: "O que muda" + "Porquê" + "Se aceitar"',
-        'Se concordas → Aceitar (escreve razão curta opcional para alimentar Camada 3 DPO)',
-        'Se discordas → Rejeitar com razão obrigatória (≥10 chars) — alimenta aprendizagem',
-        'O sistema regista hash da decisão na audit trail — podes voltar atrás em /aprendizagem > Governance',
+        'Abre a aba Barcos',
+        'Arrasta uma barra da timeline para outra fase',
+        'O sistema mostra a consequência (fitness, throughput) — sem aplicar nada ainda',
+        'Clica numa barra para ver o barco e os operadores recomendados para essa tarefa',
+        'Se quiseres regenerar o plano todo, usa Replanear',
       ],
     },
     tips: [
-      'Toda decisão Q.17 requer aprovação humana — kill_switch é admin-SQL-only',
-      'Para bulk approve/reject vai a /definicoes > Sistema > Operations',
+      'Arrastar nunca aplica às cegas — passa sempre pela pré-visualização da consequência',
     ],
     relatedPages: [
-      { id: 'aprendizagem', reason: 'Ver activity outbox + audit + rollback decisões' },
-      { id: 'regras', reason: 'Editar as regras Q.17 que originam estas decisões' },
+      { id: 'fabrica', reason: 'Executar o plano no chão de fábrica' },
+      { id: 'materiais', reason: 'Detalhe do stock que sustenta o plano' },
     ],
   },
 
-  'plano-producao': {
-    title: 'Plano de produção',
+  fabrica: {
+    title: 'Fábrica',
     purpose:
-      'Vista detalhada do que cada barco está a fazer agora e nas próximas semanas. 4 vistas: por fase, Gantt, calendário, ou CPO (optimização).',
+      'A war room do chão de fábrica: cada coluna é uma fase, cada cartão um barco. Arrastas barcos entre fases e atribuis operadores ao trabalho do dia.',
     whatYouSee: [
-      'Por fase — barcos agrupados pela fase actual (laminagem, cura, pintura...)',
-      'Gantt — timeline horizontal por barco × dias',
-      'Calendário — vista mensal',
-      'CPO — re-optimizer + alternativas MAP-Elites + commits SHA',
+      'Colunas Kanban — uma por fase, ordenadas pela sequência real de fabrico',
+      'Cartões de barco dentro de cada fase',
+      'Ao clicar num barco — painel com o detalhe e os operadores recomendados',
+      'Toggle Estado actual ↔ Plano sugerido pelo CPO',
     ],
     howToUse: {
-      title: 'Cenário: ver o que falta para um barco K1',
+      title: 'Cenário: pôr um operador num barco',
       steps: [
-        'Abre /plano-producao — vista "Por fase" por defeito',
-        'Encontra o barco pela fase actual ou usa Ctrl+K para procurar',
-        'Click no barco → drawer com timeline detalhada',
-        'Para optimizar plano → muda para vista "CPO" → ajusta horizon_days → "Re-optimizar"',
-        'Cada commit fica registado com SHA + axiom violations (devem ser 0)',
+        'Clica no cartão do barco que está na fase que te interessa',
+        'Abre um painel com a info do barco e a lista de operadores',
+        'A lista vem ordenada por adequação — o melhor leva o selo RECOMENDADO',
+        'Cada operador mostra o nível na fase e o porquê (experiência, taxa de erro)',
+        'Clica no operador que queres — fica atribuído ao barco na hora',
       ],
     },
     tips: [
-      'Os 7 axiomas Spelke são imovíveis — qualquer plano que viole capacity ≥0, mold exclusivo, etc., é rejeitado pelo CPO',
-      'Ver alternativas MAP-Elites (3D archive 10×10×5) na vista CPO > Timeline',
+      'Arrastar um barco para outra coluna mostra primeiro a consequência',
+      'A vista Plano sugerido é só leitura — é a proposta do optimizador',
     ],
     relatedPages: [
-      { id: 'atribuicao', reason: 'Quem faz o quê hoje' },
-      { id: 'inbox', reason: 'Aprovar mudanças propostas pelo CPO' },
-    ],
-  },
-
-  atribuicao: {
-    title: 'Atribuição diária',
-    purpose:
-      'Quem faz o quê hoje. Vista 2-col operador × OF para o gestor confirmar/ajustar antes do início do dia.',
-    whatYouSee: [
-      'Coluna esquerda: lista de operadores activos hoje (com nivel + skills)',
-      'Coluna direita: OFs do dia agrupadas por turno',
-      'Drag-drop visual (preview-delta) antes de commit',
-      'Botão "Sugerir atribuição" → CPO recomenda matching óptimo',
-    ],
-    howToUse: {
-      title: 'Cenário: ajustar atribuição depois de uma falta',
-      steps: [
-        'Operador faltou → marca status em /operadores > Lista',
-        'Volta a /atribuicao — operador desaparece do disponível',
-        'Click "Sugerir atribuição" → CPO devolve novo matching com axiom check',
-        'Confirma drag-drop manual se queres ajustar — ConsequenceBlock mostra o impacto',
-        'Click "Imprimir folha" para deixar no chão de fábrica',
-      ],
-    },
-    relatedPages: [
-      { id: 'operadores', reason: 'Editar nível, marcar férias, ver skill matrix' },
-      { id: 'plano-producao', reason: 'Vista Gantt do plano completo' },
-    ],
-  },
-
-  oee: {
-    title: 'OEE — Eficácia da fábrica',
-    purpose:
-      'Disponibilidade × Performance × Qualidade nos últimos 14 dias. Indicador clássico de manufacturing — sai abaixo de 75% e há problema.',
-    whatYouSee: [
-      'OEE Global — gauge com cor por nível (>85% verde, 75-85% amarelo, <75% vermelho)',
-      '3 breakdown cards (Disponibilidade / Performance / Qualidade)',
-      'Throughput chart 14 dias',
-      'Impacto financeiro 4 rows (custo por hora parada, etc.)',
-    ],
-    howToUse: {
-      title: 'Cenário: investigar drop no OEE',
-      steps: [
-        'Vê o gauge global. Se vermelho → qual dos 3 breakdowns está pior?',
-        'Disponibilidade baixa → /qualidade > Moldes (ver health report)',
-        'Performance baixa → /atribuicao (skill mismatch?)',
-        'Qualidade baixa → /qualidade > Inteligência > Root-cause',
-        'Para diagnóstico causal completo → tab Diagnóstico em /qualidade',
-      ],
-    },
-    relatedPages: [
-      { id: 'qualidade', reason: 'Drill-down em defeitos + diagnóstico causal' },
-      { id: 'plano-producao', reason: 'Ver throughput vs alvo €/dia' },
-    ],
-  },
-
-  qualidade: {
-    title: 'Qualidade & Defeitos',
-    purpose:
-      'Onde investigas porque é que peças saem defeituosas. Erros recentes, estado de moldes, retrabalho, diagnóstico causal, OEE, Trust+DQA, Inteligência (root-cause/impact).',
-    whatYouSee: [
-      'Resumo — 4 KPIs + 2-col (erros recentes / estado moldes)',
-      'Erros — lista de retrabalhos abertos',
-      'Moldes — health report grid (click molde → drawer com histórico defeitos)',
-      'Retrabalho — fila de retrabalho activa',
-      'Diagnóstico — ERRO-TREE + Reichenbach + Mill (causal Q.15.D)',
-      'OEE — embed da page OEE',
-      'Trust + DQA — heatmap, blocked metrics, coverage, ingestão, drift, quarentena',
-      'Inteligência — root-cause/impact por error_code, by-supplier, by-lot, worker ranking, multidim',
-    ],
-    howToUse: {
-      title: 'Cenário: defeito repetido num molde K2',
-      steps: [
-        'Tab Moldes → encontra o molde com pior score (red/yellow)',
-        'Click no card → drawer com últimos 50 defeitos + custo total',
-        'Ver padrão? → tab Inteligência > Root-cause analyzer com error_code',
-        'Causa-raiz noutra fase? → tab Diagnóstico > Reichenbach (common-cause)',
-        'Pedir manutenção preventiva → drawer molde > "Propor manutenção"',
-      ],
-    },
-    relatedPages: [
-      { id: 'aprendizagem', reason: 'Ver causal/explain panels (NELO_DAG, attribution)' },
-      { id: 'operadores', reason: 'Worker quality ranking — quem causa mais defeitos' },
-    ],
-  },
-
-  operadores: {
-    title: 'Operadores',
-    purpose:
-      'Lista da equipa, score derivado dos defeitos, polivalência por fase. Adicionar/editar operadores, ver skill history, simular ausências.',
-    whatYouSee: [
-      'Lista — 9 cols (avatar, tier, nível 1-3, score, taxa erro, ops, skill, estado, chevron)',
-      'Alocações — atribuição diária (mesmo que /atribuicao)',
-      'Produtividade — KPIs operacionais',
-      'Risco — RiskHeatmap + SPOFAlertPanel + DependencyGraph + CascadeImpact',
-      'Simulador — what-if "se este operador falta, qual o impacto?"',
-      'Formação — TrainingRecommendation por skill gap',
-      'Skills history — recency 12m + drawer matriz per-fase',
-    ],
-    howToUse: {
-      title: 'Cenário: adicionar operador novo Junior',
-      steps: [
-        'Click "Adicionar operador" canto superior direito',
-        'Preenche código, nome, departamento, função',
-        'No campo "Nível" escolhe "3 — Em formação" (vai gravar quality_score=3.0 inicial)',
-        'Guardar → operador aparece na lista com badge nível 3 vermelho',
-        'Click no row → drawer detail com nível explicado + barcos recomendados (recreio supervisionado)',
-        'Para perguntar ao Copilot que barcos lhe podem dar → "Pedir ao Copilot" no drawer',
-      ],
-    },
-    tips: [
-      'Nível 1=melhor, 3=pior. Derivado do quality score Laplace (defeitos/operações)',
-      'Polivalência: mesmo operador pode ser nível 1 em laminagem e 3 em pintura (per-fase)',
-      'Soft-delete preserva histórico (status TERMINATED, não apaga)',
-    ],
-    relatedPages: [
-      { id: 'atribuicao', reason: 'Atribuir o operador ao dia' },
-      { id: 'qualidade', reason: 'Worker quality ranking + by-worker errors' },
+      { id: 'planeamento', reason: 'Ver a timeline completa do plano' },
+      { id: 'equipa', reason: 'Detalhe de cada operador e das suas skills' },
     ],
   },
 
   expedicao: {
     title: 'Expedições',
     purpose:
-      'Calendário de saídas — que barcos saem em que camião, quando, para onde. Plus dashboard de Supply/Forecast (Prophet, ROP, ABC, shortage alerts).',
+      'O calendário de saídas: que barcos vão em que camião, quando e para onde. Inclui também o lado do aprovisionamento (forecast de procura, stock).',
     whatYouSee: [
-      'Tab Expedições — 3 KPIs strip + lista de batches com progress (ready/in_prod/at_risk)',
-      'Tab Supply / Forecast — Prophet 30/90d, ROP per SKU, ABC analysis, shortage alerts, sazonalidade (stub)',
+      'Lista de camiões/expedições com o manifesto de cada um',
+      'Estado de cada barco do manifesto (pronto / em produção / em risco)',
+      'Aba Supply / Forecast — previsão de procura e níveis de stock',
     ],
     howToUse: {
-      title: 'Cenário: ver risco do próximo camião',
+      title: 'Cenário: ver o risco do próximo camião',
       steps: [
-        'Tab Expedições mostra os 3 próximos batches',
-        'Cada batch tem barra com green=ready, blue=in_prod, yellow=at_risk',
-        'Se yellow elevado → drill /plano-producao para ver quais barcos atrasados',
-        'Para forecast de procura SKU → tab Supply > Forecast → input sku_id + horizon',
-        'ROP — Reorder Point por SKU com nível de serviço 90/95/99%',
+        'Abre a aba Expedições e escolhe o próximo camião na lista',
+        'Vê o manifesto à direita — barras a amarelo são barcos em risco',
+        'Se houver risco elevado, vai ao Planeamento ver que barcos estão atrasados',
+        'Arrasta um barco para outra expedição se precisares de remarcar',
       ],
     },
     relatedPages: [
-      { id: 'plano-producao', reason: 'Ver detalhe dos barcos do próximo batch' },
-      { id: 'direcao', reason: 'Próximas expedições no resumo do dia' },
+      { id: 'planeamento', reason: 'Ver o detalhe dos barcos do camião' },
+      { id: 'painel', reason: 'Próximas expedições no resumo do dia' },
     ],
   },
 
-  aprendizagem: {
-    title: 'O que aprendi',
+  equipa: {
+    title: 'Equipa',
     purpose:
-      'Hub de tudo o que o sistema aprendeu/governa: regras Q.17, 4 camadas aprendizagem, causal/explain, ML registry, Twin sandbox, governance/audit, factory data product, Copilot extras, showcase de componentes.',
+      'A casa das pessoas: a lista de operadores, o que cada um sabe fazer e quão bem, onde há risco de depender de uma só pessoa, e que formação falta.',
     whatYouSee: [
-      'Resumo — vista zip page-extra (PageLearning)',
-      'Regras (NL→DSL Q.17) — split-pane editor de regras YAML',
-      'Regras aprendidas (Camada 1) — PreferenceRules de overrides',
-      'Q.17 Avançado — 5 painéis (audit firings, impact, schema explorer, conflict, axioms)',
-      '4 Camadas Aprendizagem — preference rule, adaptive weights, DPO counter, ABL',
-      'Causal/Explain — ERRO-TREE, Reichenbach, Mill, NELO_DAG, attribution, POETIQ',
-      'Copilot extras — feedback collector, RAG ingest, mascot',
-      'Governance/Audit — event-outbox, RBAC matrix, decision rollback',
-      'Factory data product — 7 semantic views allow-listed',
-      'ML registry — list/promote/rollback versões de modelos',
-      'Twin sandbox — scenarios CRUD + simulate + solve',
-      'Showcase — demos de componentes design system',
+      'Operadores — tabela com nível, taxa de erro, operações e skills',
+      'Pares & Cobertura — quem pode substituir quem na Laminagem',
+      'SPOFs — fases que dependem de uma única pessoa (risco)',
+      'Perfil de cada operador — histórico, skills por fase, recomendações',
     ],
     howToUse: {
-      title: 'Cenário: ver porque é que uma regra disparou',
+      title: 'Cenário: ver se a equipa cobre uma falta',
       steps: [
-        'Tab Q.17 Avançado → painel Audit firings',
-        'Lista todas as vezes que regras Q.17 dispararam (rule_id, evento, outcome)',
-        'Para impacto adoption → painel Impact dashboard',
-        'Para vocabulário fechado (12 events × 9 actions × 8 ops × 7 axioms) → Schema explorer',
-        'Para rollback de decisão → tab Governance/Audit > Decision rollback',
+        'Abre a aba Pares & Cobertura',
+        'Vê os SPOFs — fases marcadas a vermelho dependem de uma só pessoa',
+        'Clica num operador para abrir o perfil com as skills por fase',
+        'Se houver um buraco, vê as recomendações de formação',
+      ],
+    },
+    tips: [
+      'Nível: 3 é o melhor, 1 o pior — e é por fase (alguém pode ser 3 em laminagem e 1 em pintura)',
+      'Os dados de qualidade e skills vêm do histórico real do ERP',
+    ],
+    relatedPages: [
+      { id: 'fabrica', reason: 'Atribuir o operador ao trabalho do dia' },
+      { id: 'qualidade', reason: 'Ver quem causa mais defeitos e onde' },
+    ],
+  },
+
+  qualidade: {
+    title: 'Qualidade & Defeitos',
+    purpose:
+      'Onde investigas porque é que saem peças defeituosas: erros recentes, defeitos por molde, retrabalho, diagnóstico de causa-raiz e a eficácia da fábrica (OEE).',
+    whatYouSee: [
+      'Resumo — KPIs de qualidade + erros recentes',
+      'Moldes — defeitos reais por molde, pior primeiro',
+      'Retrabalho — a fila de peças a refazer',
+      'Diagnóstico — análise de causa-raiz dos defeitos',
+      'OEE — disponibilidade × performance × qualidade',
+    ],
+    howToUse: {
+      title: 'Cenário: um molde anda a dar defeitos',
+      steps: [
+        'Abre a aba Moldes — vêm ordenados pelos que mais defeitos causam',
+        'Vê o número de defeitos e a data do último em cada cartão',
+        'Para perceber o padrão, vai à aba Diagnóstico',
+        'Cruza com a aba Inteligência para ver o erro por tipo e por fase',
       ],
     },
     relatedPages: [
-      { id: 'regras', reason: 'Editor split-pane standalone das regras YAML' },
-      { id: 'inbox', reason: 'Aprovar decisões originadas pelas regras' },
+      { id: 'equipa', reason: 'Quem causa mais defeitos e em que fase' },
+      { id: 'aprendi', reason: 'Painéis causais e de explicação' },
+    ],
+  },
+
+  materiais: {
+    title: 'Materiais',
+    purpose:
+      'O que a fábrica consome: o catálogo de materiais (os componentes das BOMs dos barcos), o stock que existe e os fornecedores.',
+    whatYouSee: [
+      'Catálogo — materiais com nome, unidade, custo padrão e em quantas BOMs entram',
+      'Prospeção / Entregas — o lado de compra e recepção',
+      'Fornecedores — quem fornece o quê',
+      'Stock real do ERP cruzado com o catálogo',
+    ],
+    howToUse: {
+      title: 'Cenário: ver se um material está a faltar',
+      steps: [
+        'Abre a aba Catálogo',
+        'Procura o material pelo nome',
+        'Vê o stock actual e se há rutura prevista',
+        'Materiais em risco aparecem destacados',
+      ],
+    },
+    tips: [
+      'Os materiais reais da NELO são os componentes-folha das BOMs — não há uma tabela de "material" separada',
+    ],
+    relatedPages: [
+      { id: 'planeamento', reason: 'Ver se o stock chega para o plano' },
+      { id: 'expedicao', reason: 'Forecast de procura e níveis de stock' },
+    ],
+  },
+
+  simulacoes: {
+    title: 'Simulações',
+    purpose:
+      'O gémeo digital da fábrica: testas um "e se…?" sem mexer na produção real. Vês o resultado lado a lado com o baseline antes de decidires.',
+    whatYouSee: [
+      'Histórico — cenários já simulados, baseline vs simulação',
+      'Crise · agora — cenários de crise pré-definidos prontos a correr',
+      'Botão Nova simulação — cria um cenário do zero',
+    ],
+    howToUse: {
+      title: 'Cenário: testar o impacto de uma avaria',
+      steps: [
+        'Abre a aba Crise · agora',
+        'Escolhe um cenário pré-definido (ex: máquina parada)',
+        'Corre a simulação — o twin calcula o impacto',
+        'Compara baseline vs simulação para decidir o que fazer',
+      ],
+    },
+    tips: [
+      'Nada do que fazes aqui afecta a produção real — é uma cópia segura',
+    ],
+    relatedPages: [
+      { id: 'planeamento', reason: 'Aplicar no plano real o que a simulação validou' },
+    ],
+  },
+
+  custos: {
+    title: 'Custos',
+    purpose:
+      'A casa do dinheiro: quanto custa cada barco (COGS), a margem por produto, o que mais pesa nos custos, e um simulador de cenários de preço.',
+    whatYouSee: [
+      'Custo por barco — material, mão-de-obra, máquina, energia',
+      'Margem por produto — quanto se ganha em cada modelo',
+      'Ranking de drivers de custo — o que mais pesa',
+      'Simulador what-if — mexe num preço e vê o efeito na margem',
+    ],
+    howToUse: {
+      title: 'Cenário: perceber a margem de um modelo',
+      steps: [
+        'Abre Custos e escolhe o modelo de barco',
+        'Vê o COGS decomposto — onde está o grosso do custo',
+        'Vê a margem face ao preço de venda',
+        'Usa o simulador para testar um preço diferente',
+      ],
+    },
+    tips: [
+      'O CoeficienteX é sempre dinheiro (€), nunca tempo',
+    ],
+    relatedPages: [
+      { id: 'direcao', reason: 'Visão financeira de topo para o CEO' },
+      { id: 'relatorios', reason: 'Drill-down de lucro barco a barco' },
     ],
   },
 
   regras: {
-    title: 'Regras Q.17 (YAML)',
+    title: 'Regras Q.17',
     purpose:
-      'Editor split-pane das regras logic-as-data. Vocabulário fechado: 12 events × 9 actions × 8 condition ops × 7 Spelke axioms. LLM pode propor regra a partir de NL, humano sempre aprova.',
+      'O editor das regras do sistema em linguagem-como-dados. Defines "quando acontece X, faz Y" — e o sistema passa a segui-las. Uma pessoa aprova sempre.',
     whatYouSee: [
-      'Split-pane: lista de regras YAML à esquerda, editor à direita',
-      'Sandbox dry-run banner — explica que mudanças correm em DB copy primeiro',
-      'ACTION_WIRING badges — indica quais actions estão wired (alert/block/modify_fitness/set_config) vs stubbed',
-      'Diff modal approve/reject quando aplicas mudanças',
-      'Axiom checklist visual no preview — garante 7 Spelke preservados',
+      'Lista de regras à esquerda, editor à direita',
+      'Pré-visualização da consequência antes de aplicar (sandbox)',
+      'Verificação dos 7 axiomas — garante que a regra não parte nada',
+      'Modal de diff ao aprovar uma mudança',
     ],
     howToUse: {
-      title: 'Cenário: criar regra "alertar quando mold > 800 usos"',
+      title: 'Cenário: criar uma regra de alerta',
       steps: [
-        'Click "+ Nova regra" → modal NL→DSL',
-        'Escreves "Alertar quando mold use count > 800"',
-        'LLM propõe DSL YAML estruturado (event=mold_use_count_threshold, action=alert)',
-        'Validas axioms — sandbox dry-run mostra impacto sem afectar prod',
-        'Click "Approve" → diff modal mostra estado before/after, hash chain regista decisão',
-        'Regra fica activa, dispara quando trigger condition passa',
+        'Clica em Nova regra e escreve o que queres em português',
+        'O sistema propõe a regra estruturada',
+        'Vê a pré-visualização — corre numa cópia, não afecta produção',
+        'Aprova — a mudança fica registada com o seu histórico',
       ],
     },
     tips: [
-      'safety.requires_human_approval=True é Literal — LLM nunca pode opt-out',
-      'kill_switch é admin-SQL-only — não há botão UI para activar/desactivar regras crít.',
-      '4 dispatchers stubbed (reassign_worker, propose_maintenance, notify, create_decision, pause_writes) — flipados True quando sub-sprint chegar',
+      'Toda a regra exige aprovação humana — o sistema nunca a salta',
     ],
     relatedPages: [
-      { id: 'aprendizagem', reason: 'Q.17 Avançado — audit firings + impact dashboard' },
-      { id: 'inbox', reason: 'Decisões propostas por regras aparecem aqui' },
+      { id: 'inbox', reason: 'As decisões que as regras propõem aparecem aqui' },
+      { id: 'aprendi', reason: 'Ver o histórico de quando as regras dispararam' },
     ],
   },
 
-  definicoes: {
-    title: 'Definições',
+  aprendi: {
+    title: 'O que aprendi',
     purpose:
-      'Configuração geral do sistema: dados mestre (clientes/fornecedores/máquinas/produtos/BOM/operações/tarifas/tenants), saúde do sistema, ingestão, RAG, tools, Reports schedule + GDPR, Operations dashboard.',
+      'O sítio onde vês tudo o que o sistema aprendeu e como se governa: regras, camadas de aprendizagem, modelos de ML, análise causal e a trilha de auditoria.',
     whatYouSee: [
-      'Geral — settings core',
-      'Dados Mestre — 8 sub-CRUDs (Customers/Suppliers/Machines/Products/BOM/Operations/Rates/Tenants)',
-      'Sistema — Saúde + Ingestão + RAG + Tools + Reports schedule + Operations',
-      'Trust — DQA Page (Trust Index v2 + 5 gates)',
-      'Acessos — RBAC matrix viewer',
-      'Auditoria — audit trail per user',
+      'Resumo do que o sistema aprendeu',
+      'Regras aprendidas a partir das tuas correcções',
+      'Modelos de ML — versões, promover, reverter',
+      'Painéis causais e de explicação',
+      'Governança e auditoria — quem fez o quê, quando',
     ],
     howToUse: {
-      title: 'Cenário: agendar relatório semanal de produção',
+      title: 'Cenário: ver porque o sistema sugeriu algo',
       steps: [
-        'Tab Sistema > Reports schedule',
-        'Painel Schedule auto: escolhe template "producao", cron "0 8 * * MON" (Seg 8h)',
-        'Click Agendar — fica registado (stub, persistência em sub-sprint)',
-        'Painel Email delivery: adiciona luis@nikufra.ai para receber CSV',
-        'Painel GDPR retention: define 365 dias (1 ano)',
+        'Abre a aba de auditoria / disparos de regras',
+        'Procura a decisão ou regra que te interessa',
+        'Vê o evento que a despoletou e o resultado',
+        'Para análise causal, usa os painéis de explicação',
       ],
     },
     relatedPages: [
-      { id: 'aprendizagem', reason: 'Governance + audit + RBAC viewer' },
-      { id: 'direcao', reason: 'Botão Exportar Produção usa o mesmo template' },
+      { id: 'regras', reason: 'Editar as regras que originam as decisões' },
+      { id: 'inbox', reason: 'Aprovar decisões propostas' },
+    ],
+  },
+
+  copilot: {
+    title: 'Copilot',
+    purpose:
+      'Conversa com o sistema em linguagem natural. Perguntas o que quiseres sobre a fábrica e o copiloto responde com dados ao vivo e fontes citáveis.',
+    whatYouSee: [
+      'Coluna esquerda — histórico das tuas conversas',
+      'Coluna do meio — o chat, com modos de resposta',
+      'Coluna direita — fontes e acções da última resposta',
+    ],
+    howToUse: {
+      title: 'Cenário: perguntar algo ao sistema',
+      steps: [
+        'Escreve a pergunta na caixa em baixo e envia',
+        'O copiloto consulta os dados ao vivo e responde',
+        'Vê as fontes citadas na coluna direita',
+        'Se a resposta sugerir uma acção, podes executá-la dali',
+      ],
+    },
+    tips: [
+      'Escolhe o modo de resposta nas pílulas por cima do chat',
+    ],
+    relatedPages: [
+      { id: 'painel', reason: 'A vista rápida do estado da fábrica' },
+    ],
+  },
+
+  configuracao: {
+    title: 'Configuração',
+    purpose:
+      'Onde se afina o sistema: parâmetros de scheduling, custos, cura, moldes, alertas — e os dados mestre (produtos, BOMs, tarifas, fornecedores).',
+    whatYouSee: [
+      'Abas de parâmetros por área — cada valor mostra quem o definiu e quando',
+      'Dados mestre — os CRUDs de produtos, BOM, operações, tarifas',
+      'Sistema — saúde, ingestão, relatórios agendados',
+      'Botão de repor o valor por defeito em cada parâmetro',
+    ],
+    howToUse: {
+      title: 'Cenário: mudar um parâmetro',
+      steps: [
+        'Abre a aba da área que queres afinar',
+        'Encontra o parâmetro — vê o valor actual e o histórico',
+        'Muda o valor e guarda',
+        'Se te arrependeres, usa repor ao default',
+      ],
+    },
+    relatedPages: [
+      { id: 'aprendi', reason: 'Governança, auditoria e permissões' },
+      { id: 'conexao-erp', reason: 'Estado da ligação ao ERP' },
+    ],
+  },
+
+  direcao: {
+    title: 'Direção',
+    purpose:
+      'A vista do CEO: o estado da NELO em 30 segundos. KPIs grandes, objectivos, gráfico de €/dia e a margem por país/agente.',
+    whatYouSee: [
+      '4 KPIs grandes do negócio',
+      'Banda de objectivos — onde estamos face às metas',
+      'Gráfico de €/dia com a banda-alvo',
+      'Margem por país/agente e encomendas activas',
+    ],
+    howToUse: {
+      title: 'Cenário: ponto de situação da semana',
+      steps: [
+        'Abre Direção',
+        'Lê os 4 KPIs e a banda de objectivos',
+        'Vê o gráfico de €/dia — estamos dentro da banda-alvo?',
+        'Para o detalhe financeiro, salta para Custos',
+      ],
+    },
+    relatedPages: [
+      { id: 'custos', reason: 'Detalhe de COGS, margem e cenários' },
+      { id: 'painel', reason: 'O estado operacional do dia' },
+    ],
+  },
+
+  inbox: {
+    title: 'Inbox de decisões',
+    purpose:
+      'Onde o sistema te pede aprovação antes de fazer mudanças que mexem com o plano. Tu decides: aceitar, rejeitar ou modificar.',
+    whatYouSee: [
+      'Lista de decisões pendentes, por urgência',
+      'Cada cartão: o que muda, porquê, e a consequência de aceitar ou rejeitar',
+      'Botões Aceitar / Rejeitar / Modificar',
+      'Filtros por estado (pendentes, aceites, rejeitadas)',
+    ],
+    howToUse: {
+      title: 'Cenário: aprovar uma sugestão',
+      steps: [
+        'Abre o Inbox na aba Pendentes',
+        'Lê uma sugestão — o que muda, porquê, e o que acontece se aceitares',
+        'Se concordas, Aceitar; se não, Rejeitar com uma razão curta',
+        'A tua razão alimenta a aprendizagem do sistema',
+      ],
+    },
+    tips: [
+      'Toda a decisão fica registada na trilha de auditoria — dá para voltar atrás',
+    ],
+    relatedPages: [
+      { id: 'regras', reason: 'Editar as regras que originam estas decisões' },
+      { id: 'aprendi', reason: 'Auditoria e reversão de decisões' },
+    ],
+  },
+
+  relatorios: {
+    title: 'Relatórios',
+    purpose:
+      'Os relatórios da fábrica: KPIs, o lucro barco a barco, e a exportação de relatórios para ficheiro.',
+    whatYouSee: [
+      'KPIs — indicadores agregados',
+      'Lucro — drill-down de margem por barco',
+      'Exportar — gerar e descarregar relatórios por template',
+    ],
+    howToUse: {
+      title: 'Cenário: exportar um relatório',
+      steps: [
+        'Abre a aba Exportar',
+        'Escolhe o template que queres',
+        'Gera — o ficheiro é descarregado',
+      ],
+    },
+    relatedPages: [
+      { id: 'custos', reason: 'Análise de custos e margem' },
+      { id: 'direcao', reason: 'Visão de topo do negócio' },
+    ],
+  },
+
+  saude: {
+    title: 'Saúde do sistema',
+    purpose:
+      'Responde a uma pergunta: a fábrica está segura para operar agora? Mostra o estado de cada módulo do sistema — verde, amarelo ou vermelho.',
+    whatYouSee: [
+      'Estado de cada módulo (verde / amarelo / vermelho)',
+      'O que está degradado e porquê',
+      'Sinais de diagnóstico do sistema',
+    ],
+    howToUse: {
+      title: 'Cenário: algo parece estranho no software',
+      steps: [
+        'Abre Saúde do sistema',
+        'Procura módulos a amarelo ou vermelho',
+        'Lê o motivo indicado para esse módulo',
+        'Usa isso para reportar ou investigar o problema',
+      ],
+    },
+    relatedPages: [
+      { id: 'conexao-erp', reason: 'Estado específico da ligação ao ERP' },
+      { id: 'ligacoes', reason: 'Estado das ligações em tempo real' },
+    ],
+  },
+
+  rbac: {
+    title: 'Acessos',
+    purpose:
+      'Quem pode fazer o quê no sistema. Mostra os papéis (roles) e as permissões de cada um.',
+    whatYouSee: [
+      'Lista de papéis do sistema',
+      'As permissões associadas a cada papel',
+    ],
+    howToUse: {
+      title: 'Cenário: confirmar o que um papel pode fazer',
+      steps: [
+        'Abre Acessos',
+        'Escolhe o papel que te interessa',
+        'Vê a lista de permissões desse papel',
+      ],
+    },
+    relatedPages: [
+      { id: 'configuracao', reason: 'Configuração geral do sistema' },
+    ],
+  },
+
+  'conexao-erp': {
+    title: 'Conexão ERP',
+    purpose:
+      'O estado vivo da ligação ao ERP da NELO (MAR-KAYAKS): está ligado? Os dados estão frescos? Quando foi a última sincronização?',
+    whatYouSee: [
+      'Ligado / offline — com teste real à ERP',
+      'Última sincronização por tipo de dados, com o nº de linhas',
+      'O atraso desde a última sync com sucesso',
+    ],
+    howToUse: {
+      title: 'Cenário: os dados parecem desactualizados',
+      steps: [
+        'Abre Conexão ERP',
+        'Confirma se está Ligado',
+        'Vê a última sync — se o atraso é grande, os dados estão velhos',
+        'Reporta se a ligação estiver offline',
+      ],
+    },
+    relatedPages: [
+      { id: 'saude', reason: 'Saúde geral do sistema' },
+      { id: 'ligacoes', reason: 'Estado das ligações em tempo real' },
+    ],
+  },
+
+  ligacoes: {
+    title: 'Ligações em tempo real',
+    purpose:
+      'O estado das ligações ao vivo do sistema: o canal de eventos em tempo real está a funcionar e a receber acontecimentos da fábrica?',
+    whatYouSee: [
+      'Saúde do canal de tempo real',
+      'Canais disponíveis e os respectivos tópicos',
+      'Stream ao vivo dos eventos à medida que acontecem',
+    ],
+    howToUse: {
+      title: 'Cenário: confirmar que os eventos ao vivo chegam',
+      steps: [
+        'Abre Ligações',
+        'Escolhe os canais que queres subscrever',
+        'A stream liga-se e os eventos aparecem em tempo real',
+      ],
+    },
+    relatedPages: [
+      { id: 'saude', reason: 'Saúde geral do sistema' },
+      { id: 'conexao-erp', reason: 'Estado da ligação ao ERP' },
     ],
   },
 };

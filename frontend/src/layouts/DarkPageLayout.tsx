@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
+import { useLocation } from 'react-router-dom';
 import { PageHelpButton } from '../components/help/PageHelpButton';
-import type { PageHelpId } from '../data/pageHelp';
+import { helpIdFromPath, type PageHelpId } from '../data/pageHelp';
 import { Breadcrumbs } from '../components/dark/Breadcrumbs';
 import type { BreadcrumbItem } from '../components/dark/Breadcrumbs';
 
@@ -28,11 +29,15 @@ export function DarkPageLayout({
   noPadding = false,
 }: DarkPageLayoutProps) {
   const hasBreadcrumbs = breadcrumbs !== undefined && breadcrumbs.length > 0;
+  // Se a página não passar `helpId` explícito, deriva-o da rota — o "?"
+  // passa a aparecer em todas as páginas sem cada uma ter de o declarar.
+  const { pathname } = useLocation();
+  const effectiveHelpId = helpId ?? helpIdFromPath(pathname);
   return (
     <div className="min-h-screen bg-bg-base">
       {/* Page Header — Q.52.A afinado ao PageHeader do NELO.html:
           glass sticky, icon-box 32px, título display 19px. */}
-      {(title || actions || helpId || hasBreadcrumbs) && (
+      {(title || actions || effectiveHelpId || hasBreadcrumbs) && (
         <div
           className="sticky top-0 z-10"
           style={{
@@ -89,9 +94,9 @@ export function DarkPageLayout({
               </div>
 
               {/* Actions Section */}
-              {(actions || helpId) && (
+              {(actions || effectiveHelpId) && (
                 <div className="flex items-center gap-1.5">
-                  {helpId && <PageHelpButton helpId={helpId} />}
+                  {effectiveHelpId && <PageHelpButton helpId={effectiveHelpId} />}
                   {actions}
                 </div>
               )}

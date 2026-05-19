@@ -9,8 +9,9 @@
  */
 
 import type { ReactNode } from 'react';
+import { useLocation } from 'react-router-dom';
 import { PageHelpButton } from '../help/PageHelpButton';
-import type { PageHelpId } from '../../data/pageHelp';
+import { helpIdFromPath, type PageHelpId } from '../../data/pageHelp';
 
 export interface PageHeaderProps {
   title: string;
@@ -32,6 +33,10 @@ export function PageHeader({
   helpId,
   className = '',
 }: PageHeaderProps): ReactNode {
+  // Sem `helpId` explícito → deriva-o da rota, para o "?" aparecer em
+  // todas as páginas sem cada uma o declarar (Q.56).
+  const { pathname } = useLocation();
+  const effectiveHelpId = helpId ?? helpIdFromPath(pathname);
   return (
     <header
       className={`flex items-start justify-between sticky z-10 border-b border-bd-1 ${className}`}
@@ -80,9 +85,9 @@ export function PageHeader({
           ) : null}
         </div>
       </div>
-      {(helpId || actions) ? (
+      {(effectiveHelpId || actions) ? (
         <div className="flex items-center" style={{ gap: 8 }}>
-          {helpId ? <PageHelpButton helpId={helpId} /> : null}
+          {effectiveHelpId ? <PageHelpButton helpId={effectiveHelpId} /> : null}
           {actions}
         </div>
       ) : null}

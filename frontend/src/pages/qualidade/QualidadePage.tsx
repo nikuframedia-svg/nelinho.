@@ -184,7 +184,6 @@ export default function QualidadePage() {
         icon={<ShieldCheck size={18} />}
         title="Qualidade"
         subtitle="Erros, retrabalho, OEE, diagnóstico causal · ROI de cada acção"
-        helpId={activeTab === 'oee' ? 'oee' : 'qualidade'}
         actions={
           <button
             type="button"
