@@ -1,0 +1,31 @@
+# Guardrails de pré-commit (Q.60.B) — feedback antes do CI.
+#
+# Activar uma vez por checkout:  pip install pre-commit && pre-commit install
+# Inerte até lá: quem não o instala faz commits normalmente — não bloqueia.
+#
+# Filosofia (igual ao ruff.toml): só REAL BUGS, nada cosmético. O ESLint cheio
+# (~665 erros pré-existentes) NÃO entra aqui — só o gate anti-MOCK, que é limpo.
+repos:
+  # --- Backend: ruff lint (lê o ruff.toml do repo, só corre nos .py staged) ---
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.12
+    hooks:
+      - id: ruff-check
+        name: ruff (lint backend)
+
+  # --- Frontend: hooks locais, correm quando ficheiros frontend são tocados ---
+  - repo: local
+    hooks:
+      - id: frontend-zero-mocks
+        name: ZERO MOCKS (eslint anti-MOCK)
+        entry: npm --prefix frontend run lint:mocks
+        language: system
+        pass_filenames: false
+        files: ^frontend/src/.*\.(ts|tsx)$
+
+      - id: frontend-typecheck
+        name: tsc --noEmit (frontend)
+        entry: npm --prefix frontend run typecheck
+        language: system
+        pass_filenames: false
+        files: ^frontend/.*\.(ts|tsx)$

@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "lint:mocks": "eslint --config eslint.mocks.config.js .",
+    "typecheck": "tsc -b --noEmit",
     "preview": "vite preview",
     "test": "vitest run"
   },
