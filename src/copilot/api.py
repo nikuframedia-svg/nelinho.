@@ -182,21 +182,16 @@ async def ask_copilot(
         )
 
 
-@router.post("/action", status_code=status.HTTP_200_OK)
-async def execute_action(
+async def _run_copilot_action(
     request: CopilotActionRequest,
-    user: UserContext = Depends(get_current_user),
-    tenant_id: UUID = Depends(get_tenant_id),
-    session: AsyncSession = Depends(get_session),
-):
-    """
-    Executar ação permitida.
-    
-    Ações suportadas:
-    - CREATE_DECISION_PR: Criar PR de melhoria
-    - DRY_RUN: Simular sem persistir
-    - OPEN_ENTITY: Hint para frontend navegar
-    - RUN_RUNBOOK: Executar runbook
+    tenant_id: UUID,
+    session: AsyncSession,
+) -> Dict[str, Any]:
+    """Núcleo da execução de uma acção do copiloto.
+
+    Q.55.C.2 — extraído do `execute_action` para ser partilhado por
+    `/action` (com auth) e `/action-dev` (dev, sem auth), tal como o
+    `process_ask` é partilhado por `/ask` e `/ask-dev`.
     """
     # Verificar que suggestion existe
     suggestion = await session.get(CopilotSuggestion, request.suggestion_id)
@@ -290,6 +285,44 @@ async def execute_action(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Ação '{request.action_type}' não suportada",
         )
+
+
+@router.post("/action", status_code=status.HTTP_200_OK)
+async def execute_action(
+    request: CopilotActionRequest,
+    user: UserContext = Depends(get_current_user),
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Executar ação permitida.
+
+    Ações suportadas:
+    - CREATE_DECISION_PR: Criar PR de melhoria
+    - DRY_RUN: Simular sem persistir
+    - OPEN_ENTITY: Hint para frontend navegar
+    - RUN_RUNBOOK: Executar runbook
+    """
+    return await _run_copilot_action(request, tenant_id, session)
+
+
+@router.post(
+    "/action-dev",
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
+    dependencies=[Depends(dev_only)],
+)
+async def execute_action_dev(
+    request: CopilotActionRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    """Endpoint de desenvolvimento — SEM autenticação. Espelha o `/ask-dev`.
+
+    Q.55.C.2 — o frontend dev corre sem sessão; sem este par as acções
+    sugeridas falhavam com "Not authenticated".
+    """
+    dev_tenant_id = UUID("00000000-0000-0000-0000-000000000001")
+    return await _run_copilot_action(request, dev_tenant_id, session)
 
 
 @router.get("/suggestions/{suggestion_id}", response_model=CopilotResponse)

@@ -1201,6 +1201,16 @@ export const copilotApi = {
     request<any>('/api/copilot/action', {
       method: 'POST',
       body: JSON.stringify(data),
+    }).catch((error: any) => {
+      // Q.55.C.2 — sem sessão iniciada o /action devolve 401 "Not
+      // authenticated"; cai para o endpoint dev, tal como o getDailyFeedback.
+      if (error.status === 401 || error.message?.includes('Not authenticated')) {
+        return request<any>('/api/copilot/action-dev', {
+          method: 'POST',
+          body: JSON.stringify(data),
+        });
+      }
+      throw error;
     }),
   
   getDailyFeedback: (date?: string) => {
