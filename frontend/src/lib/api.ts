@@ -1722,9 +1722,11 @@ export const improveApi = {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export const capabilitiesApi = {
-  get: () => 
-    request<any>('/v1/capabilities'),
-  
+  // Barra final: a rota é /v1/capabilities/ — sem ela o backend devolve
+  // um 307 redirect que nem sempre é seguido com os headers de tenant.
+  get: () =>
+    request<any>('/v1/capabilities/'),
+
   getModules: () => 
     request<any>('/v1/capabilities/modules'),
   

@@ -21,6 +21,7 @@ import type { ReactNode } from 'react';
 import {
   capabilitiesApi,
   catalogApi,
+  copilotApi,
   learningApi,
   mlApi,
   preferenceRulesApi,
@@ -694,17 +695,27 @@ export function CausalTab(): ReactNode {
 
 // ─── Tab: Copilot extras ────────────────────────────────────────────
 export function CopilotTab(): ReactNode {
+  // O endpoint real é /api/copilot/insights (copilotApi.getInsights), que
+  // devolve { date, now[], next[], meta }. Juntamos as bandas "now" e
+  // "next" numa lista única de aprendizagens.
   const { data, isLoading, error } = useQuery({
     queryKey: ['copilot', 'insights', 'aprendi'],
-    queryFn: () => apiFetch<unknown>('/v1/copilot/insights'),
+    queryFn: () => copilotApi.getInsights(),
   });
-  const insights: Array<Record<string, unknown>> = Array.isArray(data)
-    ? data
-    : Array.isArray((data as Record<string, unknown>)?.insights)
-      ? ((data as Record<string, unknown>).insights as Array<
-          Record<string, unknown>
-        >)
-      : [];
+  const raw = data as Record<string, unknown> | undefined;
+  const insights: Array<Record<string, unknown>> = Array.isArray(raw)
+    ? (raw as Array<Record<string, unknown>>)
+    : [
+        ...(Array.isArray(raw?.now)
+          ? (raw!.now as Array<Record<string, unknown>>)
+          : []),
+        ...(Array.isArray(raw?.next)
+          ? (raw!.next as Array<Record<string, unknown>>)
+          : []),
+        ...(Array.isArray(raw?.insights)
+          ? (raw!.insights as Array<Record<string, unknown>>)
+          : []),
+      ];
   return (
     <TabState
       loading={isLoading}

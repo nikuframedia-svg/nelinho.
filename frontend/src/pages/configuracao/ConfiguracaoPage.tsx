@@ -685,6 +685,11 @@ function CustosTab() {
             <div className="flex items-center justify-center py-6">
               <Loader2 size={20} className="text-accent-500 animate-spin" />
             </div>
+          ) : energyQ.isError ? (
+            <EmptyState
+              title="Medição de energia não disponível"
+              hint="A NELO ainda não tem sensores IOT de potência trifásica ligados. Quando houver leituras por fase, o consumo real vs standard aparece aqui."
+            />
           ) : honest.degraded ? (
             <EmptyState
               title="Sem leituras de energia"
@@ -693,7 +698,7 @@ function CustosTab() {
           ) : energyRows.length === 0 ? (
             <EmptyState
               title="Sem dados de energia"
-              hint="O endpoint /v1/profit/energy/real ainda não devolveu leituras para este período."
+              hint="Ainda não há leituras de energia registadas para este período."
             />
           ) : (
             <div className="overflow-x-auto">

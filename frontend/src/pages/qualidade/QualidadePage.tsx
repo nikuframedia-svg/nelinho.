@@ -1772,29 +1772,47 @@ function AderenciaTab() {
 // ─── DiagnosticoTab ──────────────────────────────────────────────────────
 
 function DiagnosticoTab() {
-  const [errorCode, setErrorCode] = useState('RESIN_BUBBLE');
+  // Vazio = deixa o backend escolher o defeito mais frequente da janela.
+  // A tab nunca abre partida: sem código escolhido → /root-cause e /impact
+  // resolvem o error_code dominante (most_frequent_error_code, Q.54.J).
+  const [errorCode, setErrorCode] = useState('');
+
+  // Os códigos de erro reais vêm dos próprios registos de retrabalho do
+  // ERP — não de uma lista fixa em inglês (essa divergia dos dados reais).
+  const reworkQuery = useReworkList();
+  const errorCodes = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const r of reworkQuery.data ?? []) {
+      if (r.error_code && !seen.has(r.error_code)) {
+        seen.set(r.error_code, r.error_description ?? r.error_code);
+      }
+    }
+    return [...seen.entries()].map(([code, label]) => ({ code, label }));
+  }, [reworkQuery.data]);
+
+  const qs = errorCode
+    ? `?error_code=${encodeURIComponent(errorCode)}`
+    : '';
   const rootCauseQuery = useQuery({
     queryKey: ['qualidade', 'root-cause', errorCode],
     queryFn: () =>
-      apiFetch<Record<string, unknown>>(
-        `/v1/quality/root-cause?error_code=${encodeURIComponent(errorCode)}`,
-      ),
+      apiFetch<Record<string, unknown>>(`/v1/quality/root-cause${qs}`),
     staleTime: 60_000,
     retry: 0,
-    enabled: errorCode.length > 0,
   });
   const impactQuery = useQuery({
     queryKey: ['qualidade', 'impact', errorCode],
     queryFn: () =>
-      apiFetch<Record<string, unknown>>(
-        `/v1/quality/impact?error_code=${encodeURIComponent(errorCode)}`,
-      ),
+      apiFetch<Record<string, unknown>>(`/v1/quality/impact${qs}`),
     staleTime: 60_000,
     retry: 0,
-    enabled: errorCode.length > 0,
   });
 
   const rc = rootCauseQuery.data;
+  const resolvedCode =
+    rc && typeof rc === 'object'
+      ? ((rc as { error_code?: string | null }).error_code ?? null)
+      : null;
   const dimensions =
     rc && typeof rc === 'object'
       ? (rc as { dimensions?: Record<string, unknown> }).dimensions
@@ -1808,7 +1826,7 @@ function DiagnosticoTab() {
           title="Diagnóstico causal · RootCauseAnalyzer"
           subtitle="Causa comum por dimensão · escolhe o código de erro"
         />
-        <label style={{ display: 'block', maxWidth: 280 }}>
+        <label style={{ display: 'block', maxWidth: 360 }}>
           <span style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>
             Código de erro
           </span>
@@ -1818,13 +1836,30 @@ function DiagnosticoTab() {
             className={FIELD_CLASS}
             style={FIELD_STYLE}
           >
-            {REWORK_ERROR_CODES.map((c) => (
+            <option value="">
+              Mais frequente (automático)
+            </option>
+            {errorCodes.map((c) => (
               <option key={c.code} value={c.code}>
                 {c.label}
               </option>
             ))}
           </select>
         </label>
+        {!errorCode && resolvedCode ? (
+          <div
+            style={{
+              fontSize: 11,
+              color: 'var(--fg-3)',
+              marginTop: 8,
+            }}
+          >
+            A mostrar o defeito mais frequente da janela:{' '}
+            <span style={{ color: 'var(--fg-1)', fontWeight: 500 }}>
+              {resolvedCode}
+            </span>
+          </div>
+        ) : null}
       </Card>
 
       <Card padding={18}>
