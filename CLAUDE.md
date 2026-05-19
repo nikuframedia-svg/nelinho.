@@ -50,8 +50,8 @@ $env:PYTHONPATH = "c:/Users/User/nelinho"
 # Full suite (antes de commit grande)
 .\.venv\Scripts\python.exe -m pytest tests/ -q   # alvo actual: 1684 passed
 
-# Frontend typecheck
-cd frontend && npx tsc -b --noEmit
+# Frontend typecheck + testes (Vitest+RTL) + gate ZERO MOCKS
+cd frontend && npx tsc -b --noEmit && npm test && npm run lint:mocks
 
 # DB do zero (quando schema desync)
 .\.venv\Scripts\python.exe scripts/bootstrap_dev_full.py
@@ -59,13 +59,15 @@ cd frontend && npx tsc -b --noEmit
 
 ## Where to look for context
 
-- **`.claude/skills/`** — 6 SKILL.md auto-loaded pelo Claude Code:
+- **`.claude/skills/`** — 7 SKILL.md auto-loaded pelo Claude Code:
   - `nelinho-discipline` — pre-flight checklist (Karpathy 4 princípios). **Lê antes de qualquer task.**
   - `nelinho-incremental` — Q.X.Y sub-sprint discipline.
   - `nelinho-tdd` — RED-GREEN-REFACTOR + FakeSession + property tests Spelke.
   - `nelinho-debug` — symptom→cause→recovery table (UndefinedTable, pgvector, Ollama, etc.).
   - `nelinho-frontend` — ZERO MOCKS, dark theme, RegrasPage composition pattern.
   - `nelinho-review` — 9-section pre-merge gate.
+  - `nelinho-invariants` — 12 invariants do CPO/scheduler/GA; `scripts/verify_invariants.py`
+    automatiza-os (corre no CI). Usar após mexer em `src/plan/cpo/*`.
 - **`agent_docs/`** — reference material, lê on demand:
   - [architecture.md](agent_docs/architecture.md) — module map + deploy topology + 17 módulos
   - [spelke_axioms.md](agent_docs/spelke_axioms.md) — 7 invariants em detalhe
