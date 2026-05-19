@@ -4,6 +4,22 @@ import '@testing-library/jest-dom/vitest';
 import { afterEach, beforeEach } from 'vitest';
 import { cleanup } from '@testing-library/react';
 
+// O jsdom não implementa matchMedia — componentes que leem media queries
+// (ex: prefers-reduced-motion) precisam deste stub para não rebentar.
+if (!window.matchMedia) {
+  window.matchMedia = (query: string): MediaQueryList =>
+    ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }) as MediaQueryList;
+}
+
 // Desmonta a árvore React e limpa o DOM entre testes — sem isto, queries
 // como `getByText` veriam restos do teste anterior.
 afterEach(() => {
