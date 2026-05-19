@@ -27,8 +27,12 @@ class Settings(BaseSettings):
         default="postgresql+asyncpg://prodplan:prodplan@localhost:5432/prodplan_one",
         description="PostgreSQL connection URL (async). Override via DATABASE_URL env var.",
     )
-    database_pool_size: int = Field(default=10, ge=1, le=100)
-    database_max_overflow: int = Field(default=20, ge=0, le=100)
+    # Q.59.F.2 — pool 10 era apertado para ~16 routers + scheduler + sync
+    # ERP a correr em paralelo; ocasionalmente esgotava. Sobe para 20+30.
+    # Override via DATABASE_POOL_SIZE / DATABASE_MAX_OVERFLOW continua a
+    # funcionar — só o default muda.
+    database_pool_size: int = Field(default=20, ge=1, le=100)
+    database_max_overflow: int = Field(default=30, ge=0, le=100)
     database_echo: bool = Field(default=False)
 
     # Redis

@@ -58,7 +58,12 @@ async def _build_service(
     """
     semantic = None
     try:
-        from src.factory_data_product.ingest.engine import get_engine
+        # Q.59.F.1 — `get_engine()` vive em api/endpoints.py (factory do
+        # singleton _engine usado por FastAPI Depends). Estava erradamente
+        # importado de ingest/engine.py, que só expõe a classe IngestEngine
+        # — daí o spam "semantic service unavailable: cannot import name
+        # 'get_engine'" a cada chamada do mapa.
+        from src.factory_data_product.api.endpoints import get_engine
         from src.factory_data_product.services import get_semantic_service
 
         semantic = get_semantic_service(get_engine())
