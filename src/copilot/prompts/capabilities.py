@@ -80,13 +80,15 @@ KNOWN_CAPABILITIES: List[Capability] = [
 ]
 
 
-# Wired capabilities every tenant has from day 1 — facto + cenário
-# correspond to existing infrastructure (DB queries + POETIQ/CPO).
-# No config flag because they're foundational; if they break, the
-# whole copilot is broken anyway.
+# Wired capabilities every tenant has from day 1. No config flag because
+# they're foundational; if they break, the whole copilot is broken anyway.
+# Q.33.C — dropped the "cenário: simulação CPO via POETIQ" line: POETIQ
+# lives behind its own `/v1/copilot/poetiq` endpoint and is NOT invoked
+# from the `/ask` flow, so advertising it here as always-wired made the
+# copilot promise an end-to-end simulation it never runs in an answer.
 _ALWAYS_WIRED: List[str] = [
     "facto: query directa à DB de KPIs, fases, ordens, operadores, moldes",
-    "cenário: simulação CPO via POETIQ (one-shot ou iterative opt-in)",
+    "tools de leitura: endpoints DATA_READ/ANALYSIS chamados via tool-loop",
 ]
 
 
@@ -160,9 +162,10 @@ def render_capabilities_block(flags: Dict[str, bool]) -> str:
             "Quando uma capability acima é ⚠, responde:"
         )
         block_lines.append(
-            "> *\"Posso descrever-te a árvore de raciocínio, mas o handler que "
-            "faz a investigação real não está activo neste tenant. Pede ao "
-            "admin para activar.\"*"
+            "> *\"Esta análise existe no sistema mas não está activada para "
+            "este tenant. Posso explicar-te a árvore de raciocínio que ela "
+            "seguiria; para a correr a sério sobre os teus dados, um admin "
+            "tem de a activar.\"*"
         )
         block_lines.append("")
         block_lines.append(

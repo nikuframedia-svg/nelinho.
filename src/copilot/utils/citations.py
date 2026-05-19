@@ -67,6 +67,33 @@ def create_calculation_citation(
     }
 
 
+def create_tool_citation(
+    tool_id: str,
+    params: Dict[str, Any],
+    label: str = None,
+    confidence: float = 0.90,
+    trust_index: float = 0.85,
+) -> Dict[str, Any]:
+    """Criar citation determinística para uma tool call do loop agêntico.
+
+    Q.37.E — cada entrada do ``tool_log`` gera uma citation com
+    ``source_type="calculation"`` e ``ref="tool:<id>;params_hash:<...>"``.
+    O hash dos params é determinístico (sha256 de JSON ordenado), por
+    isso a mesma tool call produz sempre a mesma citation — auditável e
+    reproduzível.
+    """
+    params_hash = hashlib.sha256(
+        json.dumps(params, sort_keys=True, default=str).encode()
+    ).hexdigest()[:16]
+    return {
+        "source_type": "calculation",
+        "ref": f"tool:{tool_id};params_hash:{params_hash}",
+        "label": label or f"Ferramenta: {tool_id}",
+        "confidence": confidence,
+        "trust_index": trust_index,
+    }
+
+
 def create_event_citation(
     event_type: str,
     event_id: str,

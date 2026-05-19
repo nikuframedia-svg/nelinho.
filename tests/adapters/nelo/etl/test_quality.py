@@ -1,93 +1,119 @@
-"""Q.20.E — quality mirror tests.
+"""Q.36.B — quality mirror tests (OF_CHECKLIST → rework_entry).
 
-``_problem_codes`` / ``_is_incident`` / ``build_catalog`` / ``build_rework``
-are pure. The end-to-end ``mirror_quality`` runs against the recording
-fake session (conftest) with the adapter mocked.
+O mirror antigo lia as colunas ``OFFP_PROBS_*`` vazias; este lê
+``OF_CHECKLIST`` via ``services.list_checklist_incidents``. As funções
+``_error_code`` / ``_is_mold_related`` / ``build_catalog`` / ``build_rework``
+são puras. O end-to-end ``mirror_quality`` corre contra a recording fake
+session (conftest) com o adaptador mockado.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from unittest.mock import AsyncMock
-from uuid import NAMESPACE_DNS, UUID, uuid5
+from uuid import NAMESPACE_DNS, UUID, uuid4, uuid5
 
 from src.adapters.nelo.etl import quality as quality_mod
 from src.adapters.nelo.etl.quality import (
-    _is_incident,
-    _problem_codes,
+    _crew_index,
+    _error_code,
+    _is_mold_related,
+    _zone_by_checklist,
     build_catalog,
     build_rework,
     mirror_quality,
 )
-from src.adapters.nelo.schemas import OperationRow
+from src.adapters.nelo.schemas import (
+    ChecklistLocationRow,
+    ChecklistRow,
+    OperationCrewRow,
+)
+from src.core.models.employee import Employee, EmploymentStatus
 from src.quality.models.rework import ErrorCatalog, ReworkEntry
 
 TENANT = UUID("00000000-0000-0000-0000-000000000001")
 
 
-def _op(**kw) -> OperationRow:
+def _chk(**kw) -> ChecklistRow:
     base = dict(
-        operation_id=1, work_order_id=5000, phase_id=18, phase_name="Pintura",
-        start_at=datetime(2025, 1, 1, 8, 0), end_at=datetime(2025, 1, 1, 14, 0),
-        expected_at=None, standard_time_hours=6.0, temperature=21.0,
-        humidity=55.0, problem_neck=None, problem_interior_id=None,
-        problem_paint_id=None, problem_mold_id=None, problem_lamination_id=None,
-        problem_logged_at=None, is_return=False, severe_return=False,
-        product_id=900, shift_id=None, mold_work_order_id=None,
-        product_type_name="K1", phase_is_automatic=False,
+        checklist_id=1, work_order_id=5000, operation_id=88, phase_id=18,
+        phase_name="Pintura", description="Risco na pintura", description_en=None,
+        severity=2, mold_repair=False, blame_chefe=False, blame_operation_id=None,
+        resolved=False, state=1, verified_at=datetime(2025, 6, 1, 10, 0),
+        updated_at=None, detected_at=datetime(2025, 6, 1, 10, 0),
+        operation_mold_id=None,
     )
     base.update(kw)
-    return OperationRow(**base)
+    return ChecklistRow(**base)
 
 
-# ── pure: problem codes ───────────────────────────────────────────────────
+# ── pure: error_code ──────────────────────────────────────────────────────
 
 
-def test_problem_codes_extracts_each_category():
-    op = _op(problem_paint_id=7, problem_mold_id=3, problem_neck="gola torta")
-    codes = dict(_problem_codes(op))
-    assert codes["PAINT-7"]
-    assert codes["MOLD-3"]
-    assert codes["NECK"]
+def test_error_code_slugifies_description():
+    assert _error_code("Interior Enrugado") == "interior-enrugado"
 
 
-def test_problem_codes_empty_for_clean_operation():
-    assert _problem_codes(_op()) == []
+def test_error_code_same_text_same_code():
+    """Duas linhas com a mesma descrição → o mesmo código → uma entrada."""
+    assert _error_code("Risco na pintura") == _error_code("  RISCO NA PINTURA ")
 
 
-# ── pure: incident detection ──────────────────────────────────────────────
+def test_error_code_empty_description_has_fallback():
+    assert _error_code("") == "sem-descricao"
 
 
-def test_is_incident_true_for_rework():
-    """OFFP_RETURN set → rework → incident, even with no problem code."""
-    assert _is_incident(_op(is_return=True)) is True
+def test_error_code_capped_at_64_chars():
+    code = _error_code("x" * 200)
+    assert len(code) == 64
 
 
-def test_is_incident_true_for_problem_only():
-    assert _is_incident(_op(problem_mold_id=2)) is True
+# ── pure: mold-related classification ─────────────────────────────────────
 
 
-def test_is_incident_false_for_clean_operation():
-    assert _is_incident(_op()) is False
+def test_is_mold_related_true_for_mold_repair_flag():
+    assert _is_mold_related(_chk(mold_repair=True)) is True
+
+
+def test_is_mold_related_true_for_mold_keyword_in_text():
+    assert _is_mold_related(_chk(description="Interior enrugado")) is True
+    assert _is_mold_related(_chk(description="Deformação no casco")) is True
+
+
+def test_is_mold_related_false_for_plain_paint_defect():
+    assert _is_mold_related(_chk(description="Risco na pintura")) is False
 
 
 # ── pure: catalogue ───────────────────────────────────────────────────────
 
 
 def test_build_catalog_distinct_codes():
-    ops = [_op(problem_paint_id=7), _op(operation_id=2, problem_paint_id=7)]
-    catalog = build_catalog(ops)
-    assert len(catalog) == 1                  # same code → one entry
-    assert catalog[0]["error_code"] == "PAINT-7"
-
-
-def test_build_catalog_severe_return_lifts_severity():
-    ops = [
-        _op(problem_mold_id=1, severe_return=False),
-        _op(operation_id=2, problem_mold_id=1, severe_return=True),
+    incidents = [
+        _chk(checklist_id=1, description="Risco na pintura"),
+        _chk(checklist_id=2, description="Risco na pintura"),
     ]
-    catalog = build_catalog(ops)
+    catalog = build_catalog(incidents)
+    assert len(catalog) == 1
+    assert catalog[0]["error_code"] == "risco-na-pintura"
+
+
+def test_build_catalog_severity_from_gravidade():
+    """OFCH_GRAVIDADE 1/2/3 → low/medium/high."""
+    catalog = build_catalog([_chk(checklist_id=1, severity=3)])
     assert catalog[0]["severity_hint"] == "high"
+
+
+def test_build_catalog_higher_gravidade_lifts_severity():
+    incidents = [
+        _chk(checklist_id=1, description="Bolha", severity=1),
+        _chk(checklist_id=2, description="Bolha", severity=3),
+    ]
+    catalog = build_catalog(incidents)
+    assert catalog[0]["severity_hint"] == "high"
+
+
+def test_build_catalog_marks_mold_related():
+    catalog = build_catalog([_chk(checklist_id=1, description="Molde baço")])
     assert catalog[0]["mold_related"] is True
 
 
@@ -95,58 +121,238 @@ def test_build_catalog_severe_return_lifts_severity():
 
 
 def test_build_rework_id_is_deterministic():
-    """Same operation id → same uuid5 → idempotent re-import."""
-    op = _op(operation_id=12345, is_return=True)
-    rows = build_rework([op])
-    assert rows[0]["id"] == uuid5(NAMESPACE_DNS, "nelo-erp-offp-12345")
+    """Mesmo OFCH_ID → mesmo uuid5 → re-import idempotente."""
+    rows = build_rework([_chk(checklist_id=12345)])
+    assert rows[0]["id"] == uuid5(NAMESPACE_DNS, "nelo-erp-ofch-12345")
 
 
-def test_build_rework_plain_return_uses_return_code():
-    """A rework with no categorised problem still produces a row."""
-    rows = build_rework([_op(is_return=True)])
-    assert len(rows) == 1
-    assert rows[0]["error_code"] == "RETURN"
+def test_build_rework_carries_description_and_mold():
+    rows = build_rework([
+        _chk(checklist_id=1, description="Interior enrugado", operation_mold_id=777),
+    ])
+    assert rows[0]["error_description"] == "Interior enrugado"
+    assert rows[0]["mold_id"] == "777"
 
 
-def test_build_rework_skips_clean_operations():
-    assert build_rework([_op()]) == []
+def test_build_rework_mold_id_none_when_no_operation_mold():
+    rows = build_rework([_chk(checklist_id=1, operation_mold_id=None)])
+    assert rows[0]["mold_id"] is None
 
 
-def test_build_rework_detected_at_falls_back_to_end_at():
-    """No problem_logged_at → use end_at for detected_at."""
-    rows = build_rework([_op(is_return=True, problem_logged_at=None)])
+def test_build_rework_causer_none_when_no_crew():
+    """Sem crew nem mapa de empregados, o causador fica None — honesto."""
+    rows = build_rework([_chk(checklist_id=1)])
+    assert rows[0]["causer_employee_id"] is None
+
+
+def test_build_rework_resolves_causer_via_blame_operation():
+    """OFCH_OFFP_ID_CULPA → OFFP_EQ → core.employees."""
+    emp_uuid = uuid4()
+    crew = [OperationCrewRow(
+        operation_id=70, work_order_id=5000, phase_id=18,
+        operator_id=42, is_chefe=False,
+    )]
+    rows = build_rework(
+        [_chk(checklist_id=1, blame_operation_id=70)],
+        crew_by_op=_crew_index(crew),
+        employee_by_code={"42": emp_uuid},
+    )
+    assert rows[0]["causer_employee_id"] == emp_uuid
+
+
+def test_build_rework_falls_back_to_operation_id_for_causer():
+    """Sem operação culpada explícita, usa a operação do incidente."""
+    emp_uuid = uuid4()
+    crew = [OperationCrewRow(
+        operation_id=88, work_order_id=5000, phase_id=18,
+        operator_id=99, is_chefe=True,
+    )]
+    rows = build_rework(
+        [_chk(checklist_id=1, operation_id=88, blame_operation_id=None)],
+        crew_by_op=_crew_index(crew),
+        employee_by_code={"99": emp_uuid},
+    )
+    assert rows[0]["causer_employee_id"] == emp_uuid
+
+
+def test_crew_index_prefers_chefe():
+    """Quando uma operação tem vários operadores, o chefe ganha."""
+    crew = [
+        OperationCrewRow(operation_id=5, work_order_id=1, phase_id=2,
+                         operator_id=10, is_chefe=False),
+        OperationCrewRow(operation_id=5, work_order_id=1, phase_id=2,
+                         operator_id=11, is_chefe=True),
+    ]
+    index = _crew_index(crew)
+    assert index[5].operator_id == 11
+
+
+# ── pure: defect zone (F11 / Q.46.A) ──────────────────────────────────────
+
+
+def _loc(**kw) -> ChecklistLocationRow:
+    base = dict(checklist_id=1, location_id=10, location_description="Proa")
+    base.update(kw)
+    return ChecklistLocationRow(**base)
+
+
+def test_zone_by_checklist_maps_checklist_to_zone():
+    index = _zone_by_checklist([_loc(checklist_id=7, location_description="Convés")])
+    assert index == {7: "Convés"}
+
+
+def test_zone_by_checklist_joins_multiple_zones():
+    """Um incidente com várias zonas → uma etiqueta única juntada."""
+    index = _zone_by_checklist([
+        _loc(checklist_id=3, location_id=10, location_description="Proa"),
+        _loc(checklist_id=3, location_id=20, location_description="Casco"),
+    ])
+    assert index == {3: "Proa / Casco"}
+
+
+def test_zone_by_checklist_dedupes_repeated_zone():
+    index = _zone_by_checklist([
+        _loc(checklist_id=3, location_id=10, location_description="Proa"),
+        _loc(checklist_id=3, location_id=11, location_description="Proa"),
+    ])
+    assert index == {3: "Proa"}
+
+
+def test_zone_by_checklist_skips_blank_description():
+    """Localização sem PROBSL_DSCR é ignorada — sem inventar uma zona."""
+    index = _zone_by_checklist([
+        _loc(checklist_id=3, location_description=None),
+        _loc(checklist_id=3, location_id=11, location_description="  "),
+    ])
+    assert index == {}
+
+
+def test_build_rework_carries_location_zone():
+    rows = build_rework(
+        [_chk(checklist_id=9)],
+        zone_by_checklist={9: "Convés traseiro"},
+    )
+    assert rows[0]["location_zone"] == "Convés traseiro"
+
+
+def test_build_rework_location_zone_none_when_no_zone():
+    """Incidente sem zona marcada fica None — honesto."""
+    rows = build_rework([_chk(checklist_id=9)])
+    assert rows[0]["location_zone"] is None
+
+
+def test_build_rework_detected_at_falls_back_to_verified_at():
+    rows = build_rework([_chk(checklist_id=1, detected_at=None,
+                              verified_at=datetime(2025, 3, 4, 9, 0))])
     assert rows[0]["detected_at"].year == 2025
+    assert rows[0]["detected_at"].month == 3
 
 
 # ── end-to-end mirror ─────────────────────────────────────────────────────
 
 
-async def test_mirror_quality_imports_incidents(monkeypatch, recording_session):
+async def test_mirror_quality_imports_checklist_incidents(monkeypatch, recording_session):
     monkeypatch.setattr(
-        quality_mod.services, "list_operations",
+        quality_mod.services, "list_checklist_incidents",
         AsyncMock(return_value=[
-            _op(operation_id=1, problem_paint_id=7, is_return=True),
-            _op(operation_id=2, problem_mold_id=3, severe_return=True),
-            _op(operation_id=3),                       # clean → skipped
+            _chk(checklist_id=1, description="Risco na pintura", severity=2),
+            _chk(checklist_id=2, description="Molde baço", severity=3,
+                 mold_repair=True, operation_mold_id=300),
         ]),
     )
+    monkeypatch.setattr(
+        quality_mod.services, "list_operation_crew",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        quality_mod.services, "list_checklist_locations",
+        AsyncMock(return_value=[]),
+    )
     result = await mirror_quality(session=recording_session, tenant_id=TENANT, since=None)
 
     assert result.status == "ok"
-    assert result.rows_read == 3
-    assert result.rows_skipped == 1                    # the clean operation
+    assert result.rows_read == 2
     catalog = [o for o in recording_session.added if isinstance(o, ErrorCatalog)]
     rework = [o for o in recording_session.added if isinstance(o, ReworkEntry)]
-    assert {c.error_code for c in catalog} == {"PAINT-7", "MOLD-3"}
+    assert {c.error_code for c in catalog} == {"risco-na-pintura", "molde-baço"}
     assert len(rework) == 2
+    mold_row = next(r for r in rework if r.error_code == "molde-baço")
+    assert mold_row.mold_id == "300"
 
 
-async def test_mirror_quality_clean_window_is_noop(monkeypatch, recording_session):
+async def test_mirror_quality_resolves_causer_from_crew(monkeypatch, recording_session):
+    """O mirror lê core.employees da sessão para resolver o causador."""
+    emp = Employee(
+        id=uuid4(), tenant_id=TENANT, employee_code="42",
+        employee_name="Operador 42", hire_date=date(2020, 1, 1),
+        status=EmploymentStatus.ACTIVE,
+    )
+    recording_session.add(emp)
     monkeypatch.setattr(
-        quality_mod.services, "list_operations",
-        AsyncMock(return_value=[_op(operation_id=1), _op(operation_id=2)]),
+        quality_mod.services, "list_checklist_incidents",
+        AsyncMock(return_value=[
+            _chk(checklist_id=1, operation_id=88, blame_operation_id=70),
+        ]),
+    )
+    monkeypatch.setattr(
+        quality_mod.services, "list_operation_crew",
+        AsyncMock(return_value=[
+            OperationCrewRow(operation_id=70, work_order_id=5000, phase_id=18,
+                             operator_id=42, is_chefe=False),
+        ]),
+    )
+    monkeypatch.setattr(
+        quality_mod.services, "list_checklist_locations",
+        AsyncMock(return_value=[]),
+    )
+    await mirror_quality(session=recording_session, tenant_id=TENANT, since=None)
+    rework = [o for o in recording_session.added if isinstance(o, ReworkEntry)]
+    assert len(rework) == 1
+    assert rework[0].causer_employee_id == emp.id
+
+
+async def test_mirror_quality_populates_location_zone(monkeypatch, recording_session):
+    """F11 (Q.46.A) — o mirror liga OFCH_LOCAL à zona do casco."""
+    monkeypatch.setattr(
+        quality_mod.services, "list_checklist_incidents",
+        AsyncMock(return_value=[
+            _chk(checklist_id=1, description="Risco na pintura"),
+            _chk(checklist_id=2, description="Bolha"),
+        ]),
+    )
+    monkeypatch.setattr(
+        quality_mod.services, "list_operation_crew",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        quality_mod.services, "list_checklist_locations",
+        AsyncMock(return_value=[
+            ChecklistLocationRow(checklist_id=1, location_id=10,
+                                 location_description="Proa"),
+        ]),
+    )
+    await mirror_quality(session=recording_session, tenant_id=TENANT, since=None)
+    rework = [o for o in recording_session.added if isinstance(o, ReworkEntry)]
+    by_id = {r.context["erp_ofch_id"]: r for r in rework}
+    assert by_id["1"].location_zone == "Proa"
+    # Incidente sem localização → zona None, sem inventar.
+    assert by_id["2"].location_zone is None
+
+
+async def test_mirror_quality_empty_window_is_noop(monkeypatch, recording_session):
+    monkeypatch.setattr(
+        quality_mod.services, "list_checklist_incidents",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        quality_mod.services, "list_operation_crew",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        quality_mod.services, "list_checklist_locations",
+        AsyncMock(return_value=[]),
     )
     result = await mirror_quality(session=recording_session, tenant_id=TENANT, since=None)
     assert result.status == "ok"
-    assert result.rows_skipped == 2
+    assert result.rows_read == 0
     assert [o for o in recording_session.added if isinstance(o, ReworkEntry)] == []

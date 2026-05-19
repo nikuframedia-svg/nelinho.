@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import unicodedata
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 from typing import Any, Dict, List, Optional, Set, Tuple
 from uuid import UUID
 
@@ -86,6 +87,24 @@ class MoldInfo:
 
 
 @dataclass
+class RoutingTemplateRow:
+    """One phase of a model's routing template, pre-loaded from
+    `plan.routing_template_phase`.
+
+    The `RoutingResolver` is synchronous; it cannot query the DB itself.
+    `FactoryState.load()` joins `model_routing_assignment` to its primary
+    template's phases up-front and stores them here so the resolver has a
+    DB-backed routing source when the curated in-memory layer is empty.
+    """
+    fase_id: str
+    fase_nome: str
+    seq: int
+    duration_p50_h: Optional[float] = None
+    requires_mold: bool = False
+    team_size_default: int = 1
+
+
+@dataclass
 class FactoryState:
     """Read-only snapshot of factory data needed by the CPO scheduler."""
 
@@ -118,12 +137,31 @@ class FactoryState:
     # open orders available to schedule
     open_orders: List[Dict[str, Any]] = field(default_factory=list)
 
+    # Sprint Q.dev-stack — routing templates synced from the ERP, keyed by
+    # model business-key. Pre-loaded by `load()` from
+    # `plan.model_routing_assignment ⋈ routing_template_phase`. The
+    # RoutingResolver reads this when the curated in-memory layer has no
+    # history/standards for the model (the `standards` curated bucket is
+    # never populated — `transformer._transform_standards` is a no-op).
+    routing_by_model: Dict[str, List[RoutingTemplateRow]] = field(default_factory=dict)
+
     # min mandatory gap between consecutive phases (curing/drying).
     # Key: (from_phase_code, to_phase_code) — both normalized via
     # `normalize_phase_code`. Value: hours.
     # Populated from the DB table `plan.phase_transition_gap`, falling
     # back to NELO_CURING_GAPS_SEED when the table is empty or missing.
     phase_transition_gaps: Dict[Tuple[str, str], float] = field(default_factory=dict)
+
+    # Sprint Q.48.B (F10) — the factory capacity calendar. Set of dates
+    # the factory operates on, loaded from `plan.factory_calendar_day`.
+    # An EMPTY set means "no calendar known" — the scheduler then treats
+    # every day as a working day (the pre-Q.48 idealised behaviour), so a
+    # fresh DB or a tenant without an ERP sync never gets a blank plan.
+    # When the set is non-empty, the decoder refuses to start an operation
+    # on a date NOT in this set: a closed day has zero capacity (Spelke
+    # axiom 1), exactly like an operator without a matching skill is
+    # unavailable for a slot (axiom 5).
+    working_days: Set[date] = field(default_factory=set)
 
     # Sprint E.4 — confirmed PreferenceRule rows (Camada 1 learning).
     # Each entry is a plain dict with `type` + `predicate` (+ optional
@@ -174,10 +212,20 @@ class FactoryState:
         sq = semantic_queries
         if sq is None:
             try:
+                from src.factory_data_product.api.endpoints import get_engine
                 from src.factory_data_product.services.semantic_queries_inmemory import (
                     SemanticQueriesInMemory,
                 )
-                sq = SemanticQueriesInMemory()
+                # SemanticQueriesInMemory exige o IngestEngine global —
+                # construir sem ele dava TypeError e o FactoryState booting
+                # vazio (mesmo bug que o AlertsEngine FASE 3.6 corrigiu).
+                engine = get_engine()
+                if engine is None:
+                    raise RuntimeError(
+                        "factory IngestEngine indisponível — corre e activa "
+                        "uma ingestão em /v1/factory/ingest"
+                    )
+                sq = SemanticQueriesInMemory(engine)
             except Exception as e:
                 # Sprint Q.8 Fase 1 — booting empty means scheduler runs
                 # with skill_matrix={}, molds_by_model={}: any worker may
@@ -204,9 +252,11 @@ class FactoryState:
 
         state = cls(tenant_id=tenant_id)
 
-        # Open orders
+        # Open orders. `get_wip` may return `{"data": None}` when the
+        # curated layer is active but has no WIP rows — guard the `.get`
+        # against a None payload (else AttributeError).
         wip = _safe_call(sq, "get_wip")
-        if wip and "data" in wip:
+        if wip and isinstance(wip.get("data"), dict):
             state.open_orders = wip["data"].get("open_orders_list", []) or []
         elif wip and "rows" in wip:
             state.open_orders = list(wip["rows"])
@@ -237,6 +287,11 @@ class FactoryState:
             session, tenant_id,
         )
 
+        # Sprint Q.48.B (F10) — factory capacity calendar. Best-effort:
+        # a missing table on a fresh test DB leaves the set empty and the
+        # decoder keeps the pre-Q.48 every-day-is-working behaviour.
+        state.working_days = await _load_factory_calendar(session, tenant_id)
+
         # Sprint E.4 — confirmed preference rules (Camada 1). Best-effort:
         # a missing governance schema / table (tests / legacy dbs) leaves
         # the list empty and the scheduler keeps its defaults.
@@ -244,13 +299,28 @@ class FactoryState:
             session, tenant_id,
         )
 
+        # Sprint Q.dev-stack — routing templates synced from the ERP. The
+        # curated in-memory `standards` bucket is never populated, so this
+        # is the only DB-backed routing source for ERP-imported orders.
+        state.routing_by_model = await _load_routing_by_model(
+            session, tenant_id,
+        )
+
+        # Open-orders fallback: the curated WIP layer is empty right after
+        # an ERP sync. When it is, schedule the IN_PROGRESS orders straight
+        # from `plan.production_orders`.
+        if not state.open_orders:
+            state.open_orders = await _load_open_orders(session, tenant_id)
+
         logger.info(
             f"FactoryState loaded: {len(state.open_orders)} orders, "
             f"{len(state.skill_matrix)} phases with skills, "
             f"{len(state.molds)} molds, "
             f"{len(state.historical_durations)} duration medians, "
             f"{len(state.phase_transition_gaps)} curing gaps, "
-            f"{len(state.preference_rules)} confirmed rules"
+            f"{len(state.preference_rules)} confirmed rules, "
+            f"{len(state.routing_by_model)} models with routing templates, "
+            f"{len(state.working_days)} working days in calendar"
         )
         return state
 
@@ -270,6 +340,37 @@ class FactoryState:
         if not a or not b:
             return 0.0
         return float(self.phase_transition_gaps.get((a, b), 0.0))
+
+    def is_working_day(self, day: date) -> bool:
+        """Whether the factory operates on `day` (Sprint Q.48.B / F10).
+
+        Returns `True` for any date when the calendar is empty — an
+        unknown calendar must NOT block scheduling (a fresh DB or a
+        tenant without an ERP sync keeps the pre-Q.48 behaviour where
+        every day counts). When the calendar IS populated, only the
+        registered working days return `True`.
+        """
+        if not self.working_days:
+            return True
+        return day in self.working_days
+
+    def next_working_day(self, day: date, *, max_skip: int = 60) -> date:
+        """First working day on or after `day` (Sprint Q.48.B / F10).
+
+        Walks forward at most `max_skip` days. When the calendar is empty
+        the input date is returned unchanged. `max_skip` is a safety stop
+        so a pathologically empty calendar (e.g. only past dates) never
+        loops forever — beyond it the original date is returned and the
+        decoder logs the schedule as it would pre-Q.48.
+        """
+        if not self.working_days:
+            return day
+        candidate = day
+        for _ in range(max_skip + 1):
+            if candidate in self.working_days:
+                return candidate
+            candidate = candidate + timedelta(days=1)
+        return day
 
     def can_perform(self, fase_id: str, funcionario_id: str) -> bool:
         return funcionario_id in self.skill_matrix.get(fase_id, set())
@@ -496,6 +597,150 @@ async def _load_phase_transition_gaps(
     merged: Dict[Tuple[str, str], float] = dict(seed)
     merged.update(db_gaps)
     return merged
+
+
+async def _load_factory_calendar(
+    session: Any,
+    tenant_id: UUID,
+) -> Set[date]:
+    """Load the set of working days from `plan.factory_calendar_day`.
+
+    Sprint Q.48.B (F10) — returns the dates where `is_working_day` is
+    `True`. Best-effort: a missing table on a fresh test DB (or no ERP
+    sync yet) returns an empty set, which `FactoryState.is_working_day`
+    treats as "calendar unknown → every day works". So the scheduler
+    never produces a blank plan just because the calendar isn't loaded.
+    """
+    if session is None:
+        return set()
+    try:
+        from sqlalchemy import select
+
+        from src.plan.models.factory_calendar import FactoryCalendarDay
+
+        stmt = (
+            select(FactoryCalendarDay.calendar_date)
+            .where(FactoryCalendarDay.tenant_id == tenant_id)
+            .where(FactoryCalendarDay.is_working_day.is_(True))
+        )
+        result = await session.execute(stmt)
+        rows = result.scalars().all()
+    except Exception as exc:  # pragma: no cover — defensive (table absent etc.)
+        logger.debug(f"factory_calendar DB load skipped: {exc}")
+        return set()
+
+    return {d for d in rows if d is not None}
+
+
+async def _load_routing_by_model(
+    session: Any,
+    tenant_id: UUID,
+) -> Dict[str, List[RoutingTemplateRow]]:
+    """Pre-load each model's routing template phases from the DB.
+
+    Joins `plan.model_routing_assignment` to the phases of its
+    `primary_template_id`. Returns ``{model_id: [RoutingTemplateRow, ...]}``
+    ordered by phase `seq`. Best-effort — a missing table on a fresh test
+    DB leaves the dict empty and the resolver keeps its curated-layer
+    behaviour.
+    """
+    if session is None:
+        return {}
+    try:
+        from sqlalchemy import select
+
+        from src.plan.models.routing_template import (
+            ModelRoutingAssignment,
+            RoutingTemplatePhase,
+        )
+
+        stmt = (
+            select(
+                ModelRoutingAssignment.model_id,
+                RoutingTemplatePhase.phase_id,
+                RoutingTemplatePhase.phase_name,
+                RoutingTemplatePhase.seq,
+                RoutingTemplatePhase.duration_p50_h,
+                RoutingTemplatePhase.requires_mold,
+                RoutingTemplatePhase.team_size_default,
+            )
+            .join(
+                RoutingTemplatePhase,
+                RoutingTemplatePhase.template_id
+                == ModelRoutingAssignment.primary_template_id,
+            )
+            .where(ModelRoutingAssignment.tenant_id == tenant_id)
+            .order_by(
+                ModelRoutingAssignment.model_id,
+                RoutingTemplatePhase.seq,
+            )
+        )
+        result = await session.execute(stmt)
+        rows = result.all()
+    except Exception as exc:  # pragma: no cover — defensive (table absent etc.)
+        logger.debug(f"routing_template DB load skipped: {exc}")
+        return {}
+
+    by_model: Dict[str, List[RoutingTemplateRow]] = {}
+    for model_id, phase_id, phase_name, seq, p50, requires_mold, team in rows:
+        if not model_id or not phase_id:
+            continue
+        by_model.setdefault(str(model_id), []).append(
+            RoutingTemplateRow(
+                fase_id=str(phase_id),
+                fase_nome=str(phase_name or phase_id),
+                seq=int(seq or 0),
+                duration_p50_h=float(p50) if p50 is not None else None,
+                requires_mold=bool(requires_mold),
+                team_size_default=int(team or 1),
+            )
+        )
+    return by_model
+
+
+async def _load_open_orders(
+    session: Any,
+    tenant_id: UUID,
+) -> List[Dict[str, Any]]:
+    """Load IN_PROGRESS production orders from `plan.production_orders`.
+
+    Used as a fallback when the curated WIP layer is empty (typical right
+    after an ERP sync). Each dict carries the keys `RoutingResolver`
+    expects: `of_id`, `modelo_id`, `produto_id`, `data_entrega_prevista`.
+    Orders without a `product_id` are skipped — the resolver has nothing
+    to map them to.
+    """
+    if session is None:
+        return []
+    try:
+        from sqlalchemy import select
+
+        from src.plan.models.order import OrderStatus, ProductionOrder
+
+        stmt = (
+            select(ProductionOrder)
+            .where(ProductionOrder.tenant_id == tenant_id)
+            .where(ProductionOrder.status == OrderStatus.IN_PROGRESS.value)
+        )
+        result = await session.execute(stmt)
+        orders = result.scalars().all()
+    except Exception as exc:  # pragma: no cover — defensive (table absent etc.)
+        logger.debug(f"production_orders DB load skipped: {exc}")
+        return []
+
+    open_orders: List[Dict[str, Any]] = []
+    for o in orders:
+        if o.product_id is None:
+            continue
+        open_orders.append({
+            "of_id": o.legacy_id,
+            "modelo_id": str(o.product_id),
+            "produto_id": str(o.product_id),
+            "data_entrega_prevista": (
+                o.transport_date.isoformat() if o.transport_date else None
+            ),
+        })
+    return open_orders
 
 
 async def _load_confirmed_preference_rules(

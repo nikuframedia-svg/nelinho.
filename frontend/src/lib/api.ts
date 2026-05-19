@@ -1129,10 +1129,10 @@ export const healthApi = {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // Import types from separate file (import before using)
-import type { CopilotAskRequest, CopilotResponse, DailyFeedbackResponse } from './copilot-types';
+import type { CopilotAskRequest, CopilotResponse, DailyFeedbackResponse, DecisionPR, DecisionPRStatus } from './copilot-types';
 
 // Re-export types for external use
-export type { CopilotAskRequest, CopilotResponse, DailyFeedbackResponse };
+export type { CopilotAskRequest, CopilotResponse, DailyFeedbackResponse, DecisionPR, DecisionPRStatus };
 
 export const copilotApi = {
   ask: async (data: CopilotAskRequest) => {
@@ -1197,12 +1197,73 @@ export const copilotApi = {
     }
   },
   
-  action: (data: { action_type: string; suggestion_id: string; payload: any }) =>
-    request<any>('/api/copilot/action', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
+  action: async (data: { action_type: string; suggestion_id: string; payload: any }) => {
+    // Q.37.A — mesmo padrão de fallback dev do `ask()`: sem token vai
+    // directo ao endpoint dev; com token tenta o normal e cai no dev
+    // se a auth falhar (401/403).
+    const token = localStorage.getItem('auth_token') || localStorage.getItem('token');
+
+    const callDev = async () => {
+      const url = `${API_BASE}/api/copilot/action-dev`;
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Tenant-Id': '00000000-0000-0000-0000-000000000001', // Tenant dev
+        },
+        body: JSON.stringify(data),
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        const errorMessage = errorData.detail || errorData.message || `HTTP ${response.status}`;
+        const errorObj = new Error(errorMessage);
+        (errorObj as any).status = response.status;
+        throw errorObj;
+      }
+      return await response.json();
+    };
+
+    if (!token) {
+      return await callDev();
+    }
+
+    try {
+      return await request<any>('/api/copilot/action', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+    } catch (error: any) {
+      if (error.status === 401 || error.status === 403 || error.message?.includes('Not authenticated') || error.message?.includes('Unauthorized')) {
+        return await callDev();
+      }
+      throw error;
+    }
+  },
   
+  // Q.37.C — Decision PRs (ciclo de vida: listar/aprovar/rejeitar/executar)
+  listDecisionPRs: (statusFilter?: string) => {
+    const qs = statusFilter ? `?status=${encodeURIComponent(statusFilter)}` : '';
+    return request<DecisionPR[]>(`/api/copilot/decision-prs${qs}`);
+  },
+
+  getDecisionPR: (id: string) =>
+    request<DecisionPR>(`/api/copilot/decision-prs/${id}`),
+
+  approveDecisionPR: (id: string) =>
+    request<DecisionPR>(`/api/copilot/decision-prs/${id}/approve`, {
+      method: 'POST',
+    }),
+
+  rejectDecisionPR: (id: string) =>
+    request<DecisionPR>(`/api/copilot/decision-prs/${id}/reject`, {
+      method: 'POST',
+    }),
+
+  executeDecisionPR: (id: string) =>
+    request<DecisionPR>(`/api/copilot/decision-prs/${id}/execute`, {
+      method: 'POST',
+    }),
+
   getDailyFeedback: (date?: string) => {
     const endpoint = `/api/copilot/daily-feedback${date ? `?date=${date}` : ''}`;
     const devEndpoint = `/api/copilot/daily-feedback-dev${date ? `?date=${date}` : ''}`;
@@ -1875,6 +1936,37 @@ export const profitApi = {
     request<MarginSummaryResponse>(`/v1/profit/orders/margin-summary?days=${days}`),
 };
 
+// ─── Q.47.A — KPI objectivo vs realizado (F9) ────────────────────────────
+
+export type KpiObjectiveStatus = 'hit' | 'near' | 'below' | 'no_objective';
+
+export interface KpiObjectiveRow {
+  kpi_id: number;
+  name: string;
+  description: string | null;
+  display_order: number;
+  has_objective: boolean;
+  value: number | null;
+  objective: number | null;
+  attainment_pct: number | null;
+  status: KpiObjectiveStatus;
+  objective_date: string | null;
+}
+
+export interface KpiObjectivesResponse {
+  erp_available: boolean;
+  reason: string | null;
+  kpi_count: number;
+  with_objective_count: number;
+  hit_count: number;
+  below_count: number;
+  items: KpiObjectiveRow[];
+}
+
+export const kpiObjectivesApi = {
+  list: () => request<KpiObjectivesResponse>('/v1/profit/kpis/objectives'),
+};
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // SPRINT Q.5 — CEO dashboard tiles (OTD / Backlog / Alerts / FPY / Expeditions)
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -2050,12 +2142,71 @@ export interface ReworkCreatePayload {
   notes?: string;
 }
 
+// Q.37.C — custo do retrabalho em € (factory-wide, painel CEO).
+export interface ReworkCostBreakdownRow {
+  key: string;
+  events: number;
+  cost_estimate_eur: number;
+  hours_lost: number;
+}
+
+export interface ReworkCostSummaryResponse {
+  window: { from: string; to: string };
+  events: number;
+  events_with_cost_estimate: number;
+  cost_coverage_pct: number;
+  cost_estimate_eur: number;
+  hours_lost: number;
+  affected_orders: number;
+  group_by: string | null;
+  breakdown: ReworkCostBreakdownRow[];
+}
+
 export const qualityReworkApi = {
   create: (payload: ReworkCreatePayload) =>
     request<any>('/v1/quality/rework', {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+
+  costSummary: (params?: {
+    group_by?: 'error_code' | 'phase' | 'model' | 'of_id';
+    since?: string;
+    until?: string;
+    top_n?: number;
+  }) =>
+    request<ReworkCostSummaryResponse>(
+      `/v1/quality/rework/cost-summary?${new URLSearchParams(filterParams(params))}`,
+    ),
+};
+
+// ─── F11 / Q.46.C — defect-by-zone hull map ──────────────────────────────────
+
+export interface DefectZoneRow {
+  zone: string;
+  events: number;
+  share_pct: number;
+  cumulative_pct: number;
+  cost_estimate_eur: number;
+  hours_lost: number;
+  affected_orders: number;
+}
+
+export interface DefectZoneMapResponse {
+  window: { from: string; to: string };
+  total_events: number;
+  events_with_zone: number;
+  events_without_zone: number;
+  zone_coverage_pct: number;
+  distinct_zones: number;
+  zones: DefectZoneRow[];
+}
+
+export const defectZonesApi = {
+  zoneMap: (params?: { since?: string; until?: string; top_n?: number }) =>
+    request<DefectZoneMapResponse>(
+      `/v1/quality/defect-zones?${new URLSearchParams(filterParams(params))}`,
+    ),
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -139,7 +139,9 @@ async def acknowledge_alert(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alert not found")
 
     alert.status = STATUS_ACKNOWLEDGED
-    alert.acknowledged_at = datetime.now(timezone.utc)
+    # Q.32.A.1 — colunas de copilot_alerts são TIMESTAMP WITHOUT TIME ZONE;
+    # o asyncpg recusa um datetime tz-aware. Naive-UTC.
+    alert.acknowledged_at = datetime.now(timezone.utc).replace(tzinfo=None)
     alert.acknowledged_by = user
     await db.flush()
     return _serialize(alert)
@@ -161,10 +163,11 @@ async def resolve_alert(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alert not found")
 
     alert.status = STATUS_RESOLVED
-    alert.resolved_at = datetime.now(timezone.utc)
+    # Q.32.A.1 — naive-UTC (colunas TIMESTAMP WITHOUT TIME ZONE).
+    alert.resolved_at = datetime.now(timezone.utc).replace(tzinfo=None)
     if not alert.acknowledged_by:
         alert.acknowledged_by = user
-        alert.acknowledged_at = datetime.now(timezone.utc)
+        alert.acknowledged_at = datetime.now(timezone.utc).replace(tzinfo=None)
     await db.flush()
     return _serialize(alert)
 
@@ -201,7 +204,9 @@ async def shift_report(
     No LLM synthesis — kept deterministic for auditability and so it works
     offline. Can be wrapped in LLM-sumarisation later.
     """
-    since = datetime.now(timezone.utc) - timedelta(hours=window_hours)
+    # Q.32.A.1 — naive-UTC: copilot_alerts.created_at é TIMESTAMP WITHOUT
+    # TIME ZONE e o asyncpg recusa um datetime tz-aware no filtro.
+    since = (datetime.now(timezone.utc) - timedelta(hours=window_hours)).replace(tzinfo=None)
 
     # New alerts in the window
     alerts_stmt = (

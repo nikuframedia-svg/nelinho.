@@ -195,6 +195,35 @@ def classify_rework_phase(phase_name: Optional[str], phase_id: Optional[str]) ->
     return None
 
 
+def _shift_to_working_day(start: datetime, state: FactoryState) -> datetime:
+    """Sprint Q.48.B (F10) — push `start` onto a factory working day.
+
+    If `start` lands on a non-working day (weekend, holiday, the August
+    shutdown), the operation cannot begin then — the factory is closed,
+    its capacity for that day is zero (Spelke axiom 1). We move the start
+    to 00:00 of the next working day so the op resumes the moment the
+    factory reopens.
+
+    No-op when the calendar is unknown (`FactoryState.working_days`
+    empty): a fresh DB or a tenant without an ERP sync keeps the pre-Q.48
+    every-day-is-working behaviour, so the scheduler never blanks a plan
+    just because the calendar isn't loaded.
+    """
+    # `getattr` guards stub states (greedy-pipeline tests) and any
+    # FactoryState built before Q.48.B that lacks the calendar fields.
+    working_days = getattr(state, "working_days", None)
+    if state is None or not working_days:
+        return start
+    if state.is_working_day(start.date()):
+        return start
+    next_day = state.next_working_day(start.date())
+    if next_day <= start.date():
+        # No later working day within the safety window — leave the start
+        # as-is rather than loop; the schedule degrades to pre-Q.48.
+        return start
+    return datetime.combine(next_day, datetime.min.time())
+
+
 def decode(
     chromosome: Chromosome,
     operations: List[SchedulingOperation],
@@ -312,6 +341,7 @@ def decode(
     setups = 0
     routing_variants_applied = 0  # Sprint A C1 — ops where variant B picked alt machine
     backwards_shifts = 0  # Sprint A D4 — ops placed later than earliest because of target_start
+    non_working_shifts = 0  # Sprint Q.48.B — ops pushed off a closed day onto the next working day
 
     # Sprint A D4 — pre-compute latest-start anchors for backwards scheduling.
     # Only used when the chromosome requests backward direction; computed
@@ -504,6 +534,15 @@ def decode(
                     if batch_target > earliest_feasible:
                         start = batch_target
                         backwards_shifts += len(batch_peers)
+
+            # Sprint Q.48.B (F10) — the factory cannot start work on a
+            # closed day. Push the start onto the next working day; a
+            # closed day has zero capacity (Spelke axiom 1). No-op when
+            # the calendar is unknown.
+            shifted_start = _shift_to_working_day(start, state)
+            if shifted_start != start:
+                non_working_shifts += len(batch_peers)
+                start = shifted_start
 
             # The batch occupies the mould for max(durations); individual ops
             # finish at start + their own duration.
@@ -700,6 +739,7 @@ def decode(
         "setups": setups,
         "routing_variants_applied": routing_variants_applied,
         "backwards_shifts": backwards_shifts,
+        "non_working_shifts": non_working_shifts,
         "total_idle_hours": round(total_idle_hours, 2),
         "idle_ratio": round(idle_ratio, 4),
         # Sprint A ME1 — Blueprint v2.0 MAP-Elites axes
@@ -996,6 +1036,7 @@ def _empty_result(horizon_start: datetime, warnings: Optional[List[str]] = None)
         "setups": 0,
         "routing_variants_applied": 0,
         "backwards_shifts": 0,
+        "non_working_shifts": 0,
         "total_idle_hours": 0.0,
         "idle_ratio": 0.0,
         "lam_utilization": 0.0,

@@ -192,34 +192,39 @@ async def translate_nl_to_rule(
         except Exception as exc:
             raise RuleTranslationError(f"Ollama call failed: {exc}") from exc
 
-        last_text = response.get("message", {}).get("content") if isinstance(response, dict) else None
-        if not last_text:
-            last_text = response.get("response") if isinstance(response, dict) else str(response)
+        # Q.32.A.3 — `OllamaClient.chat(format="json")` faz `json.loads` do
+        # `message.content` internamente e devolve o objecto JSON **já
+        # parseado** — não vem embrulhado em {"message": {"content": ...}}.
+        # O código antigo procurava `content` aí, nunca encontrava, e
+        # concluía sempre "Ollama returned an empty response". Era esse o bug.
+        parsed: dict[str, Any] | None = None
+        if isinstance(response, dict):
+            if set(response.keys()) == {"content"}:
+                # Wrapper não-JSON (só acontece se chat() correr com format!="json").
+                raw = str(response.get("content") or "")
+                try:
+                    parsed = _extract_json_object(raw) if raw.strip() else None
+                except (json.JSONDecodeError, ValueError):
+                    parsed = None
+            else:
+                parsed = response
 
-        if not last_text:
-            raise RuleTranslationError("Ollama returned an empty response")
-
-        # Parse JSON
-        try:
-            parsed = _extract_json_object(last_text)
-        except (json.JSONDecodeError, ValueError) as exc:
-            last_error = f"JSON parse error: {exc}"
-            _log.warning("parse failure on attempt %d: %s", attempt + 1, exc)
+        if not parsed:
+            last_error = "Ollama devolveu uma resposta vazia ou não-JSON"
+            _log.warning("empty/non-JSON response on attempt %d", attempt + 1)
             if attempt >= max_retries:
                 raise RuleTranslationError(
-                    "LLM did not return valid JSON after retries",
-                    last_response=last_text,
+                    "Ollama returned an empty/unparseable response",
+                    last_response=repr(response),
                     last_validation_error=last_error,
-                ) from exc
-            history.extend([
-                {"role": "user", "content": user_msg},
-                {"role": "assistant", "content": last_text},
-            ])
+                )
             user_msg = (
-                f"A resposta anterior não era JSON válido: {exc}. "
-                "Responde de novo com APENAS um objecto JSON, sem prefácio nem markdown."
+                "Não recebi um objecto JSON. Responde de novo com APENAS "
+                "um objecto JSON válido que respeite o schema, sem markdown."
             )
             continue
+
+        last_text = json.dumps(parsed, ensure_ascii=False)
 
         # If LLM signalled it can't represent the request, surface that as error.
         if isinstance(parsed, dict) and "error" in parsed and "id" not in parsed:

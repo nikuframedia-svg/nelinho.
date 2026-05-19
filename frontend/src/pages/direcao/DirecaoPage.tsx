@@ -11,7 +11,7 @@
  */
 
 import { lazy, Suspense, useMemo, useState, type ReactNode } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   Building2,
@@ -24,6 +24,7 @@ import {
   Brain,
   Activity,
   Euro,
+  Target,
 } from 'lucide-react';
 import { PageHeader, Tabs, ZipSevBadge, EmptyState, type ZipSeverity } from '../../components/dark';
 import { SkeletonLoader } from '../../components/ui/Skeleton';
@@ -33,7 +34,17 @@ import { useUmwelt } from '../../lib/umwelt';
 const ProfitDashboard = lazy(() =>
   import('../../components/profit/ProfitPanels').then((m) => ({ default: m.ProfitDashboard })),
 );
-import { ceoDashboardApi, decisionsApi, getApiBase, profitApi } from '../../lib/api';
+import {
+  ceoDashboardApi,
+  decisionsApi,
+  getApiBase,
+  kpiObjectivesApi,
+  profitApi,
+  qualityReworkApi,
+  type KpiObjectiveRow,
+  type KpiObjectiveStatus,
+  type KpiObjectivesResponse,
+} from '../../lib/api';
 
 interface ActiveOrder {
   id: string;
@@ -156,6 +167,20 @@ export default function DirecaoPage() {
     queryKey: ['direcao', 'margin-summary', refreshKey],
     queryFn: () => profitApi.marginSummary(30),
     staleTime: 60_000,
+    retry: 0,
+  });
+  // Q.37.C — € perdido em retrabalho (factory-wide, últimos 90 dias).
+  const reworkCostQuery = useQuery({
+    queryKey: ['direcao', 'rework-cost', refreshKey],
+    queryFn: () => qualityReworkApi.costSummary(),
+    staleTime: 60_000,
+    retry: 0,
+  });
+  // Q.47.B — KPI objectivo vs realizado (267 objectivos definidos na ERP).
+  const kpiObjectivesQuery = useQuery({
+    queryKey: ['direcao', 'kpi-objectives', refreshKey],
+    queryFn: () => kpiObjectivesApi.list(),
+    staleTime: 5 * 60_000,
     retry: 0,
   });
 
@@ -348,12 +373,12 @@ export default function DirecaoPage() {
           </button>
         </div>
 
-        {/* 4 KPIs */}
+        {/* 5 KPIs */}
         <div
           className="page-enter"
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(4, 1fr)',
+            gridTemplateColumns: 'repeat(5, 1fr)',
             gap: 14,
           }}
         >
@@ -426,6 +451,41 @@ export default function DirecaoPage() {
                   : 'red'
             }
             onClick={() => navigate('/relatorios?tab=lucro')}
+          />
+          {/* Q.37.C — € perdido em retrabalho */}
+          <KPICardZip
+            label="Retrabalho (90 dias)"
+            value={
+              reworkCostQuery.isError
+                ? '—'
+                : reworkCostQuery.data
+                  ? Math.round(reworkCostQuery.data.cost_estimate_eur).toLocaleString('pt-PT')
+                  : '—'
+            }
+            unit="€"
+            context={
+              reworkCostQuery.isError
+                ? 'Erro a obter o custo de retrabalho'
+                : reworkCostQuery.isLoading
+                  ? 'A carregar…'
+                  : reworkCostQuery.data
+                    ? reworkCostQuery.data.events > 0
+                      ? `${reworkCostQuery.data.events} eventos · `
+                        + `${reworkCostQuery.data.affected_orders} ordens · `
+                        + `${Math.round(reworkCostQuery.data.cost_coverage_pct)}% com € estimado`
+                      : 'Sem retrabalho registado no período'
+                    : 'Sem dados de retrabalho'
+            }
+            tone={
+              reworkCostQuery.isError || !reworkCostQuery.data
+                ? 'gray'
+                : reworkCostQuery.data.events === 0
+                  ? 'green'
+                  : reworkCostQuery.data.cost_estimate_eur > 0
+                    ? 'red'
+                    : 'gray'
+            }
+            onClick={() => navigate('/qualidade')}
           />
         </div>
 
@@ -501,6 +561,12 @@ export default function DirecaoPage() {
             )}
           </CardWithHeader>
         </div>
+
+        {/* Q.47.B — KPI objectivo vs realizado */}
+        <KpiObjectivesPanel
+          query={kpiObjectivesQuery}
+          onRetry={() => setRefreshKey((k) => k + 1)}
+        />
 
         {/* AI Panel */}
         <AIPanel />
@@ -789,6 +855,190 @@ function ShipmentRowZip({ shipment }: { shipment: any }) {
         ) : null}
       </div>
     </div>
+  );
+}
+
+// ─── KpiObjectivesPanel (Q.47.B — F9) ──────────────────────────────────────
+
+const KPI_STATUS_META: Record<
+  KpiObjectiveStatus,
+  { tone: 'green' | 'yellow' | 'red' | 'gray'; label: string }
+> = {
+  hit: { tone: 'green', label: 'Atingido' },
+  near: { tone: 'yellow', label: 'Perto' },
+  below: { tone: 'red', label: 'Abaixo' },
+  no_objective: { tone: 'gray', label: 'Sem objectivo' },
+};
+
+function formatKpiNumber(n: number): string {
+  return Number.isInteger(n)
+    ? n.toLocaleString('pt-PT')
+    : n.toLocaleString('pt-PT', { maximumFractionDigits: 1 });
+}
+
+function KpiObjectiveCard({ row }: { row: KpiObjectiveRow }) {
+  const meta = KPI_STATUS_META[row.status];
+  // Barra de aderência: 100% = objectivo cumprido. Limita a 130% para
+  // a barra não estourar visualmente quando se excede muito a meta.
+  const barPct =
+    row.attainment_pct != null ? Math.min(130, Math.max(0, row.attainment_pct)) : 0;
+
+  return (
+    <div
+      style={{
+        padding: '12px 14px',
+        background: 'var(--bg-2)',
+        border: '1px solid var(--bd-1)',
+        borderLeft: `3px solid var(--${meta.tone})`,
+        borderRadius: 'var(--r-md)',
+      }}
+    >
+      <div className="flex items-start justify-between gap-2 mb-1.5">
+        <div className="text-text-dark-primary font-medium" style={{ fontSize: 13 }}>
+          {row.name}
+        </div>
+        <span
+          className="shrink-0 font-medium"
+          style={{
+            fontSize: 10,
+            padding: '2px 7px',
+            borderRadius: 'var(--r-sm)',
+            background: `var(--${meta.tone}-bg)`,
+            color: `var(--${meta.tone})`,
+            border: `1px solid var(--${meta.tone}-bd)`,
+          }}
+        >
+          {meta.label}
+        </span>
+      </div>
+
+      {row.has_objective && row.value != null && row.objective != null ? (
+        <>
+          <div className="flex items-baseline gap-2 tabular-nums mb-1.5">
+            <span
+              className="font-semibold"
+              style={{ fontSize: 22, color: `var(--${meta.tone})`, lineHeight: 1 }}
+            >
+              {formatKpiNumber(row.value)}
+            </span>
+            <span className="text-text-dark-tertiary" style={{ fontSize: 12 }}>
+              / {formatKpiNumber(row.objective)} objectivo
+            </span>
+            {row.attainment_pct != null ? (
+              <span
+                className="ml-auto text-text-dark-secondary tabular-nums"
+                style={{ fontSize: 12 }}
+              >
+                {formatKpiNumber(row.attainment_pct)}%
+              </span>
+            ) : null}
+          </div>
+          <div
+            style={{
+              height: 5,
+              background: 'var(--bg-3)',
+              borderRadius: 3,
+              overflow: 'hidden',
+            }}
+          >
+            <div
+              style={{
+                width: `${(barPct / 130) * 100}%`,
+                height: '100%',
+                background: `var(--${meta.tone})`,
+              }}
+            />
+          </div>
+        </>
+      ) : (
+        <div className="text-text-dark-tertiary" style={{ fontSize: 12 }}>
+          KPI definido na ERP mas sem objectivo registado.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function KpiObjectivesPanel({
+  query,
+  onRetry,
+}: {
+  query: UseQueryResult<KpiObjectivesResponse>;
+  onRetry: () => void;
+}) {
+  const data = query.data;
+  const withObjective = (data?.items ?? []).filter((r) => r.has_objective);
+
+  return (
+    <CardWithHeader
+      icon={<Target size={16} />}
+      iconTone="purple"
+      title="Objectivos de KPI"
+      subtitle={
+        data && data.erp_available
+          ? `${data.hit_count} atingidos · ${data.below_count} abaixo · ${data.with_objective_count} com objectivo`
+          : 'Objectivo vs realizado — definido na ERP da NELO'
+      }
+    >
+      {query.isLoading ? (
+        <div
+          className="py-6 text-center text-text-dark-tertiary"
+          style={{ fontSize: 12 }}
+        >
+          A carregar objectivos de KPI…
+        </div>
+      ) : query.isError ? (
+        <EmptyState
+          size="sm"
+          title="Erro a obter os objectivos de KPI"
+          hint="Não foi possível ler os objectivos. Tenta novamente."
+          action={
+            <button
+              type="button"
+              onClick={onRetry}
+              className="inline-flex items-center gap-1.5 font-medium"
+              style={{
+                padding: '6px 12px',
+                background: 'var(--blue-bg)',
+                color: 'var(--blue)',
+                border: '1px solid var(--blue-bd)',
+                borderRadius: 'var(--r-md)',
+                fontSize: 12,
+              }}
+            >
+              <RefreshCw size={13} /> Tentar novamente
+            </button>
+          }
+        />
+      ) : data && !data.erp_available ? (
+        <EmptyState
+          size="sm"
+          title="ERP desligado"
+          hint={
+            data.reason ??
+            'Os objectivos de KPI vivem na ERP. Liga o sync ERP (F1) para os ver.'
+          }
+        />
+      ) : withObjective.length === 0 ? (
+        <EmptyState
+          size="sm"
+          title="Sem objectivos de KPI registados"
+          hint="A ERP ainda não tem objectivos definidos para os KPIs do catálogo."
+        />
+      ) : (
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+            gap: 12,
+          }}
+        >
+          {withObjective.map((row) => (
+            <KpiObjectiveCard key={row.kpi_id} row={row} />
+          ))}
+        </div>
+      )}
+    </CardWithHeader>
   );
 }
 

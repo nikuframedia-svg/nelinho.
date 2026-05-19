@@ -37,6 +37,7 @@ from src.improve.api import router as improve_router
 from src.factory_data_product import factory_router
 from src.copilot.api_endpoints.runbooks_api import router as runbooks_router
 from src.copilot.api_endpoints.tools_api import router as tools_router
+from src.copilot.api_endpoints.decision_pr_api import router as decision_pr_router
 from src.governance.api import router as governance_router
 from src.governance.api_preference_rules import router as preference_rules_router
 from src.governance.api_learning_metrics import router as learning_metrics_router  # Sprint R.1
@@ -121,12 +122,25 @@ async def lifespan(app: FastAPI):
 
         # Pre-warm the Copilot tool registry so the first /v1/tools call
         # doesn't incur an OpenAPI parse round-trip.
+        # Q.33.B.1 — feed the app's own `app.openapi()` spec in-process.
+        # The old no-arg call fetched `http://localhost:8000/openapi.json`
+        # (wrong port) → 0 tools → the agentic loop never engaged.
         try:
             from src.copilot.tool_registry import get_tool_registry
-            await get_tool_registry()
-            logger.info("Tool registry pre-warmed")
+            registry = await get_tool_registry(openapi_spec=app.openapi())
+            logger.info(f"Tool registry pre-warmed: {len(registry.tools)} tools")
         except Exception as tr_error:
             logger.warning(f"Tool registry pre-warm failed: {tr_error}")
+
+        # Q.37.D — regista os handlers reais das acções do copiloto
+        # (inventário + scheduling). Sem isto, EXECUTE/SANDBOX de uma
+        # acção CPO/inventário devolve 501. Idempotente (overwrite).
+        try:
+            from src.copilot.action_handlers import register_all_action_handlers
+            _n_handlers = register_all_action_handlers()
+            logger.info(f"Copilot action handlers registados: {_n_handlers}")
+        except Exception as handler_error:
+            logger.warning(f"Action handler registration failed: {handler_error}")
 
         # Q.17.D — load active YAML policy rules into the runtime engine
         # so they start firing on the first matching event without a
@@ -178,6 +192,27 @@ async def lifespan(app: FastAPI):
                         tenant_lookup_error,
                     )
                 register_ml_retrain_jobs(scheduler_instance, tenants=active_tenant_ids)
+
+                # Q.32.C.4 — registar os jobs por-tenant (alerts scan +
+                # Camadas 1-3 de aprendizagem). Sem este loop o scheduler
+                # arrancava com "0 tenant(s)" e os jobs nocturnos
+                # (preference_rule_detector, preference_weights_retrain,
+                # dpo_finetune, abl_feedback) nunca corriam.
+                from src.shared.scheduler import register_tenant
+
+                registered = 0
+                for tid in active_tenant_ids:
+                    try:
+                        register_tenant(tid)
+                        registered += 1
+                    except Exception as reg_error:
+                        logger.warning(
+                            "register_tenant(%s) failed: %s", tid, reg_error,
+                        )
+                logger.info(
+                    "Scheduler: per-tenant jobs registered for %d/%d active tenant(s)",
+                    registered, len(active_tenant_ids),
+                )
             except Exception as ml_error:
                 logger.warning(f"ML retrain job registration failed: {ml_error}")
 
@@ -542,6 +577,7 @@ app.include_router(improve_router)  # Improvement Suggestions API
 app.include_router(factory_router)  # Factory Data Product API (C10)
 app.include_router(runbooks_router) # Runbooks API (P2 Enterprise)
 app.include_router(tools_router)    # Tool Registry API (P2 Enterprise)
+app.include_router(decision_pr_router)  # Q.37.C — ciclo de vida dos Decision PRs
 app.include_router(governance_router)  # Governance API (Approvals, SoD)
 app.include_router(preference_rules_router)  # Sprint E.3 — learned rules review
 app.include_router(learning_metrics_router)  # Sprint R.1 — learning visibility (pairs/rules/weights)

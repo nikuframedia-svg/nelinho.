@@ -214,6 +214,8 @@ class MockOllamaClient:
         model: str,
         format: Optional[str] = "json",
         history: Optional[List[Dict[str, str]]] = None,
+        num_ctx: Optional[int] = None,
+        num_predict: Optional[int] = None,
         system_prompt: Optional[str] = None,
     ) -> Dict[str, Any]:
         self.chat_calls.append({
@@ -221,6 +223,8 @@ class MockOllamaClient:
             "model": model,
             "format": format,
             "history": history,
+            "num_ctx": num_ctx,
+            "num_predict": num_predict,
             "system_prompt": system_prompt,
         })
         if not self.chat_responses:

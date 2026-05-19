@@ -302,9 +302,12 @@ async def ingest_document(
         created_count += 1
     
     await session.flush()
-    
+    # Q.32.A.2 — commit explícito; o flush() esvazia session.new e o
+    # get_session não faria commit → os chunks não persistiam.
+    await session.commit()
+
     logger.info(f"Ingestão concluída: {created_count} chunks criados para {source_type}:{source_id}")
-    
+
     return created_count
 
 

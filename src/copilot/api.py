@@ -139,12 +139,23 @@ async def ask_copilot(
     rate_limiter = get_rate_limiter()
     await rate_limiter.enforce_rate_limit(tenant_id, user.user_id)
 
+    # Q.32.A.2 — o parâmetro de query `conversation_id` era aceite mas nunca
+    # atribuído ao request, por isso o process_ask nunca carregava histórico
+    # multi-turno. Liga-o agora (sem pisar um valor vindo no corpo).
+    if conversation_id and not request.conversation_id:
+        request.conversation_id = conversation_id
+
     # Service
     service = CopilotService(session, tenant_id, user.user_id, user.role)
 
     # Processar com tratamento de erros
     try:
         response, _audit_data = await service.process_ask(request)
+        # Q.32.A.2 — commit explícito. O _store_audit faz só flush(); o
+        # get_session só faz commit se session.new/dirty/deleted tiver
+        # conteúdo, e o flush() esvazia session.new → o CopilotSuggestion
+        # não persistia.
+        await session.commit()
         if request.idempotency_key:
             _idempotency_set(tenant_id, user.user_id, request.idempotency_key, response)
         return response
@@ -183,21 +194,18 @@ async def ask_copilot(
         )
 
 
-@router.post("/action", status_code=status.HTTP_200_OK)
-async def execute_action(
+async def _execute_action(
     request: CopilotActionRequest,
-    user: UserContext = Depends(get_current_user),
-    tenant_id: UUID = Depends(get_tenant_id),
-    session: AsyncSession = Depends(get_session),
-):
-    """
-    Executar ação permitida.
-    
-    Ações suportadas:
-    - CREATE_DECISION_PR: Criar PR de melhoria
-    - DRY_RUN: Simular sem persistir
-    - OPEN_ENTITY: Hint para frontend navegar
-    - RUN_RUNBOOK: Executar runbook
+    user_id: UUID,
+    tenant_id: UUID,
+    session: AsyncSession,
+) -> Dict[str, Any]:
+    """Corpo partilhado do endpoint ``/action``.
+
+    Q.37.A — extraído do handler HTTP para que ``/action`` (com auth) e
+    ``/action-dev`` (dev-only, sem token) reutilizem exactamente a mesma
+    lógica. ``user_id`` é o proponente das acções — fica gravado no
+    Decision PR via a ``CopilotSuggestion`` ligada (ver SoD em Q.37.C).
     """
     # Verificar que suggestion existe
     suggestion = await session.get(CopilotSuggestion, request.suggestion_id)
@@ -206,7 +214,7 @@ async def execute_action(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Suggestion não encontrada",
         )
-    
+
     # Executar ação
     if request.action_type == "CREATE_DECISION_PR":
         # Criar PR
@@ -220,7 +228,9 @@ async def execute_action(
         )
         session.add(pr)
         await session.flush()
-        
+        # Q.32.A.2 — commit explícito; sem isto o Decision PR não persistia.
+        await session.commit()
+
         return {
             "action_id": str(pr.id),
             "status": "created",
@@ -228,14 +238,18 @@ async def execute_action(
         }
     
     elif request.action_type == "DRY_RUN":
-        # Dry run - retornar hint (não executar realmente)
-        return {
-            "action_type": "DRY_RUN",
-            "status": "simulated",
-            "message": "Dry run executado (sem persistência)",
-            "payload": request.payload,
-        }
-    
+        # Q.37.B — DRY_RUN real via Digital Twin: cria cenário efémero,
+        # aplica payload.twin_delta, simula e compara contra o baseline.
+        # Sem delta mapeável devolve `insufficient_input` honesto.
+        from src.copilot.dry_run import run_dry_run
+
+        return await run_dry_run(
+            payload=request.payload,
+            tenant_id=tenant_id,
+            session=session,
+            user_id=user_id,
+        )
+
     elif request.action_type == "OPEN_ENTITY":
         # Hint para frontend
         return {
@@ -266,7 +280,14 @@ async def execute_action(
                 ),
             )
         try:
-            trace = execute_runbook(runbook_id, payload=request.payload)
+            # Q.35.5.2 — corre os SELECTs a sério contra o Postgres
+            # (tenant-scoped). Sem session era advisory ("planned").
+            trace = await execute_runbook(
+                runbook_id,
+                payload=request.payload,
+                session=session,
+                tenant_id=tenant_id,
+            )
         except RunbookNotFound:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -282,7 +303,7 @@ async def execute_action(
             )
         return {
             "action_type": "RUN_RUNBOOK",
-            "status": "planned",
+            "status": trace.get("status", "planned"),
             "trace": trace,
         }
     
@@ -291,6 +312,47 @@ async def execute_action(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Ação '{request.action_type}' não suportada",
         )
+
+
+@router.post("/action", status_code=status.HTTP_200_OK)
+async def execute_action(
+    request: CopilotActionRequest,
+    user: UserContext = Depends(get_current_user),
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Executar ação permitida.
+
+    Ações suportadas:
+    - CREATE_DECISION_PR: Criar PR de melhoria
+    - DRY_RUN: Simular sem persistir (via Digital Twin)
+    - OPEN_ENTITY: Hint para frontend navegar
+    - RUN_RUNBOOK: Executar runbook
+    """
+    return await _execute_action(request, user.user_id, tenant_id, session)
+
+
+@router.post(
+    "/action-dev",
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
+    dependencies=[Depends(dev_only)],
+)
+async def execute_action_dev(
+    request: CopilotActionRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Endpoint de desenvolvimento - SEM autenticação.
+
+    Q.37.A — espelha o ``/ask-dev``: tenant/user dev hardcoded, escondido
+    do schema e bloqueado em produção via ``dev_only``. Desbloqueia o
+    fallback de auth do frontend (``copilotApi.action()`` sem token).
+    """
+    dev_tenant_id = UUID("00000000-0000-0000-0000-000000000001")
+    dev_user_id = UUID("00000000-0000-0000-0000-000000000001")
+    return await _execute_action(request, dev_user_id, dev_tenant_id, session)
 
 
 @router.get("/suggestions/{suggestion_id}", response_model=CopilotResponse)
@@ -404,10 +466,14 @@ async def submit_user_feedback(
 ):
     """Recebe feedback ad-hoc do utilizador (👍/👎 + texto livre).
 
-    Q.31.H — persiste em ``copilot_user_feedback``. Antes era um stub
-    log-only e o sinal perdia-se.
+    Q.31.H — persiste em ``copilot_user_feedback``.
+    Q.32.B.2 — passa a ligar o feedback à sugestão avaliada: aceita
+    ``suggestion_id`` / ``correlation_id`` / ``actor_id`` (no topo do
+    payload ou dentro de ``context``). Sem isto o sinal era órfão e o
+    serviço de agregação não conseguia juntar feedback↔intent.
 
-    Payload aceita: ``{thumb: 'up'|'down', text: str, context?: dict}``.
+    Payload aceita: ``{thumb: 'up'|'down', text?: str, context?: dict,
+    suggestion_id?: uuid, correlation_id?: uuid, actor_id?: uuid}``.
     """
     thumb = (payload.get("thumb") or "").strip()
     text = (payload.get("text") or "").strip()
@@ -417,12 +483,29 @@ async def submit_user_feedback(
     from uuid import uuid4
 
     context = payload.get("context")
+    context = context if isinstance(context, dict) else None
+
+    def _uuid_field(key: str) -> Optional[UUID]:
+        """Lê um UUID do topo do payload ou de dentro do context."""
+        raw = payload.get(key)
+        if raw is None and context is not None:
+            raw = context.get(key)
+        if not raw:
+            return None
+        try:
+            return UUID(str(raw))
+        except (ValueError, TypeError):
+            return None
+
     row = CopilotUserFeedback(
         id=uuid4(),
         tenant_id=tenant_id,
         thumb=thumb,
         text=text or None,
-        context=context if isinstance(context, dict) else None,
+        context=context,
+        suggestion_id=_uuid_field("suggestion_id"),
+        correlation_id=_uuid_field("correlation_id"),
+        actor_id=_uuid_field("actor_id"),
     )
     session.add(row)
     await session.commit()
@@ -433,6 +516,7 @@ async def submit_user_feedback(
         "thumb": thumb,
         "text_len": len(text),
         "tenant_id": str(tenant_id),
+        "suggestion_id": str(row.suggestion_id) if row.suggestion_id else None,
     }
 
 
@@ -542,10 +626,13 @@ async def ask_copilot_dev(
     
     # Service
     service = CopilotService(session, dev_tenant_id, dev_user_id, dev_role)
-    
+
     # Processar
     response, _audit_data = await service.process_ask(request)
-    
+    # Q.32.A.2 — commit explícito (ver nota em ask_copilot); sem isto o
+    # CopilotSuggestion do audit não persistia.
+    await session.commit()
+
     return response
 
 
@@ -897,8 +984,12 @@ async def create_conversation(
     )
     session.add(conversation)
     await session.flush()
+    # Q.32.A.2 — commit explícito. Sem isto a conversa não persiste (o
+    # flush() esvazia session.new e o get_session não faz commit), e o
+    # send_message seguinte devolvia 404 "Conversa não encontrada".
+    await session.commit()
     await session.refresh(conversation)
-    
+
     return {
         "id": str(conversation.id),
         "title": conversation.title,
@@ -1011,7 +1102,10 @@ async def send_message(
         conversation_id=conversation_id,
         actor_role="copilot",
         content_text=response.summary,
-        content_structured=response.model_dump(),
+        # Q.32.B.1 — `mode="json"` serializa UUID/datetime para tipos
+        # JSON-safe; `model_dump()` cru deixava objectos UUID que o
+        # encoder JSONB rejeita ("UUID is not JSON serializable").
+        content_structured=response.model_dump(mode="json"),
         correlation_id=response.correlation_id,
         latency_ms=audit_data.get("latency_ms"),
         model=audit_data.get("model") or response.meta.get("model"),
@@ -1019,8 +1113,10 @@ async def send_message(
     )
     session.add(copilot_message)
     
-    # Atualizar last_message_at da conversa
-    conversation.last_message_at = datetime.now(timezone.utc)
+    # Atualizar last_message_at da conversa.
+    # Q.32.A.1 — `copilot_conversation.last_message_at` é TIMESTAMP WITHOUT
+    # TIME ZONE; o asyncpg recusa um datetime tz-aware. Naive-UTC.
+    conversation.last_message_at = datetime.now(timezone.utc).replace(tzinfo=None)
     
     await session.commit()
     

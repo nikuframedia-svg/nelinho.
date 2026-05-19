@@ -195,10 +195,93 @@ class TenantSession:
             self.add(instance)
 
 
+def _import_all_models() -> None:
+    """Importa todos os módulos de modelos para que fiquem registados em
+    `Base.metadata` antes do `create_all`.
+
+    O `create_all` só cria tabelas de modelos importados. O `src/main.py`
+    não importava `routing_template` nem `cpo.commits` (entre outros), por
+    isso `plan.routing_template*` e `plan.plan_schedule_commits` nunca eram
+    criados — e o sync do ERP / o CPO partiam. Espelha o
+    `bootstrap_dev_full._import_all_models()`. Import dentro da função
+    (deferido) para evitar import circular com este módulo.
+    """
+    from src.core.models import (  # noqa: F401
+        tenant, tenant_configuration, product, machine, employee,
+        operation, bom, rates, etl_run,
+    )
+    from src.copilot import models as _copilot  # noqa: F401
+    from src.copilot.alerts import models as _copilot_alerts  # noqa: F401
+    from src.dqa import models as _dqa  # noqa: F401
+    from src.supply import models as _supply  # noqa: F401
+    from src.shared.models import governance as _gov_legacy  # noqa: F401
+    from src.shared.models import user as _user  # noqa: F401
+    from src.governance import models as _gov  # noqa: F401
+    from src.governance.yaml_policy import models as _yaml_policy  # noqa: F401
+    from src.twin import models as _twin  # noqa: F401
+    from src.ml.models import orm as _ml_orm  # noqa: F401
+    from src.plan.cpo import commits as _plan_commits  # noqa: F401
+    from src.plan.models import (  # noqa: F401
+        transport, routing_template, mold, schedule, order, mrp, phase_gap,
+        factory_calendar,
+    )
+    from src.profit.models import pricing as _profit_pricing  # noqa: F401
+    from src.profit.models import cost as _profit_cost  # noqa: F401
+    from src.profit.models import phase_bonus as _profit_bonus  # noqa: F401
+    from src.quality.models import rework as _quality_rework  # noqa: F401
+    from src.factory_data_product.models import curated as _factory_curated  # noqa: F401
+    from src.sandbox import models as _sandbox  # noqa: F401
+    from src.improve import models as _improve  # noqa: F401
+    from src.workforce import models as _workforce  # noqa: F401
+    from src.hr.models import allocation as _hr_alloc  # noqa: F401
+    from src.hr.models import legacy_allocation as _hr_legacy_alloc  # noqa: F401
+    from src.hr.models import productivity as _hr_prod  # noqa: F401
+    from src.explain.models import explained_value as _explain  # noqa: F401
+    from src.legacy import models as _legacy  # noqa: F401
+    from src.reports import models as _reports  # noqa: F401
+
+
 async def init_db() -> None:
-    """Initialize database tables."""
+    """Initialize database tables.
+
+    Importa todos os modelos primeiro (`_import_all_models`) para o
+    `create_all` cobrir o schema completo — não só os modelos que os
+    routers do `main.py` calhavam a importar.
+
+    pgvector pode não estar disponível (scoop Postgres sem a extensão
+    `vector`). Nesse caso a tabela `copilot_rag_chunk` — coluna
+    `VECTOR(768)` — não pode ser criada; em vez de abortar todo o
+    `init_db` (e deixar o backend sem BD), excluímo-la do `create_all`.
+    Mesmo comportamento do `scripts/bootstrap_dev_full.py`; o RAG
+    semântico fica desligado até pgvector existir. Ver CLAUDE.md.
+    """
+    import logging
+
+    _import_all_models()
+
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        has_vector = await conn.scalar(
+            text(
+                "SELECT EXISTS (SELECT 1 FROM pg_available_extensions "
+                "WHERE name = 'vector')"
+            )
+        )
+        if has_vector:
+            await conn.run_sync(Base.metadata.create_all)
+            return
+        tables = [
+            t for t in Base.metadata.sorted_tables
+            if t.name != "copilot_rag_chunk"
+        ]
+        await conn.run_sync(
+            lambda sync_conn: Base.metadata.create_all(
+                sync_conn, tables=tables
+            )
+        )
+        logging.getLogger(__name__).warning(
+            "pgvector indisponível — copilot_rag_chunk excluído do "
+            "init_db (RAG semântico desligado)."
+        )
 
 
 async def close_db() -> None:

@@ -41,11 +41,20 @@ from datetime import date
 
 from .schemas import (
     BomRow,
+    ChecklistLocationRow,
+    ChecklistRow,
     EntityPhaseRow,
     EntityRow,
     HealthCheckResult,
+    HolidayDefinitionRow,
+    HolidayRow,
+    IotSensorDataRow,
+    KpiObjectiveRow,
+    KpiRow,
+    MoldMovementRow,
     MoldRow,
     MovementRow,
+    OperationCrewRow,
     OperationRow,
     OrderLaborRow,
     OrderRow,
@@ -54,6 +63,8 @@ from .schemas import (
     ProductRow,
     RoutingRow,
     ScheduleRow,
+    TempHumidityRow,
+    WorkDayRow,
 )
 
 # ─── Engine ─────────────────────────────────────────────────────────────
@@ -211,6 +222,7 @@ SELECT
     of_.OF_P_ID                 AS product_id,
     of_.OF_TURN_ID              AS shift_id,
     of_.OF_OF_ID_MLD            AS mold_work_order_id,
+    offp.OFFP_OF_ID_MLD         AS operation_mold_id,
     pt.TP_NOME                  AS product_type_name,
     fp.FP_AUTOMATICA            AS phase_is_automatic
 FROM        dbo.OF_FP            offp WITH (NOLOCK)
@@ -243,6 +255,54 @@ FROM        dbo.OF_FP          offp WITH (NOLOCK)
 INNER JOIN  dbo.OFFP_EQ        eq   WITH (NOLOCK) ON eq.OFFPEQ_OFFP_ID = offp.OFFP_ID
 INNER JOIN  dbo.FASES_PRODUCAO fp   WITH (NOLOCK) ON fp.FP_ID = offp.OFFP_FP_ID
 WHERE offp.OFFP_OF_ID = :work_order_id
+"""
+
+
+# Q.36.A — quality checklist. `OF_CHECKLIST` (≈3 M rows) is the REAL
+# rework/defect record in MAR-KAYAKS; the old mirror read the empty
+# `OFFP_PROBS_*` columns. Joined to `OF_FP` (the flagged operation) for
+# the per-operation mold + execution dates, and to `FASES_PRODUCAO` for
+# the phase name. `OFCH_RESOLVIDO` is nullable → COALESCE to 0.
+_VW_CHECKLIST_SQL = """
+SELECT
+    chk.OFCH_ID                  AS checklist_id,
+    chk.OFCH_OF_ID               AS work_order_id,
+    chk.OFCH_OFFP_ID             AS operation_id,
+    chk.OFCH_FP_ID               AS phase_id,
+    fp.FP_NOME                   AS phase_name,
+    chk.OFCH_DESCR               AS description,
+    chk.OFCH_DESCR_EN            AS description_en,
+    chk.OFCH_GRAVIDADE           AS severity,
+    chk.OFCH_MOLDE_REPARAR       AS mold_repair,
+    chk.OFCH_CULPA_CHEFE         AS blame_chefe,
+    chk.OFCH_OFFP_ID_CULPA       AS blame_operation_id,
+    COALESCE(chk.OFCH_RESOLVIDO, 0) AS resolved,
+    chk.OFCH_ESTADO              AS state,
+    chk.OFCH_DATA_VERIFICACAO    AS verified_at,
+    chk.OFCH_DATA_ACTUALIZACAO   AS updated_at,
+    COALESCE(offp.OFFP_DATAFIM, offp.OFFP_DATAINICIO, chk.OFCH_DATA_VERIFICACAO)
+                                 AS detected_at,
+    offp.OFFP_OF_ID_MLD          AS operation_mold_id
+FROM        dbo.OF_CHECKLIST    chk  WITH (NOLOCK)
+LEFT JOIN   dbo.OF_FP           offp WITH (NOLOCK) ON offp.OFFP_ID = chk.OFCH_OFFP_ID
+LEFT JOIN   dbo.FASES_PRODUCAO  fp   WITH (NOLOCK) ON fp.FP_ID = chk.OFCH_FP_ID
+"""
+
+
+# Q.36.A — operation crew, windowed. `_VW_ORDER_LABOR_SQL` has the same
+# OF_FP×OFFP_EQ join but is scoped to one work order; the curated ETL
+# needs the whole crew surface over a date window.
+_VW_OPERATION_CREW_SQL = """
+SELECT
+    offp.OFFP_ID         AS operation_id,
+    offp.OFFP_OF_ID      AS work_order_id,
+    offp.OFFP_FP_ID      AS phase_id,
+    offp.OFFP_DATAINICIO AS start_at,
+    offp.OFFP_DATAFIM    AS end_at,
+    eq.OFFPEQ_E_ID       AS operator_id,
+    eq.OFFPEQ_CHEFE      AS is_chefe
+FROM        dbo.OF_FP    offp WITH (NOLOCK)
+INNER JOIN  dbo.OFFP_EQ  eq   WITH (NOLOCK) ON eq.OFFPEQ_OFFP_ID = offp.OFFP_ID
 """
 
 
@@ -340,6 +400,132 @@ SELECT
     mld.MLD_UTILIZ   AS usage_count,
     mld.MLD_DATA     AS acquired_at
 FROM dbo.MOLDES mld WITH (NOLOCK)
+"""
+
+# Q.38.A — mold-movement ledger. `MOLDES_MOV` (~3.7 k rows) is the
+# history of mold movements (the resource being used / moved). Columns
+# verified against agent_docs/mar_kayaks_schema_discovery.md
+# (`MOLDES_MOV` — MLDU_*). No guessed names.
+_VW_MOLD_MOVEMENTS_SQL = """
+SELECT
+    mov.MLDU_ID     AS mold_movement_id,
+    mov.MLDU_DATA   AS moved_at,
+    mov.MLDU_TP_ID  AS movement_type_id,
+    mov.MLDU_MLD_ID AS mold_id,
+    mov.MLDU_E_ID   AS entity_id
+FROM dbo.MOLDES_MOV mov WITH (NOLOCK)
+"""
+
+
+# Q.45.A — work calendar. `DIAS_TRABALHO` (~15.6 k rows) is the registered
+# working-day calendar; `FERIAS` (~29 rows) lists individual holiday dates;
+# `DIAS_FERIADOS_FERIAS` (~14 rows) is the recurring-holiday definition.
+# Column names verified against agent_docs/mar_kayaks_schema_discovery.md +
+# nelo_deepscan_2.md. No guessed names.
+_VW_WORK_DAYS_SQL = """
+SELECT
+    dt.DTRB_ID   AS work_day_id,
+    dt.DTRB_DATA AS work_date
+FROM dbo.DIAS_TRABALHO dt WITH (NOLOCK)
+"""
+
+_VW_HOLIDAYS_SQL = """
+SELECT
+    f.DATA AS holiday_date,
+    f.TIPO AS kind
+FROM dbo.FERIAS f WITH (NOLOCK)
+"""
+
+_VW_HOLIDAY_DEFS_SQL = """
+SELECT
+    dff.DFF_ID        AS definition_id,
+    dff.DFF_MES       AS month,
+    dff.DFF_DIA       AS day,
+    dff.DFF_FIXO      AS is_fixed,
+    dff.DFF_FERIAS    AS is_vacation,
+    dff.DFF_FERIADO   AS is_holiday,
+    dff.DFF_DESCRICAO AS description
+FROM dbo.DIAS_FERIADOS_FERIAS dff WITH (NOLOCK)
+"""
+
+
+# Q.45.B — checklist defect location. `OFCH_LOCAL` (~58 k rows) links a
+# quality-checklist incident (`OFPROBS_OFCH_ID`) to a defect-location code
+# (`OFPROBS_PROBSL_ID`); joined to `PROBS_LOCAL` for the zone description
+# (`PROBSL_DSCR`) — the input for the defect-by-zone hull map.
+_VW_CHECKLIST_LOCATIONS_SQL = """
+SELECT
+    ol.OFPROBS_OFCH_ID   AS checklist_id,
+    ol.OFPROBS_PROBSL_ID AS location_id,
+    pl.PROBSL_DSCR       AS location_description
+FROM        dbo.OFCH_LOCAL  ol  WITH (NOLOCK)
+LEFT JOIN   dbo.PROBS_LOCAL pl  WITH (NOLOCK) ON pl.PROBSL_ID = ol.OFPROBS_PROBSL_ID
+"""
+
+
+# Q.45.B — temperature/humidity sensors. `TH` (~586 k rows) records the
+# ambient temperature/humidity per phase/probe. Heavy table — the reader
+# windows on `TH_DATA`.
+_VW_TEMP_HUMIDITY_SQL = """
+SELECT
+    th.TH_ID         AS reading_id,
+    th.TH_DATA       AS measured_at,
+    th.TH_TEMP       AS temperature,
+    th.TH_HUM        AS humidity,
+    th.TH_DATA_REG   AS registered_at,
+    th.TH_FASE       AS phase_id,
+    th.TH_SONDA      AS probe_id,
+    th.TH_DATA_UPDT  AS updated_at
+FROM dbo.TH th WITH (NOLOCK)
+"""
+
+
+# Q.45.C — IoT sensor data. `IOT_SENSOR_DATA` (~3.6 M rows) carries the
+# three-phase power/current samples that feed the energy-cost computation.
+# Enormous table — the reader windows on `SD_DATE` (mandatory).
+_VW_IOT_SENSOR_DATA_SQL = """
+SELECT
+    sd.SD_ID          AS sample_id,
+    sd.SD_SENSOR_ID   AS sensor_id,
+    sd.SD_DATE        AS sampled_at,
+    sd.SD_POWER_1     AS power_1,
+    sd.SD_POWER_2     AS power_2,
+    sd.SD_POWER_3     AS power_3,
+    sd.SD_CURRENT_1   AS current_1,
+    sd.SD_CURRENT_2   AS current_2,
+    sd.SD_CURRENT_3   AS current_3,
+    sd.SD_TEMPERATURE AS temperature,
+    sd.SD_HUM         AS humidity,
+    sd.SD_PRESSURE    AS pressure
+FROM dbo.IOT_SENSOR_DATA sd WITH (NOLOCK)
+"""
+
+
+# Q.45.C — KPI catalogue + objectives. `KPI` (~115 rows) is the catalogue
+# of KPIs the ERP tracks; `KPI_OBJECTIVO` (~267 rows) records value vs
+# objective per date. Light tables — no date window needed.
+_VW_KPI_SQL = """
+SELECT
+    k.KPI_ID         AS kpi_id,
+    k.KPI_DATA       AS kpi_date,
+    k.KPI_NOME       AS name,
+    k.KPI_DESCRICAO  AS description,
+    k.KPI_KPI_ID     AS parent_kpi_id,
+    k.KPI_ORDEM      AS display_order,
+    k.KPI_AUTOMATICO AS is_automatic,
+    k.KPI_ROLE       AS role
+FROM dbo.KPI k WITH (NOLOCK)
+"""
+
+_VW_KPI_OBJECTIVES_SQL = """
+SELECT
+    ko.KPIO_ID             AS objective_id,
+    ko.KPIO_KPI_ID         AS kpi_id,
+    ko.KPIO_DATA           AS objective_date_logged,
+    ko.KPIO_VALOR          AS value,
+    ko.KPIO_OBJECTIVO      AS objective,
+    ko.KPIO_OBJECTIVO_DATA AS objective_date
+FROM dbo.KPI_OBJECTIVO ko WITH (NOLOCK)
 """
 
 
@@ -448,6 +634,8 @@ async def list_operations(
     date_from: date,
     date_to: date,
     limit: int = 100_000,
+    *,
+    include_open: bool = False,
 ) -> list[OperationRow]:
     """Operations executed within `[date_from, date_to]` window (filter by `end_at`).
 
@@ -455,16 +643,36 @@ async def list_operations(
     Default limit 100 k covers ~3 months at NELO's current cadence.
     Replace inline subquery with `dbo.vw_pp1_operations` once views are
     deployed.
+
+    `include_open=False` (default) keeps the historical contract: only
+    *completed* operations (`end_at` no intervalo). Consumidores que
+    derivam duração (`time_mining`, `oee_service`) dependem disto e não
+    são afectados. `include_open=True` acrescenta as operações **em
+    curso** (`end_at IS NULL`, `start_at` na janela) — é o WIP que o
+    `curated_loader` precisa para o `OverloadDetector` ter o que ver.
     """
-    sql = f"""
-    SELECT TOP {int(limit)} v.* FROM (
-        {_VW_OPERATIONS_SQL}
-    ) v
+    if include_open:
+        window_clause = """
+    WHERE v.start_at IS NOT NULL
+      AND (
+            (v.end_at >= :date_from AND v.end_at < :date_to_plus_one)
+         OR (v.end_at IS NULL
+             AND v.start_at >= :date_from
+             AND v.start_at < :date_to_plus_one)
+          )
+    ORDER BY COALESCE(v.end_at, v.start_at) DESC
+    """
+    else:
+        window_clause = """
     WHERE v.end_at >= :date_from
       AND v.end_at <  :date_to_plus_one
       AND v.start_at IS NOT NULL
     ORDER BY v.end_at DESC
     """
+    sql = f"""
+    SELECT TOP {int(limit)} v.* FROM (
+        {_VW_OPERATIONS_SQL}
+    ) v{window_clause}"""
     # NELO data has datetimes; pass full-day bounds to be inclusive.
     from datetime import datetime, timedelta
     params = {
@@ -486,6 +694,65 @@ async def list_order_labor(work_order_id: int) -> list[OrderLaborRow]:
         _VW_ORDER_LABOR_SQL, {"work_order_id": int(work_order_id)}
     )
     return [OrderLaborRow(**r) for r in rows]
+
+
+# ─── Quality checklist + crew (Q.36 — curated ETL source) ───────────────
+
+
+def _window_params(date_from: date, date_to: date) -> dict[str, Any]:
+    """Full-day inclusive bounds for a `[date_from, date_to]` window."""
+    from datetime import datetime, timedelta
+    return {
+        "date_from": datetime.combine(date_from, datetime.min.time()),
+        "date_to_plus_one": datetime.combine(
+            date_to + timedelta(days=1), datetime.min.time(),
+        ),
+    }
+
+
+async def list_checklist_incidents(
+    date_from: date,
+    date_to: date,
+    limit: int = 200_000,
+) -> list[ChecklistRow]:
+    """`OF_CHECKLIST` rows verified within `[date_from, date_to]`.
+
+    Q.36.A — the real rework/defect source (≈3 M rows total). Always
+    pass a tight window. Windowed on `OFCH_DATA_VERIFICACAO`, falling
+    back to `OFCH_DATA_ACTUALIZACAO` when verification is NULL.
+    """
+    sql = f"""
+    SELECT TOP {int(limit)} v.* FROM (
+        {_VW_CHECKLIST_SQL}
+    ) v
+    WHERE COALESCE(v.verified_at, v.updated_at) >= :date_from
+      AND COALESCE(v.verified_at, v.updated_at) <  :date_to_plus_one
+    ORDER BY v.checklist_id
+    """
+    rows = await _fetch_all(sql, _window_params(date_from, date_to))
+    return [ChecklistRow(**r) for r in rows]
+
+
+async def list_operation_crew(
+    date_from: date,
+    date_to: date,
+    limit: int = 300_000,
+) -> list[OperationCrewRow]:
+    """OF_FP×OFFP_EQ rows for operations started in `[date_from, date_to]`.
+
+    Q.36.A — the operator-per-operation surface (`OFFP_EQ` ≈1.4 M rows),
+    windowed for the curated ETL. Heavy — always pass a tight window.
+    """
+    sql = f"""
+    SELECT TOP {int(limit)} v.* FROM (
+        {_VW_OPERATION_CREW_SQL}
+    ) v
+    WHERE v.start_at >= :date_from
+      AND v.start_at <  :date_to_plus_one
+    ORDER BY v.operation_id
+    """
+    rows = await _fetch_all(sql, _window_params(date_from, date_to))
+    return [OperationCrewRow(**r) for r in rows]
 
 
 # ─── Master data (for the ERP→Postgres ETL mirrors) ─────────────────────
@@ -558,6 +825,23 @@ async def list_molds() -> list[MoldRow]:
     return [MoldRow(**r) for r in rows]
 
 
+async def list_mold_movements(limit: int = 50_000) -> list[MoldMovementRow]:
+    """Mold-movement ledger (`MOLDES_MOV`, ~3.7 k rows).
+
+    Q.38.A — the history of mold movements (`MLDU_MLD_ID` is the FK to
+    `MOLDES.MLD_ID`). Ordered by `moved_at` DESC (most recent first).
+    Light table — the `limit` is a safety cap, not a paging window.
+    """
+    sql = f"""
+    SELECT TOP {int(limit)} * FROM (
+        {_VW_MOLD_MOVEMENTS_SQL}
+    ) v
+    ORDER BY v.moved_at DESC, v.mold_movement_id DESC
+    """
+    rows = await _fetch_all(sql)
+    return [MoldMovementRow(**r) for r in rows]
+
+
 async def list_all_routings(limit: int = 200_000) -> list[RoutingRow]:
     """Every product routing row (`PRODUTO_FASE` joined to `FASES_PRODUCAO`).
 
@@ -586,6 +870,157 @@ async def list_all_bom(limit: int = 200_000) -> list[BomRow]:
     """
     rows = await _fetch_all(sql)
     return [BomRow(**r) for r in rows]
+
+
+# ─── Work calendar (Q.45.A — capacity calendar) ─────────────────────────
+
+
+async def list_work_days(limit: int = 50_000) -> list[WorkDayRow]:
+    """Registered working days (`DIAS_TRABALHO`, ~15.6 k rows).
+
+    Q.45.A — feeds the capacity calendar. Ordered by `work_date` ASC.
+    Light table; `limit` is a safety cap.
+    """
+    sql = f"""
+    SELECT TOP {int(limit)} * FROM (
+        {_VW_WORK_DAYS_SQL}
+    ) v
+    ORDER BY v.work_date
+    """
+    rows = await _fetch_all(sql)
+    return [WorkDayRow(**r) for r in rows]
+
+
+async def list_holidays() -> list[HolidayRow]:
+    """Holiday / vacation dates (`FERIAS`, ~29 rows).
+
+    Q.45.A — individual non-working dates with a raw text `kind`
+    ("Férias" / "Feriado"). Ordered by `holiday_date` ASC.
+    """
+    sql = f"SELECT * FROM ({_VW_HOLIDAYS_SQL}) v ORDER BY v.holiday_date"
+    rows = await _fetch_all(sql)
+    return [HolidayRow(**r) for r in rows]
+
+
+async def list_holiday_definitions() -> list[HolidayDefinitionRow]:
+    """Recurring-holiday definitions (`DIAS_FERIADOS_FERIAS`, ~14 rows).
+
+    Q.45.A — the month/day rules of recurring holidays (e.g. 1 Jan).
+    Ordered by month, day.
+    """
+    sql = f"""
+    SELECT * FROM (
+        {_VW_HOLIDAY_DEFS_SQL}
+    ) v
+    ORDER BY v.month, v.day
+    """
+    rows = await _fetch_all(sql)
+    return [HolidayDefinitionRow(**r) for r in rows]
+
+
+# ─── Checklist defect location (Q.45.B — defect-by-zone hull map) ───────
+
+
+async def list_checklist_locations(limit: int = 100_000) -> list[ChecklistLocationRow]:
+    """Defect-location links (`OFCH_LOCAL`×`PROBS_LOCAL`, ~58 k rows).
+
+    Q.45.B — each row places a quality-checklist incident at a hull zone.
+    Joined to `PROBS_LOCAL` for the zone description. Ordered by
+    `checklist_id`. `limit` is a safety cap.
+    """
+    sql = f"""
+    SELECT TOP {int(limit)} * FROM (
+        {_VW_CHECKLIST_LOCATIONS_SQL}
+    ) v
+    ORDER BY v.checklist_id, v.location_id
+    """
+    rows = await _fetch_all(sql)
+    return [ChecklistLocationRow(**r) for r in rows]
+
+
+# ─── Environment sensors (Q.45.B — cure validation) ────────────────────
+
+
+async def list_temperature_humidity(
+    date_from: date,
+    date_to: date,
+    limit: int = 200_000,
+) -> list[TempHumidityRow]:
+    """Temperature/humidity readings (`TH`) within `[date_from, date_to]`.
+
+    Q.45.B — feeds the cure environmental validation. Heavy table
+    (~586 k rows) — the date window (`TH_DATA`) is mandatory. Ordered by
+    `measured_at` DESC.
+    """
+    sql = f"""
+    SELECT TOP {int(limit)} v.* FROM (
+        {_VW_TEMP_HUMIDITY_SQL}
+    ) v
+    WHERE v.measured_at >= :date_from
+      AND v.measured_at <  :date_to_plus_one
+    ORDER BY v.measured_at DESC
+    """
+    rows = await _fetch_all(sql, _window_params(date_from, date_to))
+    return [TempHumidityRow(**r) for r in rows]
+
+
+# ─── IoT sensors (Q.45.C — energy cost) ─────────────────────────────────
+
+
+async def list_iot_sensor_data(
+    date_from: date,
+    date_to: date,
+    limit: int = 500_000,
+) -> list[IotSensorDataRow]:
+    """IoT sensor samples (`IOT_SENSOR_DATA`) within `[date_from, date_to]`.
+
+    Q.45.C — three-phase power/current samples that feed the energy-cost
+    computation. Enormous table (~3.6 M rows) — the date window
+    (`SD_DATE`) is mandatory. Ordered by `sampled_at` DESC.
+    """
+    sql = f"""
+    SELECT TOP {int(limit)} v.* FROM (
+        {_VW_IOT_SENSOR_DATA_SQL}
+    ) v
+    WHERE v.sampled_at >= :date_from
+      AND v.sampled_at <  :date_to_plus_one
+    ORDER BY v.sampled_at DESC
+    """
+    rows = await _fetch_all(sql, _window_params(date_from, date_to))
+    return [IotSensorDataRow(**r) for r in rows]
+
+
+# ─── KPI catalogue + objectives (Q.45.C) ────────────────────────────────
+
+
+async def list_kpi_definitions() -> list[KpiRow]:
+    """KPI catalogue defined in the ERP (`KPI`, ~115 rows).
+
+    Q.45.C — ordered by `display_order`, `kpi_id`. Light table.
+    """
+    sql = f"""
+    SELECT * FROM (
+        {_VW_KPI_SQL}
+    ) v
+    ORDER BY v.display_order, v.kpi_id
+    """
+    rows = await _fetch_all(sql)
+    return [KpiRow(**r) for r in rows]
+
+
+async def list_kpi_objectives() -> list[KpiObjectiveRow]:
+    """KPI value-vs-objective records (`KPI_OBJECTIVO`, ~267 rows).
+
+    Q.45.C — ordered by `kpi_id`, `objective_date_logged`. Light table.
+    """
+    sql = f"""
+    SELECT * FROM (
+        {_VW_KPI_OBJECTIVES_SQL}
+    ) v
+    ORDER BY v.kpi_id, v.objective_date_logged
+    """
+    rows = await _fetch_all(sql)
+    return [KpiObjectiveRow(**r) for r in rows]
 
 
 # ─── Aggregations for health-check ──────────────────────────────────────
@@ -652,14 +1087,25 @@ __all__: Sequence[str] = (
     "health_check",
     "list_all_bom",
     "list_all_routings",
+    "list_checklist_incidents",
+    "list_checklist_locations",
     "list_current_schedule",
     "list_entities",
     "list_entity_phases",
+    "list_holiday_definitions",
+    "list_holidays",
+    "list_iot_sensor_data",
+    "list_kpi_definitions",
+    "list_kpi_objectives",
+    "list_mold_movements",
     "list_molds",
     "list_open_orders",
+    "list_operation_crew",
     "list_operations",
     "list_phases",
     "list_products",
     "list_recent_movements",
+    "list_temperature_humidity",
+    "list_work_days",
     "top_products_by_orders",
 )

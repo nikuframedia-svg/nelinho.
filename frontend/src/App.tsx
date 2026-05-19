@@ -48,6 +48,8 @@ const RBACPage = lazy(() => import('./pages/admin/RBACPage').then(m => ({ defaul
 const LearnedRulesPage = lazy(() => import('./pages/admin/LearnedRulesPage').then(m => ({ default: m.LearnedRulesPage })));
 // Sprint Q.17.C — NL→YAML rule authoring (logic-as-data)
 const RegrasPage = lazy(() => import('./pages/admin/RegrasPage'));
+// Q.37.C — painel de Decision PRs do copiloto
+const DecisionPRsPage = lazy(() => import('./pages/admin/DecisionPRsPage'));
 // Sprint X.3 — cura/secagem editável (Plan v4 §4.7)
 const CuraSecagemPage = lazy(() => import('./pages/admin/CuraSecagemPage'));
 // Sprint E.1 — CPO Timeline + MAP-Elites alternatives
@@ -481,6 +483,11 @@ function App() {
                     <Route path="regras" element={
                       <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
                         <RegrasPage />
+                      </Suspense>
+                    } />
+                    <Route path="decision-prs" element={
+                      <Suspense fallback={<div className="p-8"><SkeletonLoader count={5} /></div>}>
+                        <DecisionPRsPage />
                       </Suspense>
                     } />
                     <Route path="cura-secagem" element={

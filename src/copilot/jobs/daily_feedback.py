@@ -62,6 +62,49 @@ async def _rejection_patterns(
     return counter.most_common(5)
 
 
+async def _copilot_feedback_bullet(
+    session: AsyncSession,
+    tenant_id: UUID,
+) -> "DailyFeedbackBullet | None":
+    """Resumo das avaliações 👍/👎 do copiloto nos últimos 7 dias.
+
+    Q.32.C.3 — dá visibilidade humana ao sinal que o copiloto já usa para
+    se auto-calibrar (Q.32.C.2). Devolve ``None`` quando ainda não há
+    feedback (o schema exige ≥3 bullets, mas há o filler genérico).
+    """
+    try:
+        from src.copilot.feedback_signals import FeedbackSignalsService
+
+        by_intent = await FeedbackSignalsService(session, tenant_id).by_intent(
+            window_days=7,
+        )
+    except Exception as exc:  # pragma: no cover — defensivo
+        logger.debug("copilot feedback bullet skipped: %s", exc)
+        return None
+
+    total_up = sum(fb.up for fb in by_intent.values())
+    total_down = sum(fb.down for fb in by_intent.values())
+    total = total_up + total_down
+    if total == 0:
+        return None
+
+    pct = round(100.0 * total_up / total, 1)
+    text = f"{total} avaliações nos últimos 7 dias — 👍 {pct}% consideradas úteis."
+    significant = [fb for fb in by_intent.values() if fb.is_significant]
+    if significant:
+        worst = min(significant, key=lambda f: f.up_pct)
+        if worst.up_pct < 60:
+            text += f" Tema mais fraco: {worst.intent} ({worst.up_pct}%, N={worst.total})."
+    return DailyFeedbackBullet(
+        severity="WARN" if pct < 60 else "INFO",
+        title="Feedback do copiloto (7d)",
+        text=text,
+        citations=[],
+        suggested_runbooks=[],
+        suggested_actions=[],
+    )
+
+
 async def _top_anomalies(
     session: AsyncSession,
     _tenant_id: UUID,
@@ -204,6 +247,11 @@ async def generate_daily_feedback(
                     suggested_actions=[],
                 )
             )
+
+        # ── (a2) Copilot feedback 👍/👎 over the last 7 days (Q.32.C.3) ────
+        cp_bullet = await _copilot_feedback_bullet(session, tenant_id)
+        if cp_bullet is not None:
+            bullets.append(cp_bullet)
 
         # ── (b) Top 3 anomalies for today ──────────────────────────────────
         anomalies = await _top_anomalies(session, tenant_id, feedback_date)

@@ -50,6 +50,7 @@ def _import_all_models() -> None:
     from src.plan.models import order as plan_order_models  # noqa: F401
     from src.plan.models import mrp as plan_mrp_models  # noqa: F401
     from src.plan.models import phase_gap as plan_phase_gap_models  # noqa: F401
+    from src.plan.models import factory_calendar as plan_factory_calendar_models  # noqa: F401
     from src.factory_data_product.models import curated as factory_curated_models  # noqa: F401
     from src.sandbox import models as sandbox_models  # noqa: F401
     from src.improve import models as improve_models  # noqa: F401
@@ -158,11 +159,55 @@ async def seed_configs(tenant_id: UUID) -> int:
         return written
 
 
+async def populate_curated_if_erp_available(tenant_id: UUID) -> None:
+    """Q.36.D — passo condicional: quando o ERP MAR-KAYAKS está acessível
+    (``SQLSERVER_ENABLED=true``), corre o mirror de qualidade + o
+    ``curated_loader`` para que ``factory_curated.*`` não arranque vazio.
+
+    Sem ERP em dev, é um no-op: o bootstrap continua a ser corrível numa
+    máquina sem ligação ao SQL Server. Os detectores causais devolvem
+    "sem causa" honesto até o ``populate_curated.py`` correr.
+    """
+    from src.shared.config import settings
+
+    if not getattr(settings, "sqlserver_enabled", False):
+        log.info(
+            "curated populate SKIPPED — SQLSERVER_ENABLED=False. "
+            "Corre scripts/populate_curated.py quando o ERP estiver acessível."
+        )
+        return
+
+    from src.adapters.nelo.etl.quality import mirror_quality
+    from src.adapters.nelo.services import close_engine
+    from src.factory_data_product.etl.curated_loader import load_curated
+    from src.shared.database import async_session_factory
+
+    try:
+        async with async_session_factory() as session:
+            await mirror_quality(session=session, tenant_id=tenant_id)
+            await session.commit()
+        async with async_session_factory() as session:
+            counts = await load_curated(session, tenant_id)
+            await session.commit()
+        log.info(
+            "curated populated — order_phase=%d allocation=%d quality_event=%d",
+            counts["order_phase"], counts["allocation"], counts["quality_event"],
+        )
+    except Exception as exc:  # noqa: BLE001 — bootstrap não morre por isto
+        log.warning(
+            "curated populate falhou (%s) — DB continua utilizável; "
+            "corre scripts/populate_curated.py manualmente.", exc,
+        )
+    finally:
+        await close_engine()
+
+
 async def main() -> None:
     await ensure_schemas()
     await create_all_tables()
     tid = await ensure_tenant()
     written = await seed_configs(tid)
+    await populate_curated_if_erp_available(tid)
     print(f"OK — DB ready, tenant {tid}, {written} configs seeded")
 
 

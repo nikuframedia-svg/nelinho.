@@ -190,10 +190,11 @@ class COGSCalculator:
         overhead_rate: Decimal = Decimal("0"),
         total_production_hours: Decimal = Decimal("0"),
         scrap_rate: Decimal = Decimal("0.02"),
+        actual_rework_cost_eur: Optional[Decimal] = None,
     ) -> COGSResult:
         """
         Calculate complete COGS for an order.
-        
+
         Args:
             order_id: Production order ID
             product_id: Product being manufactured
@@ -205,7 +206,11 @@ class COGSCalculator:
             overhead_rate: Overhead rate per production hour
             total_production_hours: Total production hours for overhead allocation
             scrap_rate: Expected scrap rate (e.g., 0.02 = 2%)
-        
+            actual_rework_cost_eur: Custo de retrabalho real agregado para a
+                ordem (soma de `quality.rework_entry.cost_estimate_eur`).
+                Quando fornecido, substitui a estimativa por `scrap_rate`
+                (Q.37.B). `None` → cai na estimativa padrão.
+
         Returns:
             COGSResult with complete breakdown
         """
@@ -219,7 +224,9 @@ class COGSCalculator:
         overhead_rate = Decimal(str(overhead_rate))
         total_production_hours = Decimal(str(total_production_hours))
         scrap_rate = Decimal(str(scrap_rate))
-        
+        if actual_rework_cost_eur is not None:
+            actual_rework_cost_eur = Decimal(str(actual_rework_cost_eur))
+
         warnings = []
         
         # 1. Material Cost
@@ -242,7 +249,8 @@ class COGSCalculator:
         # 6. Scrap/Rework Cost
         material_per_unit = material.per_unit
         scrap = self._calculate_scrap_cost(
-            scrap_rate, quantity, material_per_unit, labor.per_unit
+            scrap_rate, quantity, material_per_unit, labor.per_unit,
+            actual_rework_cost_eur=actual_rework_cost_eur,
         )
         
         # Create breakdown
@@ -275,6 +283,10 @@ class COGSCalculator:
             assumptions={
                 "scrap_rate": float(scrap_rate),
                 "overhead_rate": float(overhead_rate),
+                "scrap_source": (
+                    "actual_rework" if actual_rework_cost_eur is not None
+                    else "scrap_rate_estimate"
+                ),
             },
             warnings=warnings,
         )
@@ -430,13 +442,33 @@ class COGSCalculator:
         quantity: Decimal,
         material_per_unit: Decimal,
         labor_per_unit: Decimal,
+        actual_rework_cost_eur: Optional[Decimal] = None,
     ) -> CostComponent:
         """Calculate scrap/rework cost.
 
         Sprint Q.12 — `recovery_rate` e `rework_factor` agora vêm do
         constructor (parametrizáveis por tenant) em vez de hardcoded
         50% / 10%. COGS antes podia estar 5–20% errado conforme produto.
+
+        Q.37.B — quando há custo de retrabalho real registado para a
+        ordem (`actual_rework_cost_eur`, soma de
+        `quality.rework_entry.cost_estimate_eur`), usa-o directamente em
+        vez da estimativa por `scrap_rate`. Sem dados reais cai na taxa
+        padrão — comportamento inalterado para quem não passa o valor.
         """
+        if actual_rework_cost_eur is not None:
+            total = actual_rework_cost_eur
+            per_unit = total / quantity if quantity > 0 else Decimal("0")
+            return CostComponent(
+                name="Scrap/Rework",
+                total=total,
+                per_unit=per_unit,
+                details={
+                    "source": "actual_rework",
+                    "actual_rework_cost_eur": float(total),
+                },
+            )
+
         expected_scrap_units = quantity * scrap_rate
 
         # Material lost
@@ -454,6 +486,7 @@ class COGSCalculator:
             total=total,
             per_unit=per_unit,
             details={
+                "source": "scrap_rate_estimate",
                 "scrap_rate": float(scrap_rate),
                 "scrap_recovery_rate": float(self.scrap_recovery_rate),
                 "scrap_rework_factor": float(self.scrap_rework_factor),

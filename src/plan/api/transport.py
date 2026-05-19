@@ -24,7 +24,7 @@ tune via the Settings UI without redeploy.
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, timedelta
 from typing import List, Optional
 from uuid import UUID
 
@@ -35,6 +35,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.copilot.readers.production_summary import _is_non_production
 from src.core.services.tenant_config_service import TenantConfigService
 from src.plan.models.order import ProductionOrder
 from src.plan.services.transport_batch_service import (
@@ -70,6 +71,11 @@ class TransportBatchOut(BaseModel):
     destination: Optional[str] = None
     status: str
     assigned_orders_count: Optional[int] = None
+    # Q.38.A — estado dos barcos da batch (None quando não calculado, p.ex.
+    # no create/freeze/dispatch onde a contagem não é relevante).
+    ready: Optional[int] = None
+    in_prod: Optional[int] = None
+    at_risk: Optional[int] = None
 
 
 class TransportBatchCreate(BaseModel):
@@ -130,7 +136,14 @@ async def _load_buffer_days(session: AsyncSession, tenant_id: UUID) -> int:
         return DEFAULT_DELIVERY_BUFFER_DAYS
 
 
-def _to_out(row, assigned_count: Optional[int] = None) -> TransportBatchOut:
+def _to_out(
+    row,
+    assigned_count: Optional[int] = None,
+    *,
+    ready: Optional[int] = None,
+    in_prod: Optional[int] = None,
+    at_risk: Optional[int] = None,
+) -> TransportBatchOut:
     return TransportBatchOut(
         id=row.id,
         code=row.code,
@@ -140,7 +153,45 @@ def _to_out(row, assigned_count: Optional[int] = None) -> TransportBatchOut:
         destination=row.destination,
         status=row.status,
         assigned_orders_count=assigned_count,
+        ready=ready,
+        in_prod=in_prod,
+        at_risk=at_risk,
     )
+
+
+# Q.38.A/B — janela (dias) para considerar uma ordem não-pronta "em risco".
+_AT_RISK_HORIZON_DAYS = 3
+
+
+def _batch_state_counts(
+    batch_transport_date: Optional[date],
+    orders: List[ProductionOrder],
+) -> tuple[int, int, int]:
+    """Calcula (ready, in_prod, at_risk) para as ordens de uma batch.
+
+    - ``ready``  — ordens em fase administrativa (Entregue/Armazem/Embalado/…),
+      via `_is_non_production` (normalização sem-acentos partilhada).
+    - ``in_prod`` — as restantes (ainda em produção).
+    - ``at_risk`` — subconjunto de ``in_prod`` cujo ``transport_date`` da batch
+      está a ≤ 3 dias (inclui datas já passadas). Sem data de transporte na
+      batch não há risco calculável → 0.
+    """
+    ready = 0
+    in_prod = 0
+    at_risk = 0
+    today = date.today()
+    horizon = (
+        batch_transport_date is not None
+        and batch_transport_date <= today + timedelta(days=_AT_RISK_HORIZON_DAYS)
+    )
+    for order in orders:
+        if _is_non_production(order.current_phase_name):
+            ready += 1
+        else:
+            in_prod += 1
+            if horizon:
+                at_risk += 1
+    return ready, in_prod, at_risk
 
 
 # ---------------------------------------------------------------------------
@@ -159,13 +210,63 @@ async def list_batches(
 
     Includes `assigned_orders_count` per batch so the UI can render the
     truck-capacity meter without a second round-trip.
+
+    Q.38.A/B — também devolve `ready`/`in_prod`/`at_risk` por batch. As
+    ordens de cada batch vêm de `transport_batch_assignment`; quando uma
+    batch não tem linhas explícitas lá, derivamos os assignments on-the-fly
+    pelas `production_orders` cujo `transport_date` cai no dia da batch
+    (assignments explícitos têm sempre precedência).
     """
     svc = TransportBatchService(session, tenant_id)
     rows = await svc.list_batches(
         since=from_date, until=to_date, status=status_filter,
     )
     counts = await svc.orders_by_batch()
-    return [_to_out(r, len(counts.get(r.id, []))) for r in rows]
+
+    # Carrega todas as ordens do tenant uma vez — indexadas por id (para os
+    # assignments explícitos) e por transport_date (para a derivação Q.38.B).
+    all_orders = list(
+        (
+            await session.execute(
+                select(ProductionOrder).where(
+                    ProductionOrder.tenant_id == tenant_id
+                )
+            )
+        ).scalars().all()
+    )
+    orders_by_id = {o.id: o for o in all_orders}
+    orders_by_date: dict[date, list[ProductionOrder]] = {}
+    for o in all_orders:
+        if o.transport_date is not None:
+            orders_by_date.setdefault(o.transport_date, []).append(o)
+
+    out: list[TransportBatchOut] = []
+    for r in rows:
+        explicit_ids = counts.get(r.id, [])
+        if explicit_ids:
+            batch_orders = [
+                orders_by_id[oid] for oid in explicit_ids if oid in orders_by_id
+            ]
+            assigned_count = len(explicit_ids)
+        else:
+            # Q.38.B — as 3 batches seedadas não têm linhas em
+            # transport_batch_assignment. Sem derivação, a UI mostrava 0/50
+            # em tudo. Derivamos pela data de transporte das ordens.
+            batch_orders = orders_by_date.get(r.transport_date, [])
+            assigned_count = len(batch_orders)
+        ready, in_prod, at_risk = _batch_state_counts(
+            r.transport_date, batch_orders
+        )
+        out.append(
+            _to_out(
+                r,
+                assigned_count,
+                ready=ready,
+                in_prod=in_prod,
+                at_risk=at_risk,
+            )
+        )
+    return out
 
 
 @router.post(

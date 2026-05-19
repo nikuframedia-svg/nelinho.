@@ -183,8 +183,69 @@ class OperationRow(_Frozen):
     product_id: int
     shift_id: Optional[int] = None
     mold_work_order_id: Optional[int] = None
+    # Q.36.A — `OFFP_OF_ID_MLD`: the mold (itself an OF) used on THIS
+    # operation. Distinct from `mold_work_order_id` (`OF.OF_OF_ID_MLD`,
+    # order-level). The causal detectors need the per-operation mold.
+    operation_mold_id: Optional[int] = None
     product_type_name: Optional[str] = None
     phase_is_automatic: bool = False
+
+
+# ─── Quality checklist (OF_CHECKLIST) — REAL rework detail ─────────────
+
+
+class ChecklistRow(_Frozen):
+    """One `dbo.OF_CHECKLIST` row — the real rework/defect record.
+
+    Q.36.A — `OF_CHECKLIST` (≈3 M rows) is where MAR-KAYAKS records the
+    actual defects: a free-text description, a severity, the operation to
+    blame, whether the mold needs repair. The old quality mirror read the
+    `OFFP_PROBS_*` columns / `OFFP_PROBLEMA` table, both empty here — so
+    `rework_entry` ended up 99% uncategorised `RETURN`. This is the
+    correct source.
+
+    `operation_mold_id` is resolved by joining the flagged operation
+    (`OFCH_OFFP_ID`) to `OF_FP.OFFP_OF_ID_MLD`.
+    """
+
+    checklist_id: int  # OFCH_ID
+    work_order_id: Optional[int] = None  # OFCH_OF_ID
+    operation_id: Optional[int] = None  # OFCH_OFFP_ID
+    phase_id: Optional[int] = None  # OFCH_FP_ID
+    phase_name: Optional[str] = None
+    description: str  # OFCH_DESCR — the defect text
+    description_en: Optional[str] = None
+    severity: int  # OFCH_GRAVIDADE
+    mold_repair: bool  # OFCH_MOLDE_REPARAR — defect attributable to the mold
+    blame_chefe: bool  # OFCH_CULPA_CHEFE
+    blame_operation_id: Optional[int] = None  # OFCH_OFFP_ID_CULPA
+    resolved: bool  # OFCH_RESOLVIDO
+    state: Optional[int] = None  # OFCH_ESTADO
+    verified_at: Optional[datetime] = None  # OFCH_DATA_VERIFICACAO
+    updated_at: Optional[datetime] = None  # OFCH_DATA_ACTUALIZACAO
+    detected_at: Optional[datetime] = None  # operation end/start fallback
+    operation_mold_id: Optional[int] = None  # OF_FP.OFFP_OF_ID_MLD
+
+
+# ─── Operation crew (OF_FP × OFFP_EQ, windowed) ────────────────────────
+
+
+class OperationCrewRow(_Frozen):
+    """One (operation × operator) row, windowed by date.
+
+    Q.36.A — `OrderLaborRow` carries the same shape but is scoped to a
+    single work order. The curated ETL needs the whole crew surface over
+    a date window, so this row comes from a windowed `OF_FP × OFFP_EQ`
+    join (`OFFP_EQ` ≈1.4 M rows — the operator-per-operation link).
+    """
+
+    operation_id: int  # OFFP_ID
+    work_order_id: int  # OFFP_OF_ID
+    phase_id: int  # OFFP_FP_ID
+    start_at: Optional[datetime] = None
+    end_at: Optional[datetime] = None
+    operator_id: int  # OFFPEQ_E_ID
+    is_chefe: bool  # OFFPEQ_CHEFE
 
 
 # ─── Order labour (OF_FP × OFFP_EQ) — per-order labour cost source ─────
@@ -321,6 +382,176 @@ class MoldRow(_Frozen):
     mold_type_id: int
     usage_count: int
     acquired_at: Optional[datetime] = None
+
+
+# ─── Mold movements (vw_pp1_mold_movements) ────────────────────────────
+
+
+class MoldMovementRow(_Frozen):
+    """One `dbo.MOLDES_MOV` row — the mold-movement ledger.
+
+    Q.38.A — `MOLDES_MOV` (~3.7 k rows) records every movement of a mold
+    (the resource): a movement type, when it happened, and the entity
+    (`MLDU_E_ID`) involved. `mold_id` (`MLDU_MLD_ID`) is the FK back to
+    `MOLDES.MLD_ID` — the ERP-side mold catalogue. The movement-type
+    dictionary (`MLDU_TP_ID`) is not yet confirmed by the CEO, so it is
+    surfaced as the raw int; no derived label is invented here.
+    """
+
+    mold_movement_id: int  # MLDU_ID
+    moved_at: Optional[datetime] = None  # MLDU_DATA
+    movement_type_id: int  # MLDU_TP_ID
+    mold_id: int  # MLDU_MLD_ID → MOLDES.MLD_ID
+    entity_id: int  # MLDU_E_ID
+
+
+# ─── Work calendar (vw_pp1_work_days / FERIAS / DIAS_FERIADOS_FERIAS) ───
+
+
+class WorkDayRow(_Frozen):
+    """One `dbo.DIAS_TRABALHO` row — a registered working day.
+
+    Q.45.A — `DIAS_TRABALHO` (~15.6 k rows) is the factory's calendar of
+    actual working days. Only two columns: the id and the date. Feeds the
+    capacity calendar (which days count towards available capacity).
+    """
+
+    work_day_id: int  # DTRB_ID
+    work_date: datetime  # DTRB_DATA (smalldatetime)
+
+
+class HolidayRow(_Frozen):
+    """One `dbo.FERIAS` row — a holiday / vacation day.
+
+    Q.45.A — `FERIAS` (~29 rows) lists individual non-working dates with
+    a free-text `kind` ("Férias", "Feriado"). `kind` is the raw ERP value
+    — no enum is invented (the dictionary is not formally confirmed).
+    """
+
+    holiday_date: datetime  # DATA (smalldatetime)
+    kind: str  # TIPO — raw text: "Férias" / "Feriado"
+
+
+class HolidayDefinitionRow(_Frozen):
+    """One `dbo.DIAS_FERIADOS_FERIAS` row — a recurring holiday rule.
+
+    Q.45.A — `DIAS_FERIADOS_FERIAS` (~14 rows) is the month/day definition
+    of recurring holidays (e.g. 1 Jan = Ano Novo). `is_fixed` marks a
+    fixed-date holiday vs a movable one; the `holiday`/`vacation` bits say
+    which calendar a row belongs to.
+    """
+
+    definition_id: int  # DFF_ID
+    month: int  # DFF_MES
+    day: int  # DFF_DIA
+    is_fixed: bool  # DFF_FIXO
+    is_vacation: bool  # DFF_FERIAS
+    is_holiday: bool  # DFF_FERIADO
+    description: Optional[str] = None  # DFF_DESCRICAO
+
+
+# ─── Checklist defect location (OFCH_LOCAL × PROBS_LOCAL) ──────────────
+
+
+class ChecklistLocationRow(_Frozen):
+    """One `dbo.OFCH_LOCAL` row — where on the hull a defect sits.
+
+    Q.45.B — `OFCH_LOCAL` (~58 k rows) links a quality-checklist incident
+    (`OFCH_ID`) to a defect location code (`PROBS_LOCAL`). Joined to
+    `PROBS_LOCAL` for the human-readable zone description — the input for
+    the defect-by-zone hull map. The composite PK is (checklist_id,
+    location_id).
+    """
+
+    checklist_id: int  # OFPROBS_OFCH_ID
+    location_id: int  # OFPROBS_PROBSL_ID → PROBS_LOCAL.PROBSL_ID
+    location_description: Optional[str] = None  # PROBS_LOCAL.PROBSL_DSCR
+
+
+# ─── Environment sensors (TH) ──────────────────────────────────────────
+
+
+class TempHumidityRow(_Frozen):
+    """One `dbo.TH` row — a temperature/humidity sensor reading.
+
+    Q.45.B — `TH` (~586 k rows) records ambient temperature/humidity per
+    phase/probe. Feeds the cure environmental validation (resin cure is
+    chemistry — humidity/temperature out of band ruins the boat).
+    `phase_id` (`TH_FASE`) is nullable; `probe_id` (`TH_SONDA`) identifies
+    the physical probe.
+    """
+
+    reading_id: int  # TH_ID
+    measured_at: datetime  # TH_DATA (smalldatetime)
+    temperature: float  # TH_TEMP
+    humidity: Optional[float] = None  # TH_HUM
+    registered_at: Optional[datetime] = None  # TH_DATA_REG
+    phase_id: Optional[int] = None  # TH_FASE
+    probe_id: int  # TH_SONDA
+    updated_at: Optional[datetime] = None  # TH_DATA_UPDT
+
+
+# ─── IoT sensors (IOT_SENSOR_DATA) ─────────────────────────────────────
+
+
+class IotSensorDataRow(_Frozen):
+    """One `dbo.IOT_SENSOR_DATA` row — a three-phase power/energy sample.
+
+    Q.45.C — `IOT_SENSOR_DATA` (~3.6 M rows) carries the trifásica power
+    readings (`SD_POWER_1..3` watts, `SD_CURRENT_1..3` amps) plus ambient
+    temperature/humidity/pressure. Feeds the energy-cost computation.
+    Enormous table — readers MUST window by date.
+    """
+
+    sample_id: int  # SD_ID
+    sensor_id: int  # SD_SENSOR_ID → IOT_SENSOR.SENSOR_ID
+    sampled_at: datetime  # SD_DATE
+    power_1: Optional[int] = None  # SD_POWER_1
+    power_2: Optional[int] = None  # SD_POWER_2
+    power_3: Optional[int] = None  # SD_POWER_3
+    current_1: Optional[float] = None  # SD_CURRENT_1
+    current_2: Optional[float] = None  # SD_CURRENT_2
+    current_3: Optional[float] = None  # SD_CURRENT_3
+    temperature: Optional[float] = None  # SD_TEMPERATURE
+    humidity: Optional[float] = None  # SD_HUM
+    pressure: Optional[float] = None  # SD_PRESSURE
+
+
+# ─── KPI definitions / objectives (KPI / KPI_OBJECTIVO) ────────────────
+
+
+class KpiRow(_Frozen):
+    """One `dbo.KPI` row — a KPI already defined in the ERP.
+
+    Q.45.C — `KPI` (~115 rows) is the catalogue of KPIs the NELO ERP
+    tracks. `parent_kpi_id` (`KPI_KPI_ID`) lets KPIs nest; `is_automatic`
+    marks an auto-computed KPI; `role` scopes a KPI to a user role.
+    """
+
+    kpi_id: int  # KPI_ID
+    kpi_date: date  # KPI_DATA
+    name: str  # KPI_NOME
+    description: Optional[str] = None  # KPI_DESCRICAO
+    parent_kpi_id: Optional[int] = None  # KPI_KPI_ID → KPI.KPI_ID
+    display_order: int  # KPI_ORDEM
+    is_automatic: bool  # KPI_AUTOMATICO
+    role: Optional[str] = None  # KPI_ROLE
+
+
+class KpiObjectiveRow(_Frozen):
+    """One `dbo.KPI_OBJECTIVO` row — a KPI value vs its objective.
+
+    Q.45.C — `KPI_OBJECTIVO` (~267 rows) records, per date, the realised
+    `value` against the `objective` target for a KPI. `objective_date` is
+    the date the objective is set for (nullable).
+    """
+
+    objective_id: int  # KPIO_ID
+    kpi_id: int  # KPIO_KPI_ID → KPI.KPI_ID
+    objective_date_logged: date  # KPIO_DATA
+    value: float  # KPIO_VALOR
+    objective: float  # KPIO_OBJECTIVO
+    objective_date: Optional[date] = None  # KPIO_OBJECTIVO_DATA
 
 
 # ─── Aggregate helpers ──────────────────────────────────────────────────

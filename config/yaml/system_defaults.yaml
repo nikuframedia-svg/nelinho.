@@ -361,6 +361,11 @@ categories:
       data_type: currency
       description: Sprint Q.8 — €/order used for backlog estimates (€35K/day ÷ 14.9 boats/day). Lift to
         ProductPricing in Q.9.
+    - key: energy.tariff_eur_per_kwh
+      value: 0.18
+      data_type: currency
+      description: Sprint Q.50 (F8) — €/kWh tariff applied to the real IoT power readings (IOT_SENSOR_DATA)
+        to turn measured kWh into € of energy. Override per-tenant with the real electricity contract rate.
   copilot:
     description: Conversational copilot rate limits and diagnostic capabilities.
     settings:
@@ -373,17 +378,17 @@ categories:
       data_type: int
       description: ''
     - key: diagnostics.erro_tree.enabled
-      value: false
+      value: true
       data_type: bool
-      description: ERRO-TREE handler — flip to True when Sprint Q.15.D.1 lands for this tenant.
+      description: ERRO-TREE handler — wired by Sprint Q.33.A.2.
     - key: diagnostics.reichenbach.enabled
-      value: false
+      value: true
       data_type: bool
-      description: Reichenbach common-cause handler — flip when Sprint Q.15.D.2/D.3 lands.
+      description: Reichenbach common-cause handler — wired by Sprint Q.33.A.2.
     - key: diagnostics.mill_diff.enabled
-      value: false
+      value: true
       data_type: bool
-      description: Mill's method 'what changed' handler — flip when Sprint Q.15.D.4 lands.
+      description: Mill's method 'what changed' handler — wired by Sprint Q.33.A.2.
   llm:
     description: LLM backend selection and parameters.
     settings:

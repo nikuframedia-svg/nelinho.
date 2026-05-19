@@ -213,6 +213,47 @@ async def get_active_alerts(
     }
 
 
+# ─── /margin-by-segment (Q.43.A — F7) ────────────────────────────────────
+
+from src.profit.services.margin_segment_service import (
+    DIMENSIONS,
+    MarginSegmentService,
+)
+
+
+@router.get("/margin-by-segment")
+async def get_margin_by_segment(
+    dimension: str = Query(
+        "customer",
+        description="One of: customer, country, agent",
+    ),
+    tenant_id: UUID = Depends(get_tenant_id),
+):
+    """Q.43.A (F7) — margem agregada por cliente real, país ou agente.
+
+    Lê as ordens de fabrico do ERP (`OrderRow`, join a `dbo.ENTIDADE`)
+    e soma a margem (`sale_price - cost_price`) por segmento. Responde
+    "quem dá lucro vs quem dá só volume".
+
+    `customer` e `country` têm dados hoje. `agent` (agente comercial)
+    depende do sync ERP (F1): devolve `dimension_available=false` com a
+    razão explícita até `AgenteEncomenda` ter reader — nunca inventa
+    dados.
+
+    `tenant_id` é exigido (header) por consistência mas os dados ERP são
+    tenant-agnósticos — o adapter lê a única BD MAR-KAYAKS.
+    """
+    dim = (dimension or "customer").lower()
+    if dim not in DIMENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid dimension: {dim}. One of: {', '.join(DIMENSIONS)}",
+        )
+    svc = MarginSegmentService()
+    result = await svc.by_segment(dim)  # type: ignore[arg-type]
+    return result.to_dict()
+
+
 # ─── /orders/{id}/cost + /margin (Q.2, Q.3) ──────────────────────────────
 
 @router.post("/orders/{order_id}/cost")

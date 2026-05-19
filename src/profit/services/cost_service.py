@@ -11,10 +11,11 @@ from decimal import Decimal
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from sqlalchemy import select, and_
+from sqlalchemy import func, select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.profit.models.cost import CostCalculation, CalculationStatus
+from src.quality.models.rework import ReworkEntry
 from src.profit.calculators.cogs_calculator import COGSCalculator, COGSResult
 from src.profit.calculators.scenario_simulator import ScenarioSimulator, CostMultipliers, ScenarioResult
 from src.core.services.configuration_service import ConfigurationService
@@ -106,11 +107,50 @@ class CostService:
     Orchestrates cost calculations and persistence.
     """
     
-    def __init__(self, session: AsyncSession, tenant_id: UUID):
+    def __init__(
+        self,
+        session: AsyncSession,
+        tenant_id: UUID,
+        use_actual_rework_cost: bool = True,
+    ):
         self.session = session
         self.tenant_id = tenant_id
+        # Q.37.B — quando True (default), o COGS usa o custo de retrabalho
+        # real agregado de `quality.rework_entry` se existir para a ordem,
+        # caindo na estimativa por `scrap_rate` quando não há dados. Pôr a
+        # False reverte ao comportamento pré-Q.37.B (sempre por taxa).
+        self.use_actual_rework_cost = use_actual_rework_cost
         self._calculator = COGSCalculator()
         self._simulator = ScenarioSimulator()
+
+    async def _actual_rework_cost(self, order_id: str) -> Optional[Decimal]:
+        """Soma `cost_estimate_eur` dos `ReworkEntry` reais desta ordem.
+
+        Q.37.B — `ReworkEntry.of_id` casa com o `order_id` do COGS. Devolve
+        `None` quando não há retrabalho registado com € para a ordem (ou
+        quando a flag está desligada / não há sessão BD) — o calculador
+        cai então na estimativa por `scrap_rate`. Só conta entradas com
+        `cost_estimate_eur` não-nulo: uma OF com retrabalho sem custo
+        registado não deve forçar um scrap de 0 €.
+        """
+        if not self.use_actual_rework_cost or self.session is None:
+            return None
+
+        stmt = select(
+            func.coalesce(func.sum(ReworkEntry.cost_estimate_eur), 0),
+            func.count(ReworkEntry.cost_estimate_eur),
+        ).where(
+            and_(
+                ReworkEntry.tenant_id == self.tenant_id,
+                ReworkEntry.of_id == order_id,
+                ReworkEntry.cost_estimate_eur.is_not(None),
+            )
+        )
+        row = (await self.session.execute(stmt)).one()
+        entries_with_cost = int(row[1] or 0)
+        if entries_with_cost == 0:
+            return None
+        return Decimal(str(row[0] or 0))
     
     async def calculate_cogs(
         self,
@@ -128,9 +168,15 @@ class CostService:
     ) -> COGSResult:
         """
         Calculate COGS for an order.
-        
+
         Optionally saves to database.
+
+        Q.37.B — quando há retrabalho real registado para a ordem em
+        `quality.rework_entry`, o custo de scrap usa esse valor em vez da
+        estimativa por `scrap_rate`.
         """
+        actual_rework_cost = await self._actual_rework_cost(order_id)
+
         result = self._calculator.calculate(
             order_id=order_id,
             product_id=str(product_id),
@@ -142,33 +188,39 @@ class CostService:
             overhead_rate=overhead_rate,
             total_production_hours=total_production_hours,
             scrap_rate=scrap_rate,
+            actual_rework_cost_eur=actual_rework_cost,
         )
         
         if save:
             await self._save_calculation(result, product_id)
         
-        # Publish event
-        await publish_event(
-            Topics.COGS_CALCULATED,
-            COGSCalculatedEvent(
-                tenant_id=self.tenant_id,
-                payload={
-                    "order_id": order_id,
-                    "total_cogs": float(result.total_cogs),
-                    "cogs_per_unit": float(result.cogs_per_unit),
-                    "breakdown": {
-                        "material": float(result.breakdown.material.total),
-                        "labor": float(result.breakdown.labor.total),
-                        "machine": float(result.breakdown.machine.total),
-                        "setup": float(result.breakdown.setup.total),
-                        "overhead": float(result.breakdown.overhead.total),
-                        "scrap": float(result.breakdown.scrap.total),
+        # Publish event — best-effort. O cálculo do COGS já está gravado;
+        # se o broker estiver em baixo não se perde o resultado nem se
+        # devolve 500 (mesmo padrão dos publishes em _simulate/_variance).
+        try:
+            await publish_event(
+                Topics.COGS_CALCULATED,
+                COGSCalculatedEvent(
+                    tenant_id=self.tenant_id,
+                    payload={
+                        "order_id": order_id,
+                        "total_cogs": float(result.total_cogs),
+                        "cogs_per_unit": float(result.cogs_per_unit),
+                        "breakdown": {
+                            "material": float(result.breakdown.material.total),
+                            "labor": float(result.breakdown.labor.total),
+                            "machine": float(result.breakdown.machine.total),
+                            "setup": float(result.breakdown.setup.total),
+                            "overhead": float(result.breakdown.overhead.total),
+                            "scrap": float(result.breakdown.scrap.total),
+                        },
+                        "currency": result.currency,
                     },
-                    "currency": result.currency,
-                },
-            ),
-        )
-        
+                ),
+            )
+        except Exception as exc:  # pragma: no cover — best-effort
+            _logger.warning("COGS_CALCULATED publish failed: %s", exc)
+
         return result
 
     async def calculate_cogs_from_sources(

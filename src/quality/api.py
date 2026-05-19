@@ -11,8 +11,10 @@ Endpoints under `/v1/quality/*`:
     GET    /dashboard                      — QA05 rework dashboards by dimension
     GET    /root-cause                     — QA09 statistical correlations
     GET    /impact                         — QA03 cumulative impact per error
+    GET    /rework/cost-summary            — Q.37.A factory-wide rework € rollup
     GET    /quality/by-supplier            — QA04 / O.8 supplier quality analytics
     GET    /quality/by-lot                 — QA04 lot-level quality
+    GET    /defect-zones                   — F11 / Q.46.B defect-by-zone hull map
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.quality.services.dashboard_service import QualityDashboardService
+from src.quality.services.defect_zone_service import DefectZoneService
 from src.quality.services.impact_service import ImpactService
 from src.quality.services.rework_service import (
     ReworkNotFoundError,
@@ -239,6 +242,35 @@ async def impact_analysis(
     )
 
 
+# ─── Q.37.A — Rework cost summary (CEO €) ─────────────────────────────────
+
+@router.get("/rework/cost-summary")
+async def rework_cost_summary(
+    group_by: Optional[str] = Query(
+        None, description="error_code|phase|model|of_id",
+    ),
+    since: Optional[datetime] = None,
+    until: Optional[datetime] = None,
+    top_n: int = Query(20, ge=1, le=200),
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Custo total de retrabalho em € no período (factory-wide).
+
+    Responde "quanto custou o retrabalho" — total €, horas perdidas,
+    ordens afectadas, e `cost_coverage_pct` (a fracção dos eventos com €
+    real estimado; baixa cobertura = o total é uma subcontagem). Com
+    `group_by` dá o breakdown por erro, fase, modelo ou ordem.
+    """
+    svc = ImpactService(session, tenant_id)
+    try:
+        return await svc.cost_summary(
+            group_by=group_by, since=since, until=until, top_n=top_n,
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
 # ─── R.8 — Supplier / Lot quality ─────────────────────────────────────────
 
 @router.get("/by-supplier")
@@ -265,3 +297,24 @@ async def quality_by_lot(
     svc = SupplierQualityService(session, tenant_id)
     items = await svc.by_lot(since=since, until=until, top_n=top_n)
     return {"items": items, "count": len(items)}
+
+
+# ─── F11 / Q.46.B — Defect-by-zone hull map ───────────────────────────────
+
+@router.get("/defect-zones")
+async def defect_zones(
+    since: Optional[datetime] = None,
+    until: Optional[datetime] = None,
+    top_n: int = Query(25, ge=1, le=200),
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Mapa de defeitos do barco por zona do casco (F11).
+
+    Heatmap / Pareto de retrabalho por zona — responde "onde no barco a
+    fábrica falha". `zone_coverage_pct` é o sinal de honestidade: a
+    fracção dos eventos com zona marcada (`OFCH_LOCAL`); cobertura baixa
+    = o Pareto é parcial, não um facto.
+    """
+    svc = DefectZoneService(session, tenant_id)
+    return await svc.zone_map(since=since, until=until, top_n=top_n)
