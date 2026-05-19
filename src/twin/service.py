@@ -224,27 +224,37 @@ class TwinService:
     async def simulate(self, scenario_id: UUID) -> Dict[str, Any]:
         """
         Run simulation on a scenario.
-        
-        Applies all deltas to baseline state and calculates resulting KPIs.
-        
+
+        Applies all deltas to baseline state and calculates resulting KPIs
+        (``mode="projecao_linear"``). When the scenario also carries
+        structured scheduling input (a delta of ``entity_type=
+        "scheduling_input"``), the CP-SAT solver runs automatically and the
+        schedule is attached under ``solver`` with ``mode="solver_cpsat"``.
+
+        The ``mode`` field is always present and honest: a linear projection
+        is never dressed up as a real optimisation.
+
         Args:
             scenario_id: ID of the scenario to simulate
-            
+
         Returns:
-            Simulation result with before/after KPIs
+            Simulation result with before/after KPIs and (optionally) a
+            CP-SAT schedule.
         """
+        import asyncio
+
         scenario = await self.get_scenario(scenario_id)
         if not scenario:
             raise ValueError(f"Scenario {scenario_id} not found")
-        
+
         # Mark as simulating
         scenario.status = ScenarioStatus.SIMULATING.value
         await self.db.commit()
-        
+
         try:
             # Start with baseline state
             current_state = scenario.baseline_state.copy()
-            
+
             # Apply all deltas in sequence
             for delta in sorted(scenario.deltas, key=lambda d: d.sequence):
                 current_state = self._apply_delta_to_state(current_state, {
@@ -252,32 +262,79 @@ class TwinService:
                     "entity_key": delta.entity_key,
                     "patch": delta.patch,
                 })
-            
+
             # Calculate deltas
             delta_summary = self._calculate_kpi_deltas(scenario.baseline_state, current_state)
-            
+
             # Build result
             simulation_result = {
                 "before": scenario.baseline_state,
                 "after": current_state,
                 "delta_summary": delta_summary,
+                "mode": "projecao_linear",
+                "mode_reason": (
+                    "Os KPIs foram projectados linearmente a partir dos "
+                    "deltas. Não correu o solver — o cenário não traz input "
+                    "de scheduling (operations[]+machines[])."
+                ),
                 "simulated_at": datetime.now(timezone.utc).isoformat(),
             }
-            
+
+            # Auto-solve when the scenario carries scheduling input.
+            sched_input = self._extract_scheduling_input(scenario)
+            if sched_input is not None:
+                operations, machines = sched_input
+                try:
+                    schedule_result = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            self._run_cpsat, operations, machines, 30.0
+                        ),
+                        timeout=35.0,
+                    )
+                    simulation_result["mode"] = "solver_cpsat"
+                    simulation_result["mode_reason"] = (
+                        "O cenário traz input de scheduling — correu o "
+                        "solver CP-SAT automaticamente."
+                    )
+                    simulation_result["solver"] = {
+                        "engine": "cpsat",
+                        "status": "SOLVED",
+                        "schedule": schedule_result,
+                    }
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "CP-SAT auto-solve timed out for scenario %s",
+                        scenario_id,
+                    )
+                    simulation_result["solver"] = {
+                        "engine": "cpsat",
+                        "status": "SOLVER_TIMEOUT",
+                    }
+                except Exception as exc:  # pragma: no cover — defensive
+                    logger.error(
+                        "CP-SAT auto-solve error for scenario %s: %s",
+                        scenario_id, exc, exc_info=True,
+                    )
+                    simulation_result["solver"] = {
+                        "engine": "cpsat",
+                        "status": "SOLVER_ERROR",
+                        "error": str(exc),
+                    }
+
             # Calculate scenario hash for reproducibility
             scenario_hash = self._calculate_scenario_hash(scenario)
-            
+
             # Update scenario
             scenario.simulation_result = simulation_result
             scenario.simulated_at = datetime.now(timezone.utc)
             scenario.scenario_hash = scenario_hash
             scenario.status = ScenarioStatus.SIMULATED.value
-            
+
             await self.db.commit()
-            
+
             logger.info(f"Simulated scenario {scenario_id}")
             return simulation_result
-            
+
         except Exception as e:
             scenario.status = ScenarioStatus.ERROR.value
             await self.db.commit()
@@ -612,6 +669,30 @@ class TwinService:
     # Solver
     # =========================================================================
 
+    @staticmethod
+    def _extract_scheduling_input(
+        scenario: Scenario,
+    ) -> Optional[tuple[List[Dict[str, Any]], List[Dict[str, Any]]]]:
+        """Pull CP-SAT scheduling input carried by the scenario's deltas.
+
+        A scenario "has sufficient data" for a real solver run when one of
+        its deltas is of ``entity_type="scheduling_input"`` and its ``patch``
+        carries non-empty ``operations[]`` and ``machines[]`` lists. The
+        last such delta wins (later deltas override earlier ones).
+
+        Returns ``(operations, machines)`` when present, else ``None``.
+        """
+        found: Optional[tuple[List[Dict[str, Any]], List[Dict[str, Any]]]] = None
+        for delta in sorted(scenario.deltas or [], key=lambda d: d.sequence):
+            if delta.entity_type != "scheduling_input":
+                continue
+            patch = delta.patch or {}
+            operations = patch.get("operations")
+            machines = patch.get("machines")
+            if operations and machines:
+                found = (list(operations), list(machines))
+        return found
+
     async def solve(
         self,
         scenario_id: UUID,
@@ -623,9 +704,13 @@ class TwinService:
         """
         Run optimization on a scenario.
 
-        If `operations` and `machines` are provided, run CP-SAT via SchedulingAdapter
-        to produce a real schedule. Otherwise, return the delta-applied projected state
-        with status=INSUFFICIENT_DATA (no mock KPIs).
+        Scheduling input is resolved in two ways: explicit `operations` /
+        `machines` arguments, or — when those are omitted — a
+        ``scheduling_input`` delta carried by the scenario itself
+        (`_extract_scheduling_input`). When either source yields data, the
+        CP-SAT solver runs automatically via `SchedulingAdapter`. Otherwise
+        the endpoint returns the delta-applied projected state with
+        status=INSUFFICIENT_DATA (no mock KPIs).
         """
         import asyncio
 
@@ -642,6 +727,15 @@ class TwinService:
                 "patch": delta.patch,
             })
 
+        # Fall back to scenario-carried scheduling input when the caller
+        # did not pass operations/machines explicitly.
+        input_source = "request"
+        if not (operations and machines):
+            sched_input = self._extract_scheduling_input(scenario)
+            if sched_input is not None:
+                operations, machines = sched_input
+                input_source = "scenario_delta"
+
         # Case 1: Real scheduling input → run CP-SAT
         if operations and machines:
             try:
@@ -656,6 +750,7 @@ class TwinService:
                     "objective": objective,
                     "status": "SOLVED",
                     "engine_used": "cpsat",
+                    "input_source": input_source,
                     "schedule": schedule_result,
                     "projected_kpis": projected_state,
                     "solved_at": datetime.now(timezone.utc).isoformat(),
@@ -686,10 +781,13 @@ class TwinService:
             "scenario_id": str(scenario_id),
             "objective": objective,
             "status": "INSUFFICIENT_DATA",
+            "mode": "projecao_linear",
             "reason": (
-                "CP-SAT requires operations[] and machines[] in the request. "
-                "The scenario baseline alone is not enough to run scheduling — "
-                "supply structured scheduling input or rely on delta-only projection."
+                "CP-SAT requires operations[] and machines[]. Supply them in "
+                "the request, or add a delta with entity_type='scheduling_input' "
+                "carrying operations[]+machines[] so the solver runs "
+                "automatically. The scenario baseline alone is not enough — "
+                "the result below is a delta-only linear projection."
             ),
             "projected_kpis": projected_state,
             "solved_at": datetime.now(timezone.utc).isoformat(),

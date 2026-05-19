@@ -514,3 +514,77 @@ async def set_product_pricing(
         "sale_value_default_eur": float(row.sale_value_default_eur),
         "valid_from": row.valid_from.isoformat(),
     }
+
+
+# ─── /margin-by-segment (Q.53.C — margem por país / agente) ──────────────
+
+from src.profit.services.cost_ledger_service import CostLedgerService
+from src.profit.services.objectives_service import ObjectivesService
+from src.profit.services.segment_service import MarginSegmentService
+
+
+@router.get("/margin-by-segment")
+async def get_margin_by_segment(
+    dimension: str = Query(
+        "country",
+        description="Dimensão de segmentação: country | agent",
+    ),
+    tenant_id: UUID = Depends(get_tenant_id),
+):
+    """Q.53.C — margem agregada por dimensão de negócio.
+
+    `dimension=country` parte do país do cliente; `dimension=agent` usa a
+    referência comercial. Os dados vêm do ERP NELO; quando o adaptador
+    está offline degrada com `erp_available=false` (sem inventar números).
+
+    `tenant_id` é exigido (header) por consistência com o resto da API,
+    mas os dados NELO são tenant-agnósticos (DB único MAR-KAYAKS).
+    """
+    svc = MarginSegmentService()
+    try:
+        return await svc.margin_by_segment(dimension)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+
+# ─── /kpis/objectives (Q.53.C — bandas-alvo do CEO) ──────────────────────
+
+@router.get("/kpis/objectives")
+async def get_kpi_objectives(
+    pp1_window_days: int = Query(90, ge=1, le=365),
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Q.53.C — bandas-alvo do CEO + sinal de impacto-PP1.
+
+    Devolve `low/target/high` por KPI (faturação/dia, OTD, FPY,
+    retrabalho) com defaults semeados em código e override por
+    `TenantConfiguration` da categoria `cost`. Inclui o `pp1_impact`: €
+    poupado por sugestões aceites (decisões executadas) na janela.
+    """
+    svc = ObjectivesService(session, tenant_id)
+    return await svc.objectives(pp1_window_days=pp1_window_days)
+
+
+# ─── /cost-ledger (Q.53.C — ledger de custos consolidado) ────────────────
+
+@router.get("/cost-ledger")
+async def get_cost_ledger(
+    date_from: Optional[date] = Query(None, alias="from"),
+    date_to: Optional[date] = Query(None, alias="to"),
+    limit: int = Query(2000, ge=1, le=5000),
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Q.53.C — ledger de custos consolidado para a futura página Custos.
+
+    Consolida os `CostCalculation` persistidos num único ledger: custo
+    por centro de custo, COGS detalhado por barco, margem por produto e
+    ranking de drivers de custo. Ordens sem cálculo aparecem como
+    `calculated=false` — nada é imputado.
+    """
+    svc = CostLedgerService(session, tenant_id)
+    return await svc.ledger(date_from=date_from, date_to=date_to, limit=limit)

@@ -62,6 +62,11 @@ class SimulationResult(BaseModel):
     status: str
     kpis: Dict[str, Any]
     comparison: Optional[Dict[str, Any]] = None
+    # `mode` is honest: "projecao_linear" = KPIs from linear delta
+    # projection only; "solver_cpsat" = CP-SAT ran automatically.
+    mode: str = "projecao_linear"
+    mode_reason: Optional[str] = None
+    solver: Optional[Dict[str, Any]] = None
     simulated_at: str
 
 
@@ -268,6 +273,9 @@ async def simulate_scenario(
         status="simulated",
         kpis=result.get("after", {}),
         comparison=result.get("delta_summary"),
+        mode=result.get("mode", "projecao_linear"),
+        mode_reason=result.get("mode_reason"),
+        solver=result.get("solver"),
         simulated_at=result.get("simulated_at", datetime.now(timezone.utc).isoformat()),
     )
 
