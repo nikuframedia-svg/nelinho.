@@ -15,9 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.dqa.trust_signals import curated_signals_provider
 from src.dqa.trust_v2 import SCOPE_FACTORY, TrustIndexV2Calculator
-from src.factory_data_product.services.semantic_queries_inmemory import (
-    SemanticQueriesInMemory,
-)
 from src.plan.models.schedule import ProductionSchedule
 from src.shared.auth.rbac import Role
 
@@ -185,36 +182,115 @@ async def _build_quality_snapshot(
     tenant_id: UUID,
     window_start: datetime,
 ) -> Dict[str, Any]:
-    """Build quality snapshot from Factory Data Product error data."""
-    try:
-        sq = SemanticQueriesInMemory()
-        result = sq.quality_analysis()
+    """Snapshot de qualidade — Q.55.C.1: lê `quality.rework_entry`.
 
-        if result and result.get("status") != "BLOCKED" and result.get("rows"):
-            rows = result["rows"]
-            # Classify errors by severity (heuristic: tipo_erro keyword matching)
-            minor = sum(r.get("total_erros", 0) for r in rows if "menor" in str(r.get("erro_tipo", "")).lower())
-            critical = sum(r.get("total_erros", 0) for r in rows if any(k in str(r.get("erro_tipo", "")).lower() for k in ("crítico", "critico", "grave", "rejeição")))
-            total = sum(r.get("total_erros", 0) for r in rows)
-            major = total - minor - critical
+    Antes chamava `SemanticQueriesInMemory().quality_analysis()` — a classe
+    pedia um `engine` (não passado) e o método nem existe → excepção
+    silenciada → zeros → o copiloto respondia "não tenho dados" a perguntas
+    sobre erros, com 100k+ eventos de retrabalho na BD.
 
-            return {
-                "minor_errors": minor,
-                "major_errors": max(0, major),
-                "critical_errors": critical,
-                "total_errors": total,
-                "top_error_types": [r.get("erro_tipo", "?") for r in rows[:5]],
-                "source": "factory_data_product",
-            }
-    except Exception as e:
-        logger.debug(f"Quality snapshot from semantic layer failed: {e}")
+    Agora responde a "qual o erro mais comum" e "que trabalhador tem mais
+    erros": tipos de erro agregados de `rework_entry`, ranking de operadores
+    via :class:`WorkerRankingService`, nomes legíveis de `core.employees` e
+    `quality.error_catalog`. Janela: 30 dias.
+    """
+    from datetime import timedelta, timezone
 
-    return {
-        "minor_errors": 0,
-        "major_errors": 0,
-        "critical_errors": 0,
-        "source": "unavailable",
+    from src.core.models.employee import Employee
+    from src.quality.models.rework import ErrorCatalog, ReworkEntry
+    from src.quality.services.worker_ranking_service import WorkerRankingService
+
+    empty = {
+        "total_errors": 0,
+        "most_common_error": None,
+        "top_error_types": [],
+        "top_workers": [],
+        "window_days": 30,
+        "has_data": False,
+        "source": "quality.rework_entry",
     }
+    try:
+        since = datetime.now(timezone.utc) - timedelta(days=30)
+
+        # ── Tipos de erro: top 5 por nº de eventos (a linha 0 é o mais comum) ──
+        type_rows = (await session.execute(
+            select(ReworkEntry.error_code, func.count(ReworkEntry.id).label("n"))
+            .where(
+                ReworkEntry.tenant_id == tenant_id,
+                ReworkEntry.detected_at >= since,
+            )
+            .group_by(ReworkEntry.error_code)
+            .order_by(func.count(ReworkEntry.id).desc())
+            .limit(5)
+        )).all()
+
+        total_errors = int((await session.execute(
+            select(func.count(ReworkEntry.id)).where(
+                ReworkEntry.tenant_id == tenant_id,
+                ReworkEntry.detected_at >= since,
+            )
+        )).scalar() or 0)
+
+        # ── Ranking de trabalhadores (reutiliza o serviço da casa) ──
+        worker_rows = await WorkerRankingService(session, tenant_id).ranking(
+            since=since, limit=5,
+        )
+
+        # ── Nomes legíveis: error_code → name, employee_id → name ──
+        codes = [c for c, _ in type_rows]
+        code_names: Dict[str, str] = {}
+        if codes:
+            for code, name in (await session.execute(
+                select(ErrorCatalog.error_code, ErrorCatalog.name).where(
+                    ErrorCatalog.tenant_id == tenant_id,
+                    ErrorCatalog.error_code.in_(codes),
+                )
+            )).all():
+                code_names[code] = name
+
+        worker_ids = [w["employee_id"] for w in worker_rows]
+        emp_names: Dict[str, str] = {}
+        if worker_ids:
+            for emp_id, emp_name in (await session.execute(
+                select(Employee.id, Employee.employee_name).where(
+                    Employee.id.in_(worker_ids),
+                )
+            )).all():
+                emp_names[str(emp_id)] = emp_name
+
+        top_error_types = [
+            {"code": code, "name": code_names.get(code, code), "events": int(n)}
+            for code, n in type_rows
+        ]
+        most_common = top_error_types[0] if top_error_types else None
+        if most_common:
+            most_common = {
+                **most_common,
+                "share_pct": round(100.0 * most_common["events"] / max(1, total_errors), 1),
+            }
+
+        top_workers = [
+            {
+                "name": emp_names.get(w["employee_id"], "?"),
+                "employee_id": w["employee_id"],
+                "error_count": w["error_count"],
+                "share_pct": w["share_pct"],
+            }
+            for w in worker_rows
+        ]
+
+        return {
+            "total_errors": total_errors,
+            "most_common_error": most_common,
+            "top_error_types": top_error_types,
+            "top_workers": top_workers,
+            "window_days": 30,
+            "has_data": total_errors > 0,
+            "source": "quality.rework_entry",
+        }
+    except Exception as e:
+        logger.warning(f"quality_snapshot: query à BD falhou ({e})")
+        return empty
 
 
 async def _build_plan_history(
