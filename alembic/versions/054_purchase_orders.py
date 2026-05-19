@@ -6,7 +6,7 @@ type 9 = "Pedidos a fornecedor") by the supply `purchase_orders` ETL, or
 created inside ProdPlan with `erp_movement_id` NULL.
 
 Revision ID: 054_purchase_orders
-Revises: 053_warehouse_stock
+Revises: 054_factory_calendar
 Create Date: 2026-05-19
 """
 from alembic import op
@@ -14,7 +14,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 revision = "054_purchase_orders"
-down_revision = "053_warehouse_stock"
+down_revision = "054_factory_calendar"
 branch_labels = None
 depends_on = None
 

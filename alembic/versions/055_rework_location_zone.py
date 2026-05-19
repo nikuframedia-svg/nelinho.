@@ -9,18 +9,14 @@ the same heuristic the defect-zones endpoint uses at read time for rows
 that arrive without a zone.
 
 Revision ID: 055_rework_location_zone
-Revises: 054_factory_calendar, 054_purchase_orders
+Revises: 054_purchase_orders
 Create Date: 2026-05-19
-
-This revision doubles as the merge point for the two pre-existing 054 heads
-(``054_factory_calendar`` + ``054_purchase_orders``) so the branch keeps a
-single linear head again.
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = "055_rework_location_zone"
-down_revision = ("054_factory_calendar", "054_purchase_orders")
+down_revision = "054_purchase_orders"
 branch_labels = None
 depends_on = None
 
