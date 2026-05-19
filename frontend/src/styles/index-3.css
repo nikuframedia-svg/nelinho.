@@ -1,0 +1,595 @@
+/* index.css — parcial 3/3 (Q.60.Y). Ordem preservada da cascata. */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SIDEBAR STYLES - DARK THEME
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.sidebar-dark {
+  background: linear-gradient(180deg, #0f172a 0%, #111827 100%);
+  border-right: 1px solid var(--color-border);
+}
+
+.sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-lg);
+  color: var(--color-text-secondary);
+  transition: all 0.2s ease;
+}
+
+.sidebar-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--color-text-primary);
+}
+
+.sidebar-item-active {
+  background: rgba(20, 184, 166, 0.15);
+  color: var(--color-accent-light);
+  border: 1px solid rgba(20, 184, 166, 0.3);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ANIMATIONS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes sparkline-draw {
+  to { stroke-dashoffset: 0; }
+}
+
+.sparkline-path {
+  stroke-dasharray: 1000;
+  stroke-dashoffset: 1000;
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 20px rgba(20, 184, 166, 0.3); }
+  50% { box-shadow: 0 0 30px rgba(20, 184, 166, 0.5); }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.3s ease forwards;
+}
+
+.animate-fadeInUp {
+  animation: fadeInUp 0.4s ease forwards;
+}
+
+.animate-scaleIn {
+  animation: scaleIn 0.3s ease forwards;
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.animate-shimmer {
+  background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.1) 50%, rgba(255,255,255,0) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PAGE-LOAD MOTION — Q.23.B
+   ═══════════════════════════════════════════════════════════════════════════
+   O DarkPageLayout marca o wrapper de conteúdo com .page-enter. Cada filho
+   directo entra em sequência (staggered reveal) — toda a página ganha uma
+   entrada coordenada sem edição página-a-página. .reveal + .stagger-N é a
+   versão manual para grelhas internas (ex: KPI cards).
+   Tudo dentro de prefers-reduced-motion: no-preference — quem desliga
+   animações vê a app instantânea, sem opacity:0 preso. */
+@media (prefers-reduced-motion: no-preference) {
+  .page-enter > * {
+    opacity: 0;
+    animation: fadeInUp 0.42s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+  .page-enter > *:nth-child(1) { animation-delay: 40ms; }
+  .page-enter > *:nth-child(2) { animation-delay: 90ms; }
+  .page-enter > *:nth-child(3) { animation-delay: 140ms; }
+  .page-enter > *:nth-child(4) { animation-delay: 190ms; }
+  .page-enter > *:nth-child(5) { animation-delay: 240ms; }
+  .page-enter > *:nth-child(n+6) { animation-delay: 280ms; }
+
+  .reveal {
+    opacity: 0;
+    animation: fadeInUp 0.42s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+
+  /* Delays — emparelhar com .reveal ou usar dentro de .page-enter. */
+  .stagger-1 { animation-delay: 60ms; }
+  .stagger-2 { animation-delay: 110ms; }
+  .stagger-3 { animation-delay: 160ms; }
+  .stagger-4 { animation-delay: 210ms; }
+  .stagger-5 { animation-delay: 260ms; }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SCROLLBAR - DARK THEME
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Q.18.UI.B.4 — scrollbar discreto. Track usa var(--bg-0) (mesma cor do
+   shell) para não revelar elementos atrás como uma faixa clara. */
+*::-webkit-scrollbar { width: 6px; height: 6px; }
+*::-webkit-scrollbar-track { background: var(--bg-0); }
+*::-webkit-scrollbar-thumb {
+  background: var(--bd-1);
+  border-radius: 3px;
+}
+*::-webkit-scrollbar-thumb:hover { background: var(--bd-2); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   UTILITY CLASSES
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.text-balance {
+  text-wrap: balance;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.gradient-text {
+  background: linear-gradient(135deg, #14b8a6 0%, #2dd4bf 50%, #5eead4 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.gradient-border {
+  position: relative;
+}
+
+.gradient-border::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  padding: 1px;
+  border-radius: inherit;
+  background: linear-gradient(135deg, rgba(20, 184, 166, 0.5), rgba(20, 184, 166, 0.1));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* Chart tooltip dark styling */
+.recharts-tooltip-wrapper .recharts-default-tooltip {
+  background: rgba(17, 24, 39, 0.95) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4) !important;
+}
+
+.recharts-tooltip-wrapper .recharts-tooltip-label {
+  color: #f1f5f9 !important;
+}
+
+.recharts-tooltip-wrapper .recharts-tooltip-item {
+  color: #94a3b8 !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PALANTIR-LEVEL VISUAL ENHANCEMENTS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Trust Heatmap Cells */
+.trust-heatmap-cell {
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.trust-heatmap-cell:hover {
+  transform: scale(1.05);
+  z-index: 10;
+}
+
+.trust-heatmap-cell[data-trust="high"] {
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.3), rgba(34, 197, 94, 0.1));
+  border: 1px solid rgba(34, 197, 94, 0.4);
+}
+
+.trust-heatmap-cell[data-trust="medium"] {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.3), rgba(245, 158, 11, 0.1));
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+.trust-heatmap-cell[data-trust="low"] {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.3), rgba(239, 68, 68, 0.1));
+  border: 1px solid rgba(239, 68, 68, 0.4);
+}
+
+/* Card Glow on Hover */
+.card-glow-hover {
+  position: relative;
+  transition: all 0.3s ease;
+}
+
+.card-glow-hover::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  background: radial-gradient(
+    circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
+    rgba(79, 209, 197, 0.15) 0%,
+    transparent 50%
+  );
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+
+.card-glow-hover:hover::before {
+  opacity: 1;
+}
+
+.card-glow-hover:hover {
+  border-color: rgba(79, 209, 197, 0.3);
+  box-shadow: 0 0 40px rgba(79, 209, 197, 0.1);
+}
+
+/* Animated Trust Bar */
+.trust-bar-animated {
+  position: relative;
+  overflow: hidden;
+}
+
+.trust-bar-animated::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.2) 50%,
+    transparent 100%
+  );
+  animation: trust-bar-shine 2s ease-in-out infinite;
+}
+
+@keyframes trust-bar-shine {
+  0% { left: -100%; }
+  100% { left: 100%; }
+}
+
+.trust-bar-blocked {
+  background: linear-gradient(90deg, #dc2626, #ef4444);
+  animation: trust-bar-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes trust-bar-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+/* Staggered Dashboard Card Animations */
+.dashboard-card {
+  opacity: 0;
+  animation: fadeInUp 0.5s ease forwards;
+}
+
+.dashboard-card:nth-child(1) { animation-delay: 0ms; }
+.dashboard-card:nth-child(2) { animation-delay: 50ms; }
+.dashboard-card:nth-child(3) { animation-delay: 100ms; }
+.dashboard-card:nth-child(4) { animation-delay: 150ms; }
+.dashboard-card:nth-child(5) { animation-delay: 200ms; }
+.dashboard-card:nth-child(6) { animation-delay: 250ms; }
+.dashboard-card:nth-child(7) { animation-delay: 300ms; }
+.dashboard-card:nth-child(8) { animation-delay: 350ms; }
+
+/* Subtle Pulse for Alert Banner */
+@keyframes pulse-subtle {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.85; }
+}
+
+.animate-pulse-subtle {
+  animation: pulse-subtle 3s ease-in-out infinite;
+}
+
+/* Drawer Slide Animation */
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.animate-slideInRight {
+  animation: slideInRight 0.3s ease-out forwards;
+}
+
+/* Exception Card Severity Glow */
+.exception-card-critical {
+  position: relative;
+}
+
+.exception-card-critical::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(
+    ellipse at top left,
+    rgba(239, 68, 68, 0.15) 0%,
+    transparent 50%
+  );
+  pointer-events: none;
+}
+
+.exception-card-high {
+  position: relative;
+}
+
+.exception-card-high::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(
+    ellipse at top left,
+    rgba(245, 158, 11, 0.15) 0%,
+    transparent 50%
+  );
+  pointer-events: none;
+}
+
+/* Semantic Label Badges */
+.semantic-badge-theoretical {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(59, 130, 246, 0.1));
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  color: #60a5fa;
+}
+
+.semantic-badge-observed {
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.2), rgba(34, 197, 94, 0.1));
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  color: #4ade80;
+}
+
+.semantic-badge-imputed {
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.2), rgba(168, 85, 247, 0.1));
+  border: 1px solid rgba(168, 85, 247, 0.3);
+  color: #c084fc;
+}
+
+/* Simulate Button Glow */
+.simulate-btn-glow {
+  position: relative;
+  overflow: hidden;
+}
+
+.simulate-btn-glow::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    circle at center,
+    rgba(168, 85, 247, 0.3) 0%,
+    transparent 70%
+  );
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.simulate-btn-glow:hover::after {
+  opacity: 1;
+}
+
+/* Metric Value Highlight on Hover */
+.metric-value-highlight {
+  transition: all 0.2s ease;
+}
+
+.metric-value-highlight:hover {
+  color: var(--color-accent);
+  text-shadow: 0 0 20px rgba(79, 209, 197, 0.5);
+}
+
+/* Data Quality Center Grid */
+.dqa-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 0.5rem;
+}
+
+.dqa-cell {
+  aspect-ratio: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-lg);
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.dqa-cell:hover {
+  transform: scale(1.05);
+  z-index: 10;
+}
+
+/* Copilot Citation Highlight */
+.citation-highlight {
+  background: linear-gradient(90deg, rgba(59, 130, 246, 0.1), transparent);
+  border-left: 2px solid rgba(59, 130, 246, 0.5);
+  padding-left: 0.75rem;
+}
+
+/* Loading Skeleton with Shimmer */
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.03) 0%,
+    rgba(255, 255, 255, 0.08) 50%,
+    rgba(255, 255, 255, 0.03) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+  border-radius: var(--radius-md);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Print stylesheet — Sprint Q.13.C / C.3.4
+   ═══════════════════════════════════════════════════════════════════════════
+   The CEO Dashboard's "Exportar PDF" button calls `window.print()`. The
+   browser's print-to-PDF then renders THIS stylesheet so the saved file is
+   clean (no sidebar, no chrome, dark→light inversion for ink saving).
+   This is a zero-dependency alternative to jspdf — every modern browser
+   has Save-as-PDF in the print dialog.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@media print {
+  /* Page size + margins — A4 portrait with 12mm margins fits the CEO
+     dashboard tiles + trend chart on one page. Override per-route by
+     adding `[data-print-orientation="landscape"]` to the page root. */
+  @page {
+    size: A4 portrait;
+    margin: 12mm;
+  }
+
+  /* Light theme for print — saves ink, increases legibility on paper. */
+  html, body {
+    background: #ffffff !important;
+    color: #111111 !important;
+  }
+
+  /* Remove app chrome: sidebar, top bar, floating actions, modals,
+     toast notifications. The page content is the report. */
+  [data-printable="false"],
+  nav[aria-label="Sidebar"],
+  nav[aria-label="Topbar"],
+  header[data-app-header],
+  aside[data-app-sidebar],
+  .alpha-sidebar,
+  .alpha-topbar,
+  .alpha-page-actions,
+  [role="dialog"]:not([data-print-keep="true"]),
+  [data-toast-container],
+  [data-print-hide="true"] {
+    display: none !important;
+  }
+
+  /* Cards: paper-like background, subtle border. Avoid breaking a card
+     across two pages where possible. */
+  .alpha-card,
+  [data-print-card] {
+    background: #ffffff !important;
+    border: 1px solid #d4d4d4 !important;
+    color: #111111 !important;
+    page-break-inside: avoid;
+    break-inside: avoid;
+    box-shadow: none !important;
+  }
+
+  /* Text colours: collapse the dark-theme palette to high-contrast
+     greys so headings stay readable on white paper. */
+  h1, h2, h3, h4, h5, h6,
+  .text-text-white {
+    color: #111111 !important;
+  }
+
+  .text-text-secondary,
+  .text-text-tertiary,
+  .text-slate-300,
+  .text-slate-400,
+  .text-slate-500 {
+    color: #4a4a4a !important;
+  }
+
+  /* Tabular nums + currency: keep them prominent. */
+  .tabular-nums,
+  [data-print-emphasis] {
+    color: #000000 !important;
+    font-weight: 600;
+  }
+
+  /* Charts: recharts renders SVG with currentColor — set base colour
+     so the trend line + bands stay visible on white paper. */
+  .recharts-line-curve,
+  .recharts-cartesian-axis line,
+  .recharts-cartesian-axis path {
+    stroke: #1f2937 !important;
+  }
+  .recharts-cartesian-axis text {
+    fill: #1f2937 !important;
+  }
+
+  /* Footer — every printed page gets a small "ProdPlan ONE — DD/MM/YYYY"
+     line at the bottom via :after pseudo-element on body. */
+  body::after {
+    content: "ProdPlan ONE — Relatório CEO · " attr(data-print-date);
+    position: fixed;
+    bottom: 4mm;
+    left: 12mm;
+    right: 12mm;
+    font-size: 10px;
+    color: #6b7280;
+    text-align: center;
+  }
+
+  /* Allow forms / tables to break naturally; avoid the "shrink to fit"
+     default that mangles wide content. */
+  table {
+    page-break-inside: auto;
+    break-inside: auto;
+  }
+  tr {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  thead {
+    display: table-header-group;
+  }
+
+  /* Force-show elements explicitly tagged for print (e.g. signature
+     line at the bottom of a CEO report). */
+  [data-print-only="true"] {
+    display: block !important;
+  }
+}
+
+/* Print-only elements stay hidden in screen view. */
+[data-print-only="true"] {
+  display: none;
+}
+
