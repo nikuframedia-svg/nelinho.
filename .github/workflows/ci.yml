@@ -31,6 +31,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-test.txt
 
+      # Q.59.B.2 — ruff as a real-bugs-only gate (config in ruff.toml).
+      # Runs before pytest so a lint regression fails fast and cheap.
+      - name: Lint (ruff)
+        run: ruff check src/ tests/ alembic/ scripts/ --no-fix
+
       - name: Run pytest with coverage
         # Q.59.B.1 — coverage measured over the whole `src/`, not just
         # three hand-picked files. No `--cov-fail-under` gate yet: this
@@ -40,6 +45,14 @@ jobs:
             --cov=src \
             --cov-report=term-missing \
             --cov-report=xml
+
+      - name: Verificar invariantes do CPO (Q.60.C)
+        # Static + dynamic checks de scripts/verify_invariants.py (12 invariantes
+        # do scheduler/GA — ver .claude/skills/nelinho-invariants). O test-floor
+        # e saltado: o passo de pytest acima ja corre a suite completa.
+        env:
+          VERIFY_INVARIANTS_SKIP_TESTS: "1"
+        run: python scripts/verify_invariants.py
 
       - name: Upload coverage artifact
         if: always()
