@@ -1,19 +1,24 @@
 /**
- * fabricaScoring — adequação operador ↔ barco (Q.52.F).
+ * fabricaScoring — adequação operador ↔ barco (Q.52.F · Q.53.I).
  *
  * Port do `scoreFor` do design NELO, religado a dados REAIS:
  *   - quality-score  → score 0-10 base + penalização por defect_rate
  *   - skill-matrix   → match de fase (can_do / nivel / ops_count)
+ *   - qualification  → Q.53.I: recência, versatilidade e produtividade,
+ *                      os 3 sinais novos que o workforce passou a expor
+ *                      (`/qualification-metrics`).
  *
  * Função pura: recebe os dados já carregados e devolve `{ fit, reasons,
- * impact }`. ZERO MOCKS — se um operador não tem dados de qualidade ou
- * skills, o fit degrada com honestidade (razão "sem histórico").
+ * impact }`. ZERO MOCKS — se um operador não tem dados de qualidade,
+ * skills ou métricas, o fit degrada com honestidade (razão "sem
+ * histórico"), nunca inventa.
  */
 
 import type {
   QualityScoreResult,
   SkillMatrixResult,
 } from '../../lib/api';
+import type { QualificationMetrics } from './fabricaApi';
 
 export interface FitReason {
   /** Texto curto da razão. */
@@ -39,6 +44,11 @@ export interface WorkerProfile {
   quality?: QualityScoreResult;
   /** Matriz de skills (pode faltar → sem histórico). */
   skills?: SkillMatrixResult;
+  /**
+   * Q.53.I — métricas de qualificação (recência/versatilidade/
+   * produtividade). Pode faltar → o scoring ignora esse eixo.
+   */
+  metrics?: QualificationMetrics;
 }
 
 /**
@@ -115,6 +125,67 @@ export function scoreFor(
         text: `Erro alto ${(q.defect_rate * 100).toFixed(0)}%`,
         tone: 'danger',
       });
+    }
+  }
+
+  // ── Q.53.I — 3 sinais de qualificação: recência / versatilidade /
+  //    produtividade. Cada eixo ajusta o fit; sem dados, é ignorado
+  //    (nunca inventa). Os pesos são menores que o da fase para não
+  //    afogar o match de skill, que continua a ser o eixo dominante.
+  const m = worker.metrics;
+  if (m) {
+    // Recência — operador "fresco" na fábrica vale mais; "frio" penaliza.
+    if (m.recency_days !== null) {
+      if (m.recency_days <= 14) {
+        fit += 0.7;
+        impact += 90;
+        reasons.push({
+          text: `Activo há ${m.recency_days}d`,
+          tone: 'success',
+        });
+      } else if (m.recency_days > 90) {
+        fit -= 1.0;
+        impact -= 130;
+        reasons.push({
+          text: `Sem operações há ${m.recency_days}d`,
+          tone: 'warning',
+        });
+      }
+    }
+
+    // Versatilidade — quantas fases distintas domina (flexibilidade).
+    if (m.versatility >= 8) {
+      fit += 0.6;
+      impact += 100;
+      reasons.push({
+        text: `Polivalente · ${m.versatility} fases`,
+        tone: 'info',
+      });
+    } else if (m.versatility > 0 && m.versatility <= 2) {
+      fit -= 0.5;
+      reasons.push({
+        text: `Pouca polivalência · ${m.versatility} fase(s)`,
+        tone: 'warning',
+      });
+    }
+
+    // Produtividade — operações por dia ao longo do histórico.
+    if (m.productivity !== null) {
+      if (m.productivity >= 3) {
+        fit += 0.7;
+        impact += 120;
+        reasons.push({
+          text: `Ritmo ${m.productivity.toFixed(1)} ops/dia`,
+          tone: 'success',
+        });
+      } else if (m.productivity > 0 && m.productivity < 1) {
+        fit -= 0.6;
+        impact -= 90;
+        reasons.push({
+          text: `Ritmo baixo ${m.productivity.toFixed(1)} ops/dia`,
+          tone: 'warning',
+        });
+      }
     }
   }
 

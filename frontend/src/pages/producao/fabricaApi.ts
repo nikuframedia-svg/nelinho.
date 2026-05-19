@@ -19,13 +19,35 @@ import { apiFetch } from '../../lib/api';
 export interface ActiveOrderCard {
   id: string;
   hull: string | null;
+  /** Nome do modelo do barco (ex: "Vanquish 3"). */
   product_name: string | null;
+  /** Código de classe do barco (K1/K2/K4/C1…). */
   product_type: string | null;
+  /** Nome do cliente — `null` enquanto a sincronização ERP não landa (Q.53.I). */
+  customer_name: string | null;
   /** Nome da fase actual (current_phase_name). */
   phase: string | null;
   status: string;
   created_date: string | null;
   transport_date: string | null;
+}
+
+// ─── Métricas de qualificação do operador (Q.53.E / Q.53.I) ───────────────
+
+/**
+ * Os 3 sinais de qualificação que o fit-score combina com o
+ * quality-score: recência, versatilidade e produtividade.
+ */
+export interface QualificationMetrics {
+  employee_id: string;
+  /** Dias desde a última operação — `null` = sem histórico. */
+  recency_days: number | null;
+  /** Nº de fases distintas em que o operador é apto / já trabalhou. */
+  versatility: number;
+  /** Operações por dia ao longo do histórico — `null` = não calculável. */
+  productivity: number | null;
+  ops_total: number;
+  scope: string | null;
 }
 
 // ─── Snapshot / line-load (gargalo por fase) ───────────────────────────────
@@ -80,4 +102,15 @@ export const fabricaApi = {
   /** Validação de cura — coluna Cura (PARTIAL: degrada com honestidade). */
   curingValidation: () =>
     apiFetch<CuringValidationResponse>('/v1/plan/curing-validation'),
+
+  /**
+   * Métricas de qualificação de um operador (Q.53.E) — recência,
+   * versatilidade e produtividade. Alimentam o fit-score da Fábrica.
+   */
+  qualificationMetrics: (employeeId: string) =>
+    apiFetch<QualificationMetrics>(
+      `/v1/workforce/employees/${encodeURIComponent(
+        employeeId,
+      )}/qualification-metrics`,
+    ),
 };

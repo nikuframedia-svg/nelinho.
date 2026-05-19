@@ -12,6 +12,7 @@ Resposta:
         "hull": "<legacy_id como string>",
         "product_name": "...",
         "product_type": "K1|K2|K4|C1|C2|C4|Other",
+        "customer_name": "..." | null,
         "phase": "<current_phase_name>",
         "status": "IN_PROGRESS",
         "created_date": "YYYY-MM-DD" | null,
@@ -19,6 +20,11 @@ Resposta:
       },
       ...
     ]
+
+``customer_name`` (Q.53.I) — cliente derivado da encomenda ERP quando
+disponível. O modelo legacy ``ProductionOrder`` ainda não sincroniza o
+cliente (``OF_NOME`` do ERP); o campo é exposto para o frontend ligar
+sem mock e devolve ``null`` honesto enquanto a sincronização não landa.
 
 Endpoint só lê — drag-drop entre fases continua a passar por
 ``schedulePreviewApi.previewDelta`` (Q.4) que gera o ConsequenceBlock.
@@ -41,11 +47,16 @@ router = APIRouter(tags=["PLAN.Orders"])
 
 
 def _order_to_card(o: ProductionOrder) -> dict[str, Any]:
+    # Q.53.I — cliente é exposto a partir do atributo `customer_name` se a
+    # sincronização ERP já o tiver populado; caso contrário `null` honesto
+    # (sem mock). O modelo legacy ainda não tem coluna dedicada.
+    customer = getattr(o, "customer_name", None)
     return {
         "id": str(o.id),
         "hull": str(o.legacy_id) if o.legacy_id is not None else None,
         "product_name": o.product_name,
         "product_type": o.product_type,
+        "customer_name": customer,
         "phase": o.current_phase_name,
         "status": o.status.value if hasattr(o.status, "value") else str(o.status),
         "created_date": o.created_date.isoformat() if o.created_date else None,

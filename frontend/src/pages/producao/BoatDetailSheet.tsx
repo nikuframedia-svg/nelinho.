@@ -64,7 +64,7 @@ export function BoatDetailSheet({
       title={boat.product_name ?? `Barco #${boat.hull ?? boat.id.slice(0, 6)}`}
       subtitle={`Barco #${boat.hull ?? boat.id.slice(0, 6)} · ${
         boat.product_type ?? 'modelo —'
-      }`}
+      }${boat.customer_name ? ` · ${boat.customer_name}` : ''}`}
       width={620}
     >
       <div

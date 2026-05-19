@@ -1,13 +1,18 @@
 /**
  * BoatAssignCard — cartão de barco arrastável + alvo de largada para
- * operadores (Q.52.F).
+ * operadores (Q.52.F · Q.53.I).
  *
  * Port fiel do `BoatAssignCard` do design NELO: barra de estado lateral,
- * número do barco, código do cliente/modelo, RiskBadge, e slots de
+ * número do barco, modelo + nome do cliente, RiskBadge, e slots de
  * operadores atribuídos. É draggable (payload `boat`) e drop-target
  * (payload `worker`) — DnD bidirecional via o hook `useDragDrop`.
  *
- * Dados 100% por props. ZERO MOCKS.
+ * Q.53.I — o cartão deixa de mostrar só códigos: passa a destacar o
+ * nome do modelo (`product_name`) e o nome do cliente (`customer_name`)
+ * quando disponível. ZERO MOCKS — se o cliente não está sincronizado o
+ * cartão omite-o em silêncio, nunca inventa um nome.
+ *
+ * Dados 100% por props.
  */
 
 import { useState } from 'react';
@@ -163,6 +168,7 @@ export function BoatAssignCard({
             </span>
           )}
         </div>
+        {/* Modelo do barco (product_name é o nome do modelo). */}
         <div
           style={{
             marginTop: 3,
@@ -176,6 +182,22 @@ export function BoatAssignCard({
         >
           {boat.product_name ?? 'Modelo —'}
         </div>
+        {/* Nome do cliente — só quando a sincronização ERP o trouxe. */}
+        {boat.customer_name && (
+          <div
+            style={{
+              marginTop: 2,
+              fontSize: 9.5,
+              color: 'var(--fg-3)',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+            title={boat.customer_name}
+          >
+            {boat.customer_name}
+          </div>
+        )}
 
         {risk !== undefined && risk > 0 && (
           <div style={{ marginTop: 4, fontSize: 9.5 }}>
