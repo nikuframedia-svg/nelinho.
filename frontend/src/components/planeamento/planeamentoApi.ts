@@ -58,6 +58,91 @@ export interface PriorityReport {
   max_inversions: number;
 }
 
+// ─── Q.53.B — calendário da fábrica ──────────────────────────────────────
+/** Um dia do calendário de trabalho — shape de `CalendarDayOut`. */
+export interface CalendarDay {
+  day: string; // ISO date
+  is_working_day: boolean;
+  shift_hours: number;
+  label: string | null;
+}
+
+export interface CalendarResponse {
+  items: CalendarDay[];
+  working_days: number;
+  non_working_days: number;
+}
+
+// ─── Q.53.B — datas por barco (start-by / suggest-shipment) ──────────────
+/** Um passo do breakdown de lead time — `LeadTimeBreakdown.steps`. */
+export interface LeadTimeStep {
+  seq: number;
+  phase_id: string | null;
+  phase_name: string | null;
+  work_hours: number;
+  curing_gap_hours: number;
+}
+
+export interface LeadTimeBreakdown {
+  total_hours: number;
+  work_hours: number;
+  curing_gap_hours: number;
+  n_phases: number;
+  steps: LeadTimeStep[];
+}
+
+/** Resposta de `GET /v1/plan/orders/{id}/start-by`. */
+export interface StartByResult {
+  order_id: string;
+  hull: string | null;
+  product_name?: string | null;
+  product_type?: string | null;
+  target_date: string | null;
+  target_field: string | null;
+  start_by: string | null;
+  lead_time: LeadTimeBreakdown | null;
+  feasible: boolean | null;
+  reason: string;
+}
+
+/** Resposta de `GET /v1/plan/orders/{id}/suggest-shipment`. */
+export interface SuggestShipmentResult {
+  order_id: string;
+  hull: string | null;
+  product_name?: string | null;
+  product_type?: string | null;
+  start: string;
+  suggested_shipment: string | null;
+  lead_time: LeadTimeBreakdown | null;
+  transport_date: string | null;
+  meets_transport_date?: boolean | null;
+  reason: string;
+}
+
+// ─── Q.53.B — aderência ao plano ─────────────────────────────────────────
+/** Uma fase no relatório de aderência — `PlanAdherenceService` phase row. */
+export interface AdherencePhase {
+  phase_id: string;
+  planned_ops: number;
+  realised_ops: number;
+  adherence_pct: number | null;
+  defect_count: number;
+  defect_rate_pct: number | null;
+}
+
+export interface AdherenceReport {
+  has_committed_plan: boolean;
+  commit_sha: string | null;
+  commit_created_at: string | null;
+  summary: {
+    total_planned_ops: number;
+    total_realised_ops: number;
+    adherence_pct: number | null;
+    n_phases: number;
+  };
+  phases: AdherencePhase[];
+}
+
 export const planeamentoApi = {
   /** Corre o CPO v4 e persiste como Schedule-as-Code commit. */
   runSchedule: (data?: { horizon_days?: number; message?: string }) =>
@@ -74,4 +159,30 @@ export const planeamentoApi = {
     apiFetch<PriorityReport>(
       `/v1/plan/priority-report${commitSha ? `?commit_sha=${encodeURIComponent(commitSha)}` : ''}`,
     ),
+
+  /** Calendário de trabalho da fábrica (dias úteis / fins-de-semana / feriados). */
+  calendar: (params?: { from_date?: string; to_date?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.from_date) qs.set('from_date', params.from_date);
+    if (params?.to_date) qs.set('to_date', params.to_date);
+    const q = qs.toString();
+    return apiFetch<CalendarResponse>(`/v1/plan/calendar${q ? `?${q}` : ''}`);
+  },
+
+  /** Data-limite de início para uma ordem chegar à data de transporte. */
+  startBy: (orderId: string) =>
+    apiFetch<StartByResult>(
+      `/v1/plan/orders/${encodeURIComponent(orderId)}/start-by`,
+    ),
+
+  /** Data de expedição realista se a ordem começar hoje (ou em `start`). */
+  suggestShipment: (orderId: string, start?: string) => {
+    const q = start ? `?start=${encodeURIComponent(start)}` : '';
+    return apiFetch<SuggestShipmentResult>(
+      `/v1/plan/orders/${encodeURIComponent(orderId)}/suggest-shipment${q}`,
+    );
+  },
+
+  /** Plano vs realizado por fase — aderência ao plano do CPO. */
+  adherence: () => apiFetch<AdherenceReport>('/v1/plan/adherence'),
 };

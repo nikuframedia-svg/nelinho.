@@ -26,6 +26,10 @@ import { EmptyState } from '../dark/EmptyState';
 import { ConsequenceBox } from '../dark/ConsequenceBox';
 import { SkeletonLoader } from '../ui/Skeleton';
 import { useDraggable, useDropZone } from '../dark/useDragDrop';
+import { BoatDetailSheet } from '../../pages/producao/BoatDetailSheet';
+import { fabricaApi, type ActiveOrderCard } from '../../pages/producao/fabricaApi';
+import { CalendarStrip } from './CalendarStrip';
+import { StartByCard } from './StartByCard';
 import type { CpoOperation } from './planeamentoApi';
 
 // ── Grelha temporal — 07:00 → 18:00, 15 min por slot ──────────────────────
@@ -60,6 +64,8 @@ export function BarcosTimeline(): ReactNode {
     newPhaseId: string;
   } | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  // Barco seleccionado ao clicar numa barra da timeline.
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
 
   // Último commit do CPO + as suas operações.
   const commitsQuery = useQuery({
@@ -74,6 +80,20 @@ export function BarcosTimeline(): ReactNode {
       cpoCommitsApi.get(latestSha as string, { include_operations: true }),
     enabled: latestSha !== undefined,
   });
+
+  // Ordens em curso — para abrir o detalhe do barco ao clicar numa barra.
+  const ordersQuery = useQuery({
+    queryKey: ['planeamento', 'active-orders'],
+    queryFn: () => fabricaApi.activeOrders({ limit: 500 }),
+  });
+  const ordersById = useMemo(() => {
+    const map = new Map<string, ActiveOrderCard>();
+    for (const o of ordersQuery.data ?? []) map.set(o.id, o);
+    return map;
+  }, [ordersQuery.data]);
+  const selectedBoat = selectedOrderId
+    ? (ordersById.get(selectedOrderId) ?? null)
+    : null;
 
   const operations = useMemo<CpoOperation[]>(
     () =>
@@ -166,6 +186,8 @@ export function BarcosTimeline(): ReactNode {
 
   return (
     <div>
+      <CalendarStrip />
+
       <TimelineGrid
         phases={phases}
         operations={operations}
@@ -173,6 +195,23 @@ export function BarcosTimeline(): ReactNode {
           if (newPhaseId === fromPhase) return;
           previewMutation.mutate({ operationId, newPhaseId });
         }}
+        onSelectOp={(op) => setSelectedOrderId(op.order_id)}
+      />
+
+      {selectedBoat && (
+        <div style={{ marginTop: 14 }}>
+          <StartByCard
+            orderId={selectedBoat.id}
+            hull={selectedBoat.hull}
+            productName={selectedBoat.product_name}
+          />
+        </div>
+      )}
+
+      <BoatDetailSheet
+        boat={selectedBoat}
+        workers={[]}
+        onClose={() => setSelectedOrderId(null)}
       />
 
       {previewError && (
@@ -253,10 +292,12 @@ function TimelineGrid({
   phases,
   operations,
   onMove,
+  onSelectOp,
 }: {
   phases: string[];
   operations: CpoOperation[];
   onMove: (operationId: string, newPhaseId: string, fromPhase: string) => void;
+  onSelectOp: (op: CpoOperation) => void;
 }): ReactNode {
   return (
     <div
@@ -314,6 +355,7 @@ function TimelineGrid({
           phase={phase}
           operations={operations.filter((o) => (o.phase_id ?? 'sem fase') === phase)}
           onMove={onMove}
+          onSelectOp={onSelectOp}
         />
       ))}
     </div>
@@ -324,10 +366,12 @@ function PhaseLane({
   phase,
   operations,
   onMove,
+  onSelectOp,
 }: {
   phase: string;
   operations: CpoOperation[];
   onMove: (operationId: string, newPhaseId: string, fromPhase: string) => void;
+  onSelectOp: (op: CpoOperation) => void;
 }): ReactNode {
   const { dropProps, isOver } = useDropZone<DragData>({
     accept: 'boat',
@@ -377,14 +421,27 @@ function PhaseLane({
         }}
       >
         {bars.map((bar) => (
-          <OpBarView key={bar.op.operation_id} bar={bar} fromPhase={phase} />
+          <OpBarView
+            key={bar.op.operation_id}
+            bar={bar}
+            fromPhase={phase}
+            onSelectOp={onSelectOp}
+          />
         ))}
       </div>
     </div>
   );
 }
 
-function OpBarView({ bar, fromPhase }: { bar: OpBar; fromPhase: string }): ReactNode {
+function OpBarView({
+  bar,
+  fromPhase,
+  onSelectOp,
+}: {
+  bar: OpBar;
+  fromPhase: string;
+  onSelectOp: (op: CpoOperation) => void;
+}): ReactNode {
   const { dragProps, dragging } = useDraggable<DragData>({
     kind: 'boat',
     data: { operationId: bar.op.operation_id, fromPhase },
@@ -398,7 +455,20 @@ function OpBarView({ bar, fromPhase }: { bar: OpBar; fromPhase: string }): React
   return (
     <div
       {...dragProps}
-      title={`${bar.op.order_id} · ${workersLabel}`}
+      role="button"
+      tabIndex={0}
+      // O click nativo não dispara depois de um drag HTML5 (termina em
+      // `dragend`) — arrastar e clicar coexistem sem se interferirem.
+      onClick={() => {
+        if (!dragging) onSelectOp(bar.op);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onSelectOp(bar.op);
+        }
+      }}
+      title={`${bar.op.order_id} · ${workersLabel} · clica para ver o barco`}
       style={{
         position: 'absolute',
         top: 8,
@@ -415,7 +485,7 @@ function OpBarView({ bar, fromPhase }: { bar: OpBar; fromPhase: string }): React
         display: 'flex',
         alignItems: 'center',
         gap: 6,
-        cursor: 'grab',
+        cursor: 'pointer',
         opacity: dragging ? 0.4 : 1,
         overflow: 'hidden',
       }}

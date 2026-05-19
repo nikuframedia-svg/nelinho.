@@ -39,10 +39,8 @@ import type { CpoOperation } from '../../components/planeamento/planeamentoApi';
 import { planeamentoApi } from '../../components/planeamento/planeamentoApi';
 import {
   materiaisApi,
-  type Material,
-  type MaterialPosition,
+  type BomMaterial,
 } from '../../components/materiais/materiaisApi';
-import { stateFor } from '../../components/materiais/StockRow';
 
 type TabId = 'barcos' | 'pessoas' | 'materiais';
 
@@ -371,33 +369,36 @@ function PessoasTabView(): ReactNode {
 // TAB · MATERIAIS  (viabilidade do plano com stock actual)
 // ═══════════════════════════════════════════════════════════════════════════
 
+/**
+ * Estado de risco de um material da BOM. `supply.material_master` está
+ * vazio nesta instalação — os materiais reais são os componentes-folha das
+ * BOMs (`/v1/supply/materials/from-bom`). Sem `min_stock` no shape, o
+ * risco vem do stock real (`on_hand`) e da rutura prevista (Q.53.D).
+ */
+type BomRisk = 'sem-stock' | 'risco' | 'ok' | 'sem-leitura';
+
+function bomRiskFor(m: BomMaterial): BomRisk {
+  if (m.on_hand === null) return 'sem-leitura';
+  if (m.on_hand <= 0) return 'sem-stock';
+  // Rutura prevista para os próximos ~14 dias = risco para o plano.
+  if (m.predicted_stockout_date) {
+    const days =
+      (new Date(m.predicted_stockout_date).getTime() - Date.now()) / 86_400_000;
+    if (days <= 14) return 'risco';
+  }
+  return 'ok';
+}
+
 function MateriaisViabilityTab(): ReactNode {
   const materialsQuery = useQuery({
-    queryKey: ['planeamento', 'materials'],
-    queryFn: () => materiaisApi.listMaterials({ active_only: true }),
+    queryKey: ['planeamento', 'materials-from-bom'],
+    queryFn: () => materiaisApi.listMaterialsFromBom({ limit: 2000 }),
   });
-  const materials = useMemo(
-    () => materialsQuery.data ?? [],
-    [materialsQuery.data],
+  const envelope = materialsQuery.data;
+  const materials = useMemo<BomMaterial[]>(
+    () => envelope?.items ?? [],
+    [envelope],
   );
-
-  const positionsQuery = useQuery({
-    queryKey: ['planeamento', 'material-positions', materials.map((m) => m.sku_id)],
-    queryFn: async () => {
-      const entries = await Promise.all(
-        materials.map(async (m) => {
-          try {
-            return [m.sku_id, await materiaisApi.getPosition(m.sku_id)] as const;
-          } catch {
-            return [m.sku_id, null] as const;
-          }
-        }),
-      );
-      return Object.fromEntries(entries) as Record<string, MaterialPosition | null>;
-    },
-    enabled: materials.length > 0,
-    retry: 0,
-  });
 
   if (materialsQuery.isLoading) {
     return <SkeletonLoader count={4} />;
@@ -406,7 +407,7 @@ function MateriaisViabilityTab(): ReactNode {
     return (
       <EmptyState
         title="Não foi possível verificar a viabilidade"
-        hint="O endpoint /v1/supply/materials falhou."
+        hint="O endpoint /v1/supply/materials/from-bom falhou."
         icon={<Boxes size={28} />}
         action={
           <button
@@ -432,20 +433,17 @@ function MateriaisViabilityTab(): ReactNode {
     return (
       <EmptyState
         title="Sem materiais para verificar"
-        hint="Não há materiais no master de stock para este tenant."
+        hint="Não há componentes-folha nas BOMs para este tenant."
         icon={<Boxes size={28} />}
       />
     );
   }
 
-  const rows = materials.map((m: Material) => ({
-    material: m,
-    position: positionsQuery.data?.[m.sku_id] ?? null,
-  }));
-  const critical = rows.filter((r) => {
-    const s = stateFor(r);
-    return s === 'critical' || s === 'out';
-  });
+  const stockSynced = envelope?.stock_available ?? false;
+  const rows = materials.map((m) => ({ material: m, risk: bomRiskFor(m) }));
+  const critical = rows.filter(
+    (r) => r.risk === 'sem-stock' || r.risk === 'risco',
+  );
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -469,13 +467,19 @@ function MateriaisViabilityTab(): ReactNode {
         />
         <KPIBig
           label="Viabilidade do plano"
-          value={critical.length === 0 ? 'OK' : 'Em risco'}
-          context={
-            critical.length === 0
-              ? 'Stock cobre o plano actual'
-              : `${critical.length} materiais podem bloquear barcos`
+          value={
+            !stockSynced ? '—' : critical.length === 0 ? 'OK' : 'Em risco'
           }
-          status={critical.length === 0 ? 'green' : 'red'}
+          context={
+            !stockSynced
+              ? envelope?.unavailable_reason ?? 'Stock do ERP não sincronizado'
+              : critical.length === 0
+                ? 'Stock cobre o plano actual'
+                : `${critical.length} materiais podem bloquear barcos`
+          }
+          status={
+            !stockSynced ? 'gray' : critical.length === 0 ? 'green' : 'red'
+          }
         />
       </div>
 
@@ -490,78 +494,94 @@ function MateriaisViabilityTab(): ReactNode {
         <SectionTitle
           icon={<Boxes size={14} />}
           title="O plano é viável com o stock actual?"
-          subtitle="Verificação por material — ligado à página Materiais"
+          subtitle="Componentes-folha das BOMs cruzados com o stock do ERP — ligado à página Materiais"
         />
-        {positionsQuery.isLoading ? (
-          <div style={{ fontSize: 12, color: 'var(--fg-3)' }}>
-            A ler posições de stock…
-          </div>
-        ) : (
+        {!stockSynced && (
           <div
             style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))',
-              gap: 10,
+              marginBottom: 12,
+              fontSize: 11.5,
+              color: 'var(--orange)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
             }}
           >
-            {rows.map((r) => {
-              const s = stateFor(r);
-              const tone =
-                s === 'out' || s === 'critical'
-                  ? 'red'
-                  : s === 'low'
-                    ? 'yellow'
-                    : s === 'unknown'
-                      ? 'gray'
-                      : 'green';
-              return (
-                <div
-                  key={r.material.sku_id}
-                  style={{
-                    background: 'var(--bg-2)',
-                    border: '1px solid var(--bd-1)',
-                    borderLeft: `2px solid var(--${tone})`,
-                    borderRadius: 'var(--r-sm)',
-                    padding: 11,
-                  }}
-                >
-                  <div
-                    style={{
-                      fontSize: 11,
-                      color: 'var(--fg-1)',
-                      fontWeight: 500,
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                    }}
-                  >
-                    {r.material.name}
-                  </div>
-                  <div
-                    className="tabular"
-                    style={{
-                      fontSize: 13,
-                      fontWeight: 600,
-                      marginTop: 3,
-                      color: tone === 'gray' ? 'var(--fg-3)' : `var(--${tone})`,
-                    }}
-                  >
-                    {r.position
-                      ? `${r.position.on_hand} ${r.material.unit_of_measure}`
-                      : '—'}
-                  </div>
-                  <div style={{ fontSize: 10, color: 'var(--fg-3)', marginTop: 2 }}>
-                    {r.position?.days_to_stockout != null
-                      ? `acaba ~${Math.round(r.position.days_to_stockout)}d`
-                      : r.position
-                        ? 'sem estimativa'
-                        : 'posição indisponível'}
-                  </div>
-                </div>
-              );
-            })}
+            <AlertTriangle size={13} />
+            {envelope?.unavailable_reason ??
+              'Stock do ERP ainda não foi sincronizado — leituras indisponíveis.'}
           </div>
         )}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))',
+            gap: 10,
+          }}
+        >
+          {rows.map((r) => {
+            const tone =
+              r.risk === 'sem-stock'
+                ? 'red'
+                : r.risk === 'risco'
+                  ? 'yellow'
+                  : r.risk === 'sem-leitura'
+                    ? 'gray'
+                    : 'green';
+            const m = r.material;
+            return (
+              <div
+                key={m.id}
+                style={{
+                  background: 'var(--bg-2)',
+                  border: '1px solid var(--bd-1)',
+                  borderLeft: `2px solid var(--${tone})`,
+                  borderRadius: 'var(--r-sm)',
+                  padding: 11,
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: 'var(--fg-1)',
+                    fontWeight: 500,
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}
+                  title={m.product_name}
+                >
+                  {m.product_name}
+                </div>
+                <div
+                  className="tabular"
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 600,
+                    marginTop: 3,
+                    color: tone === 'gray' ? 'var(--fg-3)' : `var(--${tone})`,
+                  }}
+                >
+                  {m.on_hand !== null
+                    ? `${m.on_hand.toLocaleString('pt-PT')} ${m.unit_of_measure}`
+                    : '—'}
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--fg-3)', marginTop: 2 }}>
+                  {m.predicted_stockout_date
+                    ? `rutura ~${new Date(
+                        m.predicted_stockout_date,
+                      ).toLocaleDateString('pt-PT', {
+                        day: '2-digit',
+                        month: 'short',
+                      })}`
+                    : m.on_hand === null
+                      ? 'sem leitura de stock'
+                      : 'sem rutura prevista'}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </section>
     </div>
   );

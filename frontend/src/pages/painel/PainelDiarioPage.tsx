@@ -10,10 +10,10 @@
  *   - Aprovações         → /v1/decisions?status_filter=PROPOSED (REAL)
  *   - Feed ao vivo       → /v1/activity/recent (REAL)
  *
- * ZERO MOCKS: nada é placeholder. A "Aderência ao plano" do protótipo
- * NÃO tem endpoint no backend hoje → KPI mostra "sem endpoint" em vez
- * de inventar um número (gap Q.53). Estados de carregamento / erro /
- * vazio são todos explícitos.
+ * ZERO MOCKS: nada é placeholder. A "Aderência ao plano" liga ao
+ * endpoint /v1/plan/adherence (Q.53.B); sem plano commitado mostra
+ * "sem plano" em vez de inventar um número. Estados de carregamento /
+ * erro / vazio são todos explícitos.
  *
  * Distinto do `PainelPage.tsx` legacy (Q.18.ZIP.B) — a rota /painel é
  * religada a esta página na integração final (Q.52.S).
@@ -43,6 +43,7 @@ import {
   LiveBadge,
 } from '../../components/dark';
 import { decisionsApi } from '../../lib/api';
+import { planeamentoApi } from '../../components/planeamento/planeamentoApi';
 import { painelApi } from './painelApi';
 import type { CopilotAlert } from './painelApi';
 import { PainelGargalo } from './PainelGargalo';
@@ -85,6 +86,14 @@ export function PainelDiarioPage(): ReactNode {
     refetchInterval: 30_000,
   });
 
+  // ─── Aderência ao plano (Q.53.B) ────────────────────────────────────────
+  const adherenceQuery = useQuery({
+    queryKey: ['painel', 'adherence'],
+    queryFn: () => planeamentoApi.adherence(),
+    refetchOnWindowFocus: false,
+    staleTime: 60_000,
+  });
+
   // ─── Mutações dos alertas ───────────────────────────────────────────────
   const [busyAlertId, setBusyAlertId] = useState<string | null>(null);
   const invalidateAlerts = () =>
@@ -121,6 +130,10 @@ export function PainelDiarioPage(): ReactNode {
   ).length;
   const decisions = decisionsQuery.data?.items ?? [];
   const activity = activityQuery.data?.items ?? [];
+
+  // Aderência ao plano — % do plano do CPO que já se realizou.
+  const adherence = adherenceQuery.data;
+  const adherencePct = adherence?.summary.adherence_pct ?? null;
 
   // €/dia — sai do snapshot quando o ThroughputService está ligado.
   const throughput = snap?.kpis.throughput_eur_day;
@@ -238,10 +251,42 @@ export function PainelDiarioPage(): ReactNode {
             />
             <KPIBig
               label="Aderência ao plano"
-              value="sem endpoint"
-              context="Plano vs realizado — endpoint dedicado planeado (gap Q.53)"
-              status="gray"
-              accent="gray"
+              value={
+                adherenceQuery.isLoading
+                  ? '…'
+                  : adherenceQuery.isError
+                    ? 'indisponível'
+                    : adherence && !adherence.has_committed_plan
+                      ? 'sem plano'
+                      : adherencePct !== null
+                        ? `${adherencePct.toFixed(0)}%`
+                        : 'sem dados'
+              }
+              context={
+                adherenceQuery.isError
+                  ? 'O endpoint /v1/plan/adherence não respondeu'
+                  : adherence && !adherence.has_committed_plan
+                    ? 'Ainda não há plano commitado do CPO'
+                    : adherence
+                      ? `${adherence.summary.total_realised_ops}/${adherence.summary.total_planned_ops} ops · ${adherence.summary.n_phases} fases`
+                      : 'Plano vs realizado por fase'
+              }
+              status={
+                adherencePct === null
+                  ? 'gray'
+                  : adherencePct >= 80
+                    ? 'green'
+                    : adherencePct >= 50
+                      ? 'yellow'
+                      : 'red'
+              }
+              accent={
+                adherencePct === null
+                  ? 'gray'
+                  : adherencePct >= 80
+                    ? 'green'
+                    : 'yellow'
+              }
             />
           </div>
 
