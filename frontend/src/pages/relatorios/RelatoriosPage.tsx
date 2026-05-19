@@ -1,22 +1,23 @@
 /**
- * RelatoriosPage — 5 separadores de relatórios.
+ * RelatoriosPage — separadores de relatórios (emagrecido em Q.53.I).
  *
  *   • KPIs       — wrap KPIsPage
- *   • Custos     — wrap COGSPage
- *   • Pricing    — wrap PricingPage
- *   • Cenários   — wrap ScenariosPage
+ *   • Lucro      — wrap OrderProfitPage (drill-down de margem por barco)
  *   • Exportar   — wire real ao POST /v1/reports/generate. Cada template
  *                  gera e descarrega; os que o backend ainda não serve
  *                  devolvem `not_implemented` (sem 5xx, estado honesto).
+ *
+ * Q.53.I — as tabs COGS / Pricing / Cenários saíram daqui. O conteúdo de
+ * custo (COGS, drivers, margem por produto, simulador) vive agora na
+ * página dedicada /custos; as simulações têm a sua própria página. Os
+ * ficheiros antigos em `pages/profit/` continuam — só deixaram de ser
+ * embebidos aqui.
  */
 
 import { lazy, Suspense, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   BarChart3,
-  Receipt,
-  Tag,
-  GitBranch,
   Download,
   RefreshCw,
   Sparkles,
@@ -33,15 +34,6 @@ import {
 const KPIsPage = lazy(() =>
   import('../profit/KPIsPage').then((m) => ({ default: m.KPIsPage }))
 );
-const COGSPage = lazy(() =>
-  import('../profit/COGSPage').then((m) => ({ default: m.COGSPage }))
-);
-const PricingPage = lazy(() =>
-  import('../profit/PricingPage').then((m) => ({ default: m.PricingPage }))
-);
-const ScenariosPage = lazy(() =>
-  import('../profit/ScenariosPage').then((m) => ({ default: m.ScenariosPage }))
-);
 const OrderProfitPage = lazy(() =>
   import('../profit/OrderProfitPage').then((m) => ({ default: m.OrderProfitPage }))
 );
@@ -50,7 +42,7 @@ function askCopilot(query: string) {
   window.dispatchEvent(new CustomEvent('copilot:open', { detail: { query } }));
 }
 
-const TAB_IDS = ['kpis', 'custos', 'lucro', 'pricing', 'cenarios', 'export'] as const;
+const TAB_IDS = ['kpis', 'lucro', 'export'] as const;
 type TabId = (typeof TAB_IDS)[number];
 function isTabId(v: string | null): v is TabId {
   return v !== null && (TAB_IDS as readonly string[]).includes(v);
@@ -92,10 +84,7 @@ export default function RelatoriosPage() {
   const tabs = useMemo(
     () => [
       { id: 'kpis', label: 'KPIs', icon: <BarChart3 size={13} /> },
-      { id: 'custos', label: 'Custos', icon: <Receipt size={13} /> },
       { id: 'lucro', label: 'Lucro', icon: <Coins size={13} /> },
-      { id: 'pricing', label: 'Pricing', icon: <Tag size={13} /> },
-      { id: 'cenarios', label: 'Cenários', icon: <GitBranch size={13} /> },
       { id: 'export', label: 'Exportar', icon: <Download size={13} /> },
     ],
     []
@@ -117,7 +106,7 @@ export default function RelatoriosPage() {
     <div>
       <PageHeader
         title="Relatórios"
-        subtitle="KPIS · CUSTOS · PRICING · CENÁRIOS · EXPORT"
+        subtitle="KPIS · LUCRO · EXPORT"
         actions={
           <>
             <button
@@ -152,24 +141,9 @@ export default function RelatoriosPage() {
             <KPIsPage />
           </Suspense>
         )}
-        {activeTab === 'custos' && (
-          <Suspense fallback={fallback}>
-            <COGSPage />
-          </Suspense>
-        )}
         {activeTab === 'lucro' && (
           <Suspense fallback={fallback}>
             <OrderProfitPage />
-          </Suspense>
-        )}
-        {activeTab === 'pricing' && (
-          <Suspense fallback={fallback}>
-            <PricingPage />
-          </Suspense>
-        )}
-        {activeTab === 'cenarios' && (
-          <Suspense fallback={fallback}>
-            <ScenariosPage />
           </Suspense>
         )}
         {activeTab === 'export' && <ExportTab />}

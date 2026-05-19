@@ -137,14 +137,19 @@ export function FabricaPage(): ReactNode {
     queries: employees.map((e) => ({
       queryKey: ['fabrica', 'profile', e.id],
       queryFn: async () => {
-        const [quality, skills] = await Promise.allSettled([
+        // Q.53.I — junta os 3 sinais de qualificação (recência/
+        // versatilidade/produtividade) ao quality-score + skill-matrix.
+        const [quality, skills, metrics] = await Promise.allSettled([
           workforceEmployeesApi.qualityScore(e.id),
           workforceEmployeesApi.skillMatrix(e.id),
+          fabricaApi.qualificationMetrics(e.id),
         ]);
         return {
           quality:
             quality.status === 'fulfilled' ? quality.value : undefined,
           skills: skills.status === 'fulfilled' ? skills.value : undefined,
+          metrics:
+            metrics.status === 'fulfilled' ? metrics.value : undefined,
         };
       },
       enabled: wantProfiles,
@@ -162,6 +167,7 @@ export function FabricaPage(): ReactNode {
           name: e.name,
           quality: data?.quality,
           skills: data?.skills,
+          metrics: data?.metrics,
         };
       }),
     [employees, profileQueries],
