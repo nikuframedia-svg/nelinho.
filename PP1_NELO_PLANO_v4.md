@@ -1,3 +1,9 @@
+<!-- ============================================================
+     ARQUIVADO 2026-05-19 (Q.60.E) — referência histórica.
+     Visão original do produto, congelada, não actualizada desde Q.6.
+     Fonte de verdade actual: ./CLAUDE.md + ./agent_docs/sprint_history.md.
+     ============================================================ -->
+
 # PP1 × NELO — O PLANO COMPLETO v4
 
 ## Sistema de IA Causal que Aprende com a Fábrica
