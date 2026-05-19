@@ -25,7 +25,11 @@ interface AllocationCreateRequest {
 // Q.21.A — porta única. O `.env` de dev usa 8001 e o backend arranca em 8001
 // (ver agent_docs/HANDOFF.md §4.7). O fallback aqui tem de concordar com o
 // `.env` para que `npm run dev` sem `.env` continue a falar com o backend.
-const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8001';
+// Build de produção (single-origin atrás de reverse-proxy): sem VITE_API_URL,
+// usa a origem de quem serviu a página — agnóstico ao host (Tailscale/Caddy).
+const API_BASE =
+  import.meta.env.VITE_API_URL ||
+  (import.meta.env.DEV ? 'http://127.0.0.1:8001' : window.location.origin);
 
 // Retry configuration
 const MAX_RETRIES = 1; // Reduced from 3 to 1 to avoid flooding console
