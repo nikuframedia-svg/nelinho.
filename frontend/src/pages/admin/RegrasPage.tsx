@@ -1,478 +1,44 @@
 /**
- * RegrasPage (Sprint Q.17.C)
- * ===========================
+ * RegrasPage — /regras · Q.17 logic-as-data (reconstrução Q.52.L)
+ * ================================================================
  *
- * `/admin/regras` — admin/manager surface for declarative business
- * rules. The operator types in PT-PT what they want; the LLM (Q.17.C
- * ``nl_translator``) translates to a YAML rule constrained by the DSL
- * whitelist (12 events × 9 actions × 8 ops × 7 axioms).
+ * O operador escreve em PT-PT o que quer; o LLM (Q.17.C `nl_translator`)
+ * traduz para uma regra YAML restringida pelo DSL fechado (12 eventos ×
+ * 9 actions × 8 operadores × 7 axiomas). A regra nasce SEMPRE como
+ * `proposed` — `requires_human_approval` é `Literal[True]`, o LLM nunca
+ * faz opt-out. Um humano aprova; só então a regra entra em vigor.
  *
- * The proposed rule appears in a diff modal where the human reviews
- * the YAML, the axioms it preserves, and approves or rejects. Once
- * approved, the rule transitions to ``active`` and the runtime engine
- * (Q.17.D) starts dispatching.
+ * Layout NELO.html (page-regras.jsx): 4 KPIs no topo, tabs
+ * Activas/Propostas/Histórico, split lista/detalhe, e o wizard de 4
+ * passos para propor regras novas.
  *
- * Always-human-approval (Luis 2026-05-06): the LLM proposes, the human
- * always approves. No auto-apply path.
+ * ZERO MOCKS — todos os dados vêm da API:
+ *   GET  /v1/governance/yaml-policy/rules         — lista
+ *   GET  /v1/governance/yaml-policy/rules/{id}    — detalhe
+ *   POST .../rules/propose                        — wizard passo 1
+ *   POST .../rules/{id}/{approve,reject,suspend,rollback}  — admin
+ *   GET  /v1/governance/rule-firings              — disparos (no painel)
+ *
+ * A matriz ACTION_WIRING vive em components/regras/ruleHelpers.ts e é
+ * espelhada de src/governance/yaml_policy/dispatchers.py.
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  BookOpen,
-  Sparkles,
-  CheckCircle2,
-  XCircle,
-  Pause,
-  RotateCcw,
-  AlertCircle,
-  Send,
-  Clock,
-  Activity,
-  Loader2,
-} from 'lucide-react';
+import { BookOpen, Sparkles, Plus, Check, History } from 'lucide-react';
 import { DarkPageLayout } from '../../layouts';
-import { DarkCard, DarkButton, DarkBadge } from '../../components/dark';
-import { yamlPolicyApi, type YamlPolicyRule } from '../../lib/api';
+import { DarkCard, DarkButton, KPIBig, Segmented } from '../../components/dark';
+import { yamlPolicyApi } from '../../lib/api';
+import { RuleCard } from '../../components/regras/RuleCard';
+import {
+  RuleDetailPanel,
+  type SafetyViolationRow,
+} from '../../components/regras/RuleDetailPanel';
+import { NovaRegraWizard } from '../../components/regras/NovaRegraWizard';
 
-// ─── Status visual mapping ────────────────────────────────────────────────
+type TabId = 'activas' | 'propostas' | 'historico';
 
-const STATUS_VARIANTS: Record<
-  YamlPolicyRule['status'],
-  'success' | 'warning' | 'danger' | 'info' | 'neutral'
-> = {
-  proposed: 'warning',
-  approved: 'info',
-  active: 'success',
-  suspended: 'neutral',
-  rolled_back: 'danger',
-  rejected: 'danger',
-};
-
-const STATUS_LABELS: Record<YamlPolicyRule['status'], string> = {
-  proposed: 'Proposta',
-  approved: 'Aprovada',
-  active: 'Activa',
-  suspended: 'Suspensa',
-  rolled_back: 'Revertida',
-  rejected: 'Rejeitada',
-};
-
-const EVENT_LABELS: Record<string, string> = {
-  schedule_propose: 'Schedule proposto',
-  schedule_committed: 'Schedule comitado',
-  kpi_threshold_crossed: 'KPI cruza limite',
-  mold_usage_threshold: 'Molde atinge ciclo',
-  worker_absent: 'Operador ausente',
-  quality_event_logged: 'Evento qualidade',
-  transport_loaded: 'Camião carregado',
-  phase_drift_detected: 'Drift de fase',
-  decision_pending: 'Decisão pendente',
-  rule_rejected: 'Regra rejeitada',
-  wip_threshold: 'WIP atinge limite',
-  time_trigger: 'Trigger temporal',
-};
-
-
-// ─── YAML preview helper ──────────────────────────────────────────────────
-
-function payloadToYaml(payload: YamlPolicyRule['payload']): string {
-  // Simple deterministic YAML serializer for the diff preview.
-  // Avoids js-yaml dep — payload is small and well-typed.
-  const lines: string[] = [];
-  lines.push(`id: ${payload.id}`);
-  lines.push(`description: |`);
-  for (const ln of payload.description.split('\n')) lines.push(`  ${ln}`);
-  lines.push(`when:`);
-  lines.push(`  event: ${payload.when.event}`);
-  if (payload.when.conditions?.length) {
-    lines.push(`  conditions:`);
-    for (const c of payload.when.conditions) {
-      lines.push(`    - field: ${c.field}`);
-      lines.push(`      op: ${c.op}`);
-      lines.push(`      value: ${JSON.stringify(c.value)}`);
-    }
-  } else {
-    lines.push(`  conditions: []`);
-  }
-  lines.push(`then:`);
-  for (const a of payload.then) {
-    lines.push(`  - action: ${a.action}`);
-    if (Object.keys(a.params).length) {
-      lines.push(`    params:`);
-      for (const [k, v] of Object.entries(a.params)) {
-        lines.push(`      ${k}: ${JSON.stringify(v)}`);
-      }
-    } else {
-      lines.push(`    params: {}`);
-    }
-  }
-  if (payload.constraints?.axioms_required?.length) {
-    lines.push(`constraints:`);
-    lines.push(`  axioms_required:`);
-    for (const ax of payload.constraints.axioms_required) {
-      lines.push(`    - ${ax}`);
-    }
-  }
-  if (payload.safety) {
-    lines.push(`safety:`);
-    if (payload.safety.max_fires_per_day !== undefined) {
-      lines.push(`  max_fires_per_day: ${payload.safety.max_fires_per_day}`);
-    }
-    if (payload.safety.expires) {
-      lines.push(`  expires: ${payload.safety.expires}`);
-    }
-  }
-  return lines.join('\n');
-}
-
-// ─── Q.23.J — YAML syntax highlight (CSS-only, regex → spans, zero deps) ───
-
-/** Colore o lado-valor de uma linha key: value. */
-function YamlValue({ text }: { text: string }) {
-  const trimmed = text.trimStart();
-  const lead = text.slice(0, text.length - trimmed.length);
-  let cls = 'text-fg-1';
-  if (/^["'].*["']$/.test(trimmed)) cls = 'text-green';
-  else if (/^-?\d/.test(trimmed)) cls = 'text-blue';
-  else if (['true', 'false', '|', '[]', '{}'].includes(trimmed)) cls = 'text-blue';
-  return (
-    <>
-      {lead}
-      <span className={cls}>{trimmed}</span>
-    </>
-  );
-}
-
-/** YAML do diff colorido: chaves em accent, pontuação muted, strings em
- * verde, números/bool em azul. Tokenizador linha-a-linha — chega para o
- * DSL fechado e pequeno do Q.17, sem dependência de highlighting. */
-function YamlHighlight({ yaml }: { yaml: string }) {
-  return (
-    <>
-      {yaml.split('\n').map((line, i) => {
-        const indentLen = line.length - line.trimStart().length;
-        const indent = line.slice(0, indentLen);
-        let rest = line.slice(indentLen);
-        let dash = '';
-        if (rest.startsWith('- ')) {
-          dash = '- ';
-          rest = rest.slice(2);
-        }
-        const kv = rest.match(/^([\w.]+):(.*)$/);
-        return (
-          <div key={i}>
-            {indent}
-            {dash ? <span className="text-fg-3">{dash}</span> : null}
-            {kv ? (
-              <>
-                <span className="text-accent">{kv[1]}</span>
-                <span className="text-fg-3">:</span>
-                {kv[2] ? <YamlValue text={kv[2]} /> : null}
-              </>
-            ) : (
-              <span className="text-fg-1">{rest}</span>
-            )}
-          </div>
-        );
-      })}
-    </>
-  );
-}
-
-// ─── Components ───────────────────────────────────────────────────────────
-
-function RuleRow({
-  rule,
-  onSelect,
-  selected,
-}: {
-  rule: YamlPolicyRule;
-  onSelect: () => void;
-  selected: boolean;
-}) {
-  const variant = STATUS_VARIANTS[rule.status];
-  return (
-    <button
-      onClick={onSelect}
-      className={`w-full text-left rounded-lg border px-4 py-3 transition-all ${
-        selected
-          ? 'border-accent bg-bg-2'
-          : 'border-bd-1 bg-bg-1 hover:border-bd-2 hover:bg-bg-2'
-      }`}
-    >
-      <div className="flex items-start justify-between gap-3 mb-1">
-        <span className="font-mono text-xs text-fg-2 truncate flex-1">{rule.rule_id}</span>
-        <DarkBadge variant={variant}>{STATUS_LABELS[rule.status]}</DarkBadge>
-      </div>
-      <p className="text-sm text-fg-0 line-clamp-2 mb-2">{rule.description}</p>
-      <div className="flex items-center gap-3 text-xs text-fg-3">
-        <span className="inline-flex items-center gap-1">
-          <Activity size={12} />
-          {EVENT_LABELS[rule.event_type] ?? rule.event_type}
-        </span>
-        {rule.fire_count > 0 && (
-          <span className="inline-flex items-center gap-1">
-            <Sparkles size={12} />
-            {rule.fire_count}× disparos
-          </span>
-        )}
-      </div>
-    </button>
-  );
-}
-
-/** Q.17.F.3 — shape of a single violation surfaced in the 422 response. */
-interface SafetyViolationRow {
-  code: string;
-  severity: 'error' | 'warning';
-  detail: string;
-  context?: Record<string, unknown>;
-}
-
-function ViolationsBanner({ violations }: { violations: SafetyViolationRow[] }) {
-  const errors = violations.filter((v) => v.severity === 'error');
-  const warnings = violations.filter((v) => v.severity === 'warning');
-  return (
-    <div className="rounded-md border border-red-bd bg-red-bg p-4 flex flex-col gap-3">
-      <div className="flex items-start gap-2">
-        <AlertCircle size={16} className="text-red mt-0.5 shrink-0" />
-        <div className="flex-1">
-          <p className="text-sm font-semibold text-red">
-            Activação bloqueada por verificações de segurança
-          </p>
-          <p className="text-xs text-fg-2 mt-1">
-            {errors.length} {errors.length === 1 ? 'erro' : 'erros'}
-            {warnings.length > 0 && ` · ${warnings.length} ${warnings.length === 1 ? 'aviso' : 'avisos'}`}
-            . Corrige a regra ou propõe uma alternativa.
-          </p>
-        </div>
-      </div>
-      <div className="flex flex-col gap-2">
-        {errors.map((v, idx) => (
-          <div
-            key={`err-${idx}`}
-            className="rounded border border-red-bd bg-bg-1 px-3 py-2 flex items-start gap-2"
-          >
-            <XCircle size={14} className="text-red mt-0.5 shrink-0" />
-            <div className="flex-1 min-w-0">
-              <p className="font-mono text-[10px] uppercase tracking-wide text-red mb-0.5">
-                {v.code}
-              </p>
-              <p className="text-xs text-fg-1">{v.detail}</p>
-            </div>
-          </div>
-        ))}
-        {warnings.map((v, idx) => (
-          <div
-            key={`warn-${idx}`}
-            className="rounded border border-yellow-bd bg-bg-1 px-3 py-2 flex items-start gap-2"
-          >
-            <AlertCircle size={14} className="text-yellow mt-0.5 shrink-0" />
-            <div className="flex-1 min-w-0">
-              <p className="font-mono text-[10px] uppercase tracking-wide text-yellow mb-0.5">
-                {v.code}
-              </p>
-              <p className="text-xs text-fg-1">{v.detail}</p>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/** Q.17.F.1 — visual marker for actions whose subsystem isn't wired yet. */
-function StubbedActionsBadge({ rule }: { rule: YamlPolicyRule }) {
-  // Wiring matrix mirrored from src/governance/yaml_policy/dispatchers.py.
-  // Update both when a dispatcher gets wired.
-  const WIRED: Record<string, boolean> = {
-    alert: true, // Q.17.F.4 — wired to CopilotAlert row
-    block: true,
-    modify_fitness: true,
-    reassign_worker: true, // Q.17.F.7 — wired to governance.decision_run
-    propose_maintenance: true, // Q.17.F.6 — wired to governance.decision_run
-    notify: true, // Q.17.F.8 — wired to RealtimeBridge SSE fan-out
-    set_config: true,
-    create_decision: true, // Q.17.F.6 — wired to governance.decision_run
-    pause_writes: true, // Q.17.F.9 — wired to PauseWritesMiddleware
-  };
-  const stubbed = (rule.payload.then ?? [])
-    .map((step) => step.action)
-    .filter((a) => WIRED[a] === false);
-  if (stubbed.length === 0) return null;
-  return (
-    <div className="rounded-md border border-yellow-bd bg-yellow-bg p-3 flex items-start gap-2">
-      <AlertCircle size={14} className="text-yellow mt-0.5 shrink-0" />
-      <div className="flex-1 text-xs text-fg-1">
-        Esta regra usa actions ainda não totalmente ligadas:{' '}
-        <span className="font-mono">{Array.from(new Set(stubbed)).join(', ')}</span>. Os disparos
-        ficam registados mas o efeito final na fábrica chega quando esses subsistemas forem
-        wired (ver wiring matrix em `dispatchers.py`).
-      </div>
-    </div>
-  );
-}
-
-function RuleDetailPanel({
-  rule,
-  onApprove,
-  onReject,
-  onSuspend,
-  onRollback,
-  pending,
-  violations,
-}: {
-  rule: YamlPolicyRule;
-  onApprove: (reason?: string) => void;
-  onReject: (reason: string) => void;
-  onSuspend: () => void;
-  onRollback: (reason: string) => void;
-  pending: boolean;
-  violations: SafetyViolationRow[] | null;
-}) {
-  const [rejectReason, setRejectReason] = useState('');
-  const [rollbackReason, setRollbackReason] = useState('');
-  const [showRollback, setShowRollback] = useState(false);
-
-  const yaml = payloadToYaml(rule.payload);
-
-  return (
-    <DarkCard className="flex flex-col gap-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="text-base font-semibold text-fg-0">{rule.description}</h3>
-          <p className="font-mono text-xs text-fg-2 mt-1">{rule.rule_id}</p>
-        </div>
-        <DarkBadge variant={STATUS_VARIANTS[rule.status]}>{STATUS_LABELS[rule.status]}</DarkBadge>
-      </div>
-
-      {rule.nl_source && (
-        <div className="rounded-md border border-bd-1 bg-bg-2 p-3">
-          <p className="text-xs uppercase tracking-wide text-fg-3 mb-1">Pedido original</p>
-          <p className="text-sm text-fg-1 italic">"{rule.nl_source}"</p>
-        </div>
-      )}
-
-      {violations && violations.length > 0 && <ViolationsBanner violations={violations} />}
-
-      {rule.status === 'proposed' && <StubbedActionsBadge rule={rule} />}
-
-      <div>
-        <p className="text-xs uppercase tracking-wide text-fg-3 mb-2">YAML produzido pelo LLM</p>
-        <pre className="rounded-md border border-bd-1 bg-bg-0 p-3 text-xs overflow-auto max-h-96 font-mono leading-relaxed">
-          <code><YamlHighlight yaml={yaml} /></code>
-        </pre>
-      </div>
-
-      {rule.payload.constraints?.axioms_required && rule.payload.constraints.axioms_required.length > 0 && (
-        <div>
-          <p className="text-xs uppercase tracking-wide text-fg-3 mb-2">Axiomas Spelke preservados</p>
-          <div className="flex flex-wrap gap-2">
-            {rule.payload.constraints.axioms_required.map((ax) => (
-              <DarkBadge key={ax} variant="success">
-                <CheckCircle2 size={12} className="inline mr-1" />
-                {ax}
-              </DarkBadge>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="flex flex-wrap items-center gap-3 text-xs text-fg-3">
-        {rule.proposed_at && (
-          <span className="inline-flex items-center gap-1">
-            <Clock size={12} /> proposta {new Date(rule.proposed_at).toLocaleString('pt-PT')}
-          </span>
-        )}
-        {rule.activated_at && (
-          <span className="inline-flex items-center gap-1">
-            <CheckCircle2 size={12} /> activa desde {new Date(rule.activated_at).toLocaleString('pt-PT')}
-          </span>
-        )}
-        {rule.fire_count > 0 && (
-          <span className="inline-flex items-center gap-1">
-            <Sparkles size={12} /> {rule.fire_count} disparos
-          </span>
-        )}
-      </div>
-
-      {/* Actions per status */}
-      {rule.status === 'proposed' && (
-        <div className="flex flex-col gap-3 border-t border-bd-1 pt-4">
-          <p className="text-sm text-fg-1">
-            Esta regra ainda não está activa. Aprovar fá-la entrar em vigor; rejeitar arquiva-a.
-          </p>
-          <div className="flex flex-wrap gap-3">
-            <DarkButton
-              variant="primary"
-              onClick={() => onApprove()}
-              disabled={pending}
-              icon={<CheckCircle2 size={14} />}
-            >
-              Aprovar e activar
-            </DarkButton>
-            <div className="flex-1 flex gap-2">
-              <input
-                type="text"
-                value={rejectReason}
-                onChange={(e) => setRejectReason(e.target.value)}
-                placeholder="Razão para rejeitar (obrigatório)…"
-                className="flex-1 px-3 py-2 rounded-md border border-bd-1 bg-bg-2 text-fg-0 text-sm placeholder:text-fg-3 focus:outline-none focus:border-accent"
-              />
-              <DarkButton
-                variant="ghost"
-                onClick={() => onReject(rejectReason)}
-                disabled={pending || rejectReason.trim().length < 4}
-                icon={<XCircle size={14} />}
-              >
-                Rejeitar
-              </DarkButton>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {rule.status === 'active' && (
-        <div className="flex flex-wrap gap-3 border-t border-bd-1 pt-4">
-          <DarkButton variant="ghost" onClick={onSuspend} disabled={pending} icon={<Pause size={14} />}>
-            Suspender
-          </DarkButton>
-          {!showRollback ? (
-            <DarkButton variant="ghost" onClick={() => setShowRollback(true)} icon={<RotateCcw size={14} />}>
-              Reverter…
-            </DarkButton>
-          ) : (
-            <div className="flex-1 flex gap-2">
-              <input
-                type="text"
-                value={rollbackReason}
-                onChange={(e) => setRollbackReason(e.target.value)}
-                placeholder="Razão para reverter (obrigatório)…"
-                className="flex-1 px-3 py-2 rounded-md border border-bd-1 bg-bg-2 text-fg-0 text-sm placeholder:text-fg-3 focus:outline-none focus:border-accent"
-              />
-              <DarkButton
-                variant="ghost"
-                onClick={() => onRollback(rollbackReason)}
-                disabled={pending || rollbackReason.trim().length < 4}
-              >
-                Confirmar reversão
-              </DarkButton>
-            </div>
-          )}
-        </div>
-      )}
-    </DarkCard>
-  );
-}
-
-// ─── Page ─────────────────────────────────────────────────────────────────
-
-/** Q.17.F.3 — parse the structured 422 from /approve so we can render
- * each violation in its own row. The api.ts request() helper throws an
- * Error whose message is the JSON-stringified body when status is 4xx;
- * we try to parse it back here. If parsing fails (regular 5xx etc),
- * fall back to the raw message. */
+/** Q.17.F.3 — parse do 422 estruturado vindo do /approve. */
 function parseSafetyViolations(err: Error): SafetyViolationRow[] | null {
   try {
     const parsed = JSON.parse(err.message);
@@ -481,21 +47,21 @@ function parseSafetyViolations(err: Error): SafetyViolationRow[] | null {
       return detail.violations as SafetyViolationRow[];
     }
   } catch {
-    // not JSON — caller renders fallback
+    // não é JSON — o caller renderiza o fallback
   }
   return null;
 }
 
 export default function RegrasPage() {
   const queryClient = useQueryClient();
-  const [nlInput, setNlInput] = useState('');
+  const [tab, setTab] = useState<TabId>('activas');
   const [selectedRuleId, setSelectedRuleId] = useState<string | null>(null);
-  const [proposeError, setProposeError] = useState<string | null>(null);
+  const [wizardOpen, setWizardOpen] = useState(false);
   const [violations, setViolations] = useState<SafetyViolationRow[] | null>(null);
 
   const rulesQuery = useQuery({
     queryKey: ['yamlPolicy', 'rules'],
-    queryFn: () => yamlPolicyApi.list({ limit: 100 }),
+    queryFn: () => yamlPolicyApi.list({ limit: 200 }),
     refetchOnWindowFocus: false,
   });
 
@@ -509,22 +75,8 @@ export default function RegrasPage() {
     queryClient.invalidateQueries({ queryKey: ['yamlPolicy'] });
   };
 
-  const proposeMutation = useMutation({
-    mutationFn: (nlText: string) => yamlPolicyApi.propose(nlText),
-    onSuccess: (data) => {
-      setNlInput('');
-      setProposeError(null);
-      setSelectedRuleId(data.rule.rule_id);
-      invalidate();
-    },
-    onError: (err: Error) => {
-      setProposeError(err.message || 'Falha na proposta');
-    },
-  });
-
   const approveMutation = useMutation({
-    mutationFn: ({ ruleId, reason }: { ruleId: string; reason?: string }) =>
-      yamlPolicyApi.approve(ruleId, reason),
+    mutationFn: (ruleId: string) => yamlPolicyApi.approve(ruleId),
     onSuccess: () => {
       setViolations(null);
       invalidate();
@@ -555,118 +107,160 @@ export default function RegrasPage() {
     suspendMutation.isPending ||
     rollbackMutation.isPending;
 
-  const rules = rulesQuery.data?.rules ?? [];
-  const selectedRule = detailQuery.data?.rule;
+  const rules = useMemo(() => rulesQuery.data?.rules ?? [], [rulesQuery.data]);
+
+  const counts = useMemo(() => {
+    const active = rules.filter((r) => r.status === 'active').length;
+    const proposed = rules.filter((r) => r.status === 'proposed').length;
+    const fires = rules.reduce((acc, r) => acc + r.fire_count, 0);
+    return { active, proposed, fires };
+  }, [rules]);
+
+  const filtered = useMemo(() => {
+    if (tab === 'activas') {
+      return rules.filter((r) => r.status === 'active' || r.status === 'approved');
+    }
+    if (tab === 'propostas') {
+      return rules.filter((r) => r.status === 'proposed');
+    }
+    return rules.filter(
+      (r) =>
+        r.status === 'suspended' || r.status === 'rolled_back' || r.status === 'rejected',
+    );
+  }, [rules, tab]);
+
+  const selectedRule = detailQuery.data?.rule ?? null;
+  const selectedInTab = selectedRule
+    ? filtered.some((r) => r.rule_id === selectedRule.rule_id)
+    : false;
 
   return (
     <DarkPageLayout
-      breadcrumbs={[{ label: 'Sistema' }, { label: 'Regras Q.17 (YAML)' }]}
-      title="Regras de Negócio"
-      subtitle="Escreve em PT, o sistema traduz para policy declarativa. Aprovas, e a regra entra em vigor."
+      breadcrumbs={[{ label: 'Sistema' }, { label: 'Regras' }]}
+      title="Regras"
+      subtitle="Logic-as-data · o LLM traduz PT-PT → DSL fechado · o humano aprova sempre"
       icon={<BookOpen className="h-6 w-6" />}
       helpId="regras"
+      actions={
+        <DarkButton
+          variant="primary"
+          icon={<Plus size={14} />}
+          onClick={() => setWizardOpen(true)}
+        >
+          Nova regra
+        </DarkButton>
+      }
     >
-      {/* Onda 1 Q.17 — Sandbox dry-run banner */}
-      <div
-        className="mb-4 px-3 py-2 rounded flex items-start gap-2"
-        style={{
-          background: 'var(--blue-bg)',
-          border: '1px solid var(--blue-bd)',
-          fontSize: 12,
-          color: 'var(--fg-1)',
-        }}
-      >
-        <Sparkles size={14} style={{ color: 'var(--blue)', flexShrink: 0, marginTop: 2 }} />
-        <div className="flex-1">
-          <strong style={{ color: 'var(--fg-0)' }}>Sandbox dry-run activo:</strong>{' '}
-          Antes de cada regra entrar em vigor, o sistema simula numa cópia
-          isolada da DB para validar Spelke axioms (capacidade ≥0, precedência,
-          molde exclusivo, dual-resource Laminagem 88.5%, skill match, cura
-          16 transições, safety net ≥ baseline). Se algum axioma é violado, a
-          regra é rejeitada com explicação visível no diff modal.
-        </div>
+      {/* KPIs */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+        <KPIBig
+          label="Regras activas"
+          value={counts.active}
+          status="green"
+          context="em vigor na fábrica"
+        />
+        <KPIBig
+          label="Propostas a aprovar"
+          value={counts.proposed}
+          status="blue"
+          accent="blue"
+          context="à espera de revisão humana"
+        />
+        <KPIBig
+          label="Disparos acumulados"
+          value={counts.fires}
+          context="soma de todas as regras"
+        />
+        <KPIBig
+          label="Total de regras"
+          value={rules.length}
+          context="todos os estados"
+        />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Left: NL composer + list */}
-        <div className="flex flex-col gap-4">
-          <DarkCard className="flex flex-col gap-3">
-            <div className="flex items-center gap-2">
-              <Sparkles className="h-4 w-4 text-accent" />
-              <h3 className="text-sm font-semibold text-fg-0">Propor nova regra</h3>
-            </div>
-            <p className="text-xs text-fg-2">
-              Descreve em PT-PT o que queres que o sistema faça. Exemplos:
-              "Quando o molde K1 7 ML 03 atingir 850 usos, propor manutenção." /
-              "Se o Paulo Gomes faltar à 6ªf de manhã, alocar Laminagem ao Carlos."
-            </p>
-            <textarea
-              value={nlInput}
-              onChange={(e) => setNlInput(e.target.value)}
-              placeholder="Escreve aqui a regra…"
-              rows={4}
-              className="w-full rounded-md border border-bd-1 bg-bg-2 text-fg-0 placeholder:text-fg-3 px-3 py-2 text-sm focus:outline-none focus:border-accent resize-none"
-              disabled={proposeMutation.isPending}
-            />
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-xs text-fg-3">
-                A regra é proposta — só entra em vigor depois de seres tu a aprovar.
-              </p>
-              <DarkButton
-                variant="primary"
-                onClick={() => proposeMutation.mutate(nlInput.trim())}
-                disabled={proposeMutation.isPending || nlInput.trim().length < 4}
-                icon={proposeMutation.isPending ? <Loader2 className="animate-spin" size={14} /> : <Send size={14} />}
-              >
-                {proposeMutation.isPending ? 'A traduzir…' : 'Propor'}
-              </DarkButton>
-            </div>
-            {proposeError && (
-              <div className="rounded-md border border-red-bd bg-red-bg p-3 flex items-start gap-2">
-                <AlertCircle size={14} className="text-red mt-0.5 shrink-0" />
-                <p className="text-xs text-red">{proposeError}</p>
-              </div>
-            )}
-          </DarkCard>
+      {/* Tabs */}
+      <div className="mb-4">
+        <Segmented<TabId>
+          value={tab}
+          onChange={setTab}
+          ariaLabel="Filtrar regras por estado"
+          options={[
+            { value: 'activas', label: 'Activas', icon: <Check size={12} /> },
+            { value: 'propostas', label: 'Propostas', icon: <Sparkles size={12} /> },
+            { value: 'historico', label: 'Histórico', icon: <History size={12} /> },
+          ]}
+        />
+      </div>
 
-          <DarkCard className="flex flex-col gap-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-fg-0">Regras existentes</h3>
-              <span className="text-xs text-fg-3">{rules.length} regras</span>
+      {/* Split: lista + detalhe */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.3fr] gap-4">
+        {/* Lista */}
+        <div>
+          <p className="text-[10.5px] uppercase tracking-wide font-semibold text-fg-3 mb-2">
+            {filtered.length} {filtered.length === 1 ? 'regra' : 'regras'}
+          </p>
+          {rulesQuery.isLoading ? (
+            <DarkCard className="text-center py-10">
+              <p className="text-sm text-fg-3">A carregar regras…</p>
+            </DarkCard>
+          ) : rulesQuery.isError ? (
+            <DarkCard className="text-center py-10 flex flex-col items-center gap-3">
+              <BookOpen className="h-8 w-8 text-fg-3" />
+              <p className="text-sm text-fg-2">Falha a carregar as regras.</p>
+              <DarkButton variant="ghost" onClick={() => rulesQuery.refetch()}>
+                Tentar novamente
+              </DarkButton>
+            </DarkCard>
+          ) : filtered.length === 0 ? (
+            <div
+              className="rounded-lg border border-dashed border-bd-2 bg-bg-1 text-center py-10 px-6"
+            >
+              <BookOpen className="h-7 w-7 text-fg-3 mx-auto mb-2" />
+              <p className="text-sm text-fg-2">
+                {tab === 'propostas'
+                  ? 'Sem propostas pendentes. Cria uma nova regra acima.'
+                  : tab === 'activas'
+                    ? 'Sem regras activas. Aprova uma proposta para a pôr em vigor.'
+                    : 'Sem regras suspensas, revertidas ou rejeitadas.'}
+              </p>
             </div>
-            {rulesQuery.isLoading ? (
-              <p className="text-sm text-fg-3 text-center py-6">A carregar…</p>
-            ) : rules.length === 0 ? (
-              <div className="text-center py-6">
-                <BookOpen className="h-8 w-8 text-fg-3 mx-auto mb-2" />
-                <p className="text-sm text-fg-2">Sem regras ainda. Propõe a primeira acima.</p>
-              </div>
-            ) : (
-              <div className="flex flex-col gap-2 max-h-[60vh] overflow-y-auto">
-                {rules.map((r) => (
-                  <RuleRow
-                    key={r.id}
-                    rule={r}
-                    onSelect={() => {
-                      setSelectedRuleId(r.rule_id);
-                      setViolations(null);
-                    }}
-                    selected={selectedRuleId === r.rule_id}
-                  />
-                ))}
-              </div>
-            )}
-          </DarkCard>
+          ) : (
+            <div className="max-h-[70vh] overflow-y-auto pr-1">
+              {filtered.map((r) => (
+                <RuleCard
+                  key={r.id}
+                  rule={r}
+                  active={selectedRuleId === r.rule_id}
+                  onSelect={() => {
+                    setSelectedRuleId(r.rule_id);
+                    setViolations(null);
+                  }}
+                />
+              ))}
+            </div>
+          )}
         </div>
 
-        {/* Right: detail panel */}
+        {/* Detalhe */}
         <div>
-          {selectedRule ? (
+          {selectedRuleId && detailQuery.isLoading ? (
+            <DarkCard className="text-center py-16">
+              <p className="text-sm text-fg-3">A carregar detalhe…</p>
+            </DarkCard>
+          ) : selectedRuleId && detailQuery.isError ? (
+            <DarkCard className="text-center py-16 flex flex-col items-center gap-3">
+              <BookOpen className="h-10 w-10 text-fg-3" />
+              <p className="text-sm text-fg-2">Falha a carregar o detalhe da regra.</p>
+              <DarkButton variant="ghost" onClick={() => detailQuery.refetch()}>
+                Tentar novamente
+              </DarkButton>
+            </DarkCard>
+          ) : selectedRule && selectedInTab ? (
             <RuleDetailPanel
               rule={selectedRule}
-              onApprove={(reason) => {
+              onApprove={() => {
                 setViolations(null);
-                approveMutation.mutate({ ruleId: selectedRule.rule_id, reason });
+                approveMutation.mutate(selectedRule.rule_id);
               }}
               onReject={(reason) =>
                 rejectMutation.mutate({ ruleId: selectedRule.rule_id, reason })
@@ -681,17 +275,28 @@ export default function RegrasPage() {
           ) : (
             <DarkCard className="text-center py-16">
               <BookOpen className="h-12 w-12 text-fg-3 mx-auto mb-3" />
-              <h3 className="text-base font-semibold text-fg-1 mb-1">
-                Selecciona uma regra à esquerda
+              <h3 className="text-base font-medium text-fg-1 mb-1">
+                Selecciona uma regra na lista
               </h3>
               <p className="text-sm text-fg-2">
-                Ou propõe uma nova — vais ver aqui o YAML que o LLM produz e podes
-                aprovar/rejeitar.
+                Vês aqui o YAML que o LLM produziu, os axiomas que preserva e as acções
+                de aprovação.
               </p>
             </DarkCard>
           )}
         </div>
       </div>
+
+      <NovaRegraWizard
+        open={wizardOpen}
+        onClose={() => setWizardOpen(false)}
+        onProposed={(ruleId) => {
+          setTab('propostas');
+          setSelectedRuleId(ruleId);
+          setViolations(null);
+          invalidate();
+        }}
+      />
     </DarkPageLayout>
   );
 }
