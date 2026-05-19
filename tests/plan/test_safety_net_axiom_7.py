@@ -356,13 +356,17 @@ def test_axiom7_q54g_dimension_degradation_always_blocked(base, which):
     if which == "lam_utilization":
         # Drop 20pp below baseline — far past the 5pp tolerance.
         cand["lam_utilization"] = max(0.0, base["lam_utilization"] - 20.0)
-        # Skip the (rare) case where baseline is already near the floor
-        # so the 20pp drop can't actually exceed the 5pp tolerance.
-        if base["lam_utilization"] - cand["lam_utilization"] <= 5.0:
+        # Skip the (rare) case where the baseline is already near the
+        # floor (clamped at 0) so the realised drop can't clear the 5pp
+        # tolerance with comfortable margin. Require >6pp so float noise
+        # at the tolerance boundary can't flip the assertion.
+        if base["lam_utilization"] - cand["lam_utilization"] <= 6.0:
             return
     else:  # idle_ratio
         cand["idle_ratio"] = min(1.0, base["idle_ratio"] + 0.20)
-        if cand["idle_ratio"] - base["idle_ratio"] <= 0.05:
+        # Same boundary guard — require a realised rise >6pp so a
+        # baseline near the 1.0 ceiling can't land exactly on tolerance.
+        if cand["idle_ratio"] - base["idle_ratio"] <= 0.06:
             return
     assert is_worse_than_baseline(cand, base) is True
     violations = _gather_violations(cand, base)
