@@ -155,13 +155,16 @@ async def test_roi_actions_uses_fixed_cost_when_catalog_hint_present():
 
 
 async def test_roi_actions_ranks_by_net_eur():
+    # `winner` has explicit cost (saved) but no lost hours → invested 0 →
+    # all of saved_eur is net. `effort-only` is pure reaction effort →
+    # saved == invested → net 0. Net-€ ranking puts the winner first.
     rework_rows = [
-        ("low-impact", 1, 5.0, 0.0, 0.0),
-        ("high-impact", 50, 0.0, 100.0, 0.0),
+        ("effort-only", 50, 0.0, 100.0, 0.0),
+        ("winner", 1, 800.0, 0.0, 0.0),
     ]
     session = _ScriptedSession([rework_rows, []])
     out = await ROIService(session, TENANT).roi_by_action(since=T0, until=NOW)
-    assert out["actions"][0]["error_code"] == "high-impact"
+    assert out["actions"][0]["error_code"] == "winner"
 
 
 async def test_roi_actions_empty_when_no_rework():
@@ -169,3 +172,77 @@ async def test_roi_actions_empty_when_no_rework():
     out = await ROIService(session, TENANT).roi_by_action(since=T0, until=NOW)
     assert out["actions"] == []
     assert out["total_saved_eur"] == 0.0
+
+
+# ─── Q.54.J — ROI fallback to total reaction effort ───────────────────────
+
+async def test_roi_actions_uses_total_hours_when_nothing_resolved():
+    """No catalog hint and no *resolved* events: the action cost falls back
+    to the cumulative lost-hours of every event of that code, so roi_ratio
+    is computed instead of leaking a null. Q.54.J."""
+    # (error_code, events, cost_sum, hours_sum, resolved_hours)
+    rework_rows = [("BOLHA", 3, 0.0, 6.0, 0.0)]
+    catalog_rows = []  # no hint
+    session = _ScriptedSession([rework_rows, catalog_rows])
+    out = await ROIService(session, TENANT).roi_by_action(since=T0, until=NOW)
+
+    action = out["actions"][0]
+    assert action["action_basis"] == "total_reaction_effort"
+    # invested = total 6h × rate (nothing resolved → use all hours)
+    assert action["invested_eur"] == round(6.0 * LABOUR_RATE_EUR_PER_HOUR, 2)
+    assert action["roi_ratio"] == round(
+        action["saved_eur"] / action["invested_eur"], 2
+    )
+    assert action["roi_ratio"] is not None
+
+
+async def test_roi_ratio_stays_null_when_no_hours_recorded():
+    """When a code has no catalog hint and no hours_lost recorded at all,
+    there is no honest basis to price prevention — roi_ratio stays None."""
+    rework_rows = [("barco-com-lixo", 2, 0.0, 0.0, 0.0)]
+    session = _ScriptedSession([rework_rows, []])
+    out = await ROIService(session, TENANT).roi_by_action(since=T0, until=NOW)
+
+    action = out["actions"][0]
+    assert action["action_basis"] == "total_reaction_effort"
+    assert action["invested_eur"] == 0.0
+    assert action["roi_ratio"] is None
+
+
+# ─── Q.54.J — most_frequent_error_code default for diagnostics ────────────
+
+class _ScalarResult:
+    def __init__(self, value):
+        self._value = value
+
+    def scalars(self):
+        return self
+
+    def first(self):
+        return self._value
+
+
+async def test_most_frequent_error_code_picks_top_code():
+    """The diagnostic endpoints default to the most-frequent defect when no
+    error_code is supplied — the tab never opens broken. Q.54.J."""
+    from src.quality.services.impact_service import most_frequent_error_code
+
+    class _Session:
+        async def execute(self, _stmt, _params=None):
+            return _ScalarResult("INTERIOR_ENRUGADO")
+
+    code = await most_frequent_error_code(_Session(), TENANT)
+    assert code == "INTERIOR_ENRUGADO"
+
+
+async def test_most_frequent_error_code_none_when_no_rework():
+    """No rework at all → None, so the endpoint can return an honest empty
+    payload instead of 422."""
+    from src.quality.services.impact_service import most_frequent_error_code
+
+    class _Session:
+        async def execute(self, _stmt, _params=None):
+            return _ScalarResult(None)
+
+    code = await most_frequent_error_code(_Session(), TENANT)
+    assert code is None

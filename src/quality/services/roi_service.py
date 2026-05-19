@@ -12,13 +12,24 @@ A "quality action" here is a preventive intervention targeting one
     saved_eur     = historical cost of every rework event of that code
                     in the window (cost_estimate_eur, hours_lost × rate)
     invested_eur  = a per-action investment estimate — the cost of the
-                    corrective action itself. We do not invent a number:
-                    when the error catalog has a `preventive_action_hint`
-                    we treat it as a one-off fixed intervention priced at
-                    `DEFAULT_ACTION_COST_EUR`; otherwise the action cost is
-                    the cumulative `hours_lost` of *resolved* events of that
-                    code (the effort already spent reacting), which is the
-                    honest floor for "what fixing it would cost".
+                    corrective action itself. We do not invent a number,
+                    we step down an honest ladder of bases:
+                      1. `fixed_corrective_action` — the error catalog has
+                         a `preventive_action_hint`, so the fix is a known
+                         one-off priced at `DEFAULT_ACTION_COST_EUR`.
+                      2. `reaction_effort` — no catalog hint, but events of
+                         this code were *resolved*: the cumulative
+                         `hours_lost` of those resolved events is the
+                         effort already spent reacting, the honest floor
+                         for "what fixing it would cost".
+                      3. `total_reaction_effort` — no resolved events, but
+                         the rework rows do carry `hours_lost`: the
+                         cumulative lost-hours of *every* event is the
+                         honest proxy (you have already paid that effort
+                         reacting; preventing it costs at most that).
+                    When none of these has a basis (no hint, no recorded
+                    hours at all) `invested_eur` stays 0 and `roi_ratio`
+                    is `None` — the frontend shows an honest empty state.
 
     roi_ratio     = saved_eur / invested_eur   (None when invested is 0)
     net_eur       = saved_eur - invested_eur
@@ -103,14 +114,20 @@ class ROIService:
             saved_eur = round(explicit_cost + hours * LABOUR_RATE_EUR_PER_HOUR, 2)
 
             hint = catalog.get(error_code)
+            resolved_h = float(resolved_hours or 0)
             if hint:
                 invested_eur = DEFAULT_ACTION_COST_EUR
                 action_basis = "fixed_corrective_action"
-            else:
-                invested_eur = round(
-                    float(resolved_hours or 0) * LABOUR_RATE_EUR_PER_HOUR, 2
-                )
+            elif resolved_h > 0:
+                invested_eur = round(resolved_h * LABOUR_RATE_EUR_PER_HOUR, 2)
                 action_basis = "reaction_effort"
+            else:
+                # No catalog hint and nothing resolved yet: fall back to the
+                # cumulative lost-hours of every event of this code. That
+                # effort is already spent reacting — preventing the defect
+                # costs at most that, so it is an honest floor for ROI.
+                invested_eur = round(hours * LABOUR_RATE_EUR_PER_HOUR, 2)
+                action_basis = "total_reaction_effort"
 
             net_eur = round(saved_eur - invested_eur, 2)
             roi_ratio = (

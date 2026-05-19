@@ -27,7 +27,10 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.quality.services.dashboard_service import QualityDashboardService
-from src.quality.services.impact_service import ImpactService
+from src.quality.services.impact_service import (
+    ImpactService,
+    most_frequent_error_code,
+)
 from src.quality.services.rework_service import (
     ReworkNotFoundError,
     ReworkService,
@@ -209,13 +212,30 @@ async def first_pass_yield(
 
 @router.get("/root-cause")
 async def root_cause(
-    error_code: str,
+    error_code: Optional[str] = None,
     since: Optional[datetime] = None,
     until: Optional[datetime] = None,
     top_n_per_dimension: int = 5,
     tenant_id: UUID = Depends(get_tenant_id),
     session: AsyncSession = Depends(get_session),
 ):
+    """QA09 — causa-raiz por dimensão para um `error_code`.
+
+    Quando `error_code` é omitido, usa o defeito mais frequente da janela
+    (`most_frequent_error_code`) — a tab Diagnóstico nunca abre partida.
+    Devolve `error_code: None` + dimensões vazias quando não há retrabalho.
+    """
+    if not error_code:
+        error_code = await most_frequent_error_code(
+            session, tenant_id, since=since, until=until
+        )
+    if not error_code:
+        return {
+            "error_code": None,
+            "dimensions": {},
+            "total_events": 0,
+            "reason": "Sem retrabalho registado na janela.",
+        }
     svc = RootCauseAnalyzer(session, tenant_id)
     return await svc.analyse(
         error_code=error_code, since=since, until=until,
@@ -227,12 +247,31 @@ async def root_cause(
 
 @router.get("/impact")
 async def impact_analysis(
-    error_code: str,
+    error_code: Optional[str] = None,
     since: Optional[datetime] = None,
     until: Optional[datetime] = None,
     tenant_id: UUID = Depends(get_tenant_id),
     session: AsyncSession = Depends(get_session),
 ):
+    """QA03 — impacto cumulativo (€, horas) de um `error_code`.
+
+    Quando `error_code` é omitido, usa o defeito mais frequente da janela.
+    Devolve `error_code: None` + zeros quando não há retrabalho.
+    """
+    if not error_code:
+        error_code = await most_frequent_error_code(
+            session, tenant_id, since=since, until=until
+        )
+    if not error_code:
+        return {
+            "error_code": None,
+            "events": 0,
+            "affected_orders": 0,
+            "cost_estimate_eur": 0.0,
+            "hours_lost": 0.0,
+            "share_pct_of_total_rework": 0.0,
+            "reason": "Sem retrabalho registado na janela.",
+        }
     svc = ImpactService(session, tenant_id)
     return await svc.impact_by_error(
         error_code=error_code, since=since, until=until,
