@@ -30,11 +30,17 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import UUID
 
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.plan.cpo.commits import CommitsService, ScheduleCommit, compute_commit_hash
 from src.plan.cpo.fitness import FitnessConfig, compute_fitness
 from src.plan.cpo.state import normalize_phase_code
+from src.plan.models.order import ProductionOrder
+from src.plan.services.cpo_commit_orders import (
+    _op_order_key,
+    pick_operation_for_order,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,11 +56,19 @@ PAIR_REQUIRED_PHASES: tuple[str, ...] = PAIR_PREFERRED_PHASES
 
 @dataclass
 class PreviewMutation:
-    """The change the operator wants to preview."""
+    """The change the operator wants to preview.
 
-    operation_id: str
+    Q.55.C — a operação-alvo identifica-se por ``operation_id`` (o id da
+    operação dentro do commit) OU por ``order_id`` (o nº de OF / ``hull``
+    do barco). O frontend Fábrica só conhece o barco, por isso manda
+    ``order_id`` e o serviço resolve a operação certa do commit. Pelo
+    menos um dos dois tem de vir preenchido.
+    """
+
+    operation_id: Optional[str] = None
     new_phase_id: Optional[str] = None
     new_worker_ids: Optional[list[str]] = None
+    order_id: Optional[str] = None
 
 
 @dataclass
@@ -121,10 +135,9 @@ class PreviewDeltaService:
     async def preview(self, mutation: PreviewMutation) -> PreviewResult:
         commit, schedule_before = await self._load_base_schedule()
 
-        if not _find_op(schedule_before, mutation.operation_id):
-            raise ValueError(
-                f"operation_id {mutation.operation_id} not in latest commit"
-            )
+        mutation.operation_id = await self._resolve_operation_id(
+            schedule_before, mutation
+        )
 
         schedule_after = copy.deepcopy(schedule_before)
         _apply_mutation(schedule_after, mutation)
@@ -172,10 +185,9 @@ class PreviewDeltaService:
         commit, schedule_before = await self._load_base_schedule()
         if commit is None:
             raise ValueError("no base commit; cannot apply move")
-        if not _find_op(schedule_before, mutation.operation_id):
-            raise ValueError(
-                f"operation_id {mutation.operation_id} not in latest commit"
-            )
+        mutation.operation_id = await self._resolve_operation_id(
+            schedule_before, mutation
+        )
 
         schedule_after = copy.deepcopy(schedule_before)
         _apply_mutation(schedule_after, mutation)
@@ -248,6 +260,87 @@ class PreviewDeltaService:
     # ─────────────────────────────────────────────────────────────────────
     # Helpers
     # ─────────────────────────────────────────────────────────────────────
+
+    async def _resolve_operation_id(
+        self,
+        schedule: dict[str, Any],
+        mutation: PreviewMutation,
+    ) -> str:
+        """Devolve o id da operação a mover dentro do commit mais recente.
+
+        Q.55.C — aceita os dois caminhos:
+
+        * ``operation_id`` directo — validado contra as operações do
+          commit (retro-compatível com a SchedulingPage / Timeline);
+        * ``order_id`` — o nº de OF do barco; filtramos as operações do
+          commit por esse ``order_id`` e escolhemos a relevante com
+          :func:`pick_operation_for_order` (a da fase actual da ordem,
+          senão a que arranca mais cedo).
+
+        Levanta ``ValueError`` com mensagem explícita quando a operação
+        ou a ordem não estão no commit — o operador vê porquê.
+        """
+        if mutation.operation_id:
+            if _find_op(schedule, mutation.operation_id) is None:
+                raise ValueError(
+                    f"operation_id {mutation.operation_id} not in latest commit"
+                )
+            return mutation.operation_id
+
+        if not mutation.order_id:
+            raise ValueError(
+                "preview requer operation_id ou order_id — nenhum foi dado"
+            )
+
+        order_key = str(mutation.order_id).strip()
+        order_ops = [
+            op for op in schedule.get("operations") or []
+            if _op_order_key(op) == order_key
+        ]
+        if not order_ops:
+            raise ValueError(
+                f"ordem {mutation.order_id} não está no plano (commit mais "
+                f"recente) — nada para mover"
+            )
+
+        order = await self._load_order(order_key)
+        chosen = (
+            pick_operation_for_order(order, order_ops)
+            if order is not None
+            else order_ops[0]
+        )
+        op_id = str(
+            (chosen or {}).get("id")
+            or (chosen or {}).get("operation_id")
+            or ""
+        )
+        if not op_id:
+            raise ValueError(
+                f"operação da ordem {mutation.order_id} não tem id no commit"
+            )
+        return op_id
+
+    async def _load_order(self, order_id: str) -> Optional[ProductionOrder]:
+        """Carrega a `ProductionOrder` por `legacy_id` (= nº de OF) ou `id`.
+
+        O frontend manda o `hull` (= `legacy_id`); aceita-se também o id
+        UUID por robustez. Sem match → `None` (o caller degrada para a
+        primeira operação da ordem).
+        """
+        conditions = []
+        if order_id.isdigit():
+            conditions.append(ProductionOrder.legacy_id == int(order_id))
+        try:
+            conditions.append(ProductionOrder.id == UUID(order_id))
+        except (ValueError, AttributeError):
+            pass
+        if not conditions:
+            return None
+        stmt = select(ProductionOrder).where(
+            ProductionOrder.tenant_id == self.tenant_id,
+            or_(*conditions),
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def _load_base_schedule(
         self,

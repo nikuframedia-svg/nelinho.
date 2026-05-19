@@ -2604,25 +2604,37 @@ export interface ApplyMoveResult {
   reason: string;
 }
 
+/**
+ * Identifica a operação a mover: `operation_id` directo (id da operação no
+ * commit) OU `order_id` (= nº de OF / `hull`), que o backend resolve para a
+ * operação certa do barco. Pelo menos um tem de vir preenchido.
+ */
+interface MoveTarget {
+  operation_id?: string;
+  order_id?: string;
+}
+
 export const schedulePreviewApi = {
   /** Sub-second drag-and-drop side-effect preview. Never runs CPO. */
-  previewDelta: (payload: {
-    operation_id: string;
-    new_phase_id?: string;
-    new_worker_ids?: string[];
-  }) =>
+  previewDelta: (
+    payload: MoveTarget & {
+      new_phase_id?: string;
+      new_worker_ids?: string[];
+    },
+  ) =>
     request<PreviewDeltaResult>('/v1/plan/schedule/preview-delta', {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
 
   /** Persist the move as a new ScheduleCommit (child of latest). */
-  applyMove: (payload: {
-    operation_id: string;
-    new_phase_id?: string;
-    new_worker_ids?: string[];
-    reason: string;
-  }) =>
+  applyMove: (
+    payload: MoveTarget & {
+      new_phase_id?: string;
+      new_worker_ids?: string[];
+      reason: string;
+    },
+  ) =>
     request<ApplyMoveResult>('/v1/plan/schedule/apply-move', {
       method: 'POST',
       body: JSON.stringify(payload),

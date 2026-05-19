@@ -285,10 +285,13 @@ export function FabricaPage(): ReactNode {
     ],
     queryFn: () =>
       schedulePreviewApi.previewDelta({
-        operation_id: pendingMove!.boat.id,
+        // `hull` é o nº de OF (= `order_id` no commit do CPO); o backend
+        // resolve a operação certa do barco. Passar `boat.id` (UUID da
+        // ordem) nunca casava com os ids de operação do commit → 400.
+        order_id: pendingMove!.boat.hull ?? undefined,
         new_phase_id: pendingMove!.targetPhase,
       }),
-    enabled: !!pendingMove,
+    enabled: !!pendingMove && !!pendingMove.boat.hull,
     retry: false,
   });
 
@@ -296,7 +299,7 @@ export function FabricaPage(): ReactNode {
   const applyMutation = useMutation({
     mutationFn: (reason: string) =>
       schedulePreviewApi.applyMove({
-        operation_id: pendingMove!.boat.id,
+        order_id: pendingMove!.boat.hull ?? undefined,
         new_phase_id: pendingMove!.targetPhase,
         reason,
       }),
