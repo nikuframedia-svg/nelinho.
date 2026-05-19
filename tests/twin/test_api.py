@@ -66,12 +66,13 @@ def _build_app(service):
 
 def test_baseline_endpoint_returns_available_and_blocked_buckets():
     service = AsyncMock()
-    # _create_baseline_state is sync — must be a regular Mock-like attr
-    service._create_baseline_state = lambda: {
+    # Q.56.B — `_create_baseline_state` é async (faz queries de fallback
+    # às tabelas de governança); o stub tem de ser uma coroutine.
+    service._create_baseline_state = AsyncMock(return_value={
         "throughput_eur_day": {"value": 30000.0, "status": "OK"},
         "oee": {"status": "BLOCKED", "reason": "no machine data"},
         "_metadata": {"data_version": "test"},
-    }
+    })
     client = TestClient(_build_app(service))
     resp = client.get("/v1/twin/baseline")
     assert resp.status_code == 200

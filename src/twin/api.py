@@ -124,7 +124,7 @@ async def get_baseline_state(service: TwinService = Depends(get_twin_service)):
     marked with reason. Data comes from the Factory Data Product semantic
     layer when ingestion has run.
     """
-    baseline = service._create_baseline_state()
+    baseline = await service._create_baseline_state()
 
     available: Dict[str, Any] = {}
     blocked: Dict[str, Any] = {}

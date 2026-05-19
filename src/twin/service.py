@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, and_, or_
+from sqlalchemy import select, and_, or_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import Scenario, ScenarioDelta, ScenarioComparison, ScenarioStatus
@@ -173,7 +173,7 @@ class TwinService:
             Created Scenario
         """
         # Get baseline state
-        baseline_state = self._create_baseline_state()
+        baseline_state = await self._create_baseline_state()
         
         # Clone deltas from base scenario if specified
         cloned_deltas = []
@@ -551,10 +551,73 @@ class TwinService:
     # Helper Methods
     # =========================================================================
     
-    def _create_baseline_state(self) -> Dict[str, Any]:
+    async def _governance_baseline_metrics(self) -> Dict[str, Optional[float]]:
+        """Q.56.B — KPIs do baseline computados de tabelas reais.
+
+        Fallback para quando a camada semântica do Factory Data Product
+        não está disponível (o caso em dev). Cada query é best-effort: uma
+        falha numa fonte deixa esse KPI a ``None``, não derruba o baseline.
+        Mesmo padrão do Q.34 (copiloto redireccionado para as tabelas de
+        governança).
+        """
+        out: Dict[str, Optional[float]] = {
+            "wip": None,
+            "quality_errors": None,
+            "backlog_hours": None,
+        }
+
+        # WIP — ordens IN_PROGRESS ainda no chão de fábrica (fase não terminal).
+        try:
+            from src.plan.models.order import OrderStatus, ProductionOrder
+            from src.plan.services.phase_classification import is_completed_phase
+
+            phases = (await self.db.execute(
+                select(ProductionOrder.current_phase_name).where(
+                    ProductionOrder.tenant_id == self.tenant_id,
+                    ProductionOrder.status == OrderStatus.IN_PROGRESS,
+                )
+            )).scalars().all()
+            out["wip"] = sum(1 for p in phases if not is_completed_phase(p))
+        except Exception as exc:  # pragma: no cover — defensivo
+            logger.debug("twin baseline: contagem de WIP falhou: %s", exc)
+
+        # Erros de qualidade — total de entradas de retrabalho do tenant.
+        try:
+            from src.quality.models.rework import ReworkEntry
+
+            count = (await self.db.execute(
+                select(func.count(ReworkEntry.id)).where(
+                    ReworkEntry.tenant_id == self.tenant_id
+                )
+            )).scalar()
+            out["quality_errors"] = int(count or 0)
+        except Exception as exc:  # pragma: no cover — defensivo
+            logger.debug("twin baseline: contagem de retrabalho falhou: %s", exc)
+
+        # Backlog — `makespan_hours` do commit CPO mais recente (melhor
+        # sinal real de carga planeada).
+        try:
+            from src.plan.cpo.commits import CommitsService
+
+            commit = await CommitsService(self.db, self.tenant_id).get_latest()
+            if commit is not None and commit.kpis:
+                makespan = commit.kpis.get("makespan_hours")
+                if isinstance(makespan, (int, float)) and makespan > 0:
+                    out["backlog_hours"] = float(makespan)
+        except Exception as exc:  # pragma: no cover — defensivo
+            logger.debug("twin baseline: commit CPO mais recente falhou: %s", exc)
+
+        return out
+
+    async def _create_baseline_state(self) -> Dict[str, Any]:
         """
         Create baseline factory state from the Factory Data Product semantic layer.
-        Falls back to None values if the data pipeline has not been run.
+
+        Q.56.B — quando a camada semântica não está disponível, os KPIs de
+        WIP / backlog / erros de qualidade caem para métricas computadas de
+        tabelas reais (``_governance_baseline_metrics``), em vez de ficarem
+        todos ``null``. Os KPIs sem fonte barata (OEE/OTD, gargalos, skills)
+        ficam ``BLOCKED``/``NO_DATA`` — honesto, nunca inventado.
         """
         sq = None
         try:
@@ -597,6 +660,27 @@ class TwinService:
 
         data_source = "semantic_layer" if sq else "unavailable"
 
+        # Q.56.B — fallback de tabelas reais para os 3 KPIs que as
+        # simulações de crise mexem. A camada semântica tem prioridade;
+        # `source` regista, por KPI, de onde veio o valor.
+        gov = await self._governance_baseline_metrics()
+        wip_source = data_source
+        if wip_value is None and gov["wip"] is not None:
+            wip_value = gov["wip"]
+            wip_source = "governance_tables"
+        backlog_source = data_source
+        if backlog_value is None and gov["backlog_hours"] is not None:
+            backlog_value = gov["backlog_hours"]
+            backlog_source = "governance_tables"
+        quality_source = data_source
+        if quality_value is None and gov["quality_errors"] is not None:
+            quality_value = gov["quality_errors"]
+            quality_source = "governance_tables"
+
+        any_governance = "governance_tables" in (
+            wip_source, backlog_source, quality_source
+        )
+
         return {
             "oee": {
                 "value": None,
@@ -619,15 +703,15 @@ class TwinService:
                 "trust_index": TRUST_INDEX.get("FasesOrdemFabrico_structure", 80),
                 "semantic_label": SEMANTIC_LABELS["wip"],
                 "status": "OK" if wip_value is not None else "NO_DATA",
-                "source": data_source,
+                "source": wip_source,
             },
             "backlog_horas_theoretical": {
-                "value": round(backlog_value, 1) if backlog_value else None,
+                "value": round(backlog_value, 1) if backlog_value is not None else None,
                 "unit": "hours",
                 "trust_index": TRUST_INDEX.get("FasesOrdemFabrico_HorasPrevistas", 58),
                 "semantic_label": SEMANTIC_LABELS["bottleneck"],
-                "status": "WARNING" if backlog_value else "NO_DATA",
-                "source": data_source,
+                "status": "WARNING" if backlog_value is not None else "NO_DATA",
+                "source": backlog_source,
             },
             "lead_time_days_observed": {
                 "value": lead_time_value,
@@ -658,12 +742,16 @@ class TwinService:
                 "unit": "errors",
                 "trust_index": TRUST_INDEX.get("OrdemFabricoErros", 67),
                 "semantic_label": SEMANTIC_LABELS["quality"],
-                "status": "WARNING" if quality_value else "NO_DATA",
-                "source": data_source,
+                "status": "WARNING" if quality_value is not None else "NO_DATA",
+                "source": quality_source,
             },
             "_metadata": {
                 "source": "factory_data_product",
-                "data_version": data_source,
+                "data_version": (
+                    "semantic_layer" if sq
+                    else "governance_tables" if any_governance
+                    else "unavailable"
+                ),
                 "generated_at": datetime.now(timezone.utc).isoformat(),
             },
         }
