@@ -67,6 +67,76 @@ class SoftDeletePayload(BaseModel):
     reason: Optional[str] = Field(default=None, max_length=500)
 
 
+class ProfilesBatchPayload(BaseModel):
+    """Q.54.C — batch read of operator profiles.
+
+    The Factory page used to fire 3 endpoints × ~20 operators = ~60 HTTP
+    requests every time a boat was clicked. This collapses it into one.
+    """
+
+    employee_ids: list[UUID] = Field(..., min_length=1, max_length=200)
+
+
+# ---------------------------------------------------------------------------
+# Batch profiles (Q.54.C) — one call for the whole Factory operator panel
+# ---------------------------------------------------------------------------
+
+@router.post("/profiles")
+async def get_profiles_batch(
+    body: ProfilesBatchPayload,
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Aggregated profile (quality-score + skill-matrix + qualification
+    metrics) for several operators in a single response.
+
+    Replaces the Factory page's ~60-request fan-out (20 operators × 3
+    endpoints). Read-only; one `EmployeeExtrasService` reused across the
+    batch so the connection isn't opened/closed per operator. A failure
+    on one operator degrades to an `error` entry instead of failing the
+    whole batch.
+    """
+    svc = EmployeeExtrasService(session, tenant_id)
+
+    # Deduplicate while keeping a stable order.
+    seen: set[UUID] = set()
+    unique_ids: list[UUID] = []
+    for eid in body.employee_ids:
+        if eid not in seen:
+            seen.add(eid)
+            unique_ids.append(eid)
+
+    profiles: list[dict] = []
+    for employee_id in unique_ids:
+        try:
+            quality = await svc.quality_score(employee_id)
+            skills = await svc.skill_matrix(employee_id)
+            metrics = await svc.qualification_metrics(employee_id)
+            profiles.append({
+                "employee_id": str(employee_id),
+                "quality_score": quality.to_dict(),
+                "skill_matrix": {
+                    "phases": [r.to_dict() for r in skills],
+                    "total": len(skills),
+                },
+                "qualification_metrics": metrics.to_dict(),
+            })
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning(
+                "profiles batch: employee %s failed: %r", employee_id, exc,
+            )
+            profiles.append({
+                "employee_id": str(employee_id),
+                "error": type(exc).__name__,
+            })
+
+    return {
+        "profiles": profiles,
+        "requested": len(body.employee_ids),
+        "returned": len(profiles),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Quality score (read + override)
 # ---------------------------------------------------------------------------

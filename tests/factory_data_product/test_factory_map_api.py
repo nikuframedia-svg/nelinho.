@@ -33,7 +33,11 @@ def _stub_publish(monkeypatch):
 @pytest.fixture(autouse=True)
 def _clear_cache():
     from src.core.services.tenant_config_service import _reset_cache_for_tests
+    from src.factory_data_product.services.factory_map_service import (
+        _reset_snapshot_cache_for_tests,
+    )
     _reset_cache_for_tests()
+    _reset_snapshot_cache_for_tests()
 
 
 @pytest.fixture(autouse=True)

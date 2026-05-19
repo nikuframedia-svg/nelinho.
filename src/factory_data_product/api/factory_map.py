@@ -44,11 +44,17 @@ def get_tenant_id(x_tenant_id: UUID = Header(..., alias="X-Tenant-Id")) -> UUID:
 async def _build_service(
     session: AsyncSession,
     tenant_id: UUID,
+    *,
+    parallel: bool = False,
 ) -> FactoryMapService:
     """Construct the aggregator with a lazy semantic-service lookup.
 
     Falls back to `None` for the semantic service if the in-memory engine
     hasn't been warmed up yet — the service methods already handle that.
+
+    Q.54.C — `parallel=True` (used by `/snapshot`) injects the global
+    `async_session_factory` so the snapshot fans its independent DB reads
+    out concurrently, each on its own session.
     """
     semantic = None
     try:
@@ -58,7 +64,18 @@ async def _build_service(
         semantic = get_semantic_service(get_engine())
     except Exception as exc:  # pragma: no cover — defensive
         logger.warning("semantic service unavailable: %s", exc)
-    return FactoryMapService(session, tenant_id, semantic_service=semantic)
+
+    session_factory = None
+    if parallel:
+        from src.shared.database import async_session_factory
+
+        session_factory = async_session_factory
+
+    return FactoryMapService(
+        session, tenant_id,
+        semantic_service=semantic,
+        session_factory=session_factory,
+    )
 
 
 async def _cache_ttl(session: AsyncSession, tenant_id: UUID) -> int:
@@ -111,7 +128,7 @@ async def get_snapshot(
         redis = None
         key = None
 
-    svc = await _build_service(session, tenant_id)
+    svc = await _build_service(session, tenant_id, parallel=True)
     payload = await svc.snapshot()
 
     if redis is not None and key is not None:

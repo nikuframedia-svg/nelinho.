@@ -20,7 +20,7 @@ from src.factory_data_product.services.factory_map_service import (
     FactoryMapService,
     RiskFlag,
 )
-from tests.conftest import TEST_TENANT_ID
+from tests.conftest import FakeSession, TEST_TENANT_ID
 
 
 @pytest.fixture(autouse=True)
@@ -36,7 +36,11 @@ def _stub_publish(monkeypatch):
 @pytest.fixture(autouse=True)
 def _clear_cache():
     from src.core.services.tenant_config_service import _reset_cache_for_tests
+    from src.factory_data_product.services.factory_map_service import (
+        _reset_snapshot_cache_for_tests,
+    )
     _reset_cache_for_tests()
+    _reset_snapshot_cache_for_tests()
 
 
 # ---------------------------------------------------------------------------
@@ -127,15 +131,20 @@ async def test_orders_summary_empty_tenant(fake_session):
 
 @pytest.mark.asyncio
 async def test_kpis_throughput_eur_day_reports_real_or_unavailable(fake_session):
-    # Call order inside kpis():
-    #   1. _orders_summary          (scalars → status/count rows)
-    #   2. throughput.load_targets  (scalars → TenantConfig get_category)
-    #   3. throughput.throughput_today (scalar → sum)
-    #   4. _completed_count_today   (scalar → count)
+    # Call order inside kpis() (semantic quality present → DB defect-rate
+    # fallback is skipped):
+    #   1. _orders_summary               (scalars → status/count rows)
+    #   2. _bottlenecks_from_db backlog  (scalars → empty)
+    #   3. _bottlenecks_from_db capacity (scalars → empty)
+    #   4+ throughput service           (several executes)
+    #   last. _completed_count_today    (scalar → count)
     _queue(fake_session, scalars=[("IN_PROGRESS", 3), ("COMPLETED", 7)])
-    _queue(fake_session, scalars=[])                            # load_targets empty → defaults
-    _queue(fake_session, scalar=0)                              # throughput_today = 0
+    _queue(fake_session, scalars=[])                            # bottlenecks backlog
+    _queue(fake_session, scalars=[])                            # bottlenecks capacity
+    _queue(fake_session, scalar=0)                              # throughput today
     _queue(fake_session, scalar=2)                              # completed_today
+    for _ in range(8):
+        _queue(fake_session, scalars=[])                        # spare padding
 
     svc = FactoryMapService(
         fake_session, TEST_TENANT_ID,
@@ -342,3 +351,115 @@ async def test_snapshot_aggregates_all_sources(fake_session):
     throughput = snap["kpis"]["throughput_eur_day"]
     assert "today" in throughput or throughput.get("status") == "unavailable"
     assert "composite" in snap["trust"]
+    # Q.54.E — kpis payload must not leak the private `_bottlenecks_db` key.
+    assert not any(k.startswith("_") for k in snap["kpis"])
+
+
+# ---------------------------------------------------------------------------
+# Q.54.C — snapshot in-memory cache
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_snapshot_second_call_served_from_cache(fake_session):
+    """First snapshot computes; the second one (same tenant) is cached.
+
+    The cached call performs zero DB work — proven by giving the second
+    call a FakeSession with an empty queue and still getting the same
+    payload back, flagged `cached=True`.
+    """
+    _queue(fake_session, scalars=[("IN_PROGRESS", 3), ("COMPLETED", 10)])
+    _queue(fake_session, scalars=[(False, 8), (True, 2)])
+    _queue(fake_session, scalars=[])
+    _queue(fake_session, scalars=[])
+    _queue(fake_session, scalars=[("IN_PROGRESS", 3), ("COMPLETED", 10)])
+    _queue(fake_session, scalar=1)
+    for _ in range(8):
+        _queue(fake_session, scalars=[])
+
+    svc = FactoryMapService(
+        fake_session, TEST_TENANT_ID, semantic_service=StubSemantic(),
+    )
+    first = await svc.snapshot()
+    assert first.get("cached") is not True
+    assert first["boats"]["total"] == 13
+
+    # Second call — fresh empty session, would yield total=0 if it hit
+    # the DB. Cache must serve the first payload instead.
+    svc2 = FactoryMapService(FakeSession(), TEST_TENANT_ID)
+    second = await svc2.snapshot()
+    assert second.get("cached") is True
+    assert second["boats"]["total"] == 13
+
+
+@pytest.mark.asyncio
+async def test_snapshot_use_cache_false_bypasses_cache(fake_session):
+    """`use_cache=False` always recomputes — needed for forced refresh."""
+    _queue(fake_session, scalars=[("IN_PROGRESS", 1)])
+    for _ in range(14):
+        _queue(fake_session, scalars=[])
+    svc = FactoryMapService(fake_session, TEST_TENANT_ID)
+    snap = await svc.snapshot(use_cache=False)
+    assert snap.get("cached") is not True
+
+
+# ---------------------------------------------------------------------------
+# Q.54.E — defect_rate + bottlenecks computed directly from the DB
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_defect_rate_from_db_when_semantic_absent(fake_session):
+    """No semantic service → defect_rate is rework_count / orders_total."""
+    # kpis() call order without semantic:
+    #   1. _orders_summary               (scalars)
+    #   2. _defect_rate_from_db count    (scalar)
+    #   3. _bottlenecks_from_db backlog  (scalars)
+    #   4. _bottlenecks_from_db capacity (scalars)
+    #   5+ throughput
+    #   last. _completed_count_today     (scalar)
+    _queue(fake_session, scalars=[("IN_PROGRESS", 6), ("COMPLETED", 14)])
+    _queue(fake_session, scalar=5)        # rework count = 5
+    _queue(fake_session, scalars=[])      # bottlenecks backlog → empty
+    _queue(fake_session, scalars=[])      # bottlenecks capacity
+    _queue(fake_session, scalars=[])      # throughput load_targets
+    _queue(fake_session, scalar=0)        # throughput today
+    _queue(fake_session, scalar=2)        # completed_today
+    for _ in range(8):
+        _queue(fake_session, scalars=[])  # spare padding
+
+    svc = FactoryMapService(fake_session, TEST_TENANT_ID)  # no semantic
+    k = await svc.kpis()
+    # 5 rework / 20 orders = 0.25
+    assert k["defect_rate"] == 0.25
+    assert k["_bottlenecks_db"] == []
+
+
+@pytest.mark.asyncio
+async def test_bottlenecks_from_db_scores_phases(fake_session):
+    """Bottleneck score = backlog hours / capacity hours, sorted desc."""
+    svc = FactoryMapService(fake_session, TEST_TENANT_ID)
+    # backlog rows: (fase_id, fase_nome, n_open, horas_finais, horas_prev)
+    fake_session.queue_scalars([
+        ("F1", "Laminagem", 10, Decimal("400"), Decimal("0")),
+        ("F2", "Pintura", 4, Decimal("40"), Decimal("0")),
+    ])
+    # capacity rows: (fase_id, capacidade_horas)
+    fake_session.queue_scalars([
+        ("F1", Decimal("40")),
+        ("F2", Decimal("80")),
+    ])
+    result = await svc._bottlenecks_from_db()
+    assert len(result) == 2
+    # F1: 400/40 = 10.0 > F2: 40/80 = 0.5
+    assert result[0]["fase_id"] == "F1"
+    assert result[0]["score"] == 10.0
+    assert result[0]["is_critical"] is True
+    assert result[1]["fase_id"] == "F2"
+    assert result[1]["is_critical"] is False
+
+
+@pytest.mark.asyncio
+async def test_bottlenecks_from_db_empty_when_no_phase_data(fake_session):
+    svc = FactoryMapService(fake_session, TEST_TENANT_ID)
+    fake_session.queue_scalars([])  # no backlog rows
+    result = await svc._bottlenecks_from_db()
+    assert result == []

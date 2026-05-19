@@ -45,7 +45,9 @@ Design constraints
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
@@ -55,6 +57,44 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# In-memory snapshot cache (Q.54.C)
+# ---------------------------------------------------------------------------
+# The snapshot is the heaviest read in the Factory Map (TrustIndexV2 +
+# 5 DB aggregates). The Factory page blocks its first paint on this call,
+# so a slow snapshot freezes the screen. We keep a short per-tenant
+# in-process cache: the first request computes, the next ones (within the
+# TTL) serve instantly. This is intentionally process-local — it sits
+# *in front of* the Redis cache in the API layer and survives a Redis
+# outage. Stale data for ~30-60s on a factory dashboard is acceptable.
+
+_SNAPSHOT_CACHE_TTL_SECONDS = 45.0
+_snapshot_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+def _snapshot_cache_get(tenant_id: UUID) -> Optional[dict[str, Any]]:
+    entry = _snapshot_cache.get(str(tenant_id))
+    if entry is None:
+        return None
+    expires_at, payload = entry
+    if time.monotonic() >= expires_at:
+        _snapshot_cache.pop(str(tenant_id), None)
+        return None
+    return payload
+
+
+def _snapshot_cache_put(tenant_id: UUID, payload: dict[str, Any]) -> None:
+    _snapshot_cache[str(tenant_id)] = (
+        time.monotonic() + _SNAPSHOT_CACHE_TTL_SECONDS,
+        payload,
+    )
+
+
+def _reset_snapshot_cache_for_tests() -> None:
+    """Clear the in-memory snapshot cache — used by the test suite."""
+    _snapshot_cache.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -104,59 +144,174 @@ class FactoryMapService:
         tenant_id: UUID,
         *,
         semantic_service: Any = None,
+        session_factory: Any = None,
     ) -> None:
         self.session = session
         self.tenant_id = tenant_id
         # Dependency-injected so tests can pass a stub; real callers use the
         # in-memory semantic service via `get_semantic_service()`.
         self._semantic = semantic_service
+        # Q.54.C — when provided, `snapshot()` fans its independent DB reads
+        # out concurrently, each on its OWN session (a single AsyncSession
+        # is not safe for concurrent use). Tests pass a FakeSession and no
+        # factory → the snapshot stays serial on the shared session, which
+        # keeps the deterministic-queue test fixtures valid.
+        self._session_factory = session_factory
 
     # ─── N.1 Snapshot ─────────────────────────────────────────────────────
 
-    async def snapshot(self, *, as_of: Optional[datetime] = None) -> dict[str, Any]:
+    async def snapshot(
+        self,
+        *,
+        as_of: Optional[datetime] = None,
+        use_cache: bool = True,
+    ) -> dict[str, Any]:
         """Global factory snapshot. All fields are best-effort.
 
         Nothing here runs the CPO engine; the heaviest operation is the
-        semantic queries (in-memory) + two DB reads for molds and orders.
+        Trust Index recompute + 5 DB aggregates.
+
+        Q.54.C — performance. Two changes killed the ~2s freeze:
+        1. A short per-tenant in-memory cache (`use_cache`): the second
+           call inside the TTL window returns instantly.
+        2. When a `session_factory` was injected, the five independent
+           operations run concurrently via `asyncio.gather`, each on its
+           own session. Without a factory (unit tests with a FakeSession)
+           they stay serial on the shared session.
         """
         as_of = as_of or datetime.now(timezone.utc)
+
+        if use_cache:
+            cached = _snapshot_cache_get(self.tenant_id)
+            if cached is not None:
+                # Refresh only the timestamp so the UI shows "now" but the
+                # heavy payload is reused.
+                return {**cached, "timestamp": as_of.isoformat(), "cached": True}
+
         availability = Availability()
 
-        # Semantic layer (cheap — in-memory)
+        # Semantic layer (cheap — in-memory, no DB session involved)
         wip = self._safe_semantic("get_wip")
         bottlenecks = self._safe_semantic("get_bottlenecks")
         skills_risk = self._safe_semantic("get_skills_risk")
         availability.semantic = wip is not None or bottlenecks is not None
 
-        # Orders (count by status)
-        orders_summary = await self._orders_summary()
+        # The five operations below each hit the DB and are independent of
+        # one another. When we have a session factory, fan them out.
+        (
+            orders_summary,
+            molds_summary,
+            trust_payload,
+            load_preview,
+            kpis_payload,
+        ) = await self._gather_snapshot_parts()
+
         availability.orders = orders_summary["total"] > 0
-
-        # Mold status
-        molds_summary = await self._molds_summary()
         availability.molds = molds_summary["total"] > 0
-
-        # Trust Index (lazy import — avoids circular refs at module load)
-        trust_payload = await self._trust_payload()
-
-        # Line-load preview (next 7d)
-        load_preview = await self.line_load(horizon_days=7)
         availability.schedule = load_preview["has_data"]
 
-        return {
+        # Bottlenecks: prefer the semantic payload, but fall back to a
+        # direct DB computation so the panel is never empty when there's
+        # data (Q.54.E).
+        bottleneck_list = (bottlenecks or {}).get("bottlenecks", [])
+        if not bottleneck_list:
+            bottleneck_list = kpis_payload.get("_bottlenecks_db", [])
+
+        payload = {
             "timestamp": as_of.isoformat(),
             "availability": availability.as_dict(),
             "trust": trust_payload,
             "boats": orders_summary,
             "phases": {
-                "bottlenecks": (bottlenecks or {}).get("bottlenecks", []),
+                "bottlenecks": bottleneck_list,
                 "skills_risk": (skills_risk or {}).get("at_risk_phases", []),
                 "wip": (wip or {}).get("open_phases_total"),
             },
             "molds": molds_summary,
             "line_load_preview": load_preview["points"][:14],  # first two weeks
-            "kpis": await self.kpis(),
+            "kpis": {k: v for k, v in kpis_payload.items() if not k.startswith("_")},
         }
+
+        if use_cache:
+            _snapshot_cache_put(self.tenant_id, payload)
+        return payload
+
+    async def _gather_snapshot_parts(self) -> tuple[
+        dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any],
+        dict[str, Any],
+    ]:
+        """Compute the five independent snapshot parts.
+
+        With a `session_factory` each part runs concurrently on its own
+        `AsyncSession` (SQLAlchemy sessions are NOT concurrency-safe, so
+        sharing one across `gather` tasks would corrupt state). Without a
+        factory we run them serially on the shared session.
+        """
+        async def _serial() -> tuple[Any, Any, Any, Any, Any]:
+            return (
+                await self._orders_summary(),
+                await self._molds_summary(),
+                await self._trust_payload(),
+                await self.line_load(horizon_days=7),
+                await self.kpis(),
+            )
+
+        # Only fan out when we have a factory AND a real DB session. Unit
+        # tests pass a FakeSession (not an AsyncSession) — those stay
+        # serial on the shared session so the deterministic-queue
+        # fixtures keep working.
+        if self._session_factory is None or not isinstance(
+            self.session, AsyncSession
+        ):
+            return await _serial()
+
+        async def _run(method_name: str, **kwargs: Any) -> Any:
+            async with self._session_factory() as sub_session:
+                sub = FactoryMapService(
+                    sub_session, self.tenant_id,
+                    semantic_service=self._semantic,
+                )
+                return await getattr(sub, method_name)(**kwargs)
+
+        results = await asyncio.gather(
+            _run("_orders_summary"),
+            _run("_molds_summary"),
+            _run("_trust_payload"),
+            _run("line_load", horizon_days=7),
+            _run("kpis"),
+            return_exceptions=True,
+        )
+
+        # If every part blew up the session factory itself is unusable
+        # (e.g. a test that injected a real factory but no real DB) — fall
+        # back to the shared session rather than serving an all-empty
+        # snapshot.
+        if all(isinstance(r, Exception) for r in results):
+            logger.warning(
+                "snapshot parallel path failed wholesale; falling back to serial",
+            )
+            return await _serial()
+
+        # Defensive: a single failing part degrades to its empty shape
+        # rather than 500-ing the whole snapshot.
+        defaults = (
+            {"total": 0, "in_progress": 0, "completed": 0, "cancelled": 0},
+            {"total": 0, "active": 0, "in_maintenance": 0},
+            {"composite": None, "error": "unavailable"},
+            {"horizon_days": 7, "has_data": False, "points": []},
+            {},
+        )
+        out: list[Any] = []
+        for idx, res in enumerate(results):
+            if isinstance(res, Exception):
+                logger.warning(
+                    "snapshot part %d failed for tenant=%s: %r",
+                    idx, self.tenant_id, res,
+                )
+                out.append(defaults[idx])
+            else:
+                out.append(res)
+        return tuple(out)  # type: ignore[return-value]
 
     # ─── N.2 Per-boat view ────────────────────────────────────────────────
 
@@ -460,15 +615,31 @@ class FactoryMapService:
 
     async def kpis(self) -> dict[str, Any]:
         """Strategic KPIs. Throughput €/dia requires Sprint Q.0 (ProductPricing)
-        which hasn't shipped; returns `"unavailable"` instead of guessing."""
+        which hasn't shipped; returns `"unavailable"` instead of guessing.
+
+        Q.54.E — `defect_rate` and `bottlenecks` no longer depend on the
+        in-memory semantic service (which is often un-warmed → KPIs came
+        back `null`/`[]`). They are now computed directly from the DB:
+        rework events vs orders for the defect rate, phase backlog vs
+        capacity for the bottlenecks. The semantic service is still
+        consulted first when it has an answer.
+        """
         orders_summary = await self._orders_summary()
 
-        # Simple defect rate proxy from quality semantic query (cheap).
-        quality = self._safe_semantic("get_quality")
+        # Defect rate — prefer the semantic query, fall back to a direct
+        # DB ratio of rework events over orders in a recent window.
         defect_rate = None
+        quality = self._safe_semantic("get_quality")
         if quality and orders_summary["total"] > 0:
             total_errors = int(quality.get("total_errors") or 0)
             defect_rate = round(total_errors / orders_summary["total"], 3)
+        if defect_rate is None:
+            defect_rate = await self._defect_rate_from_db(orders_summary["total"])
+
+        # Bottlenecks — DB fallback so `phases.bottlenecks` is never empty
+        # when there is curated phase data. Carried under a private key the
+        # snapshot reads and strips.
+        bottlenecks_db = await self._bottlenecks_from_db()
 
         # Sprint Q.5 — real throughput €/dia from ThroughputService. Falls back
         # to `unavailable` when the service / table isn't wired on this tenant.
@@ -480,7 +651,120 @@ class FactoryMapService:
             "completed_today": await self._completed_count_today(),
             "defect_rate": defect_rate,
             "throughput_eur_day": throughput_eur_day,
+            "_bottlenecks_db": bottlenecks_db,
         }
+
+    async def _defect_rate_from_db(
+        self, orders_total: int, *, window_days: int = 90,
+    ) -> Optional[float]:
+        """Rework events ÷ orders over a recent window.
+
+        Mirrors how `QualityDashboardService` counts events: rows in
+        `quality.rework_entry` with `detected_at` inside the window. The
+        denominator is the total orders for the tenant — a rework rate
+        per order, which is the number the Factory panel shows.
+        """
+        if orders_total <= 0:
+            return None
+        try:
+            from src.quality.models.rework import ReworkEntry
+
+            since = datetime.now(timezone.utc) - timedelta(days=window_days)
+            stmt = select(func.count(ReworkEntry.id)).where(
+                and_(
+                    ReworkEntry.tenant_id == self.tenant_id,
+                    ReworkEntry.detected_at >= since,
+                )
+            )
+            rework_count = int(
+                (await self.session.execute(stmt)).scalar_one_or_none() or 0
+            )
+            return round(rework_count / orders_total, 3)
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning(
+                "defect_rate DB fallback failed for tenant=%s: %r",
+                self.tenant_id, exc,
+            )
+            return None
+
+    async def _bottlenecks_from_db(
+        self, *, top_n: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Per-phase bottleneck score from curated backlog vs capacity.
+
+        For each phase: open-phase backlog hours (`CuratedOrderPhase`
+        rows whose `estado` is not a closed state) divided by the phase
+        capacity (`PhaseCapacity.capacidade_horas`, falling back to an
+        8h/day assumption). The score is the theoretical backlog in days;
+        phases with the highest score are the gargalos. Returns `[]` when
+        there's no curated phase data — an honest empty state.
+        """
+        try:
+            from src.factory_data_product.models.curated import (
+                CuratedOrderPhase,
+                CuratedPhaseCapacity,
+            )
+
+            # Open-phase backlog hours per phase. `estado` for an open
+            # phase is anything other than the closed markers; we count
+            # rows whose data_fim is NULL (phase not finished) as the
+            # backlog, which is robust to estado-string drift.
+            backlog_stmt = (
+                select(
+                    CuratedOrderPhase.fase_id,
+                    func.max(CuratedOrderPhase.fase_nome),
+                    func.count(CuratedOrderPhase.id),
+                    func.coalesce(
+                        func.sum(CuratedOrderPhase.horas_finais), 0,
+                    ),
+                    func.coalesce(
+                        func.sum(CuratedOrderPhase.horas_previstas), 0,
+                    ),
+                )
+                .where(CuratedOrderPhase.data_fim.is_(None))
+                .group_by(CuratedOrderPhase.fase_id)
+            )
+            backlog_rows = (await self.session.execute(backlog_stmt)).all()
+            if not backlog_rows:
+                return []
+
+            # Capacity hours per phase (latest period available).
+            cap_stmt = select(
+                CuratedPhaseCapacity.fase_id,
+                func.max(CuratedPhaseCapacity.capacidade_horas),
+            ).group_by(CuratedPhaseCapacity.fase_id)
+            cap_rows = (await self.session.execute(cap_stmt)).all()
+            capacity_by_phase = {
+                r[0]: float(r[1]) for r in cap_rows if r[1] is not None
+            }
+
+            items: list[dict[str, Any]] = []
+            for fase_id, fase_nome, n_open, horas_finais, horas_prev in backlog_rows:
+                backlog_h = float(horas_finais or 0) or float(horas_prev or 0)
+                # When we have no hours at all, use an 8h/phase proxy so
+                # the count of open phases still produces a signal.
+                if backlog_h <= 0:
+                    backlog_h = float(n_open or 0) * 8.0
+                capacity_h = capacity_by_phase.get(fase_id) or 8.0
+                score_days = round(backlog_h / capacity_h, 2) if capacity_h else None
+                items.append({
+                    "fase_id": str(fase_id) if fase_id else None,
+                    "fase_nome": fase_nome,
+                    "open_phases": int(n_open or 0),
+                    "backlog_horas": round(backlog_h, 1),
+                    "capacidade_horas": round(capacity_h, 1),
+                    "score": score_days,
+                    "is_critical": score_days is not None and score_days > 5,
+                })
+
+            items.sort(key=lambda x: (x["score"] or 0), reverse=True)
+            return items[:top_n]
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning(
+                "bottlenecks DB fallback failed for tenant=%s: %r",
+                self.tenant_id, exc,
+            )
+            return []
 
     async def _throughput_eur_day(self) -> dict[str, Any]:
         try:
