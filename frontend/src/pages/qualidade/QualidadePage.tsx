@@ -7,15 +7,20 @@
  *
  * ZERO MOCKS — cada tab liga a endpoints REAIS:
  *   /v1/quality/{dashboard,first-pass-yield,by-supplier,by-lot,
- *               workers/ranking,rework,root-cause,impact}
- *   /v1/profit/oee?group_by=phase · /v1/plan/molds/{*}
- * Endpoints sem fonte (defect-zones, plan/adherence, curing-validation,
- * risco preditivo por barco, ROI de qualidade) degradam com empty state
- * honesto via useHonestEmptyState — nunca placeholder.
+ *               workers/ranking,rework,root-cause,impact,
+ *               defect-risk,defect-zones,roi-actions}
+ *   /v1/profit/oee?group_by=phase · /v1/plan/molds/{*} · /v1/plan/adherence
+ *
+ * Q.53.H — as tabs Predições, Mapa do casco, Aderência e ROI passaram de
+ * empty state honesto a dados reais: Q.53.A serviu defect-risk (ML
+ * QualityRiskModel), defect-zones e roi-actions; Q.44.B serviu
+ * /v1/plan/adherence. Quando um endpoint degrada (modelo sem treino, ERP
+ * desligado, sem commit) a tab mostra o empty state honesto da resposta.
  *
  * Átomos da Onda 0 (KPIBig, OEERing, RiskBadge) reutilizados; primitivas
  * locais (Card, SectionHeader, MiniBar, HullHeatmap, Banner) em
- * components/qualidade/QualidadeBits.tsx.
+ * components/qualidade/QualidadeBits.tsx; fetchers Q.53.H em
+ * components/qualidade/qualidadeApi.ts.
  */
 
 import { useMemo, useState } from 'react';
@@ -44,14 +49,24 @@ import {
   KPIBig,
   OEERing,
   EmptyState,
+  RiskBadge,
 } from '../../components/dark';
 import {
   Card,
   SectionHeader,
   MiniBar,
   Banner,
+  HullHeatmap,
+  type HullZone,
 } from '../../components/qualidade/QualidadeBits';
-import { useHonestEmptyState } from '../../hooks/useHonestEmptyState';
+import {
+  fetchDefectRisk,
+  fetchDefectZones,
+  fetchRoiActions,
+  fetchAdherence,
+  type DefectZone,
+  type HullZoneId,
+} from '../../components/qualidade/qualidadeApi';
 import {
   apiFetch,
   moldsApi,
@@ -548,40 +563,326 @@ function ResumoTab() {
 // ─── PredicoesTab ────────────────────────────────────────────────────────
 
 function PredicoesTab() {
-  // O risco preditivo de defeito por barco precisa de um endpoint de
-  // orquestração ML que ainda não existe (gap Q.53). Empty state honesto.
+  // Q.53.H — GET /v1/quality/defect-risk: scoring do QualityRiskModel
+  // sobre cada barco em produção. Degrada com model_available=false.
+  const riskQuery = useQuery({
+    queryKey: ['qualidade', 'defect-risk'],
+    queryFn: () => fetchDefectRisk(50),
+    staleTime: 60_000,
+    retry: 0,
+  });
+
+  if (riskQuery.isLoading) {
+    return (
+      <Card padding={20}>
+        <SectionHeader
+          icon={<Brain size={14} />}
+          title="Risco preditivo de defeito por barco"
+          subtitle="QualityRiskModel · scoring por barco em produção"
+        />
+        <LoadingLine />
+      </Card>
+    );
+  }
+
+  if (riskQuery.isError) {
+    return (
+      <Card padding={20}>
+        <SectionHeader
+          icon={<Brain size={14} />}
+          title="Risco preditivo de defeito por barco"
+          subtitle="QualityRiskModel · scoring por barco em produção"
+        />
+        <EmptyState
+          title="Predições indisponíveis"
+          hint="O endpoint /v1/quality/defect-risk não respondeu. Tenta atualizar dentro de momentos."
+        />
+      </Card>
+    );
+  }
+
+  const data = riskQuery.data;
+  const orders = data?.orders ?? [];
+
+  // Modelo sem treino possível (histórico insuficiente) — empty honesto.
+  if (data && data.model_available === false) {
+    return (
+      <Card padding={20}>
+        <SectionHeader
+          icon={<Brain size={14} />}
+          title="Risco preditivo de defeito por barco"
+          subtitle="QualityRiskModel · scoring por barco em produção"
+        />
+        <EmptyState
+          title="Modelo de risco ainda não disponível"
+          hint={
+            data.reason ??
+            'Não há histórico de qualidade suficiente para treinar o QualityRiskModel.'
+          }
+        />
+      </Card>
+    );
+  }
+
   return (
-    <Card padding={20}>
-      <SectionHeader
-        icon={<Brain size={14} />}
-        title="Risco preditivo de defeito por barco"
-        subtitle="QualityRiskModel · scoring por barco em produção"
-      />
-      <EmptyState
-        title="Predições por barco ainda não disponíveis"
-        hint="O scoring de risco preditivo por barco precisa de um endpoint de orquestração do QualityRiskModel que ainda não está exposto. Até lá, o risco não é mostrado para não inventar números. O modelo continua ligado ao fitness do CPO."
-      />
-    </Card>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(3, 1fr)',
+          gap: 12,
+        }}
+      >
+        <KpiTile
+          label="Barcos avaliados"
+          value={`${data?.total_orders ?? orders.length}`}
+          tone="neutral"
+        />
+        <KpiTile
+          label="Risco alto"
+          value={`${data?.high_risk_count ?? orders.filter((o) => o.risk_band === 'alto').length}`}
+          tone="red"
+        />
+        <KpiTile
+          label="Risco baixo"
+          value={`${orders.filter((o) => o.risk_band === 'baixo').length}`}
+          tone="green"
+        />
+      </div>
+
+      <Card padding={0}>
+        <div style={{ padding: '14px 18px 0 18px' }}>
+          <SectionHeader
+            icon={<Brain size={14} />}
+            title="Risco preditivo de defeito por barco"
+            subtitle="QualityRiskModel · P(defeito) na fase actual · maior risco primeiro"
+          />
+        </div>
+        {orders.length === 0 ? (
+          <div style={{ padding: 18 }}>
+            <EmptyState
+              size="sm"
+              title="Sem barcos em produção"
+              hint="O modelo está activo mas não há ordens em curso para avaliar."
+            />
+          </div>
+        ) : (
+          <>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '120px 1fr 1fr 90px',
+                padding: '10px 18px',
+                borderBottom: '1px solid var(--bd-1)',
+                background: 'var(--bg-2)',
+                fontSize: 10.5,
+                color: 'var(--fg-3)',
+                textTransform: 'uppercase',
+                letterSpacing: 0.4,
+                fontWeight: 600,
+              }}
+            >
+              <div>Barco (OF)</div>
+              <div>Produto</div>
+              <div>Fase actual</div>
+              <div style={{ textAlign: 'right' }}>Risco</div>
+            </div>
+            {orders.map((o, i) => (
+              <div
+                key={o.of_id}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '120px 1fr 1fr 90px',
+                  alignItems: 'center',
+                  padding: '10px 18px',
+                  borderBottom:
+                    i < orders.length - 1
+                      ? '1px solid var(--bd-1)'
+                      : 'none',
+                  fontSize: 12,
+                }}
+              >
+                <span
+                  className="tabular"
+                  style={{ color: 'var(--fg-0)', fontWeight: 500 }}
+                >
+                  {o.of_id}
+                </span>
+                <span style={{ color: 'var(--fg-1)' }}>
+                  {o.product_name ?? o.product_type ?? '—'}
+                </span>
+                <span style={{ color: 'var(--fg-2)' }}>
+                  {o.current_phase_name ?? o.current_phase_id ?? '—'}
+                </span>
+                <span style={{ justifySelf: 'end' }}>
+                  <RiskBadge value={o.defect_probability} />
+                </span>
+              </div>
+            ))}
+          </>
+        )}
+      </Card>
+    </div>
   );
 }
 
 // ─── MapaTab ─────────────────────────────────────────────────────────────
 
+// Geometria das 8 zonas canónicas do casco sobre o viewBox 0 0 400 86 do
+// HullHeatmap. As chaves espelham HULL_ZONE_IDS do backend.
+const ZONE_GEOMETRY: Record<
+  HullZoneId,
+  { label: string; x: number; y: number; w: number; h: number }
+> = {
+  casco: { label: 'Casco', x: 70, y: 30, w: 78, h: 26 },
+  conves: { label: 'Convés', x: 152, y: 30, w: 70, h: 11 },
+  cockpit: { label: 'Cockpit', x: 152, y: 44, w: 70, h: 12 },
+  interior: { label: 'Interior', x: 226, y: 30, w: 64, h: 26 },
+  acabamento: { label: 'Acabamento', x: 294, y: 30, w: 56, h: 26 },
+  molde: { label: 'Molde', x: 28, y: 30, w: 38, h: 26 },
+  montagem: { label: 'Montagem', x: 354, y: 32, w: 30, h: 22 },
+  outro: { label: 'Outro', x: 152, y: 58, w: 70, h: 0 },
+};
+
 function MapaTab() {
-  // O mapa de defeitos por zona do casco precisa do endpoint
-  // /v1/quality/defect-zones, que ainda não existe. Empty state honesto.
+  // Q.53.H — GET /v1/quality/defect-zones: agregação de retrabalho por
+  // zona do casco. Sempre devolve as 8 zonas canónicas (count 0 quando
+  // limpa), por isso o SVG renderiza o casco completo.
+  const zonesQuery = useQuery({
+    queryKey: ['qualidade', 'defect-zones'],
+    queryFn: () => fetchDefectZones(),
+    staleTime: 60_000,
+    retry: 0,
+  });
+
+  const header = (
+    <SectionHeader
+      icon={<Layers size={14} />}
+      title="Mapa de defeitos por zona do casco"
+      subtitle="DefectZoneService · onde o defeito ocorre, não só quanto"
+    />
+  );
+
+  if (zonesQuery.isLoading) {
+    return (
+      <Card padding={20}>
+        {header}
+        <LoadingLine />
+      </Card>
+    );
+  }
+
+  if (zonesQuery.isError || !zonesQuery.data) {
+    return (
+      <Card padding={20}>
+        {header}
+        <EmptyState
+          title="Mapa do casco indisponível"
+          hint="O endpoint /v1/quality/defect-zones não respondeu. Tenta atualizar dentro de momentos."
+        />
+      </Card>
+    );
+  }
+
+  const data = zonesQuery.data;
+  // O HullHeatmap só desenha as zonas com geometria posicionável; a zona
+  // "outro" (sem localização no casco) é listada à parte na tabela.
+  const heatmapZones: HullZone[] = data.zones
+    .filter((z): z is DefectZone => z.zone in ZONE_GEOMETRY && z.zone !== 'outro')
+    .map((z) => {
+      const g = ZONE_GEOMETRY[z.zone];
+      return {
+        id: z.zone,
+        label: g.label,
+        x: g.x,
+        y: g.y,
+        w: g.w,
+        h: g.h,
+        count: z.events,
+      };
+    });
+
+  const ranked = [...data.zones].sort((a, b) => b.events - a.events);
+
   return (
-    <Card padding={20}>
-      <SectionHeader
-        icon={<Layers size={14} />}
-        title="Mapa de defeitos por zona do casco"
-        subtitle="OFCH_LOCAL · onde o defeito ocorre, não só quanto"
-      />
-      <EmptyState
-        title="Mapa do casco ainda não disponível"
-        hint="A agregação de defeitos por zona do casco (endpoint /v1/quality/defect-zones) ainda não está ligada. Assim que a fonte OFCH_LOCAL for exposta, a silhueta com heatmap aparece aqui."
-      />
-    </Card>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <Card padding={20}>
+        {header}
+        {data.total_events === 0 ? (
+          <EmptyState
+            size="sm"
+            title="Sem defeitos registados na janela"
+            hint="Não há eventos de retrabalho nos últimos 90 dias para mapear no casco."
+          />
+        ) : (
+          <HullHeatmap zones={heatmapZones} />
+        )}
+      </Card>
+
+      <Card padding={18}>
+        <SectionHeader
+          title="Defeitos por zona"
+          subtitle={`${data.total_events} eventos · janela de ${new Date(
+            data.window.from,
+          ).toLocaleDateString('pt-PT')} a ${new Date(
+            data.window.to,
+          ).toLocaleDateString('pt-PT')}`}
+        />
+        {ranked.map((z, i, arr) => {
+          const tone =
+            z.share_pct > 30
+              ? 'red'
+              : z.share_pct > 15
+                ? 'orange'
+                : z.share_pct > 5
+                  ? 'yellow'
+                  : 'green';
+          return (
+            <div
+              key={z.zone}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '130px 1fr 70px 80px 70px',
+                alignItems: 'center',
+                gap: 14,
+                padding: '9px 0',
+                borderBottom:
+                  i < arr.length - 1 ? '1px solid var(--bd-1)' : 'none',
+                fontSize: 12,
+              }}
+            >
+              <span style={{ color: 'var(--fg-0)', fontWeight: 500 }}>
+                {ZONE_GEOMETRY[z.zone]?.label ?? z.zone}
+              </span>
+              <MiniBar
+                value={z.share_pct}
+                max={60}
+                color={`var(--${tone})`}
+                height={5}
+              />
+              <span
+                className="tabular"
+                style={{ color: `var(--${tone})`, fontWeight: 600 }}
+              >
+                {z.share_pct.toFixed(1)}%
+              </span>
+              <span
+                className="tabular"
+                style={{ color: 'var(--red)', textAlign: 'right' }}
+              >
+                {z.cost_eur > 0 ? `−€${Math.round(z.cost_eur)}` : '—'}
+              </span>
+              <span
+                className="tabular"
+                style={{ color: 'var(--fg-2)', textAlign: 'right' }}
+              >
+                {z.events} ev.
+              </span>
+            </div>
+          );
+        })}
+      </Card>
+    </div>
   );
 }
 
@@ -1245,34 +1546,226 @@ function RetrabalhoTab() {
 // ─── AderenciaTab ────────────────────────────────────────────────────────
 
 function AderenciaTab() {
-  // /v1/plan/adherence é PARTIAL — degrada com honestidade.
+  // Q.53.H — GET /v1/plan/adherence: compara o ScheduleCommit mais recente
+  // com o OF_FP real. Degrada com honestidade via `status` quando o ERP
+  // está desligado ou o commit não tem plano temporal.
   const adherenceQuery = useQuery({
     queryKey: ['qualidade', 'adherence'],
-    queryFn: () =>
-      apiFetch<unknown>('/v1/plan/adherence').catch(() => ({
-        status: 'sem_execucao_real',
-      })),
+    queryFn: () => fetchAdherence(),
     staleTime: 60_000,
     retry: 0,
   });
-  const honest = useHonestEmptyState(adherenceQuery.data);
+
+  const header = (
+    <SectionHeader
+      icon={<Target size={14} />}
+      title="Aderência ao plano · ScheduleCommit × OF_FP"
+      subtitle="Fecha o ciclo: planeei → aconteceu → aprendi"
+    />
+  );
+
+  if (adherenceQuery.isLoading) {
+    return (
+      <Card padding={20}>
+        {header}
+        <LoadingLine />
+      </Card>
+    );
+  }
+
+  const data = adherenceQuery.data;
+
+  // null = endpoint deu 404: ainda não há nenhum ScheduleCommit.
+  if (adherenceQuery.isError || data === null || data === undefined) {
+    return (
+      <Card padding={20}>
+        {header}
+        <EmptyState
+          title="Sem plano para comparar"
+          hint={
+            adherenceQuery.isError
+              ? 'O endpoint /v1/plan/adherence não respondeu. Tenta atualizar dentro de momentos.'
+              : 'Ainda não há nenhum ScheduleCommit. Gera um plano no CPO para poderes medir a aderência.'
+          }
+        />
+      </Card>
+    );
+  }
+
+  // Degradação honesta: ERP desligado ou commit sem horas.
+  if (data.status !== 'ok') {
+    return (
+      <Card padding={20}>
+        {header}
+        <EmptyState
+          title={
+            data.status === 'sem_execucao_real'
+              ? 'Sem execução real para comparar'
+              : 'Commit sem plano temporal'
+          }
+          hint={
+            data.detail ??
+            'O cálculo de aderência não tem dados suficientes para este commit.'
+          }
+        />
+      </Card>
+    );
+  }
+
+  const phaseDeviations = data.phase_deviations ?? [];
 
   return (
-    <Card padding={20}>
-      <SectionHeader
-        icon={<Target size={14} />}
-        title="Aderência ao plano · ScheduleCommit × OF_FP"
-        subtitle="Fecha o ciclo: planeei → aconteceu → aprendi"
-      />
-      <EmptyState
-        title="Aderência ao plano indisponível"
-        hint={
-          honest.degraded
-            ? honest.reason
-            : 'O cálculo de aderência (plano vs realizado por fase) ainda não tem execução real registada. Aparece assim que houver ScheduleCommits cruzáveis com OF_FP.'
-        }
-      />
-    </Card>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <Card padding={20}>
+        {header}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(4, 1fr)',
+            gap: 12,
+          }}
+        >
+          <KpiTile
+            label="Aderência"
+            value={`${(data.adherence_pct ?? 0).toFixed(1)}%`}
+            tone={
+              (data.adherence_pct ?? 0) >= 85
+                ? 'green'
+                : (data.adherence_pct ?? 0) >= 60
+                  ? 'neutral'
+                  : 'red'
+            }
+          />
+          <KpiTile
+            label="Cobertura"
+            value={`${(data.match_pct ?? 0).toFixed(1)}%`}
+            tone="neutral"
+          />
+          <KpiTile
+            label="Operações planeadas"
+            value={`${data.planned_total}`}
+            tone="neutral"
+          />
+          <KpiTile
+            label="Sem execução"
+            value={`${data.missing?.length ?? 0}`}
+            tone={(data.missing?.length ?? 0) > 0 ? 'red' : 'green'}
+          />
+        </div>
+        <div style={{ marginTop: 12 }}>
+          <Banner tone="accent">
+            <Target size={18} color="var(--accent)" />
+            <div style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>
+              Commit{' '}
+              <span className="mono" style={{ color: 'var(--fg-1)' }}>
+                {data.short_sha}
+              </span>{' '}
+              · {data.matched_total ?? 0} de {data.planned_total} operações
+              executadas · {data.within_tolerance_total ?? 0} dentro da
+              tolerância de {data.tolerance_hours ?? 0}h
+              {data.window
+                ? ` · janela ${new Date(
+                    data.window.from,
+                  ).toLocaleDateString('pt-PT')}–${new Date(
+                    data.window.to,
+                  ).toLocaleDateString('pt-PT')}`
+                : ''}
+            </div>
+          </Banner>
+        </div>
+      </Card>
+
+      <Card padding={0}>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1.6fr 90px 90px 110px 110px',
+            alignItems: 'center',
+            gap: 12,
+            padding: '12px 18px',
+            borderBottom: '1px solid var(--bd-1)',
+            background: 'var(--bg-2)',
+            fontSize: 10.5,
+            color: 'var(--fg-3)',
+            textTransform: 'uppercase',
+            letterSpacing: 0.4,
+            fontWeight: 600,
+          }}
+        >
+          <div>Fase</div>
+          <div style={{ textAlign: 'right' }}>Planeado</div>
+          <div style={{ textAlign: 'right' }}>Executado</div>
+          <div style={{ textAlign: 'right' }}>Deriva início</div>
+          <div style={{ textAlign: 'right' }}>Deriva fim</div>
+        </div>
+        {phaseDeviations.length === 0 ? (
+          <div style={{ padding: 18 }}>
+            <EmptyState
+              size="sm"
+              title="Sem desvios por fase"
+              hint="O commit não tem operações agrupáveis por fase."
+            />
+          </div>
+        ) : (
+          phaseDeviations.map((p, i, arr) => {
+            const drift = p.avg_start_drift_hours;
+            const tone =
+              drift === null
+                ? 'fg-2'
+                : Math.abs(drift) <= (data.tolerance_hours ?? 4)
+                  ? 'green'
+                  : Math.abs(drift) <= 24
+                    ? 'orange'
+                    : 'red';
+            return (
+              <div
+                key={p.phase_id}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1.6fr 90px 90px 110px 110px',
+                  alignItems: 'center',
+                  gap: 12,
+                  padding: '11px 18px',
+                  borderBottom:
+                    i < arr.length - 1 ? '1px solid var(--bd-1)' : 'none',
+                  fontSize: 12,
+                }}
+              >
+                <span style={{ color: 'var(--fg-0)', fontWeight: 500 }}>
+                  {p.phase_id}
+                </span>
+                <span
+                  className="tabular"
+                  style={{ color: 'var(--fg-2)', textAlign: 'right' }}
+                >
+                  {p.planned_count}
+                </span>
+                <span
+                  className="tabular"
+                  style={{ color: 'var(--fg-1)', textAlign: 'right' }}
+                >
+                  {p.matched_count}
+                </span>
+                <span
+                  className="tabular"
+                  style={{ color: `var(--${tone})`, textAlign: 'right' }}
+                >
+                  {drift !== null ? `${drift > 0 ? '+' : ''}${drift}h` : '—'}
+                </span>
+                <span
+                  className="tabular"
+                  style={{ color: 'var(--fg-2)', textAlign: 'right' }}
+                >
+                  {p.avg_end_drift_hours !== null
+                    ? `${p.avg_end_drift_hours > 0 ? '+' : ''}${p.avg_end_drift_hours}h`
+                    : '—'}
+                </span>
+              </div>
+            );
+          })
+        )}
+      </Card>
+    </div>
   );
 }
 
@@ -1670,17 +2163,179 @@ function CustosTab() {
         )}
       </Card>
 
+      <RoiCard />
+    </div>
+  );
+}
+
+// ─── RoiCard — ROI de acções de qualidade (Q.53.H) ───────────────────────
+
+function RoiCard() {
+  // Q.53.H — GET /v1/quality/roi-actions: € poupado vs investido por
+  // acção, ordenado por retorno líquido.
+  const roiQuery = useQuery({
+    queryKey: ['qualidade', 'roi-actions'],
+    queryFn: () => fetchRoiActions(25),
+    staleTime: 60_000,
+    retry: 0,
+  });
+
+  const header = (
+    <SectionHeader
+      icon={<Euro size={14} />}
+      title="ROI de acções de qualidade"
+      subtitle="ROIService · investido vs poupado por código de erro"
+    />
+  );
+
+  if (roiQuery.isLoading) {
+    return (
       <Card padding={20}>
-        <SectionHeader
-          title="ROI de acções de qualidade"
-          subtitle="Investido vs poupado por acção"
-        />
+        {header}
+        <LoadingLine />
+      </Card>
+    );
+  }
+
+  if (roiQuery.isError || !roiQuery.data) {
+    return (
+      <Card padding={20}>
+        {header}
         <EmptyState
-          title="ROI de qualidade ainda não disponível"
-          hint="O cálculo de retorno (investido vs poupado) de cada acção de qualidade precisa de um endpoint dedicado que ainda não existe. Até lá, não inventamos os números — o custo de retrabalho real está acima."
+          title="ROI de qualidade indisponível"
+          hint="O endpoint /v1/quality/roi-actions não respondeu. O custo de retrabalho real está no cartão acima."
         />
       </Card>
-    </div>
+    );
+  }
+
+  const data = roiQuery.data;
+  const actions = data.actions;
+
+  if (actions.length === 0) {
+    return (
+      <Card padding={20}>
+        {header}
+        <EmptyState
+          size="sm"
+          title="Sem acções de qualidade para avaliar"
+          hint="Não há registos de retrabalho na janela para calcular retorno."
+        />
+      </Card>
+    );
+  }
+
+  const netTotal = data.total_saved_eur - data.total_invested_eur;
+
+  return (
+    <Card padding={20}>
+      {header}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(3, 1fr)',
+          gap: 12,
+          marginBottom: 14,
+        }}
+      >
+        <KpiTile
+          label="Poupado (total)"
+          value={`€${Math.round(data.total_saved_eur).toLocaleString('pt-PT')}`}
+          tone="green"
+        />
+        <KpiTile
+          label="Investido (total)"
+          value={`€${Math.round(data.total_invested_eur).toLocaleString('pt-PT')}`}
+          tone="red"
+        />
+        <KpiTile
+          label="Retorno líquido"
+          value={`€${Math.round(netTotal).toLocaleString('pt-PT')}`}
+          tone={netTotal >= 0 ? 'green' : 'red'}
+        />
+      </div>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '1.4fr 90px 110px 110px 90px',
+          padding: '10px 6px',
+          borderBottom: '1px solid var(--bd-1)',
+          background: 'var(--bg-2)',
+          fontSize: 10.5,
+          color: 'var(--fg-3)',
+          textTransform: 'uppercase',
+          letterSpacing: 0.4,
+          fontWeight: 600,
+        }}
+      >
+        <div>Código de erro</div>
+        <div style={{ textAlign: 'right' }}>Eventos</div>
+        <div style={{ textAlign: 'right' }}>Poupado</div>
+        <div style={{ textAlign: 'right' }}>Investido</div>
+        <div style={{ textAlign: 'right' }}>ROI</div>
+      </div>
+      {actions.map((a, i, arr) => {
+        const tone =
+          a.net_eur > 0 ? 'green' : a.net_eur < 0 ? 'red' : 'fg-2';
+        return (
+          <div
+            key={a.error_code}
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '1.4fr 90px 110px 110px 90px',
+              alignItems: 'center',
+              padding: '11px 6px',
+              borderBottom:
+                i < arr.length - 1 ? '1px solid var(--bd-1)' : 'none',
+              fontSize: 12,
+            }}
+          >
+            <span style={{ color: 'var(--fg-0)' }}>
+              <span style={{ fontWeight: 500 }}>{a.error_code}</span>
+              <span
+                style={{
+                  fontSize: 10.5,
+                  color: 'var(--fg-3)',
+                  marginLeft: 8,
+                }}
+              >
+                {a.action_basis === 'fixed_corrective_action'
+                  ? 'acção correctiva'
+                  : 'esforço de reacção'}
+              </span>
+            </span>
+            <span
+              className="tabular"
+              style={{ color: 'var(--fg-2)', textAlign: 'right' }}
+            >
+              {a.events}
+            </span>
+            <span
+              className="tabular"
+              style={{ color: 'var(--green)', textAlign: 'right' }}
+            >
+              €{Math.round(a.saved_eur).toLocaleString('pt-PT')}
+            </span>
+            <span
+              className="tabular"
+              style={{ color: 'var(--red)', textAlign: 'right' }}
+            >
+              €{Math.round(a.invested_eur).toLocaleString('pt-PT')}
+            </span>
+            <span
+              className="tabular"
+              style={{
+                color: `var(--${tone})`,
+                fontWeight: 600,
+                textAlign: 'right',
+              }}
+            >
+              {a.roi_ratio !== null ? `${a.roi_ratio.toFixed(1)}×` : '—'}
+            </span>
+          </div>
+        );
+      })}
+    </Card>
   );
 }
 
