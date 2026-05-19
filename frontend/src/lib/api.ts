@@ -3046,8 +3046,36 @@ export const authApi = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Q.31.B — Manutenção de moldes
+// Q.31.B + Q.52.C — Moldes (família completa /v1/plan/molds/*)
 // ═══════════════════════════════════════════════════════════════════════════════
+//
+// O router de moldes (src/plan/api/mold.py) está montado sob o prefixo
+// `/v1/plan` — daí os caminhos `/v1/plan/molds/...`. Os endpoints devolvem
+// dicts nus (sem `response_model`); os tipos abaixo derivam de `_mold_to_dict`
+// e `_event_to_dict` no backend. Não existe `sync-usage` no backend hoje —
+// quando alguma página precisar, ver gap Q.53.
+
+export interface MoldHealthSummary {
+  /** 0-100. Maior é mais saudável. */
+  score_0_100: number;
+  /** Semáforo: vermelho exige atenção, amarelo monitorizar, verde ok. */
+  risk_category: 'red' | 'yellow' | 'green' | string;
+  assessed_at: string | null;
+  components: Record<string, unknown>;
+}
+
+export interface Mold {
+  id: string;
+  mold_code: string;
+  model_id: string;
+  name: string | null;
+  pocket_count: number;
+  expected_life_cycles: number | null;
+  active: boolean;
+  depreciated: boolean;
+  /** Presente em GET /{id} e em /health-report; ausente em GET /molds/. */
+  health?: MoldHealthSummary;
+}
 
 export interface MoldMaintenanceEvent {
   id: string;
@@ -3063,23 +3091,91 @@ export interface MoldMaintenanceEvent {
   comments: string | null;
 }
 
+/** Resposta de POST /molds/{id}/recompute-health. */
+export interface MoldHealthRecompute {
+  score_0_100: number;
+  risk_category: 'red' | 'yellow' | 'green' | string;
+  components: Record<string, unknown>;
+}
+
+/** Resposta de POST /molds/propose-preventive. */
+export interface MoldPreventiveProposal {
+  events_proposed: number;
+  events: MoldMaintenanceEvent[];
+}
+
 export const moldsApi = {
+  /** Lista de moldes. `activeOnly` filtra os depreciados (default true). */
+  list: (params?: { activeOnly?: boolean }) =>
+    request<Mold[]>(`/v1/plan/molds/?${new URLSearchParams(filterParams(params))}`),
+
+  /** Detalhe de um molde + última avaliação de saúde. */
+  get: (moldId: string) =>
+    request<Mold>(`/v1/plan/molds/${encodeURIComponent(moldId)}`),
+
+  /** Criar um molde novo. */
+  create: (payload: {
+    mold_code: string;
+    model_id: string;
+    pocket_count?: number;
+    expected_life_cycles?: number;
+    name?: string;
+  }) =>
+    request<Mold>('/v1/plan/molds/', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  /** Calendário de manutenções planeadas numa janela (default próximos 30 dias). */
+  calendar: (params?: { since?: string; until?: string }) =>
+    request<MoldMaintenanceEvent[]>(
+      `/v1/plan/molds/calendar?${new URLSearchParams(filterParams(params))}`,
+    ),
+
+  /** Moldes ordenados por risco — vermelhos primeiro. */
+  healthReport: (params?: { limit?: number }) =>
+    request<Mold[]>(
+      `/v1/plan/molds/health-report?${new URLSearchParams(filterParams(params))}`,
+    ),
+
+  /** Recalcular o score de saúde de um molde. */
+  recomputeHealth: (moldId: string) =>
+    request<MoldHealthRecompute>(
+      `/v1/plan/molds/${encodeURIComponent(moldId)}/recompute-health`,
+      { method: 'POST' },
+    ),
+
+  /** Propor manutenção preventiva para os moldes em risco. */
+  proposePreventive: (params?: { horizonDays?: number }) =>
+    request<MoldPreventiveProposal>(
+      `/v1/plan/molds/propose-preventive?${new URLSearchParams(filterParams(params))}`,
+      { method: 'POST' },
+    ),
+
+  /** Emitir alertas MOLD_MAINT_DUE para os moldes que precisam de manutenção. */
+  scanAlerts: () =>
+    request<{ alerts_created: number }>('/v1/plan/molds/scan-alerts', {
+      method: 'POST',
+    }),
+
   /** Eventos de manutenção de um molde. */
   listMaintenance: (moldId: string) =>
-    request<MoldMaintenanceEvent[]>(`/v1/plan/molds/${moldId}/maintenance`),
+    request<MoldMaintenanceEvent[]>(
+      `/v1/plan/molds/${encodeURIComponent(moldId)}/maintenance`,
+    ),
   /** Planear uma manutenção. */
   planMaintenance: (
     moldId: string,
     payload: { planned_date: string; maintenance_type?: string; comments?: string },
   ) =>
-    request<MoldMaintenanceEvent>(`/v1/plan/molds/${moldId}/maintenance`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
+    request<MoldMaintenanceEvent>(
+      `/v1/plan/molds/${encodeURIComponent(moldId)}/maintenance`,
+      { method: 'POST', body: JSON.stringify(payload) },
+    ),
   /** Marcar uma manutenção planeada como iniciada. */
   startMaintenance: (eventId: string) =>
     request<MoldMaintenanceEvent>(
-      `/v1/plan/molds/maintenance/${eventId}/start`,
+      `/v1/plan/molds/maintenance/${encodeURIComponent(eventId)}/start`,
       { method: 'POST' },
     ),
   /** Concluir uma manutenção em curso. */
@@ -3089,10 +3185,11 @@ export const moldsApi = {
       actual_duration_h?: number;
       parts_cost_eur?: number;
       labor_cost_eur?: number;
+      defects_fixed?: string[];
     },
   ) =>
     request<MoldMaintenanceEvent>(
-      `/v1/plan/molds/maintenance/${eventId}/complete`,
+      `/v1/plan/molds/maintenance/${encodeURIComponent(eventId)}/complete`,
       { method: 'POST', body: JSON.stringify(payload) },
     ),
 };
@@ -3118,6 +3215,210 @@ export const searchApi = {
   query: (q: string, limit = 5) =>
     request<SearchResponse>(
       `/v1/search?q=${encodeURIComponent(q)}&limit=${limit}`,
+    ),
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Q.52.C — Relatórios (/v1/reports/*)
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// `generate` é REAL — delega aos generators live (producao/cliente/qualidade/
+// payroll/cogs/inventario). Quando uma tabela não tem dados o relatório vem
+// `ready` com 0 linhas, nunca placeholders. `schedule` e `email` persistem em
+// `reports.*` mas o plano Q.52 trata-os como STUB ("brevemente") porque o envio
+// SMTP está desligado em dev — em dev o email vem `skipped` / `status:generated`.
+
+export type ReportTemplateId =
+  | 'producao'
+  | 'cliente'
+  | 'qualidade'
+  | 'payroll'
+  | 'cogs'
+  | 'inventario';
+
+export type ReportFormat = 'csv' | 'json';
+
+export interface ReportGenerateRequest {
+  template_id: ReportTemplateId;
+  format?: ReportFormat;
+  since?: string;
+  until?: string;
+}
+
+export interface ReportGenerateResponse {
+  template_id: ReportTemplateId;
+  status: 'ready' | 'not_implemented';
+  format: ReportFormat;
+  filename: string;
+  /** CSV text ou JSON string. Vazio se not_implemented. */
+  content: string;
+  row_count: number;
+  generated_at: string;
+  message: string | null;
+}
+
+export interface ReportSchedule {
+  id: string;
+  template_id: string;
+  cron: string;
+  enabled: boolean;
+  format: ReportFormat;
+  recipients: string[];
+  retention_days: number;
+  created_at: string;
+}
+
+/** Resposta de POST /v1/reports/email — STUB em dev (SMTP desligado). */
+export interface ReportEmailResponse {
+  run_id: string;
+  template_id: string;
+  status: 'delivered' | 'generated' | 'failed';
+  recipients: string[];
+  row_count: number;
+  sent: boolean;
+  skipped: boolean;
+  generated_at: string;
+  message: string | null;
+}
+
+export const reportsApi = {
+  /** Gera um relatório (REAL — delega aos generators live). */
+  generate: (payload: ReportGenerateRequest) =>
+    request<ReportGenerateResponse>('/v1/reports/generate', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  /** Lista os agendamentos de relatórios do tenant. */
+  listSchedules: () =>
+    request<ReportSchedule[]>('/v1/reports/schedule'),
+
+  /** STUB — agenda execução periódica; persiste mas o envio SMTP está off em dev. */
+  createSchedule: (payload: {
+    template_id: ReportTemplateId;
+    cron: string;
+    enabled?: boolean;
+    format?: ReportFormat;
+    recipients?: string[];
+    retention_days?: number;
+  }) =>
+    request<ReportSchedule>('/v1/reports/schedule', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  /** STUB — gera e tenta entregar por email; em dev vem `skipped`. */
+  email: (payload: {
+    template_id: ReportTemplateId;
+    to: string[];
+    format?: ReportFormat;
+    since?: string;
+    until?: string;
+  }) =>
+    request<ReportEmailResponse>('/v1/reports/email', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Q.52.C — Registry ML (/v1/ml/*)
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// Lifecycle + inspecção de artefactos já treinados. `promote` abre uma
+// DecisionRun de governança quando `via_governance` (default true) — auto-aprova
+// promoções low-risk, exige aprovação humana caso contrário. `via_governance:
+// false` é admin-only (bypassa o audit trail).
+
+export interface MlArtifact {
+  id: string;
+  model_name: string;
+  version: number;
+  storage_uri: string;
+  metrics: Record<string, unknown>;
+  active: boolean;
+  promoted_at: string | null;
+  promoted_by: string | null;
+  promoted_by_decision_id: string | null;
+  trained_by: string;
+  training_duration_sec: number | null;
+  training_samples: number | null;
+  created_at: string | null;
+}
+
+/** Resposta de POST .../promote — shape varia conforme governança/auto-aprovação. */
+export interface MlPromoteResponse {
+  status: 'promoted' | 'awaiting_approval';
+  artifact: MlArtifact;
+  decision_id: string | null;
+  decision_status?: string;
+}
+
+export const mlApi = {
+  /** Nomes de todos os modelos no registry (array nu de strings). */
+  listModels: () => request<string[]>('/v1/ml/models'),
+
+  /** Versões de um modelo, mais recente primeiro. */
+  listVersions: (modelName: string, params?: { limit?: number }) =>
+    request<MlArtifact[]>(
+      `/v1/ml/models/${encodeURIComponent(modelName)}/versions?${new URLSearchParams(filterParams(params))}`,
+    ),
+
+  /** Versão activa de um modelo. 404 quando nenhuma está promovida. */
+  getActive: (modelName: string) =>
+    request<MlArtifact>(
+      `/v1/ml/models/${encodeURIComponent(modelName)}/active`,
+    ),
+
+  /** Promover uma versão a activa. Default via governança (audit trail). */
+  promote: (
+    modelName: string,
+    artifactId: string,
+    payload: { via_governance?: boolean } = {},
+  ) =>
+    request<MlPromoteResponse>(
+      `/v1/ml/models/${encodeURIComponent(modelName)}/versions/${encodeURIComponent(artifactId)}/promote`,
+      { method: 'POST', body: JSON.stringify(payload) },
+    ),
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Q.52.C — OEE (/v1/profit/oee) — consolidação de fetch cru
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// Várias páginas (qualidade, direcao) chamavam `/v1/profit/oee` com `fetch`
+// directo, saltando o circuit breaker / retry / headers do `apiFetch`. Este
+// wrapper é a forma única de pedir OEE. As páginas adoptam-no depois — Q.52.C
+// não toca nas páginas.
+
+export interface OEEComponent {
+  group_value: string;
+  /** Componentes 0-1: disponibilidade × desempenho × qualidade = oee. */
+  availability: number;
+  performance: number;
+  quality: number;
+  oee: number;
+  sample_size: number;
+  sample_excluded: number;
+}
+
+export interface OEEResponse {
+  date_from: string;
+  date_to: string;
+  group_by: 'none' | 'phase' | 'shift' | 'product_type' | 'mold';
+  overall: OEEComponent;
+  breakdown: OEEComponent[];
+}
+
+export const profitOeeApi = {
+  /** OEE das operações NELO vivas, opcionalmente agrupado. */
+  get: (params?: {
+    date_from?: string;
+    date_to?: string;
+    group_by?: 'phase' | 'shift' | 'product_type' | 'mold';
+  }) =>
+    request<OEEResponse>(
+      `/v1/profit/oee?${new URLSearchParams(filterParams(params))}`,
     ),
 };
 
