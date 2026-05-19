@@ -39,7 +39,9 @@ from .material_service import (
     MaterialService,
     NegativeStockBlockedError,
 )
+from .purchase_order_service import PurchaseOrderService
 from .rop_calculator import ROPCalculator
+from .stockout_predictor import StockoutPredictor
 
 router = APIRouter(prefix="/v1/supply", tags=["Supply Chain"])
 
@@ -217,6 +219,21 @@ class BomMaterialResponse(BaseModel):
     warehouses: List[WarehouseStockBreakdown] = Field(
         default_factory=list, description="Repartição do stock por armazém"
     )
+    predicted_stockout_date: Optional[str] = Field(
+        default=None,
+        description=(
+            "Data prevista de rutura (ISO) a partir do consumo histórico real "
+            "do ledger. Null se não há histórico suficiente ou sem stock."
+        ),
+    )
+    stockout_confidence: Optional[str] = Field(
+        default=None,
+        description="Confiança da previsão: high/medium/low/none",
+    )
+    avg_daily_consumption: Optional[float] = Field(
+        default=None,
+        description="Consumo médio diário (unidades) usado na previsão",
+    )
 
 
 class BomMaterialsEnvelope(BaseModel):
@@ -234,6 +251,73 @@ class BomMaterialsEnvelope(BaseModel):
         description="'erp_nelo_warehouse_stock' ou 'indisponivel'"
     )
     unavailable_reason: Optional[str] = None
+
+
+class PurchaseOrderItem(BaseModel):
+    """Uma encomenda a fornecedor — uma linha de `supply.purchase_orders`."""
+
+    id: str
+    po_number: Optional[str] = None
+    erp_movement_id: Optional[int] = None
+    supplier_name: str
+    supplier_erp_id: Optional[int] = None
+    product_code: str
+    product_name: Optional[str] = None
+    qty_ordered: float
+    qty_received: float
+    qty_outstanding: float
+    unit_of_measure: str
+    ordered_at: Optional[str] = None
+    eta: Optional[str] = None
+    received_at: Optional[str] = None
+    status: str
+    is_overdue: bool
+    days_to_eta: Optional[int] = None
+    source: str
+    notes: Optional[str] = None
+
+
+class PurchaseOrdersSummary(BaseModel):
+    open: int
+    overdue: int
+    received: int
+    cancelled: int
+    total_outstanding_qty: float
+
+
+class PurchaseOrdersEnvelope(BaseModel):
+    """Tracking de encomendas a fornecedor — backing da tab Entregas.
+
+    Degrada com honestidade: se o mirror `supply.purchase_orders` nunca
+    foi sincronizado, `data_available=false` e `unavailable_reason`
+    explica como sincronizar.
+    """
+
+    items: List[PurchaseOrderItem]
+    count: int
+    data_available: bool
+    source: str = Field(
+        description="'supply_purchase_orders' ou 'indisponivel'"
+    )
+    last_synced_at: Optional[str] = None
+    unavailable_reason: Optional[str] = None
+    summary: PurchaseOrdersSummary
+
+
+class StockoutForecastResponse(BaseModel):
+    """Data prevista de rutura a partir do consumo histórico real."""
+
+    sku_id: str
+    predicted_stockout_date: Optional[str] = None
+    confidence: str = Field(description="high / medium / low / none")
+    avg_daily_consumption: float
+    history_days: int
+    total_consumed: float
+    window_days: int
+    days_to_stockout: Optional[float] = None
+    on_hand: float
+    reason: Optional[str] = None
+    method: str
 
 
 class ReconciliationResponse(BaseModel):
@@ -535,6 +619,27 @@ async def list_materials_from_bom(
             "`produto_stocks_por_armazem` do ERP NELO."
         )
 
+    # Q.53.D — data prevista de rutura a partir do consumo histórico real.
+    # O predictor lê o ledger (`InventoryLedgerEntry`, transaction_type=
+    # "consume"); `product_code == sku_id` é a convenção desta instalação
+    # (mesmo P_ID do ERP). Só prevemos materiais com stock conhecido — sem
+    # on-hand não há data de rutura honesta. Materiais sem histórico de
+    # consumo devolvem `predicted_stockout_date=None` com confidence "none".
+    on_hand_by_code: Dict[str, float] = {}
+    for r in rows:
+        code = r.product_code
+        ws_list = stock_by_code.get(code, [])
+        if ws_list:
+            on_hand_by_code[code] = float(
+                sum(float(ws.stock) for ws in ws_list)
+            )
+    stockout_by_code: Dict[str, Dict[str, Any]] = {}
+    if on_hand_by_code:
+        predictor = StockoutPredictor(session, tenant_id)
+        stockout_by_code = await predictor.predict_many(
+            on_hand_by_sku=on_hand_by_code
+        )
+
     items: List[BomMaterialResponse] = []
     for r in rows:
         warehouses = sorted(
@@ -551,6 +656,7 @@ async def list_materials_from_bom(
         on_hand = (
             sum(w.stock for w in warehouses) if warehouses else None
         )
+        prediction = stockout_by_code.get(r.product_code)
         items.append(
             BomMaterialResponse(
                 id=str(r.id),
@@ -572,6 +678,15 @@ async def list_materials_from_bom(
                 ),
                 on_hand=on_hand,
                 warehouses=warehouses,
+                predicted_stockout_date=(
+                    prediction["predicted_stockout_date"] if prediction else None
+                ),
+                stockout_confidence=(
+                    prediction["confidence"] if prediction else None
+                ),
+                avg_daily_consumption=(
+                    prediction["avg_daily_consumption"] if prediction else None
+                ),
             )
         )
 
@@ -584,6 +699,100 @@ async def list_materials_from_bom(
             "erp_nelo_warehouse_stock" if stock_available else "indisponivel"
         ),
         unavailable_reason=unavailable_reason,
+    )
+
+
+@router.get("/purchase-orders", response_model=PurchaseOrdersEnvelope)
+async def list_purchase_orders(
+    status_filter: Optional[
+        Literal["OPEN", "PARTIAL", "RECEIVED", "CANCELLED"]
+    ] = None,
+    product_code: Optional[str] = None,
+    supplier: Optional[str] = None,
+    open_only: bool = False,
+    limit: int = 200,
+    tenant_id: UUID = Depends(require_tenant_header),
+    session: AsyncSession = Depends(get_session),
+):
+    """Q.53.D — tracking de encomendas a fornecedor (tab Entregas).
+
+    Lista as POs espelhadas em `supply.purchase_orders`: fornecedor,
+    material, quantidade encomendada vs recebida, ETA e estado de receção.
+    Fonte: ERP NELO `MOVIMENTO` tipo 9 ("Pedidos a fornecedor"), mirrored
+    pelo ETL `purchase_orders`, mais POs criadas dentro do ProdPlan.
+
+    Se o mirror nunca foi sincronizado devolve `data_available=false` com
+    `unavailable_reason` — a UI mostra um empty-state explícito em vez de
+    uma tabela vazia silenciosa (ZERO MOCKS).
+    """
+    if limit < 1 or limit > 1000:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, detail="limit must be in [1, 1000]"
+        )
+    svc = PurchaseOrderService(session, tenant_id)
+    try:
+        result = await svc.list_purchase_orders(
+            status=status_filter,
+            product_code=product_code,
+            supplier=supplier,
+            open_only=open_only,
+            limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return PurchaseOrdersEnvelope(
+        items=[PurchaseOrderItem(**i) for i in result["items"]],
+        count=result["count"],
+        data_available=result["data_available"],
+        source=result["source"],
+        last_synced_at=result["last_synced_at"],
+        unavailable_reason=result["unavailable_reason"],
+        summary=PurchaseOrdersSummary(**result["summary"]),
+    )
+
+
+@router.get(
+    "/materials/{sku_id}/stockout-forecast",
+    response_model=StockoutForecastResponse,
+)
+async def get_stockout_forecast(
+    sku_id: str,
+    window_days: int = 90,
+    tenant_id: UUID = Depends(require_tenant_header),
+    session: AsyncSession = Depends(get_session),
+):
+    """Q.53.D — data prevista de rutura a partir do consumo histórico real.
+
+    Em vez da heurística `on_hand / avg_daily_demand` configurada à mão,
+    estima o consumo médio diário a partir do ledger de movimentos reais
+    (`InventoryLedgerEntry`, transaction_type="consume") numa janela
+    móvel, e devolve a `predicted_stockout_date` com um nível de
+    confiança. Sem histórico suficiente devolve a data `null` com
+    `confidence="none"` — honesto, sem inventar.
+    """
+    if window_days < 7 or window_days > 730:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail="window_days must be in [7, 730]",
+        )
+    ledger = InventoryLedger(session, tenant_id)
+    on_hand = float(await ledger.get_current_on_hand(sku_id))
+
+    predictor = StockoutPredictor(session, tenant_id, window_days=window_days)
+    result = await predictor.predict(sku_id=sku_id, on_hand=on_hand)
+
+    return StockoutForecastResponse(
+        sku_id=result["sku_id"],
+        predicted_stockout_date=result["predicted_stockout_date"],
+        confidence=result["confidence"],
+        avg_daily_consumption=result["avg_daily_consumption"],
+        history_days=result["history_days"],
+        total_consumed=result["total_consumed"],
+        window_days=result["window_days"],
+        days_to_stockout=result["days_to_stockout"],
+        on_hand=on_hand,
+        reason=result["reason"],
+        method=result["method"],
     )
 
 

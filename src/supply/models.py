@@ -248,3 +248,87 @@ class WarehouseStock(TenantBase):
     )
 
 
+# ============================================================================
+# Q.53.D — purchase-order tracking (supplier deliveries)
+# ============================================================================
+
+# Reception status. A PO is `OPEN` until the goods arrive, then `RECEIVED`
+# (fully) or `PARTIAL` (some lines short). `CANCELLED` is a terminal close.
+PO_STATUS_OPEN = "OPEN"
+PO_STATUS_PARTIAL = "PARTIAL"
+PO_STATUS_RECEIVED = "RECEIVED"
+PO_STATUS_CANCELLED = "CANCELLED"
+PO_STATUSES = (PO_STATUS_OPEN, PO_STATUS_PARTIAL, PO_STATUS_RECEIVED, PO_STATUS_CANCELLED)
+
+
+class PurchaseOrder(TenantBase):
+    """A supplier purchase order — one line per material ordered.
+
+    Q.53.D — backs the "Entregas" tab of the Materiais page: tracking of
+    what was ordered, from whom, how much, the ETA and the reception
+    state. The factory's source of truth is the ERP NELO `MOVIMENTO`
+    table (movement type 9 = "Pedidos a fornecedor"); the supply ETL
+    `purchase_orders` mirrors those rows here so the UI does not hit the
+    12M-row ledger live.
+
+    `erp_movement_id` is the originating `MOV_ID` when the row was
+    mirrored from the ERP; it is `NULL` for POs created inside ProdPlan
+    (e.g. by the MRP suggestion flow). The unique constraint on
+    (tenant, erp_movement_id) makes the ETL upsert idempotent — re-syncing
+    never duplicates a PO. Rows with no ERP origin keep `erp_movement_id`
+    NULL and are not covered by the uniqueness rule (Postgres treats
+    NULLs as distinct).
+
+    `qty_ordered` / `qty_received` are kept separate so a PARTIAL
+    delivery is honest: `qty_received < qty_ordered` and the outstanding
+    quantity is the difference.
+    """
+
+    __tablename__ = "purchase_orders"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "erp_movement_id",
+            name="uq_purchase_orders_tenant_erp_movement",
+        ),
+        {"schema": "supply"},
+    )
+
+    # ERP origin — MOV_ID of the MOVIMENTO row (type 9). NULL = born here.
+    erp_movement_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # Human-facing PO reference (ERP order number or internal slug).
+    po_number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
+
+    # Supplier — free-form name + optional ERP entity id (ENTIDADE.E_ID).
+    supplier_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    supplier_erp_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # Material — `product_code` matches `core.products.product_code`.
+    product_code: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    product_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    qty_ordered: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6), nullable=False, default=Decimal("0"),
+    )
+    qty_received: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6), nullable=False, default=Decimal("0"),
+    )
+    unit_of_measure: Mapped[str] = mapped_column(String(20), nullable=False, default="UN")
+
+    ordered_at: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    eta: Mapped[Optional[date]] = mapped_column(Date, nullable=True, index=True)
+    received_at: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=PO_STATUS_OPEN, index=True,
+    )
+
+    # 'erp_nelo_movimento' when mirrored from the ERP, 'prodplan' otherwise.
+    source: Mapped[str] = mapped_column(String(40), nullable=False, default="prodplan")
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    synced_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+
+
