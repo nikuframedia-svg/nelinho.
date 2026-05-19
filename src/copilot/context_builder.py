@@ -68,68 +68,116 @@ async def _build_operational_snapshot(
     has_hr_role: bool,
     kpi_snapshot: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Construir snapshot operacional."""
-    # Se kpi_snapshot fornecido, usar valores reais
-    if kpi_snapshot:
-        oee_value = kpi_snapshot.get("oee", {}).get("value") if isinstance(kpi_snapshot.get("oee"), dict) else None
-        availability_value = kpi_snapshot.get("availability", {}).get("value") if isinstance(kpi_snapshot.get("availability"), dict) else None
-        performance_value = kpi_snapshot.get("performance", {}).get("value") if isinstance(kpi_snapshot.get("performance"), dict) else None
-        quality_fpy_value = kpi_snapshot.get("quality_fpy", {}).get("value") if isinstance(kpi_snapshot.get("quality_fpy"), dict) else None
-        rework_rate_value = kpi_snapshot.get("rework_rate", {}).get("value") if isinstance(kpi_snapshot.get("rework_rate"), dict) else None
-        orders_total_value = kpi_snapshot.get("orders_total", {}).get("value") if isinstance(kpi_snapshot.get("orders_total"), dict) else None
-        orders_in_progress_value = kpi_snapshot.get("orders_in_progress", {}).get("value") if isinstance(kpi_snapshot.get("orders_in_progress"), dict) else None
-        orders_completed_value = kpi_snapshot.get("orders_completed", {}).get("value") if isinstance(kpi_snapshot.get("orders_completed"), dict) else None
-        
-        has_data = any(v is not None for v in [oee_value, availability_value, performance_value, quality_fpy_value, rework_rate_value, orders_total_value])
-        
-        snapshot = {
-            "orders_total": int(orders_total_value) if orders_total_value is not None else 0,
-            "orders_in_progress": int(orders_in_progress_value) if orders_in_progress_value is not None else 0,
-            "orders_completed": int(orders_completed_value) if orders_completed_value is not None else 0,
-            "rework_rate": float(rework_rate_value) if rework_rate_value is not None else 0.0,
-            "fpy": float(quality_fpy_value) if quality_fpy_value is not None else 0.0,
-            "oee": float(oee_value) if oee_value is not None else None,
-            "availability": float(availability_value) if availability_value is not None else None,
-            "performance": float(performance_value) if performance_value is not None else None,
-            "quality": float(quality_fpy_value) if quality_fpy_value is not None else None,
-            "top_phases_by_wip": [],
-            "allocations": {
-                "top_phases": [],
-                "top_employees": [],  # Mascarado se não HR role
-            },
-            "standard_times": {
-                "avg_labor_hours": 0.0,
-                "avg_machine_hours": 0.0,
-            },
-            "has_data": has_data,
-            "data_status": "DATA_AVAILABLE" if has_data else "NO_DATA_AVAILABLE",
-        }
-    else:
-        # Sem kpi_snapshot, retornar estrutura vazia
-        snapshot = {
-            "orders_total": 0,
-            "orders_in_progress": 0,
-            "orders_completed": 0,
-            "rework_rate": 0.0,
-            "fpy": 0.0,
-            "oee": None,
-            "availability": None,
-            "performance": None,
-            "quality": None,
-            "top_phases_by_wip": [],
-            "allocations": {
-                "top_phases": [],
-                "top_employees": [],
-            },
-            "standard_times": {
-                "avg_labor_hours": 0.0,
-                "avg_machine_hours": 0.0,
-            },
-            "has_data": False,
-            "data_status": "NO_DATA_AVAILABLE",
-        }
-    
-    return snapshot
+    """Snapshot operacional — Q.55.B.1: lê mesmo a base de dados.
+
+    Antes, esta função só relayava um ``kpi_snapshot``; sem ele, devolvia
+    zeros. Como o ``kpi_snapshot`` só é buscado para o intent ``kpi_current``,
+    quase todas as perguntas chegavam ao LLM com um contexto operacional
+    vazio — e o copiloto respondia "não tenho dados" com 164 ordens em curso
+    e 100k eventos de retrabalho na BD.
+
+    Agora a BD é a base: contagens de ordens (``plan.production_orders``) e
+    de retrabalho (``quality.rework_entry``) vêm sempre de SELECTs reais. O
+    ``kpi_snapshot``, quando existe, sobrepõe-se só nos KPIs derivados
+    (OEE/disponibilidade/performance/FPY) que precisam do cálculo próprio.
+    """
+    from src.plan.models.order import ProductionOrder
+    from src.quality.models.rework import ReworkEntry
+
+    # ── Base: sempre consultar a BD ───────────────────────────────────────
+    orders_total = orders_in_progress = orders_completed = 0
+    rework_total = rework_7d = 0
+    rework_last: Optional[str] = None
+    top_phases: List[Dict[str, Any]] = []
+    db_ok = False
+
+    try:
+        status_rows = (await session.execute(
+            select(ProductionOrder.status, func.count())
+            .where(ProductionOrder.tenant_id == tenant_id)
+            .group_by(ProductionOrder.status)
+        )).all()
+        by_status = {str(s): int(c) for s, c in status_rows}
+        orders_in_progress = by_status.get("IN_PROGRESS", 0)
+        orders_completed = by_status.get("COMPLETED", 0)
+        orders_total = sum(by_status.values())
+
+        phase_rows = (await session.execute(
+            select(ProductionOrder.current_phase_name, func.count().label("c"))
+            .where(
+                ProductionOrder.tenant_id == tenant_id,
+                ProductionOrder.status == "IN_PROGRESS",
+            )
+            .group_by(ProductionOrder.current_phase_name)
+            .order_by(func.count().desc())
+            .limit(5)
+        )).all()
+        top_phases = [
+            {"phase": (p or "?"), "wip": int(c)} for p, c in phase_rows
+        ]
+
+        total_rows = (await session.execute(
+            select(func.count(), func.max(ReworkEntry.detected_at))
+            .where(ReworkEntry.tenant_id == tenant_id)
+        )).all()
+        if total_rows:
+            rework_total = int(total_rows[0][0] or 0)
+            last_dt = total_rows[0][1]
+            rework_last = last_dt.date().isoformat() if last_dt else None
+
+        seven_days_ago = datetime.now(timezone.utc) - timedelta(days=7)
+        recent_rows = (await session.execute(
+            select(func.count()).where(
+                ReworkEntry.tenant_id == tenant_id,
+                ReworkEntry.detected_at >= seven_days_ago,
+            )
+        )).all()
+        if recent_rows:
+            rework_7d = int(recent_rows[0][0] or 0)
+
+        db_ok = True
+    except Exception as exc:
+        logger.warning(f"operational_snapshot: query à BD falhou ({exc})")
+
+    # ── Overlay: KPIs derivados, só quando há kpi_snapshot ────────────────
+    def _kpi(name: str) -> Optional[float]:
+        d = kpi_snapshot.get(name) if kpi_snapshot else None
+        v = d.get("value") if isinstance(d, dict) else None
+        return float(v) if v is not None else None
+
+    oee = _kpi("oee")
+    availability = _kpi("availability")
+    performance = _kpi("performance")
+    fpy_value = _kpi("quality_fpy")
+    rework_rate = _kpi("rework_rate")
+
+    has_data = db_ok and (orders_total > 0 or rework_total > 0)
+
+    return {
+        "orders_total": orders_total,
+        "orders_in_progress": orders_in_progress,
+        "orders_completed": orders_completed,
+        "rework_events_total": rework_total,
+        "rework_events_7d": rework_7d,
+        "rework_last_detected": rework_last,
+        "rework_rate": rework_rate if rework_rate is not None else 0.0,
+        "fpy": fpy_value if fpy_value is not None else 0.0,
+        "oee": oee,
+        "availability": availability,
+        "performance": performance,
+        "quality": fpy_value,
+        "top_phases_by_wip": top_phases,
+        "allocations": {
+            "top_phases": [],
+            "top_employees": [],  # Mascarado se não HR role
+        },
+        "standard_times": {
+            "avg_labor_hours": 0.0,
+            "avg_machine_hours": 0.0,
+        },
+        "has_data": has_data,
+        "data_status": "DATA_AVAILABLE" if has_data else "NO_DATA_AVAILABLE",
+    }
 
 
 async def _build_quality_snapshot(
