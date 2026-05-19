@@ -588,3 +588,74 @@ async def get_cost_ledger(
     """
     svc = CostLedgerService(session, tenant_id)
     return await svc.ledger(date_from=date_from, date_to=date_to, limit=limit)
+
+
+# ─── /cost-reduction-suggestions (Q.54.H — sugestões accionáveis) ────────
+
+from src.profit.services.cost_reduction_service import CostReductionService
+
+
+class CostReductionRequest(BaseModel):
+    """Janela e limite da análise de sugestões de redução de custo."""
+
+    date_from: Optional[date] = None
+    date_to: Optional[date] = None
+    limit: int = 20
+
+
+class SuggestionToDecisionRequest(BaseModel):
+    """Promove uma sugestão (o dict devolvido por /cost-reduction-suggestions)
+    a `DecisionRun` no Inbox de governança."""
+
+    suggestion: dict
+    proposed_by: str = "custos-ui"
+
+
+@router.post("/cost-reduction-suggestions")
+async def post_cost_reduction_suggestions(
+    req: CostReductionRequest,
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Q.54.H — sugestões accionáveis de redução de custo.
+
+    Analisa os `CostCalculation` persistidos, deteta barcos/centros de
+    custo acima da mediana do tipo de produto e devolve uma sugestão por
+    desvio. O texto explicativo é redigido pelo LLM (Ollama); os números
+    vêm todos da análise determinística. POST porque a análise corre
+    sobre uma janela e invoca o LLM — não é uma leitura barata.
+    """
+    svc = CostReductionService(session, tenant_id)
+    return await svc.suggestions(
+        date_from=req.date_from,
+        date_to=req.date_to,
+        limit=max(1, min(req.limit, 100)),
+    )
+
+
+@router.post(
+    "/cost-reduction-suggestions/decision",
+    status_code=status.HTTP_201_CREATED,
+)
+async def post_suggestion_to_decision(
+    req: SuggestionToDecisionRequest,
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Q.54.H — transforma uma sugestão aceite numa Decisão.
+
+    Cria um `DecisionRun` do tipo `cost_reduction` no Inbox de
+    governança — fica a aguardar aprovação humana. O `expected_impact`
+    leva o `eur_saved` (o excesso determinístico), por isso quando a
+    decisão for executada conta para o KPI "Poupado por sugestões".
+    """
+    svc = CostReductionService(session, tenant_id)
+    try:
+        return await svc.create_decision_from_suggestion(
+            req.suggestion, proposed_by=req.proposed_by
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Sugestão sem o campo obrigatório: {exc}",
+        ) from exc
