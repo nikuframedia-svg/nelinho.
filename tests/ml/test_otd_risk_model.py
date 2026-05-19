@@ -209,7 +209,7 @@ class TestOTDRiskRetrainJobIntegration:
     async def test_lifecycle_with_synthetic_data(self, fake_session, tmp_path):
         """Full RetrainJob lifecycle: extract → train → validate → save."""
         from src.ml.jobs import base as base_module
-        import pytest as _pytest  # noqa: F401
+        import pytest as _pytest
 
         storage = ArtifactStorage(
             MLConfig(artifact_dir=tmp_path, auto_promote_max_wmape_delta=0.05)

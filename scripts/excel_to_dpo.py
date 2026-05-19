@@ -398,8 +398,8 @@ def extract_real_vs_standard_time_pairs(
             "é a única referência fiável (CLAUDE_1.md confirma 25× máximo)."
         )
         rejected = (
-            f"Prefiro o plano B: standard é a referência oficial e "
-            f"vem da BoM do produto."
+            "Prefiro o plano B: standard é a referência oficial e "
+            "vem da BoM do produto."
         )
         pairs.append(DPOPair(
             prompt=prompt,
@@ -599,7 +599,7 @@ def extract_phase_rework_pairs(
             "aumenta retrabalho a jusante."
         )
         rejected = (
-            f"Prefiro o plano B: confiar no operador é mais rápido e a maioria das "
+            "Prefiro o plano B: confiar no operador é mais rápido e a maioria das "
             "peças passa sem incidente."
         )
         pairs.append(DPOPair(
@@ -639,7 +639,7 @@ def extract_phase_rework_pairs(
             "históricos; investigar origem evita repetir o defeito em mais peças."
         )
         rejected = (
-            f"Prefiro o plano B: re-trabalhar é mais rápido para esta peça."
+            "Prefiro o plano B: re-trabalhar é mais rápido para esta peça."
         )
         pairs.append(DPOPair(
             prompt=prompt,
@@ -721,7 +721,7 @@ def extract_lead_time_pairs(
             f"{median:.0f} dias; planear no P90 inflaciona compromisso ao cliente."
         )
         rejected = (
-            f"Prefiro o plano B: ir pelo P90 dá margem de segurança."
+            "Prefiro o plano B: ir pelo P90 dá margem de segurança."
         )
         pairs.append(DPOPair(
             prompt=prompt,

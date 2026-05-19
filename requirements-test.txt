@@ -79,3 +79,7 @@ pytest==7.4.4
 pytest-asyncio==0.23.3
 pytest-cov==4.1.0
 hypothesis>=6.92  # property-based testing — used by tests/plan/test_preview_delta_property.py
+
+# Lint — Q.59.B.2 wired ruff into CI as a real-bugs-only gate (config in
+# ruff.toml). Pinned so CI and local agree on the rule set.
+ruff==0.15.12

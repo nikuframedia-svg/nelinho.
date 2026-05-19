@@ -328,7 +328,7 @@ class CostReductionService:
         """Flag boats whose component cost exceeds its type baseline."""
         # Sample size per (type, component) for the explanation context.
         sample_size: dict[tuple[str, str], int] = {}
-        for order_id, cc in cost_by_order.items():
+        for order_id in cost_by_order:
             order = order_by_key.get(order_id)
             ptype = (order.product_type if order else None) or "Outro"
             for comp in _COST_COMPONENTS:
@@ -393,7 +393,7 @@ class CostReductionService:
                 format=None,
                 system_prompt=system,
             )
-        except Exception as exc:  # noqa: BLE001 — degrade, never crash
+        except Exception as exc:
             logger.warning(
                 "cost-reduction: LLM indisponível, uso texto determinístico: %s",
                 exc,

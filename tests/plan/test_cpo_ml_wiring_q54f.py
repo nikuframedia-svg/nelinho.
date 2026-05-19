@@ -132,10 +132,10 @@ async def test_quality_risk_predictor_wired_when_active(monkeypatch):
 # gains and axiom 7's safety net would compare against a corrupt
 # baseline.
 
-from hypothesis import HealthCheck, given, settings  # noqa: E402
-from hypothesis import strategies as st  # noqa: E402
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
-from src.plan.cpo.fitness import compute_fitness  # noqa: E402
+from src.plan.cpo.fitness import compute_fitness
 
 
 @st.composite

@@ -40,7 +40,7 @@ def test_shared_module_imports_cleanly():
     fixed it by switching to a proper Index() declaration matching
     migration 003. If this test fails, someone reintroduced the bug.
     """
-    from src.shared.outbox_models import EventDLQ, EventOutbox  # noqa: F401
+    from src.shared.outbox_models import EventDLQ, EventOutbox
 
     # If the import succeeded the assertion below is trivial; the value
     # of this test is the import itself raising on regressions.

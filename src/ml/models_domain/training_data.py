@@ -118,7 +118,7 @@ async def build_duration_dataset(
                 "modelo_id": str(r["product_type"] or "desconhecido"),
                 "fase_id": fase_id,
                 "team_size": 1,  # not tracked on order_phase — neutral default
-                "mold_pocket_count": 1 if r["molde_id"] else 1,
+                "mold_pocket_count": 1,  # order_phase has no pocket count — neutral default
                 "is_rework": 0,
                 "queue_depth": fase_counts.get(fase_id, 0),
                 "horas_reais": float(r["horas_reais"]),

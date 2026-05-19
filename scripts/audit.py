@@ -278,7 +278,7 @@ def collect_routes(repo_root: Path) -> set[str]:
     empty set if the app fails to load (e.g. missing DB)."""
     try:
         sys.path.insert(0, str(repo_root))
-        from src.main import app  # noqa: PLC0415
+        from src.main import app
         return {
             r.path for r in app.routes
             if hasattr(r, "methods") and hasattr(r, "path")
@@ -506,7 +506,7 @@ def main() -> int:
 
     targets = [args.module] if args.module else list(MODULES)
 
-    print(f"[audit] booting app to collect routes…", file=sys.stderr)
+    print("[audit] booting app to collect routes…", file=sys.stderr)
     routes = collect_routes(repo_root)
     print(f"[audit] {len(routes)} routes registered", file=sys.stderr)
 

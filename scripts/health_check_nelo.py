@@ -63,7 +63,7 @@ async def main() -> int:
 
         print()
         print(f"[OK] Health-check passed ({elapsed:.2f}s elapsed)")
-    except Exception as exc:  # noqa: BLE001 — top-level reporter
+    except Exception as exc:
         print(f"\n[FAIL] Health-check FAILED: {type(exc).__name__}: {exc}")
         rc = 1
     finally:

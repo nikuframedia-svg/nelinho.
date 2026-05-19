@@ -17,7 +17,7 @@ from pathlib import Path
 SCRIPTS_DIR = Path(__file__).resolve().parents[2] / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from excel_to_dpo import (  # noqa: E402
+from excel_to_dpo import (
     DPOPair,
     extract_lead_time_pairs,
     extract_operator_affinity_pairs,

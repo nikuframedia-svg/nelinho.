@@ -163,7 +163,7 @@ def test_property_emitted_conflicts_correspond_to_real_overlaps(op_indices):
     """For any random schedule, every emitted `mold_double_booking`
     must correspond to a real overlap on the same mold. False positives
     indicate a regression in the detector."""
-    from hypothesis import strategies as st  # noqa: F401 — used implicitly via @given
+    from hypothesis import strategies as st
 
     # Deterministically build a schedule from the indices so we can
     # cross-check overlap predicate manually.

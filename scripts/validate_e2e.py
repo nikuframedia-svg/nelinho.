@@ -255,7 +255,7 @@ def phase_c_counts(report: Report, engine, ingestion_id):
     for row in raw_rows:
         name = row.get("sheet_name") or row.get("sheet") or "?"
         by_sheet[name] = by_sheet.get(name, 0) + 1
-    print(f"  RAW per-sheet:")
+    print("  RAW per-sheet:")
     for k, v in sorted(by_sheet.items()):
         print(f"    {k}: {v:,}")
 
@@ -340,7 +340,7 @@ def phase_d_semantic(report: Report, engine):
         if status == "DRIFT" and isinstance(obs, (int, float)):
             if abs(obs - expected) / expected <= 0.10:
                 status = "PASS"
-                note = f"within 10% band"
+                note = "within 10% band"
         report.add(Finding(label, expected, obs, status, note))
 
     # get_quality - top errors

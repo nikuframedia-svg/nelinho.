@@ -27,54 +27,54 @@ DEV_TENANT_CODE = "nelo-dev"
 # Mirror alembic/env.py imports so Base.metadata is fully populated.
 def _import_all_models() -> None:
     # Core
-    from src.core.models import (  # noqa: F401
+    from src.core.models import (
         tenant, tenant_configuration, product, machine, employee, operation, bom, rates,
     )
     # Domain modules
-    from src.copilot import models as copilot_models  # noqa: F401
-    from src.dqa import models as dqa_models  # noqa: F401
-    from src.supply import models as supply_models  # noqa: F401
-    from src.shared.models import governance  # noqa: F401  (legacy decision_runs/approvals)
+    from src.copilot import models as copilot_models
+    from src.dqa import models as dqa_models
+    from src.supply import models as supply_models
+    from src.shared.models import governance
     # Active Q.13+ governance models (decision_run singular, preference_rule, rule_firing, etc.)
-    from src.governance import models as governance_main_models  # noqa: F401
-    from src.twin import models as twin_models  # noqa: F401
-    from src.copilot.alerts import models as copilot_alerts_models  # noqa: F401
-    from src.ml.models import orm as ml_orm_models  # noqa: F401
-    from src.plan.cpo import commits as plan_commits_models  # noqa: F401
-    from src.plan.models import transport as plan_transport_models  # noqa: F401
-    from src.plan.models import routing_template as plan_routing_template_models  # noqa: F401
-    from src.profit.models import pricing as profit_pricing_models  # noqa: F401
-    from src.quality.models import rework as quality_rework_models  # noqa: F401
-    from src.plan.models import mold as plan_mold_models  # noqa: F401
-    from src.plan.models import schedule as plan_schedule_models  # noqa: F401
-    from src.plan.models import order as plan_order_models  # noqa: F401
-    from src.plan.models import mrp as plan_mrp_models  # noqa: F401
-    from src.plan.models import phase_gap as plan_phase_gap_models  # noqa: F401
-    from src.factory_data_product.models import curated as factory_curated_models  # noqa: F401
-    from src.sandbox import models as sandbox_models  # noqa: F401
-    from src.improve import models as improve_models  # noqa: F401
+    from src.governance import models as governance_main_models
+    from src.twin import models as twin_models
+    from src.copilot.alerts import models as copilot_alerts_models
+    from src.ml.models import orm as ml_orm_models
+    from src.plan.cpo import commits as plan_commits_models
+    from src.plan.models import transport as plan_transport_models
+    from src.plan.models import routing_template as plan_routing_template_models
+    from src.profit.models import pricing as profit_pricing_models
+    from src.quality.models import rework as quality_rework_models
+    from src.plan.models import mold as plan_mold_models
+    from src.plan.models import schedule as plan_schedule_models
+    from src.plan.models import order as plan_order_models
+    from src.plan.models import mrp as plan_mrp_models
+    from src.plan.models import phase_gap as plan_phase_gap_models
+    from src.factory_data_product.models import curated as factory_curated_models
+    from src.sandbox import models as sandbox_models
+    from src.improve import models as improve_models
 
     # Q.18.BOOTSTRAP — modules that env.py forgets but the running backend needs:
-    from src.workforce import models as workforce_models  # noqa: F401
-    from src.profit.models import cost as profit_cost_models  # noqa: F401
-    from src.profit.models import phase_bonus as profit_phase_bonus_models  # noqa: F401
-    from src.hr.models import allocation as hr_allocation_models  # noqa: F401
-    from src.hr.models import legacy_allocation as hr_legacy_allocation_models  # noqa: F401
-    from src.hr.models import productivity as hr_productivity_models  # noqa: F401
-    from src.explain.models import explained_value as explain_explained_value_models  # noqa: F401
+    from src.workforce import models as workforce_models
+    from src.profit.models import cost as profit_cost_models
+    from src.profit.models import phase_bonus as profit_phase_bonus_models
+    from src.hr.models import allocation as hr_allocation_models
+    from src.hr.models import legacy_allocation as hr_legacy_allocation_models
+    from src.hr.models import productivity as hr_productivity_models
+    from src.explain.models import explained_value as explain_explained_value_models
 
     # Q.17.C — tenant_rule + revision tables (NL→YAML rule authoring)
-    from src.governance.yaml_policy import models as yaml_policy_models  # noqa: F401
+    from src.governance.yaml_policy import models as yaml_policy_models
 
     # Q.20.A — core.etl_run audit table (ERP→Postgres sync trail)
-    from src.core.models import etl_run as core_etl_run_models  # noqa: F401
+    from src.core.models import etl_run as core_etl_run_models
 
     # Q.22.A — shared.users identity table (backs GET /v1/auth/me)
-    from src.shared.models import user as shared_user_models  # noqa: F401
+    from src.shared.models import user as shared_user_models
     # Q.22.C — plan.production_errors (backs /api/errors*)
-    from src.legacy import models as legacy_models  # noqa: F401
+    from src.legacy import models as legacy_models
     # Q.22.D — reports.report_schedule + report_run
-    from src.reports import models as reports_models  # noqa: F401
+    from src.reports import models as reports_models
 
 
 _SCHEMAS = (

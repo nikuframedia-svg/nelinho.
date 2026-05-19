@@ -21,7 +21,7 @@ _SCRIPTS_DIR = _REPO_ROOT / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
-from train_quality_risk_from_excel import _norm  # noqa: E402
+from train_quality_risk_from_excel import _norm
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -57,7 +57,7 @@ class _FakeSheet:
         self._header = header
         self._rows = rows
 
-    def iter_rows(self, values_only: bool = False):  # noqa: ARG002
+    def iter_rows(self, values_only: bool = False):
         yield self._header
         for r in self._rows:
             yield r

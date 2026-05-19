@@ -30,7 +30,7 @@ class _FakeSession:
         self.by_entity = by_entity
         self.calls = 0
 
-    async def execute(self, stmt):  # noqa: ANN001 — test stub
+    async def execute(self, stmt):
         self.calls += 1
         entity = stmt.column_descriptions[0]["entity"]
         rows = self.by_entity.get(entity, [])

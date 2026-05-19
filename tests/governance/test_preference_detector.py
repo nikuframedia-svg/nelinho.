@@ -78,7 +78,7 @@ class _FakeSession:
         self.added: List[Any] = []
         self.flush_calls = 0
 
-    async def execute(self, stmt):  # noqa: ANN001 — test stub
+    async def execute(self, stmt):
         rows: List[Any] = self._commits
         try:
             entity = stmt.column_descriptions[0].get("entity")

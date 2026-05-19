@@ -504,7 +504,7 @@ class AllocationService:
         """
         try:
             await publish_event(topic, event)
-        except Exception as exc:  # noqa: BLE001 — bus down não é fatal
+        except Exception as exc:
             logger.warning(
                 "publish_event(%s) falhou (best-effort, ignorado): %s",
                 topic, exc,

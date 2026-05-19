@@ -254,7 +254,7 @@ class _FakeSession:
         self._employees = employees
         self._calls = 0
 
-    async def execute(self, stmt):  # noqa: ANN001
+    async def execute(self, stmt):
         self._calls += 1
         if self._calls == 1:
             # CommitsService.get_by_sha / get_latest

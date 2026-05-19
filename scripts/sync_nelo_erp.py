@@ -69,7 +69,7 @@ async def main(argv: list[str]) -> int:
     print(f"NELO ERP-to-Postgres sync at {datetime.now():%Y-%m-%d %H:%M:%S}")
     try:
         results = await run_nelo_sync(only=args.only, exclude=args.exclude, since=since)
-    except Exception as exc:  # noqa: BLE001 — top-level reporter
+    except Exception as exc:
         print(f"[FAIL] sync aborted: {type(exc).__name__}: {exc}")
         return 1
 

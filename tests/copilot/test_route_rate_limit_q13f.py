@@ -40,7 +40,7 @@ class _FakeRedis:
     def __init__(self) -> None:
         self.zsets: Dict[str, List[Tuple[int, str]]] = {}
 
-    async def eval(self, *_args, **_kwargs):  # noqa: D401
+    async def eval(self, *_args, **_kwargs):
         raise NotImplementedError("fake redis: EVAL not implemented")
 
     async def zremrangebyscore(self, key: str, lo: int, hi: int):
@@ -66,7 +66,7 @@ class _FakeRedis:
             zs.append((int(score), member))
         return len(mapping)
 
-    async def expire(self, key: str, ttl: int) -> int:  # noqa: ARG002
+    async def expire(self, key: str, ttl: int) -> int:
         return 1
 
 

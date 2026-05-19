@@ -30,7 +30,7 @@ class _FailingDB:
     """Simulates a DB session whose `execute()` always blows up — i.e.
     the curated tables are missing or the connection is severed."""
 
-    async def execute(self, *_args, **_kwargs):  # noqa: D401
+    async def execute(self, *_args, **_kwargs):
         raise RuntimeError("simulated curated layer outage")
 
 

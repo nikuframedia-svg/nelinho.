@@ -275,8 +275,8 @@ def test_apply_safety_net_clean_candidate_passes_through():
 # across the full 9-dimension space — including the two Q.54.G
 # additions (lam_utilization, idle_ratio).
 
-from hypothesis import HealthCheck, given, settings  # noqa: E402
-from hypothesis import strategies as st  # noqa: E402
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 
 @st.composite

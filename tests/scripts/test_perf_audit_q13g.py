@@ -30,7 +30,7 @@ _SCRIPTS_DIR = _REPO_ROOT / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
-from perf_audit import _summary, _walk_for_index  # noqa: E402
+from perf_audit import _summary, _walk_for_index
 
 
 # ───────────────────────────────────────────────────────────────────────────

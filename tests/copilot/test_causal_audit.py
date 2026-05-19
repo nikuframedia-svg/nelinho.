@@ -52,7 +52,7 @@ class _FakeSession:
     def add(self, obj: Any) -> None:
         self.added.append(obj)
 
-    async def execute(self, _stmt):  # noqa: ANN001 — test stub
+    async def execute(self, _stmt):
         rows = self._rows
 
         class _R:

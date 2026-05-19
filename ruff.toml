@@ -52,9 +52,18 @@ ignore = [
     "F401",   # imported but unused — many __init__.py re-exports
     "F403",   # star imports — pre-existing pattern in some places
     "F405",   # undefined-from-star — same as above
+    "ASYNC240", # pathlib metadata ops (.exists/.resolve/.unlink) in async
+                # fns — microsecond-scale, too noisy for a "real bugs only"
+                # set; hot-path I/O is revisited in a perf sub-sprint.
 ]
 
 [lint.per-file-ignores]
-"tests/**/*.py" = ["F841", "B011", "B017", "B018"]  # test fixtures often unused
+# Test code is DAMP and full of throwaway bindings — relax the
+# "unused/style" detectors that fire on fixtures and assertions.
+"tests/**/*.py" = [
+    "F841", "B011", "B017", "B018",
+    "RUF059", "B007", "RUF005", "RUF007", "RUF009", "RUF015",
+]
 "alembic/versions/*.py" = ["E402", "F401"]  # migrations are special
-"scripts/**/*.py" = ["E402"]  # ad-hoc scripts
+# Ad-hoc one-off scripts — not production code; relax unused/style noise.
+"scripts/**/*.py" = ["E402", "F841", "B007", "RUF005", "RUF046"]

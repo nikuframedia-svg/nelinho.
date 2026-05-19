@@ -35,7 +35,7 @@ async def _probe(name: str, coro) -> bool:
         if sample is not None:
             print(f"       amostra: {repr(sample)[:150]}")
         return True
-    except Exception as e:  # noqa: BLE001 — validador: queremos ver tudo
+    except Exception as e:
         dt = (time.perf_counter() - t0) * 1000
         print(f"  FALHA {name:35s} {dt:8.0f}ms  {type(e).__name__}: {str(e)[:150]}")
         return False
@@ -81,7 +81,7 @@ async def main() -> None:
             pid = prods[0].product_id
             results.append(await _probe(f"get_routing({pid})", services.get_routing(pid)))
             results.append(await _probe(f"get_bom({pid})", services.get_bom(pid)))
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         print(f"  (routing/bom saltados: {type(e).__name__}: {e})")
 
     await services.close_engine()
