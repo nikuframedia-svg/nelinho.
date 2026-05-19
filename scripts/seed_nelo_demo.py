@@ -233,6 +233,10 @@ async def upsert_employees(session: AsyncSession) -> dict[str, UUID]:
 
 
 async def upsert_orders(session: AsyncSession) -> None:
+    # Q.54.B — o status da ordem deriva da fase, nunca é IN_PROGRESS fixo
+    # (uma ordem "Entregue"/"Armazém" está COMPLETED).
+    from src.plan.services.phase_classification import phase_status
+
     today = date.today()
     for legacy_id, model, short, phase_id, transport in BOATS:
         stmt = select(ProductionOrder).where(
@@ -241,13 +245,14 @@ async def upsert_orders(session: AsyncSession) -> None:
         )
         existing = (await session.execute(stmt)).scalar_one_or_none()
         phase_name = PHASE_BY_ID[phase_id]
+        status = phase_status(phase_name)
         if existing:
             existing.product_name = model
             existing.product_type = short
             existing.current_phase_id = phase_id
             existing.current_phase_name = phase_name
             existing.transport_date = transport
-            existing.status = OrderStatus.IN_PROGRESS
+            existing.status = status
         else:
             session.add(ProductionOrder(
                 tenant_id=DEV_TENANT_ID,
@@ -259,7 +264,7 @@ async def upsert_orders(session: AsyncSession) -> None:
                 current_phase_name=phase_name,
                 created_date=today,
                 transport_date=transport,
-                status=OrderStatus.IN_PROGRESS,
+                status=status,
             ))
 
 

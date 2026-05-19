@@ -1,9 +1,15 @@
 """GET /v1/plan/orders/active — orders activos para PhaseColumnView.
 
-Sprint Q.18.ZIP.BE.1.
+Sprint Q.18.ZIP.BE.1 · Q.54.B.
 
-Devolve lista flat de production orders em curso (``status=IN_PROGRESS``)
-no formato consumido pelo BoatCard / PhaseColumnView do frontend Producao.
+Devolve lista flat de production orders ainda no chão de fábrica no
+formato consumido pelo BoatCard / PhaseColumnView do frontend Producao.
+
+Q.54.B — o filtro deixou de ser ``status == IN_PROGRESS`` (que estava
+desincronizado: 521 ordens TODAS IN_PROGRESS quando 329 já estavam
+"Entregue"). Passou a EXCLUIR as ordens cuja fase é terminal — "Entregue",
+"Armazem", "Embalado" — via :func:`is_completed_phase`. A classificação de
+fases vive num sítio único: ``src/plan/services/phase_classification.py``.
 
 Resposta:
     [
@@ -14,6 +20,7 @@ Resposta:
         "product_type": "K1|K2|K4|C1|C2|C4|Other",
         "customer_name": "..." | null,
         "phase": "<current_phase_name>",
+        "phase_sequence": <int> | null,
         "status": "IN_PROGRESS",
         "created_date": "YYYY-MM-DD" | null,
         "transport_date": "YYYY-MM-DD" | null
@@ -21,10 +28,11 @@ Resposta:
       ...
     ]
 
+``phase_sequence`` (Q.54.B) — posição da fase na sequência de routing NELO,
+para o frontend ordenar as colunas sem reinventar a ordem das fases.
+
 ``customer_name`` (Q.53.I) — cliente derivado da encomenda ERP quando
-disponível. O modelo legacy ``ProductionOrder`` ainda não sincroniza o
-cliente (``OF_NOME`` do ERP); o campo é exposto para o frontend ligar
-sem mock e devolve ``null`` honesto enquanto a sincronização não landa.
+disponível; ``null`` honesto enquanto a sincronização não landa.
 
 Endpoint só lê — drag-drop entre fases continua a passar por
 ``schedulePreviewApi.previewDelta`` (Q.4) que gera o ConsequenceBlock.
@@ -40,6 +48,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.plan.models.order import OrderStatus, ProductionOrder
+from src.plan.services.phase_classification import (
+    is_completed_phase,
+    phase_sequence,
+)
 from src.shared.auth.headers import require_tenant_header
 from src.shared.database import get_session
 
@@ -57,7 +69,10 @@ def _order_to_card(o: ProductionOrder) -> dict[str, Any]:
         "product_name": o.product_name,
         "product_type": o.product_type,
         "customer_name": customer,
+        # Q.54.B — `phase` traz sempre o NOME da fase; `phase_sequence` dá
+        # a posição canónica no routing NELO (None se a fase é desconhecida).
         "phase": o.current_phase_name,
+        "phase_sequence": phase_sequence(o.current_phase_name),
         "status": o.status.value if hasattr(o.status, "value") else str(o.status),
         "created_date": o.created_date.isoformat() if o.created_date else None,
         "transport_date": o.transport_date.isoformat() if o.transport_date else None,
@@ -71,14 +86,27 @@ async def list_active_orders(
     tenant_id: UUID = Depends(require_tenant_header),
     session: AsyncSession = Depends(get_session),
 ) -> list[dict[str, Any]]:
+    """Ordens ainda no chão de fábrica.
+
+    Q.54.B — exclui ordens em fase terminal ("Entregue"/"Armazem"/
+    "Embalado") e ordens ``CANCELLED``. O filtro de fase é por NOME, feito
+    em Python (o ERP não expõe um flag de fase terminal); o volume é baixo
+    (~500 ordens) por isso carregar e filtrar é barato. O param ``phase``
+    continua a permitir afunilar para uma fase concreta.
+    """
     stmt = (
         select(ProductionOrder)
         .where(ProductionOrder.tenant_id == tenant_id)
-        .where(ProductionOrder.status == OrderStatus.IN_PROGRESS)
+        # CANCELLED nunca é chão de fábrica; COMPLETED filtra-se a seguir
+        # pela fase (defesa em profundidade — mesmo que o status não tenha
+        # transitado, a fase terminal exclui a ordem).
+        .where(ProductionOrder.status != OrderStatus.CANCELLED)
     )
     if phase:
         stmt = stmt.where(ProductionOrder.current_phase_name == phase)
-    stmt = stmt.order_by(ProductionOrder.created_date.desc().nullslast()).limit(limit)
+    stmt = stmt.order_by(ProductionOrder.created_date.desc().nullslast())
     result = await session.execute(stmt)
     rows = result.scalars().all()
-    return [_order_to_card(o) for o in rows]
+
+    active = [o for o in rows if not is_completed_phase(o.current_phase_name)]
+    return [_order_to_card(o) for o in active[:limit]]

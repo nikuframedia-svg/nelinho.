@@ -134,6 +134,17 @@ def start_scheduler(
         coalesce=True,
         max_instances=1,
     )
+    # Q.54.B — reconciliação do estado das ordens com a fase actual.
+    # Postgres-interna, corre sempre (independente de sqlserver_enabled).
+    _scheduler.add_job(
+        _order_status_reconcile_job,
+        trigger=IntervalTrigger(minutes=15),
+        id="order_status_reconcile",
+        name="order_status_reconcile",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
 
     _scheduler.start()
     logger.info(
@@ -1072,6 +1083,58 @@ async def _daily_feedback_job(tenant_ids: List[UUID]) -> None:
             logger.info(f"daily_feedback generated for tenant={tid}")
         except Exception as e:
             logger.error(f"daily_feedback failed for tenant={tid}: {e}", exc_info=True)
+
+
+async def _reconcile_order_statuses_all_tenants() -> None:
+    """Q.54.B — faz o `status` das ordens convergir com a fase actual.
+
+    Reconciliacao puramente Postgres (nao precisa do ERP): uma ordem em
+    fase terminal ("Entregue"/"Armazem"/"Embalado") passa a COMPLETED.
+    Escreve `core.audit_log` por transicao. Best-effort por tenant — uma
+    falha num tenant nao bloqueia os outros.
+    """
+    from sqlalchemy import select
+
+    from src.core.models.tenant import Tenant
+    from src.plan.services.order_status_reconciler import (
+        reconcile_order_statuses,
+    )
+    from src.shared.database import get_session_context
+
+    try:
+        async with get_session_context() as session:
+            tenant_ids = (
+                await session.execute(select(Tenant.id))
+            ).scalars().all()
+    except Exception as exc:
+        logger.warning("reconcile_order_statuses: tenant list failed: %s", exc)
+        return
+
+    for tid in tenant_ids:
+        try:
+            async with get_session_context() as session:
+                result = await reconcile_order_statuses(session, tid)
+                await session.commit()
+            if result.transitioned:
+                logger.info(
+                    "reconcile_order_statuses tenant=%s transitioned=%d",
+                    tid, result.transitioned,
+                )
+        except Exception as exc:
+            logger.error(
+                "reconcile_order_statuses tenant=%s failed: %s",
+                tid, exc, exc_info=True,
+            )
+
+
+async def _order_status_reconcile_job() -> None:
+    """Q.54.B — job dedicado de reconciliacao do estado das ordens.
+
+    Reconciliacao puramente Postgres (nao depende do ERP) — corre SEMPRE,
+    independente de ``sqlserver_enabled``. Cadencia frequente porque e
+    barato e mantem o estado das ordens fresco para a pagina Producao.
+    """
+    await _reconcile_order_statuses_all_tenants()
 
 
 async def _nelo_erp_sync_job() -> None:

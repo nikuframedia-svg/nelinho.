@@ -149,12 +149,19 @@ async def migrate_orders(session: AsyncSession, tenant_id: UUID, orders: List[Di
             except:
                 pass
         
-        # Parse status
-        status = OrderStatus.IN_PROGRESS
+        # Parse status — Q.54.B: o status do SQLite legacy estava preso em
+        # IN_PROGRESS para todas as ordens, mesmo as "Entregue"/"Armazém".
+        # Deriva-se da fase: uma ordem em fase terminal é COMPLETED. Um
+        # CANCELLED explícito do legacy é respeitado.
+        from src.plan.services.phase_classification import phase_status
+
+        status = phase_status(order_data["current_phase_name"])
         if order_data["status"]:
             try:
-                status = OrderStatus(order_data["status"])
-            except:
+                legacy_status = OrderStatus(order_data["status"])
+                if legacy_status == OrderStatus.CANCELLED:
+                    status = OrderStatus.CANCELLED
+            except (ValueError, KeyError):
                 pass
         
         order = ProductionOrder(
