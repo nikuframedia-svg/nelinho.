@@ -314,6 +314,11 @@ class GovernanceService:
             prev_hash=last_hash,
             audit_hash=audit_hash,
             proposed_by=proposed_by,
+            # Initialise the collection eagerly: a freshly-proposed
+            # decision has zero approvals, and assigning [] here stops
+            # `_run_to_dict` from triggering a lazy SELECT after flush
+            # (which raises greenlet_spawn in the async session).
+            approvals=[],
         )
 
         self.db.add(decision_run)

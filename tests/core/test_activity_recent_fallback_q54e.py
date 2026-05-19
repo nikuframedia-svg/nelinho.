@@ -42,12 +42,18 @@ class _SqlFakeSession:
 
     def __init__(self, queue):
         self._queue = list(queue)
+        self.rollbacks = 0
 
     async def execute(self, _stmt, _params=None):
         item = self._queue.pop(0) if self._queue else []
         if isinstance(item, Exception):
             raise item
         return _Result(item)
+
+    async def rollback(self):
+        # A failed statement leaves the asyncpg transaction aborted; the
+        # handler rolls back before the audit-log fallback so it can run.
+        self.rollbacks += 1
 
 
 def _client(session) -> TestClient:
@@ -119,3 +125,6 @@ def test_recent_falls_back_when_outbox_table_missing():
     items = resp.json()["items"]
     assert len(items) == 1
     assert items[0]["type"] == "user"
+    # The aborted transaction must be rolled back before the audit-log
+    # query — otherwise it raises InFailedSQLTransactionError.
+    assert session.rollbacks == 1

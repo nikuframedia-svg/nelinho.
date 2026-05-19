@@ -269,6 +269,10 @@ async def recent_activity(
             "activity/recent: event_outbox unavailable (%s); trying audit_log",
             type(exc).__name__,
         )
+        # A failed statement leaves the asyncpg transaction aborted —
+        # every subsequent query raises InFailedSQLTransactionError until
+        # we roll back. Do that before the fallback so it actually runs.
+        await session.rollback()
         return ActivityResponse(items=await _from_audit_log(session, limit))
 
     items: List[ActivityItem] = []
