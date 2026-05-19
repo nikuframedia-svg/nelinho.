@@ -19,8 +19,9 @@
  *   • aprovision.  — GET/PATCH /v1/config/supply (ROP, alertas rutura) [Q.53.J]
  *   • custos-metas — GET/PATCH /v1/config/cost (throughput, margem)    [Q.53.J]
  *
- * Respostas PARTIAL (energy/real sem sensores) → empty state honesto via
- * useHonestEmptyState. Sprint Q.52.P + Q.53.J.
+ * A secção "Energia" não tem fonte de dados (sem sensores IOT na NELO) —
+ * mostra um empty state honesto, sem chamar endpoint. Sprint Q.52.P +
+ * Q.53.J + Q.58.A.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -60,12 +61,10 @@ import {
   phaseGapsApi,
   learningApi,
   dqaApi,
-  apiFetch,
   type ConfigDataType,
   type ConfigCategoryValues,
   type PhaseGap,
 } from '../../lib/api';
-import { useHonestEmptyState } from '../../hooks/useHonestEmptyState';
 import { useToastContext } from '../../components/ToastProvider';
 
 // ─── Tabs ───────────────────────────────────────────────────────────────────
@@ -542,17 +541,6 @@ interface RateRow {
   updated_at?: string;
 }
 
-interface EnergyRealRow {
-  phase?: string;
-  phase_code?: string;
-  std_kwh?: number;
-  real_kwh?: number;
-  std_eur?: number;
-  real_eur?: number;
-  kwh_standard?: number;
-  kwh_real?: number;
-}
-
 function rateValue(r: RateRow): number | null {
   const v = r.rate_per_hour ?? r.cost_per_hour ?? r.hourly_rate ?? r.amount;
   return typeof v === 'number' ? v : null;
@@ -588,18 +576,9 @@ function CustosTab() {
     staleTime: 60_000,
     retry: false,
   });
-  const energyQ = useQuery({
-    queryKey: ['profit', 'energy-real'],
-    queryFn: () => apiFetch<unknown>('/v1/profit/energy/real'),
-    staleTime: 60_000,
-    retry: false,
-  });
-
-  const honest = useHonestEmptyState(energyQ.data);
   const labor = unwrapList<RateRow>(laborQ.data);
   const machine = unwrapList<RateRow>(machineQ.data);
   const overhead = unwrapList<RateRow>(overheadQ.data);
-  const energyRows = honest.degraded ? [] : unwrapList<EnergyRealRow>(energyQ.data);
 
   const rateGroups: Array<{ title: string; rows: RateRow[]; loading: boolean }> = [
     { title: 'Mão de obra (€/hora)', rows: labor, loading: laborQ.isLoading },
@@ -681,84 +660,15 @@ function CustosTab() {
           />
         </div>
         <div className="p-[18px]">
-          {energyQ.isLoading ? (
-            <div className="flex items-center justify-center py-6">
-              <Loader2 size={20} className="text-accent-500 animate-spin" />
-            </div>
-          ) : energyQ.isError ? (
-            <EmptyState
-              title="Medição de energia não disponível"
-              hint="A NELO ainda não tem sensores IOT de potência trifásica ligados. Quando houver leituras por fase, o consumo real vs standard aparece aqui."
-            />
-          ) : honest.degraded ? (
-            <EmptyState
-              title="Sem leituras de energia"
-              hint={honest.reason}
-            />
-          ) : energyRows.length === 0 ? (
-            <EmptyState
-              title="Sem dados de energia"
-              hint="Ainda não há leituras de energia registadas para este período."
-            />
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse min-w-[560px]">
-                <thead>
-                  <tr>
-                    {['Fase', 'kWh standard', 'kWh real', 'Δ kWh'].map((h) => (
-                      <th
-                        key={h}
-                        className="text-[10.5px] uppercase tracking-wide font-semibold text-text-dark-tertiary py-2 px-2.5"
-                        style={{
-                          textAlign: h === 'Fase' ? 'left' : 'right',
-                          borderBottom: '1px solid var(--bd-1)',
-                        }}
-                      >
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {energyRows.map((r, i) => {
-                    const std = r.std_kwh ?? r.kwh_standard ?? 0;
-                    const real = r.real_kwh ?? r.kwh_real ?? 0;
-                    const d = real - std;
-                    return (
-                      <tr
-                        key={i}
-                        style={{
-                          borderBottom:
-                            i < energyRows.length - 1
-                              ? '1px solid var(--bd-1)'
-                              : 'none',
-                        }}
-                      >
-                        <td className="py-2 px-2.5 text-[12px] text-text-dark-secondary">
-                          {r.phase ?? r.phase_code ?? '—'}
-                        </td>
-                        <td className="py-2 px-2.5 text-[12px] tabular-nums text-text-dark-tertiary text-right">
-                          {std}
-                        </td>
-                        <td className="py-2 px-2.5 text-[12px] tabular-nums text-text-dark-primary text-right">
-                          {real}
-                        </td>
-                        <td
-                          className="py-2 px-2.5 text-[12px] tabular-nums text-right font-semibold"
-                          style={{
-                            color: d > 0 ? 'var(--red)' : 'var(--green)',
-                          }}
-                        >
-                          {d > 0 ? '+' : ''}
-                          {d}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+          {/* Q.58.A — não há endpoint nem fonte de dados de energia (o
+              backend nunca expôs `/v1/profit/energy/real`). Em vez de uma
+              `useQuery` que batia sempre num 404, mostramos o estado
+              honesto directamente. Quando a NELO ligar sensores IOT de
+              potência, religa-se aqui a query ao endpoint real. */}
+          <EmptyState
+            title="Medição de energia não disponível"
+            hint="A NELO ainda não tem sensores IOT de potência trifásica ligados. Quando houver leituras por fase, o consumo real vs standard aparece aqui."
+          />
         </div>
       </ConfigCard>
     </div>
