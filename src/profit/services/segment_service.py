@@ -178,11 +178,19 @@ class MarginSegmentService:
         """Resolve the segment label for one order, or None when absent."""
         if dim == "country":
             raw = getattr(order, "customer_country", None)
-        else:  # agent
-            # The ERP carries the commercial reference on `reference`;
-            # there is no dedicated agent column today, so we use it as
-            # the agent proxy. Empty → skipped (degrades honestly).
-            raw = getattr(order, "reference", None)
+            if raw is None:
+                return None
+            # The ERP free-texts the country with no casing discipline —
+            # "SPAIN", "Spain" and "spain" are the same segment. Title-case
+            # so they collapse into one bucket instead of three.
+            label = str(raw).strip()
+            return label.title() if label else None
+        # agent
+        # The ERP carries the commercial reference on `reference`; there is
+        # no dedicated agent column today, so we use it as the agent proxy.
+        # Empty → skipped (degrades honestly). Kept verbatim — agent codes
+        # are identifiers, not free text.
+        raw = getattr(order, "reference", None)
         if raw is None:
             return None
         label = str(raw).strip()

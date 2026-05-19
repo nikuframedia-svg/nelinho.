@@ -60,6 +60,30 @@ async def test_country_segmentation_aggregates(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_country_casing_collapses_into_one_segment(monkeypatch):
+    """The ERP free-texts the country — "SPAIN"/"Spain"/"spain" are one."""
+    orders = [
+        _order(country="SPAIN", sale=10000, cost=4000),
+        _order(country="Spain", sale=6000, cost=2000),
+        _order(country="spain", sale=4000, cost=1000),
+    ]
+
+    async def _fake(limit):
+        return orders
+
+    import src.adapters.nelo.services as nelo
+    monkeypatch.setattr(nelo, "list_open_orders", _fake)
+
+    out = await MarginSegmentService().margin_by_segment("country")
+
+    assert len(out["segments"]) == 1
+    spain = out["segments"][0]
+    assert spain["segment"] == "Spain"
+    assert spain["order_count"] == 3
+    assert spain["revenue_eur"] == 20000.0
+
+
+@pytest.mark.asyncio
 async def test_agent_segmentation_uses_reference(monkeypatch):
     orders = [
         _order(reference="AG-NORTE", sale=5000, cost=3000),
