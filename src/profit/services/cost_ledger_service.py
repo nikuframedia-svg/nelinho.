@@ -22,6 +22,16 @@ Everything is built from data already in Postgres (`profit.cost_calculations`
 + `profit.order_revenue` + `plan.production_orders`). Orders without a
 `CostCalculation` are reported as `uncalculated` — never imputed.
 
+Revenue per boat (Q.54.H): the `profit.order_revenue` table is the
+primary source, but on a fresh install it is empty — that left the
+`cost-ledger` returning `revenue_eur:null` for every boat while
+`margin-by-segment` already had €58.7k of real revenue. The gap is the
+source: `margin-by-segment` reads `OF_PRECOVENDA` (`sale_price`) straight
+from the live NELO ERP. This service now joins that same NELO revenue
+as a fallback, keyed by `work_order_id` (== `ProductionOrder.legacy_id`).
+When the ERP adapter is offline the fallback is simply skipped — never
+invented.
+
 CoeficienteX is DINHEIRO but is NOT a COGS component; it is intentionally
 absent from this ledger.
 """
@@ -87,6 +97,10 @@ class CostLedgerService:
         keys = [str(o.legacy_id) for o in orders]
         cost_by_order = await self._load_costs(keys)
         rev_by_order = await self._load_revenue(keys)
+        # Q.54.H — the `order_revenue` table is empty on a fresh install;
+        # backfill missing boats from the live NELO ERP (`OF_PRECOVENDA`),
+        # the same source `margin-by-segment` already uses.
+        revenue_source = await self._backfill_nelo_revenue(orders, rev_by_order)
 
         per_boat = [
             self._boat_row(o, cost_by_order, rev_by_order) for o in orders
@@ -119,6 +133,7 @@ class CostLedgerService:
             "per_boat": per_boat,
             "currency": "EUR",
             "source": "profit.cost_calculations",
+            "revenue_source": revenue_source,
         }
 
     # ─── loaders ───────────────────────────────────────────────────────────
@@ -171,6 +186,78 @@ class CostLedgerService:
         for rv in (await self.session.execute(stmt)).scalars().all():
             by_order[rv.order_id] = Decimal(str(rv.total_revenue_eur))
         return by_order
+
+    async def _backfill_nelo_revenue(
+        self,
+        orders: list[ProductionOrder],
+        rev_by_order: dict[str, Decimal],
+    ) -> dict[str, Any]:
+        """Fill `rev_by_order` gaps from the live NELO ERP (`OF_PRECOVENDA`).
+
+        `margin-by-segment` already exposes €58.7k of real revenue from
+        the ERP; the cost-ledger was returning `revenue_eur:null` only
+        because `profit.order_revenue` is empty on a fresh install. We
+        backfill boats with no Postgres revenue row from the same NELO
+        source, keyed by `work_order_id` (== `ProductionOrder.legacy_id`).
+
+        Mutates `rev_by_order` in place. Returns a small descriptor of
+        where revenue came from so the Custos page can be honest. When
+        the ERP adapter is offline the backfill is skipped — never
+        invents a figure.
+        """
+        from_table = len(rev_by_order)
+        missing = {
+            str(o.legacy_id)
+            for o in orders
+            if str(o.legacy_id) not in rev_by_order
+        }
+        if not missing:
+            return {
+                "primary": "profit.order_revenue",
+                "from_order_revenue": from_table,
+                "from_nelo_erp": 0,
+                "erp_available": True,
+            }
+
+        try:
+            from src.adapters.nelo import services as nelo
+
+            erp_orders = await nelo.list_open_orders(limit=5000)
+        except (RuntimeError, OSError) as exc:
+            # Same degradation contract as margin-by-segment / OEE.
+            logger.warning(
+                "cost-ledger: NELO revenue backfill skipped — "
+                "adaptador offline: %s",
+                exc,
+            )
+            return {
+                "primary": "profit.order_revenue",
+                "from_order_revenue": from_table,
+                "from_nelo_erp": 0,
+                "erp_available": False,
+                "unavailable_reason": (
+                    "A receita por barco em falta vinha do ERP NELO "
+                    "(OF_PRECOVENDA), que não está ligado neste ambiente."
+                ),
+            }
+
+        backfilled = 0
+        for eo in erp_orders:
+            key = str(getattr(eo, "work_order_id", "") or "")
+            if key not in missing:
+                continue
+            sale = getattr(eo, "sale_price", None)
+            if sale is None:
+                continue
+            rev_by_order[key] = Decimal(str(sale))
+            backfilled += 1
+
+        return {
+            "primary": "profit.order_revenue",
+            "from_order_revenue": from_table,
+            "from_nelo_erp": backfilled,
+            "erp_available": True,
+        }
 
     # ─── builders (pure) ──────────────────────────────────────────────────
 

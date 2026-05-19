@@ -180,3 +180,100 @@ async def test_highest_cost_version_wins(fake_session):
 
     out = await CostLedgerService(fake_session, TENANT).ledger()
     assert out["summary"]["total_cogs_eur"] == 9000.0
+
+
+# ─── Q.54.H — revenue_eur backfill from the live NELO ERP ────────────────
+
+
+def _erp_order(work_order_id: int, sale: float):
+    """Minimal NELO `OrderRow` stand-in — only the fields the backfill reads."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(work_order_id=work_order_id, sale_price=sale)
+
+
+@pytest.mark.asyncio
+async def test_revenue_backfilled_from_nelo_when_table_empty(
+    fake_session, monkeypatch
+):
+    """`order_revenue` empty → revenue_eur comes from OF_PRECOVENDA.
+
+    The Q.54.H bug: cost-ledger returned revenue_eur:null for every boat
+    while margin-by-segment already had the real ERP revenue. The ledger
+    now backfills from the same NELO source so margin per boat computes.
+    """
+    fake_session.queue_scalars([_order(4001), _order(4002)])
+    fake_session.queue_scalars([
+        _cost(4001, material="5000", labor="3000", overhead="0"),
+        _cost(4002, material="4000", labor="3000", overhead="0"),
+    ])
+    fake_session.queue_scalars([])  # profit.order_revenue empty
+
+    async def _fake_erp(limit):
+        return [_erp_order(4001, 12000.0), _erp_order(4002, 11000.0)]
+
+    import src.adapters.nelo.services as nelo
+    monkeypatch.setattr(nelo, "list_open_orders", _fake_erp)
+
+    out = await CostLedgerService(fake_session, TENANT).ledger()
+    by_hull = {b["hull"]: b for b in out["per_boat"]}
+
+    assert by_hull["4001"]["revenue_eur"] == 12000.0
+    assert by_hull["4001"]["margin_eur"] == 4000.0  # 12000 - 8000
+    assert by_hull["4002"]["revenue_eur"] == 11000.0
+    assert by_hull["4002"]["margin_eur"] == 4000.0  # 11000 - 7000
+    assert out["revenue_source"]["from_nelo_erp"] == 2
+    assert out["revenue_source"]["erp_available"] is True
+
+
+@pytest.mark.asyncio
+async def test_order_revenue_table_takes_precedence_over_nelo(
+    fake_session, monkeypatch
+):
+    """A boat with a Postgres `OrderRevenue` row is not overwritten."""
+    fake_session.queue_scalars([_order(4001), _order(4002)])
+    fake_session.queue_scalars([
+        _cost(4001, material="5000", labor="3000", overhead="0"),
+        _cost(4002, material="4000", labor="3000", overhead="0"),
+    ])
+    fake_session.queue_scalars([_revenue(4001, "15000")])  # 4001 has a row
+
+    async def _fake_erp(limit):
+        # ERP would say 9000 for 4001 — must be ignored (table wins).
+        return [_erp_order(4001, 9000.0), _erp_order(4002, 11000.0)]
+
+    import src.adapters.nelo.services as nelo
+    monkeypatch.setattr(nelo, "list_open_orders", _fake_erp)
+
+    out = await CostLedgerService(fake_session, TENANT).ledger()
+    by_hull = {b["hull"]: b for b in out["per_boat"]}
+
+    assert by_hull["4001"]["revenue_eur"] == 15000.0  # from the table
+    assert by_hull["4002"]["revenue_eur"] == 11000.0  # backfilled
+    assert out["revenue_source"]["from_order_revenue"] == 1
+    assert out["revenue_source"]["from_nelo_erp"] == 1
+
+
+@pytest.mark.asyncio
+async def test_revenue_null_when_erp_offline_and_table_empty(
+    fake_session, monkeypatch
+):
+    """ERP offline + empty table → revenue_eur stays null, flagged honestly."""
+    fake_session.queue_scalars([_order(4001)])
+    fake_session.queue_scalars([
+        _cost(4001, material="5000", labor="3000", overhead="0"),
+    ])
+    fake_session.queue_scalars([])  # empty table
+
+    async def _boom(limit):
+        raise RuntimeError("SQL Server não configurado")
+
+    import src.adapters.nelo.services as nelo
+    monkeypatch.setattr(nelo, "list_open_orders", _boom)
+
+    out = await CostLedgerService(fake_session, TENANT).ledger()
+    boat = out["per_boat"][0]
+    assert boat["revenue_eur"] is None  # never invented
+    assert boat["margin_eur"] is None
+    assert out["revenue_source"]["erp_available"] is False
+    assert "ERP NELO" in out["revenue_source"]["unavailable_reason"]
