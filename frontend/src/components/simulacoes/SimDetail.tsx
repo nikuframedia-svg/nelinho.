@@ -16,46 +16,66 @@ import { twinApi } from '../../lib/api';
 import { Tag } from './atoms';
 import type { TwinScenario } from './types';
 
-interface ComparisonRow {
+export interface ComparisonRow {
   label: string;
   baseline: string;
   simulated: string;
 }
 
-/** Aplaina o resultado da simulação numa tabela legível. */
-function buildComparisonRows(
-  simResult: Record<string, unknown> | null,
-): ComparisonRow[] {
-  if (!simResult) return [];
-  const rows: ComparisonRow[] = [];
-  const kpis = simResult.kpis;
-  const comparison = simResult.comparison;
-
-  if (comparison && typeof comparison === 'object') {
-    for (const [key, value] of Object.entries(
-      comparison as Record<string, unknown>,
-    )) {
-      if (value && typeof value === 'object') {
-        const v = value as Record<string, unknown>;
-        rows.push({
-          label: key,
-          baseline: String(v.baseline ?? v.before ?? '—'),
-          simulated: String(v.scenario ?? v.after ?? v.value ?? '—'),
-        });
-      }
-    }
+/** Formata uma célula de KPI `{value, unit, status}` para texto legível. */
+function kpiCell(kpi: unknown): string {
+  if (!kpi || typeof kpi !== 'object') return '—';
+  const k = kpi as Record<string, unknown>;
+  const value = k.value;
+  if (value === null || value === undefined) {
+    // KPI sem valor — mostra o estado honesto (BLOCKED / NO_DATA).
+    return typeof k.status === 'string' ? k.status : '—';
   }
-  if (rows.length === 0 && kpis && typeof kpis === 'object') {
-    for (const [key, value] of Object.entries(
-      kpis as Record<string, unknown>,
-    )) {
-      if (key.startsWith('_')) continue;
-      const display =
-        value && typeof value === 'object'
-          ? String((value as Record<string, unknown>).value ?? '—')
-          : String(value);
-      rows.push({ label: key, baseline: '—', simulated: display });
-    }
+  if (typeof value === 'number') {
+    const unit = typeof k.unit === 'string' ? ` ${k.unit}` : '';
+    return `${value.toLocaleString('pt-PT')}${unit}`;
+  }
+  return String(value);
+}
+
+/**
+ * Aplaina o `simulation_result` numa tabela baseline↔simulação.
+ *
+ * Q.56.C — o backend (`twin/service.simulate`) guarda o resultado como
+ * `{ before, after, delta_summary, mode }`. Antes esta função procurava
+ * `kpis`/`comparison` (a forma da RESPOSTA do endpoint `/simulate`, não a
+ * guardada) → a tabela vinha sempre vazia. Agora emparelha `before` e
+ * `after` por chave de KPI.
+ */
+export function buildComparisonRows(
+  simResult: Record<string, unknown> | null | undefined,
+): ComparisonRow[] {
+  if (!simResult || typeof simResult !== 'object') return [];
+  const before = simResult.before;
+  const after = simResult.after;
+  if (
+    !before || typeof before !== 'object' ||
+    !after || typeof after !== 'object'
+  ) {
+    return [];
+  }
+  const b = before as Record<string, unknown>;
+  const a = after as Record<string, unknown>;
+  const keys = [...new Set([...Object.keys(b), ...Object.keys(a)])].filter(
+    (k) => !k.startsWith('_'),
+  );
+  const rows: ComparisonRow[] = [];
+  for (const key of keys) {
+    const src = (a[key] ?? b[key]) as Record<string, unknown> | undefined;
+    const label =
+      src && typeof src.semantic_label === 'string'
+        ? src.semantic_label
+        : key;
+    rows.push({
+      label,
+      baseline: kpiCell(b[key]),
+      simulated: kpiCell(a[key]),
+    });
   }
   return rows;
 }
