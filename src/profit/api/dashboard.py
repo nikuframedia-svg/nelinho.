@@ -15,6 +15,7 @@ with the Sprint Q endpoints:
 
 from __future__ import annotations
 
+import logging
 from datetime import date
 from decimal import Decimal
 from typing import Optional
@@ -23,7 +24,10 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import and_, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
+
+log = logging.getLogger(__name__)
 
 from src.profit.models.pricing import ProductPricing
 from src.profit.services.dashboard_metrics_service import DashboardMetricsService
@@ -125,6 +129,25 @@ async def get_oee(
         result = await svc.calculate(df, dt, group_by=gb)  # type: ignore[arg-type]
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (RuntimeError, OSError, SQLAlchemyError) as exc:
+        # OEE is computed from the live NELO ERP (SQL Server / OF_FP).
+        # When that adapter is not configured or unreachable (e.g. dev
+        # without SQL Server) the read raises — degrade honestly with a
+        # 200 + erp_available:false instead of a 500. The frontend
+        # `useHonestEmptyState` picks up the marker and shows the reason.
+        log.warning("OEE indisponível — adaptador NELO offline: %s", exc)
+        return {
+            "date_from": df.isoformat(),
+            "date_to": dt.isoformat(),
+            "group_by": gb,
+            "overall": None,
+            "breakdown": [],
+            "erp_available": False,
+            "unavailable_reason": (
+                "Os dados de OEE vêm do ERP NELO (SQL Server / OF_FP), "
+                "que não está ligado neste ambiente."
+            ),
+        }
 
     return {
         "date_from": result.date_from.isoformat(),
@@ -132,6 +155,8 @@ async def get_oee(
         "group_by": result.group_by,
         "overall": _oee_item_to_dict(result.overall),
         "breakdown": [_oee_item_to_dict(b) for b in result.breakdown],
+        "erp_available": True,
+        "unavailable_reason": None,
     }
 
 
