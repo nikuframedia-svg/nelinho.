@@ -162,6 +162,11 @@ class Settings(BaseSettings):
     ollama_keep_alive: str = Field(default="30m", description="How long to keep model in VRAM")
     ollama_temperature: float = Field(default=0.1, ge=0.0, le=2.0, description="LLM temperature (low = deterministic)")
     ollama_num_predict: int = Field(default=512, ge=64, le=8192, description="Max tokens to generate")
+    ollama_think: bool = Field(
+        default=False,
+        description="Permitir 'thinking' do modelo. False para gemma4:e4b — o "
+                    "raciocínio descartado esvazia o content e custa latência.",
+    )
     copilot_embeddings_model: str = Field(default="nomic-embed-text")
     copilot_rate_limit_per_hour: int = Field(default=60, ge=1)
     copilot_rate_limit_per_day: int = Field(default=300, ge=1)

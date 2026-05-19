@@ -177,6 +177,11 @@ class OllamaClient:
             "model": model,
             "messages": messages,
             "stream": False,
+            # Q.55.B.4 — gemma4:e4b é um modelo de raciocínio: sem isto
+            # emite o raciocínio num campo `thinking` separado e o
+            # `content` pode vir vazio quando o raciocínio esgota o
+            # `num_predict`. `think=false` manda tudo para o `content`.
+            "think": getattr(settings, "ollama_think", False),
             "keep_alive": getattr(settings, "ollama_keep_alive", "30m"),
             "options": {
                 "temperature": getattr(settings, "ollama_temperature", 0.1),
@@ -210,9 +215,22 @@ class OllamaClient:
 
                 # Extrair resposta do formato Ollama
                 if "message" in data and "content" in data["message"]:
-                    content = data["message"]["content"]
+                    msg = data["message"]
+                    content = (msg.get("content") or "").strip()
+                    # Q.55.B.4 — defesa: um modelo de raciocínio pode deixar
+                    # o `content` vazio e pôr tudo no `thinking`. Cair para
+                    # lá antes de desistir (espelha scripts/dpo_eval.py).
+                    if not content:
+                        content = (msg.get("thinking") or "").strip()
                     if format == "json":
                         import json
+                        if not content:
+                            # Erro claro em vez do críptico
+                            # "Expecting value: line 1 column 1 (char 0)".
+                            raise ValueError(
+                                "Ollama devolveu uma resposta vazia "
+                                "(sem content nem thinking)"
+                            )
                         return json.loads(content)
                     return {"content": content}
 
