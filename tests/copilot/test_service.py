@@ -303,6 +303,11 @@ class TestRlmDiagnostic:
             )
 
         monkeypatch.setattr("src.copilot.rlm.agent.run_rlm_agent", _fake_rlm)
+        # Q.55.B.2 — o RLM só corre quando a camada semântica tem dados.
+        # Stub para o engine in-memory contar como "com dados" no teste.
+        monkeypatch.setattr(
+            CopilotService, "_resolve_semantic_queries", lambda self: object(),
+        )
 
         svc = _make_service(fake_session, tenant_id)
         req = _make_request("Porque caiu o OEE esta semana?")
@@ -331,6 +336,9 @@ class TestRlmDiagnostic:
             )
 
         monkeypatch.setattr("src.copilot.rlm.agent.run_rlm_agent", _fake_rlm)
+        monkeypatch.setattr(
+            CopilotService, "_resolve_semantic_queries", lambda self: object(),
+        )
         mock_ollama.queue_chat(valid_llm_response_factory(intent="generic"))
 
         svc = _make_service(fake_session, tenant_id)
@@ -351,6 +359,9 @@ class TestRlmDiagnostic:
             raise RuntimeError("kernel indisponível")
 
         monkeypatch.setattr("src.copilot.rlm.agent.run_rlm_agent", _boom)
+        monkeypatch.setattr(
+            CopilotService, "_resolve_semantic_queries", lambda self: object(),
+        )
         mock_ollama.queue_chat(valid_llm_response_factory(intent="generic"))
 
         svc = _make_service(fake_session, tenant_id)

@@ -724,17 +724,23 @@ class CopilotService:
             "porque ", "porquê", "por que ", "investigar", "investiga",
             "o que mudou", "que mudou", "what changed",
             "causa", "raiz", "diagnosticar", "diagnostico", "diagnóstico",
+            # Q.55.B.2 — vocabulário PT-PT de fábrica que faltava: o
+            # "gargalo" é a pergunta de diagnóstico mais comum do chefe
+            # de turno e não estava na lista.
+            "gargalo", "gargalos", "estrangula", "estrangular",
+            "bottleneck", "estrangulamento",
         )
         diagnostic_kpi_drop = (
             "caiu", "desceu", "baixou", "subiu", "aumentou", "atrasou",
-            "atrasaram", "drift", "spike",
+            "atrasaram", "drift", "spike", "disparou", "piorou",
         )
         if any(trigger in query_lower for trigger in diagnostic_triggers):
             return "diagnostic"
         # "Porque is implicit" patterns: "throughput desceu" / "OEE caiu"
         # treat as diagnostic when paired with a drop verb + KPI noun.
-        kpi_nouns = ("oee", "fpy", "rework", "throughput", "qualidade",
-                     "lead time", "tempo", "barcos")
+        kpi_nouns = ("oee", "fpy", "rework", "retrabalho", "throughput",
+                     "qualidade", "defeito", "defeitos", "lead time",
+                     "tempo", "barcos")
         if any(verb in query_lower for verb in diagnostic_kpi_drop):
             if any(noun in query_lower for noun in kpi_nouns):
                 return "diagnostic"
@@ -967,8 +973,22 @@ class CopilotService:
         from src.copilot.rlm.agent import AgentTurn, run_rlm_agent
         from src.copilot.rlm.factory_state_query import FactoryStateQuery
 
+        # Q.55.B.2 — o RLM lê o `SemanticQueriesInMemory` (IngestEngine
+        # in-memory). Quando esse motor está vazio (o caso normal hoje),
+        # o agente só consegue responder "não tenho dados" — e ao devolver
+        # uma resposta não-vazia rouba a pergunta ao caminho LLM normal,
+        # que pós-Q.55.B.1 TEM os dados operacionais reais. Se a camada
+        # semântica não resolve, salta já para esse caminho.
+        semantic_queries = self._resolve_semantic_queries()
+        if semantic_queries is None:
+            logger.info(
+                "RLM: camada semântica indisponível — a cair no caminho "
+                "LLM (contexto operacional real)."
+            )
+            return None
+
         state_query = FactoryStateQuery(
-            state=None, queries=self._resolve_semantic_queries()
+            state=None, queries=semantic_queries
         )
 
         model = settings.ollama_model
@@ -1079,6 +1099,13 @@ class CopilotService:
             )
             engine = get_engine()
             if engine is None:
+                return None
+            # Q.55.B.2 — o `IngestEngine` é in-memory e arranca sem
+            # ingestões. Um engine sem `active_run` não tem dados; devolver
+            # um `SemanticQueriesInMemory` por cima dele só produz respostas
+            # "não disponível". Tratar como indisponível (None) — o chamador
+            # cai no caminho com os dados reais de Postgres.
+            if engine.get_active_run() is None:
                 return None
             return SemanticQueriesInMemory(engine)
         except Exception as exc:
