@@ -14,7 +14,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.shared.auth.headers import require_tenant_header
 from src.shared.database import get_session
-from src.hr.services.allocation_service import AllocationService
+from src.hr.services.allocation_service import (
+    AllocationService,
+    OrderNotAllocatableError,
+    PhaseNotStartedError,
+)
 
 router = APIRouter(prefix="/allocations", tags=["Allocations"])
 
@@ -114,10 +118,13 @@ async def create_daily_allocation(
     tenant_id: UUID = Depends(require_tenant_header),
     session: AsyncSession = Depends(get_session),
 ):
-    """Q.31.D.2 — atribui um operador a um barco para um dia (drag-drop).
+    """Q.31.D.2 / Q.55.B — atribui um operador a um barco para um dia.
 
-    O serviço resolve a operação concreta a partir da `ProductionSchedule`.
-    Ordem sem fase agendada para o dia → 409.
+    O serviço resolve a operação pela fase actual da ordem (ou por uma
+    `ProductionSchedule` a cobrir o dia, se existir).
+
+    * ordem inexistente / em fase terminal → **409**;
+    * ordem ainda não arrancada (fase "Pendente") → **422**.
     """
     service = AllocationService(session, tenant_id)
     try:
@@ -127,7 +134,12 @@ async def create_daily_allocation(
             allocation_date=request.allocation_date or date.today(),
             allocated_hours=Decimal(str(request.allocated_hours)),
         )
+    except OrderNotAllocatableError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except PhaseNotStartedError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     except ValueError as exc:
+        # Defesa em profundidade — caminho legado que ainda levante ValueError.
         raise HTTPException(status_code=409, detail=str(exc))
 
     await session.commit()

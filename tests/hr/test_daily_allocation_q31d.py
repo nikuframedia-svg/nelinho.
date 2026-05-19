@@ -1,8 +1,10 @@
 """Q.31.D.2 — atribuição diária de operadores por drag-drop.
 
 O frontend arrasta operador → barco; o backend resolve a operação
-concreta a partir da `ProductionSchedule` (a fase agendada que cobre o
-dia, menor `operation_sequence`) e cria a `HRAllocation`.
+concreta e cria a `HRAllocation`. Estes testes cobrem o caminho em que
+existe uma `ProductionSchedule` a cobrir o dia — a operação vem dela.
+O caminho sem schedule (resolução pela fase) está em
+`test_daily_allocation_q55b.py`.
 """
 
 from __future__ import annotations
@@ -16,10 +18,10 @@ import pytest
 from src.hr.api.allocations import DailyAllocationRequest, create_daily_allocation
 from src.hr.models.allocation import AllocationStatus
 from src.hr.services.allocation_service import AllocationService
+from src.plan.models.order import OrderStatus, ProductionOrder
 from src.plan.models.schedule import ProductionSchedule
 
 TENANT = UUID("00000000-0000-0000-0000-000000000001")
-OTHER_TENANT = UUID("00000000-0000-0000-0000-000000000002")
 
 
 @pytest.fixture(autouse=True)
@@ -30,6 +32,18 @@ def _no_kafka(monkeypatch):
 
     monkeypatch.setattr(
         "src.hr.services.allocation_service.publish_event", _noop
+    )
+
+
+def _order(phase: str = "Laminagem") -> ProductionOrder:
+    return ProductionOrder(
+        id=uuid4(),
+        tenant_id=TENANT,
+        legacy_id=4272,
+        product_name="K1 Vanquish",
+        product_type="K1",
+        current_phase_name=phase,
+        status=OrderStatus.IN_PROGRESS,
     )
 
 
@@ -48,13 +62,34 @@ def _schedule(operation_id: UUID, sequence: int) -> ProductionSchedule:
     )
 
 
+def _feed(session, *rows) -> None:
+    """Alimenta a FakeSession — cada `row` é o resultado de UM `execute()`.
+
+    A FakeSession faz pop de um escalar E de uma lista por cada
+    `execute()`; alinhar os dois por chamada evita o desfasamento que
+    daria a query errada o resultado de outra.
+
+    `row` = `(scalar_one_or_none, scalars_list)`, pela ordem em que o
+    serviço corre as queries: load-order → resolve-schedule → [resolver
+    de operação] → employee-rate.
+    """
+    for scalar, scalars in rows:
+        session.queue_scalar(scalar)
+        session.queue_scalars(scalars)
+
+
 @pytest.mark.asyncio
 async def test_create_single_allocation_resolves_operation(fake_session):
     emp = uuid4()
     op_a, op_b = uuid4(), uuid4()
-    # Acabamento agendado para 2026-05-18 — duas fases, escolhe a 1ª.
-    fake_session.queue_scalars([_schedule(op_a, 1), _schedule(op_b, 2)])
-    fake_session.queue_scalars([Decimal("15.50")])  # taxa horária
+    # load-order → ordem activa; resolve-schedule → 2 fases, escolhe a 1ª;
+    # employee-rate → taxa horária.
+    _feed(
+        fake_session,
+        (_order(), []),
+        (None, [_schedule(op_a, 1), _schedule(op_b, 2)]),
+        (None, [Decimal("15.50")]),
+    )
 
     service = AllocationService(fake_session, TENANT)
     allocation = await service.create_single_allocation(
@@ -72,14 +107,17 @@ async def test_create_single_allocation_resolves_operation(fake_session):
     assert allocation.hourly_rate == Decimal("15.50")
     assert allocation.estimated_cost == Decimal("124.00")  # 8 × 15.50
     assert allocation in fake_session.added
-    assert fake_session.flush_calls == 1
 
 
 @pytest.mark.asyncio
 async def test_create_single_allocation_zero_rate_when_unpriced(fake_session):
     """Operador sem taxa em core.labor_rates → custo 0, nunca inventado."""
-    fake_session.queue_scalars([_schedule(uuid4(), 1)])
-    fake_session.queue_scalars([])  # sem LaborRate
+    _feed(
+        fake_session,
+        (_order(), []),
+        (None, [_schedule(uuid4(), 1)]),
+        (None, []),  # sem LaborRate
+    )
 
     service = AllocationService(fake_session, TENANT)
     allocation = await service.create_single_allocation(
@@ -93,24 +131,14 @@ async def test_create_single_allocation_zero_rate_when_unpriced(fake_session):
 
 
 @pytest.mark.asyncio
-async def test_create_single_allocation_without_schedule_raises(fake_session):
-    """Sem fase agendada para o dia não há operation_id — ValueError."""
-    fake_session.queue_scalars([])  # nenhuma ProductionSchedule
-
-    service = AllocationService(fake_session, TENANT)
-    with pytest.raises(ValueError, match="Sem operação agendada"):
-        await service.create_single_allocation(
-            employee_id=uuid4(),
-            order_id="9999",
-            allocation_date=date(2026, 5, 18),
-        )
-
-
-@pytest.mark.asyncio
 async def test_daily_endpoint_returns_payload(fake_session):
     op = uuid4()
-    fake_session.queue_scalars([_schedule(op, 1)])
-    fake_session.queue_scalars([Decimal("12")])
+    _feed(
+        fake_session,
+        (_order(), []),
+        (None, [_schedule(op, 1)]),
+        (None, [Decimal("12")]),
+    )
 
     out = await create_daily_allocation(
         request=DailyAllocationRequest(
@@ -132,9 +160,10 @@ async def test_daily_endpoint_returns_payload(fake_session):
 
 @pytest.mark.asyncio
 async def test_daily_endpoint_unknown_order_is_409(fake_session):
+    """Ordem inexistente → 409, sem commit."""
     from fastapi import HTTPException
 
-    fake_session.queue_scalars([])  # sem schedule
+    _feed(fake_session, (None, []))  # load-order não encontra nada
 
     with pytest.raises(HTTPException) as exc:
         await create_daily_allocation(

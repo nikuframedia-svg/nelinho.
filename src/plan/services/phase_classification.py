@@ -33,6 +33,7 @@ __all__ = [
     "phase_status",
     "phase_sequence",
     "is_completed_phase",
+    "is_workable_phase",
     "NELO_PHASE_ORDER",
 ]
 
@@ -111,6 +112,25 @@ def classify_phase(phase_name: Optional[str]) -> PhaseBucket:
 def is_completed_phase(phase_name: Optional[str]) -> bool:
     """True se a fase é terminal (barco fora do chão de fábrica)."""
     return classify_phase(phase_name) is PhaseBucket.CONCLUIDO
+
+
+def is_workable_phase(phase_name: Optional[str]) -> bool:
+    """True se a fase é uma fase de trabalho real do routing.
+
+    Q.55.B/D — usado para decidir se faz sentido atribuir um operador
+    a uma ordem ou pontuar a adequação para a fase. É ``False`` para:
+
+    * fases terminais (CONCLUIDO — o barco já saiu do chão de fábrica);
+    * fases "por começar" (POR_COMECAR — "Pendente"/"Não Laminado": a
+      ordem ainda não arrancou, não há operação de trabalho);
+    * uma fase sem nome.
+
+    Só as fases A_DECORRER são trabalháveis. Sítio único de verdade —
+    o backend (atribuição) e o frontend (painel de operadores) leem daqui.
+    """
+    if not phase_name or not phase_name.strip():
+        return False
+    return classify_phase(phase_name) is PhaseBucket.A_DECORRER
 
 
 def phase_status(phase_name: Optional[str]) -> OrderStatus:
