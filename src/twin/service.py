@@ -7,9 +7,11 @@ Service layer for managing Twin scenarios with database persistence.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import logging
+import math
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
@@ -21,6 +23,112 @@ from .models import Scenario, ScenarioDelta, ScenarioComparison, ScenarioStatus
 from src.factory_data_product.config import BLOCKED_METRICS, TRUST_INDEX, SEMANTIC_LABELS
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Q.54.I — validação robusta de simulações
+# =============================================================================
+
+class TwinValidationError(ValueError):
+    """Input inválido numa simulação Twin.
+
+    Subclasse de :class:`ValueError` (por isso o código existente que faz
+    ``except ValueError`` continua a apanhá-la), mas o endpoint distingue-a
+    para devolver **HTTP 422** em vez de 400/404 — é erro do *input*, não
+    "cenário não encontrado". Mensagens sempre em PT-PT.
+    """
+
+
+# entity_type → conjunto de patch-keys que TÊM de ser uma percentagem [-100, 100].
+# Q.54.I — `_apply_delta_to_state` é uma whitelist fechada; estas são as
+# chaves que afectam KPIs e por isso precisam de validação numérica estrita.
+_PERCENTAGE_PATCH_KEYS: Dict[str, tuple[str, ...]] = {
+    "capacity_adjustment": ("capacity_increase_pct",),
+    "standard_time": ("reduction_pct",),
+    "quality_improvement": ("error_reduction_pct",),
+}
+
+# entity_type → patch-keys que têm de ser uma contagem não-negativa.
+_NON_NEGATIVE_PATCH_KEYS: Dict[str, tuple[str, ...]] = {
+    "skills_training": ("phases_trained",),
+    "wip_policy": ("wip_limit",),
+}
+
+# Todos os entity_type que `_apply_delta_to_state` sabe aplicar. Um delta com
+# um tipo fora desta lista é REJEITADO (Q.54.I) — antes era ignorado em
+# silêncio, o que dava ao utilizador uma simulação sem efeito sem o avisar.
+SUPPORTED_DELTA_ENTITY_TYPES: tuple[str, ...] = (
+    "capacity_adjustment",
+    "standard_time",
+    "skills_training",
+    "quality_improvement",
+    "wip_policy",
+    "scheduling_input",
+)
+
+
+def _is_finite_number(value: Any) -> bool:
+    """True só se ``value`` é um número real finito (exclui bool/NaN/inf)."""
+    # bool é subclasse de int — um patch com `True` não é uma percentagem.
+    if isinstance(value, bool):
+        return False
+    if not isinstance(value, (int, float)):
+        return False
+    return math.isfinite(float(value))
+
+
+def validate_delta_patch(entity_type: str, patch: Dict[str, Any]) -> None:
+    """Q.54.I — valida um delta de simulação antes de o aceitar.
+
+    Rejeita com :class:`TwinValidationError` (→ HTTP 422):
+
+    * ``entity_type`` desconhecido (fora de
+      :data:`SUPPORTED_DELTA_ENTITY_TYPES`) — antes era ignorado em silêncio;
+    * valores não-numéricos, ``NaN`` ou ``inf`` em chaves numéricas;
+    * percentagens fora da gama ``[-100, 100]``;
+    * contagens negativas (``phases_trained``, ``wip_limit``).
+
+    ``scheduling_input`` não traz chaves numéricas de KPI — a sua estrutura
+    (operations[]+machines[]) é validada pelo solver, por isso aqui só
+    confirmamos que o tipo é conhecido.
+    """
+    if entity_type not in SUPPORTED_DELTA_ENTITY_TYPES:
+        raise TwinValidationError(
+            f"entity_type desconhecido: {entity_type!r}. "
+            f"Tipos suportados: {', '.join(SUPPORTED_DELTA_ENTITY_TYPES)}."
+        )
+
+    patch = patch or {}
+
+    for key in _PERCENTAGE_PATCH_KEYS.get(entity_type, ()):
+        if key not in patch:
+            continue
+        value = patch[key]
+        if not _is_finite_number(value):
+            raise TwinValidationError(
+                f"{entity_type}.{key} tem de ser um número finito — "
+                f"recebido {value!r} (NaN/inf/texto não são aceites)."
+            )
+        if not (-100.0 <= float(value) <= 100.0):
+            raise TwinValidationError(
+                f"{entity_type}.{key} tem de ser uma percentagem entre "
+                f"-100 e 100 — recebido {value!r}."
+            )
+
+    for key in _NON_NEGATIVE_PATCH_KEYS.get(entity_type, ()):
+        if key not in patch:
+            continue
+        value = patch[key]
+        if not _is_finite_number(value):
+            raise TwinValidationError(
+                f"{entity_type}.{key} tem de ser um número finito — "
+                f"recebido {value!r}."
+            )
+        if float(value) < 0:
+            raise TwinValidationError(
+                f"{entity_type}.{key} não pode ser negativo — "
+                f"recebido {value!r}."
+            )
 
 
 class TwinService:
@@ -185,10 +293,16 @@ class TwinService:
         scenario = await self.get_scenario(scenario_id)
         if not scenario:
             raise ValueError(f"Scenario {scenario_id} not found")
-        
+
         if scenario.status not in [ScenarioStatus.DRAFT.value, ScenarioStatus.SIMULATED.value]:
             raise ValueError(f"Cannot apply delta to scenario with status {scenario.status}")
-        
+
+        # Q.54.I — valida o delta ANTES de o persistir. Um entity_type
+        # desconhecido ou um patch com NaN/inf/percentagem fora de gama
+        # é rejeitado já aqui (TwinValidationError → HTTP 422) em vez de
+        # passar e só falhar — ou pior, ser ignorado — na simulação.
+        validate_delta_patch(entity_type, patch)
+
         # Get next sequence number
         max_sequence = max((d.sequence for d in scenario.deltas), default=-1)
         
@@ -252,11 +366,20 @@ class TwinService:
         await self.db.commit()
 
         try:
-            # Start with baseline state
-            current_state = scenario.baseline_state.copy()
+            # Q.54.I — deep copy do estado-base. Um `.copy()` shallow
+            # partilha os dicts aninhados (cada KPI é `{"value": ...}`),
+            # por isso `_apply_delta_to_state` mutava o `baseline_state`
+            # original — o "before" do resultado deixava de ser o baseline.
+            # `deepcopy` garante before/after independentes e atómicos.
+            current_state = copy.deepcopy(scenario.baseline_state)
+            baseline_snapshot = copy.deepcopy(scenario.baseline_state)
 
-            # Apply all deltas in sequence
+            # Apply all deltas in sequence. Cada delta é validado outra vez
+            # aqui (Q.54.I) — deltas clonados de outro cenário entram pelo
+            # construtor e não passam por `apply_delta`, por isso a guarda
+            # tem de estar também no caminho da simulação.
             for delta in sorted(scenario.deltas, key=lambda d: d.sequence):
+                validate_delta_patch(delta.entity_type, delta.patch or {})
                 current_state = self._apply_delta_to_state(current_state, {
                     "entity_type": delta.entity_type,
                     "entity_key": delta.entity_key,
@@ -264,11 +387,11 @@ class TwinService:
                 })
 
             # Calculate deltas
-            delta_summary = self._calculate_kpi_deltas(scenario.baseline_state, current_state)
+            delta_summary = self._calculate_kpi_deltas(baseline_snapshot, current_state)
 
             # Build result
             simulation_result = {
-                "before": scenario.baseline_state,
+                "before": baseline_snapshot,
                 "after": current_state,
                 "delta_summary": delta_summary,
                 "mode": "projecao_linear",
@@ -334,6 +457,15 @@ class TwinService:
 
             logger.info(f"Simulated scenario {scenario_id}")
             return simulation_result
+
+        except TwinValidationError as e:
+            # Q.54.I — erro de INPUT (delta inválido), não falha de execução.
+            # O cenário não fica ERROR — devolve-se ao estado anterior à
+            # simulação para o utilizador poder corrigir o delta e repetir.
+            scenario.status = ScenarioStatus.DRAFT.value
+            await self.db.commit()
+            logger.warning(f"Simulation rejected for scenario {scenario_id}: {e}")
+            raise
 
         except Exception as e:
             scenario.status = ScenarioStatus.ERROR.value
@@ -537,12 +669,29 @@ class TwinService:
         }
     
     def _apply_delta_to_state(self, state: Dict[str, Any], delta: Dict[str, Any]) -> Dict[str, Any]:
-        """Apply a delta to a state and return new state."""
-        new_state = state.copy()
-        
+        """Apply a delta to a state and return new state.
+
+        Q.54.I — `deepcopy` (não `.copy()` shallow): cada KPI no estado é
+        um dict aninhado `{"value": ...}`; um shallow copy partilharia
+        esses dicts e a escrita `new_state[k]["value"] *= ...` mutava
+        também o `state` de entrada. `entity_type` desconhecido é
+        rejeitado em vez de devolver o estado intacto sem aviso.
+        """
+        new_state = copy.deepcopy(state)
+
         entity_type = delta.get("entity_type", "")
-        patch = delta.get("patch", {})
-        
+        patch = delta.get("patch", {}) or {}
+
+        # Q.54.I — `_apply_delta_to_state` é uma whitelist fechada. Um tipo
+        # fora dela não tem efeito nenhum — antes caía pelo fim da cadeia
+        # de `if` e devolvia `new_state` igual, deixando o utilizador a
+        # crer que o cenário tinha sido modelado. Falha alto.
+        if entity_type not in SUPPORTED_DELTA_ENTITY_TYPES:
+            raise TwinValidationError(
+                f"entity_type desconhecido: {entity_type!r}. "
+                f"Tipos suportados: {', '.join(SUPPORTED_DELTA_ENTITY_TYPES)}."
+            )
+
         if entity_type == "capacity_adjustment":
             if "capacity_increase_pct" in patch:
                 increase = patch["capacity_increase_pct"]
@@ -586,30 +735,52 @@ class TwinService:
         return new_state
     
     def _calculate_kpi_deltas(self, before: Dict[str, Any], after: Dict[str, Any]) -> Dict[str, Any]:
-        """Calculate delta summary between two states."""
-        deltas = {}
-        
+        """Calculate delta summary between two states.
+
+        Q.54.I — protegido contra resultados não-finitos: se `after - before`
+        der `inf`/`NaN` (overflow ou valores corrompidos no estado), a
+        diferença é descartada em vez de poluir o resumo com um número que
+        nenhum cliente sabe renderizar.
+        """
+        deltas: Dict[str, Any] = {}
+
         for key in set(before.keys()) | set(after.keys()):
             if key.startswith("_"):
                 continue
-            
+
             before_val = self._extract_value(before.get(key))
             after_val = self._extract_value(after.get(key))
-            
+
             if before_val is not None and after_val is not None:
-                deltas[f"{key}_change"] = after_val - before_val
-        
+                change = after_val - before_val
+                if math.isfinite(change):
+                    deltas[f"{key}_change"] = change
+
         return deltas
-    
+
     def _extract_value(self, item: Any) -> Optional[float]:
-        """Extract numeric value from a KPI item."""
+        """Extract numeric value from a KPI item.
+
+        Q.54.I — devolve `None` para valores não-finitos (`NaN`/`inf`) e
+        para `bool` (que é subclasse de `int` mas não é uma métrica). Sem
+        esta guarda um `NaN` no estado contaminava silenciosamente todos
+        os deltas a jusante.
+        """
         if item is None:
             return None
+        if isinstance(item, bool):
+            return None
         if isinstance(item, (int, float)):
-            return float(item)
+            return float(item) if math.isfinite(float(item)) else None
         if isinstance(item, dict):
             val = item.get("value")
-            if val is not None and item.get("status") != "BLOCKED":
+            if (
+                val is not None
+                and not isinstance(val, bool)
+                and isinstance(val, (int, float))
+                and item.get("status") != "BLOCKED"
+                and math.isfinite(float(val))
+            ):
                 return float(val)
         return None
     
@@ -718,9 +889,13 @@ class TwinService:
         if not scenario:
             raise ValueError(f"Scenario {scenario_id} not found")
 
-        # Apply deltas deterministically to get projected state
-        projected_state = dict(scenario.baseline_state)
+        # Apply deltas deterministically to get projected state.
+        # Q.54.I — `deepcopy` (não `dict()`) para não mutar os dicts
+        # aninhados do `baseline_state` original; valida cada delta antes
+        # de o aplicar (entity_type desconhecido / patch inválido → 422).
+        projected_state = copy.deepcopy(scenario.baseline_state)
         for delta in sorted(scenario.deltas, key=lambda d: d.sequence):
+            validate_delta_patch(delta.entity_type, delta.patch or {})
             projected_state = self._apply_delta_to_state(projected_state, {
                 "entity_type": delta.entity_type,
                 "entity_key": delta.entity_key,
