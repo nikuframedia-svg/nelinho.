@@ -36,6 +36,10 @@ jobs:
       - name: Lint (ruff)
         run: ruff check src/ tests/ alembic/ scripts/ --no-fix
 
+      - name: Gate de revisao (Q.60.D)
+        # Seccoes automatizaveis do nelinho-review (hoje: vocabulario PT-PT).
+        run: python scripts/review_gate.py
+
       - name: Run pytest with coverage
         # Q.59.B.1 — coverage measured over the whole `src/`, not just
         # three hand-picked files. No `--cov-fail-under` gate yet: this
@@ -87,6 +91,10 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: ZERO MOCKS (eslint anti-MOCK, Q.60.A)
+        # Gate limpo, isolado dos ~665 erros pre-existentes do `eslint .`.
+        run: npm run lint:mocks
 
       - name: Typecheck (tsc)
         run: npx tsc -b --noEmit
