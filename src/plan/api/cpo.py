@@ -549,6 +549,130 @@ async def get_commit(
 
 
 # =============================================================================
+# /commits/{sha}/orders (Sprint Q.54.D — plano optimizado consumível)
+# =============================================================================
+#
+# A página Fábrica mostra o estado CRU do ERP (`/v1/plan/orders/active`).
+# O CPO produz o plano optimizado dentro de um ScheduleCommit, mas não havia
+# endpoint que o devolvesse na mesma forma que `/orders/active` para o
+# frontend mostrar barco→fase→operador→molde+datas lado-a-lado.
+
+
+class CommitOrderItem(BaseModel):
+    """Uma ordem activa enriquecida com o plano optimizado do commit.
+
+    Os primeiros campos são idênticos a `/v1/plan/orders/active`; os campos
+    `optimized_*` / `assigned_*` / `scheduled_*` vêm do plano do CPO. Quando
+    a ordem não está no plano, `in_optimized_plan=False` e os campos
+    optimizados ficam a `null` (honesto — zero mocks)."""
+
+    id: str
+    hull: Optional[str] = None
+    product_name: str
+    product_type: Optional[str] = None
+    customer_name: Optional[str] = None
+    phase: Optional[str] = None
+    phase_sequence: Optional[int] = None
+    status: str
+    created_date: Optional[str] = None
+    transport_date: Optional[str] = None
+    # --- plano optimizado (Q.54.D) ---
+    in_optimized_plan: bool = False
+    optimized_phase: Optional[str] = None
+    optimized_phase_sequence: Optional[int] = None
+    assigned_employee_id: Optional[str] = None
+    assigned_employee_name: Optional[str] = None
+    assigned_machine_id: Optional[str] = None
+    scheduled_start: Optional[str] = None
+    scheduled_end: Optional[str] = None
+
+
+class CommitOrdersResponse(BaseModel):
+    """Resposta de `GET /v1/plan/cpo/commits/{sha}/orders`."""
+
+    commit_sha256: str
+    short_sha: str
+    kpis: Dict[str, Any] = Field(default_factory=dict)
+    orders: List[CommitOrderItem] = Field(default_factory=list)
+
+
+@router.get("/commits/{sha}/orders", response_model=CommitOrdersResponse)
+async def get_commit_orders(
+    sha: str,
+    tenant_id: UUID = Depends(_tenant_id),
+    db: AsyncSession = Depends(get_session),
+):
+    """Q.54.D — ordens activas + o plano optimizado do CPO, na mesma forma.
+
+    `sha` aceita um SHA-256 completo, um prefixo curto (>=7 chars), ou a
+    palavra-chave `latest` (o commit mais recente do tenant). Cada item tem
+    a forma de `/v1/plan/orders/active` mais os campos optimizados do plano
+    (fase/operador/máquina/datas). Junta também os KPIs do commit
+    (makespan, setups, utilization, num_late_orders) na resposta.
+
+    A junção é por `order_id` da operação ↔ `legacy_id` (nº de OF) da
+    `ProductionOrder`. Campo que não resolve fica `null` — uma ordem fora
+    do plano vem com `in_optimized_plan=False`.
+    """
+    from sqlalchemy import select as _select
+
+    from src.core.models.employee import Employee
+    from src.plan.models.order import OrderStatus, ProductionOrder
+    from src.plan.services.cpo_commit_orders import merge_commit_with_orders
+    from src.plan.services.phase_classification import is_completed_phase
+
+    service = CommitsService(db, tenant_id)
+    if sha == "latest":
+        commit = await service.get_latest()
+        if commit is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="no schedule commit yet — run /v1/plan/cpo/schedule first",
+            )
+    else:
+        commit = await _resolve_commit_or_404(service, sha)
+
+    # Ordens activas — mesmo filtro de /orders/active (exclui CANCELLED +
+    # fases terminais). O volume é baixo (~500 ordens).
+    order_rows = (
+        await db.execute(
+            _select(ProductionOrder).where(
+                (ProductionOrder.tenant_id == tenant_id)
+                & (ProductionOrder.status != OrderStatus.CANCELLED)
+            )
+        )
+    ).scalars().all()
+    active_orders = [
+        o for o in order_rows if not is_completed_phase(o.current_phase_name)
+    ]
+
+    # Mapa employee_code → employee_name para resolver o operador atribuído.
+    emp_rows = (
+        await db.execute(
+            _select(Employee).where(Employee.tenant_id == tenant_id)
+        )
+    ).scalars().all()
+    employee_names = {
+        str(e.employee_code): e.employee_name
+        for e in emp_rows
+        if e.employee_code
+    }
+
+    merged = merge_commit_with_orders(
+        operations=list(commit.operations or []),
+        orders=list(active_orders),
+        employee_names=employee_names,
+    )
+
+    return CommitOrdersResponse(
+        commit_sha256=commit.commit_sha256,
+        short_sha=commit.commit_sha256[:12],
+        kpis=dict(commit.kpis or {}),
+        orders=[CommitOrderItem(**m) for m in merged],
+    )
+
+
+# =============================================================================
 # /commits/{sha}/diff/{other} (Sprint K.3 — Delta view)
 # =============================================================================
 
