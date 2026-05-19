@@ -39,6 +39,13 @@ import {
   profitApi,
   type BacklogResponse,
 } from '../../lib/api';
+import {
+  direcaoApi,
+  type KpiObjectivesResponse,
+  type ObjectiveBand,
+  type Pp1Impact,
+  type MarginBySegmentResponse,
+} from './direcaoApi';
 
 // ─── Tipos das respostas REAIS ──────────────────────────────────────────
 
@@ -151,24 +158,19 @@ export default function DirecaoPage() {
     retry: 0,
   });
 
-  // Objetivos do CEO — endpoint não existe (PARTIAL): degrada honesto.
-  const objectivesQuery = useQuery({
+  // Objetivos do CEO — bandas low/target/high por KPI + impacto-PP1 (Q.53.C).
+  const objectivesQuery = useQuery<KpiObjectivesResponse>({
     queryKey: ['direcao', 'objectives'],
-    queryFn: () =>
-      apiFetch<unknown>('/v1/profit/kpis/objectives').catch(() => ({
-        erp_available: false,
-      })),
+    queryFn: () => direcaoApi.objectives(),
     staleTime: 5 * 60_000,
     retry: 0,
   });
 
-  // Margem por país — endpoint margin-by-segment não existe (PARTIAL).
-  const marginCountryQuery = useQuery({
+  // Margem por país — segmentação do ERP NELO (Q.53.C). Degrada honesto
+  // via erp_available=false quando o adaptador NELO está offline.
+  const marginCountryQuery = useQuery<MarginBySegmentResponse>({
     queryKey: ['direcao', 'margin-country'],
-    queryFn: () =>
-      apiFetch<unknown>(
-        '/v1/profit/margin-by-segment?dimension=country',
-      ).catch(() => ({ erp_available: false })),
+    queryFn: () => direcaoApi.marginBySegment('country'),
     staleTime: 5 * 60_000,
     retry: 0,
   });
@@ -197,8 +199,9 @@ export default function DirecaoPage() {
   const otd = otdQuery.data ?? null;
   const reworkRate = kpiQuery.data?.rework_rate?.value ?? null;
 
-  const objectivesHonest = useHonestEmptyState(objectivesQuery.data);
   const marginCountryHonest = useHonestEmptyState(marginCountryQuery.data);
+  const objectives = objectivesQuery.data?.kpis ?? [];
+  const pp1Impact = objectivesQuery.data?.pp1_impact ?? null;
 
   const backlogTotal = useMemo(
     () =>
@@ -339,63 +342,51 @@ export default function DirecaoPage() {
           <SectionHeader
             icon={<Target size={14} />}
             title="KPIs · objetivo vs realizado"
-            subtitle="Alvos do CEO em KPI_OBJECTIVO · banda verde = dentro do esperado"
+            subtitle="Bandas-alvo do CEO · banda verde = dentro do esperado"
           />
-          {objectivesHonest.degraded || objectivesQuery.isError ? (
+          {objectivesQuery.isLoading ? (
+            <div
+              style={{
+                padding: 16,
+                textAlign: 'center',
+                color: 'var(--fg-3)',
+                fontSize: 12,
+              }}
+            >
+              A carregar objetivos…
+            </div>
+          ) : objectivesQuery.isError ? (
             <EmptyState
               size="sm"
               title="Objetivos do CEO indisponíveis"
-              hint={
-                objectivesHonest.reason ||
-                'O endpoint de objetivos (KPI_OBJECTIVO) ainda não está ligado. Os alvos aparecem assim que a fonte for sincronizada.'
-              }
+              hint="Não foi possível ler /v1/profit/kpis/objectives. Tenta recarregar a página."
+            />
+          ) : objectives.length === 0 ? (
+            <EmptyState
+              size="sm"
+              title="Sem objetivos definidos"
+              hint="Ainda não há bandas-alvo configuradas. Define-as na configuração de custos."
             />
           ) : (
-            // Sem fonte real de bandas — derivamos os objetivos dos KPIs
-            // vivos acima contra metas de produto conhecidas (Blueprint §1.1).
             <div
               style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(4, 1fr)',
+                gridTemplateColumns: `repeat(${Math.min(objectives.length, 4)}, 1fr)`,
                 gap: 14,
               }}
             >
-              {throughput ? (
+              {objectives.map((band) => (
                 <ObjectiveCell
-                  label="€/dia"
-                  value={Number((throughput.today / 1000).toFixed(1))}
-                  low={throughput.target_min / 1000}
-                  high={throughput.target_max / 1000}
-                  unit="K"
+                  key={band.kpi}
+                  band={band}
+                  realised={realisedForKpi(band.kpi, {
+                    throughputToday: throughput?.today ?? null,
+                    otdPct: otd?.otd_pct ?? null,
+                    fpyPct: fpyValue,
+                    reworkRate,
+                  })}
                 />
-              ) : null}
-              {otd ? (
-                <ObjectiveCell
-                  label="OTD"
-                  value={Math.round(otd.otd_pct)}
-                  low={90}
-                  high={100}
-                  unit="%"
-                />
-              ) : null}
-              {fpyValue !== null ? (
-                <ObjectiveCell
-                  label="FPY"
-                  value={Number(fpyValue.toFixed(1))}
-                  low={90}
-                  high={100}
-                  unit="%"
-                />
-              ) : null}
-              {reworkRate !== null ? (
-                <ObjectiveCell
-                  label="Retrabalho"
-                  value={Number((reworkRate * 100).toFixed(1))}
-                  low={0}
-                  high={10}
-                  unit="%"
-                />
-              ) : null}
+              ))}
             </div>
           )}
         </Card>
@@ -433,9 +424,13 @@ export default function DirecaoPage() {
             <SectionHeader
               icon={<Sparkles size={14} />}
               title="Impacto PP1"
-              subtitle="Sistema de aprendizagem activo"
+              subtitle="€ poupado por sugestões aceites"
             />
-            <ImpactPP1 />
+            <ImpactPP1
+              impact={pp1Impact}
+              isLoading={objectivesQuery.isLoading}
+              isError={objectivesQuery.isError}
+            />
           </Card>
         </div>
 
@@ -507,17 +502,29 @@ export default function DirecaoPage() {
               >
                 Por país
               </div>
-              {marginCountryHonest.degraded || marginCountryQuery.isError ? (
+              {marginCountryQuery.isLoading ? (
+                <div
+                  style={{
+                    padding: 16,
+                    textAlign: 'center',
+                    color: 'var(--fg-3)',
+                    fontSize: 12,
+                  }}
+                >
+                  A carregar margem por país…
+                </div>
+              ) : marginCountryHonest.degraded || marginCountryQuery.isError ? (
                 <EmptyState
                   size="sm"
                   title="Segmentação por país indisponível"
                   hint={
+                    marginCountryQuery.data?.unavailable_reason ||
                     marginCountryHonest.reason ||
-                    'A segmentação de margem por país/agente ainda não está ligada ao ERP MAR-KAYAKS.'
+                    'A segmentação de margem por país ainda não está ligada ao ERP MAR-KAYAKS.'
                   }
                 />
               ) : (
-                <CountryMargins data={marginCountryQuery.data} />
+                <CountryMargins data={marginCountryQuery.data ?? null} />
               )}
             </div>
           </div>
@@ -703,21 +710,55 @@ export default function DirecaoPage() {
   );
 }
 
+// ─── realisedForKpi — casa um KPI da banda com o seu valor vivo ──────────
+
+interface LiveKpis {
+  throughputToday: number | null;
+  otdPct: number | null;
+  fpyPct: number | null;
+  reworkRate: number | null;
+}
+
+/**
+ * Devolve o valor realizado (vivo) para um KPI da banda, na mesma
+ * unidade da banda. `throughput` vem em €/dia → divide-se por 1000 para
+ * casar com a banda (semeada em € mas mostrada em K). `rework` vive em
+ * 0–1 na snapshot → ×100 para %. null quando o KPI não tem dados.
+ */
+function realisedForKpi(kpi: string, live: LiveKpis): number | null {
+  switch (kpi) {
+    case 'throughput_eur_day':
+      return live.throughputToday !== null
+        ? Number((live.throughputToday / 1000).toFixed(1))
+        : null;
+    case 'otd_pct':
+      return live.otdPct !== null ? Number(live.otdPct.toFixed(1)) : null;
+    case 'fpy_pct':
+      return live.fpyPct !== null ? Number(live.fpyPct.toFixed(1)) : null;
+    case 'rework_pct':
+      return live.reworkRate !== null
+        ? Number((live.reworkRate * 100).toFixed(1))
+        : null;
+    default:
+      return null;
+  }
+}
+
 // ─── ObjectiveCell ───────────────────────────────────────────────────────
 
 function ObjectiveCell({
-  label,
-  value,
-  low,
-  high,
-  unit,
+  band,
+  realised,
 }: {
-  label: string;
-  value: number;
-  low: number;
-  high: number;
-  unit: string;
+  band: ObjectiveBand;
+  realised: number | null;
 }) {
+  // A banda do backend `throughput_eur_day` vem em € — a ObjectiveBar
+  // mostra-a em K para casar com o realizado. Os restantes KPIs (%) já
+  // estão na escala certa.
+  const isThroughput = band.kpi === 'throughput_eur_day';
+  const scale = isThroughput ? 1000 : 1;
+  const unit = isThroughput ? 'K' : band.unit;
   return (
     <div>
       <div
@@ -730,9 +771,38 @@ function ObjectiveCell({
           marginBottom: 6,
         }}
       >
-        {label}
+        {band.label}
       </div>
-      <ObjectiveBar value={value} low={low} high={high} unit={unit} />
+      {realised !== null ? (
+        <ObjectiveBar
+          value={realised}
+          low={band.low / scale}
+          high={band.high / scale}
+          unit={unit}
+        />
+      ) : (
+        <div
+          style={{
+            fontSize: 11,
+            color: 'var(--fg-3)',
+            padding: '6px 0',
+          }}
+        >
+          alvo {(band.target / scale).toLocaleString('pt-PT')}
+          {unit} · sem realizado
+        </div>
+      )}
+      <div
+        style={{
+          fontSize: 9.5,
+          color: 'var(--fg-3)',
+          marginTop: 2,
+        }}
+      >
+        alvo {(band.target / scale).toLocaleString('pt-PT')}
+        {unit}
+        {band.source === 'tenant_config' ? ' · configurado' : ''}
+      </div>
     </div>
   );
 }
@@ -773,25 +843,22 @@ function SummaryStat({
   );
 }
 
-// ─── CountryMargins — só renderiza se a resposta tiver shape esperado ────
+// ─── CountryMargins — margem agregada por país do ERP NELO ───────────────
 
-function CountryMargins({ data }: { data: unknown }) {
+function CountryMargins({ data }: { data: MarginBySegmentResponse | null }) {
   const rows = useMemo(() => {
-    if (!data || typeof data !== 'object') return [];
-    const items = (data as { items?: unknown }).items;
-    if (!Array.isArray(items)) return [];
-    return items
-      .filter(
-        (r): r is { label: string; margin: number; revenue: number } =>
-          !!r &&
-          typeof r === 'object' &&
-          typeof (r as Record<string, unknown>).margin === 'number',
-      )
-      .map((r) => ({
-        label: String((r as Record<string, unknown>).label ?? '—'),
-        margin: Number((r as Record<string, unknown>).margin),
-        revenue: Number((r as Record<string, unknown>).revenue ?? 0),
-      }));
+    const segments = data?.segments ?? [];
+    // margin_pct vem 0–1 no backend → ×100 para a percentagem que a
+    // MarginRow espera. Ordena por margem € decrescente (já vem assim,
+    // mas garantimos para não depender da ordem do backend).
+    return segments
+      .map((s) => ({
+        label: s.segment,
+        margin: s.margin_pct !== null ? s.margin_pct * 100 : 0,
+        revenue: s.revenue_eur,
+        marginEur: s.margin_eur,
+      }))
+      .sort((a, b) => b.marginEur - a.marginEur);
   }, [data]);
 
   if (rows.length === 0) {
@@ -799,7 +866,7 @@ function CountryMargins({ data }: { data: unknown }) {
       <EmptyState
         size="sm"
         title="Sem margem por país"
-        hint="Não há ordens com país atribuído para segmentar."
+        hint="O ERP respondeu, mas nenhuma ordem tem país atribuído para segmentar."
       />
     );
   }
@@ -819,18 +886,103 @@ function CountryMargins({ data }: { data: unknown }) {
   );
 }
 
-// ─── ImpactPP1 — quanto o sistema de aprendizagem rendeu ─────────────────
+// ─── ImpactPP1 — € poupado por sugestões aceites (decisões executadas) ───
 
-function ImpactPP1() {
-  // O Impacto PP1 monetário não tem endpoint dedicado — mostramos um
-  // empty state honesto em vez de inventar o número.
+function ImpactPP1({
+  impact,
+  isLoading,
+  isError,
+}: {
+  impact: Pp1Impact | null;
+  isLoading: boolean;
+  isError: boolean;
+}) {
+  if (isLoading) {
+    return (
+      <div
+        style={{
+          padding: 12,
+          textAlign: 'center',
+          color: 'var(--fg-3)',
+          fontSize: 12,
+        }}
+      >
+        A carregar impacto PP1…
+      </div>
+    );
+  }
+  if (isError || !impact) {
+    return (
+      <div style={{ marginTop: 4 }}>
+        <EmptyState
+          size="sm"
+          title="Impacto PP1 indisponível"
+          hint="Não foi possível ler o sinal de impacto-PP1. Tenta recarregar a página."
+        />
+      </div>
+    );
+  }
+  // Sem decisões aceites na janela — mostra a razão honesta do backend.
+  if (impact.accepted_decisions === 0) {
+    return (
+      <div style={{ marginTop: 4 }}>
+        <EmptyState
+          size="sm"
+          title="Impacto PP1 ainda não quantificado"
+          hint={
+            impact.reason ||
+            'A poupança começa a contar quando as sugestões do sistema forem aceites e executadas.'
+          }
+        />
+      </div>
+    );
+  }
   return (
     <div style={{ marginTop: 4 }}>
-      <EmptyState
-        size="sm"
-        title="Impacto PP1 ainda não quantificado"
-        hint="A poupança gerada pelas sugestões aceites será calculada pelo serviço de custos. Até lá, o valor não é mostrado para não inventar números."
-      />
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'baseline',
+          gap: 6,
+          marginBottom: 4,
+        }}
+      >
+        <span
+          className="display tabular"
+          style={{
+            fontSize: 26,
+            fontWeight: 500,
+            color: impact.eur_saved > 0 ? 'var(--green)' : 'var(--fg-0)',
+            letterSpacing: -0.4,
+          }}
+        >
+          €{Math.round(impact.eur_saved).toLocaleString('pt-PT')}
+        </span>
+        <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>
+          poupado · {impact.window_days} dias
+        </span>
+      </div>
+      <div style={{ fontSize: 11.5, color: 'var(--fg-2)' }}>
+        {impact.accepted_decisions} decis
+        {impact.accepted_decisions === 1 ? 'ão' : 'ões'} aceite
+        {impact.accepted_decisions === 1 ? '' : 's'}
+        {impact.decisions_with_eur < impact.accepted_decisions
+          ? ` · ${impact.decisions_with_eur} com € medido`
+          : ''}
+      </div>
+      {impact.decisions_with_eur < impact.accepted_decisions ? (
+        <div
+          style={{
+            fontSize: 10.5,
+            color: 'var(--fg-3)',
+            marginTop: 6,
+            lineHeight: 1.5,
+          }}
+        >
+          As restantes decisões ainda não têm impacto € registado — o
+          valor mostrado é só o que foi medido.
+        </div>
+      ) : null}
     </div>
   );
 }
