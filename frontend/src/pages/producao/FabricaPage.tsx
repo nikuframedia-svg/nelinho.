@@ -1,17 +1,26 @@
 /**
  * FabricaPage — war room: Kanban de fases + atribuição dinâmica (Q.52.F).
  *
- * Onda 1 · T1. Reconstrução fiel do `page-fabrica.jsx` do design NELO:
- * strip de KPIs, colunas-fase Kanban com drag-drop bidirecional e o
- * rail de operadores com fit-scoring. Ligada a endpoints REAIS:
- *   - /v1/plan/orders/active            (cartões de barco)
+ * Onda 1 · T1 · Q.54.C/D. Reconstrução fiel do `page-fabrica.jsx` do
+ * design NELO: strip de KPIs, colunas-fase Kanban com drag-drop
+ * bidirecional e o rail de operadores com fit-scoring. Ligada a
+ * endpoints REAIS:
+ *   - /v1/plan/orders/active            (cartões de barco, com
+ *                                        phase_sequence p/ ordenar)
+ *   - /v1/plan/cpo/commits/latest/orders (plano optimizado do CPO)
  *   - /v1/factory-map/snapshot          (score de gargalo por fase)
  *   - /v1/core/employees                (operadores)
- *   - /v1/workforce/employees/{id}/quality-score + /skill-matrix
- *                                       (fit-scoring real)
+ *   - POST /v1/workforce/employees/profiles (perfis em LOTE — uma só
+ *                                        chamada substitui o fan-out
+ *                                        de ~3×N pedidos que congelava)
  *   - /v1/plan/schedule/preview-delta   (consequência do drag)
  *   - /v1/plan/schedule/apply-move      (persistir o movimento)
  *   - /v1/hr/allocations/daily          (atribuir operador → barco)
+ *
+ * Q.54.C — colunas ordenadas pela sequência de routing NELO
+ * (`phase_sequence`), não alfabética; perfis de operador pré-carregados
+ * em lote → atribuição instantânea.
+ * Q.54.D — toggle "Plano sugerido" alterna estado cru ↔ plano CPO.
  *
  * DnD bidirecional via HTML5 dataTransfer (MIME application/x-nelo-dnd):
  * `boat` arrasta entre colunas-fase; `worker` arrasta para os cartões.
@@ -26,22 +35,20 @@ import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
   useMutation,
-  useQueries,
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
-import { Factory, Layers, X } from 'lucide-react';
+import { Factory, Layers, Sparkles, X } from 'lucide-react';
 import { DarkPageLayout } from '../../layouts';
 import { DarkButton, EmptyState, LiveBadge } from '../../components/dark';
 import {
   allocationsApi,
   employeesApi,
   schedulePreviewApi,
-  workforceEmployeesApi,
   type PreviewDeltaResult,
 } from '../../lib/api';
 import { fabricaApi } from './fabricaApi';
-import type { ActiveOrderCard } from './fabricaApi';
+import type { ActiveOrderCard, OptimizedOrderCard } from './fabricaApi';
 import { FabricaPhaseColumn } from './FabricaPhaseColumn';
 import type { PhaseColumnModel } from './FabricaPhaseColumn';
 import type { AssignedWorker } from './BoatAssignCard';
@@ -69,14 +76,29 @@ function deriveInitials(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
+/** Vista da Fábrica: estado cru vs plano optimizado do CPO. */
+type FabricaView = 'estado' | 'plano';
+
 export function FabricaPage(): ReactNode {
   const queryClient = useQueryClient();
+
+  // ─── Vista: Estado actual vs Plano sugerido (Q.54.D) ────────────────────
+  const [view, setView] = useState<FabricaView>('estado');
 
   // ─── Ordens activas ─────────────────────────────────────────────────────
   const ordersQuery = useQuery({
     queryKey: ['fabrica', 'orders'],
     queryFn: () => fabricaApi.activeOrders({ limit: 500 }),
     refetchOnWindowFocus: false,
+  });
+
+  // ─── Plano optimizado do CPO (só carrega na vista "plano") ──────────────
+  const planQuery = useQuery({
+    queryKey: ['fabrica', 'plan', 'latest'],
+    queryFn: () => fabricaApi.commitOrders('latest'),
+    refetchOnWindowFocus: false,
+    enabled: view === 'plano',
+    retry: false,
   });
 
   // ─── Snapshot (score de gargalo por fase) ───────────────────────────────
@@ -107,6 +129,7 @@ export function FabricaPage(): ReactNode {
         if (!id) return null;
         const parts = [rec.first_name, rec.last_name].filter(Boolean);
         const name =
+          (rec.employee_name as string) ||
           (parts.join(' ') as string) ||
           (rec.full_name as string) ||
           (rec.name as string) ||
@@ -115,6 +138,23 @@ export function FabricaPage(): ReactNode {
       })
       .filter((x): x is EmployeeRow => x !== null);
   }, [employeesQuery.data]);
+
+  // ─── Perfis de operador em LOTE (Q.54.C) ────────────────────────────────
+  // Uma só chamada batch substitui o fan-out de ~3×N pedidos que congelava
+  // a página. Pré-carregada no load (não só ao clicar num barco) → a
+  // atribuição é instantânea.
+  const employeeIds = useMemo(
+    () => employees.map((e) => e.id),
+    [employees],
+  );
+  const profilesQuery = useQuery({
+    queryKey: ['fabrica', 'profiles', employeeIds],
+    queryFn: () => fabricaApi.employeeProfiles(employeeIds),
+    enabled: employeeIds.length > 0,
+    refetchOnWindowFocus: false,
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
 
   // ─── State da página ────────────────────────────────────────────────────
   const [activeBoatId, setActiveBoatId] = useState<string | null>(null);
@@ -128,54 +168,55 @@ export function FabricaPage(): ReactNode {
     {},
   );
 
-  const orders = ordersQuery.data ?? [];
+  // No modo "plano" as ordens vêm do commit optimizado; no modo "estado"
+  // vêm do snapshot cru.
+  const rawOrders = ordersQuery.data ?? [];
+  const planOrders = planQuery.data?.orders ?? [];
+  const orders: ActiveOrderCard[] =
+    view === 'plano' ? planOrders : rawOrders;
 
-  // ─── Fit-scoring: só carrega perfis do operador quando há barco activo ──
-  // (evita N×2 pedidos no load inicial — só puxa quando vai pesar a escolha)
-  const wantProfiles = activeBoatId !== null;
-  const profileQueries = useQueries({
-    queries: employees.map((e) => ({
-      queryKey: ['fabrica', 'profile', e.id],
-      queryFn: async () => {
-        // Q.53.I — junta os 3 sinais de qualificação (recência/
-        // versatilidade/produtividade) ao quality-score + skill-matrix.
-        const [quality, skills, metrics] = await Promise.allSettled([
-          workforceEmployeesApi.qualityScore(e.id),
-          workforceEmployeesApi.skillMatrix(e.id),
-          fabricaApi.qualificationMetrics(e.id),
-        ]);
-        return {
-          quality:
-            quality.status === 'fulfilled' ? quality.value : undefined,
-          skills: skills.status === 'fulfilled' ? skills.value : undefined,
-          metrics:
-            metrics.status === 'fulfilled' ? metrics.value : undefined,
-        };
-      },
-      enabled: wantProfiles,
-      staleTime: 5 * 60_000,
-      retry: false,
-    })),
-  });
+  // ─── Fit-scoring: perfis vindos da chamada batch (Q.54.C) ───────────────
+  // Indexa o resultado batch por employee_id para o cruzar com a lista.
+  const workerProfiles: WorkerProfile[] = useMemo(() => {
+    const byId = new Map(
+      (profilesQuery.data?.profiles ?? []).map((p) => [
+        p.employee_id,
+        p,
+      ]),
+    );
+    return employees.map((e) => {
+      const p = byId.get(e.id);
+      return {
+        id: e.id,
+        name: e.name,
+        quality: p?.quality_score ?? undefined,
+        skills: p?.skill_matrix ?? undefined,
+        metrics: p?.qualification_metrics ?? undefined,
+      };
+    });
+  }, [employees, profilesQuery.data]);
+  const profilesLoading = profilesQuery.isLoading;
 
-  const workerProfiles: WorkerProfile[] = useMemo(
-    () =>
-      employees.map((e, i) => {
-        const data = profileQueries[i]?.data;
-        return {
-          id: e.id,
-          name: e.name,
-          quality: data?.quality,
-          skills: data?.skills,
-          metrics: data?.metrics,
-        };
-      }),
-    [employees, profileQueries],
-  );
-  const profilesLoading =
-    wantProfiles && profileQueries.some((q) => q.isLoading);
+  // Fase a usar para agrupar/ordenar uma ordem: no modo "plano" é a fase
+  // optimizada do CPO, no modo "estado" é a fase actual.
+  const phaseOf = (o: ActiveOrderCard): string => {
+    if (view === 'plano') {
+      const opt = (o as OptimizedOrderCard).optimized_phase;
+      if (opt) return opt;
+    }
+    return o.phase ?? 'Sem fase';
+  };
+  const seqOf = (o: ActiveOrderCard): number => {
+    if (view === 'plano') {
+      const s = (o as OptimizedOrderCard).optimized_phase_sequence;
+      if (typeof s === 'number') return s;
+    }
+    return typeof o.phase_sequence === 'number'
+      ? o.phase_sequence
+      : Number.MAX_SAFE_INTEGER;
+  };
 
-  // ─── Colunas Kanban derivadas das fases reais + scores de gargalo ───────
+  // ─── Colunas Kanban ordenadas pela sequência de routing NELO (Q.54.C) ───
   const columns: PhaseColumnModel[] = useMemo(() => {
     const bottlenecks = snapshotQuery.data?.phases.bottlenecks ?? [];
     // Indexa scores de gargalo por nome de fase.
@@ -191,13 +232,22 @@ export function FabricaPage(): ReactNode {
       }
       scoreByPhase.set(key.toLowerCase(), { score, load, cap });
     }
-    // Conjunto ordenado de fases presentes nas ordens.
-    const phaseNames: string[] = [];
+    // Fases presentes nas ordens, com a sua sequência de routing.
+    const seqByPhase = new Map<string, number>();
     for (const o of orders) {
-      const p = o.phase ?? 'Sem fase';
-      if (!phaseNames.includes(p)) phaseNames.push(p);
+      const name = phaseOf(o);
+      const seq = seqOf(o);
+      const prev = seqByPhase.get(name);
+      // Guarda a menor sequência vista para a fase (estável).
+      if (prev === undefined || seq < prev) seqByPhase.set(name, seq);
     }
-    phaseNames.sort((a, b) => a.localeCompare(b, 'pt-PT'));
+    // Ordena por sequência de routing crescente; empate → nome.
+    const phaseNames = [...seqByPhase.keys()].sort((a, b) => {
+      const sa = seqByPhase.get(a) ?? Number.MAX_SAFE_INTEGER;
+      const sb = seqByPhase.get(b) ?? Number.MAX_SAFE_INTEGER;
+      if (sa !== sb) return sa - sb;
+      return a.localeCompare(b, 'pt-PT');
+    });
     return phaseNames.map((name) => {
       const bn = scoreByPhase.get(name.toLowerCase());
       return {
@@ -208,7 +258,8 @@ export function FabricaPage(): ReactNode {
         cap: bn?.cap ?? null,
       };
     });
-  }, [orders, snapshotQuery.data]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orders, snapshotQuery.data, view]);
 
   // ─── Helpers de derivação ───────────────────────────────────────────────
   const activeBoat = orders.find((o) => o.id === activeBoatId) ?? null;
@@ -306,7 +357,10 @@ export function FabricaPage(): ReactNode {
   });
 
   // ─── Handlers ───────────────────────────────────────────────────────────
+  // No modo "plano" a fábrica é só leitura — o plano sugerido não se
+  // edita por drag (corre-se uma nova optimização para o mudar).
   function handleBoatDrop(boatId: string, phaseId: string): void {
+    if (view === 'plano') return;
     const boat = orders.find((o) => o.id === boatId);
     if (!boat) return;
     if (boat.phase === phaseId) return; // mesma coluna — nada a fazer
@@ -314,6 +368,7 @@ export function FabricaPage(): ReactNode {
   }
 
   function handleWorkerDrop(boatId: string, workerId: string): void {
+    if (view === 'plano') return;
     allocateMutation.mutate({ boatId, workerId });
   }
 
@@ -336,15 +391,74 @@ export function FabricaPage(): ReactNode {
     orders.filter((o) => o.status === s).length;
 
   // ─── Render ─────────────────────────────────────────────────────────────
-  const isLoading = ordersQuery.isLoading || snapshotQuery.isLoading;
+  const isLoading =
+    view === 'plano'
+      ? planQuery.isLoading
+      : ordersQuery.isLoading || snapshotQuery.isLoading;
+  const planKpis = planQuery.data?.kpis ?? null;
+  const inOptimizedCount =
+    view === 'plano'
+      ? planOrders.filter((o) => o.in_optimized_plan).length
+      : 0;
 
   return (
     <DarkPageLayout
       title="Fábrica"
-      subtitle="Arrasta barcos entre fases · clica num barco para ver operadores recomendados · arrasta para atribuir"
+      subtitle={
+        view === 'plano'
+          ? 'Plano sugerido pelo CPO — fases e operadores optimizados (só leitura)'
+          : 'Arrasta barcos entre fases · clica num barco para ver operadores recomendados · arrasta para atribuir'
+      }
       icon={<Factory size={18} />}
       actions={
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {/* Toggle Estado actual ↔ Plano sugerido (Q.54.D) */}
+          <div
+            style={{
+              display: 'flex',
+              border: '1px solid var(--bd-1)',
+              borderRadius: 'var(--r-md)',
+              overflow: 'hidden',
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setView('estado')}
+              style={{
+                padding: '5px 10px',
+                fontSize: 11,
+                fontWeight: 600,
+                border: 'none',
+                cursor: 'pointer',
+                background:
+                  view === 'estado' ? 'var(--accent)' : 'var(--bg-2)',
+                color: view === 'estado' ? '#fff' : 'var(--fg-2)',
+              }}
+            >
+              Estado actual
+            </button>
+            <button
+              type="button"
+              onClick={() => setView('plano')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 4,
+                padding: '5px 10px',
+                fontSize: 11,
+                fontWeight: 600,
+                border: 'none',
+                borderLeft: '1px solid var(--bd-1)',
+                cursor: 'pointer',
+                background:
+                  view === 'plano' ? 'var(--accent)' : 'var(--bg-2)',
+                color: view === 'plano' ? '#fff' : 'var(--fg-2)',
+              }}
+            >
+              <Sparkles size={11} />
+              Plano sugerido
+            </button>
+          </div>
           {activeBoatId && (
             <DarkButton
               variant="ghost"
@@ -372,32 +486,82 @@ export function FabricaPage(): ReactNode {
         />
       ) : (
         <>
-          {/* Strip de KPIs */}
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(4, 1fr)',
-              gap: 10,
-              marginBottom: 14,
-            }}
-          >
-            <KpiTile label="Em produção" value={orders.length} />
-            <KpiTile
-              label="No prazo"
-              value={statusCount('IN_PROGRESS')}
-              tone="green"
-            />
-            <KpiTile
-              label="Em risco"
-              value={statusCount('AT_RISK')}
-              tone="yellow"
-            />
-            <KpiTile
-              label="Atrasados"
-              value={statusCount('LATE')}
-              tone="red"
-            />
-          </div>
+          {/* Strip de KPIs — no modo plano mostra os KPIs do commit CPO */}
+          {view === 'plano' ? (
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(4, 1fr)',
+                gap: 10,
+                marginBottom: 14,
+              }}
+            >
+              <KpiTile
+                label="No plano optimizado"
+                value={inOptimizedCount}
+                tone="green"
+              />
+              <KpiTile
+                label="Makespan (h)"
+                value={Math.round(planKpis?.makespan_hours ?? 0)}
+              />
+              <KpiTile label="Setups" value={planKpis?.setups ?? 0} />
+              <KpiTile
+                label="Ordens atrasadas"
+                value={planKpis?.num_late_orders ?? 0}
+                tone="red"
+              />
+            </div>
+          ) : (
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(4, 1fr)',
+                gap: 10,
+                marginBottom: 14,
+              }}
+            >
+              <KpiTile label="Em produção" value={orders.length} />
+              <KpiTile
+                label="No prazo"
+                value={statusCount('IN_PROGRESS')}
+                tone="green"
+              />
+              <KpiTile
+                label="Em risco"
+                value={statusCount('AT_RISK')}
+                tone="yellow"
+              />
+              <KpiTile
+                label="Atrasados"
+                value={statusCount('LATE')}
+                tone="red"
+              />
+            </div>
+          )}
+
+          {view === 'plano' && planKpis?.avg_utilization != null && (
+            <div
+              style={{
+                fontSize: 11,
+                color: 'var(--fg-3)',
+                marginBottom: 12,
+              }}
+            >
+              Utilização média{' '}
+              <span style={{ color: 'var(--fg-1)', fontWeight: 600 }}>
+                {planKpis.avg_utilization.toFixed(1)}%
+              </span>
+              {planKpis.safety_net_triggered && (
+                <span style={{ color: 'var(--yellow)' }}>
+                  {'  ·  '}safety-net activo
+                </span>
+              )}
+              {planQuery.data?.short_sha && (
+                <span> · commit {planQuery.data.short_sha}</span>
+              )}
+            </div>
+          )}
 
           {/* Colunas Kanban */}
           <div style={{ marginBottom: 12 }}>
@@ -415,12 +579,31 @@ export function FabricaPage(): ReactNode {
               >
                 A carregar as colunas da fábrica…
               </div>
+            ) : view === 'plano' && planQuery.isError ? (
+              <EmptyState
+                mascot={false}
+                icon={<Sparkles size={28} />}
+                title="Sem plano optimizado"
+                hint="O CPO ainda não gerou um commit. Corre uma optimização para ver o plano sugerido."
+                action={
+                  <DarkButton
+                    size="sm"
+                    onClick={() => setView('estado')}
+                  >
+                    Voltar ao estado actual
+                  </DarkButton>
+                }
+              />
             ) : orders.length === 0 ? (
               <EmptyState
                 mascot={false}
                 icon={<Layers size={28} />}
                 title="Sem barcos em produção"
-                hint="Nenhuma ordem activa hoje. Confirma se a ingestão de ordens correu."
+                hint={
+                  view === 'plano'
+                    ? 'O commit optimizado não tem ordens. Corre uma nova optimização.'
+                    : 'Nenhuma ordem activa hoje. Confirma se a ingestão de ordens correu.'
+                }
               />
             ) : (
               <div
@@ -437,9 +620,7 @@ export function FabricaPage(): ReactNode {
                   <FabricaPhaseColumn
                     key={col.id}
                     phase={col}
-                    boats={orders.filter(
-                      (o) => (o.phase ?? 'Sem fase') === col.id,
-                    )}
+                    boats={orders.filter((o) => phaseOf(o) === col.id)}
                     assignments={assignedWorkersByBoat}
                     activeBoatId={activeBoatId}
                     draggedBoatId={draggedBoatId}

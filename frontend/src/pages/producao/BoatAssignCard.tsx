@@ -7,17 +7,18 @@
  * operadores atribuídos. É draggable (payload `boat`) e drop-target
  * (payload `worker`) — DnD bidirecional via o hook `useDragDrop`.
  *
- * Q.53.I — o cartão deixa de mostrar só códigos: passa a destacar o
- * nome do modelo (`product_name`) e o nome do cliente (`customer_name`)
- * quando disponível. ZERO MOCKS — se o cliente não está sincronizado o
- * cartão omite-o em silêncio, nunca inventa um nome.
+ * Q.53.I / Q.54.D — o cartão deixa de mostrar só códigos: destaca o
+ * nome do modelo (`product_name`) e o cliente (`customer_name`) quando
+ * disponível. Se o cliente não veio do ERP, cai para o modelo — nunca
+ * mostra um código cru sozinho havendo alternativa legível. ZERO MOCKS:
+ * omite em silêncio o que não existe, nunca inventa um nome.
  *
  * Dados 100% por props.
  */
 
 import { useState } from 'react';
 import type { DragEvent, ReactNode } from 'react';
-import type { ActiveOrderCard } from './fabricaApi';
+import type { ActiveOrderCard, OptimizedOrderCard } from './fabricaApi';
 
 export interface AssignedWorker {
   id: string;
@@ -67,6 +68,14 @@ export function BoatAssignCard({
 }: BoatAssignCardProps): ReactNode {
   const [overWorker, setOverWorker] = useState(false);
   const statusColor = STATUS_COLOR[boat.status] ?? 'var(--blue)';
+
+  // Linha secundária: cliente quando o ERP o trouxe, senão o modelo.
+  // Nunca um código cru sozinho — havendo alternativa legível, usa-a.
+  const secondaryLabel =
+    boat.customer_name ?? boat.product_name ?? null;
+  // Operador que o plano optimizado atribuiu (só no modo plano).
+  const optimizedWorker =
+    (boat as OptimizedOrderCard).assigned_employee_name ?? null;
 
   function isWorkerDrag(e: DragEvent<HTMLDivElement>): boolean {
     // O payload só é legível no `drop`; no `dragOver` confiamos no MIME.
@@ -168,7 +177,7 @@ export function BoatAssignCard({
             </span>
           )}
         </div>
-        {/* Modelo do barco (product_name é o nome do modelo). */}
+        {/* Cliente (do ERP) ou, na sua falta, o modelo do barco. */}
         <div
           style={{
             marginTop: 3,
@@ -178,12 +187,12 @@ export function BoatAssignCard({
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
           }}
-          title={boat.product_name ?? ''}
+          title={secondaryLabel ?? ''}
         >
-          {boat.product_name ?? 'Modelo —'}
+          {secondaryLabel ?? 'Modelo por sincronizar'}
         </div>
-        {/* Nome do cliente — só quando a sincronização ERP o trouxe. */}
-        {boat.customer_name && (
+        {/* Se há cliente E modelo, mostra também o modelo em baixo. */}
+        {boat.customer_name && boat.product_name && (
           <div
             style={{
               marginTop: 2,
@@ -193,9 +202,26 @@ export function BoatAssignCard({
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
             }}
-            title={boat.customer_name}
+            title={boat.product_name}
           >
-            {boat.customer_name}
+            {boat.product_name}
+          </div>
+        )}
+        {/* Operador atribuído pelo plano optimizado (modo plano). */}
+        {optimizedWorker && (
+          <div
+            style={{
+              marginTop: 3,
+              fontSize: 9.5,
+              color: 'var(--accent)',
+              fontWeight: 600,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+            title={`Plano sugerido: ${optimizedWorker}`}
+          >
+            → {optimizedWorker}
           </div>
         )}
 

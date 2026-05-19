@@ -44,7 +44,12 @@ export function WorkersStrip({
   assignedToActive,
   loadingProfiles = false,
 }: WorkersStripProps): ReactNode {
-  const scored = useMemo(() => {
+  // Limite do rail — com 122 operadores, renderizar todos os cartões
+  // pesa o DOM sem ganho: mostramos os mais relevantes (já ordenados
+  // por adequação/score) e o resto fica acessível por scroll/selecção.
+  const RAIL_CAP = 40;
+
+  const scoredAll = useMemo(() => {
     return workers
       .filter((w) => !assignedToActive.includes(w.id))
       .map((w) => {
@@ -59,8 +64,14 @@ export function WorkersStrip({
       );
   }, [workers, activeBoat, assignedToActive]);
 
+  const scored = useMemo(
+    () => scoredAll.slice(0, RAIL_CAP),
+    [scoredAll],
+  );
+  const hiddenCount = scoredAll.length - scored.length;
+
   const recommendedCount = activeBoat
-    ? scored.filter((s) => s.fit > 7).length
+    ? scoredAll.filter((s) => s.fit > 7).length
     : 0;
 
   function onDragStartWorker(
@@ -105,7 +116,7 @@ export function WorkersStrip({
             Operadores disponíveis
           </span>
           <span style={{ fontSize: 11, color: 'var(--fg-3)' }}>
-            · {scored.length}
+            · {scoredAll.length}
           </span>
           {activeBoat && recommendedCount > 0 && (
             <DarkBadge variant="info" size="sm">
@@ -354,6 +365,25 @@ export function WorkersStrip({
               </div>
             );
           })
+        )}
+        {hiddenCount > 0 && (
+          <div
+            style={{
+              display: 'grid',
+              placeItems: 'center',
+              minWidth: 150,
+              flexShrink: 0,
+              fontSize: 10.5,
+              color: 'var(--fg-3)',
+              textAlign: 'center',
+              padding: '0 12px',
+            }}
+          >
+            +{hiddenCount} operador(es).
+            {activeBoat
+              ? ' Os mais adequados aparecem primeiro.'
+              : ' Clica num barco para ordenar por adequação.'}
+          </div>
         )}
       </div>
     </div>

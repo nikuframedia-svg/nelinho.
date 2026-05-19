@@ -13,6 +13,10 @@
  */
 
 import { apiFetch } from '../../lib/api';
+import type {
+  QualityScoreResult,
+  SkillMatrixResult,
+} from '../../lib/api';
 
 // ─── Ordens activas (cartões de barco) ─────────────────────────────────────
 
@@ -27,9 +31,71 @@ export interface ActiveOrderCard {
   customer_name: string | null;
   /** Nome da fase actual (current_phase_name). */
   phase: string | null;
+  /** Sequência de routing NELO da fase actual — ordena as colunas Kanban. */
+  phase_sequence: number | null;
   status: string;
   created_date: string | null;
   transport_date: string | null;
+}
+
+// ─── Plano optimizado do CPO (Q.54.D) ──────────────────────────────────────
+
+/**
+ * Ordem como aparece no commit optimizado do CPO. Estende o cartão cru
+ * com a atribuição que o solver decidiu (`optimized_*`, `assigned_*`,
+ * `scheduled_*`). `in_optimized_plan=false` → o solver não a colocou.
+ */
+export interface OptimizedOrderCard extends ActiveOrderCard {
+  in_optimized_plan: boolean;
+  optimized_phase: string | null;
+  optimized_phase_sequence: number | null;
+  assigned_employee_id: string | null;
+  assigned_employee_name: string | null;
+  assigned_machine_id: string | null;
+  scheduled_start: string | null;
+  scheduled_end: string | null;
+}
+
+/** KPIs do commit optimizado. */
+export interface CommitKpis {
+  setups?: number | null;
+  status?: string | null;
+  makespan_hours?: number | null;
+  solve_time_sec?: number | null;
+  avg_utilization?: number | null;
+  num_late_orders?: number | null;
+  throughput_eur_day?: number | null;
+  safety_net_triggered?: boolean | null;
+  throughput_eur_total?: number | null;
+  total_tardiness_hours?: number | null;
+  [k: string]: unknown;
+}
+
+export interface CommitOrdersResponse {
+  commit_sha256: string;
+  short_sha: string;
+  kpis: CommitKpis;
+  orders: OptimizedOrderCard[];
+}
+
+// ─── Perfis de operador em lote (Q.54.C) ───────────────────────────────────
+
+/**
+ * Perfil agregado de um operador devolvido pelo endpoint batch
+ * `POST /v1/workforce/employees/profiles` — junta os 3 sinais numa só
+ * chamada (substitui o fan-out de 3 pedidos × N operadores).
+ */
+export interface EmployeeProfile {
+  employee_id: string;
+  quality_score: QualityScoreResult | null;
+  skill_matrix: SkillMatrixResult | null;
+  qualification_metrics: QualificationMetrics | null;
+}
+
+export interface EmployeeProfilesResponse {
+  profiles: EmployeeProfile[];
+  requested: number;
+  returned: number;
 }
 
 // ─── Métricas de qualificação do operador (Q.53.E / Q.53.I) ───────────────
@@ -95,6 +161,29 @@ export const fabricaApi = {
       `/v1/plan/orders/active?${qs.toString()}`,
     );
   },
+
+  /**
+   * Plano optimizado do CPO — ordens com a atribuição do solver +
+   * KPIs do commit (Q.54.D). `sha` aceita `latest`.
+   */
+  commitOrders: (sha: string = 'latest') =>
+    apiFetch<CommitOrdersResponse>(
+      `/v1/plan/cpo/commits/${encodeURIComponent(sha)}/orders`,
+    ),
+
+  /**
+   * Perfis de operador em lote (Q.54.C) — quality-score + skill-matrix +
+   * qualification-metrics agregados numa só chamada. Substitui o fan-out
+   * de ~60 pedidos que congelava a página ao seleccionar um barco.
+   */
+  employeeProfiles: (employeeIds: string[]) =>
+    apiFetch<EmployeeProfilesResponse>(
+      '/v1/workforce/employees/profiles',
+      {
+        method: 'POST',
+        body: JSON.stringify({ employee_ids: employeeIds }),
+      },
+    ),
 
   /** Snapshot da fábrica — score de gargalo por fase (REAL). */
   snapshot: () => apiFetch<FabricaSnapshot>('/v1/factory-map/snapshot'),

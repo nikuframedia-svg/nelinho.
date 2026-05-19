@@ -9,7 +9,7 @@
 import type { ReactNode } from 'react';
 import { Sheet, NeloWorkerAvatar } from '../../components/dark';
 import type { AssignedWorker } from './BoatAssignCard';
-import type { ActiveOrderCard } from './fabricaApi';
+import type { ActiveOrderCard, OptimizedOrderCard } from './fabricaApi';
 
 export interface BoatDetailSheetProps {
   boat: ActiveOrderCard | null;
@@ -56,6 +56,10 @@ export function BoatDetailSheet({
   onClose,
 }: BoatDetailSheetProps): ReactNode {
   if (!boat) return null;
+
+  const opt = boat as OptimizedOrderCard;
+  const optimizedPhase = opt.optimized_phase ?? null;
+  const optimizedWorker = opt.assigned_employee_name ?? null;
 
   return (
     <Sheet
@@ -115,7 +119,33 @@ export function BoatDetailSheet({
         </Box>
       </div>
 
-      <Box label={`Operadores (${workers.length})`}>
+      {(optimizedPhase || optimizedWorker) && (
+        <Box label="Plano sugerido pelo CPO">
+          {optimizedPhase && (
+            <div style={{ fontSize: 12.5, color: 'var(--fg-0)' }}>
+              Fase optimizada:{' '}
+              <span style={{ fontWeight: 600 }}>{optimizedPhase}</span>
+            </div>
+          )}
+          {optimizedWorker && (
+            <div
+              style={{
+                fontSize: 12.5,
+                color: 'var(--fg-2)',
+                marginTop: 4,
+              }}
+            >
+              Operador sugerido:{' '}
+              <span style={{ color: 'var(--accent)', fontWeight: 600 }}>
+                {optimizedWorker}
+              </span>
+            </div>
+          )}
+        </Box>
+      )}
+
+      <div style={{ marginTop: optimizedPhase || optimizedWorker ? 12 : 0 }}>
+        <Box label={`Operadores (${workers.length})`}>
         {workers.length === 0 ? (
           <div style={{ fontSize: 12, color: 'var(--fg-3)' }}>
             Sem operadores atribuídos · usa o rail em baixo para arrastar um
@@ -135,7 +165,8 @@ export function BoatDetailSheet({
             ))}
           </div>
         )}
-      </Box>
+        </Box>
+      </div>
     </Sheet>
   );
 }
