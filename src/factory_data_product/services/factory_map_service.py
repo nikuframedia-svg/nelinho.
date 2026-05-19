@@ -657,29 +657,55 @@ class FactoryMapService:
     async def _defect_rate_from_db(
         self, orders_total: int, *, window_days: int = 90,
     ) -> Optional[float]:
-        """Rework events ÷ orders over a recent window.
+        """Fração de ordens com ≥1 retrabalho — uma taxa de defeito 0..1.
 
-        Mirrors how `QualityDashboardService` counts events: rows in
-        `quality.rework_entry` with `detected_at` inside the window. The
-        denominator is the total orders for the tenant — a rework rate
-        per order, which is the number the Factory panel shows.
+        A versão anterior dividia o nº total de eventos de `rework_entry`
+        pelo nº de ordens, o que dava números >1 sem sentido ("63 erros
+        por ordem") — o `rework_entry` regista cada não-conformidade de
+        checklist, não barcos defeituosos. A "taxa de defeito" do Painel
+        tem de ser uma percentagem: ordens com pelo menos um retrabalho ÷
+        total de ordens. `ReworkEntry.of_id` casa com
+        `ProductionOrder.legacy_id` (o nº de OF).
         """
-        if orders_total <= 0:
-            return None
         try:
+            from sqlalchemy import String as SAString, cast
+            from src.plan.models.order import ProductionOrder
             from src.quality.models.rework import ReworkEntry
 
+            total = int(
+                (
+                    await self.session.execute(
+                        select(func.count(ProductionOrder.id)).where(
+                            ProductionOrder.tenant_id == self.tenant_id
+                        )
+                    )
+                ).scalar_one_or_none()
+                or 0
+            )
+            if total <= 0:
+                return None
+
             since = datetime.now(timezone.utc) - timedelta(days=window_days)
-            stmt = select(func.count(ReworkEntry.id)).where(
-                and_(
-                    ReworkEntry.tenant_id == self.tenant_id,
-                    ReworkEntry.detected_at >= since,
-                )
+            known_ofs = select(cast(ProductionOrder.legacy_id, SAString)).where(
+                ProductionOrder.tenant_id == self.tenant_id
             )
-            rework_count = int(
-                (await self.session.execute(stmt)).scalar_one_or_none() or 0
+            with_rework = int(
+                (
+                    await self.session.execute(
+                        select(
+                            func.count(func.distinct(ReworkEntry.of_id))
+                        ).where(
+                            and_(
+                                ReworkEntry.tenant_id == self.tenant_id,
+                                ReworkEntry.detected_at >= since,
+                                ReworkEntry.of_id.in_(known_ofs),
+                            )
+                        )
+                    )
+                ).scalar_one_or_none()
+                or 0
             )
-            return round(rework_count / orders_total, 3)
+            return round(min(with_rework / total, 1.0), 3)
         except Exception as exc:  # pragma: no cover — defensive
             logger.warning(
                 "defect_rate DB fallback failed for tenant=%s: %r",
@@ -726,7 +752,9 @@ class FactoryMapService:
             )
             backlog_rows = (await self.session.execute(backlog_stmt)).all()
             if not backlog_rows:
-                return []
+                # A camada curada está vazia nesta instalação — cai para a
+                # distribuição real de WIP das ordens de produção.
+                return await self._bottlenecks_from_orders(top_n=top_n)
 
             # Capacity hours per phase (latest period available).
             cap_stmt = select(
@@ -762,6 +790,57 @@ class FactoryMapService:
         except Exception as exc:  # pragma: no cover — defensive
             logger.warning(
                 "bottlenecks DB fallback failed for tenant=%s: %r",
+                self.tenant_id, exc,
+            )
+            return []
+
+    async def _bottlenecks_from_orders(
+        self, *, top_n: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Gargalos a partir do WIP real das ordens de produção.
+
+        Quando a camada curada está vazia, o sinal honesto de gargalo é a
+        distribuição de barcos a decorrer por fase: a fase com mais WIP é
+        o gargalo visível. Agrupa `ProductionOrder` IN_PROGRESS por
+        `current_phase_name`. O `score` é a contagem de barcos na fase.
+        """
+        try:
+            from src.plan.models.order import OrderStatus, ProductionOrder
+
+            stmt = (
+                select(
+                    ProductionOrder.current_phase_name,
+                    func.count(ProductionOrder.id),
+                )
+                .where(
+                    and_(
+                        ProductionOrder.tenant_id == self.tenant_id,
+                        ProductionOrder.status == OrderStatus.IN_PROGRESS,
+                    )
+                )
+                .group_by(ProductionOrder.current_phase_name)
+            )
+            rows = (await self.session.execute(stmt)).all()
+            if not rows:
+                return []
+            counts = [int(n or 0) for _, n in rows]
+            busiest = max(counts) if counts else 0
+            items = [
+                {
+                    "fase_id": None,
+                    "fase_nome": phase or "Sem fase",
+                    "open_phases": int(n or 0),
+                    "wip_barcos": int(n or 0),
+                    "score": int(n or 0),
+                    "is_critical": busiest > 0 and int(n or 0) == busiest,
+                }
+                for phase, n in rows
+            ]
+            items.sort(key=lambda x: x["score"], reverse=True)
+            return items[:top_n]
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning(
+                "bottlenecks order fallback failed for tenant=%s: %r",
                 self.tenant_id, exc,
             )
             return []

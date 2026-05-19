@@ -131,29 +131,29 @@ async def test_orders_summary_empty_tenant(fake_session):
 
 @pytest.mark.asyncio
 async def test_kpis_throughput_eur_day_reports_real_or_unavailable(fake_session):
-    # Call order inside kpis() (semantic quality present → DB defect-rate
-    # fallback is skipped):
-    #   1. _orders_summary               (scalars → status/count rows)
-    #   2. _bottlenecks_from_db backlog  (scalars → empty)
-    #   3. _bottlenecks_from_db capacity (scalars → empty)
-    #   4+ throughput service           (several executes)
-    #   last. _completed_count_today    (scalar → count)
+    """`kpis()` monta o dicionário a partir dos seus blocos.
+
+    As partes pesadas e de ordenação variável (bottlenecks, throughput)
+    são patched — o teste verifica a montagem, não a sequência de queries.
+    `_orders_summary` consome a 1ª query; `_completed_count_today` a 2ª.
+    """
     _queue(fake_session, scalars=[("IN_PROGRESS", 3), ("COMPLETED", 7)])
-    _queue(fake_session, scalars=[])                            # bottlenecks backlog
-    _queue(fake_session, scalars=[])                            # bottlenecks capacity
-    _queue(fake_session, scalar=0)                              # throughput today
     _queue(fake_session, scalar=2)                              # completed_today
-    for _ in range(8):
-        _queue(fake_session, scalars=[])                        # spare padding
 
     svc = FactoryMapService(
         fake_session, TEST_TENANT_ID,
         semantic_service=StubSemantic(quality={"total_errors": 5}),
     )
-    k = await svc.kpis()
+    with patch.object(svc, "_bottlenecks_from_db", new=AsyncMock(return_value=[])), \
+         patch.object(
+             svc, "_throughput_eur_day",
+             new=AsyncMock(return_value={"status": "unavailable"}),
+         ):
+        k = await svc.kpis()
     assert k["wip"] == 3
     assert k["orders_total"] == 10
     assert k["completed_today"] == 2
+    # Semantic quality presente → defect_rate = total_errors / orders_total.
     assert k["defect_rate"] == 0.5
     throughput = k["throughput_eur_day"]
     assert "today" in throughput or throughput.get("status") == "unavailable"
@@ -407,30 +407,35 @@ async def test_snapshot_use_cache_false_bypasses_cache(fake_session):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_defect_rate_from_db_when_semantic_absent(fake_session):
-    """No semantic service → defect_rate is rework_count / orders_total."""
-    # kpis() call order without semantic:
-    #   1. _orders_summary               (scalars)
-    #   2. _defect_rate_from_db count    (scalar)
-    #   3. _bottlenecks_from_db backlog  (scalars)
-    #   4. _bottlenecks_from_db capacity (scalars)
-    #   5+ throughput
-    #   last. _completed_count_today     (scalar)
-    _queue(fake_session, scalars=[("IN_PROGRESS", 6), ("COMPLETED", 14)])
-    _queue(fake_session, scalar=5)        # rework count = 5
-    _queue(fake_session, scalars=[])      # bottlenecks backlog → empty
-    _queue(fake_session, scalars=[])      # bottlenecks capacity
-    _queue(fake_session, scalars=[])      # throughput load_targets
-    _queue(fake_session, scalar=0)        # throughput today
-    _queue(fake_session, scalar=2)        # completed_today
-    for _ in range(8):
-        _queue(fake_session, scalars=[])  # spare padding
+async def test_defect_rate_from_db_counts_orders_with_rework(fake_session):
+    """defect_rate = ordens com ≥1 retrabalho ÷ total de ordens (0..1).
 
-    svc = FactoryMapService(fake_session, TEST_TENANT_ID)  # no semantic
-    k = await svc.kpis()
-    # 5 rework / 20 orders = 0.25
-    assert k["defect_rate"] == 0.25
-    assert k["_bottlenecks_db"] == []
+    `_defect_rate_from_db` faz 2 queries: total de `ProductionOrder` e
+    nº distinto de OFs com retrabalho na janela. 3/20 = 0,15.
+    """
+    _queue(fake_session, scalar=20)       # total ProductionOrder
+    _queue(fake_session, scalar=3)        # distinct OFs com retrabalho
+
+    svc = FactoryMapService(fake_session, TEST_TENANT_ID)
+    rate = await svc._defect_rate_from_db(orders_total=0)
+    assert rate == 0.15
+
+
+@pytest.mark.asyncio
+async def test_defect_rate_from_db_none_when_no_orders(fake_session):
+    """Sem ordens não há taxa de defeito honesta — devolve None."""
+    _queue(fake_session, scalar=0)        # total ProductionOrder = 0
+    svc = FactoryMapService(fake_session, TEST_TENANT_ID)
+    assert await svc._defect_rate_from_db(orders_total=0) is None
+
+
+@pytest.mark.asyncio
+async def test_defect_rate_from_db_clamped_to_one(fake_session):
+    """A taxa nunca passa de 1.0 mesmo que o numerador a ultrapasse."""
+    _queue(fake_session, scalar=10)       # total ProductionOrder
+    _queue(fake_session, scalar=14)       # OFs com retrabalho > total
+    svc = FactoryMapService(fake_session, TEST_TENANT_ID)
+    assert await svc._defect_rate_from_db(orders_total=0) == 1.0
 
 
 @pytest.mark.asyncio
