@@ -12,7 +12,18 @@ from decimal import Decimal
 from typing import Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, String, Integer, Float, Date, DateTime, Numeric, Text, func
+from sqlalchemy import (
+    Boolean,
+    String,
+    Integer,
+    Float,
+    Date,
+    DateTime,
+    Numeric,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -197,6 +208,43 @@ class StockReconciliation(TenantBase):
     resolved_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     resolved_ledger_entry_id: Mapped[Optional[UUID]] = mapped_column(
         PG_UUID(as_uuid=True), nullable=True,
+    )
+
+
+# ============================================================================
+# Q.52.K — per-warehouse stock, mirrored from the NELO ERP
+# ============================================================================
+
+class WarehouseStock(TenantBase):
+    """Per-warehouse on-hand stock — snapshot mirrored from the NELO ERP.
+
+    Source is the ERP view `dbo.produto_stocks_por_armazem` (the factory's
+    own stock-by-warehouse view). One row per (tenant, product, warehouse).
+    `product_code` matches `core.products.product_code` (== the ERP
+    `P_ID`). Refreshed by the supply stock ETL mirror; `synced_at` records
+    when the snapshot was taken.
+
+    This is a *snapshot*, not a ledger — the ERP owns the movement
+    history. Re-syncing upserts each (product, warehouse) row in place.
+    """
+
+    __tablename__ = "warehouse_stock"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "product_code", "warehouse_id",
+            name="uq_warehouse_stock_tenant_product_warehouse",
+        ),
+        {"schema": "supply"},
+    )
+
+    product_code: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    warehouse_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    warehouse_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    stock: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6), nullable=False, default=Decimal("0"),
+    )
+    synced_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
     )
 
 

@@ -14,7 +14,6 @@ validado via `require_tenant_header` (rejeita header em falta/zero UUID
 em vez de aceitar silenciosamente).
 """
 
-import logging
 from datetime import date as date_type, datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Literal, Optional
@@ -23,13 +22,14 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import distinct, func, select
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.models.bom import BOMItem
 from src.core.models.product import Product
 from src.shared.auth.headers import require_tenant_header
 from src.shared.database import get_session
+
+from .models import WarehouseStock
 
 from .abc_analysis import ABCAnalysis
 from .forecaster import ARIMAForecaster
@@ -40,8 +40,6 @@ from .material_service import (
     NegativeStockBlockedError,
 )
 from .rop_calculator import ROPCalculator
-
-log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/supply", tags=["Supply Chain"])
 
@@ -182,6 +180,14 @@ class MaterialResponse(BaseModel):
     active: bool
 
 
+class WarehouseStockBreakdown(BaseModel):
+    """Stock de um material num armazém — uma linha de `supply.warehouse_stock`."""
+
+    warehouse_id: int
+    warehouse_name: str
+    stock: float
+
+
 class BomMaterialResponse(BaseModel):
     """Material derivado da BOM — componente-folha de `core.bom_items`.
 
@@ -189,9 +195,9 @@ class BomMaterialResponse(BaseModel):
     mas como produtos componente de uma BOM que nunca são, eles próprios,
     produto-pai. Este endpoint expõe esses componentes-folha.
 
-    O stock (`on_hand`/`min_stock`) vem ao vivo do ERP NELO (`dbo.PRODUTO`,
-    colunas `P_STOCK`/`P_STOCKMIN`). Quando o ERP não está ligado, esses
-    campos ficam `null` e `BomMaterialsEnvelope.erp_available` é `false`.
+    O stock vem de `supply.warehouse_stock` — espelho do ERP NELO (view
+    `produto_stocks_por_armazem`), sincronizado pelo ETL `stock`. `on_hand`
+    é o total entre armazéns; `warehouses` é a repartição por armazém.
     """
 
     id: str
@@ -206,26 +212,26 @@ class BomMaterialResponse(BaseModel):
         default=None, description="Soma de quantity_per em todas as BOMs"
     )
     on_hand: Optional[float] = Field(
-        default=None, description="Stock atual (ERP NELO P_STOCK) — null se ERP offline"
+        default=None, description="Stock total entre armazéns — null se não sincronizado"
     )
-    min_stock: Optional[float] = Field(
-        default=None, description="Stock mínimo (ERP NELO P_STOCKMIN) — null se ERP offline"
-    )
-    below_min: Optional[bool] = Field(
-        default=None, description="on_hand < min_stock (só quando há leitura de stock)"
+    warehouses: List[WarehouseStockBreakdown] = Field(
+        default_factory=list, description="Repartição do stock por armazém"
     )
 
 
 class BomMaterialsEnvelope(BaseModel):
-    """Catálogo de materiais derivado da BOM + estado da leitura de stock."""
+    """Catálogo de materiais derivado da BOM + estado do stock por armazém."""
 
     items: List[BomMaterialResponse]
     count: int
-    erp_available: bool = Field(
-        description="True se o stock veio ao vivo do ERP NELO"
+    stock_available: bool = Field(
+        description="True se há stock sincronizado em supply.warehouse_stock"
+    )
+    stock_synced_at: Optional[str] = Field(
+        default=None, description="ISO timestamp da última sincronização do stock"
     )
     stock_source: str = Field(
-        description="'nelo_erp_live' ou 'indisponivel'"
+        description="'erp_nelo_warehouse_stock' ou 'indisponivel'"
     )
     unavailable_reason: Optional[str] = None
 
@@ -445,7 +451,7 @@ async def list_materials_from_bom(
     tenant_id: UUID = Depends(require_tenant_header),
     session: AsyncSession = Depends(get_session),
 ):
-    """Lista os materiais reais derivados da BOM, com stock ao vivo do ERP.
+    """Lista os materiais reais derivados da BOM, com stock por armazém.
 
     `supply.material_master` está vazio nesta instalação — os materiais reais
     da NELO são os componentes-folha de `core.bom_items` (um
@@ -453,9 +459,10 @@ async def list_materials_from_bom(
     cruzados com `core.products` para nome, unidade e custo padrão.
     Ordenado por nº de BOMs que o consomem (os mais usados primeiro).
 
-    O stock (`on_hand`/`min_stock`) é lido ao vivo do ERP NELO
-    (`dbo.PRODUTO.P_STOCK`/`P_STOCKMIN`). Quando o ERP está offline, o
-    catálogo continua a responder e `erp_available=false`.
+    O stock vem de `supply.warehouse_stock` — espelho do ERP NELO
+    (view `produto_stocks_por_armazem`), sincronizado pelo ETL `stock`.
+    `on_hand` é o total entre armazéns; `warehouses` é a repartição por
+    armazém. Se o stock nunca foi sincronizado, `stock_available=false`.
     """
     limit = max(1, min(limit, 5000))
 
@@ -505,37 +512,44 @@ async def list_materials_from_bom(
 
     rows = (await session.execute(stmt)).all()
 
-    # Stock ao vivo do ERP NELO — `core.products.product_code` == `dbo.PRODUTO.P_ID`.
-    stock_by_pid: Dict[int, Any] = {}
-    erp_available = False
-    unavailable_reason: Optional[str] = None
-    try:
-        from src.adapters.nelo import services as nelo_services
+    # Stock por armazém — espelho local de `supply.warehouse_stock`, mantido
+    # pelo ETL `stock`. `product_code` == `WarehouseStock.product_code`.
+    stock_by_code: Dict[str, List[WarehouseStock]] = {}
+    stock_synced_at: Optional[datetime] = None
+    ws_rows = (
+        await session.execute(
+            select(WarehouseStock).where(WarehouseStock.tenant_id == tenant_id)
+        )
+    ).scalars().all()
+    for ws in ws_rows:
+        stock_by_code.setdefault(ws.product_code, []).append(ws)
+        if stock_synced_at is None or ws.synced_at > stock_synced_at:
+            stock_synced_at = ws.synced_at
 
-        stock_rows = await nelo_services.list_product_stock()
-        stock_by_pid = {s.product_id: s for s in stock_rows}
-        erp_available = True
-    except (RuntimeError, OSError, SQLAlchemyError) as exc:
-        log.warning("Stock indisponível — adaptador NELO offline: %s", exc)
+    stock_available = len(ws_rows) > 0
+    unavailable_reason: Optional[str] = None
+    if not stock_available:
         unavailable_reason = (
-            "O stock vem ao vivo do ERP NELO (SQL Server / dbo.PRODUTO), "
-            "que não está ligado neste ambiente. O catálogo, custo e uso "
-            "em BOM continuam disponíveis."
+            "O stock por armazém ainda não foi sincronizado. Corre o ETL "
+            "`scripts/sync_nelo_erp.py --only stock` para espelhar a view "
+            "`produto_stocks_por_armazem` do ERP NELO."
         )
 
     items: List[BomMaterialResponse] = []
     for r in rows:
-        stock = None
-        try:
-            stock = stock_by_pid.get(int(r.product_code))
-        except (TypeError, ValueError):
-            stock = None
-        on_hand = float(stock.stock) if stock else None
-        min_stock = float(stock.stock_min) if stock else None
-        below_min = (
-            on_hand < min_stock
-            if on_hand is not None and min_stock is not None
-            else None
+        warehouses = sorted(
+            (
+                WarehouseStockBreakdown(
+                    warehouse_id=ws.warehouse_id,
+                    warehouse_name=ws.warehouse_name,
+                    stock=float(ws.stock),
+                )
+                for ws in stock_by_code.get(r.product_code, [])
+            ),
+            key=lambda w: -w.stock,
+        )
+        on_hand = (
+            sum(w.stock for w in warehouses) if warehouses else None
         )
         items.append(
             BomMaterialResponse(
@@ -557,16 +571,18 @@ async def list_materials_from_bom(
                     float(r.total_qty_per) if r.total_qty_per is not None else None
                 ),
                 on_hand=on_hand,
-                min_stock=min_stock,
-                below_min=below_min,
+                warehouses=warehouses,
             )
         )
 
     return BomMaterialsEnvelope(
         items=items,
         count=len(items),
-        erp_available=erp_available,
-        stock_source="nelo_erp_live" if erp_available else "indisponivel",
+        stock_available=stock_available,
+        stock_synced_at=stock_synced_at.isoformat() if stock_synced_at else None,
+        stock_source=(
+            "erp_nelo_warehouse_stock" if stock_available else "indisponivel"
+        ),
         unavailable_reason=unavailable_reason,
     )
 

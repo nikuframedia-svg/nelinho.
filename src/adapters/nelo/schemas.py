@@ -271,6 +271,22 @@ class ProductStockRow(_Frozen):
     stock_min: float  # P_STOCKMIN — minimum
 
 
+class WarehouseStockRow(_Frozen):
+    """One row of `dbo.produto_stocks_por_armazem` — the ERP's own
+    per-warehouse on-hand view (`P_ID` × `Armazem`).
+
+    This is the granular truth the factory uses: stock split across the
+    ~20 warehouses (Laminagem, Pintura, Montagem, Camião Nelo…). It does
+    not necessarily sum to `PRODUTO.P_STOCK`, which is a separate cached
+    aggregate maintained by the ERP.
+    """
+
+    product_id: int  # P_ID
+    warehouse_id: int  # Armazem_Id
+    warehouse_name: str  # Armazem
+    stock: float  # Stock — on-hand in that warehouse
+
+
 # ─── Entities / operators (vw_pp1_entities) ────────────────────────────
 
 

@@ -35,6 +35,13 @@ export interface Material {
  * da NELO são os componentes-folha das BOMs (`component_product_id` que
  * nunca é `parent_product_id`), cruzados com `core.products`.
  */
+/** Stock de um material num armazém. */
+export interface WarehouseStockBreakdown {
+  warehouse_id: number;
+  warehouse_name: string;
+  stock: number;
+}
+
 export interface BomMaterial {
   id: string;
   product_code: string;
@@ -45,19 +52,19 @@ export interface BomMaterial {
   product_type: string;
   used_in_n_boms: number;
   total_qty_per: number | null;
-  /** Stock atual — ERP NELO P_STOCK. null se o ERP estiver offline. */
+  /** Stock total entre armazéns. null se o stock não foi sincronizado. */
   on_hand: number | null;
-  /** Stock mínimo — ERP NELO P_STOCKMIN. null se o ERP estiver offline. */
-  min_stock: number | null;
-  below_min: boolean | null;
+  /** Repartição do stock por armazém (ERP NELO). */
+  warehouses: WarehouseStockBreakdown[];
 }
 
 /** Envelope de `/v1/supply/materials/from-bom` — catálogo + estado do stock. */
 export interface BomMaterialsEnvelope {
   items: BomMaterial[];
   count: number;
-  erp_available: boolean;
-  stock_source: 'nelo_erp_live' | 'indisponivel';
+  stock_available: boolean;
+  stock_synced_at: string | null;
+  stock_source: 'erp_nelo_warehouse_stock' | 'indisponivel';
   unavailable_reason: string | null;
 }
 

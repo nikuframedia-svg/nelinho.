@@ -8,8 +8,9 @@
  *                 está vazio nesta instalação; os materiais reais da NELO são
  *                 os componentes-folha das BOMs (`core.bom_items` × `core.products`),
  *                 com nome, unidade, custo padrão e nº de BOMs que os consomem.
- *                 O stock (on-hand/mínimo) vem ao vivo do ERP NELO
- *                 (`dbo.PRODUTO.P_STOCK`); ERP offline → coluna "—" + banner.
+ *                 O stock por armazém vem de `supply.warehouse_stock` (espelho
+ *                 da view ERP `produto_stocks_por_armazem`, ETL `stock`); cada
+ *                 linha expande para a repartição por armazém.
  *   - Prospeção → /v1/factory-map/shortage-risks (REAL) +
  *                 /v1/supply/reconciliation (REAL).
  *   - Entregas  → SEM endpoint de tracking de PO → empty state explícito.
@@ -27,6 +28,8 @@ import {
   AlertTriangle,
   Star,
   Search,
+  ChevronRight,
+  Warehouse,
 } from 'lucide-react';
 import { DarkPageLayout } from '../../layouts/DarkPageLayout';
 import { Segmented } from '../../components/dark/Segmented';
@@ -93,7 +96,7 @@ function StockTab(): ReactNode {
     () => envelope?.items ?? [],
     [envelope],
   );
-  const erpAvailable = envelope?.erp_available ?? false;
+  const stockAvailable = envelope?.stock_available ?? false;
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -108,22 +111,19 @@ function StockTab(): ReactNode {
   const stats = useMemo(() => {
     let withCost = 0;
     let costSum = 0;
-    let widelyUsed = 0;
-    let belowMin = 0;
+    let withStock = 0;
     for (const m of all) {
       if (m.standard_cost !== null && m.standard_cost > 0) {
         withCost += 1;
         costSum += m.standard_cost;
       }
-      if (m.used_in_n_boms >= 10) widelyUsed += 1;
-      if (m.below_min === true) belowMin += 1;
+      if (m.on_hand !== null && m.on_hand > 0) withStock += 1;
     }
     return {
       total: all.length,
       withCost,
       avgCost: withCost > 0 ? costSum / withCost : 0,
-      widelyUsed,
-      belowMin,
+      withStock,
     };
   }, [all]);
 
@@ -175,15 +175,15 @@ function StockTab(): ReactNode {
           status="gray"
         />
         <KPIBig
-          label="Abaixo do mínimo"
-          value={erpAvailable ? stats.belowMin : '—'}
+          label="Com stock"
+          value={stockAvailable ? stats.withStock : '—'}
           context={
-            erpAvailable
-              ? 'Stock (ERP NELO) < mínimo'
-              : 'ERP offline — sem leitura de stock'
+            stockAvailable
+              ? `${stats.withStock} de ${stats.total} com on-hand > 0`
+              : 'Stock por armazém não sincronizado'
           }
-          status={erpAvailable && stats.belowMin > 0 ? 'red' : 'gray'}
-          accent={erpAvailable && stats.belowMin > 0 ? 'red' : undefined}
+          status={stockAvailable ? 'green' : 'gray'}
+          accent={stockAvailable ? 'green' : undefined}
         />
         <KPIBig
           label="Custo padrão médio"
@@ -193,8 +193,8 @@ function StockTab(): ReactNode {
         />
       </div>
 
-      {/* ── Banner honesto: stock do ERP ───────────────────────────────── */}
-      {!erpAvailable && (
+      {/* ── Banner honesto: estado do stock por armazém ─────────────────── */}
+      {!stockAvailable ? (
         <div
           style={{
             display: 'flex',
@@ -212,10 +212,22 @@ function StockTab(): ReactNode {
           <AlertTriangle size={14} color="var(--yellow)" style={{ flexShrink: 0, marginTop: 1 }} />
           <span>
             {envelope?.unavailable_reason ??
-              'O stock vem ao vivo do ERP NELO, que não está ligado. ' +
-                'O catálogo, custo e uso em BOM continuam disponíveis.'}
+              'O stock por armazém ainda não foi sincronizado do ERP NELO.'}
           </span>
         </div>
+      ) : (
+        envelope?.stock_synced_at && (
+          <div
+            style={{
+              fontSize: 10.5,
+              color: 'var(--fg-3)',
+              marginBottom: 12,
+            }}
+          >
+            Stock por armazém sincronizado do ERP NELO ·{' '}
+            {new Date(envelope.stock_synced_at).toLocaleString('pt-PT')}
+          </div>
+        )
       )}
 
       {/* ── Pesquisa ───────────────────────────────────────────────────── */}
@@ -278,7 +290,7 @@ function StockTab(): ReactNode {
         >
           <div>Material</div>
           <div>Unidade</div>
-          <div style={{ textAlign: 'right' }}>Stock (ERP)</div>
+          <div style={{ textAlign: 'right' }}>Stock total</div>
           <div style={{ textAlign: 'right' }}>Custo padrão</div>
           <div style={{ textAlign: 'right' }}>Usado em</div>
         </div>
@@ -302,86 +314,155 @@ function StockTab(): ReactNode {
 }
 
 function CatalogRow({ material: m }: { material: BomMaterial }): ReactNode {
+  const [open, setOpen] = useState(false);
+  // Só armazéns com stock ≠ 0 interessam para a repartição.
+  const warehouses = m.warehouses.filter((w) => w.stock !== 0);
+  const expandable = warehouses.length > 0;
+
   return (
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: CATALOG_GRID,
-        alignItems: 'center',
-        gap: 14,
-        padding: '11px 16px',
-        borderBottom: '1px solid var(--bd-1)',
-      }}
-    >
-      <div>
-        <div style={{ fontSize: 12.5, color: 'var(--fg-0)', fontWeight: 500 }}>
-          {m.product_name}
-        </div>
-        <div style={{ fontSize: 10.5, color: 'var(--fg-3)', marginTop: 3 }}>
-          {m.product_code}
-          {m.category ? ` · ${m.category}` : ''}
-        </div>
-      </div>
-      <div style={{ fontSize: 12, color: 'var(--fg-2)' }}>
-        {m.unit_of_measure}
-      </div>
+    <div style={{ borderBottom: '1px solid var(--bd-1)' }}>
       <div
-        className="tabular"
+        role={expandable ? 'button' : undefined}
+        tabIndex={expandable ? 0 : undefined}
+        onClick={expandable ? () => setOpen((o) => !o) : undefined}
+        onKeyDown={
+          expandable
+            ? (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setOpen((o) => !o);
+                }
+              }
+            : undefined
+        }
         style={{
-          fontSize: 12.5,
-          fontWeight: 600,
-          textAlign: 'right',
-          color:
-            m.on_hand === null
-              ? 'var(--fg-3)'
-              : m.below_min === true
-                ? 'var(--red)'
+          display: 'grid',
+          gridTemplateColumns: CATALOG_GRID,
+          alignItems: 'center',
+          gap: 14,
+          padding: '11px 16px',
+          cursor: expandable ? 'pointer' : 'default',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          <ChevronRight
+            size={13}
+            color="var(--fg-3)"
+            style={{
+              flexShrink: 0,
+              opacity: expandable ? 1 : 0,
+              transform: open ? 'rotate(90deg)' : 'none',
+              transition: 'transform 0.12s',
+            }}
+          />
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 12.5, color: 'var(--fg-0)', fontWeight: 500 }}>
+              {m.product_name}
+            </div>
+            <div style={{ fontSize: 10.5, color: 'var(--fg-3)', marginTop: 3 }}>
+              {m.product_code}
+              {m.category ? ` · ${m.category}` : ''}
+              {expandable ? ` · ${warehouses.length} armazém(ns)` : ''}
+            </div>
+          </div>
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--fg-2)' }}>
+          {m.unit_of_measure}
+        </div>
+        <div
+          className="tabular"
+          style={{
+            fontSize: 12.5,
+            fontWeight: 600,
+            textAlign: 'right',
+            color:
+              m.on_hand === null
+                ? 'var(--fg-3)'
                 : m.on_hand <= 0
                   ? 'var(--orange)'
                   : 'var(--fg-0)',
-        }}
-      >
-        {m.on_hand === null ? (
-          <span style={{ fontWeight: 400 }}>—</span>
-        ) : (
-          <>
-            {m.on_hand.toLocaleString('pt-PT', { maximumFractionDigits: 1 })}
-            {m.min_stock !== null && m.min_stock > 0 && (
-              <span style={{ fontSize: 10, color: 'var(--fg-3)', fontWeight: 400 }}>
-                {' '}
-                / mín {m.min_stock.toLocaleString('pt-PT', { maximumFractionDigits: 1 })}
+          }}
+        >
+          {m.on_hand === null ? (
+            <span style={{ fontWeight: 400 }}>—</span>
+          ) : (
+            m.on_hand.toLocaleString('pt-PT', { maximumFractionDigits: 1 })
+          )}
+        </div>
+        <div
+          className="tabular"
+          style={{
+            fontSize: 12.5,
+            color: m.standard_cost && m.standard_cost > 0 ? 'var(--fg-0)' : 'var(--fg-3)',
+            fontWeight: 600,
+            textAlign: 'right',
+          }}
+        >
+          {m.standard_cost !== null && m.standard_cost > 0
+            ? `€${m.standard_cost.toLocaleString('pt-PT', {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+              })}`
+            : '—'}
+        </div>
+        <div
+          className="tabular"
+          style={{ fontSize: 12, color: 'var(--fg-2)', textAlign: 'right' }}
+        >
+          {m.used_in_n_boms.toLocaleString('pt-PT')}{' '}
+          <span style={{ fontSize: 10, color: 'var(--fg-3)' }}>BOMs</span>
+        </div>
+      </div>
+
+      {/* ── Repartição por armazém ──────────────────────────────────────── */}
+      {open && expandable && (
+        <div
+          style={{
+            background: 'var(--bg-2)',
+            padding: '4px 16px 10px 36px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 2,
+          }}
+        >
+          {warehouses.map((w) => (
+            <div
+              key={w.warehouse_id}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '5px 0',
+                fontSize: 11.5,
+              }}
+            >
+              <span
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  color: 'var(--fg-2)',
+                }}
+              >
+                <Warehouse size={11} color="var(--fg-3)" />
+                {w.warehouse_name}
               </span>
-            )}
-          </>
-        )}
-      </div>
-      <div
-        className="tabular"
-        style={{
-          fontSize: 12.5,
-          color: m.standard_cost && m.standard_cost > 0 ? 'var(--fg-0)' : 'var(--fg-3)',
-          fontWeight: 600,
-          textAlign: 'right',
-        }}
-      >
-        {m.standard_cost !== null && m.standard_cost > 0
-          ? `€${m.standard_cost.toLocaleString('pt-PT', {
-              minimumFractionDigits: 2,
-              maximumFractionDigits: 2,
-            })}`
-          : '—'}
-      </div>
-      <div
-        className="tabular"
-        style={{
-          fontSize: 12,
-          color: 'var(--fg-2)',
-          textAlign: 'right',
-        }}
-      >
-        {m.used_in_n_boms.toLocaleString('pt-PT')}{' '}
-        <span style={{ fontSize: 10, color: 'var(--fg-3)' }}>BOMs</span>
-      </div>
+              <span
+                className="tabular"
+                style={{
+                  fontWeight: 600,
+                  color: w.stock < 0 ? 'var(--red)' : 'var(--fg-0)',
+                }}
+              >
+                {w.stock.toLocaleString('pt-PT', { maximumFractionDigits: 1 })}{' '}
+                <span style={{ fontSize: 9.5, color: 'var(--fg-3)', fontWeight: 400 }}>
+                  {m.unit_of_measure}
+                </span>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

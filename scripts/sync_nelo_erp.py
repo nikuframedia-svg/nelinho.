@@ -1,7 +1,8 @@
 """Q.20.G — ERP→Postgres sync CLI.
 
-Runs the registered Q.20 ETL mirrors (``master``, ``molds``, ``skills``,
-``quality``, ``time_mining``) via :func:`src.adapters.nelo.etl.sync.run_nelo_sync`.
+Runs the registered ETL mirrors (``master``, ``molds``, ``skills``,
+``quality``, ``time_mining``, ``stock``) via
+:func:`src.adapters.nelo.etl.sync.run_nelo_sync`.
 Each mirror writes a ``core.etl_run`` audit row; this CLI prints a
 human-readable summary and exits 0 when every mirror succeeded, 1 if any
 mirror reported an error.
