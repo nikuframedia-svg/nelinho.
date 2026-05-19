@@ -51,7 +51,10 @@ def get_tenant_id(x_tenant_id: UUID = Header(..., alias="X-Tenant-Id")) -> UUID:
 class SkillTogglePayload(BaseModel):
     phase_id: str = Field(..., min_length=1, max_length=100)
     can_do: bool
-    nivel: Optional[int] = Field(default=None, ge=1, le=5)
+    # Q.53.E — nível agora float na escala invertida (3.0=melhor, 1.0=pior)
+    # com meios-passos. O serviço clamp-a ao meio-passo válido mais
+    # próximo; aceitamos [1.0, 3.0] aqui.
+    nivel: Optional[float] = Field(default=None, ge=1.0, le=3.0)
     reason: Optional[str] = Field(default=None, max_length=500)
 
 
@@ -196,14 +199,21 @@ async def get_level_summary(
     tenant_id: UUID = Depends(get_tenant_id),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """Resumo do nível global (1-3, 1=melhor) do operador.
+    """Resumo do nível do operador — escala invertida 3=melhor, 1=pior.
 
-    Escala derivada do quality score Laplace [1-10] já existente. Inclui
-    descrição do nível, barcos recomendados e skill matrix per-fase para
-    polivalência. Usado pela UI de /equipa > Lista (drawer detail) e pelo
-    Copilot quando entity_type=employee + entity_id.
+    Q.53.E: o nível derivado é agora um float com meios-passos
+    (1.0/1.5/2.0/2.5/3.0) e é detalhado **por grupo de área** (~7 grupos)
+    além do nível global. Escala derivada do quality score Laplace [1-10].
+    Inclui descrição do nível, barcos recomendados, skill matrix per-fase
+    para polivalência, e os 3 sinais de qualificação (recency/versatility/
+    productivity). Usado pela UI de /equipa e /fabrica e pelo Copilot.
     """
-    from src.workforce.levels import level_summary_payload
+    from src.workforce.levels import (
+        area_group_for_phase,
+        clamp_level,
+        level_summary_payload,
+        public_level_from_cpo,
+    )
 
     svc = EmployeeExtrasService(session, tenant_id)
     quality = await svc.quality_score(employee_id)
@@ -212,7 +222,62 @@ async def get_level_summary(
     payload = level_summary_payload(quality.score, skills_apt_names)
     payload["employee_id"] = str(employee_id)
     payload["per_phase_skills"] = [r.to_dict() for r in skills]
+
+    # Nível por grupo de área — média dos níveis curados das fases aptas
+    # do grupo (mapeados da escala ERP 1-5 para a invertida 3=melhor).
+    # Quando o grupo não tem nivel curado, recai no nível global derivado.
+    global_level = payload["derived_level"]
+    by_group: dict[str, list[float]] = {}
+    for r in skills:
+        if not r.can_do:
+            continue
+        group = area_group_for_phase(r.phase_name, r.phase_id)
+        lvl = (
+            public_level_from_cpo(r.nivel)
+            if r.nivel is not None
+            else global_level
+        )
+        by_group.setdefault(group, []).append(lvl)
+    payload["per_area_levels"] = [
+        {
+            "area_group": group,
+            "level": clamp_level(sum(vals) / len(vals)),
+            "phases_apt": len(vals),
+        }
+        for group, vals in sorted(by_group.items())
+    ]
+
+    metrics = await svc.qualification_metrics(employee_id)
+    payload["qualification_metrics"] = metrics.to_dict()
     return payload
+
+
+@router.get("/{employee_id}/qualification-metrics")
+async def get_qualification_metrics(
+    employee_id: UUID,
+    phase_id: Optional[str] = Query(
+        default=None,
+        description="Escopar recência/produtividade a uma fase específica.",
+    ),
+    area_group: Optional[str] = Query(
+        default=None,
+        description="Escopar a um grupo de área (ex: Laminagem). Ignorado "
+        "se phase_id for dado.",
+    ),
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Q.53.E — os 3 sinais de qualificação que faltavam no workforce.
+
+    `recency_days` (dias desde a última operação), `versatility` (nº de
+    fases aptas/trabalhadas) e `productivity` (ops/dia). A página Fábrica
+    combina-os com o quality-score no fit-score do operador.
+    """
+    svc = EmployeeExtrasService(session, tenant_id)
+    metrics = await svc.qualification_metrics(
+        employee_id, phase_id=phase_id, area_group=area_group,
+    )
+    return metrics.to_dict()
 
 
 @router.patch("/{employee_id}/skills")
@@ -229,6 +294,11 @@ async def toggle_skill(
     rows so they survive the next ingest and feed Camada 1. The route
     returns the current effective value (override → curated fallback).
     """
+    # Q.53.E — normaliza o nível ao meio-passo válido da escala invertida.
+    from src.workforce.levels import clamp_level
+
+    nivel = clamp_level(body.nivel) if body.nivel is not None else None
+
     try:
         from src.governance.models import (
             PreferenceRule,
@@ -251,7 +321,7 @@ async def toggle_skill(
             "field": "skill",
             "phase_id": body.phase_id,
             "can_do": body.can_do,
-            "nivel": body.nivel,
+            "nivel": nivel,
             "reason": body.reason,
         }
         description = (
@@ -285,7 +355,7 @@ async def toggle_skill(
         "employee_id": str(employee_id),
         "phase_id": body.phase_id,
         "can_do": body.can_do,
-        "nivel": body.nivel,
+        "nivel": nivel,
         "preference_rule_logged": True,
     }
 

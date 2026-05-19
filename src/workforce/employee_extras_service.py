@@ -94,6 +94,42 @@ class SkillMatrixRow:
 
 
 @dataclass
+class QualificationMetrics:
+    """Q.53.E — os 3 sinais de qualificação que faltavam.
+
+    Até agora a página workforce só expunha quality-score, skill-match e
+    defect-rate. Estes 3 completam o fit-score que a página Fábrica usa:
+
+    * `recency_days` — dias desde a última operação (na fase/área pedida,
+      ou em qualquer fase quando `scope` é None). `None` = sem histórico.
+    * `versatility` — nº de fases distintas em que o operador é apto/já
+      trabalhou. Quanto maior, mais flexível para o scheduler.
+    * `productivity` — operações por dia ao longo do histórico observado
+      (ops_total / span_dias). `None` quando não dá para calcular.
+    """
+
+    employee_id: UUID
+    recency_days: Optional[int]
+    versatility: int
+    productivity: Optional[float]
+    ops_total: int
+    scope: Optional[str]  # phase_id/area filtrado, ou None = global
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "employee_id": str(self.employee_id),
+            "recency_days": self.recency_days,
+            "versatility": self.versatility,
+            "productivity": (
+                round(self.productivity, 3)
+                if self.productivity is not None else None
+            ),
+            "ops_total": self.ops_total,
+            "scope": self.scope,
+        }
+
+
+@dataclass
 class OperationHistoryRow:
     schedule_id: UUID
     order_id: str
@@ -235,6 +271,93 @@ class EmployeeExtrasService:
 
         out.sort(key=lambda r: (-r.ops_count, r.phase_id))
         return out
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Qualification metrics (Q.53.E) — recency / versatility / productivity
+    # ─────────────────────────────────────────────────────────────────────
+
+    async def qualification_metrics(
+        self,
+        employee_id: UUID,
+        *,
+        phase_id: Optional[str] = None,
+        area_group: Optional[str] = None,
+    ) -> QualificationMetrics:
+        """Os 3 sinais de qualificação em falta para o fit-score.
+
+        Deriva tudo da `skill_matrix` (que já junta curated + histórico
+        real ERP), evitando uma segunda passagem por queries. Read-only.
+
+        * `phase_id` — quando dado, recency é a recência *nessa fase*.
+        * `area_group` — quando dado (e `phase_id` não), recency/ops são
+          escopados às fases desse grupo de área. Senão, global.
+        """
+        from src.workforce.levels import area_group_for_phase
+
+        rows = await self.skill_matrix(employee_id)
+
+        # Recorte do escopo: fase exacta > grupo de área > global.
+        if phase_id is not None:
+            scope = phase_id
+            scoped = [r for r in rows if r.phase_id == phase_id]
+        elif area_group is not None:
+            scope = area_group
+            scoped = [
+                r for r in rows
+                if area_group_for_phase(r.phase_name, r.phase_id) == area_group
+            ]
+        else:
+            scope = None
+            scoped = rows
+
+        # Versatilidade: nº de fases distintas onde é apto OU já trabalhou.
+        versatility = sum(
+            1 for r in rows if r.can_do or r.ops_count > 0
+        )
+
+        # Recência: menor nº de dias desde a última operação no escopo.
+        today = datetime.now()
+        recency_days: Optional[int] = None
+        for r in scoped:
+            if r.last_used_at is None:
+                continue
+            last = r.last_used_at
+            # last_used_at pode ser tz-naive (combine de date) — comparar
+            # naive com naive para não rebentar com TypeError.
+            if last.tzinfo is not None:
+                last = last.replace(tzinfo=None)
+            delta = (today - last).days
+            if delta < 0:
+                delta = 0
+            if recency_days is None or delta < recency_days:
+                recency_days = delta
+
+        # Produtividade: ops_total / span_dias observado no escopo.
+        ops_total = sum(r.ops_count for r in scoped)
+        last_dates = [
+            (r.last_used_at.replace(tzinfo=None)
+             if r.last_used_at and r.last_used_at.tzinfo
+             else r.last_used_at)
+            for r in scoped
+            if r.last_used_at is not None
+        ]
+        productivity: Optional[float] = None
+        if ops_total > 0 and last_dates:
+            # Sem datas de início por fase, usamos o intervalo entre a
+            # operação mais antiga e mais recente como proxy do span.
+            span_days = (max(last_dates) - min(last_dates)).days
+            # span 0 (uma só fase / mesmo dia) → assume 1 dia para não
+            # dividir por zero nem inflar a produtividade ao infinito.
+            productivity = ops_total / max(1, span_days)
+
+        return QualificationMetrics(
+            employee_id=employee_id,
+            recency_days=recency_days,
+            versatility=versatility,
+            productivity=productivity,
+            ops_total=ops_total,
+            scope=scope,
+        )
 
     # ─────────────────────────────────────────────────────────────────────
     # Operation history
