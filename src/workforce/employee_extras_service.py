@@ -34,6 +34,7 @@ from src.core.models.employee import Employee
 from src.factory_data_product.models.curated import (
     CuratedAllocation,
     CuratedOrderPhase,
+    CuratedQualityEvent,
     CuratedSkillMatrix,
 )
 from src.plan.models.schedule import ProductionSchedule
@@ -177,9 +178,27 @@ class EmployeeExtrasService:
         completed without rework") because the rework table doesn't
         cover every op and the schedule table is the only authoritative
         per-worker counter we have today.
+
+        Q.54.P — quando ``ProductionSchedule`` não tem linhas para o
+        operador (o caso real hoje: 0 das 159 linhas têm operador
+        atribuído), cai na camada ERP curada: 131k linhas em
+        ``factory_curated.allocation`` (operações) e 97k em
+        ``quality_event`` (defeitos). É o mesmo fallback que o
+        ``skill_matrix`` já fazia — sem ele todos os operadores saíam
+        como "sem histórico" quando o histórico real existe.
         """
+        emp = await self._get_employee(employee_id)
+        code = emp.employee_code if emp is not None else None
+
+        # Camada de governança: ProductionSchedule + ReworkEntry.
         ops = await self._count_ops(employee_id)
-        defects = await self._count_rework(employee_id)
+        if ops > 0:
+            defects = await self._count_rework(employee_id)
+        else:
+            # ProductionSchedule não cobre este operador → histórico real
+            # do ERP na camada curada, keyed por employee_code.
+            ops = await self._count_curated_ops(code)
+            defects = await self._count_curated_defects(code)
 
         if ops == 0 and defects == 0:
             return QualityScoreResult(
@@ -255,13 +274,17 @@ class EmployeeExtrasService:
 
         # Phases the worker has actually done but that aren't in the
         # curated matrix — surface them as `can_do=True, nivel=None`.
+        # Q.54.P — `phase_name` vem agora do histórico (`fase_nome` do
+        # CuratedOrderPhase). Sem ele o fit-score recebia só o `fase_id`
+        # (código "5") e nunca casava com o nome da fase do barco
+        # ("Pintura Acabamento") → dizia "Sem experiência" a quem tinha.
         for phase_id, hist in history_by_phase.items():
             if phase_id in seen_phases:
                 continue
             out.append(
                 SkillMatrixRow(
                     phase_id=phase_id,
-                    phase_name=None,
+                    phase_name=hist.get("phase_name"),
                     can_do=True,
                     nivel=None,
                     ops_count=hist["ops_count"],
@@ -441,6 +464,67 @@ class EmployeeExtrasService:
         result = await self.session.execute(stmt)
         return int(result.scalar_one() or 0)
 
+    async def _count_curated_ops(self, employee_code: Optional[str]) -> int:
+        """Nº de operações no histórico ERP curado (`factory_curated.allocation`).
+
+        Q.54.P — usado quando `ProductionSchedule` não cobre o operador. A
+        camada curada tem 131k alocações reais, keyed por `funcionario_id`
+        = `employee_code`.
+        """
+        if not employee_code:
+            return 0
+        try:
+            stmt = select(func.count(CuratedAllocation.id)).where(
+                CuratedAllocation.funcionario_id == employee_code
+            )
+            result = await self.session.execute(stmt)
+            return int(result.scalar_one() or 0)
+        except Exception as exc:  # pragma: no cover — defensivo
+            logger.warning(
+                "curated ops count failed for employee_code=%s: %s",
+                employee_code,
+                exc,
+            )
+            return 0
+
+    async def _count_curated_defects(self, employee_code: Optional[str]) -> int:
+        """Defeitos atribuíveis ao operador via o histórico ERP curado.
+
+        Q.54.P — `factory_curated.quality_event` regista erros por
+        `(of_id, fase_id)`, sem operador. Atribui-se a um operador
+        cruzando com as fases-de-ordem em que ele trabalhou:
+        ``allocation → order_phase → quality_event``. Soma `quantidade`
+        (nº de erros do evento).
+        """
+        if not employee_code:
+            return 0
+        try:
+            stmt = (
+                select(func.coalesce(func.sum(CuratedQualityEvent.quantidade), 0))
+                .select_from(CuratedAllocation)
+                .join(
+                    CuratedOrderPhase,
+                    CuratedOrderPhase.fase_of_id == CuratedAllocation.fase_of_id,
+                )
+                .join(
+                    CuratedQualityEvent,
+                    and_(
+                        CuratedQualityEvent.of_id == CuratedOrderPhase.of_id,
+                        CuratedQualityEvent.fase_id == CuratedOrderPhase.fase_id,
+                    ),
+                )
+                .where(CuratedAllocation.funcionario_id == employee_code)
+            )
+            result = await self.session.execute(stmt)
+            return int(result.scalar_one() or 0)
+        except Exception as exc:  # pragma: no cover — defensivo
+            logger.warning(
+                "curated defects count failed for employee_code=%s: %s",
+                employee_code,
+                exc,
+            )
+            return 0
+
     async def _curated_skills_for(
         self, employee_code: Optional[str],
     ) -> list[dict[str, Any]]:
@@ -543,6 +627,7 @@ class EmployeeExtrasService:
             stmt = (
                 select(
                     CuratedOrderPhase.fase_id.label("phase_id"),
+                    CuratedOrderPhase.fase_nome.label("phase_name"),
                     func.count(CuratedAllocation.id).label("ops_count"),
                     func.max(CuratedOrderPhase.data_fim).label("last_used_at"),
                 )
@@ -551,12 +636,12 @@ class EmployeeExtrasService:
                     CuratedOrderPhase.fase_of_id == CuratedAllocation.fase_of_id,
                 )
                 .where(CuratedAllocation.funcionario_id == employee_code)
-                .group_by(CuratedOrderPhase.fase_id)
+                .group_by(CuratedOrderPhase.fase_id, CuratedOrderPhase.fase_nome)
             )
             rows = (await self.session.execute(stmt)).all()
             out: list[dict[str, Any]] = []
             for r in rows:
-                last = r[2]
+                last = r[3]
                 last_dt: Optional[datetime] = None
                 if last is not None:
                     last_dt = (
@@ -566,7 +651,8 @@ class EmployeeExtrasService:
                 out.append(
                     {
                         "phase_id": r[0],
-                        "ops_count": int(r[1] or 0),
+                        "phase_name": r[1],
+                        "ops_count": int(r[2] or 0),
                         "last_used_at": last_dt,
                     }
                 )
