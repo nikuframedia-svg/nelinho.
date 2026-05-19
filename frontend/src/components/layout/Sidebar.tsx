@@ -28,6 +28,7 @@ import {
   Brain,
   Sparkles,
   Settings,
+  Coins,
   Building2 as Building,
   Tablet,
   Inbox,
@@ -35,6 +36,8 @@ import {
   Database,
   HeartPulse,
   Lock,
+  Plug,
+  Radio,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -103,6 +106,7 @@ export function Sidebar() {
         { path: '/qualidade', label: 'Qualidade', icon: <Shield size={16} /> },
         { path: '/materiais', label: 'Materiais', icon: <Boxes size={16} /> },
         { path: '/simulacoes', label: 'Simulações', icon: <FlaskConical size={16} /> },
+        { path: '/custos', label: 'Custos', icon: <Coins size={16} /> },
         { path: '/regras', label: 'Regras', icon: <BookOpen size={16} /> },
         { path: '/aprendi', label: 'O que aprendi', icon: <Brain size={16} /> },
         { path: '/copilot', label: 'Copilot', icon: <Sparkles size={16} /> },
@@ -127,6 +131,8 @@ export function Sidebar() {
         },
         { path: '/relatorios', label: 'Relatórios', icon: <FileText size={16} /> },
         { path: '/dados-mestre', label: 'Dados-mestre', icon: <Database size={16} /> },
+        { path: '/conexao-erp', label: 'Conexão ERP', icon: <Plug size={16} /> },
+        { path: '/ligacoes', label: 'Ligações', icon: <Radio size={16} /> },
         { path: '/saude', label: 'Saúde', icon: <HeartPulse size={16} /> },
         { path: '/rbac', label: 'RBAC', icon: <Lock size={16} /> },
       ],

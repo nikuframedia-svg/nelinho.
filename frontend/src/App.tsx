@@ -41,8 +41,15 @@ const AprendiPage = lazy(() => import('./pages/aprendi/AprendiPage'));
 const CopilotPage = lazy(() => import('./pages/copilot/CopilotPage'));
 const ConfiguracaoPage = lazy(() => import('./pages/configuracao/ConfiguracaoPage'));
 
+// ── Q.53 — página de Custos dedicada (COGS · pricing · margem · cenários) ──
+const CustosPage = lazy(() => import('./pages/custos/CustosPage'));
+
 // ── 2 vistas especiais ───────────────────────────────────────────────
 const DirecaoPage = lazy(() => import('./pages/direcao/DirecaoPage'));
+
+// ── Q.53 — páginas de Sistema novas ──────────────────────────────────
+const ConexaoErpPage = lazy(() => import('./pages/conexao-erp/ConexaoErpPage'));
+const LigacoesPage = lazy(() => import('./pages/ligacoes/LigacoesPage'));
 
 // ── 5 páginas órfãs preservadas (Q.52.R) ─────────────────────────────
 const InboxDecisoesPage = lazy(() => import('./pages/inbox/InboxDecisoesPage'));
@@ -86,7 +93,7 @@ function App() {
                   {/* Raiz → Painel diário. */}
                   <Route index element={<Navigate to="/painel" replace />} />
 
-                  {/* ── 12 páginas principais ── */}
+                  {/* ── Páginas principais (Q.53: + Custos) ── */}
                   <Route path="painel" element={<Lazy><PainelDiarioPage /></Lazy>} />
                   <Route path="planeamento" element={<Lazy><PlaneamentoPage /></Lazy>} />
                   <Route path="fabrica" element={<Lazy><FabricaPage /></Lazy>} />
@@ -95,6 +102,7 @@ function App() {
                   <Route path="qualidade" element={<Lazy><QualidadePage /></Lazy>} />
                   <Route path="materiais" element={<Lazy><MateriaisPage /></Lazy>} />
                   <Route path="simulacoes" element={<Lazy><SimulacoesPage /></Lazy>} />
+                  <Route path="custos" element={<Lazy><CustosPage /></Lazy>} />
                   <Route path="regras" element={<Lazy><RegrasPage /></Lazy>} />
                   <Route path="aprendi" element={<Lazy><AprendiPage /></Lazy>} />
                   <Route path="copilot" element={<Lazy count={3}><CopilotPage /></Lazy>} />
@@ -103,7 +111,7 @@ function App() {
                   {/* ── Vista especial: Direção ── */}
                   <Route path="direcao" element={<Lazy><DirecaoPage /></Lazy>} />
 
-                  {/* ── 5 páginas órfãs preservadas (grupo Sistema) ── */}
+                  {/* ── Grupo Sistema (Q.53: + Conexão ERP, Ligações) ── */}
                   <Route path="inbox" element={<Lazy><InboxDecisoesPage /></Lazy>} />
                   <Route path="relatorios" element={<Lazy><RelatoriosPage /></Lazy>} />
                   <Route
@@ -112,6 +120,9 @@ function App() {
                   />
                   <Route path="saude" element={<Lazy><HealthDashboardPage /></Lazy>} />
                   <Route path="rbac" element={<Lazy><RBACPage /></Lazy>} />
+                  {/* Q.53 — estado da ligação à API do ERP NELO + saúde do realtime */}
+                  <Route path="conexao-erp" element={<Lazy><ConexaoErpPage /></Lazy>} />
+                  <Route path="ligacoes" element={<Lazy><LigacoesPage /></Lazy>} />
 
                   {/* ── Pesquisa global ── */}
                   <Route path="pesquisa" element={<Lazy count={4}><SearchResultsPage /></Lazy>} />
@@ -162,8 +173,8 @@ function App() {
                   <Route path="profit">
                     <Route path="oee" element={<Navigate to="/qualidade?tab=oee" replace />} />
                     <Route path="quality" element={<Navigate to="/qualidade" replace />} />
-                    <Route path="cogs" element={<Navigate to="/configuracao?tab=custos" replace />} />
-                    <Route path="pricing" element={<Navigate to="/configuracao?tab=custos" replace />} />
+                    <Route path="cogs" element={<Navigate to="/custos" replace />} />
+                    <Route path="pricing" element={<Navigate to="/custos" replace />} />
                     <Route path="scenarios" element={<Navigate to="/simulacoes" replace />} />
                     <Route path="kpis" element={<Navigate to="/direcao" replace />} />
                   </Route>
