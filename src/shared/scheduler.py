@@ -134,6 +134,19 @@ def start_scheduler(
         coalesce=True,
         max_instances=1,
     )
+    # Q.54.A — sync incremental operacional de 5/5 min (stock/calendar/
+    # quality). Watermark por mirror lido de core.etl_run. coalesce=True
+    # + max_instances=1 garantem que um sync lento não acumula corridas.
+    # No-op quando sqlserver_enabled=False.
+    _scheduler.add_job(
+        _nelo_erp_incremental_sync_job,
+        trigger=IntervalTrigger(minutes=5),
+        id="nelo_erp_incremental_sync",
+        name="nelo_erp_incremental_sync",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
     # Q.54.B — reconciliação do estado das ordens com a fase actual.
     # Postgres-interna, corre sempre (independente de sqlserver_enabled).
     _scheduler.add_job(
@@ -1164,6 +1177,77 @@ async def _nelo_erp_sync_job() -> None:
         )
     except Exception as exc:
         logger.error("nelo_erp_sync failed: %s", exc, exc_info=True)
+
+
+#: Mirrors operacionais leves que o sync incremental Q.54.A corre de
+#: 5/5 min. Master/molds/skills mudam devagar (cadência nocturna chega);
+#: time_mining é pesado (cadência semanal). Estes três espelham dados
+#: que mudam ao longo do dia — stock, calendário, qualidade.
+_INCREMENTAL_MIRRORS = ["stock", "calendar", "quality"]
+
+
+async def _nelo_erp_incremental_sync_job() -> None:
+    """Q.54.A — sync incremental ERP->Postgres de 5/5 min.
+
+    Corre só os mirrors operacionais leves (``stock``, ``calendar``,
+    ``quality``) — os que mudam ao longo do dia. Para cada um, lê de
+    ``core.etl_run`` o watermark (último ``finished_at`` com sucesso) e
+    passa-o como ``since``, por isso a janela relida é curta em vez do
+    look-back inteiro.
+
+    GLOBAL e idempotente. No-op quando ``sqlserver_enabled=False``. Um
+    mirror que falha não aborta os outros (``run_nelo_sync`` já trata).
+    Só usa mirrors registados — não inventa ``purchase_orders`` nem
+    ``suppliers`` (não existem).
+    """
+    from src.shared.config import settings
+
+    if not settings.sqlserver_enabled:
+        logger.debug("nelo_erp_incremental_sync skipped — sqlserver_enabled=False")
+        return
+
+    from src.adapters.nelo.etl.sync import (
+        last_sync_watermarks,
+        registered_mirrors,
+        run_nelo_sync,
+        _load_mirror_modules,
+    )
+    from src.shared.database import get_session_context
+
+    # Garante que os módulos-mirror estão importados antes de filtrar.
+    _load_mirror_modules()
+    known = set(registered_mirrors())
+    selected = [m for m in _INCREMENTAL_MIRRORS if m in known]
+    if not selected:
+        logger.warning(
+            "nelo_erp_incremental_sync — nenhum mirror operacional "
+            "registado (esperados=%s)", _INCREMENTAL_MIRRORS,
+        )
+        return
+
+    tenant_id = UUID("00000000-0000-0000-0000-000000000001")  # dev tenant
+    started = datetime.utcnow()
+    try:
+        async with get_session_context() as session:
+            watermarks = await last_sync_watermarks(
+                session, tenant_id, selected,
+            )
+        results = await run_nelo_sync(
+            only=selected, tenant_id=tenant_id, since=watermarks,
+        )
+        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        failed = [r.source for r in results if r.status != "ok"]
+        logger.info(
+            "nelo_erp_incremental_sync mirrors=%s watermarks=%s "
+            "failed=%s elapsed_ms=%s",
+            [r.source for r in results],
+            {k: v.isoformat() for k, v in watermarks.items()},
+            failed or "none", elapsed_ms,
+        )
+    except Exception as exc:
+        logger.error(
+            "nelo_erp_incremental_sync failed: %s", exc, exc_info=True,
+        )
 
 
 async def _nelo_erp_time_mining_job() -> None:
