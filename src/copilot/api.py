@@ -112,7 +112,6 @@ async def ask_copilot(
     user: UserContext = Depends(get_current_user),
     tenant_id: UUID = Depends(get_tenant_id),
     session: AsyncSession = Depends(get_session),
-    conversation_id: Optional[UUID] = None,
 ):
     """
     Fazer pergunta ao COPILOT.
@@ -896,9 +895,13 @@ async def create_conversation(
         title=title or "Nova conversa",
     )
     session.add(conversation)
-    await session.flush()
+    # Commit explícito: `get_session` só auto-commita se `session.new/dirty/
+    # deleted` tiverem conteúdo no fim do request — e `flush()` esvazia
+    # `session.new`. Sem este commit a conversa era inserida e logo
+    # rollbacked ao fechar a sessão (id devolvido, linha inexistente).
+    await session.commit()
     await session.refresh(conversation)
-    
+
     return {
         "id": str(conversation.id),
         "title": conversation.title,
@@ -1000,7 +1003,13 @@ async def send_message(
     )
     session.add(user_message)
     await session.flush()
-    
+
+    # Memória multi-turno: o `process_ask` lê/escreve o `ConversationStore`
+    # (Redis, últimos 3 turnos) com base em `request.conversation_id`. O
+    # endpoint recebe o id no path mas nunca o injectava no request — o
+    # LLM ficava sem memória da conversa. Liga-os aqui.
+    request.conversation_id = conversation_id
+
     # Processar pergunta com COPILOT
     service = CopilotService(session, tenant_id, user.user_id, user.role)
     response, audit_data = await service.process_ask(request)

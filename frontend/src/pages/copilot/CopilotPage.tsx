@@ -19,8 +19,15 @@
  * vem vazio e a página explica-o — o chat continua a funcionar via o
  * endpoint dev de `ask` (mesmo fallback do CopilotDrawer legacy).
  *
- * Esta página NÃO está registada em App.tsx — o wiring de rotas é da
- * Onda 2 (Q.52.S). Aqui só se constrói o componente.
+ * Q.57 — persistência ao navegar:
+ *   - Toda a pergunta passa a criar/usar uma conversa real, por isso a
+ *     resposta fica gravada na BD mesmo que saias da página antes de ela
+ *     chegar (o pedido HTTP não é cancelado ao desmontar).
+ *   - `activeConversation` + a pergunta-em-curso vivem no localStorage;
+ *     ao voltar à página o estado restaura-se e o polling apanha a
+ *     resposta assim que o Ollama acaba.
+ *   - A memória multi-turno do LLM (Redis, 3 turnos) fica ligada porque
+ *     o `send_message` injecta agora o `conversation_id` no `process_ask`.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -41,15 +48,87 @@ import {
 let msgSeq = 0;
 const nextId = () => `m-${Date.now()}-${msgSeq++}`;
 
+// ── Persistência local (Q.57) ────────────────────────────────────────
+// A página é uma lazy-route: navegar para fora desmonta-a e perde o
+// `useState`. Guardamos a conversa activa e a pergunta em curso no
+// localStorage para que sair da página e voltar mantenha tudo.
+const ACTIVE_CONV_KEY = 'copilot.activeConversation';
+const PENDING_KEY = 'copilot.pendingAsk';
+// A resposta do Ollama leva ~22s; 2min é folga de sobra antes de
+// desistir de uma pergunta cujo pedido morreu (ex: fechaste o browser).
+const PENDING_TIMEOUT_MS = 120_000;
+
+/** Pergunta lançada e ainda sem resposta — sobrevive a navegar para fora. */
+interface PendingAsk {
+  conversationId: string | null;
+  question: string;
+  startedAt: number;
+}
+
+function hasAuthToken(): boolean {
+  return !!(localStorage.getItem('auth_token') || localStorage.getItem('token'));
+}
+
+function readPending(): PendingAsk | null {
+  try {
+    const raw = localStorage.getItem(PENDING_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw) as PendingAsk;
+    if (!p.startedAt || Date.now() - p.startedAt > PENDING_TIMEOUT_MS) {
+      localStorage.removeItem(PENDING_KEY);
+      return null;
+    }
+    return p;
+  } catch {
+    localStorage.removeItem(PENDING_KEY);
+    return null;
+  }
+}
+
+function writePending(p: PendingAsk): void {
+  localStorage.setItem(PENDING_KEY, JSON.stringify(p));
+}
+
+function clearPending(): void {
+  localStorage.removeItem(PENDING_KEY);
+}
+
+function clockLabel(epochMs: number): string {
+  return new Date(epochMs).toLocaleTimeString('pt-PT', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 export default function CopilotPage() {
   const queryClient = useQueryClient();
-  const [activeConversation, setActiveConversation] = useState<string | null>(null);
+  const [activeConversation, setActiveConversation] = useState<string | null>(
+    () => localStorage.getItem(ACTIVE_CONV_KEY),
+  );
+  const [pending, setPending] = useState<PendingAsk | null>(() => readPending());
   const [mode, setMode] = useState<CopilotMode>('factual');
   const [input, setInput] = useState('');
   const [search, setSearch] = useState('');
   /** Mensagens da conversa em curso (sessão local — espelha o servidor). */
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Espelhar a conversa activa no localStorage — é daqui que o restauro
+  // ao voltar à página a vai buscar.
+  useEffect(() => {
+    if (activeConversation) localStorage.setItem(ACTIVE_CONV_KEY, activeConversation);
+    else localStorage.removeItem(ACTIVE_CONV_KEY);
+  }, [activeConversation]);
+
+  // Uma pergunta em curso só é recuperável se tiver uma conversa real
+  // por trás (o caminho `/ask` sem sessão é local-only). Sem conversa,
+  // descarta o marcador para não ficar um "a escrever…" eterno.
+  useEffect(() => {
+    if (pending && !pending.conversationId && !activeConversation) {
+      clearPending();
+      setPending(null);
+    }
+  }, [pending, activeConversation]);
 
   // ─── Histórico de conversas ───────────────────────────────────────────
   const conversationsQuery = useQuery({
@@ -73,27 +152,12 @@ export default function CopilotPage() {
     queryFn: () => copilotApi.getConversationMessages(activeConversation!, { limit: 100 }),
     enabled: !!activeConversation,
     refetchOnWindowFocus: false,
+    // Enquanto houver uma pergunta em curso (marcador local), faz polling:
+    // o pedido pode ter sido lançado num mount anterior e a resposta cai
+    // na BD quando o Ollama acabar. Lê o marcador do localStorage para
+    // não depender de estado React que pode estar stale neste callback.
+    refetchInterval: () => (readPending() ? 2500 : false),
   });
-
-  // Quando uma conversa da BD carrega, hidrata o estado local.
-  useEffect(() => {
-    if (!activeConversation || !messagesQuery.data) return;
-    setMessages(
-      messagesQuery.data.map((m) => ({
-        id: m.id,
-        role: m.role === 'user' ? 'user' : 'copilot',
-        text:
-          m.content_text ||
-          (m.content_structured as CopilotResponse | null)?.summary ||
-          '',
-        when: new Date(m.created_at).toLocaleTimeString('pt-PT', {
-          hour: '2-digit',
-          minute: '2-digit',
-        }),
-        response: (m.content_structured as CopilotResponse | null) ?? undefined,
-      })),
-    );
-  }, [activeConversation, messagesQuery.data]);
 
   // Auto-scroll ao fundo a cada nova mensagem.
   useEffect(() => {
@@ -104,15 +168,34 @@ export default function CopilotPage() {
 
   // ─── Mutation: enviar pergunta ────────────────────────────────────────
   const askMutation = useMutation({
-    mutationFn: (userQuery: string) => {
+    mutationFn: async (
+      userQuery: string,
+    ): Promise<{ resp: CopilotResponse; conversationId: string | null }> => {
       const payload = { user_query: userQuery, include_citations: true };
-      // Conversa persistida → endpoint da conversa. Senão → /ask (com
-      // fallback dev embutido em copilotApi.ask).
-      return activeConversation
-        ? copilotApi.sendMessage(activeConversation, payload)
-        : copilotApi.ask(payload);
+      let convId = activeConversation;
+      // Sem conversa activa → cria uma persistida (precisa de sessão). É
+      // isto que garante que a resposta fica gravada na BD mesmo que
+      // saias da página antes de ela chegar. Sem sessão, cai no /ask
+      // local-only — a coluna do histórico explica essa limitação.
+      if (!convId && hasAuthToken()) {
+        try {
+          const conv = await copilotApi.createConversation(userQuery.slice(0, 80));
+          convId = conv.id;
+          setActiveConversation(conv.id);
+          const p = readPending();
+          if (p) writePending({ ...p, conversationId: conv.id });
+        } catch {
+          convId = null;
+        }
+      }
+      const resp = convId
+        ? await copilotApi.sendMessage(convId, payload)
+        : await copilotApi.ask(payload);
+      return { resp, conversationId: convId };
     },
-    onSuccess: (resp: CopilotResponse) => {
+    onSuccess: ({ resp, conversationId }) => {
+      clearPending();
+      setPending(null);
       setMessages((prev) => {
         const withoutTyping = prev.filter((m) => !m.typing);
         return [
@@ -126,14 +209,16 @@ export default function CopilotPage() {
           },
         ];
       });
-      if (activeConversation) {
+      if (conversationId) {
         queryClient.invalidateQueries({
-          queryKey: ['copilot', 'conversation', activeConversation],
+          queryKey: ['copilot', 'conversation', conversationId],
         });
       }
       queryClient.invalidateQueries({ queryKey: ['copilot', 'conversations'] });
     },
     onError: (err: Error) => {
+      clearPending();
+      setPending(null);
       setMessages((prev) => {
         const withoutTyping = prev.filter((m) => !m.typing);
         return [
@@ -148,6 +233,66 @@ export default function CopilotPage() {
       });
     },
   });
+
+  // ─── Hidratação do estado local a partir do servidor ──────────────────
+  // Corre quando a conversa carrega ou faz polling. Fica de fora durante
+  // um envio em curso neste mesmo mount — aí a UI optimista manda. Definida
+  // depois do `askMutation` para poder ler `askMutation.isPending`.
+  useEffect(() => {
+    if (!activeConversation || askMutation.isPending) return;
+    const data = messagesQuery.data;
+    if (!data) return;
+    const mapped: ChatMessage[] = data.map((m) => ({
+      id: m.id,
+      role: m.role === 'user' ? 'user' : 'copilot',
+      text:
+        m.content_text ||
+        (m.content_structured as CopilotResponse | null)?.summary ||
+        '',
+      when: clockLabel(new Date(m.created_at).getTime()),
+      response: (m.content_structured as CopilotResponse | null) ?? undefined,
+    }));
+    // Pergunta em curso lançada antes (outro mount): a transacção do
+    // servidor só commita pergunta+resposta juntas no fim. Enquanto não
+    // aparece uma resposta posterior ao `startedAt`, mostra a pergunta
+    // optimista + "a escrever…" e deixa o polling continuar.
+    if (pending && pending.conversationId === activeConversation) {
+      const answered = data.some(
+        (m) =>
+          m.role !== 'user' &&
+          new Date(m.created_at).getTime() >= pending.startedAt - 3000,
+      );
+      if (answered) {
+        clearPending();
+        setPending(null);
+        setMessages(mapped);
+      } else {
+        setMessages([
+          ...mapped,
+          {
+            id: 'pending-q',
+            role: 'user',
+            text: pending.question,
+            when: clockLabel(pending.startedAt),
+          },
+          { id: 'pending-a', role: 'copilot', text: '', when: nowLabel(), typing: true },
+        ]);
+      }
+      return;
+    }
+    setMessages(mapped);
+  }, [activeConversation, messagesQuery.data, askMutation.isPending, pending]);
+
+  // localStorage aponta para uma conversa que já não existe (ex: BD
+  // recriada) → recomeça em vez de deixar a página presa num erro.
+  useEffect(() => {
+    if (messagesQuery.isError) {
+      setActiveConversation(null);
+      setMessages([]);
+      clearPending();
+      setPending(null);
+    }
+  }, [messagesQuery.isError]);
 
   // ─── Mutation: executar acção sugerida ────────────────────────────────
   const lastResponse = useMemo(() => {
@@ -199,6 +344,15 @@ export default function CopilotPage() {
       { id: nextId(), role: 'copilot', text: '', when: nowLabel(), typing: true },
     ]);
     setInput('');
+    // Marca a pergunta como em curso ANTES de disparar — se navegares
+    // para fora durante os ~22s do Ollama, o restauro ao voltar lê isto.
+    const marker: PendingAsk = {
+      conversationId: activeConversation,
+      question: text,
+      startedAt: Date.now(),
+    };
+    writePending(marker);
+    setPending(marker);
     askMutation.mutate(text);
   };
 
@@ -206,6 +360,8 @@ export default function CopilotPage() {
     setActiveConversation(null);
     setMessages([]);
     setInput('');
+    clearPending();
+    setPending(null);
   };
 
   const activeMode = COPILOT_MODES.find((m) => m.id === mode)!;
