@@ -42,6 +42,7 @@ from .schemas import (
     PhaseRow,
     ProductOrderCount,
     ProductRow,
+    ProductStockRow,
     RoutingRow,
     ScheduleRow,
 )
@@ -63,6 +64,7 @@ __all__ = [
     "ProductComponent",
     "ProductOrderCount",
     "ProductRow",
+    "ProductStockRow",
     "ProductionPhase",
     "ProductPhase",
     "RoutingRow",

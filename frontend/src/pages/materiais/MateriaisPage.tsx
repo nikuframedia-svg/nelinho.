@@ -8,14 +8,12 @@
  *                 está vazio nesta instalação; os materiais reais da NELO são
  *                 os componentes-folha das BOMs (`core.bom_items` × `core.products`),
  *                 com nome, unidade, custo padrão e nº de BOMs que os consomem.
+ *                 O stock (on-hand/mínimo) vem ao vivo do ERP NELO
+ *                 (`dbo.PRODUTO.P_STOCK`); ERP offline → coluna "—" + banner.
  *   - Prospeção → /v1/factory-map/shortage-risks (REAL) +
  *                 /v1/supply/reconciliation (REAL).
  *   - Entregas  → SEM endpoint de tracking de PO → empty state explícito.
  *   - Fornecedores → /v1/core/suppliers (REAL).
- *
- * Nota: não há leitura de stock (on-hand) — `supply.inventory_ledger`
- * está vazio. O catálogo mostra a verdade que existe (custo + uso em BOM),
- * sem inventar níveis de stock.
  */
 
 import { useMemo, useState } from 'react';
@@ -80,7 +78,7 @@ export default function MateriaisPage(): ReactNode {
 // TAB · CATÁLOGO  (materiais derivados da BOM)
 // ═══════════════════════════════════════════════════════════════════════════
 
-const CATALOG_GRID = '2.4fr 0.8fr 1fr 1.1fr';
+const CATALOG_GRID = '2.1fr 0.7fr 1.2fr 1fr 1fr';
 
 function StockTab(): ReactNode {
   const [search, setSearch] = useState('');
@@ -90,10 +88,12 @@ function StockTab(): ReactNode {
     queryFn: () => materiaisApi.listMaterialsFromBom({ limit: 2000 }),
   });
 
+  const envelope = materialsQuery.data;
   const all = useMemo(
-    () => materialsQuery.data ?? [],
-    [materialsQuery.data],
+    () => envelope?.items ?? [],
+    [envelope],
   );
+  const erpAvailable = envelope?.erp_available ?? false;
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -109,18 +109,21 @@ function StockTab(): ReactNode {
     let withCost = 0;
     let costSum = 0;
     let widelyUsed = 0;
+    let belowMin = 0;
     for (const m of all) {
       if (m.standard_cost !== null && m.standard_cost > 0) {
         withCost += 1;
         costSum += m.standard_cost;
       }
       if (m.used_in_n_boms >= 10) widelyUsed += 1;
+      if (m.below_min === true) belowMin += 1;
     }
     return {
       total: all.length,
       withCost,
       avgCost: withCost > 0 ? costSum / withCost : 0,
       widelyUsed,
+      belowMin,
     };
   }, [all]);
 
@@ -172,11 +175,15 @@ function StockTab(): ReactNode {
           status="gray"
         />
         <KPIBig
-          label="Usados em ≥10 BOMs"
-          value={stats.widelyUsed}
-          context="Materiais de uso transversal"
-          status="green"
-          accent="green"
+          label="Abaixo do mínimo"
+          value={erpAvailable ? stats.belowMin : '—'}
+          context={
+            erpAvailable
+              ? 'Stock (ERP NELO) < mínimo'
+              : 'ERP offline — sem leitura de stock'
+          }
+          status={erpAvailable && stats.belowMin > 0 ? 'red' : 'gray'}
+          accent={erpAvailable && stats.belowMin > 0 ? 'red' : undefined}
         />
         <KPIBig
           label="Custo padrão médio"
@@ -185,6 +192,31 @@ function StockTab(): ReactNode {
           status="gray"
         />
       </div>
+
+      {/* ── Banner honesto: stock do ERP ───────────────────────────────── */}
+      {!erpAvailable && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 8,
+            background: 'var(--yellow-bg)',
+            border: '1px solid var(--yellow-bd)',
+            borderRadius: 'var(--r-md)',
+            padding: '10px 12px',
+            marginBottom: 12,
+            fontSize: 11.5,
+            color: 'var(--fg-2)',
+          }}
+        >
+          <AlertTriangle size={14} color="var(--yellow)" style={{ flexShrink: 0, marginTop: 1 }} />
+          <span>
+            {envelope?.unavailable_reason ??
+              'O stock vem ao vivo do ERP NELO, que não está ligado. ' +
+                'O catálogo, custo e uso em BOM continuam disponíveis.'}
+          </span>
+        </div>
+      )}
 
       {/* ── Pesquisa ───────────────────────────────────────────────────── */}
       <div
@@ -246,6 +278,7 @@ function StockTab(): ReactNode {
         >
           <div>Material</div>
           <div>Unidade</div>
+          <div style={{ textAlign: 'right' }}>Stock (ERP)</div>
           <div style={{ textAlign: 'right' }}>Custo padrão</div>
           <div style={{ textAlign: 'right' }}>Usado em</div>
         </div>
@@ -291,6 +324,36 @@ function CatalogRow({ material: m }: { material: BomMaterial }): ReactNode {
       </div>
       <div style={{ fontSize: 12, color: 'var(--fg-2)' }}>
         {m.unit_of_measure}
+      </div>
+      <div
+        className="tabular"
+        style={{
+          fontSize: 12.5,
+          fontWeight: 600,
+          textAlign: 'right',
+          color:
+            m.on_hand === null
+              ? 'var(--fg-3)'
+              : m.below_min === true
+                ? 'var(--red)'
+                : m.on_hand <= 0
+                  ? 'var(--orange)'
+                  : 'var(--fg-0)',
+        }}
+      >
+        {m.on_hand === null ? (
+          <span style={{ fontWeight: 400 }}>—</span>
+        ) : (
+          <>
+            {m.on_hand.toLocaleString('pt-PT', { maximumFractionDigits: 1 })}
+            {m.min_stock !== null && m.min_stock > 0 && (
+              <span style={{ fontSize: 10, color: 'var(--fg-3)', fontWeight: 400 }}>
+                {' '}
+                / mín {m.min_stock.toLocaleString('pt-PT', { maximumFractionDigits: 1 })}
+              </span>
+            )}
+          </>
+        )}
       </div>
       <div
         className="tabular"

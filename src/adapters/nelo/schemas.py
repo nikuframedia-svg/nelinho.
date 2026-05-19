@@ -258,6 +258,19 @@ class ProductRow(_Frozen):
     cost_price: float
 
 
+class ProductStockRow(_Frozen):
+    """Stock cache from `dbo.PRODUTO` — `P_STOCK` / `P_STOCKMIN` per product.
+
+    The ERP keeps a per-product on-hand cache directly on the catalogue
+    row, so a current snapshot does not need to fold the 12M-row
+    `MOVIMENTO` ledger. Quantities are in the product's own unit.
+    """
+
+    product_id: int  # P_ID
+    stock: float  # P_STOCK — on-hand
+    stock_min: float  # P_STOCKMIN — minimum
+
+
 # ─── Entities / operators (vw_pp1_entities) ────────────────────────────
 
 

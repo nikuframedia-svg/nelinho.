@@ -45,6 +45,20 @@ export interface BomMaterial {
   product_type: string;
   used_in_n_boms: number;
   total_qty_per: number | null;
+  /** Stock atual — ERP NELO P_STOCK. null se o ERP estiver offline. */
+  on_hand: number | null;
+  /** Stock mínimo — ERP NELO P_STOCKMIN. null se o ERP estiver offline. */
+  min_stock: number | null;
+  below_min: boolean | null;
+}
+
+/** Envelope de `/v1/supply/materials/from-bom` — catálogo + estado do stock. */
+export interface BomMaterialsEnvelope {
+  items: BomMaterial[];
+  count: number;
+  erp_available: boolean;
+  stock_source: 'nelo_erp_live' | 'indisponivel';
+  unavailable_reason: string | null;
 }
 
 /** Prospeção material (MR02) — payload livre do backend. */
@@ -144,7 +158,7 @@ export const materiaisApi = {
     if (params?.category) qs.set('category', params.category);
     if (params?.limit) qs.set('limit', String(params.limit));
     const q = qs.toString();
-    return apiFetch<BomMaterial[]>(
+    return apiFetch<BomMaterialsEnvelope>(
       `/v1/supply/materials/from-bom${q ? `?${q}` : ''}`,
     );
   },

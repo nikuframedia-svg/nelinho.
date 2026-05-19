@@ -14,6 +14,7 @@ validado via `require_tenant_header` (rejeita header em falta/zero UUID
 em vez de aceitar silenciosamente).
 """
 
+import logging
 from datetime import date as date_type, datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Literal, Optional
@@ -22,6 +23,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import distinct, func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.models.bom import BOMItem
@@ -38,6 +40,8 @@ from .material_service import (
     NegativeStockBlockedError,
 )
 from .rop_calculator import ROPCalculator
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/supply", tags=["Supply Chain"])
 
@@ -184,6 +188,10 @@ class BomMaterialResponse(BaseModel):
     Os materiais reais da NELO não vivem em `supply.material_master` (vazio),
     mas como produtos componente de uma BOM que nunca são, eles próprios,
     produto-pai. Este endpoint expõe esses componentes-folha.
+
+    O stock (`on_hand`/`min_stock`) vem ao vivo do ERP NELO (`dbo.PRODUTO`,
+    colunas `P_STOCK`/`P_STOCKMIN`). Quando o ERP não está ligado, esses
+    campos ficam `null` e `BomMaterialsEnvelope.erp_available` é `false`.
     """
 
     id: str
@@ -197,6 +205,29 @@ class BomMaterialResponse(BaseModel):
     total_qty_per: Optional[float] = Field(
         default=None, description="Soma de quantity_per em todas as BOMs"
     )
+    on_hand: Optional[float] = Field(
+        default=None, description="Stock atual (ERP NELO P_STOCK) — null se ERP offline"
+    )
+    min_stock: Optional[float] = Field(
+        default=None, description="Stock mínimo (ERP NELO P_STOCKMIN) — null se ERP offline"
+    )
+    below_min: Optional[bool] = Field(
+        default=None, description="on_hand < min_stock (só quando há leitura de stock)"
+    )
+
+
+class BomMaterialsEnvelope(BaseModel):
+    """Catálogo de materiais derivado da BOM + estado da leitura de stock."""
+
+    items: List[BomMaterialResponse]
+    count: int
+    erp_available: bool = Field(
+        description="True se o stock veio ao vivo do ERP NELO"
+    )
+    stock_source: str = Field(
+        description="'nelo_erp_live' ou 'indisponivel'"
+    )
+    unavailable_reason: Optional[str] = None
 
 
 class ReconciliationResponse(BaseModel):
@@ -406,7 +437,7 @@ async def list_materials(
     return [_material_to_dict(r) for r in rows]
 
 
-@router.get("/materials/from-bom", response_model=List[BomMaterialResponse])
+@router.get("/materials/from-bom", response_model=BomMaterialsEnvelope)
 async def list_materials_from_bom(
     search: Optional[str] = None,
     category: Optional[str] = None,
@@ -414,13 +445,17 @@ async def list_materials_from_bom(
     tenant_id: UUID = Depends(require_tenant_header),
     session: AsyncSession = Depends(get_session),
 ):
-    """Lista os materiais reais derivados da BOM.
+    """Lista os materiais reais derivados da BOM, com stock ao vivo do ERP.
 
     `supply.material_master` está vazio nesta instalação — os materiais reais
     da NELO são os componentes-folha de `core.bom_items` (um
     `component_product_id` que nunca aparece como `parent_product_id`),
     cruzados com `core.products` para nome, unidade e custo padrão.
     Ordenado por nº de BOMs que o consomem (os mais usados primeiro).
+
+    O stock (`on_hand`/`min_stock`) é lido ao vivo do ERP NELO
+    (`dbo.PRODUTO.P_STOCK`/`P_STOCKMIN`). Quando o ERP está offline, o
+    catálogo continua a responder e `erp_available=false`.
     """
     limit = max(1, min(limit, 5000))
 
@@ -469,24 +504,71 @@ async def list_materials_from_bom(
     stmt = stmt.limit(limit)
 
     rows = (await session.execute(stmt)).all()
-    return [
-        BomMaterialResponse(
-            id=str(r.id),
-            product_code=r.product_code,
-            product_name=r.product_name,
-            unit_of_measure=r.base_unit or "UN",
-            standard_cost=float(r.standard_cost) if r.standard_cost is not None else None,
-            category=r.category,
-            product_type=(
-                r.product_type.value
-                if hasattr(r.product_type, "value")
-                else str(r.product_type)
-            ),
-            used_in_n_boms=int(r.used_in_n_boms or 0),
-            total_qty_per=float(r.total_qty_per) if r.total_qty_per is not None else None,
+
+    # Stock ao vivo do ERP NELO — `core.products.product_code` == `dbo.PRODUTO.P_ID`.
+    stock_by_pid: Dict[int, Any] = {}
+    erp_available = False
+    unavailable_reason: Optional[str] = None
+    try:
+        from src.adapters.nelo import services as nelo_services
+
+        stock_rows = await nelo_services.list_product_stock()
+        stock_by_pid = {s.product_id: s for s in stock_rows}
+        erp_available = True
+    except (RuntimeError, OSError, SQLAlchemyError) as exc:
+        log.warning("Stock indisponível — adaptador NELO offline: %s", exc)
+        unavailable_reason = (
+            "O stock vem ao vivo do ERP NELO (SQL Server / dbo.PRODUTO), "
+            "que não está ligado neste ambiente. O catálogo, custo e uso "
+            "em BOM continuam disponíveis."
         )
-        for r in rows
-    ]
+
+    items: List[BomMaterialResponse] = []
+    for r in rows:
+        stock = None
+        try:
+            stock = stock_by_pid.get(int(r.product_code))
+        except (TypeError, ValueError):
+            stock = None
+        on_hand = float(stock.stock) if stock else None
+        min_stock = float(stock.stock_min) if stock else None
+        below_min = (
+            on_hand < min_stock
+            if on_hand is not None and min_stock is not None
+            else None
+        )
+        items.append(
+            BomMaterialResponse(
+                id=str(r.id),
+                product_code=r.product_code,
+                product_name=r.product_name,
+                unit_of_measure=r.base_unit or "UN",
+                standard_cost=(
+                    float(r.standard_cost) if r.standard_cost is not None else None
+                ),
+                category=r.category,
+                product_type=(
+                    r.product_type.value
+                    if hasattr(r.product_type, "value")
+                    else str(r.product_type)
+                ),
+                used_in_n_boms=int(r.used_in_n_boms or 0),
+                total_qty_per=(
+                    float(r.total_qty_per) if r.total_qty_per is not None else None
+                ),
+                on_hand=on_hand,
+                min_stock=min_stock,
+                below_min=below_min,
+            )
+        )
+
+    return BomMaterialsEnvelope(
+        items=items,
+        count=len(items),
+        erp_available=erp_available,
+        stock_source="nelo_erp_live" if erp_available else "indisponivel",
+        unavailable_reason=unavailable_reason,
+    )
 
 
 @router.post(
