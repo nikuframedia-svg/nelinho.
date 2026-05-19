@@ -12,7 +12,14 @@
  * Os `deltas` seguem o contrato `DeltaApplyRequest` do twin:
  *   { entity_type, entity_key, patch, description }
  *
- * Sprint Q.52.M.
+ * O `entity_type` TEM de ser um dos tipos que o backend Twin sabe aplicar
+ * (`SUPPORTED_DELTA_ENTITY_TYPES` em `src/twin/service.py`) — senão o
+ * `apply-delta` devolve 422. O Twin modela a fábrica em KPIs agregados, por
+ * isso cada crise entra como um choque de capacidade (`capacity_adjustment`,
+ * `capacity_increase_pct` negativo = perda) ou de qualidade
+ * (`quality_improvement`, `error_reduction_pct` negativo = degradação).
+ *
+ * Sprint Q.52.M · Q.56.A.
  */
 
 import type { Tone } from './atoms';
@@ -79,10 +86,11 @@ export const CRISIS_SCENARIOS: CrisisScenario[] = [
     scenarioTitle: 'Crise · molde K1 7 ML (03) parte',
     deltas: [
       {
-        entity_type: 'mold',
-        entity_key: 'K1-7ML-03',
-        patch: { available: false, unavailable_days: 7 },
-        description: 'Molde indisponível 7 dias (rotura em laminagem)',
+        entity_type: 'capacity_adjustment',
+        entity_key: 'molde-k1-7ml-03',
+        patch: { capacity_increase_pct: -30 },
+        description:
+          'Molde K1 7 ML (03) fora 7 dias — perda de capacidade de laminagem',
       },
     ],
     cascade: [
@@ -143,10 +151,11 @@ export const CRISIS_SCENARIOS: CrisisScenario[] = [
     scenarioTitle: 'Crise · ausência de laminador K1',
     deltas: [
       {
-        entity_type: 'employee',
+        entity_type: 'capacity_adjustment',
         entity_key: 'laminador-k1-principal',
-        patch: { available: false, absent_days: 3, phase: 'Laminagem' },
-        description: 'Laminador K1 ausente 3 dias (baixa médica)',
+        patch: { capacity_increase_pct: -15 },
+        description:
+          'Laminador K1 ausente 3 dias — par de laminagem quebrado, capacidade abaixo',
       },
     ],
     cascade: [
@@ -209,10 +218,11 @@ export const CRISIS_SCENARIOS: CrisisScenario[] = [
     scenarioTitle: 'Crise · rotura de gelcoat branco',
     deltas: [
       {
-        entity_type: 'material',
+        entity_type: 'capacity_adjustment',
         entity_key: 'gelcoat-branco',
-        patch: { stock_qty: 0, next_delivery_days: 3 },
-        description: 'Gelcoat branco em rotura · entrega em 3 dias',
+        patch: { capacity_increase_pct: -20 },
+        description:
+          'Gelcoat branco em rotura 3 dias — barcos param antes da pintura',
       },
     ],
     cascade: [
@@ -271,10 +281,14 @@ export const CRISIS_SCENARIOS: CrisisScenario[] = [
     scenarioTitle: 'Crise · pico de defeitos no lote de resina',
     deltas: [
       {
-        entity_type: 'material_lot',
+        entity_type: 'quality_improvement',
         entity_key: 'resina-lote-suspeito',
-        patch: { defect_rate: 0.23, baseline_defect_rate: 0.06 },
-        description: 'Lote de resina com taxa de defeito 23% (3.8× baseline)',
+        // `error_reduction_pct` negativo = degradação. -100 (erros duplicam)
+        // é o limite da validação [-100,100]; o lote real é 3.8× baseline,
+        // mas o choque máximo modelável é a duplicação.
+        patch: { error_reduction_pct: -100 },
+        description:
+          'Lote de resina com taxa de defeito 23% (3.8× baseline) — erros disparam',
       },
     ],
     cascade: [
@@ -337,10 +351,11 @@ export const CRISIS_SCENARIOS: CrisisScenario[] = [
     scenarioTitle: 'Crise · falha eléctrica nas estufas de cura',
     deltas: [
       {
-        entity_type: 'facility',
+        entity_type: 'capacity_adjustment',
         entity_key: 'estufas-cura',
-        patch: { powered: false, boats_in_curing: 12 },
-        description: 'Estufas de cura sem energia · 12 barcos em cura activa',
+        patch: { capacity_increase_pct: -55 },
+        description:
+          'Estufas de cura sem energia — 12 barcos em cura activa em risco',
       },
     ],
     cascade: [
@@ -403,10 +418,11 @@ export const CRISIS_SCENARIOS: CrisisScenario[] = [
     scenarioTitle: 'Crise · atraso do camião de expedição',
     deltas: [
       {
-        entity_type: 'transport_batch',
+        entity_type: 'capacity_adjustment',
         entity_key: 'camiao-fed-italiana',
-        patch: { delayed_days: 2, boats_ready: 16 },
-        description: 'Camião de expedição atrasa 2 dias (avaria da transportadora)',
+        patch: { capacity_increase_pct: -10 },
+        description:
+          'Camião de expedição atrasa 2 dias — 16 barcos prontos ocupam armazém',
       },
     ],
     cascade: [
