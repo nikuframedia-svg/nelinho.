@@ -7,30 +7,29 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Fonte-de-verdade da paleta = index.css @theme (OKLCH). Os HEX aqui
-        // são equivalentes aproximados — Tailwind não lê OKLCH nativo. Ao mudar
-        // uma cor, mudar primeiro no @theme e refletir o HEX aqui (Q.23.A).
-        // Dark theme backgrounds — Q.18.ZIP.design2 OKLCH (HEX equivalents)
-        // hue 250 = cool blue-gray neutral (Palantir-like)
+        // Fonte-de-verdade da paleta = index.css :root + @theme. Os HEX aqui
+        // espelham esses tokens — ao mudar uma cor, mudar primeiro no index.css
+        // e refletir o HEX aqui (Q.52.A).
+        // Dark theme backgrounds — Q.52.A preto-puro NELO.html (--bg-N)
         dark: {
-          900: '#1d2025',   // matches --bg-0 oklch(0.158 0.008 250)
-          800: '#252830',   // matches --bg-1 oklch(0.195 0.008 250)
-          700: '#2c2f37',   // matches --bg-2 oklch(0.225 0.009 250)
-          600: '#373a43',   // matches --bg-3 oklch(0.265 0.010 250)
-          500: '#42454f',   // matches --bg-4 oklch(0.305 0.011 250)
+          900: '#000000',   // matches --bg-0
+          800: '#0a0a0c',   // matches --bg-1
+          700: '#111114',   // matches --bg-2
+          600: '#18181c',   // matches --bg-3
+          500: '#222227',   // matches --bg-4
         },
-        // Accent - Teal
+        // Accent — Q.52.A azul NELO.html (#2876e5, era teal)
         accent: {
-          50: '#f0fdfa',
-          100: '#ccfbf1',
-          200: '#99f6e4',
-          300: '#5eead4',
-          400: '#2dd4bf',
-          500: '#14b8a6',
-          600: '#0d9488',
-          700: '#0f766e',
-          800: '#115e59',
-          900: '#134e4a',
+          50: '#eef4fd',
+          100: '#d4e3fa',
+          200: '#a9c7f5',
+          300: '#7eaaef',
+          400: '#4f93ec',
+          500: '#2876e5',
+          600: '#1f5cb8',
+          700: '#17468b',
+          800: '#0f2f5d',
+          900: '#081930',
         },
         // Primary (Blue)
         primary: {
@@ -45,22 +44,23 @@ export default {
           800: '#075985',
           900: '#0c4a6e',
         },
-        // Text colors — Q.18.ZIP.design2 OKLCH (HEX equivalents)
+        // Text colors — Q.52.A soft-white NELO.html (--fg-N)
         'text-dark': {
-          primary:   '#f0f1f3',  // matches --fg-0 oklch(0.96 0.005 250)
-          secondary: '#c8cbd0',  // matches --fg-1 oklch(0.82 0.008 250)
-          tertiary:  '#888d96',  // matches --fg-2 oklch(0.62 0.012 250)
-          muted:     '#5a5f68',  // matches --fg-3 oklch(0.45 0.015 250)
+          primary:   '#f5f5f7',  // matches --fg-0
+          secondary: '#c7c7cc',  // matches --fg-1
+          tertiary:  '#8e8e93',  // matches --fg-2
+          muted:     '#636366',  // matches --fg-3
         },
-        // Border tokens (--bd-N) accessible as Tailwind utility classes
-        'bd-1': '#3b3e47',  // matches --bd-1 oklch(0.295 0.011 250)
-        'bd-2': '#494d58',  // matches --bd-2 oklch(0.355 0.013 250)
-        'bd-3': '#5a5f68',  // matches --bd-3 oklch(0.420 0.014 250)
-        // Status colors (design2 desaturated calm — HEX approximations)
-        green:  { DEFAULT: '#5fc77e' },  // oklch(0.78 0.14 155)
-        yellow: { DEFAULT: '#d6b146' },  // oklch(0.82 0.14 90)
-        red:    { DEFAULT: '#e76060' },  // oklch(0.72 0.18 25)
-        blue:   { DEFAULT: '#7aa3d8' },  // oklch(0.72 0.14 245)
+        // Border tokens (--bd-N) — translucent white (NELO.html).
+        // HEX-on-black equivalents para utilitários Tailwind sólidos.
+        'bd-1': 'rgba(255,255,255,0.06)',  // matches --bd-1
+        'bd-2': 'rgba(255,255,255,0.10)',  // matches --bd-2
+        'bd-3': 'rgba(255,255,255,0.16)',  // matches --bd-3
+        // Status colors — Q.52.A sober-on-black NELO.html
+        green:  { DEFAULT: '#2da14b' },
+        yellow: { DEFAULT: '#c9a72a' },
+        red:    { DEFAULT: '#d6453a' },
+        blue:   { DEFAULT: '#2876e5' },
         // Status colors
         success: {
           DEFAULT: '#10b981',
@@ -112,12 +112,13 @@ export default {
         'inner-glow': 'inset 0 0 20px rgba(20, 184, 166, 0.1)',
       },
       borderRadius: {
-        // Q.18.ZIP.design2 — refinado, mais pequeno (matching design package)
-        sm: '4px',    // era 6px
-        md: '6px',    // era 8px
-        lg: '10px',   // era 12px (matching --r-lg do design package)
-        xl: '14px',   // era 16px
-        '2xl': '1rem',
+        // Q.52.A — raios generosos Apple-style (matching --r-* do NELO.html)
+        xs: '6px',    // matches --r-xs
+        sm: '8px',    // matches --r-sm
+        md: '10px',   // matches --r-md
+        lg: '14px',   // matches --r-lg
+        xl: '18px',   // matches --r-xl
+        '2xl': '22px',// matches --r-2xl
         '3xl': '1.5rem',
       },
       backgroundImage: {

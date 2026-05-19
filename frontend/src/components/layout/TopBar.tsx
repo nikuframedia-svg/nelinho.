@@ -54,9 +54,12 @@ export function TopBar() {
       style={{
         height: 52,
         flexShrink: 0,
-        background: 'var(--bg-0)',
-        padding: '0 24px',
-        gap: 16,
+        background: 'rgba(0,0,0,0.6)',
+        backdropFilter: 'saturate(180%) blur(20px)',
+        WebkitBackdropFilter: 'saturate(180%) blur(20px)',
+        borderBottom: '1px solid var(--bd-1)',
+        padding: '0 16px',
+        gap: 14,
       }}
     >
       {/* Search */}
@@ -65,24 +68,26 @@ export function TopBar() {
         onClick={openCommandPalette}
         className="flex items-center gap-2 text-text-dark-tertiary hover:text-text-dark-secondary transition-colors"
         style={{
-          width: 320,
+          width: 360,
+          height: 32,
           background: 'var(--bg-2)',
           border: '1px solid var(--bd-1)',
           borderRadius: 'var(--r-md)',
-          padding: '6px 12px',
+          padding: '5px 11px',
         }}
         title="Procurar (⌘K)"
         aria-label="Procurar"
       >
-        <Search size={14} className="shrink-0" />
-        <span className="flex-1 text-left truncate" style={{ fontSize: 13 }}>
-          Procurar barco, operador, fase...
+        <Search size={13} className="shrink-0" />
+        <span className="flex-1 text-left truncate" style={{ fontSize: 12 }}>
+          Procurar barco, operador, fase…
         </span>
         <span
-          className="text-text-dark-tertiary"
+          className="mono text-text-dark-tertiary"
           style={{
             fontSize: 10,
-            padding: '1px 6px',
+            padding: '1px 5px',
+            background: 'var(--bg-3)',
             border: '1px solid var(--bd-1)',
             borderRadius: 4,
           }}
@@ -115,16 +120,16 @@ export function TopBar() {
         onClick={openCopilot}
         className="inline-flex items-center gap-1.5 font-medium transition-colors"
         style={{
-          padding: '6px 12px',
+          padding: '0 11px',
           height: 32,
           background: 'var(--bg-2)',
-          color: 'var(--fg-1)',
+          color: 'var(--fg-0)',
           border: '1px solid var(--bd-2)',
           borderRadius: 'var(--r-md)',
           fontSize: 12,
         }}
       >
-        <Sparkles size={14} />
+        <Sparkles size={13} />
         Assistente
       </button>
     </header>

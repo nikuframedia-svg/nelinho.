@@ -1,56 +1,69 @@
 @import "tailwindcss";
-/* Q.18.ZIP.design2 — Geist primary (matching design package index.html) */
-@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap');
+/* Q.52.A — Geist primary (matching design NELO.html) */
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap');
 
-/* Q.18.ZIP.design2 — port literal do design package nelo/project/index.html
-   :root tokens. OKLCH values (modern browsers, hue 250 = cool blue-gray). */
+/* Q.52.A — fundação visual: port literal dos :root tokens do NELO.html
+   ("dark Apple-like minimal"). Base preto-puro, foregrounds soft-white,
+   bordas translúcidas, accent azul #2876e5, raios generosos.
+   Substitui a paleta OKLCH do Q.18.ZIP.design2. */
 :root {
-  /* Background scale — deep, neutral, Palantir */
-  --bg-0: oklch(0.158 0.008 250);
-  --bg-1: oklch(0.195 0.008 250);
-  --bg-2: oklch(0.225 0.009 250);
-  --bg-3: oklch(0.265 0.010 250);
-  --bg-4: oklch(0.305 0.011 250); /* extra step para elevated overlay */
+  /* Surfaces — pure black base, layered panels */
+  --bg-0: #000000;
+  --bg-1: #0a0a0c;
+  --bg-2: #111114;
+  --bg-3: #18181c;
+  --bg-4: #222227;
+  --bg-hover: #1c1c20;
 
-  /* Foreground scale */
-  --fg-0: oklch(0.96 0.005 250);
-  --fg-1: oklch(0.82 0.008 250);
-  --fg-2: oklch(0.62 0.012 250);
-  --fg-3: oklch(0.45 0.015 250);
+  /* Foreground — soft whites */
+  --fg-0: #f5f5f7;
+  --fg-1: #c7c7cc;
+  --fg-2: #8e8e93;
+  --fg-3: #636366;
+  --fg-4: #48484a;
 
-  /* Borders */
-  --bd-1: oklch(0.295 0.011 250);
-  --bd-2: oklch(0.355 0.013 250);
-  --bd-3: oklch(0.420 0.014 250);
+  /* Borders — barely-there, translucent */
+  --bd-1: rgba(255, 255, 255, 0.06);
+  --bd-2: rgba(255, 255, 255, 0.10);
+  --bd-3: rgba(255, 255, 255, 0.16);
 
-  /* Status — desaturated, calm (OKLCH para tone perceptual consistente) */
-  --green:    oklch(0.78 0.14 155);
-  --green-bg: oklch(0.30 0.07 155 / 0.20);
-  --green-bd: oklch(0.45 0.10 155 / 0.40);
+  /* Accent — sober, slightly desaturated blue */
+  --accent: #2876e5;
+  --accent-bg: rgba(40, 118, 229, 0.10);
+  --accent-bd: rgba(40, 118, 229, 0.28);
 
-  --yellow:    oklch(0.82 0.14 90);
-  --yellow-bg: oklch(0.32 0.08 80 / 0.20);
-  --yellow-bd: oklch(0.50 0.12 80 / 0.40);
+  /* Status — muted, sober on black */
+  --green:    #2da14b;
+  --green-bg: rgba(45, 161, 75, 0.09);
+  --green-bd: rgba(45, 161, 75, 0.26);
 
-  --orange:    oklch(0.74 0.16 50);
-  --orange-bg: oklch(0.32 0.09 50 / 0.20);
-  --orange-bd: oklch(0.50 0.13 50 / 0.40);
+  --yellow:    #c9a72a;
+  --yellow-bg: rgba(201, 167, 42, 0.09);
+  --yellow-bd: rgba(201, 167, 42, 0.26);
 
-  --red:    oklch(0.72 0.18 25);
-  --red-bg: oklch(0.32 0.10 25 / 0.22);
-  --red-bd: oklch(0.50 0.14 25 / 0.40);
+  --orange:    #c97a1c;
+  --orange-bg: rgba(201, 122, 28, 0.09);
+  --orange-bd: rgba(201, 122, 28, 0.26);
 
-  --blue:    oklch(0.72 0.14 245);
-  --blue-bg: oklch(0.32 0.07 245 / 0.20);
-  --blue-bd: oklch(0.50 0.10 245 / 0.40);
+  --red:    #d6453a;
+  --red-bg: rgba(214, 69, 58, 0.09);
+  --red-bd: rgba(214, 69, 58, 0.28);
 
-  --purple:    oklch(0.72 0.15 295);
-  --purple-bg: oklch(0.32 0.08 295 / 0.20);
-  --purple-bd: oklch(0.50 0.11 295 / 0.40);
+  --blue:    #2876e5;
+  --blue-bg: rgba(40, 118, 229, 0.09);
+  --blue-bd: rgba(40, 118, 229, 0.26);
 
-  --gray:    oklch(0.62 0.012 250);
-  --gray-bg: oklch(0.30 0.008 250 / 0.30);
-  --gray-bd: oklch(0.45 0.012 250 / 0.40);
+  --purple:    #8e6fc4;
+  --purple-bg: rgba(142, 111, 196, 0.09);
+  --purple-bd: rgba(142, 111, 196, 0.26);
+
+  --teal:    #4ea7c1;
+  --teal-bg: rgba(78, 167, 193, 0.09);
+  --teal-bd: rgba(78, 167, 193, 0.26);
+
+  --gray:    #8e8e93;
+  --gray-bg: rgba(142, 142, 147, 0.08);
+  --gray-bd: rgba(142, 142, 147, 0.20);
 
   /* Page padding token — DarkPageLayout + pages que querem alinhar
      consistente (Q.18.UI.B.3). lg breakpoint sobe para 2rem em 1024+ */
@@ -67,30 +80,38 @@
 
 :root {
 
-  /* Radii — design package: smaller, more refined */
-  --r-sm: 4px;
-  --r-md: 6px;
-  --r-lg: 10px;
-  --r-xl: 14px;
+  /* Radii — generous, Apple-style (NELO.html) */
+  --r-xs: 6px;
+  --r-sm: 8px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-xl: 18px;
+  --r-2xl: 22px;
 
-  /* Shadows — escala em camadas, com profundidade real no topo (Q.23.A) */
-  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.35);
-  --shadow-2: 0 2px 6px rgba(0, 0, 0, 0.40), 0 1px 2px rgba(0, 0, 0, 0.30);
-  --shadow-3: 0 8px 20px rgba(0, 0, 0, 0.45), 0 3px 8px rgba(0, 0, 0, 0.35);
-  --shadow-4: 0 20px 48px rgba(0, 0, 0, 0.55), 0 8px 20px rgba(0, 0, 0, 0.40);
+  /* Shadows — NELO.html escala (3 níveis) + Q.23.A --shadow-4 preservado */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-3: 0 24px 64px rgba(0, 0, 0, 0.6);
+  --shadow-4: 0 24px 64px rgba(0, 0, 0, 0.6), 0 8px 20px rgba(0, 0, 0, 0.45);
+  --glow-accent: 0 0 0 4px rgba(40, 118, 229, 0.18);
 
-  /* Atmosfera — gradientes subtis para fundos deixarem de ser cor sólida (Q.23.A) */
-  --atmosphere-page: radial-gradient(ellipse 80% 50% at 50% 0%, oklch(0.30 0.03 250 / 0.35) 0%, transparent 70%);
-  --atmosphere-card: linear-gradient(180deg, oklch(0.42 0.02 250 / 0.06) 0%, transparent 60%);
+  /* Motion — Apple-like spring + entrada/saída suaves (NELO.html) */
+  --ease-spring: cubic-bezier(0.34, 1.36, 0.64, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.83, 0, 0.17, 1);
 
-  /* Focus — ring de contraste + halo suave (Q.23.A) */
-  --focus-glow: 0 0 0 2px var(--bg-0), 0 0 0 4px oklch(0.72 0.14 245 / 0.55), 0 0 12px oklch(0.72 0.14 245 / 0.30);
+  /* Atmosfera — gradientes subtis (Q.23.A, re-tonalizados para preto-puro) */
+  --atmosphere-page: radial-gradient(ellipse 80% 50% at 50% 0%, rgba(40, 118, 229, 0.06) 0%, transparent 70%);
+  --atmosphere-card: linear-gradient(180deg, rgba(255, 255, 255, 0.02) 0%, transparent 60%);
+
+  /* Focus — ring de contraste + halo suave (Q.23.A, accent azul) */
+  --focus-glow: 0 0 0 2px var(--bg-0), 0 0 0 4px rgba(40, 118, 229, 0.55), 0 0 12px rgba(40, 118, 229, 0.30);
 
   /* Legacy preserved (não remover — outras páginas consomem) */
-  --accent-orange: oklch(0.74 0.16 50);
-  --accent-orange-soft: oklch(0.32 0.09 50 / 0.20);
-  --accent-orange-bd: oklch(0.50 0.13 50 / 0.40);
-  --bd-focus: oklch(0.72 0.14 245);
+  --accent-orange: var(--orange);
+  --accent-orange-soft: var(--orange-bg);
+  --accent-orange-bd: var(--orange-bd);
+  --bd-focus: var(--accent);
   --grid-line: rgba(255, 255, 255, 0.025);
 }
 
@@ -107,21 +128,21 @@
      ALPHA DASHBOARD THEME
      ═══════════════════════════════════════════════════════════════════════════ */
   
-  /* Background Hierarchy — Q.18.ZIP.design2 aligned com OKLCH --bg-N */
-  --color-bg-base: oklch(0.158 0.008 250);      /* matches --bg-0 */
-  --color-bg-primary: oklch(0.158 0.008 250);
-  --color-bg-secondary: oklch(0.195 0.008 250); /* matches --bg-1 */
-  --color-bg-tertiary: oklch(0.225 0.009 250);  /* matches --bg-2 */
-  --color-bg-elevated: oklch(0.265 0.010 250);  /* matches --bg-3 */
-  --color-bg-card: oklch(0.195 0.008 250);
-  --color-bg-card-hover: oklch(0.225 0.009 250);
-  
-  /* Accent Colors - Alpha Teal */
-  --color-accent: #4fd1c5;
-  --color-accent-light: #5eead4;
-  --color-accent-dark: #38b2ac;
-  --color-accent-muted: rgba(79, 209, 197, 0.15);
-  --color-accent-glow: rgba(79, 209, 197, 0.4);
+  /* Background Hierarchy — Q.52.A aligned com --bg-N preto-puro (NELO.html) */
+  --color-bg-base: #000000;       /* matches --bg-0 */
+  --color-bg-primary: #000000;
+  --color-bg-secondary: #0a0a0c;  /* matches --bg-1 */
+  --color-bg-tertiary: #111114;   /* matches --bg-2 */
+  --color-bg-elevated: #18181c;   /* matches --bg-3 */
+  --color-bg-card: #0a0a0c;
+  --color-bg-card-hover: #111114;
+
+  /* Accent Colors — Q.52.A azul NELO.html (#2876e5, era Alpha Teal) */
+  --color-accent: #2876e5;
+  --color-accent-light: #4f93ec;
+  --color-accent-dark: #1f5cb8;
+  --color-accent-muted: rgba(40, 118, 229, 0.15);
+  --color-accent-glow: rgba(40, 118, 229, 0.4);
   
   /* Secondary Accents */
   --color-orange: #f97316;
@@ -132,20 +153,20 @@
   --color-amber: #fbbf24;
   --color-coral: #ff6b6b;
   
-  /* Text Colors — Q.18.ZIP.design2 aligned com OKLCH --fg-N */
-  --color-text-primary: oklch(0.96 0.005 250);    /* matches --fg-0 */
-  --color-text-secondary: oklch(0.82 0.008 250);  /* matches --fg-1 */
-  --color-text-tertiary: oklch(0.62 0.012 250);   /* matches --fg-2 */
-  --color-text-muted: oklch(0.45 0.015 250);      /* matches --fg-3 */
-  --color-text-white: oklch(0.96 0.005 250);
-  --color-text-gray: oklch(0.62 0.012 250);
+  /* Text Colors — Q.52.A aligned com --fg-N soft-white (NELO.html) */
+  --color-text-primary: #f5f5f7;    /* matches --fg-0 */
+  --color-text-secondary: #c7c7cc;  /* matches --fg-1 */
+  --color-text-tertiary: #8e8e93;   /* matches --fg-2 */
+  --color-text-muted: #636366;      /* matches --fg-3 */
+  --color-text-white: #f5f5f7;
+  --color-text-gray: #8e8e93;
 
-  /* Border Colors — Q.18.ZIP.design2 OKLCH --bd-N */
-  --color-border: oklch(0.295 0.011 250);            /* matches --bd-1 */
-  --color-border-subtle: oklch(0.295 0.011 250);
-  --color-border-hover: oklch(0.355 0.013 250);      /* matches --bd-2 */
-  --color-border-strong: oklch(0.420 0.014 250);     /* matches --bd-3 */
-  --color-border-accent: oklch(0.50 0.10 245 / 0.40);
+  /* Border Colors — Q.52.A translucent --bd-N (NELO.html) */
+  --color-border: rgba(255, 255, 255, 0.06);            /* matches --bd-1 */
+  --color-border-subtle: rgba(255, 255, 255, 0.06);
+  --color-border-hover: rgba(255, 255, 255, 0.10);      /* matches --bd-2 */
+  --color-border-strong: rgba(255, 255, 255, 0.16);     /* matches --bd-3 */
+  --color-border-accent: rgba(40, 118, 229, 0.28);
   
   /* Status Colors */
   --color-success: #22c55e;
@@ -212,8 +233,97 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.01em; }
 .tabular { font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; }
 .mono, code { font-family: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, monospace; }
 
-/* Selection */
-::selection { background: var(--blue-bg); color: var(--fg-0); }
+.display { letter-spacing: -0.03em; font-weight: 600; }
+
+/* Selection — Q.52.A accent azul */
+::selection { background: rgba(40, 118, 229, 0.30); color: #fff; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Q.52.A — NELO DESIGN UTILITIES (port literal do NELO.html <style>)
+   keyframes Apple-like + .glass surface + .anim-* page transitions +
+   .pulse-dot/.spin + custom range styling.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@keyframes pulse-soft { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes slide-in-r {
+  from { transform: translateX(24px); opacity: 0; }
+  to   { transform: translateX(0); opacity: 1; }
+}
+@keyframes slide-in-up {
+  from { transform: translateY(8px); opacity: 0; }
+  to   { transform: translateY(0); opacity: 1; }
+}
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes count-up {
+  from { transform: translateY(0.6em); opacity: 0; }
+  to   { transform: translateY(0); opacity: 1; }
+}
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(40, 118, 229, 0.4); }
+  50%      { box-shadow: 0 0 0 6px rgba(40, 118, 229, 0); }
+}
+
+.pulse-dot { animation: pulse-soft 2.4s ease-in-out infinite; }
+.spin { animation: spin 1s linear infinite; }
+.anim-up { animation: slide-in-up 0.45s var(--ease-out) both; }
+.anim-r { animation: slide-in-r 0.4s var(--ease-out) both; }
+.anim-fade { animation: fade-in 0.4s ease both; }
+.anim-glow { animation: glow-pulse 2s ease-in-out infinite; }
+
+/* Glass surface — translucent panel com backdrop blur (NELO.html) */
+.glass {
+  background: rgba(18, 18, 22, 0.72);
+  backdrop-filter: saturate(180%) blur(24px);
+  -webkit-backdrop-filter: saturate(180%) blur(24px);
+  border: 1px solid var(--bd-2);
+}
+
+/* Skeleton shimmer (NELO.html) — gradiente animado no próprio elemento.
+   Distinto do .shimmer overlay legacy abaixo. */
+.shimmer-skeleton {
+  background: linear-gradient(90deg, var(--bg-2) 25%, var(--bg-3) 50%, var(--bg-2) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.8s linear infinite;
+}
+
+/* Custom range — Apple-like thumb (NELO.html) */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  height: 4px;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  background: var(--bd-1);
+  border-radius: 2px;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--fg-0);
+  margin-top: -5px;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+input[type="range"]::-moz-range-track {
+  height: 4px;
+  background: var(--bd-1);
+  border-radius: 2px;
+}
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: none;
+  border-radius: 50%;
+  background: var(--fg-0);
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
 
 /* ═══════════════════════════════════════════════════════════════════════════
    ALPHA CARD SYSTEM

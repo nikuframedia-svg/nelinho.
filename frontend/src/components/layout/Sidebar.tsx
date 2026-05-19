@@ -134,21 +134,26 @@ export function Sidebar() {
 
   return (
     <aside
-      className="h-screen flex flex-col fixed left-0 top-0 bg-dark-800"
-      style={{ width: 240 }}
+      className="h-screen flex flex-col fixed left-0 top-0"
+      style={{
+        width: 220,
+        background: 'var(--bg-0)',
+        borderRight: '1px solid var(--bd-1)',
+      }}
     >
       {/* Logo */}
       <div
-        className="flex items-center gap-2.5 border-b border-bd-1"
-        style={{ padding: '18px 20px' }}
+        className="flex items-center gap-2.5"
+        style={{ padding: '18px 18px', borderBottom: '1px solid var(--bd-1)' }}
       >
         <div
-          className="flex items-center justify-center text-white font-bold"
+          className="flex items-center justify-center font-bold"
           style={{
-            width: 30,
-            height: 30,
-            background: 'var(--blue)',
-            borderRadius: 'var(--r-md)',
+            width: 28,
+            height: 28,
+            background: 'var(--fg-0)',
+            color: 'var(--bg-0)',
+            borderRadius: 'var(--r-xs)',
             fontSize: 14,
           }}
         >
@@ -156,39 +161,39 @@ export function Sidebar() {
         </div>
         <div>
           <div
-            className="text-text-dark-primary font-semibold leading-tight"
-            style={{ fontSize: 14, letterSpacing: '-0.1px' }}
+            className="display text-text-dark-primary font-semibold leading-tight"
+            style={{ fontSize: 14, letterSpacing: '-0.2px' }}
           >
             NELO
           </div>
           <div
             className="text-text-dark-tertiary uppercase font-medium"
-            style={{ fontSize: 10, letterSpacing: '0.4px' }}
+            style={{ fontSize: 9.5, letterSpacing: '0.8px' }}
           >
-            ProdPlan ONE
+            ProdPlan
           </div>
         </div>
       </div>
 
       {/* Nav */}
       <nav
-        className="flex-1 overflow-y-auto"
-        style={{ padding: '12px 10px' }}
+        className="flex-1 overflow-y-auto overflow-x-hidden"
+        style={{ padding: '14px 10px' }}
         aria-label="Navegação principal"
       >
         {NAV.map((group) => (
-          <div key={group.label} style={{ marginBottom: 18 }}>
+          <div key={group.label} style={{ marginBottom: 14 }}>
             <div
-              className="text-text-dark-tertiary uppercase font-semibold"
+              className="text-text-dark-muted uppercase font-semibold"
               style={{
-                fontSize: 10,
-                letterSpacing: '0.6px',
-                padding: '6px 12px 8px 12px',
+                fontSize: 9.5,
+                letterSpacing: '0.8px',
+                padding: '8px 11px 6px 11px',
               }}
             >
               {group.label}
             </div>
-            <ul className="flex flex-col">
+            <ul className="flex flex-col" style={{ gap: 2 }}>
               {group.items.map((item) => {
                 const active = isActive(item.path);
                 return (
@@ -196,29 +201,33 @@ export function Sidebar() {
                     <NavLink
                       to={item.path}
                       className={cn(
-                        'group flex items-center w-full relative transition-colors duration-150',
+                        'group flex items-center w-full relative',
                         active
-                          ? 'bg-dark-600 text-text-dark-primary font-medium'
-                          : 'bg-transparent text-text-dark-secondary hover:bg-dark-700 hover:text-text-dark-primary',
+                          ? 'text-text-dark-primary font-medium'
+                          : 'text-text-dark-tertiary',
                       )}
                       style={{
-                        padding: '8px 12px',
+                        padding: '8px 11px',
                         fontSize: 13,
                         gap: 11,
-                        borderRadius: 'var(--r-md)',
+                        borderRadius: 'var(--r-sm)',
+                        background: active ? 'var(--bg-3)' : 'transparent',
+                        transition: 'background 0.16s, color 0.16s',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!active)
+                          e.currentTarget.style.background = 'var(--bg-2)';
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!active)
+                          e.currentTarget.style.background = 'transparent';
                       }}
                     >
-                      {active ? (
-                        <span
-                          aria-hidden="true"
-                          className="absolute inset-y-1 left-0 w-1 rounded-r-full bg-blue"
-                        />
-                      ) : null}
                       <span
                         className={
                           active
-                            ? 'text-text-dark-primary'
-                            : 'text-text-dark-tertiary group-hover:text-text-dark-secondary'
+                            ? 'text-text-dark-primary flex'
+                            : 'text-text-dark-tertiary group-hover:text-text-dark-secondary flex'
                         }
                       >
                         {item.icon}
@@ -228,11 +237,13 @@ export function Sidebar() {
                         <span
                           className="text-white font-semibold tabular-nums"
                           style={{
-                            background: 'var(--orange)',
-                            fontSize: 10,
-                            padding: '1px 6px',
+                            background: 'var(--accent)',
+                            fontSize: 9.5,
+                            padding: '0 5px',
                             borderRadius: 999,
-                            minWidth: 18,
+                            minWidth: 16,
+                            height: 14,
+                            lineHeight: '14px',
                             textAlign: 'center',
                           }}
                         >
@@ -250,19 +261,19 @@ export function Sidebar() {
 
       {/* User footer */}
       <div
-        className="flex items-center gap-2.5 border-t border-bd-1"
-        style={{ padding: '14px 16px' }}
+        className="flex items-center gap-2.5"
+        style={{ padding: '12px 14px', borderTop: '1px solid var(--bd-1)' }}
         title={me?.email ?? '—'}
       >
         <div
           className="rounded-full grid place-items-center font-semibold border"
           style={{
-            width: 32,
-            height: 32,
-            background: 'var(--bg-3)',
+            width: 28,
+            height: 28,
+            background: 'linear-gradient(135deg, var(--bg-3), var(--bg-4))',
             borderColor: 'var(--bd-2)',
-            fontSize: 12,
-            color: 'var(--fg-1)',
+            fontSize: 11,
+            color: 'var(--fg-0)',
           }}
         >
           {me ? initials(me.name) : '—'}
