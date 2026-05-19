@@ -19,13 +19,15 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
-import numpy as np
-from sklearn.ensemble import GradientBoostingClassifier
-from sklearn.metrics import average_precision_score, roc_auc_score
-from sklearn.model_selection import train_test_split
+# Q.59.F.3 — numpy/sklearn movidos para dentro dos métodos que os usam
+# (`train`, `validate`). Estavam top-level e custavam ~500 ms no arranque.
+# PEP 563 ativo (from __future__ import annotations), portanto
+# `Optional[GradientBoostingClassifier]` resolve em tempo de check.
+if TYPE_CHECKING:
+    from sklearn.ensemble import GradientBoostingClassifier
 
 from src.ml.jobs.base import RetrainJob
 from src.ml.models_domain._common import encode_categoricals
@@ -58,6 +60,12 @@ class QualityRiskModel:
             raise ValueError(
                 f"QualityRiskModel needs >=20 rows; got {len(rows)}"
             )
+
+        # Q.59.F.3 — imports diferidos para fora do startup.
+        import numpy as np
+        from sklearn.ensemble import GradientBoostingClassifier
+        from sklearn.metrics import average_precision_score, roc_auc_score
+        from sklearn.model_selection import train_test_split
 
         y = np.asarray([int(r.get("is_error", 0)) for r in rows], dtype=np.int32)
         if y.sum() == 0 or y.sum() == len(y):
@@ -187,6 +195,9 @@ class QualityRiskRetrainJob(RetrainJob):
         # solid metrics; this is a sanity check that predict_batch works.
         if not features or len(features) < 20:
             return {}
+        # Q.59.F.3 — imports diferidos.
+        import numpy as np
+        from sklearn.metrics import average_precision_score, roc_auc_score
         sample = features[:min(200, len(features))]
         probs = model.predict_proba_batch(sample)
         y_true = np.asarray([int(r.get("is_error", 0)) for r in sample])
