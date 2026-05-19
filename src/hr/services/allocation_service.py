@@ -5,10 +5,13 @@ ProdPlan ONE - Allocation Service
 Business logic for employee allocation.
 """
 
+import logging
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 from uuid import UUID
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -208,7 +211,7 @@ class AllocationService:
             })
             
             # Publish event
-            await publish_event(
+            await self._publish_best_effort(
                 Topics.EMPLOYEE_ALLOCATED,
                 EmployeeAllocatedEvent(
                     tenant_id=self.tenant_id,
@@ -232,7 +235,7 @@ class AllocationService:
             order_cost = sum(a["estimated_cost"] for a in order_allocations)
             order_hours = sum(a["allocated_hours"] for a in order_allocations)
             
-            await publish_event(
+            await self._publish_best_effort(
                 Topics.LABOR_COST_COMMITTED,
                 LaborCostCommittedEvent(
                     tenant_id=self.tenant_id,
@@ -321,7 +324,7 @@ class AllocationService:
         )
         self.session.add(allocation)
 
-        await publish_event(
+        await self._publish_best_effort(
             Topics.EMPLOYEE_ALLOCATED,
             EmployeeAllocatedEvent(
                 tenant_id=self.tenant_id,
@@ -491,6 +494,22 @@ class AllocationService:
             "allocations_count": len(allocations),
         }
     
+    async def _publish_best_effort(self, topic, event) -> None:
+        """Publica um evento sem deixar uma falha do bus rebentar a atribuição.
+
+        Q.55.E.1 — a `HRAllocation` já está na transacção da BD: é a fonte
+        de verdade. Um Kafka offline (dev) ou em outage (prod) não pode
+        reverter uma atribuição confirmada — o evento é só uma notificação
+        a jusante. A falha fica registada para reconciliação posterior.
+        """
+        try:
+            await publish_event(topic, event)
+        except Exception as exc:  # noqa: BLE001 — bus down não é fatal
+            logger.warning(
+                "publish_event(%s) falhou (best-effort, ignorado): %s",
+                topic, exc,
+            )
+
     def _is_uuid(self, value: str) -> bool:
         try:
             UUID(value)

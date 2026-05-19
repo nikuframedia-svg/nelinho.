@@ -117,6 +117,38 @@ async def test_allocation_without_schedule_resolves_operation_from_phase(
 
 
 @pytest.mark.asyncio
+async def test_allocation_survives_event_bus_down(fake_session, monkeypatch):
+    """Q.55.E.1 — Kafka offline não rebenta uma atribuição já confirmada.
+
+    O `publish_event` de `EMPLOYEE_ALLOCATED` é best-effort: a
+    `HRAllocation` na BD é a fonte de verdade.
+    """
+    async def _boom(*_a, **_k):
+        raise RuntimeError("KafkaConnectionError: unable to bootstrap")
+
+    monkeypatch.setattr(
+        "src.hr.services.allocation_service.publish_event", _boom
+    )
+    _feed(
+        fake_session,
+        (_order("Laminagem"), []),
+        (None, []),
+        (None, []),
+        (None, [Decimal("10")]),
+    )
+
+    service = AllocationService(fake_session, TENANT)
+    allocation = await service.create_single_allocation(
+        employee_id=uuid4(),
+        order_id="4272",
+        allocation_date=date(2026, 5, 19),
+    )
+
+    assert allocation.operation_id is not None
+    assert allocation in fake_session.added
+
+
+@pytest.mark.asyncio
 async def test_allocation_reuses_existing_phase_operation(fake_session):
     """Operação de routing já existe → reutiliza-a, não duplica."""
     existing = _operation(operation_code_for_phase("Laminagem"))
