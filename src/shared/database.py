@@ -158,43 +158,6 @@ async def get_session_context() -> AsyncGenerator[AsyncSession, None]:
             await session.close()
 
 
-class TenantSession:
-    """
-    Tenant-scoped session wrapper.
-    
-    Automatically filters queries by tenant_id.
-    """
-    
-    def __init__(self, session: AsyncSession, tenant_id: UUID):
-        self._session = session
-        self.tenant_id = tenant_id
-    
-    @property
-    def session(self) -> AsyncSession:
-        return self._session
-    
-    async def execute(self, statement, **kwargs):
-        """Execute a statement with automatic tenant filtering."""
-        return await self._session.execute(statement, **kwargs)
-    
-    async def commit(self):
-        await self._session.commit()
-    
-    async def rollback(self):
-        await self._session.rollback()
-    
-    def add(self, instance):
-        """Add instance, automatically setting tenant_id if applicable."""
-        if hasattr(instance, "tenant_id") and instance.tenant_id is None:
-            instance.tenant_id = self.tenant_id
-        self._session.add(instance)
-    
-    def add_all(self, instances):
-        """Add multiple instances, setting tenant_id on each."""
-        for instance in instances:
-            self.add(instance)
-
-
 async def init_db() -> None:
     """Initialize database tables."""
     async with engine.begin() as conn:
