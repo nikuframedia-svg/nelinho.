@@ -1,10 +1,10 @@
 /**
  * ConfiguracaoPage — reconstrução fiel do design NELO (page-configuracao.jsx).
  *
- * 9 tabs top-level: aprendizagem · custos · scheduling · routing · cura ·
- * moldes · alertas · trust · sistema. Cada parâmetro mostra valor, quem
- * definiu, quando, e botão reset ao default. ZERO MOCKS — cada secção liga
- * a um endpoint real:
+ * 12 tabs top-level: aprendizagem · custos · scheduling · routing · cura ·
+ * moldes · alertas · trust · sistema · governança · aprovisionamento ·
+ * custos-metas. Cada parâmetro mostra valor, quem definiu, quando, e botão
+ * reset ao default. ZERO MOCKS — cada secção liga a um endpoint real:
  *
  *   • aprendizagem — GET /v1/governance/learning/{rules,weights}
  *   • custos       — GET /v1/core/rates/* + GET /v1/profit/energy/real (PARTIAL)
@@ -15,9 +15,12 @@
  *   • alertas      — GET/PATCH /v1/config/quality (thresholds de alerta)
  *   • trust        — GET /v1/dqa/trust-index + GET/PATCH /v1/config/trust
  *   • sistema      — GET/PATCH /v1/config/system (idioma, moeda)
+ *   • governança   — GET/PATCH /v1/config/governance (auto-aprovação) [Q.53.J]
+ *   • aprovision.  — GET/PATCH /v1/config/supply (ROP, alertas rutura) [Q.53.J]
+ *   • custos-metas — GET/PATCH /v1/config/cost (throughput, margem)    [Q.53.J]
  *
  * Respostas PARTIAL (energy/real sem sensores) → empty state honesto via
- * useHonestEmptyState. Sprint Q.52.P.
+ * useHonestEmptyState. Sprint Q.52.P + Q.53.J.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -40,6 +43,9 @@ import {
   Target,
   Zap,
   TriangleAlert,
+  Scale,
+  PackageSearch,
+  Coins,
 } from 'lucide-react';
 import {
   PageHeader,
@@ -74,6 +80,10 @@ const TAB_IDS = [
   'alertas',
   'trust',
   'sistema',
+  // Q.53.J — categorias de config que já existem no backend mas não tinham aba.
+  'governanca',
+  'aprovisionamento',
+  'custos-metas',
 ] as const;
 type TabId = (typeof TAB_IDS)[number];
 
@@ -91,6 +101,13 @@ const TABS = [
   { id: 'alertas', label: 'Alertas', icon: <Bell size={13} /> },
   { id: 'trust', label: 'Trust', icon: <ShieldCheck size={13} /> },
   { id: 'sistema', label: 'Sistema', icon: <Globe size={13} /> },
+  { id: 'governanca', label: 'Governança', icon: <Scale size={13} /> },
+  {
+    id: 'aprovisionamento',
+    label: 'Aprovisionamento',
+    icon: <PackageSearch size={13} />,
+  },
+  { id: 'custos-metas', label: 'Metas de custo', icon: <Coins size={13} /> },
 ];
 
 // ─── Card / SectionHeader (geometria do design NELO) ─────────────────────────
@@ -150,7 +167,8 @@ interface ConfigKeyRow {
   key: string;
   label: string;
   hint: string;
-  dataType: Extract<ConfigDataType, 'int' | 'float' | 'bool' | 'string'>;
+  // Q.53.J — `currency` adicionado para a aba Custos (metas em €).
+  dataType: Extract<ConfigDataType, 'int' | 'float' | 'bool' | 'string' | 'currency'>;
 }
 
 function parseConfigValue(row: ConfigKeyRow, raw: string): unknown {
@@ -159,6 +177,7 @@ function parseConfigValue(row: ConfigKeyRow, raw: string): unknown {
     case 'int':
       return Number.parseInt(raw, 10);
     case 'float':
+    case 'currency':
       return Number.parseFloat(raw);
     case 'bool':
       return raw === 'true' || raw === '1';
@@ -1204,6 +1223,108 @@ const SYSTEM_KEYS: ConfigKeyRow[] = [
   },
 ];
 
+// ═══ Q.53.J — categorias de config governance / supply / cost ════════════════
+// As linhas mapeiam 1:1 os seeds de src/core/services/default_configs.py.
+
+const GOVERNANCA_KEYS: ConfigKeyRow[] = [
+  {
+    key: 'auto_approval.reschedule_order.enabled',
+    label: 'Auto-aprovar reagendamentos',
+    hint: 'WG07 — auto-aprova mudanças de plano baratas de risco baixo',
+    dataType: 'bool',
+  },
+  {
+    key: 'auto_approval.reschedule_order.risk_ceiling',
+    label: 'Tecto de risco — reagendamento',
+    hint: 'Só decisões até este nível auto-aprovam (LOW/MEDIUM/HIGH)',
+    dataType: 'string',
+  },
+  {
+    key: 'auto_approval.stock_adjustment.enabled',
+    label: 'Auto-aprovar ajustes de stock',
+    hint: 'Auto-aprova ajustes de stock dentro do tecto de risco',
+    dataType: 'bool',
+  },
+  {
+    key: 'auto_approval.stock_adjustment.risk_ceiling',
+    label: 'Tecto de risco — ajuste de stock',
+    hint: 'Nível máximo que auto-aprova ajustes de stock',
+    dataType: 'string',
+  },
+  {
+    key: 'auto_approval.model_promotion.enabled',
+    label: 'Auto-aprovar promoção de modelos ML',
+    hint: 'Auto-aprova a promoção de modelos ML de risco baixo',
+    dataType: 'bool',
+  },
+  {
+    key: 'auto_approval.model_promotion.risk_ceiling',
+    label: 'Tecto de risco — promoção de modelos',
+    hint: 'Nível máximo que auto-aprova promoção de modelos',
+    dataType: 'string',
+  },
+  {
+    key: 'timeline.hide_low_risk_default',
+    label: 'Esconder risco baixo por defeito',
+    hint: 'WG08 — anti-fadiga: esconde decisões LOW na timeline',
+    dataType: 'bool',
+  },
+  {
+    key: 'timeline.max_per_user_shown',
+    label: 'Máx. itens por revisor',
+    hint: 'WG08 — limita itens visíveis por revisor para evitar sobrecarga',
+    dataType: 'int',
+  },
+];
+
+const APROVISIONAMENTO_KEYS: ConfigKeyRow[] = [
+  {
+    key: 'safety_multiplier',
+    label: 'Multiplicador de segurança',
+    hint: 'MR05 — multiplicador sobre os pontos de encomenda calculados',
+    dataType: 'float',
+  },
+  {
+    key: 'stockout_critical_days',
+    label: 'Dias críticos até rutura',
+    hint: 'Abaixo deste nº de dias dispara MATERIAL_STOCKOUT_IMMINENT',
+    dataType: 'int',
+  },
+  {
+    key: 'adjust.auto_approve_threshold_qty',
+    label: 'Limite de ajuste sem aprovação',
+    hint: '|qty_delta| acima exige aprovação de governança (MR06/ST01)',
+    dataType: 'float',
+  },
+];
+
+const CUSTOS_METAS_KEYS: ConfigKeyRow[] = [
+  {
+    key: 'target.throughput_eur_day_min',
+    label: 'Meta mínima de throughput/dia',
+    hint: 'CS05 — Blueprint v2.0 §2.8 alvo €30K/dia',
+    dataType: 'currency',
+  },
+  {
+    key: 'target.throughput_eur_day_max',
+    label: 'Meta máxima de throughput/dia',
+    hint: 'Topo da banda de meta diária (€35K/dia)',
+    dataType: 'currency',
+  },
+  {
+    key: 'margin_default',
+    label: 'Margem por defeito',
+    hint: 'Margem fallback quando ProductPricing.sale_value falta (ex: 1.40)',
+    dataType: 'float',
+  },
+  {
+    key: 'target.unit_value_eur',
+    label: 'Valor por encomenda',
+    hint: 'Q.8 — €/encomenda para estimativas de backlog (€35K ÷ 14.9 barcos)',
+    dataType: 'currency',
+  },
+];
+
 // ═══ Página ══════════════════════════════════════════════════════════════════
 
 export default function ConfiguracaoPage() {
@@ -1296,6 +1417,39 @@ export default function ConfiguracaoPage() {
             category="system"
             rows={SYSTEM_KEYS}
             hint="O frontend usa PT-PT directamente nos componentes. Suporte i18n completo (en-US, de-DE) está diferido."
+          />
+        )}
+
+        {activeTab === 'governanca' && (
+          <ConfigKeysPanel
+            title="Governança & auto-aprovação"
+            subtitle="Quando o sistema decide sozinho vs quando pede aprovação humana"
+            icon={<Scale size={14} />}
+            category="governance"
+            rows={GOVERNANCA_KEYS}
+            hint="Os axiomas Spelke e o write-gate continuam a aplicar-se: estas chaves só controlam o que auto-aprova dentro do tecto de risco, nunca contornam o gate de aprovação humana."
+          />
+        )}
+
+        {activeTab === 'aprovisionamento' && (
+          <ConfigKeysPanel
+            title="Aprovisionamento"
+            subtitle="Pontos de encomenda, alertas de rutura e limites de ajuste de stock"
+            icon={<PackageSearch size={14} />}
+            category="supply"
+            rows={APROVISIONAMENTO_KEYS}
+            hint="Afetam o detetor de rutura e o cálculo de ROP — não tocam no stock real do ERP NELO."
+          />
+        )}
+
+        {activeTab === 'custos-metas' && (
+          <ConfigKeysPanel
+            title="Metas de custo"
+            subtitle="Metas de throughput diário, margem e valor por encomenda"
+            icon={<Coins size={14} />}
+            category="cost"
+            rows={CUSTOS_METAS_KEYS}
+            hint="A CoeficienteX é dinheiro (€) — estas metas alimentam o módulo de lucro, nunca o scheduler."
           />
         )}
 
