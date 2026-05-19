@@ -75,15 +75,18 @@ export interface UseRealtimeEventsResult {
   clear: () => void;
 }
 
+// Q.59.A — fall back to the dev tenant, not the zero UUID. The zero
+// UUID is rejected by design (`require_tenant_header`), so the old
+// fallback guaranteed a failed subscription. Matches `lib/api.ts`.
 function resolveTenantId(explicit?: string): string {
   if (explicit) return explicit;
   if (typeof window !== 'undefined') {
     return (
       window.localStorage.getItem('tenant_id') ||
-      '00000000-0000-0000-0000-000000000000'
+      '00000000-0000-0000-0000-000000000001'
     );
   }
-  return '00000000-0000-0000-0000-000000000000';
+  return '00000000-0000-0000-0000-000000000001';
 }
 
 export function useRealtimeEvents(

@@ -74,14 +74,31 @@ def test_events_rejects_empty_channels_csv(client):
     assert "at least one channel" in resp.json()["detail"]
 
 
-def test_events_returns_503_when_bridge_unhealthy(client):
-    """Bridge is never started in this test fixture — SSE endpoint
-    must answer 503 and explain the fallback, not hang forever."""
-    resp = client.get(
-        f"/v1/realtime/events?tenant_id={uuid4()}&channels=alerts",
-    )
-    assert resp.status_code == 503
-    assert "unhealthy" in resp.json()["detail"].lower()
+@pytest.mark.asyncio
+async def test_events_no_503_and_flags_degraded_when_bridge_unhealthy():
+    """Q.59.A — an unhealthy bridge (Kafka down) no longer answers 503.
+
+    `EventSource` cannot read an HTTP status, so a 503 just made the
+    browser reconnect forever — a single backend log showed 982 such
+    503s. The endpoint now always serves the stream; its `connected`
+    handshake carries `degraded: true` so the client leans on polling.
+
+    We call the route directly and pull only the FIRST SSE item — never
+    consume the (infinite) stream through `TestClient`, which deadlocks.
+    The bridge is never started here, so it is unhealthy by construction.
+    """
+    from src.shared.realtime.api import stream_events
+
+    RealtimeBridge.reset_for_tests()
+    assert RealtimeBridge.instance().healthy is False
+
+    # Before Q.59.A this raised HTTPException(503). It must not now.
+    response = await stream_events(tenant_id=uuid4(), channels="alerts")
+
+    first = await response.body_iterator.__anext__()
+    text = first.decode() if isinstance(first, (bytes, bytearray)) else str(first)
+    assert "connected" in text
+    assert '"degraded": true' in text
 
 
 def test_events_rejects_invalid_tenant_uuid(client):

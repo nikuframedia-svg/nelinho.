@@ -74,14 +74,13 @@ async def stream_events(
         ) from exc
 
     bridge = RealtimeBridge.instance()
-    if not bridge.healthy:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "Realtime bridge unhealthy (Kafka unreachable). "
-                "Fall back to polling."
-            ),
-        )
+    # Q.59.A — an unhealthy bridge (Kafka unreachable) used to answer 503.
+    # But `EventSource` cannot read an HTTP status, so the browser just
+    # reconnects forever — a single backend log showed 982 such 503s. We
+    # now always serve the stream; when degraded it carries only
+    # heartbeats and the frontend falls back to TanStack Query polling.
+    # `/v1/realtime/health` still reports the real bridge state.
+    degraded = not bridge.healthy
 
     sub_id, queue = bridge.subscribe(tenant_id, channels=channel_list)
 
@@ -90,12 +89,15 @@ async def stream_events(
             # Initial handshake — lets the browser know the stream is
             # live and tells it which subscription id we're using
             # (useful when debugging a missing event with journalctl).
+            # `degraded=True` means no live event source (Kafka down);
+            # the client should lean on polling for data.
             yield {
                 "event": "connected",
                 "data": json.dumps({
                     "subscription_id": sub_id,
                     "tenant_id": str(tenant_id),
                     "channels": channel_list,
+                    "degraded": degraded,
                 }),
             }
 
