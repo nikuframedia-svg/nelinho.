@@ -32,6 +32,16 @@ FRONTEND_DRIFT_RULES = {
     "Q61_07_no_direct_fetch": "Q.61.07",  # match contra texto do erro
 }
 
+# Frontend (regex direto sobre source) — chave logica + (glob, pattern):
+# Q.61.28 — `: any` no frontend baseline para nao crescer (TS strict
+# real soa overshoot — 259 ocorrencias). Touched-file pays.
+FRONTEND_REGEX_RULES = {
+    "Q61_28_any_annotation": (
+        ["frontend/src/**/*.ts", "frontend/src/**/*.tsx"],
+        r":\s*any\b",
+    ),
+}
+
 
 def count_python_violations(rule: str) -> int:
     """Conta violacoes de uma regra em src/ via ruff."""
@@ -63,12 +73,34 @@ def count_frontend_violations(needle: str) -> int:
     return sum(1 for line in proc.stdout.splitlines() if needle in line)
 
 
+def count_regex_in_globs(globs: list[str], pattern: str) -> int:
+    """Conta ocorrencias `pattern` (regex) em todos os ficheiros que batem
+    qualquer dos `globs` (relativos ao repo root). Ignora comentarios e
+    docstrings inline porque o regex apanha texto cru — bom para um
+    drift gate sensitivo a crescimento, no para auditoria fina."""
+    import re
+    rx = re.compile(pattern)
+    total = 0
+    for pat in globs:
+        for path in REPO_ROOT.glob(pat):
+            if not path.is_file():
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+            total += len(rx.findall(text))
+    return total
+
+
 def count_all() -> dict[str, int]:
     counts: dict[str, int] = {}
     for rule in PYTHON_DRIFT_RULES:
         counts[rule] = count_python_violations(rule)
     for key, needle in FRONTEND_DRIFT_RULES.items():
         counts[key] = count_frontend_violations(needle)
+    for key, (globs, pattern) in FRONTEND_REGEX_RULES.items():
+        counts[key] = count_regex_in_globs(globs, pattern)
     return counts
 
 
