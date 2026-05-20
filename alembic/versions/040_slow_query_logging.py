@@ -39,19 +39,21 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Threshold 1000ms — anything slower lands in the log. NELO's
-    # production load is small enough that this won't flood logs;
-    # most queries are <50ms (cf. existing http_request_duration
-    # histogram in metrics.py).
-    op.execute("ALTER SYSTEM SET log_min_duration_statement = 1000")
-    # Sample 100% of slow statements (capture is cheap when only
-    # exceptional rows hit the threshold).
-    op.execute("ALTER SYSTEM SET log_statement_sample_rate = 1.0")
-    # Apply without restart.
-    op.execute("SELECT pg_reload_conf()")
+    # Q.62.A.2 — `ALTER SYSTEM` é non-transactional em Postgres.
+    # Alembic envolve cada migration numa transacção implícita; com
+    # `autocommit_block()` saímos temporariamente da tx para correr o
+    # DDL non-tx, e voltamos depois.
+    with op.get_context().autocommit_block():
+        # Threshold 1000ms — anything slower lands in the log.
+        op.execute("ALTER SYSTEM SET log_min_duration_statement = 1000")
+        # Sample 100% of slow statements.
+        op.execute("ALTER SYSTEM SET log_statement_sample_rate = 1.0")
+        # Apply without restart.
+        op.execute("SELECT pg_reload_conf()")
 
 
 def downgrade() -> None:
-    op.execute("ALTER SYSTEM RESET log_min_duration_statement")
-    op.execute("ALTER SYSTEM RESET log_statement_sample_rate")
-    op.execute("SELECT pg_reload_conf()")
+    with op.get_context().autocommit_block():
+        op.execute("ALTER SYSTEM RESET log_min_duration_statement")
+        op.execute("ALTER SYSTEM RESET log_statement_sample_rate")
+        op.execute("SELECT pg_reload_conf()")

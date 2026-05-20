@@ -59,7 +59,7 @@ def upgrade() -> None:
 
     # --- core.tenant_configurations.valid_from ------------------------------
     op.alter_column(
-        "tenant_configurations", "valid_from",
+        "tenant_configuration", "valid_from",
         server_default=sa.func.now(),
         schema="core",
     )
@@ -84,7 +84,7 @@ def downgrade() -> None:
     op.execute("DROP INDEX IF EXISTS core.idx_operations_machine_id")
 
     op.alter_column("employees", "burden_rate", server_default=None, schema="core")
-    op.alter_column("tenant_configurations", "valid_from", server_default=None, schema="core")
+    op.alter_column("tenant_configuration", "valid_from", server_default=None, schema="core")
 
     op.alter_column("tenants", "locale", server_default=None, schema="core")
     op.alter_column("tenants", "currency_code", server_default=None, schema="core")

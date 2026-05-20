@@ -17,7 +17,8 @@ import sqlalchemy as sa
 
 
 revision = '027_decision_rejection_category'
-down_revision = '026_preference_rule_review_notes'
+# Q.62.A.1 — rebase: 028a cria governance.approval, esta migration altera-a.
+down_revision = '028a_q62_governance_orphan'
 branch_labels = None
 depends_on = None
 

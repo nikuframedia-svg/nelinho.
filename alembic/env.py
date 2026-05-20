@@ -58,12 +58,19 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection: Connection) -> None:
-    """Run migrations with a connection."""
+    """Run migrations with a connection.
+
+    Q.62.A.3 — `include_schemas=True` é necessário para `alembic check`
+    e autogenerate detectarem tabelas em schemas non-default
+    (core/governance/plan/etc). Sem isto, falsos positivos massivos
+    quando o modelo tem schema explícito.
+    """
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
         compare_type=True,
         compare_server_default=True,
+        include_schemas=True,
     )
 
     with context.begin_transaction():

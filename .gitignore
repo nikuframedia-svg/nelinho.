@@ -137,6 +137,9 @@ legacy/__pycache__/
 # bloqueiam o commit. Decisao final (commit vs ignorar) fica para Q.62.
 frontend/src/lib/api/generated/
 
+# Q.62.A.1 — pg_dump backups (rotativos, grandes).
+backups/
+
 # Excel temp files (Office lock files)
 ~$*.xlsx
 ~$*.xls
