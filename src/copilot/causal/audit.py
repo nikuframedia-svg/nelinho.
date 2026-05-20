@@ -98,7 +98,9 @@ async def persist_chain_audit(
         model=None,
         validation_passed=verification.passed,
     )
-    session.add(msg)
+    # Q.66.B.3: CopilotMessage e o registo da conversa LLM (auditoria
+    # interna do copiloto, chain + verification), nao state de governance.
+    session.add(msg)  # noqa: audit_coverage  # copilot conversation message, not gov state
     return msg
 
 

@@ -40,6 +40,7 @@ from src.shared.database import get_session
 from src.shared.auth.jwt_handler import get_current_user, UserContext
 from src.shared.auth.rbac import PermissionDependency, Permission
 from src.shared.config import settings
+from src.governance.audit_service import audit_change
 
 logger = logging.getLogger(__name__)
 
@@ -213,8 +214,25 @@ async def _run_copilot_action(
             status="PENDING",
         )
         session.add(pr)
-        await session.flush()
-        
+        await session.flush()  # garante pr.id populated antes do audit
+
+        # Q.66.B.3: CopilotDecisionPR e proposta de mudanca que entra no
+        # workflow de aprovacao (PENDING → APPROVED/REJECTED) — state
+        # autoritativo de governance, audita.
+        await audit_change(
+            session,
+            tenant_id=tenant_id,
+            entity_type="copilot_decision_pr",
+            entity_id=pr.id,
+            action="INSERT",
+            new_values={
+                "suggestion_id": str(request.suggestion_id),
+                "title": pr.title,
+                "status": pr.status,
+            },
+            reason="copilot criou decision PR a partir de suggestion",
+        )
+
         return {
             "action_id": str(pr.id),
             "status": "created",
@@ -474,7 +492,9 @@ async def submit_user_feedback(
         text=text or None,
         context=context if isinstance(context, dict) else None,
     )
-    session.add(row)
+    # Q.66.B.3: feedback do utilizador (thumbs up/down) e dado de
+    # aprendizagem para tuning do copiloto, nao state de governance.
+    session.add(row)  # noqa: audit_coverage  # user feedback for learning, not gov state
     await session.commit()
 
     return {
@@ -945,7 +965,9 @@ async def create_conversation(
         actor_id=user.user_id,
         title=title or "Nova conversa",
     )
-    session.add(conversation)
+    # Q.66.B.3: conversa do copiloto (chat container), nao state de
+    # governance. Mensagens vivem em copilot.message com correlation_id.
+    session.add(conversation)  # noqa: audit_coverage  # copilot chat container, not gov state
     # Commit explícito: `get_session` só auto-commita se `session.new/dirty/
     # deleted` tiverem conteúdo no fim do request — e `flush()` esvazia
     # `session.new`. Sem este commit a conversa era inserida e logo
@@ -1052,7 +1074,8 @@ async def send_message(
         content_text=request.user_query,
         content_structured=None,
     )
-    session.add(user_message)
+    # Q.66.B.3: mensagem de chat LLM, nao state de governance.
+    session.add(user_message)  # noqa: audit_coverage  # chat message, not gov state
     await session.flush()
 
     # Memória multi-turno: o `process_ask` lê/escreve o `ConversationStore`
@@ -1077,7 +1100,9 @@ async def send_message(
         model=audit_data.get("model") or response.meta.get("model"),
         validation_passed=response.meta.get("validation_passed"),
     )
-    session.add(copilot_message)
+    # Q.66.B.3: resposta LLM (latencia/model/validation) — chat history,
+    # nao state de governance.
+    session.add(copilot_message)  # noqa: audit_coverage  # chat message, not gov state
     
     # Atualizar last_message_at da conversa
     conversation.last_message_at = datetime.now(timezone.utc)

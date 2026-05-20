@@ -298,7 +298,9 @@ async def ingest_document(
             chunk_metadata=metadata,
         )
         
-        session.add(chunk)
+        # Q.66.B.3: chunk RAG (pgvector cache para retrieval do copiloto),
+        # nao state autoritativo de governance — cache derivada de documentos.
+        session.add(chunk)  # noqa: audit_coverage  # RAG cache chunk, not gov state
         created_count += 1
     
     await session.flush()

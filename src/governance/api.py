@@ -812,7 +812,11 @@ async def update_rule_firing_outcome(
         # we keep accepted_by NULL but still record the notes/outcome.
         pass
 
-    await db.execute(
+    # Q.66.B.3: RuleFiring e ELE PROPRIO um audit-trail row (registo de
+    # quando uma rule disparou); este UPDATE so altera outcome/accepted_by/
+    # notes na mesma row de audit — record_rule_firing ja foi a fonte
+    # original. Auto-audit via colunas accepted_at/accepted_by/outcome.
+    await db.execute(  # noqa: audit_coverage  # audit-trail row self-update (outcome/notes)
         update(RuleFiring)
         .where(RuleFiring.id == firing_id)
         .values(

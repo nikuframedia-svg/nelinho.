@@ -340,9 +340,12 @@ class ActionExecutor:
                 executed_at=datetime.now(timezone.utc),
                 rollback_until=rollback_until,
             )
-            self.session.add(audit_log)
+            # Q.66.B.3: CopilotActionLog vive em copilot.action_log (audit
+            # interno do copilot para rollback de execucoes), nao em
+            # core.audit_log — nao e state autoritativo de governance.
+            self.session.add(audit_log)  # noqa: audit_coverage  # copilot internal action log, not gov state
             await self.session.flush()
-            
+
             # Publish Kafka event
             if self.kafka_producer:
                 event = EventBase(

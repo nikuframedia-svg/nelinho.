@@ -1413,9 +1413,12 @@ IMPORTANTE:
             actor_role=self.actor_role,
         )
         
-        self.session.add(suggestion)
+        # Q.66.B.3: CopilotSuggestion e proposta do LLM (texto + citations
+        # + validation) para o utilizador agir — quando vira CopilotDecisionPR
+        # ou rule firing, esse e que gera audit em governance.
+        self.session.add(suggestion)  # noqa: audit_coverage  # LLM suggestion, not gov state
         await self.session.flush()
-        
+
         return {
             "suggestion_id": str(suggestion_id),
             "correlation_id": str(correlation_id),

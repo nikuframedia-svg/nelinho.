@@ -248,7 +248,10 @@ class CostService:
             assumptions=result.assumptions,
         )
         
-        self.session.add(calculation)
+        # Q.66.B.3: CostCalculation e resultado de calculo COGS determinista
+        # (versionado por calculation_version), nao state autoritativo de
+        # governance — re-correr o calculo gera nova row, nao mutacao.
+        self.session.add(calculation)  # noqa: audit_coverage  # COGS calc result, not gov state
         await self.session.flush()
         return calculation
     

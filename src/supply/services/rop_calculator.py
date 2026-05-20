@@ -168,7 +168,10 @@ async def recompute_rop_configs(
                 safety_stock=safety_stock,
                 z_score=z_score,
             )
-            session.add(row)
+            # Q.66.B.3: ROPConfig e resultado calculado de reorder point
+            # (avg_daily_demand x lead_time x z-score), nao state autoritativo
+            # — re-correr o calculator regenera. Audit so em adopcao manual.
+            session.add(row)  # noqa: audit_coverage  # ROP calc result, not gov state
         else:
             existing.avg_daily_demand = avg_daily_demand
             existing.lead_time_days = lead_time_days
