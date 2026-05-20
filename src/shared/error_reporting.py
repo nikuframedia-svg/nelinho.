@@ -156,9 +156,7 @@ def capture_exception(exc: BaseException, **kwargs: Any) -> None:
     try:
         import sentry_sdk
         sentry_sdk.capture_exception(exc, **kwargs)
-    except Exception:
-        # Reporting failure must NEVER cascade — the call site already
-        # decided to swallow the original exception.
+    except Exception:  # noqa: S110  Reporting failure must NEVER cascade — call site already swallowed
         pass
 
 

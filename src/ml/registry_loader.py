@@ -53,14 +53,14 @@ def _instrumented_predictor(fn: Callable, *, model_name: str) -> Callable:
                     model_name=model_name,
                     error_type=type(exc).__name__,
                 ).inc()
-            except Exception:  # pragma: no cover — defensive
+            except Exception:  # noqa: S110  Q.61.06: metrics best-effort; never cascade
                 pass
             raise
         finally:
             elapsed_ms = (time.perf_counter() - started) * 1000.0
             try:
                 ml_inference_latency_ms.labels(model_name=model_name).observe(elapsed_ms)
-            except Exception:  # pragma: no cover — defensive
+            except Exception:  # noqa: S110  Q.61.06: metrics best-effort; never cascade
                 pass
 
     wrapped.__name__ = getattr(fn, "__name__", "predict")

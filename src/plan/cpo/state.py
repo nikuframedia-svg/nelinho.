@@ -201,7 +201,7 @@ class FactoryState:
                     bump_silent_fallback(
                         "factory_state", "semantic_layer_unavailable",
                     )
-                except Exception:  # pragma: no cover — defensive
+                except Exception:  # noqa: S110  Q.61.06: metrics best-effort
                     pass
                 return cls(
                     tenant_id=tenant_id,

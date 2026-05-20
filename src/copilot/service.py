@@ -243,7 +243,7 @@ class CopilotService:
                 # opcional — recuperar a sessão para o resto do pedido.
                 try:
                     await self.session.rollback()
-                except Exception:
+                except Exception:  # noqa: S110  Q.61.06: rollback during recovery; nothing else to do
                     pass
 
         # 6. Render prompt (com fact pack se kpi_snapshot disponível)

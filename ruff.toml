@@ -35,6 +35,11 @@ select = [
     "PLE",   # pylint errors — REAL BUGS
     "RUF",   # ruff specific — mostly real bugs
     "ASYNC", # async misuses
+    # Q.61.06 — stop-the-bleeding (Larson De-risk). BLE001 (370 violations
+    # today) e demasiado grande para fix em massa; vive num drift gate
+    # separado em scripts/lint_drift_gate.py. Estas duas sao manageable:
+    "S110",  # try-except-pass — 10 sites, todos marcados # noqa com razao
+    "T201",  # print() em src/ — 1 site (CLI tool), marcado # noqa
 ]
 
 # Allow common patterns that aren't real bugs in this codebase

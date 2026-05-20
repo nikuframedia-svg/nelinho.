@@ -284,7 +284,7 @@ def main():
         parser.print_help()
         sys.exit(1)
     
-    print(json.dumps(result, indent=2))
+    print(json.dumps(result, indent=2))  # noqa: T201  CLI tool output to stdout
 
 
 if __name__ == "__main__":
