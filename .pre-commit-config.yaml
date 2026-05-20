@@ -59,3 +59,15 @@ repos:
         language: system
         pass_filenames: false
         files: ^tests/.*\.py$
+
+      # --- Q.66.C.2 — anti src+tests no mesmo commit (test-cheating) ---
+      # Padrao Anthropic: agente AI ajusta src/X/Y.py E tests/X/test_Y.py
+      # no mesmo commit, deixando o test "verde" mesmo com behaviour
+      # mudado. Match por top-level modulo (src/governance/ vs
+      # tests/governance/). Escape: `ALLOW_TEST_COEVOLUTION=1` para TDD.
+      - id: lint-src-tests-coupling
+        name: anti src+tests same commit (test-cheating defence)
+        entry: pwsh -NoProfile -Command ".\.venv\Scripts\python.exe tools/lint_src_tests_coupling.py"
+        language: system
+        pass_filenames: true
+        files: ^(src/|tests/).+\.py$
