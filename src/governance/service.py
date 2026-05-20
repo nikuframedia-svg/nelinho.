@@ -358,14 +358,24 @@ class GovernanceService:
             # outer commit lands. We don't touch the bus here.
             return self._run_to_dict(decision_run), event
 
+        from src.shared.observability import get_trace_id
         from src.shared.outbox_models import EventOutbox
+
+        # Q.61.12 — injecta trace_id no payload para correlacao
+        # request HTTP -> event -> consumer. Quando Q.61.18 adicionar
+        # coluna correlation_id no EventOutbox, esta linha migra para
+        # campo dedicado; ate la, o trace_id viaja no JSONB.
+        outbox_payload = dict(event.payload)
+        trace_id = get_trace_id()
+        if trace_id is not None:
+            outbox_payload["trace_id"] = trace_id
 
         self.db.add(EventOutbox(
             tenant_id=self.tenant_id,
             aggregate_id=decision_run.id,
             aggregate_type="decision_run",
             event_type="DECISION_PROPOSED",
-            payload=event.payload,
+            payload=outbox_payload,
             status="pending",
         ))
 

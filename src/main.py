@@ -313,6 +313,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Q.61.12 — trace_id end-to-end. Extrai X-Request-Id (ou gera UUID),
+# mete em ContextVar; call-sites lem via `get_trace_id()`. Ecoa no
+# response header para o cliente correlacionar com network logs.
+# Registado ANTES de CORS para que a echo ainda chegue em respostas
+# de erro.
+from src.shared.observability import TraceIdMiddleware
+app.add_middleware(TraceIdMiddleware)
+
 # CORS middleware. Sprint S6 / Φ5: was `allow_methods=["*"]` and
 # `allow_headers=["*"]` together with `allow_credentials=True`. That combo is
 # specifically forbidden by the CORS spec (browsers reject credentialed wildcard

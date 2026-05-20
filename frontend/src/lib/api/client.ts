@@ -146,6 +146,18 @@ export async function request<T>(
   headers['X-Tenant-Id'] = tenantId;
   headers['X-User-Id'] = userId;
   headers['X-User-Role'] = userRole;
+
+  // Q.61.12 — trace_id end-to-end. crypto.randomUUID e standard em
+  // browsers modernos (Chrome 92+, Firefox 95+, Safari 15.4+). Backend
+  // middleware extrai, propaga via ContextVar; logs/audit/outbox
+  // correlacionam pelo mesmo id. Echo no response (cliente pode
+  // tracear no DevTools network).
+  if (!headers['X-Request-Id']) {
+    headers['X-Request-Id'] =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : Math.random().toString(36).slice(2) + Date.now().toString(36);
+  }
   
   try {
     // Use circuit breaker to prevent cascading failures
