@@ -201,21 +201,24 @@ export const ordersApi = {
     if (params.sortBy) queryParams.set('sortBy', params.sortBy);
     if (params.sortOrder) queryParams.set('sortOrder', params.sortOrder);
     
-    return request<OrdersResponse>(`/api/orders?${queryParams.toString()}`);
+    // Q.61.32a — migrado de /api/orders para /v1/plan/orders.
+    return request<OrdersResponse>(`/v1/plan/orders?${queryParams.toString()}`);
   },
-  
+
   /**
    * Get a single order by ID.
    */
   get: (id: string): Promise<Order> =>
-    request<Order>(`/api/orders/${id}`),
-  
+    // Q.61.32a — migrado de /api/orders/{id} para /v1/plan/orders/{id}.
+    request<Order>(`/v1/plan/orders/${id}`),
+
   /**
    * Get aggregate statistics for all orders (uses full database).
    * This is NOT paginated - returns totals from all 27,380 orders.
    */
   stats: (): Promise<OrdersStats> =>
-    request<OrdersStats>('/api/orders/stats'),
+    // Q.61.32a — migrado de /api/orders/stats para /v1/plan/orders/stats.
+    request<OrdersStats>('/v1/plan/orders/stats'),
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════

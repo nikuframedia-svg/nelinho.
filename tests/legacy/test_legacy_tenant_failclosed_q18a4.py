@@ -59,8 +59,9 @@ def client(monkeypatch):
 # ---------------------------------------------------------------------------
 
 LEGACY_GET_PATHS = [
-    "/api/orders",
-    "/api/orders/stats",
+    # Q.61.32a — /api/orders e /api/orders/stats migrados para
+    # /v1/plan/orders e /v1/plan/orders/stats. Cobertura fail-closed
+    # vive agora em tests/plan/test_orders_api_migrated_q61_32a.py.
     "/api/allocations",
     "/api/allocations/stats",
     "/api/errors",
@@ -93,21 +94,25 @@ def test_valid_dev_tenant_passes_dep_gate(client):
 
     The handler may still 5xx because we stubbed the session, but the
     gate itself must accept the request — that's what we're asserting.
+    Q.61.32a — exemplo passa a usar `/api/allocations` (orders migrou).
     """
-    resp = client.get("/api/orders", headers={"X-Tenant-Id": DEV_TENANT})
+    resp = client.get("/api/allocations", headers={"X-Tenant-Id": DEV_TENANT})
     # 200 if the handler tolerates the AsyncMock session, otherwise 5xx.
     # The point is "not 401" — the dep let it through.
     assert resp.status_code != 401, resp.text
 
 
 def test_production_requires_jwt(monkeypatch):
-    """Legacy endpoints in production must require a JWT — header alone is rejected."""
+    """Legacy endpoints in production must require a JWT — header alone is rejected.
+
+    Q.61.32a — exemplo passa a usar `/api/allocations` (orders migrou).
+    """
     monkeypatch.setattr(settings, "environment", "production", raising=False)
     app = FastAPI()
     app.include_router(legacy_router)
     app.dependency_overrides[get_session] = _stub_session
     c = TestClient(app, raise_server_exceptions=False)
 
-    resp = c.get("/api/orders", headers={"X-Tenant-Id": DEV_TENANT})
+    resp = c.get("/api/allocations", headers={"X-Tenant-Id": DEV_TENANT})
     assert resp.status_code == 401, resp.text
     assert "JWT" in resp.json().get("detail", "")
