@@ -171,3 +171,8 @@ mutmut-cache/
 .mutmut-cache/
 html/  # mutmut html report output
 
+# Q.61.26 — orval generated TS hooks (regerar via `npm run gen:api`).
+# Decisao em Q.62: commitar ou nao. Por agora gitignored para nao
+# poluir o diff dos sub-sprints.
+frontend/src/lib/api/generated/
+
