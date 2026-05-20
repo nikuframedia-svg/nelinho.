@@ -6,6 +6,7 @@ Async SQLAlchemy 2.0 setup with PostgreSQL.
 Includes multi-tenancy base model and session management.
 """
 
+import logging
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import AsyncGenerator, Optional
@@ -21,6 +22,8 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from .config import settings
+
+logger = logging.getLogger(__name__)
 
 # Naming convention for constraints (helps with migrations)
 NAMING_CONVENTION = {
@@ -159,7 +162,49 @@ async def get_session_context() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def init_db() -> None:
-    """Initialize database tables."""
+    """Verify schema is up-to-date with Alembic migrations (Q.61.16).
+
+    Production path: `alembic upgrade head` corre ANTES do uvicorn
+    arrancar. Esta funcao apenas verifica que o DB tem uma revision
+    aplicada; se nao tem, crash early em vez de criar silenciosamente.
+
+    Pre-Q.61.16 isto fazia `Base.metadata.create_all` em todos os
+    arranques — mascarava drift entre Alembic e o modelo SQLA (ex:
+    se um modelo novo nao estivesse em `alembic/env.py`, create_all
+    criava a tabela e producao via `alembic upgrade head` deixava-a
+    orfa). Q.61.14 fechou o lado da deteccao (model_registry); Q.61.16
+    fecha o lado da producao.
+
+    Para tests/fixtures/bootstrap_dev: usar `init_db_create_all()`.
+    """
+    from alembic.runtime.migration import MigrationContext
+
+    async with engine.connect() as conn:
+        def _check_revision(sync_conn):
+            ctx = MigrationContext.configure(sync_conn)
+            return ctx.get_current_revision()
+
+        rev = await conn.run_sync(_check_revision)
+
+    if rev is None:
+        raise RuntimeError(
+            "DB schema not initialized (alembic_version table empty or "
+            "absent). Run `alembic upgrade head` before starting the app."
+        )
+    logger.info("DB schema at revision %s", rev)
+
+
+async def init_db_create_all() -> None:
+    """Test/dev path — cria tabelas via metadata, sem Alembic.
+
+    Usado por:
+      * tests (fixtures async)
+      * scripts/bootstrap_dev_full.py (dev fresh setup)
+      * scripts ad-hoc que precisam de schema rapido
+
+    NUNCA chamar de producao. Use `alembic upgrade head` antes do
+    uvicorn arrancar.
+    """
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
