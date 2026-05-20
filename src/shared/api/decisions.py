@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, and_, or_, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.models.audit import AuditLog
+from src.governance.audit_service import audit_change
 from src.shared.auth.headers import require_tenant_header, require_user_uuid
 from src.shared.database import get_session
 from src.shared.models.governance import SharedDecisionRun, DecisionApproval, DecisionStatus, ApprovalStatus
@@ -116,12 +116,13 @@ async def propose_decision(
         # Q.61.09 — NAO criamos DecisionApproval no propose. A tabela
         # decision_approvals contem so aprovacoes reais. Approvers pendentes
         # sao derivados de `required_approver_roles - users_que_ja_agiram`.
-        audit = AuditLog(
+        # Q.61.18 — audit via service unificado (em vez de inline).
+        await audit_change(
+            session,
             tenant_id=tenant_id,
             entity_type="decision_run",
             entity_id=decision.id,
             action="INSERT",
-            old_values=None,
             new_values={
                 "title": request.title,
                 "action_type": request.action_type,
@@ -131,7 +132,6 @@ async def propose_decision(
             actor_id=user_id,
             reason="decision proposed",
         )
-        session.add(audit)
 
     from src.shared.auth.rbac import SOD_POLICIES, Role
 
