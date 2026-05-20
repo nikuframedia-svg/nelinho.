@@ -70,6 +70,14 @@ Step "ruff check src/" {
     if ($LASTEXITCODE -ne 0) { throw "ruff falhou" }
 }
 
+Step "lint-imports (module boundary contracts)" {
+    # Q.66.A.1 — import-linter (config em pyproject.toml). 3 contracts:
+    # shared layer base, cpo n.o importa profit, governance n.o importa plan.
+    $env:PYTHONPATH = "."
+    & .\.venv\Scripts\lint-imports.exe
+    if ($LASTEXITCODE -ne 0) { throw "lint-imports falhou" }
+}
+
 if (-not $QuickPython) {
     Step "pytest tests/governance + tests/shared (canary)" {
         & .\.venv\Scripts\python.exe -m pytest tests/governance/ tests/shared/ -q --tb=no

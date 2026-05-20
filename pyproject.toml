@@ -1,0 +1,142 @@
+# Q.66.A.1 — import-linter setup.
+#
+# Este ficheiro existe primariamente para alojar a configuração do
+# `import-linter` (module boundaries enforcement no CI). Outros
+# tools (ruff, pytest, alembic) mantêm os seus ficheiros próprios
+# por compatibilidade histórica e para evitar churn fora deste
+# touch-map.
+#
+# Os 3 contracts abaixo são o setup INICIAL (Q.66 Fase 1). A intenção
+# era ter um contract `layers` apertado com `src.shared` em baixo, mas
+# `lint-imports` reportou 100 violations só nessa direcção (cross-domain
+# imports), o que tornaria o gate red dia 1. Optámos por:
+#
+#   - Contract 1: `forbidden` cirúrgico — `src.shared` não importa
+#     domínios. Esta é a invariante mínima defensável; os 8 domínios
+#     elegíveis ficam livres de se importar entre si até Q.66 Fase 4
+#     (boundary refactors) tratar disso.
+#   - Contracts 2 e 3: invariantes do CLAUDE.md (CoeficienteX em
+#     src.profit ⊄ scheduler; governance é meta-layer sobre plan).
+#     Ambos têm `ignore_imports` para as violations já existentes —
+#     o gate apanha REGRESSÕES (novos imports cross-boundary), não
+#     pede refactor agora.
+#
+# Ver `agent_docs/sprint_history.md` (Q.66.A.1) para contexto.
+
+[tool.importlinter]
+root_packages = ["src"]
+include_external_packages = false
+
+# Contract 1 — src.shared é a base layer.
+# Invariante: shared declara modelos, infra de DB, auth headers, etc.
+# Nunca deve precisar de importar lógica de domínio. Hoje passa
+# limpa em quase tudo; 2 violations conhecidas com `ignore_imports`.
+[[tool.importlinter.contracts]]
+name = "shared não importa domínios"
+type = "forbidden"
+# allow_indirect_imports: o gate só falha em imports DIRECTOS cross-
+# boundary. Caminhos transitivos (A→B→C) onde A só toca B legítimo
+# não contam — caso contrário cada `shared.events.handlers` que vai
+# a `plan` e dali a um modelo de outro domínio criava 10 violations.
+allow_indirect_imports = "true"
+source_modules = ["src.shared"]
+forbidden_modules = [
+    "src.copilot",
+    "src.governance",
+    "src.plan",
+    "src.quality",
+    "src.profit",
+    "src.workforce",
+    "src.factory_data_product",
+    "src.supply",
+    "src.hr",
+    "src.explain",
+    "src.improve",
+    "src.twin",
+    "src.sandbox",
+    "src.reports",
+    "src.search",
+    "src.adapters",
+    "src.diagnostics",
+]
+# Conhecidas — 2 fontes intencionais cruzam para domínio:
+#   1. `src.shared.model_registry` (Q.61.14) — agrega Base.metadata
+#      de TODOS os domínios para `alembic check`. Por design.
+#   2. `src.shared.scheduler` (god-file, Q.66 Fase 5) — APScheduler
+#      jobs que orquestram domínios (copilot, governance, plan,
+#      supply, explain, adapters). Fase 5 do plano vai partir este
+#      ficheiro em workers por domínio.
+# Wildcards apanham TODOS os imports a partir destes 2 módulos.
+# Resto da lista são imports directos legítimos (event handlers que
+# despacham para domínios; capabilities que precisa de saber o que
+# o factory_data_product expõe; decorators que aplicam políticas).
+# Q.66 Fase 4 (boundary refactors) pode inverter alguns via DI.
+ignore_imports = [
+    "src.shared.model_registry -> **",
+    "src.shared.scheduler -> **",
+    "src.shared.api.capabilities -> src.factory_data_product.config",
+    "src.shared.api.capabilities -> src.factory_data_product.models.meta",
+    "src.shared.api.decisions -> src.governance.audit_service",
+    "src.shared.decorators -> src.governance.ab_framework",
+    "src.shared.decorators -> src.governance.models",
+    "src.shared.events.handlers -> src.hr.services.allocation_service",
+    "src.shared.events.handlers -> src.plan.services.scheduling_service",
+    "src.shared.events.handlers -> src.profit.services.cost_service",
+    "src.shared.events.handlers -> src.profit.services.pricing_service",
+    "src.shared.explanation_engine -> src.plan.models.schedule",
+]
+
+# Contract 2 — CPO (scheduler determinístico) não importa profit.
+# CLAUDE.md invariant #5: CoeficienteX é DINHEIRO €, vive em
+# src.profit, nunca deve aparecer no scheduler. Hoje há 1 caminho
+# indirecto (worker -> api.cpo -> profit.models.pricing) — registado.
+[[tool.importlinter.contracts]]
+name = "cpo não importa profit"
+type = "forbidden"
+# allow_indirect_imports: o gate só falha em imports DIRECTOS cross-
+# boundary. Caminhos transitivos (A→B→C) onde A só toca B legítimo
+# não contam — caso contrário cada `shared.events.handlers` que vai
+# a `plan` e dali a um modelo de outro domínio criava 10 violations.
+allow_indirect_imports = "true"
+source_modules = ["src.plan.cpo"]
+forbidden_modules = ["src.profit"]
+# Conhecida — `src.plan.api.cpo` (a camada API) importa
+# `profit.models.pricing` para apresentar custo no response do
+# endpoint. O scheduler (`scheduler_run`, `worker`) só toca em API
+# para reusar tipos — não usa pricing directamente. Aceitável
+# como tech debt registada; Q.66 Fase 4 pode mover os tipos
+# necessários para fora de api.cpo.
+ignore_imports = [
+    "src.plan.cpo.worker -> src.plan.api.cpo",
+    "src.plan.cpo.scheduler_run -> src.plan.api.cpo",
+]
+
+# Contract 3 — Governance (YAML policy, audit, rules) é meta-layer:
+# define políticas sobre planeamento, não chama o planeamento. A
+# direcção correcta é src.plan → src.governance (dispatchers).
+[[tool.importlinter.contracts]]
+name = "governance não importa plan"
+type = "forbidden"
+# allow_indirect_imports: o gate só falha em imports DIRECTOS cross-
+# boundary. Caminhos transitivos (A→B→C) onde A só toca B legítimo
+# não contam — caso contrário cada `shared.events.handlers` que vai
+# a `plan` e dali a um modelo de outro domínio criava 10 violations.
+allow_indirect_imports = "true"
+source_modules = ["src.governance"]
+forbidden_modules = ["src.plan"]
+# Conhecidas — governance.action_executor e preference_learning
+# chamam serviços do plan (commits, mold_service, scheduling_service)
+# para *executar* acções aprovadas. Há um argumento legítimo: a
+# direcção plan→governance é para o gate, e governance→plan é só
+# para o executor (output side). Q.66 Fase 4 pode inverter via
+# event bus / interface no plan.
+ignore_imports = [
+    "src.governance.action_executor -> src.plan.services.mold_service",
+    "src.governance.action_executor -> src.plan.services.scheduling_service",
+    "src.governance.api -> src.plan.cpo.commits",
+    "src.governance.preference_learning.adaptive_weights -> src.plan.cpo.commits",
+    "src.governance.preference_learning.detector -> src.plan.cpo.commits",
+    "src.governance.preference_learning.dpo_dataset_builder -> src.plan.cpo.commits",
+    "src.governance.preference_learning.learning_metrics_service -> src.plan.cpo.commits",
+    "src.governance.service -> src.plan.cpo.commits",
+]

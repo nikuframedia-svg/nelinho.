@@ -84,6 +84,12 @@ hypothesis>=6.92  # property-based testing — used by tests/plan/test_preview_d
 # ruff.toml). Pinned so CI and local agree on the rule set.
 ruff==0.15.12
 
+# Q.66.A.1 — import-linter enforces module boundary contracts (shared
+# base layer, cpo ⊄ profit, governance ⊄ plan). Config em pyproject.toml.
+# Corre via `lint-imports` no CI (após ruff, antes de pytest) e em
+# scripts/verify.ps1.
+import-linter>=2.0,<3
+
 # Mutation testing — Q.61.05. Corre via scripts/mutation_test.ps1 contra
 # os modulos criticos (CPO, YAML policy, decisions). Coverage > 90% pode
 # esconder mutation < 35% (Anthropic post-mortem Abril 2026). Mutmut e

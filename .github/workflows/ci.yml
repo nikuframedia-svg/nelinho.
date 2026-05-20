@@ -36,6 +36,16 @@ jobs:
       - name: Lint (ruff)
         run: ruff check src/ tests/ alembic/ scripts/ --no-fix
 
+      # Q.66.A.1 — import-linter enforces module boundary contracts
+      # (config in pyproject.toml). 3 contracts: shared layer base,
+      # cpo not importing profit, governance not importing plan.
+      # Catches new cross-boundary imports; known violations have
+      # explicit `ignore_imports` entries.
+      - name: Lint imports (import-linter)
+        env:
+          PYTHONPATH: .
+        run: lint-imports
+
       - name: Gate de revisao (Q.60.D)
         # Seccoes automatizaveis do nelinho-review (hoje: vocabulario PT-PT).
         run: python scripts/review_gate.py
