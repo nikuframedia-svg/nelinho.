@@ -47,3 +47,15 @@ repos:
         language: system
         pass_filenames: false
         files: ^(src/|frontend/src/).+\.(py|ts|tsx)$
+
+      # --- Q.66.C.1 — bloqueia @pytest.mark.skip/.xfail sem GH issue link ---
+      # Anti-test-cheating: agente AI nao pode silenciar testes para fazer
+      # "verde". Pre-commit local + CI ambos correm. `--no-verify` continua
+      # uma flag client-side (sem hook fiavel para bloquear); o gate real
+      # vive no CI do GitHub que sempre corre, independente da flag.
+      - id: lint-skip-tests
+        name: pytest.mark.skip sem GH issue
+        entry: pwsh -NoProfile -Command ".\.venv\Scripts\python.exe tools/lint_skip_tests.py tests/"
+        language: system
+        pass_filenames: false
+        files: ^tests/.*\.py$
