@@ -44,6 +44,7 @@ MODULES = sorted([
     "src.improve",
     "src.infrastructure",
     "src.ml",
+    "src.observability",  # Q.66.E.3 — agent_actions endpoint
     "src.plan",
     "src.profit",
     "src.quality",

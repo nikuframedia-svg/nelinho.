@@ -664,6 +664,10 @@ app.include_router(copilot_poetiq_router)  # POETIQ copilot↔CPO loop (Sprint K
 from src.shared.api.outbox_status import router as outbox_status_router
 app.include_router(outbox_status_router)
 
+# Q.66.E.3 — agent actions observability (GET /v1/observability/agent-actions)
+from src.observability import router as observability_router
+app.include_router(observability_router)
+
 
 # API info
 @app.get("/", tags=["Info"])

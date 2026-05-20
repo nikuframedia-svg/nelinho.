@@ -31,6 +31,7 @@ vem primeiro (e o ancoragem de FK para muitos outros).
 
 # ─── core ───────────────────────────────────────────────────────────────
 from src.core.models import (
+    agent_action,  # Q.66.E.3 — observability do copiloto
     audit,
     bom,
     employee,
