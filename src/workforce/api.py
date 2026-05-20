@@ -8,17 +8,24 @@ REST endpoints for Workforce Operations System:
 - POST /v1/workforce/simulate
 - GET /v1/workforce/training-recommendations
 - POST /v1/workforce/scenarios/compare
+
+Q.61.32b — migrados de /api/allocations* (legacy):
+- GET /v1/workforce/allocations          (paginated)
+- GET /v1/workforce/allocations/stats    (aggregate)
 """
 import logging
-from typing import List
+import math
+from typing import Any, List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.hr.models.legacy_allocation import LegacyAllocation
 from src.shared.auth.headers import require_tenant_header
-from src.shared.database import get_session_safe
+from src.shared.database import get_session, get_session_safe
 
 from .service import WorkforceService, WorkforceDataUnavailableError
 from .models import (
@@ -292,4 +299,214 @@ async def training_suggestions(
     except Exception as e:
         logger.error(f"Error getting training suggestions: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── Q.61.32b — Migrado de src/legacy/api.py ─────────────────────────
+#
+# Os 2 endpoints abaixo vinham de `src/legacy/api.py` sob `/api/*`.
+# Comportamento copiado tal-qual incluindo o fallback fail-soft em DB
+# outage (Q.62 limpa BLE001). Behavioural preservation.
+
+
+@router.get("/allocations")
+async def list_allocations_paginated(
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    pageSize: int = Query(20, ge=1, le=100, description="Items per page"),
+    employeeId: Optional[int] = Query(None, description="Filter by employee ID"),
+    phase: Optional[str] = Query(None, description="Filter by phase name"),
+    isLeader: Optional[bool] = Query(None, description="Filter by leader status"),
+    search: Optional[str] = Query(None, description="Search in employee name, phase, or order ID"),
+    sortBy: str = Query("startDate", description="Sort field: startDate, employeeName, phaseName, id"),
+    sortOrder: str = Query("desc", description="Sort order: asc, desc"),
+    tenant_id: UUID = Depends(require_tenant_header),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Lista paginada de alocações (LegacyAllocation).
+
+    Migrado em Q.61.32b de `/api/allocations`. Preserva contrato 1-para-1.
+    """
+    try:
+        query = select(LegacyAllocation).where(LegacyAllocation.tenant_id == tenant_id)
+
+        if employeeId:
+            query = query.where(LegacyAllocation.employee_id == employeeId)
+        if phase:
+            query = query.where(LegacyAllocation.phase_name.ilike(f"%{phase}%"))
+        if isLeader is not None:
+            query = query.where(LegacyAllocation.is_leader == isLeader)
+        if search:
+            search_pattern = f"%{search}%"
+            query = query.where(
+                or_(
+                    LegacyAllocation.employee_name.ilike(search_pattern),
+                    LegacyAllocation.phase_name.ilike(search_pattern),
+                    LegacyAllocation.order_id.cast(str).ilike(search_pattern),
+                )
+            )
+
+        count_query = select(func.count()).select_from(query.subquery())
+        total = (await session.execute(count_query)).scalar() or 0
+
+        sort_field_map = {
+            "startDate": LegacyAllocation.start_date,
+            "employeeName": LegacyAllocation.employee_name,
+            "phaseName": LegacyAllocation.phase_name,
+            "id": LegacyAllocation.id,
+        }
+        sort_field = sort_field_map.get(sortBy, LegacyAllocation.start_date)
+        if sortOrder.lower() == "asc":
+            query = query.order_by(sort_field.asc())
+        else:
+            query = query.order_by(sort_field.desc())
+
+        offset = (page - 1) * pageSize
+        query = query.limit(pageSize).offset(offset)
+        result = await session.execute(query)
+        allocations = result.scalars().all()
+
+        allocations_data = [
+            {
+                "id": str(a.id),
+                "orderId": str(a.order_id) if a.order_id else None,
+                "phaseId": str(a.phase_id) if a.phase_id else None,
+                "phaseName": a.phase_name,
+                "employeeId": str(a.employee_id),
+                "employeeName": a.employee_name,
+                "isLeader": a.is_leader,
+                "startDate": a.start_date.isoformat() if a.start_date else None,
+                "endDate": a.end_date.isoformat() if a.end_date else None,
+            }
+            for a in allocations
+        ]
+
+        total_pages = math.ceil(total / pageSize) if pageSize > 0 else 0
+        return {
+            "data": allocations_data,
+            "total": total,
+            "page": page,
+            "pageSize": pageSize,
+            "totalPages": total_pages,
+            "hasNextPage": page < total_pages,
+            "hasPreviousPage": page > 1,
+        }
+    except Exception as e:  # Q.61.32b: comportamento copiado tal-qual; Q.62 limpa BLE001
+        error_str = str(e).lower()
+        if (
+            "connection refused" in error_str
+            or "operationalerror" in error_str
+            or "interfaceerror" in error_str
+        ):
+            logger.warning(
+                "DB unavailable in list_allocations_paginated, returning fallback: %s",
+                e,
+            )
+            return {
+                "data": [],
+                "total": 0,
+                "page": page,
+                "pageSize": pageSize,
+                "totalPages": 0,
+                "hasNextPage": False,
+                "hasPreviousPage": False,
+            }
+        raise
+
+
+@router.get("/allocations/stats")
+async def allocations_stats(
+    tenant_id: UUID = Depends(require_tenant_header),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Estatísticas agregadas (total, unique employees/orders, leader, top phases/employees).
+
+    Migrado em Q.61.32b de `/api/allocations/stats`.
+    """
+    try:
+        total_query = select(func.count(LegacyAllocation.id)).where(
+            LegacyAllocation.tenant_id == tenant_id
+        )
+        total = (await session.execute(total_query)).scalar() or 0
+
+        unique_employees_query = select(
+            func.count(func.distinct(LegacyAllocation.employee_id))
+        ).where(LegacyAllocation.tenant_id == tenant_id)
+        unique_employees = (await session.execute(unique_employees_query)).scalar() or 0
+
+        unique_orders_query = select(
+            func.count(func.distinct(LegacyAllocation.order_id))
+        ).where(
+            and_(
+                LegacyAllocation.tenant_id == tenant_id,
+                LegacyAllocation.order_id.isnot(None),
+            )
+        )
+        unique_orders = (await session.execute(unique_orders_query)).scalar() or 0
+
+        as_leader_query = select(func.count(LegacyAllocation.id)).where(
+            and_(
+                LegacyAllocation.tenant_id == tenant_id,
+                LegacyAllocation.is_leader.is_(True),
+            )
+        )
+        as_leader = (await session.execute(as_leader_query)).scalar() or 0
+
+        avg_per_employee = (total / unique_employees) if unique_employees > 0 else 0
+
+        top_phases_query = (
+            select(
+                LegacyAllocation.phase_name,
+                func.count(LegacyAllocation.id).label("count"),
+            )
+            .where(LegacyAllocation.tenant_id == tenant_id)
+            .group_by(LegacyAllocation.phase_name)
+            .order_by(func.count(LegacyAllocation.id).desc())
+            .limit(10)
+        )
+        top_phases = [
+            {"phase": row[0], "count": row[1]}
+            for row in (await session.execute(top_phases_query)).all()
+        ]
+
+        top_employees_query = (
+            select(
+                LegacyAllocation.employee_name,
+                func.count(LegacyAllocation.id).label("count"),
+            )
+            .where(LegacyAllocation.tenant_id == tenant_id)
+            .group_by(LegacyAllocation.employee_name)
+            .order_by(func.count(LegacyAllocation.id).desc())
+            .limit(10)
+        )
+        top_employees = [
+            {"employee": row[0], "count": row[1]}
+            for row in (await session.execute(top_employees_query)).all()
+        ]
+
+        return {
+            "total": total,
+            "uniqueEmployees": unique_employees,
+            "uniqueOrders": unique_orders,
+            "asLeader": as_leader,
+            "avgPerEmployee": round(avg_per_employee, 2),
+            "topPhases": top_phases,
+            "topEmployees": top_employees,
+        }
+    except Exception as e:  # Q.61.32b: comportamento copiado tal-qual; Q.62 limpa BLE001
+        error_str = str(e).lower()
+        if (
+            "connection refused" in error_str
+            or "operationalerror" in error_str
+            or "interfaceerror" in error_str
+        ):
+            logger.warning("DB unavailable in allocations_stats, returning fallback: %s", e)
+            return {
+                "total": 0,
+                "uniqueEmployees": 0,
+                "uniqueOrders": 0,
+                "asLeader": 0,
+                "avgPerEmployee": 0.0,
+                "topPhases": [],
+                "topEmployees": [],
+            }
+        raise
 

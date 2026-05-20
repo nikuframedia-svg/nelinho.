@@ -59,11 +59,9 @@ def client(monkeypatch):
 # ---------------------------------------------------------------------------
 
 LEGACY_GET_PATHS = [
-    # Q.61.32a — /api/orders e /api/orders/stats migrados para
-    # /v1/plan/orders e /v1/plan/orders/stats. Cobertura fail-closed
-    # vive agora em tests/plan/test_orders_api_migrated_q61_32a.py.
-    "/api/allocations",
-    "/api/allocations/stats",
+    # Q.61.32a — /api/orders* → /v1/plan/orders* (test_orders_api_migrated_q61_32a).
+    # Q.61.32b — /api/allocations* → /v1/workforce/allocations*
+    #            (test_allocations_api_migrated_q61_32b).
     "/api/errors",
     "/api/errors/stats",
 ]
@@ -94,9 +92,9 @@ def test_valid_dev_tenant_passes_dep_gate(client):
 
     The handler may still 5xx because we stubbed the session, but the
     gate itself must accept the request — that's what we're asserting.
-    Q.61.32a — exemplo passa a usar `/api/allocations` (orders migrou).
+    Q.61.32b — exemplo passa a usar `/api/errors` (orders e allocations migraram).
     """
-    resp = client.get("/api/allocations", headers={"X-Tenant-Id": DEV_TENANT})
+    resp = client.get("/api/errors", headers={"X-Tenant-Id": DEV_TENANT})
     # 200 if the handler tolerates the AsyncMock session, otherwise 5xx.
     # The point is "not 401" — the dep let it through.
     assert resp.status_code != 401, resp.text
@@ -105,7 +103,7 @@ def test_valid_dev_tenant_passes_dep_gate(client):
 def test_production_requires_jwt(monkeypatch):
     """Legacy endpoints in production must require a JWT — header alone is rejected.
 
-    Q.61.32a — exemplo passa a usar `/api/allocations` (orders migrou).
+    Q.61.32b — exemplo passa a usar `/api/errors` (orders e allocations migraram).
     """
     monkeypatch.setattr(settings, "environment", "production", raising=False)
     app = FastAPI()
@@ -113,6 +111,6 @@ def test_production_requires_jwt(monkeypatch):
     app.dependency_overrides[get_session] = _stub_session
     c = TestClient(app, raise_server_exceptions=False)
 
-    resp = c.get("/api/allocations", headers={"X-Tenant-Id": DEV_TENANT})
+    resp = c.get("/api/errors", headers={"X-Tenant-Id": DEV_TENANT})
     assert resp.status_code == 401, resp.text
     assert "JWT" in resp.json().get("detail", "")

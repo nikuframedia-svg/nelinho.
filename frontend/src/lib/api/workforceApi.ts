@@ -198,14 +198,16 @@ export const allocationsApiPaginated = {
     if (params.sortBy) queryParams.set('sortBy', params.sortBy);
     if (params.sortOrder) queryParams.set('sortOrder', params.sortOrder);
     
-    return request<AllocationsResponse>(`/api/allocations?${queryParams.toString()}`);
+    // Q.61.32b — migrado de /api/allocations para /v1/workforce/allocations.
+    return request<AllocationsResponse>(`/v1/workforce/allocations?${queryParams.toString()}`);
   },
-  
+
   /**
    * Get aggregate statistics for all allocations (uses full database).
    * This is NOT paginated - returns totals from all 346,832 allocations.
    */
   stats: (): Promise<AllocationsStats> =>
-    request<AllocationsStats>('/api/allocations/stats'),
+    // Q.61.32b — migrado de /api/allocations/stats para /v1/workforce/allocations/stats.
+    request<AllocationsStats>('/v1/workforce/allocations/stats'),
 };
 
