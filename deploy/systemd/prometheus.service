@@ -1,0 +1,46 @@
+# Q.61.38 — Prometheus systemd unit (template).
+#
+# Copia para /etc/systemd/system/ e ajusta paths:
+#   sudo cp deploy/systemd/prometheus.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now prometheus
+#
+# Pre-requisitos:
+#   1. Download binary:
+#        cd /opt && sudo wget https://github.com/prometheus/prometheus/releases/.../prometheus-3.0.0.linux-amd64.tar.gz
+#        sudo tar xvf prometheus-3.0.0.linux-amd64.tar.gz
+#        sudo ln -sf /opt/prometheus-3.0.0.linux-amd64 /opt/prometheus
+#   2. User dedicated:
+#        sudo useradd --no-create-home --shell /bin/false prometheus
+#        sudo chown -R prometheus:prometheus /opt/prometheus /var/lib/prometheus
+#   3. Config: aponta para o ficheiro do nelinho (deploy/prometheus.yml).
+
+[Unit]
+Description=Prometheus monitoring
+Documentation=https://prometheus.io/docs/introduction/overview/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=prometheus
+Group=prometheus
+ExecStart=/opt/prometheus/prometheus \
+    --config.file=/opt/nelinho/deploy/prometheus.yml \
+    --storage.tsdb.path=/var/lib/prometheus \
+    --storage.tsdb.retention.time=30d \
+    --web.listen-address=:9090 \
+    --web.external-url=http://localhost:9090
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+# Hardening — read-only excepto data + config dir
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/prometheus
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
