@@ -28,6 +28,10 @@ pyodbc==5.3.0
 # Redis
 redis[hiredis]==5.0.1
 
+# Q.62.D.1 — Arq queue para jobs assincronos (CPO scheduler etc).
+# Usa Redis como broker (Q.61.22 lifespan ja faz init_redis_pool).
+arq>=0.26.0,<1.0
+
 # Kafka
 aiokafka==0.10.0
 

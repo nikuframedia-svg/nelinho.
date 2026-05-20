@@ -1,0 +1,44 @@
+[Unit]
+# Q.62.D.1 — Arq worker para CPO scheduler (e jobs futuros).
+# Corre em paralelo ao uvicorn nelinho-api.service para libertar o
+# endpoint /v1/plan/cpo/schedule (que bloqueava 30s).
+Description=Nelinho Arq Worker (CPO scheduler + async jobs)
+After=network.target redis-server.service nelinho-api.service
+Wants=redis-server.service
+PartOf=nelinho-api.service
+
+[Service]
+Type=simple
+User=nelinho
+Group=nelinho
+WorkingDirectory=/opt/nelinho
+
+# Reuse o mesmo venv que a API usa.
+Environment="PATH=/opt/nelinho/.venv/bin:/usr/bin"
+Environment="PYTHONPATH=/opt/nelinho"
+EnvironmentFile=/etc/nelinho/env
+
+# Arq worker — uma instancia. Para escalar adicionar
+# nelinho-arq@1.service, @2.service etc com max_jobs ajustado.
+ExecStart=/opt/nelinho/.venv/bin/arq src.plan.cpo.worker.WorkerSettings
+
+# Resilience: restart se cair (Redis blip, OOM, etc).
+Restart=on-failure
+RestartSec=10s
+
+# Resource limits — CPO é pesado, dá ~2 GB / 2 cores ao worker.
+MemoryMax=2G
+CPUQuota=200%
+
+# Soft kill: dá 30s para drain dos jobs antes de SIGKILL.
+TimeoutStopSec=30s
+KillMode=mixed
+KillSignal=SIGTERM
+
+# stdout/stderr → journal.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nelinho-arq
+
+[Install]
+WantedBy=multi-user.target
