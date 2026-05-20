@@ -250,6 +250,24 @@ async def _run_copilot_action(
             list_runbooks,
         )
 
+        # Q.55.C.3 — fallback: LLM pode gerar RUN_RUNBOOK sem runbook_id.
+        # Default para primeiro runbook disponível em vez de 400 imediato.
+        # Se NENHUM runbook disponível, deixa o 400 acontecer (fail-closed).
+        if not request.payload.get("runbook_id"):
+            available = list_runbooks()
+            if available:
+                # `list_runbooks()` devolve List[str] (filename stems).
+                default_runbook = available[0]
+                default_id = (
+                    getattr(default_runbook, "id", None)
+                    or getattr(default_runbook, "runbook_id", None)
+                    or default_runbook
+                )
+                request.payload["runbook_id"] = default_id
+                logger.info(
+                    "Q.55.C.3 — RUN_RUNBOOK sem id; default to %s", default_id
+                )
+
         runbook_id = request.payload.get("runbook_id")
         if not runbook_id:
             raise HTTPException(
