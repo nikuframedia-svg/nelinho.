@@ -165,6 +165,100 @@ def fake_session() -> FakeSession:
 
 
 # ---------------------------------------------------------------------------
+# Typed-stash variant for tests that issue many distinct SELECTs
+# ---------------------------------------------------------------------------
+#
+# Q.61.02 — unifica o `_FakeSession` que vivia em
+# `tests/governance/test_yaml_rule_service_q17c.py:59-106`. A diferenca de
+# desenho face ao queue-based FakeSession acima:
+#
+#   * Queue mode (FakeSession): cada `execute()` consome o proximo item da
+#     fila. Bom para testes choreografados onde a ordem de queries e
+#     conhecida.
+#
+#   * Stash mode (FakeRuleSession): adiciona-se rules/revisions a colecoes
+#     tipadas; `execute()` inspecciona o SQL compilado para decidir que
+#     colecao devolver. Bom quando o service emite varias queries distintas
+#     e o teste so quer guarantir um estado inicial.
+#
+# Ambos os modos co-existem; servicos que precisam de fluxo simples usam
+# FakeSession; YAML rule lifecycle (~15 transicoes diferentes a inspeccionar
+# tabelas distintas) usa FakeRuleSession.
+
+
+class _TypedFakeResult:
+    """_FakeResult sem fila — devolve a coleccao tipada que lhe foi dada."""
+
+    def __init__(self, items: List[Any]) -> None:
+        self._items = items
+
+    def scalars(self) -> "_TypedFakeResult":
+        return self
+
+    def all(self) -> List[Any]:
+        return list(self._items)
+
+    def scalar_one_or_none(self) -> Any:
+        return self._items[0] if self._items else None
+
+
+class FakeRuleSession(FakeSession):
+    """FakeSession para tests YAML rule lifecycle (governance.yaml_policy).
+
+    Em vez de queue, mantem coleccoes tipadas por classe de modelo. O
+    `execute(stmt)` inspecciona o SQL compilado para devolver o conjunto
+    certo (rules vs revisions). Coexiste com o queue-based (chamadas a
+    `execute()` que nao batem em nenhum FROM caem para o queue do pai).
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        # Coleccoes tipadas — populadas via `add()`. Tipos importados
+        # lazy para evitar acoplamento de bootstrap a governance.yaml_policy.
+        self.rules: List[Any] = []
+        self.revisions: List[Any] = []
+        self.flush_count = 0  # alias historico para compat com testes
+
+    def add(self, obj: Any) -> None:
+        super().add(obj)  # mantem flat list `self.added`
+        cls_name = obj.__class__.__name__
+        if cls_name == "TenantRule":
+            if getattr(obj, "id", None) is None:
+                obj.id = uuid4()
+            self.rules.append(obj)
+        elif cls_name == "TenantRuleRevision":
+            if getattr(obj, "id", None) is None:
+                obj.id = uuid4()
+            self.revisions.append(obj)
+
+    async def flush(self) -> None:
+        await super().flush()
+        for r in self.rules:
+            if getattr(r, "id", None) is None:
+                r.id = uuid4()
+        self.flush_count = self.flush_calls
+
+    async def execute(self, stmt: Any) -> Any:
+        # Compila para inspeccionar. Se nao for um Select inspeccionavel,
+        # caimos no super().execute() (queue-based).
+        try:
+            compiled = str(stmt.compile(compile_kwargs={"literal_binds": False}))
+        except Exception:
+            return await super().execute(stmt)
+
+        if "FROM governance.yaml_policy_rule_revision" in compiled:
+            return _TypedFakeResult(self.revisions)
+        if "FROM governance.yaml_policy_rule" in compiled:
+            return _TypedFakeResult(self.rules)
+        return await super().execute(stmt)
+
+
+@pytest.fixture
+def fake_rule_session() -> FakeRuleSession:
+    return FakeRuleSession()
+
+
+# ---------------------------------------------------------------------------
 # fakeredis for ConversationStore
 # ---------------------------------------------------------------------------
 

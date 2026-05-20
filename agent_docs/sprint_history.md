@@ -100,6 +100,7 @@ FASE 1B (CRIT-13..16, 23), FASE 2 (CRIT-02/17/18 atomicity), FASE 3 (HIGH-41..56
 ### Q.61 — Consolidação (em curso, plano em `.claude/plans/trust-index-v1-indexed-token.md`)
 
 - **Q.61.01** Guarda AST `TESTS-no-empty-bodies` em `verify_invariants.py` — apanha `def test_*: pass | ...` antes do CI. Stop-the-bleeding contra falsos positivos (audit overnight tinha-os reportado; AST confirmou zero hoje).
+- **Q.61.02** Unificar `FakeRuleSession` no conftest — extraído de `tests/governance/test_yaml_rule_service_q17c.py:59-106` (duplicação face ao queue-based FakeSession). Subclasse `FakeRuleSession(FakeSession)` com typed-stash por SQL inspection; 17/17 testes verdes, canary governance 391/391. Os ~40 `_FakeSession` locais a outros tests ficam (variantes legítimas por service).
 
 ## Test count progression
 
