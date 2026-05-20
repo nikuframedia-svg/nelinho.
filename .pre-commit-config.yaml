@@ -29,3 +29,21 @@ repos:
         language: system
         pass_filenames: false
         files: ^frontend/.*\.(ts|tsx)$
+
+      # --- Backend: Q.61.08 — guardrails de invariantes estaticas + drift gate ---
+      # Sem suite pytest (VERIFY_INVARIANTS_SKIP_TESTS=1 — corre no CI proprio).
+      # Total ~3s combinado: invariantes estaticas (CX/C/F/E/D/ST/WG/CO/ME/H0
+      # + AST testes vazios) + lint drift gate (BLE001 + Q61_07_no_direct_fetch).
+      - id: verify-invariants-static
+        name: scripts/verify_invariants.py (sem testes)
+        entry: pwsh -NoProfile -Command "$env:VERIFY_INVARIANTS_SKIP_TESTS='1'; $env:PYTHONPATH='.'; .\.venv\Scripts\python.exe scripts/verify_invariants.py"
+        language: system
+        pass_filenames: false
+        files: ^(src/|tests/|scripts/).+\.py$
+
+      - id: lint-drift-gate
+        name: scripts/lint_drift_gate.py (BLE001 + Q.61.07)
+        entry: pwsh -NoProfile -Command "$env:PYTHONPATH='.'; .\.venv\Scripts\python.exe scripts/lint_drift_gate.py"
+        language: system
+        pass_filenames: false
+        files: ^(src/|frontend/src/).+\.(py|ts|tsx)$

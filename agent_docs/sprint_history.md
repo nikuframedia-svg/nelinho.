@@ -106,6 +106,7 @@ FASE 1B (CRIT-13..16, 23), FASE 2 (CRIT-02/17/18 atomicity), FASE 3 (HIGH-41..56
 - **Q.61.05** Mutmut baseline script — `scripts/mutation_test.ps1` + `mutmut>=2.5,<3` em requirements-test. Smoke/decisions/yaml_policy/cpo/all targets; saída em `scripts/mutmut_baseline.json`. **Não corrido** nesta sessão (lento); Luis pode kick-off com `pwsh scripts/mutation_test.ps1 -Module smoke`.
 - **Q.61.06** Stop-the-bleeding lint: `S110` + `T201` adicionados a `ruff.toml` (11 sites fixados com `# noqa: <rule>  Q.61.06: <razão>`). Para `BLE001` (370 sites, demasiado para mass-fix), novo `scripts/lint_drift_gate.py` com baseline em `scripts/lint_baseline.json` — falha CI se count sobe (Larson De-risk, sem orthogonal damage de massa de `# noqa`).
 - **Q.61.07** ESLint anti-direct-fetch — regra `no-restricted-syntax` em `eslint.mocks.config.js` que apanha `fetch(...)` directo em `src/pages/` e `src/components/` (50 sites pré-existentes em warn; Vaga 5 migra-os). Drift gate estendido com `Q61_07_no_direct_fetch` (50 baseline) — count >50 falha CI.
+- **Q.61.08** Pre-commit ganha 2 hooks fast (~4.5s combinados): `verify-invariants-static` (invariantes CX/C/F/E/D/ST/WG/CO/ME/H0 + AST testes vazios, sem pytest) + `lint-drift-gate` (BLE001 + Q.61.07 contra baseline). Trava regressão antes do push, sem precisar de canary completo.
 
 ## Test count progression
 
