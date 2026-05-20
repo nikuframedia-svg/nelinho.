@@ -7,14 +7,16 @@
  *
  * - Barcos:    timeline arrastável das operações do último commit do CPO
  *              (cpoCommitsApi + schedulePreviewApi preview-delta/apply-move).
- *              "Replanear" → POST /v1/plan/cpo/schedule.
+ *              Q.62.E.5 — "Replanear" agora usa POST /schedule/async +
+ *              polling em /schedule/job/{id} para não bloquear a UI 30s.
+ *              "Aprovar" depois promove ScheduleCommit.status DRAFT→LIVE.
  * - Pessoas:   cobertura por fase derivada das operações reais + relatório
  *              de prioridade (alinhamento receita ↔ scheduler).
  * - Materiais: viabilidade do plano com stock actual — /v1/supply/materials
  *              + .../position (PARTIAL → "—" honesto).
  */
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -58,12 +60,67 @@ export default function PlaneamentoPage(): ReactNode {
   const [tab, setTab] = useState<TabId>('barcos');
   const queryClient = useQueryClient();
 
-  const replanMutation = useMutation({
-    mutationFn: () => planeamentoApi.runSchedule({ horizon_days: 7 }),
+  // Q.62.E.5 — Replanear async via Arq + polling.
+  //
+  // Flow:
+  //   1. mutation `enqueueReplan` chama POST /schedule/async → 202 + job_id.
+  //   2. `useQuery` em /schedule/job/{id} faz polling cada 2s enquanto
+  //      state ∈ {deferred, in_progress}; pára quando complete | failed.
+  //   3. Quando complete, UI mostra "Aprovar" → PUT /schedule/job/{id}/approve
+  //      muda ScheduleCommit.status DRAFT → LIVE.
+  //
+  // Manter `runSchedule` sync continua disponível em `planeamentoApi` para
+  // testes/legacy, mas a página usa o caminho async (worker Arq deve estar up).
+  const [jobId, setJobId] = useState<string | null>(null);
+
+  const enqueueReplan = useMutation({
+    mutationFn: () => planeamentoApi.runScheduleAsync({ horizon_days: 7 }),
+    onSuccess: (data) => {
+      setJobId(data.job_id);
+    },
+  });
+
+  const jobStatusQuery = useQuery({
+    queryKey: ['cpo-schedule-job', jobId],
+    queryFn: () => planeamentoApi.pollScheduleJob(jobId as string),
+    enabled: !!jobId,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (!data) return 2000;
+      // Para quando complete, failed, ou not_found.
+      if (data.state === 'complete' || data.state === 'failed' || data.state === 'not_found') {
+        return false;
+      }
+      return 2000; // polling cada 2s para deferred/in_progress.
+    },
+    refetchIntervalInBackground: false,
+  });
+
+  // Quando o job completa com sucesso, invalida queries para refrescar
+  // o plano e tabelas dependentes.
+  useEffect(() => {
+    if (jobStatusQuery.data?.state === 'complete') {
+      void queryClient.invalidateQueries({ queryKey: ['planeamento'] });
+    }
+  }, [jobStatusQuery.data?.state, queryClient]);
+
+  const approveMutation = useMutation({
+    mutationFn: () => planeamentoApi.approveScheduleJob(jobId as string),
     onSuccess: () => {
+      // Após approve, libertar job_id (UI volta ao estado inicial).
+      setJobId(null);
       void queryClient.invalidateQueries({ queryKey: ['planeamento'] });
     },
   });
+
+  // Estado derivado para mostrar na UI / botão.
+  const jobState = jobStatusQuery.data?.state;
+  const isReplanning =
+    enqueueReplan.isPending ||
+    jobState === 'deferred' ||
+    jobState === 'in_progress';
+  const jobComplete = jobState === 'complete';
+  const jobFailed = jobState === 'failed' || jobState === 'not_found';
 
   return (
     <DarkPageLayout
@@ -71,35 +128,63 @@ export default function PlaneamentoPage(): ReactNode {
       subtitle="Plano dia/dia · 15 min · barcos, pessoas e materiais"
       icon={<CalendarRange size={18} />}
       actions={
-        <button
-          type="button"
-          onClick={() => replanMutation.mutate()}
-          disabled={replanMutation.isPending}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 6,
-            padding: '6px 14px',
-            fontSize: 12,
-            fontWeight: 500,
-            borderRadius: 'var(--r-sm)',
-            background: 'var(--accent)',
-            color: '#fff',
-            border: 'none',
-            cursor: replanMutation.isPending ? 'wait' : 'pointer',
-            opacity: replanMutation.isPending ? 0.7 : 1,
-          }}
-        >
-          <RefreshCw size={13} />
-          {replanMutation.isPending ? 'A replanear…' : 'Replanear'}
-        </button>
+        <div style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
+          {/* Q.62.E.5 — botão Aprovar aparece quando o job está complete
+              (commit ainda DRAFT). Click → PUT /approve → DRAFT → LIVE. */}
+          {jobComplete && (
+            <button
+              type="button"
+              onClick={() => approveMutation.mutate()}
+              disabled={approveMutation.isPending}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '6px 14px',
+                fontSize: 12,
+                fontWeight: 500,
+                borderRadius: 'var(--r-sm)',
+                background: 'var(--green)',
+                color: '#fff',
+                border: 'none',
+                cursor: approveMutation.isPending ? 'wait' : 'pointer',
+                opacity: approveMutation.isPending ? 0.7 : 1,
+              }}
+            >
+              {approveMutation.isPending ? 'A aprovar…' : 'Aprovar (LIVE)'}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => enqueueReplan.mutate()}
+            disabled={isReplanning}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '6px 14px',
+              fontSize: 12,
+              fontWeight: 500,
+              borderRadius: 'var(--r-sm)',
+              background: 'var(--accent)',
+              color: '#fff',
+              border: 'none',
+              cursor: isReplanning ? 'wait' : 'pointer',
+              opacity: isReplanning ? 0.7 : 1,
+            }}
+          >
+            <RefreshCw size={13} />
+            {isReplanning ? 'A replanear…' : 'Replanear'}
+          </button>
+        </div>
       }
     >
       <div style={{ marginBottom: 16 }}>
         <Segmented options={TABS} value={tab} onChange={setTab} />
       </div>
 
-      {replanMutation.isError && (
+      {/* Status do job async — Q.62.E.5 polling. */}
+      {enqueueReplan.isError && (
         <div
           style={{
             marginBottom: 14,
@@ -111,13 +196,45 @@ export default function PlaneamentoPage(): ReactNode {
             padding: '8px 12px',
           }}
         >
-          Falha a replanear:{' '}
-          {replanMutation.error instanceof Error
-            ? replanMutation.error.message
+          Falha a enfileirar replano:{' '}
+          {enqueueReplan.error instanceof Error
+            ? enqueueReplan.error.message
             : 'erro desconhecido'}
         </div>
       )}
-      {replanMutation.isSuccess && (
+      {isReplanning && jobId && (
+        <div
+          style={{
+            marginBottom: 14,
+            fontSize: 11.5,
+            color: 'var(--accent)',
+            background: 'var(--accent-bg)',
+            border: '1px solid var(--accent-bd)',
+            borderRadius: 'var(--r-sm)',
+            padding: '8px 12px',
+          }}
+        >
+          A processar plano · job {jobId.slice(0, 8)} ·{' '}
+          estado: {jobState ?? 'a enfileirar'}
+        </div>
+      )}
+      {jobFailed && (
+        <div
+          style={{
+            marginBottom: 14,
+            fontSize: 11.5,
+            color: 'var(--red)',
+            background: 'var(--red-bg)',
+            border: '1px solid var(--red-bd)',
+            borderRadius: 'var(--r-sm)',
+            padding: '8px 12px',
+          }}
+        >
+          Job {jobId?.slice(0, 8)} falhou:{' '}
+          {jobStatusQuery.data?.error ?? 'job não encontrado (worker desligado?)'}
+        </div>
+      )}
+      {jobComplete && jobStatusQuery.data?.result && (
         <div
           style={{
             marginBottom: 14,
@@ -129,11 +246,29 @@ export default function PlaneamentoPage(): ReactNode {
             padding: '8px 12px',
           }}
         >
-          Plano regenerado · {replanMutation.data.operations.length} operações ·
-          makespan {replanMutation.data.makespan_hours.toFixed(1)}h
-          {replanMutation.data.degraded
-            ? ` · ATENÇÃO: plano degradado (${replanMutation.data.fallback_reason ?? 'fallback'})`
+          Plano pronto (DRAFT) · {jobStatusQuery.data.result.operations.length}{' '}
+          operações · makespan{' '}
+          {jobStatusQuery.data.result.makespan_hours.toFixed(1)}h · clica em
+          “Aprovar” para promover a LIVE.
+          {jobStatusQuery.data.result.degraded
+            ? ` · ATENÇÃO: plano degradado (${jobStatusQuery.data.result.fallback_reason ?? 'fallback'})`
             : ''}
+        </div>
+      )}
+      {approveMutation.isSuccess && (
+        <div
+          style={{
+            marginBottom: 14,
+            fontSize: 11.5,
+            color: 'var(--green)',
+            background: 'var(--green-bg)',
+            border: '1px solid var(--green-bd)',
+            borderRadius: 'var(--r-sm)',
+            padding: '8px 12px',
+          }}
+        >
+          Plano aprovado · commit {approveMutation.data.commit_sha256.slice(0, 8)}{' '}
+          → {approveMutation.data.new_status}.
         </div>
       )}
 
