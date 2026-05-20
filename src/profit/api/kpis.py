@@ -229,7 +229,7 @@ async def calculate_kpis(
             if product_dr_decimal is not None:
                 # product_defect_rate é [0,1]; FPY é [0,100].
                 quality_fpy = float((1 - product_dr_decimal) * 100)
-        except Exception as exc:  # noqa: BLE001  Q.62.E.4: factory best-effort, fallback honesto
+        except Exception as exc:
             logger.warning("KPIFactory.product_defect_rate failed: %s", exc)
 
         kpis["quality_fpy"] = KPIMetric(

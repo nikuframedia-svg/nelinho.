@@ -378,7 +378,7 @@ class TenantContextMiddleware(BaseHTTPMiddleware):
                     tid_uuid = _UUID(payload.tenant_id)
                 except (ValueError, TypeError):
                     tid_uuid = None
-        except Exception:  # noqa: BLE001  Q.62.B.2: JWT decode best-effort; falla para header fallback abaixo
+        except Exception:
             tid_uuid = None  # JWT decode falhou — fica para require_tenant_header.
 
         if tid_uuid is None:

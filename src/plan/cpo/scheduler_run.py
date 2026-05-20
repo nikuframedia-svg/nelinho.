@@ -142,7 +142,7 @@ async def run_cpo_schedule(
             )
             session.add(alert)
             await session.flush()
-        except Exception as alert_exc:  # noqa: BLE001  Q.62.E.1: behaviour-preserving copy do endpoint sync (best-effort alert; Q.62 nao mexe na semantica)
+        except Exception as alert_exc:
             logger.warning("CPO schedule: failed to emit routing alert: %s", alert_exc)
 
     if not operations:
@@ -230,7 +230,7 @@ async def run_cpo_schedule(
             )
     except HTTPException:
         raise
-    except Exception as _yp_exc:  # noqa: BLE001  Q.62.E.1: yaml_policy hook nunca deve partir o scheduler (best-effort)
+    except Exception as _yp_exc:
         logger.warning(f"yaml_policy SCHEDULE_PROPOSE hook failed: {_yp_exc}")
 
     trust_index_value = await _compute_trust_index_for_schedule(session, tenant_id)
@@ -250,7 +250,7 @@ async def run_cpo_schedule(
         )
         commit_sha = commit.commit_sha256
         parent_sha = await _parent_sha(commits, commit)
-    except Exception as e:  # noqa: BLE001  Q.62.E.1: persistencia do commit nunca deve partir o scheduler (schedule funciona, audit opcional)
+    except Exception as e:
         logger.warning(f"Schedule-as-Code commit failed: {e}", exc_info=True)
 
     return {
