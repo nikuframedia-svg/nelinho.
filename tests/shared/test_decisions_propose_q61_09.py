@@ -45,13 +45,29 @@ APPROVER = UUID("22222222-2222-2222-2222-222222222222")
 # ─── propose path: nao cria DecisionApproval ─────────────────────────────
 
 
+class _NestedTx:
+    """Async context manager que mimica savepoint (Q.61.10)."""
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return None
+
+
 class _ProposeSession:
-    """AsyncSession stand-in que captura adds e flushes."""
+    """AsyncSession stand-in que captura adds e flushes.
+
+    Q.61.10: suporta `async with session.begin_nested():` — devolve
+    um nested tx sem efeito real (testes nao precisam de rollback
+    real, so de confirmar o que foi adicionado).
+    """
 
     def __init__(self) -> None:
         self.added: list[Any] = []
         self.flushes = 0
         self.commits = 0
+        self.begin_nested_calls = 0
 
     def add(self, obj: Any) -> None:
         # decision.id e atribuido aqui (no real, pelo flush).
@@ -64,6 +80,10 @@ class _ProposeSession:
 
     async def commit(self) -> None:
         self.commits += 1
+
+    def begin_nested(self) -> _NestedTx:
+        self.begin_nested_calls += 1
+        return _NestedTx()
 
 
 def _propose_app(session: _ProposeSession) -> FastAPI:
@@ -101,13 +121,17 @@ def test_propose_does_not_create_self_approval():
         },
     )
     assert resp.status_code == 201, resp.text
-    # Apenas o DecisionRun foi adicionado — nada de DecisionApproval.
-    types_added = [type(obj).__name__ for obj in session.added]
-    assert types_added == ["SharedDecisionRun"], (
-        f"propose adicionou {types_added!r}; esperado apenas "
-        f"['SharedDecisionRun']. Regressao do Q.61.09 — voltou a criar "
-        f"DecisionApproval no propose."
+    # Apenas DecisionRun + AuditLog (Q.61.10 UoW) — NUNCA DecisionApproval.
+    type_counts: dict[str, int] = {}
+    for obj in session.added:
+        type_counts[type(obj).__name__] = type_counts.get(type(obj).__name__, 0) + 1
+    assert "DecisionApproval" not in type_counts, (
+        f"propose adicionou DecisionApproval ({type_counts!r}). "
+        f"Regressao do Q.61.09 — voltou a criar placeholder no propose."
     )
+    # Sanity Q.61.10: 1 DecisionRun + 1 AuditLog (UoW invariante 7).
+    assert type_counts.get("SharedDecisionRun") == 1
+    assert type_counts.get("AuditLog") == 1
 
 
 def test_propose_response_shape_unchanged():
@@ -133,6 +157,97 @@ def test_propose_response_shape_unchanged():
     body = resp.json()
     assert set(body) == {"id", "status", "message"}
     assert body["status"] == "proposed"
+
+
+# ─── Q.61.10 — UoW: AuditLog escrito na MESMA transaccao ─────────────────
+
+
+def test_propose_writes_audit_log_in_same_uow():
+    """Invariante 7: cada mudanca de estado escreve AuditLog na mesma tx.
+
+    Q.61.10 envolve INSERT em `async with session.begin_nested():` para
+    que decision_run + audit_log committem ou rollback juntos.
+    """
+    from src.core.models.audit import AuditLog
+    from src.shared.models.governance import SharedDecisionRun
+
+    session = _ProposeSession()
+    client = TestClient(_propose_app(session))
+
+    resp = client.post(
+        "/v1/shared/decisions/propose",
+        headers={
+            "x-tenant-id": str(TENANT),
+            "x-user-id": str(PROPOSER),
+        },
+        json={
+            "title": "Audit",
+            "action_type": "GENERIC_ACTION",
+            "target": "t",
+            "sandbox_result": {},
+            "before_state": {},
+            "after_state": {},
+        },
+    )
+    assert resp.status_code == 201, resp.text
+
+    # 1 DecisionRun + 1 AuditLog, na mesma sessao.
+    decisions = [o for o in session.added if isinstance(o, SharedDecisionRun)]
+    audits = [o for o in session.added if isinstance(o, AuditLog)]
+    assert len(decisions) == 1
+    assert len(audits) == 1
+
+    # AuditLog aponta para o DecisionRun, com os campos certos.
+    audit = audits[0]
+    assert audit.entity_type == "decision_run"
+    assert audit.entity_id == decisions[0].id
+    assert audit.action == "INSERT"
+    assert audit.actor_id == PROPOSER
+    assert audit.tenant_id == TENANT
+    assert audit.new_values is not None
+    assert audit.new_values["title"] == "Audit"
+    assert audit.new_values["status"] == "PROPOSED"
+
+    # Savepoint aberto exactamente 1x (UoW).
+    assert session.begin_nested_calls == 1
+
+
+def test_propose_rolls_back_when_audit_fails():
+    """Forca AuditLog.add a falhar; verifica que o cliente recebe 5xx
+    e que o handler entra em begin_nested antes de adicionar audit
+    (mesmo que o savepoint nao seja real no FakeSession, o gate e o
+    `begin_nested_calls == 1` + a exception bubbling)."""
+    from src.core.models.audit import AuditLog
+
+    class _FailingAuditSession(_ProposeSession):
+        def add(self, obj):
+            if isinstance(obj, AuditLog):
+                raise RuntimeError("simulated audit log INSERT failure")
+            super().add(obj)
+
+    session = _FailingAuditSession()
+    client = TestClient(_propose_app(session), raise_server_exceptions=False)
+
+    resp = client.post(
+        "/v1/shared/decisions/propose",
+        headers={
+            "x-tenant-id": str(TENANT),
+            "x-user-id": str(PROPOSER),
+        },
+        json={
+            "title": "Rollback",
+            "action_type": "GENERIC_ACTION",
+            "target": "t",
+            "sandbox_result": {},
+            "before_state": {},
+            "after_state": {},
+        },
+    )
+    # FastAPI converte a RuntimeError em 500. O ponto e: nao 201.
+    assert resp.status_code == 500
+    # begin_nested foi aberto (UoW entrou); a propagacao da excepcao
+    # garante rollback do savepoint pelo SQLAlchemy real.
+    assert session.begin_nested_calls == 1
 
 
 # ─── approve path: find_or_create + check_sod() ─────────────────────────

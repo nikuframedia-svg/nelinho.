@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, and_, or_, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.models.audit import AuditLog
 from src.shared.auth.headers import require_tenant_header, require_user_uuid
 from src.shared.database import get_session
 from src.shared.models.governance import SharedDecisionRun, DecisionApproval, DecisionStatus, ApprovalStatus
@@ -91,7 +92,10 @@ async def propose_decision(
     
     Creates DecisionRun with status "PROPOSED" and routes to approvers based on SoD policy.
     """
-    # Create decision proposal
+    # Q.61.10 — Unit-of-Work: DecisionRun INSERT + AuditLog INSERT
+    # numa unica transaccao (savepoint). Se a auditoria falhar, a
+    # decision tambem rollback — invariante 7 (audit na MESMA tx que
+    # a mudanca de estado) deixa de depender de disciplina humana.
     decision = SharedDecisionRun(
         tenant_id=tenant_id,
         title=request.title,
@@ -104,17 +108,31 @@ async def propose_decision(
         proposed_by=user_id,
         proposed_at=datetime.utcnow(),
     )
-    
-    session.add(decision)
-    await session.flush()
 
-    # Q.61.09 — NAO criamos DecisionApproval no propose. O bug original
-    # (linha 127 historica) escrevia approver_id=user_id, ou seja, o
-    # proposer aparecia como o seu proprio approver pendente. A tabela
-    # decision_approvals passa a representar SO aprovacoes reais — quem
-    # ja agiu, quando, com que decisao. A lista de approvers pendentes
-    # e derivada de `required_approver_roles - approvers_que_ja_agiram`
-    # no GET /decisions/{id} (sem placeholders enganadores).
+    async with session.begin_nested():
+        session.add(decision)
+        await session.flush()  # populates decision.id
+
+        # Q.61.09 — NAO criamos DecisionApproval no propose. A tabela
+        # decision_approvals contem so aprovacoes reais. Approvers pendentes
+        # sao derivados de `required_approver_roles - users_que_ja_agiram`.
+        audit = AuditLog(
+            tenant_id=tenant_id,
+            entity_type="decision_run",
+            entity_id=decision.id,
+            action="INSERT",
+            old_values=None,
+            new_values={
+                "title": request.title,
+                "action_type": request.action_type,
+                "target": request.target,
+                "status": DecisionStatus.PROPOSED.value,
+            },
+            actor_id=user_id,
+            reason="decision proposed",
+        )
+        session.add(audit)
+
     from src.shared.auth.rbac import SOD_POLICIES, Role
 
     required_approver_roles = SOD_POLICIES.get(
