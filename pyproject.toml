@@ -59,21 +59,20 @@ forbidden_modules = [
     "src.adapters",
     "src.diagnostics",
 ]
-# Conhecidas — 2 fontes intencionais cruzam para domínio:
+# Conhecidas — fontes intencionais:
 #   1. `src.shared.model_registry` (Q.61.14) — agrega Base.metadata
 #      de TODOS os domínios para `alembic check`. Por design.
-#   2. `src.shared.scheduler` (god-file, Q.66 Fase 5) — APScheduler
-#      jobs que orquestram domínios (copilot, governance, plan,
-#      supply, explain, adapters). Fase 5 do plano vai partir este
-#      ficheiro em workers por domínio.
-# Wildcards apanham TODOS os imports a partir destes 2 módulos.
+#   2. (Q.66.A.4) `src.shared.scheduler` deixou de ser god-file —
+#      agora é um shim de 100 linhas que só importa `src.scheduling.*`
+#      (pacote novo, fora da forbidden list). O wildcard antigo foi
+#      removido; o domínio real vive em `src.scheduling`.
+# Wildcard apanha TODOS os imports a partir do model_registry.
 # Resto da lista são imports directos legítimos (event handlers que
 # despacham para domínios; capabilities que precisa de saber o que
 # o factory_data_product expõe; decorators que aplicam políticas).
 # Q.66 Fase 4 (boundary refactors) pode inverter alguns via DI.
 ignore_imports = [
     "src.shared.model_registry -> **",
-    "src.shared.scheduler -> **",
     "src.shared.api.capabilities -> src.factory_data_product.config",
     "src.shared.api.capabilities -> src.factory_data_product.models.meta",
     "src.shared.api.decisions -> src.governance.audit_service",
