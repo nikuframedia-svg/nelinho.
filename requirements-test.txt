@@ -83,3 +83,9 @@ hypothesis>=6.92  # property-based testing — used by tests/plan/test_preview_d
 # Lint — Q.59.B.2 wired ruff into CI as a real-bugs-only gate (config in
 # ruff.toml). Pinned so CI and local agree on the rule set.
 ruff==0.15.12
+
+# Mutation testing — Q.61.05. Corre via scripts/mutation_test.ps1 contra
+# os modulos criticos (CPO, YAML policy, decisions). Coverage > 90% pode
+# esconder mutation < 35% (Anthropic post-mortem Abril 2026). Mutmut e
+# o motor; o script e o gate.
+mutmut>=2.5,<3

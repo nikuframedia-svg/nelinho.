@@ -165,3 +165,9 @@ legacy/__pycache__/
 
 
 models/
+
+# Q.61.05 — mutmut state (regravavel via scripts/mutation_test.ps1)
+mutmut-cache/
+.mutmut-cache/
+html/  # mutmut html report output
+

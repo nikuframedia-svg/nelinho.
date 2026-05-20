@@ -103,6 +103,7 @@ FASE 1B (CRIT-13..16, 23), FASE 2 (CRIT-02/17/18 atomicity), FASE 3 (HIGH-41..56
 - **Q.61.02** Unificar `FakeRuleSession` no conftest — extraído de `tests/governance/test_yaml_rule_service_q17c.py:59-106` (duplicação face ao queue-based FakeSession). Subclasse `FakeRuleSession(FakeSession)` com typed-stash por SQL inspection; 17/17 testes verdes, canary governance 391/391. Os ~40 `_FakeSession` locais a outros tests ficam (variantes legítimas por service).
 - **Q.61.03** Property test write-gate dispatcher — `tests/governance/test_dispatcher_wired_property_q61_03.py` com Hypothesis pin do invariante `_stubbed_or_ok` (status='ok' iff wired AND callback). Cobre toda a matrix `ACTION_WIRING` (9 actions × 4 combinations × 100+ exemplos) + unknown actions + 2 testes end-to-end via real dispatch. Apanha o bug Q.17.F.1 (dispatcher reportar 'ok' com wired=False).
 - **Q.61.04** ACTION_WIRING roundtrip — `tests/governance/test_action_wiring_roundtrip_q61_04.py` faz parse do TS `frontend/src/components/regras/ruleHelpers.ts` e compara keys + wired flags com backend `dispatchers.ACTION_WIRING`. Antes só havia teste "backend tem entry por ActionType"; agora drift backend↔frontend falha o CI.
+- **Q.61.05** Mutmut baseline script — `scripts/mutation_test.ps1` + `mutmut>=2.5,<3` em requirements-test. Smoke/decisions/yaml_policy/cpo/all targets; saída em `scripts/mutmut_baseline.json`. **Não corrido** nesta sessão (lento); Luis pode kick-off com `pwsh scripts/mutation_test.ps1 -Module smoke`.
 
 ## Test count progression
 
