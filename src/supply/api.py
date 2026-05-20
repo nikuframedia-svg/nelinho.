@@ -19,7 +19,7 @@ from decimal import Decimal
 from typing import Any, Dict, List, Literal, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,6 +41,7 @@ from .material_service import (
 )
 from .purchase_order_service import PurchaseOrderService
 from .rop_calculator import ROPCalculator
+from .services.rop_calculator import recompute_rop_configs
 from .stockout_predictor import StockoutPredictor
 
 router = APIRouter(prefix="/v1/supply", tags=["Supply Chain"])
@@ -508,6 +509,31 @@ async def calculate_abc_analysis(
             "C": ABCBucket(count=len(result["C"]), skus=result["C"]),
         }
     )
+
+
+@router.post("/rop-configs/recompute")
+async def trigger_rop_recompute(
+    lookback_days: int = Query(90, ge=7, le=365),
+    service_level: float = Query(0.95, ge=0.8, le=0.999),
+    tenant_id: UUID = Depends(require_tenant_header),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Q.64.C — recompute ROP configs from inventory_ledger history.
+
+    Le `supply.inventory_ledger_entries` (qty_out, ultimos `lookback_days`)
+    + `supply.supply_material_master` (active SKUs), e faz upsert em
+    `supply.supply_rop_configs` aplicando a formula classica de inventory
+    management. Idempotente: segunda chamada substitui, nao duplica.
+    Devolve `{rows_processed, rows_upserted, rows_skipped}`.
+    """
+    result = await recompute_rop_configs(
+        session,
+        tenant_id,
+        lookback_days=lookback_days,
+        service_level=service_level,
+    )
+    await session.commit()
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
