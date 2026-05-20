@@ -1,0 +1,13 @@
+﻿{
+    "runs":  [
+                 {
+                     "paths":  "src/shared/api/decisions.py",
+                     "exit_code":  2,
+                     "tests":  "tests/shared/test_decisions_advisory.py tests/shared/test_auth_rbac.py",
+                     "module":  "smoke",
+                     "results":  "To apply a mutant on disk:\r\n    mutmut apply \u003cid\u003e\r\n\r\nTo show a mutant:\r\n    mutmut show \u003cid\u003e\r\n\r\n\r\nSurvived 🙁 (182)\r\n\r\n---- src/shared/api/decisions.py (182) ----\r\n\r\n3, 7-120, 126-127, 129, 132-141, 144, 147-148, 154-155, 157, 159, 161-162, 167-178, 181, 185-216",
+                     "elapsed_secs":  356
+                 }
+             ],
+    "started_at":  "2026-05-20T15:32:04.7293168Z"
+}

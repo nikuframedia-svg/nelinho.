@@ -20,6 +20,7 @@ htmlcov/
 *.egg-info/
 dist/
 build/
+.mutmut-cache
 
 # Claude Code local settings (per-machine, not to be tracked)
 .claude/

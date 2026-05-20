@@ -40,6 +40,7 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $repoRoot
 $env:PYTHONPATH = "."
+$env:PYTHONIOENCODING = "utf-8"  # Q.61.41 — mutmut imprime emoji 🎉; consola cp1252 crasha
 
 $mutmut = Join-Path $repoRoot ".venv\Scripts\mutmut.exe"
 if (-not (Test-Path $mutmut)) {
@@ -87,10 +88,13 @@ foreach ($m in $order) {
     Write-Host "" -ForegroundColor White
     Write-Host "[$m] paths=$($t.paths)  tests=$($t.tests)  timeout=$($t.timeout)s" -ForegroundColor Cyan
 
+    # Q.61.41 — subprocess do mutmut nao herda venv activation; chamamos
+    # pytest via `python -m pytest` com path absoluto ao interpreter.
+    $py = Join-Path $repoRoot ".venv\Scripts\python.exe"
     $runnerArgs = @(
         "run",
         "--paths-to-mutate", $t.paths,
-        "--runner", "pytest -x --tb=no -q $($t.tests)",
+        "--runner", "$py -m pytest -x --tb=no -q $($t.tests)",
         "--tests-dir", "tests/"
     )
 
