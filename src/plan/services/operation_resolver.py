@@ -19,8 +19,8 @@ from uuid import UUID, uuid4
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.models.audit import AuditLog
 from src.core.models.operation import Operation
+from src.governance.audit_service import audit_change
 from src.plan.services.phase_classification import _norm
 
 __all__ = ["OperationResolver", "operation_code_for_phase"]
@@ -69,7 +69,8 @@ class OperationResolver:
             operation_name=phase_name,
         )
         self.session.add(operation)
-        self.session.add(AuditLog(
+        await audit_change(
+            self.session,
             tenant_id=self.tenant_id,
             entity_type="operation",
             entity_id=operation.id,
@@ -78,9 +79,9 @@ class OperationResolver:
             new_values={"operation_code": code, "operation_name": phase_name},
             actor_role="system",
             reason=(
-                f"Q.55.B — operação de routing criada para a fase "
-                f"'{phase_name}' (atribuição diária de operador)"
+                f"Q.55.B — operacao de routing criada para a fase "
+                f"'{phase_name}' (atribuicao diaria de operador)"
             ),
-        ))
+        )
         await self.session.flush()
         return operation

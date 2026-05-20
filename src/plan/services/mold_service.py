@@ -31,6 +31,7 @@ from src.copilot.alerts.models import (
     CopilotAlert,
     STATUS_ACTIVE,
 )
+from src.governance.audit_service import audit_change
 from src.plan.models.mold import (
     Mold,
     MoldDefectLog,
@@ -87,7 +88,26 @@ class MoldService:
             depreciated=False,
         )
         self.session.add(mold)
+        await audit_change(
+            self.session,
+            tenant_id=self.tenant_id,
+            entity_type="mold",
+            entity_id=mold.id,
+            action="INSERT",
+            old_values=None,
+            new_values={
+                "mold_code": mold_code,
+                "model_id": model_id,
+                "pocket_count": pocket_count,
+                "expected_life_cycles": expected_life_cycles,
+                "active": True,
+            },
+            reason="Q.66.B.3 — molde criado",
+        )
         # Seed the usage counter so future increments don't race.
+        # noqa: audit_coverage — counter seed (zero) acompanha o INSERT do molde
+        # acima; o counter em si nao e state autoritativo (e cache de incrementos
+        # registados via increment_cycle, esses sao tambem noqa por triviais).
         counter = MoldUsageCounter(
             id=uuid4(),
             tenant_id=self.tenant_id,
@@ -96,7 +116,7 @@ class MoldService:
             cycles_since_last_maint=0,
             last_updated_at=datetime.now(timezone.utc),
         )
-        self.session.add(counter)
+        self.session.add(counter)  # noqa: audit_coverage  # counter seed (zero) — molde ja audit acima
         await self.session.flush()
         return mold
 
@@ -141,6 +161,22 @@ class MoldService:
             components=result.components.as_dict(),
         )
         self.session.add(row)
+        await audit_change(
+            self.session,
+            tenant_id=self.tenant_id,
+            entity_type="mold_health",
+            entity_id=row.id,
+            action="INSERT",
+            old_values=None,
+            new_values={
+                "mold_id": str(mold.id),
+                "score_0_100": row.score_0_100,
+                "risk_category": row.risk_category,
+                "previous_score": prev.score_0_100 if prev else None,
+                "previous_risk_category": prev.risk_category if prev else None,
+            },
+            reason="Q.66.B.3 — snapshot de saude de molde",
+        )
         await self.session.flush()
 
         degraded = (
@@ -212,6 +248,22 @@ class MoldService:
             status="PLANNED",
         )
         self.session.add(event)
+        await audit_change(
+            self.session,
+            tenant_id=self.tenant_id,
+            entity_type="mold_maintenance_event",
+            entity_id=event.id,
+            action="INSERT",
+            old_values=None,
+            new_values={
+                "mold_id": str(mold_id),
+                "maintenance_type": maintenance_type,
+                "planned_date": planned_date.isoformat(),
+                "status": "PLANNED",
+                "technician_id": str(technician_id) if technician_id else None,
+            },
+            reason="Q.66.B.3 — manutencao de molde planeada",
+        )
         await self.session.flush()
         return event
 
@@ -317,7 +369,7 @@ class MoldService:
                 cycles_since_last_maint=amount,
                 last_updated_at=datetime.now(timezone.utc),
             )
-            self.session.add(counter)
+            self.session.add(counter)  # noqa: audit_coverage  # counter increment, nao state autoritativo
         else:
             counter.shot_count_total += amount
             counter.cycles_since_last_maint += amount
@@ -406,7 +458,7 @@ class MoldService:
                 created_at=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc),
             )
-            self.session.add(alert)
+            self.session.add(alert)  # noqa: audit_coverage  # alert derivado, nao state autoritativo
             created += 1
 
             try:

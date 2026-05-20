@@ -33,6 +33,7 @@ from uuid import UUID
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.governance.audit_service import audit_change
 from src.plan.cpo.commits import CommitsService, ScheduleCommit, compute_commit_hash
 from src.plan.cpo.fitness import FitnessConfig, compute_fitness
 from src.plan.cpo.state import normalize_phase_code
@@ -250,6 +251,24 @@ class PreviewDeltaService:
         )
         self.session.add(new_commit)
         await self.session.flush()
+        await audit_change(
+            self.session,
+            tenant_id=self.tenant_id,
+            entity_type="schedule_commit",
+            entity_id=new_commit.id,
+            action="INSERT",
+            old_values=None,
+            new_values={
+                "commit_sha256": new_sha,
+                "parent_sha256": commit.commit_sha256,
+                "author": author,
+                "operation_id": mutation.operation_id,
+                "new_phase_id": mutation.new_phase_id,
+                "operations_count": len(ops_after),
+                "kind": "preview_apply",
+            },
+            reason=f"Q.66.B.3 — preview-apply: {reason[:80]}",
+        )
         await self.session.commit()
         logger.info(
             "preview-apply commit %s parent=%s op=%s",

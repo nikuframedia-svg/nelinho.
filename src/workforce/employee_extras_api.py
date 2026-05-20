@@ -173,6 +173,7 @@ async def override_quality_score(
     # Best-effort Camada 1 hook — never block the override on a
     # detector-side error.
     try:
+        from src.governance.audit_service import audit_change
         from src.governance.models import (
             PreferenceRule,
             PreferenceRuleStatus,
@@ -189,27 +190,43 @@ async def override_quality_score(
         )
         existing = (await session.execute(stmt)).scalar_one_or_none()
         if existing is None:
-            session.add(
-                PreferenceRule(
-                    tenant_id=tenant_id,
-                    type=PreferenceRuleType.WORKFORCE_OVERRIDE.value,
-                    description=(
-                        f"Operator override on quality_score for employee "
-                        f"{employee_id}: {ml.score:.2f} → {body.score:.2f}. "
-                        f"Reason: {body.reason}"
-                    ),
-                    predicate={
-                        "employee_id": str(employee_id),
-                        "field": "quality_score",
-                        "ml_value": round(ml.score, 2),
-                        "override_value": round(body.score, 2),
-                        "reason": body.reason,
-                    },
-                    confidence=1.0,
-                    status=PreferenceRuleStatus.DETECTED.value,
-                )
+            new_rule = PreferenceRule(
+                tenant_id=tenant_id,
+                type=PreferenceRuleType.WORKFORCE_OVERRIDE.value,
+                description=(
+                    f"Operator override on quality_score for employee "
+                    f"{employee_id}: {ml.score:.2f} → {body.score:.2f}. "
+                    f"Reason: {body.reason}"
+                ),
+                predicate={
+                    "employee_id": str(employee_id),
+                    "field": "quality_score",
+                    "ml_value": round(ml.score, 2),
+                    "override_value": round(body.score, 2),
+                    "reason": body.reason,
+                },
+                confidence=1.0,
+                status=PreferenceRuleStatus.DETECTED.value,
             )
+            session.add(new_rule)
             await session.flush()
+            await audit_change(
+                session,
+                tenant_id=tenant_id,
+                entity_type="preference_rule",
+                entity_id=new_rule.id,
+                action="INSERT",
+                old_values=None,
+                new_values={
+                    "type": PreferenceRuleType.WORKFORCE_OVERRIDE.value,
+                    "status": PreferenceRuleStatus.DETECTED.value,
+                    "employee_id": str(employee_id),
+                    "field": "quality_score",
+                    "ml_value": round(ml.score, 2),
+                    "override_value": round(body.score, 2),
+                },
+                reason="Q.66.B.3 — override de quality_score do operador",
+            )
         else:
             # Refresh the most recent override on the existing rule.
             predicate = dict(existing.predicate or {})
@@ -370,6 +387,7 @@ async def toggle_skill(
     nivel = clamp_level(body.nivel) if body.nivel is not None else None
 
     try:
+        from src.governance.audit_service import audit_change
         from src.governance.models import (
             PreferenceRule,
             PreferenceRuleStatus,
@@ -399,20 +417,38 @@ async def toggle_skill(
             f"can_do={body.can_do}"
         )
         if existing is None:
-            session.add(
-                PreferenceRule(
-                    tenant_id=tenant_id,
-                    type=PreferenceRuleType.WORKFORCE_OVERRIDE.value,
-                    description=description,
-                    predicate=predicate,
-                    confidence=1.0,
-                    status=PreferenceRuleStatus.DETECTED.value,
-                )
+            new_rule = PreferenceRule(
+                tenant_id=tenant_id,
+                type=PreferenceRuleType.WORKFORCE_OVERRIDE.value,
+                description=description,
+                predicate=predicate,
+                confidence=1.0,
+                status=PreferenceRuleStatus.DETECTED.value,
+            )
+            session.add(new_rule)
+            await session.flush()
+            await audit_change(
+                session,
+                tenant_id=tenant_id,
+                entity_type="preference_rule",
+                entity_id=new_rule.id,
+                action="INSERT",
+                old_values=None,
+                new_values={
+                    "type": PreferenceRuleType.WORKFORCE_OVERRIDE.value,
+                    "status": PreferenceRuleStatus.DETECTED.value,
+                    "employee_id": str(employee_id),
+                    "field": "skill",
+                    "phase_id": body.phase_id,
+                    "can_do": body.can_do,
+                    "nivel": nivel,
+                },
+                reason="Q.66.B.3 — override de skill do operador",
             )
         else:
             existing.predicate = predicate
             existing.description = description
-        await session.flush()
+            await session.flush()
         await session.commit()
     except Exception as exc:
         logger.error("skill toggle failed: %s", exc, exc_info=True)

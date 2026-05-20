@@ -13,6 +13,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.governance.audit_service import audit_change
 from src.plan.models.schedule import ProductionSchedule, ScheduleStatus
 from src.plan.engines.scheduling_adapter import (
     SchedulingAdapter,
@@ -174,6 +175,7 @@ class SchedulingService:
                 row_quantity = Decimal("1")
 
             schedule = ProductionSchedule(
+                id=uuid4(),
                 tenant_id=self.tenant_id,
                 order_id=op_data["order_id"],
                 product_id=UUID(op_data["product_id"]) if op_data.get("product_id") else None,
@@ -199,7 +201,25 @@ class SchedulingService:
                 ),
             )
             self.session.add(schedule)
-        
+            await audit_change(
+                self.session,
+                tenant_id=self.tenant_id,
+                entity_type="production_schedule",
+                entity_id=schedule.id,
+                action="INSERT",
+                old_values=None,
+                new_values={
+                    "order_id": str(schedule.order_id),
+                    "operation_sequence": schedule.operation_sequence,
+                    "planning_run_id": planning_run_id,
+                    "status": ScheduleStatus.SCHEDULED.value,
+                    "scheduled_start_date": schedule.scheduled_start_date.isoformat(),
+                    "scheduled_end_date": schedule.scheduled_end_date.isoformat(),
+                    "engine_used": schedule.engine_used,
+                },
+                reason="Q.66.B.3 — operacao calendarizada",
+            )
+
         await self.session.flush()
         
         # Publish event
