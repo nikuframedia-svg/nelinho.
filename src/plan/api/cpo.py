@@ -193,232 +193,233 @@ async def schedule_cpo(
     tenant_id: UUID = Depends(_tenant_id),
     db: AsyncSession = Depends(get_session),
 ):
-    """Run CPO v4 and persist the result as a Schedule-as-Code commit."""
-    horizon_start = datetime.utcnow()
-    horizon_end = horizon_start + timedelta(days=request.horizon_days)
+    """Run CPO v4 syncronamente + persist o resultado como commit.
 
-    state = await FactoryState.load(db, tenant_id)
+    Q.62.D.2 — body extraído para `src/plan/cpo/scheduler_run.py`.
+    Endpoint sync continua a funcionar (backwards compat para tests +
+    clientes legacy). Para o cliente novo que quer non-blocking, ver
+    `POST /schedule/async` + `GET /schedule/job/{job_id}`.
+    """
+    from src.plan.cpo.scheduler_run import run_cpo_schedule
 
-    # FASE 1B.1 (CRIT-15) — refuse to schedule when FactoryState load failed.
-    # An empty state means skill_matrix={} and molds_by_model={}: the
-    # scheduler would happily assign any worker to any phase, producing a
-    # plan that ignores domain constraints. Better to fail loud than to
-    # ship a "valid" but unsafe schedule.
-    if not state.loaded_ok:
+    result_dict = await run_cpo_schedule(db, tenant_id, request)
+    return CPOScheduleResponse(**result_dict)
+
+
+# ─── Q.62.D.2 — async endpoint via Arq ─────────────────────────────────
+
+
+class CPOScheduleEnqueueResponse(BaseModel):
+    """Q.62.D.2 — 202 response do POST /schedule/async."""
+
+    job_id: str
+    status_url: str
+    enqueued_at: str
+
+
+class CPOJobStatusResponse(BaseModel):
+    """Q.62.D.2 — GET /schedule/job/{job_id} polling response.
+
+    `state` é um dos: deferred (na queue), in_progress, complete, failed,
+    not_found.
+    """
+
+    job_id: str
+    state: str
+    result: Optional[Dict[str, Any]] = None  # CPOScheduleResponse dict
+    error: Optional[str] = None
+    enqueued_at: Optional[str] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+
+
+@router.post(
+    "/schedule/async",
+    response_model=CPOScheduleEnqueueResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def schedule_cpo_async(
+    request: CPOScheduleRequest,
+    tenant_id: UUID = Depends(_tenant_id),
+    user_id: UUID = Depends(_tenant_id),  # placeholder — same gate
+):
+    """Q.62.D.2 — enfileira o CPO scheduler num Arq worker.
+
+    Retorna 202 imediato com `job_id`. Cliente faz polling em
+    `GET /v1/plan/cpo/schedule/job/{job_id}` para obter o resultado.
+
+    Worker DEVE estar a correr:
+        arq src.plan.cpo.worker.WorkerSettings
+
+    Se o worker não está disponível, o job fica na queue até alguém o
+    drainar. 503 só se Redis estiver completamente offline.
+    """
+    from arq.connections import ArqRedis, create_pool
+    from src.shared.config import settings as _settings
+    from arq.connections import RedisSettings
+
+    try:
+        redis: ArqRedis = await create_pool(
+            RedisSettings.from_dsn(_settings.redis_url),
+        )
+    except Exception as exc:  # pragma: no cover — Redis down e raro
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                f"FactoryState unavailable for tenant {tenant_id}: "
-                f"{state.load_error or 'unknown error'}. Ingest curated "
-                "data via /v1/factory-data/ingest before scheduling."
-            ),
+            detail=f"Arq queue unavailable (Redis): {exc}",
         )
 
-    orders = request.orders or state.open_orders
-    if not orders:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "No orders available. Either provide `orders` in the request "
-                "or ingest data via /v1/factory-data/ingest to populate the "
-                "curated layer."
-            ),
-        )
-
-    # FASE 0.3 (DEVA-02) / Sprint Q.54.F — wire the active ML models into
-    # this scheduling run. `apply_ml_to_cpo` is the shared chokepoint
-    # (also used by the copilot's POETIQ path) so both planners wire the
-    # DurationModel + QualityRiskModel identically. When no artifact is
-    # active, the predictors are None and behaviour is identical to
-    # before (history / 2× standard templates, zero quality-risk term).
-    #
-    # Sprint Q.9 Onda 1.2 — fitness_config carries the per-tenant adaptive
-    # Camada-2 weights; `apply_ml_to_cpo` mutates it to attach the
-    # QualityRiskModel predictor. Built here (before the ML wiring) so the
-    # helper has something to attach to.
-    fitness_config = await FitnessConfig.from_tenant_config(db, tenant_id)
-    from src.plan.cpo.ml_wiring import apply_ml_to_cpo
-    duration_predictor, ml_report = await apply_ml_to_cpo(
-        db, tenant_id, fitness_config=fitness_config,
-    )
-    resolver = RoutingResolver(state, duration_predictor=duration_predictor)
-    operations = resolver.resolve_many(orders, horizon_start=horizon_start)
-
-    # FASE 1B.3 (CRIT-13) — when the resolver fell back to standards
-    # because the curated semantic engine was unavailable, emit an alert
-    # so the operator knows the schedule was built on 2× buffer estimates
-    # rather than real history. Best-effort: never block scheduling.
-    if resolver.engine_unavailable:
-        try:
-            from src.copilot.alerts.models import (
-                CODE_ROUTING_ENGINE_UNAVAILABLE,
-                CopilotAlert,
-            )
-            alert = CopilotAlert(
-                tenant_id=tenant_id,
-                severity="WARN",
-                code=CODE_ROUTING_ENGINE_UNAVAILABLE,
-                title="Routing engine unavailable — schedule built on 2× buffer templates",
-                message_pt=(
-                    "O motor de routing não conseguiu aceder à camada curada "
-                    "(factory_data_product). O scheduler caiu para os templates "
-                    "FasesStandardModelos com buffer 2× — durações podem divergir "
-                    "até 25× da realidade. Re-ingere os dados curados e volta a planear."
-                ),
-                context={"resolved_orders": len(orders)},
-                entity_refs=[],
-            )
-            db.add(alert)
-            await db.flush()
-        except Exception as alert_exc:  # pragma: no cover — defensive
-            logger.warning("CPO schedule: failed to emit routing alert: %s", alert_exc)
-    if not operations:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "Routing resolver returned no operations. No history or "
-                "standard template found for these orders."
-            ),
-        )
-
-    if request.machines:
-        machines = [
-            SchedulingMachine(
-                machine_id=m.machine_id,
-                name=m.name or m.machine_id,
-                capacity=m.capacity,
-                speed_factor=m.speed_factor,
-                centro_custo=m.centro_custo,
-            )
-            for m in request.machines
-        ]
-    else:
-        machines = [SchedulingMachine(machine_id="MANUAL", name="Manual pool")]
-
-    # Sprint Q.9 Onda 1.2 / Q.54.F — `fitness_config` was built above with
-    # the adaptive Camada-2 weights and already carries the QualityRiskModel
-    # predictor attached by `apply_ml_to_cpo`. The engine constructor also
-    # copies `state.preference_rules` into it (Camada 1 wire).
-    engine = CPOv4Engine(
-        state=state,
-        config=CPOConfig(
-            population_size=request.population_size,
-            generations=request.generations,
-            time_limit_sec=request.time_limit_sec,
-        ),
-        fitness_config=fitness_config,
-    )
-
-    # Sprint C 1.1 — load current product prices so the decoder can compute
-    # throughput €/day (F1). Without this lookup the fitness term stays at 0
-    # and the CEO never sees the real €/day target being optimised.
-    product_price_eur = await _load_product_prices(db, tenant_id)
-
-    result = engine.schedule(
-        operations, machines, horizon_start, horizon_end,
-        product_price_eur=product_price_eur,
-    )
-
-    # FASE 0.3 / Q.54.F — surface ML wiring (duration + quality-risk) for
-    # observability and E2E asserts.
-    result.setdefault("cpo_meta", {}).update(ml_report.as_meta())
-
-    # Q.17.F.2 — yaml_policy SCHEDULE_PROPOSE hook. Fire any tenant rules
-    # that subscribe to this event; if any ``block`` action triggers,
-    # refuse to commit the schedule and surface the rule's reason as 409.
-    # Other actions (alert/modify_fitness/notify) are best-effort and
-    # don't block the response. Failure of the engine itself is
-    # swallowed — never let yaml_policy break the scheduler.
     try:
-        from src.governance.yaml_policy import EventType as _YPEventType
-        from src.governance.yaml_policy.engine import RuleEngine as _RuleEngine
-        from src.governance.yaml_policy.runtime import get_engine as _get_yp_engine
-        _yp_payload = {
-            "tenant_id": str(tenant_id),
-            "horizon_days": int(request.horizon_days),
-            "operations_count": len(result.get("operations", [])),
-            "fitness_score": float(result.get("fitness_score", 0.0)),
-            "makespan_hours": float(result.get("makespan_hours", 0.0)),
-            "tardiness_hours": float(result.get("total_tardiness_hours", 0.0)),
-        }
-        _yp_fired = await _get_yp_engine().on_event(
-            _YPEventType.SCHEDULE_PROPOSE,
-            _yp_payload,
-            tenant_id=tenant_id,
-            session=db,
+        job = await redis.enqueue_job(
+            "cpo_schedule_job",
+            request.model_dump(mode="json"),
+            str(tenant_id),
+            str(user_id),
         )
-        _yp_blocks = _RuleEngine.block_results(_yp_fired)
-        if _yp_blocks:
-            _block = _yp_blocks[0]
-            _rule_id = next(
-                (r.id for r, results in _yp_fired
-                 if any(rs.action == "block" for rs in results)),
-                "?",
-            )
+    finally:
+        await redis.close()
+
+    if job is None:
+        # Arq retorna None se o job ja existe pelo job_id (deduping).
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Job already enqueued (idempotency).",
+        )
+
+    return CPOScheduleEnqueueResponse(
+        job_id=job.job_id,
+        status_url=f"/v1/plan/cpo/schedule/job/{job.job_id}",
+        enqueued_at=datetime.utcnow().isoformat() + "Z",
+    )
+
+
+@router.get(
+    "/schedule/job/{job_id}",
+    response_model=CPOJobStatusResponse,
+)
+async def get_schedule_job_status(
+    job_id: str,
+    tenant_id: UUID = Depends(_tenant_id),
+):
+    """Q.62.D.2 — polling endpoint para o resultado do Arq job."""
+    from arq.connections import create_pool
+    from arq.jobs import Job, JobStatus
+    from src.shared.config import settings as _settings
+    from arq.connections import RedisSettings
+
+    try:
+        redis = await create_pool(
+            RedisSettings.from_dsn(_settings.redis_url),
+        )
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Arq queue unavailable (Redis): {exc}",
+        )
+
+    try:
+        job = Job(job_id, redis=redis)
+        job_status = await job.status()
+
+        if job_status is JobStatus.not_found:
+            return CPOJobStatusResponse(job_id=job_id, state="not_found")
+
+        info = await job.info()
+        result: Optional[Dict[str, Any]] = None
+        error_str: Optional[str] = None
+
+        if job_status is JobStatus.complete:
+            try:
+                raw_result = await job.result(timeout=0.1)
+                if isinstance(raw_result, dict):
+                    result = raw_result
+            except Exception as exc:
+                # job completou mas com erro — `result()` re-raises.
+                error_str = str(exc)
+
+        return CPOJobStatusResponse(
+            job_id=job_id,
+            state=job_status.value if hasattr(job_status, "value") else str(job_status),
+            result=result,
+            error=error_str,
+            enqueued_at=(info.enqueue_time.isoformat() + "Z") if info and info.enqueue_time else None,
+            started_at=(info.start_time.isoformat() + "Z") if info and info.start_time else None,
+            completed_at=(info.finish_time.isoformat() + "Z") if info and info.finish_time else None,
+        )
+    finally:
+        await redis.close()
+
+
+# ─── Q.62.D.4 — approve job result (DRAFT → LIVE) ──────────────────────
+
+
+class CPOJobApproveResponse(BaseModel):
+    """Q.62.D.4 — PUT /schedule/job/{job_id}/approve."""
+
+    job_id: str
+    commit_sha256: str
+    previous_status: str
+    new_status: str
+    approved_at: str
+
+
+@router.put(
+    "/schedule/job/{job_id}/approve",
+    response_model=CPOJobApproveResponse,
+)
+async def approve_schedule_job(
+    job_id: str,
+    tenant_id: UUID = Depends(_tenant_id),
+    db: AsyncSession = Depends(get_session),
+):
+    """Q.62.D.4 — promove o commit do job de DRAFT para LIVE.
+
+    O CPO scheduler cria commits com `status=DRAFT` por defeito. Approver
+    revê e chama este endpoint para marcar LIVE. Decision-as-code.
+    """
+    from arq.connections import create_pool
+    from arq.jobs import Job, JobStatus
+    from arq.connections import RedisSettings
+    from src.shared.config import settings as _settings
+
+    # 1. Lookup do job e extracção do commit_sha256.
+    redis = await create_pool(RedisSettings.from_dsn(_settings.redis_url))
+    try:
+        job = Job(job_id, redis=redis)
+        job_status = await job.status()
+        if job_status is JobStatus.not_found:
+            raise HTTPException(404, f"Job {job_id} not found in Arq queue")
+        if job_status is not JobStatus.complete:
             raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "error": "blocked_by_yaml_policy",
-                    "rule_id": _rule_id,
-                    "scope": _block.payload.get("scope"),
-                    "reason_pt": _block.payload.get("reason_pt", ""),
-                },
+                409,
+                f"Job {job_id} state is {job_status.value if hasattr(job_status, 'value') else job_status}; cannot approve until complete.",
             )
-        if _yp_fired:
-            logger.info(
-                "yaml_policy: schedule_propose fired %d rules (no blocks)",
-                len(_yp_fired),
-            )
-    except HTTPException:
-        raise  # propagate the 409 we just raised
-    except Exception as _yp_exc:
-        logger.warning(f"yaml_policy SCHEDULE_PROPOSE hook failed: {_yp_exc}")
+        result = await job.result(timeout=0.1)
+    finally:
+        await redis.close()
 
-    # Sprint C 1.2 — real Trust Index for this schedule commit.
-    # Uses the v2 Calculator in factory scope, which reads tenant weights
-    # and falls back to neutral components when no signals provider is
-    # wired. The result drives the auto-commit gate in decisions.py.
-    trust_index_value = await _compute_trust_index_for_schedule(db, tenant_id)
-
-    # Sprint K — persist a commit
-    commit_sha: Optional[str] = None
-    parent_sha: Optional[str] = None
-    try:
-        commits = CommitsService(db, tenant_id)
-        alternatives = _extract_mapelites_representatives(engine)
-        commit = await commits.create_from_schedule(
-            schedule_result=result,
-            mapelites_representatives=alternatives,
-            delta=request.delta,
-            author=request.author,
-            message=request.message,
-            trust_index=trust_index_value,  # Sprint C 1.2 — real TI from DQA calculator
+    commit_sha = (result or {}).get("commit_sha256")
+    if not commit_sha:
+        raise HTTPException(
+            500, f"Job {job_id} complete but has no commit_sha256 in result"
         )
-        commit_sha = commit.commit_sha256
-        parent_sha = await _parent_sha(commits, commit)
-    except Exception as e:
-        # Never let commit persistence block a working schedule.
-        logger.warning(f"Schedule-as-Code commit failed: {e}", exc_info=True)
 
-    return CPOScheduleResponse(
-        tenant_id=str(tenant_id),
-        engine_used=result.get("engine_used", "cpo_v4"),
-        status=result.get("status", "unknown"),
-        solve_time_sec=float(result.get("solve_time_sec", 0.0)),
-        makespan_hours=float(result.get("makespan_hours", 0.0)),
-        total_tardiness_hours=float(result.get("total_tardiness_hours", 0.0)),
-        num_late_orders=int(result.get("num_late_orders", 0)),
-        setups=int(result.get("setups", 0)),
-        avg_utilization=float(result.get("avg_utilization", 0.0)),
-        safety_net_triggered=bool(result.get("safety_net_triggered", False)),
-        degraded=bool(result.get("degraded", False)),
-        fallback_reason=result.get("fallback_reason"),
-        cpo_meta=result.get("cpo_meta", {}),
-        operations=result.get("operations", []),
-        warnings=list(result.get("warnings", [])),
-        infeasible_op_ids=list(result.get("infeasible_op_ids", [])),
+    # 2. Toggle ScheduleCommit.status DRAFT → LIVE.
+    commits = CommitsService(db, tenant_id)
+    commit = await _resolve_commit_or_404(commits, commit_sha)
+
+    prev_status = getattr(commit, "status", "DRAFT") or "DRAFT"
+    if prev_status == "LIVE":
+        raise HTTPException(409, f"Commit {commit_sha[:8]} already LIVE")
+
+    commit.status = "LIVE"
+    await db.commit()
+
+    return CPOJobApproveResponse(
+        job_id=job_id,
         commit_sha256=commit_sha,
-        parent_sha256=parent_sha,
+        previous_status=prev_status,
+        new_status="LIVE",
+        approved_at=datetime.utcnow().isoformat() + "Z",
     )
 
 

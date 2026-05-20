@@ -72,24 +72,20 @@ def test_cpo_schedule_job_signature():
     )
 
 
-@pytest.mark.asyncio
-async def test_cpo_schedule_job_stub_raises_not_implemented():
-    """Q.62.D.1 entrega scaffolding; o body real fica para Q.62.D.2.
-    O job stub deve levantar NotImplementedError com referência a D.2."""
-    from src.plan.cpo.worker import cpo_schedule_job
+def test_cpo_schedule_job_calls_run_cpo_schedule():
+    """Q.62.D.2 — verifica que o worker delega para run_cpo_schedule.
+    Test estatico: lê o source e confirma o import + invocação.
 
-    ctx = {"job_id": "test-job-123"}
-    request_dict = {
-        "horizon_days": 30,
-        "time_limit_sec": 30.0,
-        "population_size": 100,
-        "generations": 50,
-        "author": "test",
-        "message": "smoke",
-    }
+    Foi `NotImplementedError` em D.1; D.2 wireou e este test passou a
+    confirmar o wiring."""
+    from pathlib import Path
 
-    with pytest.raises(NotImplementedError, match="Q.62.D.2"):
-        await cpo_schedule_job(ctx, request_dict, _TENANT, "user@example.com")
+    text = Path("src/plan/cpo/worker.py").read_text(encoding="utf-8")
+    assert "from src.plan.cpo.scheduler_run import run_cpo_schedule" in text
+    assert "await run_cpo_schedule(session, tenant_id, request)" in text
+    assert "NotImplementedError" not in text, (
+        "D.2 wireou o worker — NotImplementedError nao devia mais existir"
+    )
 
 
 def test_systemd_unit_exists():

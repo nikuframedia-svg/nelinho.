@@ -102,6 +102,12 @@ class ScheduleCommit(TenantBase):
     trust_index: Mapped[float] = mapped_column(nullable=False, default=0.0)
     operations_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
+    # Q.62.D.4 — DRAFT | LIVE. CPO scheduler cria DRAFT por defeito;
+    # approver promove via PUT /v1/plan/cpo/schedule/job/{job_id}/approve.
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="DRAFT", server_default="DRAFT",
+    )
+
 
 # =============================================================================
 # Hash computation

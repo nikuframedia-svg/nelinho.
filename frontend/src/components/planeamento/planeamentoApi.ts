@@ -143,8 +143,43 @@ export interface AdherenceReport {
   phases: AdherencePhase[];
 }
 
+// Q.62.D.2/D.3 — async polling contract.
+export interface CpoScheduleEnqueueResponse {
+  job_id: string;
+  status_url: string;
+  enqueued_at: string;
+}
+
+export type CpoJobState =
+  | 'deferred'
+  | 'in_progress'
+  | 'complete'
+  | 'failed'
+  | 'not_found';
+
+export interface CpoJobStatusResponse {
+  job_id: string;
+  state: CpoJobState;
+  result: CpoScheduleResult | null;
+  error: string | null;
+  enqueued_at: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface CpoJobApproveResponse {
+  job_id: string;
+  commit_sha256: string;
+  previous_status: string;
+  new_status: string;
+  approved_at: string;
+}
+
 export const planeamentoApi = {
-  /** Corre o CPO v4 e persiste como Schedule-as-Code commit. */
+  /** Q.62.D.2 — corre o CPO v4 syncronamente (legacy, ainda bloqueia ate 30s).
+   *  Mantido para tests + cases sem worker Arq. Frontend novo usa
+   *  `runScheduleAsync` + `pollScheduleJob`.
+   */
   runSchedule: (data?: { horizon_days?: number; message?: string }) =>
     apiFetch<CpoScheduleResult>('/v1/plan/cpo/schedule', {
       method: 'POST',
@@ -153,6 +188,30 @@ export const planeamentoApi = {
         message: data?.message ?? 'Replaneamento via página Planeamento',
       }),
     }),
+
+  /** Q.62.D.2 — enfileira o CPO scheduler num Arq worker. Retorna 202
+   *  + `job_id` imediato; cliente faz polling via `pollScheduleJob`. */
+  runScheduleAsync: (data?: { horizon_days?: number; message?: string }) =>
+    apiFetch<CpoScheduleEnqueueResponse>('/v1/plan/cpo/schedule/async', {
+      method: 'POST',
+      body: JSON.stringify({
+        horizon_days: data?.horizon_days ?? 7,
+        message: data?.message ?? 'Replaneamento (async)',
+      }),
+    }),
+
+  /** Q.62.D.2 — polling do estado do Arq job. */
+  pollScheduleJob: (jobId: string) =>
+    apiFetch<CpoJobStatusResponse>(
+      `/v1/plan/cpo/schedule/job/${encodeURIComponent(jobId)}`,
+    ),
+
+  /** Q.62.D.4 — promove o commit do job (DRAFT → LIVE). */
+  approveScheduleJob: (jobId: string) =>
+    apiFetch<CpoJobApproveResponse>(
+      `/v1/plan/cpo/schedule/job/${encodeURIComponent(jobId)}/approve`,
+      { method: 'PUT' },
+    ),
 
   /** Alinhamento receita ↔ ordem de prioridade do scheduler. */
   priorityReport: (commitSha?: string) =>

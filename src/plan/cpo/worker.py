@@ -60,13 +60,15 @@ async def cpo_schedule_job(
         modulo `tenant_id`). Em Q.62.D.2 o endpoint converte para CommitSha
         e o polling endpoint serve o commit completo.
 
-    Q.62.D.1 entrega o scaffolding — invocacao concreta do engine.schedule()
-    fica para Q.62.D.2 quando o endpoint fizer extraccao do body para
-    `run_cpo_schedule_sync(session, tenant_id, request)`. Por agora este
-    job é stub que log + raise para sinalizar.
+    Q.62.D.2 — wire concreto: abre session limpa, set tenant_scope, e
+    invoca `run_cpo_schedule(session, tenant_id, request)`. O dict
+    retornado vai para o Arq result store (acessivel via polling em
+    `GET /v1/plan/cpo/schedule/job/{job_id}`).
     """
     from src.plan.api.cpo import CPOScheduleRequest
+    from src.plan.cpo.scheduler_run import run_cpo_schedule
     from src.shared.auth.tenant_context import tenant_scope
+    from src.shared.database import get_session_context
 
     tenant_id = UUID(tenant_id_str)
     request = CPOScheduleRequest(**request_dict)
@@ -81,20 +83,19 @@ async def cpo_schedule_job(
         request.time_limit_sec,
     )
 
-    # Q.62.D.2 — extrair body de schedule_cpo para
-    # `src/plan/cpo/scheduler_run.py:run_cpo_schedule` e chamar aqui:
-    #
-    #     from src.shared.database import get_session_context
-    #     async with get_session_context() as session:
-    #         result = await run_cpo_schedule(session, tenant_id, request)
-    #     return result
-    #
-    # Por agora (D.1 scaffolding) levantamos para forçar D.2:
-    with tenant_scope(tenant_id):  # noqa: F841  - smoke that ContextVar wires
-        raise NotImplementedError(
-            "Q.62.D.1: scaffolding only. Q.62.D.2 extrai o body de "
-            "schedule_cpo e wire o engine.schedule() aqui."
-        )
+    with tenant_scope(tenant_id):
+        async with get_session_context() as session:
+            result = await run_cpo_schedule(session, tenant_id, request)
+
+    logger.info(
+        "cpo_schedule_job complete: job_id=%s commit_sha=%s status=%s "
+        "solve_time=%.2fs",
+        ctx.get("job_id"),
+        (result.get("commit_sha256") or "<none>")[:8],
+        result.get("status"),
+        result.get("solve_time_sec", 0.0),
+    )
+    return result
 
 
 # ─── Worker settings ─────────────────────────────────────────────────
