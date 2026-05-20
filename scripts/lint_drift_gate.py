@@ -42,6 +42,14 @@ FRONTEND_REGEX_RULES = {
     ),
 }
 
+# Python custom (AST walk via tools/lint_*.py) — chave logica.
+# Q.66.B.2 — audit_change() coverage em services. Baseline alto (41)
+# enquanto o pipeline migra de 2 callsites para coverage global; o
+# drift gate impede crescer (Larson: stop the bleeding).
+PYTHON_CUSTOM_RULES = {
+    "Q66_B2_audit_coverage_violations": "tools/lint_audit_coverage.py",
+}
+
 
 def count_python_violations(rule: str) -> int:
     """Conta violacoes de uma regra em src/ via ruff."""
@@ -73,6 +81,29 @@ def count_frontend_violations(needle: str) -> int:
     return sum(1 for line in proc.stdout.splitlines() if needle in line)
 
 
+def count_python_custom(script_rel: str) -> int:
+    """Corre um lint AST custom (tools/lint_*.py) e devolve o count
+    final. O script tem que imprimir uma linha com sintaxe:
+        Q.66.B.2 audit coverage violations: <N>
+    O drift gate parsa esse N para enforcement. Script standalone
+    sai 0 sempre (e o drift gate quem enforce contra baseline)."""
+    proc = subprocess.run(
+        [sys.executable, str(REPO_ROOT / script_rel)],
+        capture_output=True, text=True, cwd=REPO_ROOT,
+    )
+    # Procura "violations: <N>" no stdout — formato fixo dos lints custom.
+    for line in proc.stdout.splitlines():
+        marker = "violations:"
+        if marker in line:
+            try:
+                return int(line.split(marker, 1)[1].strip().split()[0])
+            except (ValueError, IndexError):
+                continue
+    # Sem match — tratamos como 0 (script provavelmente falhou; o stderr
+    # vai para fora e o caller ve).
+    return 0
+
+
 def count_regex_in_globs(globs: list[str], pattern: str) -> int:
     """Conta ocorrencias `pattern` (regex) em todos os ficheiros que batem
     qualquer dos `globs` (relativos ao repo root). Ignora comentarios e
@@ -101,6 +132,8 @@ def count_all() -> dict[str, int]:
         counts[key] = count_frontend_violations(needle)
     for key, (globs, pattern) in FRONTEND_REGEX_RULES.items():
         counts[key] = count_regex_in_globs(globs, pattern)
+    for key, script_rel in PYTHON_CUSTOM_RULES.items():
+        counts[key] = count_python_custom(script_rel)
     return counts
 
 

@@ -91,7 +91,14 @@ Step "verify_invariants.py (estatica + AST)" {
     if ($LASTEXITCODE -ne 0) { throw "verify_invariants falhou" }
 }
 
-Step ("lint drift gate (BLE001 + Q61.07 + Q61.28)") {
+Step ("lint-audit-coverage (Q.66.B.2 - invariant 7)") {
+    # Audit coverage standalone - imprime baseline; drift gate proprio
+    # corre logo a seguir para enforce o teto contra lint_baseline.json.
+    & .\.venv\Scripts\python.exe tools/lint_audit_coverage.py
+    if ($LASTEXITCODE -ne 0) { throw "lint-audit-coverage crasher" }
+}
+
+Step ("lint drift gate (BLE001 + Q61.07 + Q61.28 + Q66.B2)") {
     & .\.venv\Scripts\python.exe scripts/lint_drift_gate.py
     if ($LASTEXITCODE -ne 0) { throw "lint drift gate cresceu - reverter ou actualizar baseline" }
 }
