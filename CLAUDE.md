@@ -168,7 +168,9 @@ cd frontend && npx tsc -b --noEmit && npm test && npm run lint:mocks
 
 ---
 
-*This file is intentionally short. Boris (Anthropic): "every line in CLAUDE.md affects 1000 future
-prompts — write fewer, better lines." Karpathy: "surface assumptions, prefer the smallest change."
-HumanLayer: "progressive disclosure beats monolithic config." When in doubt, link to a skill or
-to `agent_docs/`. Don't repeat content here.*
+*This file is intentionally short. CLAUDE.md é carregado em TODAS as sessões — cada linha aqui
+afecta milhares de prompts futuros. Manter pequeno; conteúdo condicional vive em skills ou em
+`agent_docs/`. (Best practices oficiais: <https://code.claude.com/docs/en/best-practices>.)
+Karpathy: "surface assumptions, prefer the smallest change." HumanLayer: "progressive disclosure
+beats monolithic config." Quando em dúvida, linka para uma skill ou para `agent_docs/`. Não
+repetir conteúdo aqui.*
