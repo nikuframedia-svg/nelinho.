@@ -97,6 +97,10 @@ FASE 1B (CRIT-13..16, 23), FASE 2 (CRIT-02/17/18 atomicity), FASE 3 (HIGH-41..56
 - Future: Q.18.A→J (10-day plan): tokens migration, atom port, backend gaps, route consolidation
   32→5, drawer infrastructure, operator kiosk endpoints
 
+### Q.61 — Consolidação (em curso, plano em `.claude/plans/trust-index-v1-indexed-token.md`)
+
+- **Q.61.01** Guarda AST `TESTS-no-empty-bodies` em `verify_invariants.py` — apanha `def test_*: pass | ...` antes do CI. Stop-the-bleeding contra falsos positivos (audit overnight tinha-os reportado; AST confirmou zero hoje).
+
 ## Test count progression
 
 | Sprint | Total tests |

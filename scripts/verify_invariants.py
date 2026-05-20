@@ -18,7 +18,11 @@ Diferencas face ao script de referencia da skill, para uso de longa duracao:
   nao apanhava a anotacao de tipo `: float =`. Aqui esta corrigida. A skill
   deve ser actualizada para casar (pendente de autorizacao para editar
   ficheiros .claude/skills/).
+- Q.61.01: nova invariante `TESTS-no-empty-bodies` (AST scan) — apanha
+  `def test_*: pass` antes do CI correr a suite. Stop-the-bleeding contra
+  falsos positivos.
 """
+import ast
 import os
 import re
 import subprocess
@@ -176,6 +180,51 @@ for module, attr in [
             check(label, True)
     except ImportError as e:
         check(label, False, f"Import falhou: {e}")
+
+# --- AST: testes nao podem ter corpo vazio (Q.61.01) ---
+# Apanha `def test_*: pass` / `def test_*: ...` / corpo so com docstring.
+# Theater destes esta proibido — passa sem afirmar nada e mascara
+# regressoes durante refactor.
+print("\n-> AST DOS TESTES")
+empty_tests: list[tuple[str, str, int]] = []
+for tpath in Path("tests").rglob("test_*.py"):
+    try:
+        tree = ast.parse(tpath.read_text(encoding="utf-8"))
+    except SyntaxError as e:
+        check(f"AST-parse-{tpath}", False, f"syntax error: {e}")
+        continue
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not node.name.startswith("test_"):
+            continue
+        # Remove docstring antes de medir o corpo.
+        body = [
+            s for s in node.body
+            if not (
+                isinstance(s, ast.Expr)
+                and isinstance(s.value, ast.Constant)
+                and isinstance(s.value.value, str)
+            )
+        ]
+        if len(body) == 0:
+            empty_tests.append((str(tpath), node.name, node.lineno))
+        elif len(body) == 1 and isinstance(body[0], ast.Pass):
+            empty_tests.append((str(tpath), node.name, node.lineno))
+        elif (
+            len(body) == 1
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and body[0].value.value is Ellipsis
+        ):
+            empty_tests.append((str(tpath), node.name, node.lineno))
+check(
+    "TESTS-no-empty-bodies",
+    len(empty_tests) == 0,
+    f"{len(empty_tests)} teste(s) com corpo vazio: "
+    + ", ".join(f"{p}:{ln} {n}" for p, n, ln in empty_tests[:3])
+    + (" ..." if len(empty_tests) > 3 else ""),
+)
 
 # --- TESTES ---
 print("\n-> TESTES")
