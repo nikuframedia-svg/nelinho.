@@ -117,6 +117,45 @@ async_session_factory = async_sessionmaker(
 )
 
 
+# ─── Q.62.B.2 — Row-Level Security tenant filter ──────────────────────
+#
+# Cada nova transacao injecta `SET LOCAL app.tenant_id` consoante o
+# ContextVar `current_tenant_id_var` (definido pelo middleware FastAPI
+# ou por `tenant_scope()` em background tasks). As policies RLS criadas
+# em migration 056_q62_b_rls_enable filtram queries automaticamente.
+#
+# `SET LOCAL` (não `SET`) — libertado no commit/rollback, não vaza para
+# proximo checkout do pool.
+#
+# Sem tenant_id setado (background task que esqueceu de set explicito,
+# request sem header), `current_setting('app.tenant_id', true)` devolve
+# string vazia. O cast para UUID falha silenciosamente -> RLS rejeita
+# todas as rows (fail-closed).
+
+
+@event.listens_for(engine.sync_engine, "begin")
+def _set_tenant_id_on_transaction_begin(conn):
+    """Q.62.B.2 — injecta SET LOCAL app.tenant_id no início de cada tx.
+
+    `engine.sync_engine` é o sync engine subjacente ao async engine.
+    Eventos disparados aqui aplicam-se a ambos os modos.
+    """
+    # Import local para evitar import circular (tenant_context não
+    # precisa de database.py).
+    from src.shared.auth.tenant_context import get_tenant_id as _get_tid
+
+    tid = _get_tid()
+    if tid is None:
+        # Sem tenant set — RLS bloqueia tudo (fail-closed). Não levantamos
+        # erro aqui porque queries de migration/health-check podem
+        # legitimamente correr sem tenant.
+        return
+    # Uso de exec_driver_sql para evitar parsing SQLAlchemy + escape de
+    # UUID inline. UUID validado pelo type system Python antes de chegar
+    # aqui, mas defesa em profundidade: str() é seguro.
+    conn.exec_driver_sql(f"SET LOCAL app.tenant_id = '{tid}'")
+
+
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     """
     Dependency for getting database session.

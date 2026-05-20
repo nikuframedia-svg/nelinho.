@@ -341,6 +341,65 @@ app = FastAPI(
 from src.shared.observability import TraceIdMiddleware
 app.add_middleware(TraceIdMiddleware)
 
+
+# Q.62.B.2 — Tenant context middleware.
+# Extrai X-Tenant-Id (ou JWT.tenant_id) e poe em ContextVar para que o
+# event listener "begin" da engine (src/shared/database.py) injecte
+# `SET LOCAL app.tenant_id` em cada transacao. As policies RLS da
+# migration 056_q62_b_rls_enable filtram queries automaticamente.
+#
+# Background tasks (scheduler, ETL) que nao passam pelo middleware
+# devem chamar `tenant_scope(uuid)` explicitamente antes de queries.
+from starlette.middleware.base import BaseHTTPMiddleware
+from src.shared.auth.tenant_context import set_tenant_id, reset_tenant_id
+from uuid import UUID as _UUID
+
+
+class TenantContextMiddleware(BaseHTTPMiddleware):
+    """Q.62.B.2 — set ContextVar `current_tenant_id_var` por request.
+
+    Reuse a logica de extraccao do `require_tenant_header` em
+    `src/shared/auth/headers.py` (Q.12 Onda 0.1 fail-closed). Se o
+    header é valido (non-zero UUID), set; senao deixa None (RLS bloqueia).
+    Endpoints que precisam de tenant continuam a chamar
+    `require_tenant_header` como Depends e isso valida o gate (401 se
+    falta). Aqui nao falhamos — middleware é best-effort.
+    """
+
+    async def dispatch(self, request, call_next):
+        # JWT primeiro (Q.12 Onda 0.1 order), depois header fallback.
+        tid_uuid = None
+        try:
+            from src.shared.auth.headers import _try_jwt  # type: ignore
+
+            payload = _try_jwt(request)
+            if payload is not None:
+                try:
+                    tid_uuid = _UUID(payload.tenant_id)
+                except (ValueError, TypeError):
+                    tid_uuid = None
+        except Exception:
+            tid_uuid = None  # JWT decode falhou — fica para require_tenant_header.
+
+        if tid_uuid is None:
+            header = request.headers.get("x-tenant-id") or request.headers.get("X-Tenant-Id")
+            if header:
+                try:
+                    candidate = _UUID(header)
+                    if candidate != _UUID("00000000-0000-0000-0000-000000000000"):
+                        tid_uuid = candidate
+                except (ValueError, TypeError):
+                    tid_uuid = None
+
+        token = set_tenant_id(tid_uuid)
+        try:
+            return await call_next(request)
+        finally:
+            reset_tenant_id(token)
+
+
+app.add_middleware(TenantContextMiddleware)
+
 # CORS middleware. Sprint S6 / Φ5: was `allow_methods=["*"]` and
 # `allow_headers=["*"]` together with `allow_credentials=True`. That combo is
 # specifically forbidden by the CORS spec (browsers reject credentialed wildcard
