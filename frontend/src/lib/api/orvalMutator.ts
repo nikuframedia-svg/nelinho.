@@ -2,43 +2,38 @@
  * Q.61.26 — mutator orval. Adapta a chamada gerada para usar o
  * `request<T>()` central do nelinho (tenant + trace_id automaticos).
  *
- * Orval emite chamadas como:
- *   const data = await orvalRequest<T>({ url, method, params, data })
+ * Orval (com client: 'react-query') emite chamadas como:
+ *
+ *     orvalRequest<T>(url, { ...options, method: 'GET' })
  *
  * Esta funcao re-encaixa em `request<T>(endpoint, options)` da
  * `lib/api/client.ts`.
+ *
+ * Q.61.42 — primeiro run do `gen:api` revelou que a assinatura era
+ * (config) mas orval gera (url, options); corrigido aqui para a forma
+ * actual.
  */
 import { request } from './client';
 
-interface OrvalRequestConfig {
-  url: string;
-  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
-  params?: Record<string, string | number | boolean | undefined | null>;
+interface OrvalRequestInit extends RequestInit {
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   data?: unknown;
-  headers?: Record<string, string>;
-  signal?: AbortSignal;
 }
 
-export async function orvalRequest<T>(config: OrvalRequestConfig): Promise<T> {
-  const query = config.params
-    ? '?' +
-      Object.entries(config.params)
-        .filter(([_, v]) => v !== undefined && v !== null)
-        .map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`)
-        .join('&')
-    : '';
-  const endpoint = `${config.url}${query}`;
-
+export async function orvalRequest<T>(
+  url: string,
+  options?: OrvalRequestInit,
+): Promise<T> {
   const init: RequestInit = {
-    method: config.method,
-    headers: config.headers,
-    signal: config.signal,
+    method: options?.method ?? 'GET',
+    headers: options?.headers,
+    signal: options?.signal,
   };
-  if (config.data !== undefined) {
-    init.body = JSON.stringify(config.data);
+  if (options?.data !== undefined) {
+    init.body = JSON.stringify(options.data);
   }
 
-  return await request<T>(endpoint, init);
+  return await request<T>(url, init);
 }
 
 export default orvalRequest;

@@ -132,6 +132,11 @@ dmypy.json
 # Legacy
 legacy/__pycache__/
 
+# Q.61.42 — Orval-generated hooks (regravavel via `npm run gen:api`).
+# 2 erros pequenos no codigo gerado (factory.ts file upload type)
+# bloqueiam o commit. Decisao final (commit vs ignorar) fica para Q.62.
+frontend/src/lib/api/generated/
+
 # Excel temp files (Office lock files)
 ~$*.xlsx
 ~$*.xls
