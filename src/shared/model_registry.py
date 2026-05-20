@@ -25,7 +25,9 @@ Convencao de ordem: alfabetica por modulo top-level (core, copilot,
 dqa, ...), depois por sub-ficheiro. Excepcao: `core/models/tenant.py`
 vem primeiro (e o ancoragem de FK para muitos outros).
 """
-# ruff: noqa: F401  (imports for side effect — Base.metadata registration)
+# Os imports abaixo sao side-effect (registam classes em Base.metadata
+# via decoradores SQLAlchemy). F401 (unused import) ja esta em ignore
+# no ruff config principal.
 
 # ─── core ───────────────────────────────────────────────────────────────
 from src.core.models import (

@@ -68,18 +68,22 @@ async def _try_acquire(conn, key: int) -> bool:
             text("SELECT pg_try_advisory_lock(:k)"), {"k": key},
         )
         return bool(result)
-    except Exception as exc:  # noqa: BLE001  Q.61.35: defensivo — fora-de-postgres cai aqui
+    except Exception as exc:
+        # Q.61.35 defensivo: fora-de-Postgres (SQLite em testes) cai aqui.
+        # `except Exception` deliberado — qualquer falha do driver e
+        # equivalente a "lock nao disponivel" -> fallback executa sem lock.
         logger.warning(
             "advisory lock unavailable (likely non-Postgres engine: %s) "
-            "— executing job WITHOUT lock", exc,
+            "- executing job WITHOUT lock", exc,
         )
-        return True  # graceful fallback — testes nao tem PG
+        return True  # graceful fallback - testes nao tem PG
 
 
 async def _release(conn, key: int) -> None:
     try:
         await conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": key})
-    except Exception as exc:  # noqa: BLE001  Q.61.35: defensivo
+    except Exception as exc:
+        # Q.61.35 defensivo: unlock no fallback path nao tem efeito real.
         logger.debug("advisory unlock failed (ok in fallback path): %s", exc)
 
 
