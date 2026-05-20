@@ -132,10 +132,10 @@ dmypy.json
 # Legacy
 legacy/__pycache__/
 
-# Q.61.42 — Orval-generated hooks (regravavel via `npm run gen:api`).
-# 2 erros pequenos no codigo gerado (factory.ts file upload type)
-# bloqueiam o commit. Decisao final (commit vs ignorar) fica para Q.62.
-frontend/src/lib/api/generated/
+# Q.62.E.10 — Orval-generated hooks AGORA versionados (single source of
+# truth para o contract OpenAPI; regerar via `npm run gen:api` quando o
+# OpenAPI muda). Linha previa que ignorava `frontend/src/lib/api/generated/`
+# foi removida em Q.62.E.10 apos Q.62.E.7 corrigir o erro TS no factory.ts.
 
 # Q.62.A.1 — pg_dump backups (rotativos, grandes).
 backups/
@@ -183,8 +183,6 @@ mutmut-cache/
 .mutmut-cache/
 html/  # mutmut html report output
 
-# Q.61.26 — orval generated TS hooks (regerar via `npm run gen:api`).
-# Decisao em Q.62: commitar ou nao. Por agora gitignored para nao
-# poluir o diff dos sub-sprints.
-frontend/src/lib/api/generated/
+# Q.62.E.10 — orval generated/ AGORA versionados (ver linha 135 acima).
+# Esta segunda entrada foi removida; mantemos comentario para historia.
 

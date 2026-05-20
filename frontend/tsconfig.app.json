@@ -30,6 +30,5 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["src"],
-  "exclude": ["src/lib/api/generated"]
+  "include": ["src"]
 }
