@@ -50,6 +50,7 @@ MODULES = sorted([
     "src.quality",
     "src.reports",
     "src.sandbox",
+    "src.scheduling",  # Q.66.A.4 — extraído de src.shared.scheduler god-file
     "src.search",
     "src.shared",
     "src.supply",
