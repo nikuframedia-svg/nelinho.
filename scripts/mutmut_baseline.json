@@ -1,13 +1,49 @@
-﻿{
-    "runs":  [
-                 {
-                     "paths":  "src/shared/api/decisions.py",
-                     "exit_code":  2,
-                     "tests":  "tests/shared/test_decisions_advisory.py tests/shared/test_auth_rbac.py",
-                     "module":  "smoke",
-                     "results":  "To apply a mutant on disk:\r\n    mutmut apply \u003cid\u003e\r\n\r\nTo show a mutant:\r\n    mutmut show \u003cid\u003e\r\n\r\n\r\nSurvived 🙁 (182)\r\n\r\n---- src/shared/api/decisions.py (182) ----\r\n\r\n3, 7-120, 126-127, 129, 132-141, 144, 147-148, 154-155, 157, 159, 161-162, 167-178, 181, 185-216",
-                     "elapsed_secs":  356
-                 }
-             ],
-    "started_at":  "2026-05-20T15:32:04.7293168Z"
+{
+    "runs": [
+        {
+            "paths": "src/shared/api/decisions.py",
+            "exit_code": 2,
+            "tests": "tests/shared/test_decisions_advisory.py tests/shared/test_auth_rbac.py",
+            "module": "smoke",
+            "results": "To apply a mutant on disk:\r\n    mutmut apply <id>\r\n\r\nTo show a mutant:\r\n    mutmut show <id>\r\n\r\n\r\nSurvived 🙁 (182)\r\n\r\n---- src/shared/api/decisions.py (182) ----\r\n\r\n3, 7-120, 126-127, 129, 132-141, 144, 147-148, 154-155, 157, 159, 161-162, 167-178, 181, 185-216",
+            "elapsed_secs": 356,
+            "captured_at": "2026-05-20T15:32:04Z",
+            "survivors": 182,
+            "killed": null,
+            "total": null,
+            "status": "captured"
+        },
+        {
+            "paths": "src/plan/cpo/fitness.py",
+            "exit_code": 0,
+            "tests": "tests/plan/test_fitness_quality_risk.py tests/plan/test_safety_net_axiom_7.py",
+            "module": "cpo (fitness only, Q.66.C.3 first half)",
+            "results": "Survived 🙁 (203)\n---- src/plan/cpo/fitness.py (203) ----\n1, 5, 7, 9, 11-17, 19-32, 34-40, 42, 44-48, 51, 53-67, 69-71, 73-89, 91-123, 126, 130, 132, 134-135, 137, 139-140, 145, 147, 151, 155, 167-236, 239-240, 244-245, 252, 254-255, 257, 260, 262, 265, 272, 274-275",
+            "elapsed_secs": 720,
+            "captured_at": "2026-05-20T16:50:00Z",
+            "survivors": 203,
+            "killed": 72,
+            "total": 275,
+            "mutation_score_pct": 26.18,
+            "target_survivors": 100,
+            "status": "captured_above_target",
+            "notes": "Q.66.C.3 — primeiro baseline. 203 survivors >> target 100. Tests focados ainda nao distinguem maioria das mutacoes semanticas em fitness.py (weights, branches V2, normalizacao). Reducir nas proximas vagas via touched-file pays."
+        },
+        {
+            "paths": "src/plan/cpo/decoder.py",
+            "tests": "tests/plan/test_cpo_decoder.py tests/plan/test_decoder_p0_fixes.py tests/plan/test_axiom3_mold_exclusivity_q13e.py tests/plan/test_curing_constraints.py",
+            "module": "cpo (decoder only, Q.66.C.3 second half)",
+            "results": null,
+            "elapsed_secs": null,
+            "captured_at": null,
+            "survivors": null,
+            "killed": null,
+            "total": null,
+            "target_survivors": 100,
+            "status": "pending_first_run",
+            "notes": "Q.66.C.3 — decoder.py (1026 LoC) demoraria ~30-40min adicionais; deferred para nao exceder budget. Kick-off com `pwsh scripts/mutation_test.ps1 -Module cpo` (ja corre os dois)."
+        }
+    ],
+    "started_at": "2026-05-20T15:32:04.7293168Z",
+    "last_updated_at": "2026-05-20T16:50:00Z"
 }

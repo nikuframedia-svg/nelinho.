@@ -9,9 +9,16 @@
   um teste passa apos um operador != → ==, o teste e theater.
 
   Alvos:
-    - src/plan/cpo/                   nucleo Spelke + GA + decoder
+    - src/plan/cpo/decoder.py +
+      src/plan/cpo/fitness.py         Spelke axioms criticos (cura/secagem,
+                                      mold exclusivo, capacity, precedence,
+                                      safety_net baseline)
     - src/governance/yaml_policy/     write-gate + policy engine
     - src/shared/api/decisions.py     SoD + propose/approve flow
+
+  Nota Q.66.C.3: o target `cpo` corre apenas decoder.py + fitness.py
+  (Spelke-critical) e nao o modulo inteiro — `cpo/` completo demora
+  >2h. Engine/scheduler/workforce ficam para targets dedicados futuros.
 
   Saida:
     - scripts/mutmut_baseline.json    snapshot estatistico
@@ -65,9 +72,14 @@ $targets = @{
         timeout = 1800
     }
     cpo         = @{
-        paths   = "src/plan/cpo/"
-        tests   = "tests/plan/"
-        timeout = 3600
+        # Q.66.C.3: scope reduzido a decoder.py + fitness.py — sao os
+        # ficheiros onde vivem os 7 Spelke axioms (cura/secagem 16
+        # transicoes, mold exclusivo, capacity, precedence, safety_net
+        # baseline). cpo/ inteiro tem GA/scheduler/workforce — esses
+        # ganham targets dedicados se quisermos cobertura adicional.
+        paths   = "src/plan/cpo/decoder.py,src/plan/cpo/fitness.py"
+        tests   = "tests/plan/test_cpo_decoder.py tests/plan/test_decoder_p0_fixes.py tests/plan/test_fitness_quality_risk.py tests/plan/test_axiom3_mold_exclusivity_q13e.py tests/plan/test_safety_net_axiom_7.py tests/plan/test_curing_constraints.py"
+        timeout = 1800
     }
 }
 
@@ -101,6 +113,15 @@ foreach ($m in $order) {
     if ($Pretend) {
         Write-Host "  (pretend) & $mutmut $runnerArgs" -ForegroundColor Yellow
         continue
+    }
+
+    # Q.66.C.3: mutmut grava .mutmut-cache no repo root (single sqlite).
+    # Se nao limparmos entre targets, o `results` mistura sobreviventes
+    # do target anterior.
+    $cachePath = Join-Path $repoRoot ".mutmut-cache"
+    if (Test-Path $cachePath) {
+        Remove-Item $cachePath -Force
+        Write-Host "  cleared .mutmut-cache (clean baseline para $m)" -ForegroundColor DarkGray
     }
 
     $start = Get-Date
