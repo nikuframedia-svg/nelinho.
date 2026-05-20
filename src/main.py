@@ -25,7 +25,7 @@ from src.plan.api import router as plan_router
 from src.profit.api import router as profit_router
 from src.hr.api import router as hr_router
 from src.copilot.api import router as copilot_router
-from src.legacy.api import router as legacy_router
+# Q.61.32d — src.legacy/ apagado; endpoints migraram para plan/workforce/quality.
 from src.supply.api import router as supply_router
 from src.shared.api import router as shared_router
 
@@ -560,7 +560,7 @@ app.include_router(hr_router)
 app.include_router(copilot_router)
 app.include_router(supply_router)  # Supply Chain Planning module
 app.include_router(shared_router)  # Shared/Governance APIs (Decision Ledger)
-app.include_router(legacy_router)  # Legacy endpoints for compatibility
+# Q.61.32d — legacy_router desmontado; src/legacy/ apagado em Q.61.32d.
 
 # New module routers
 app.include_router(explain_router)  # Explainability API

@@ -72,9 +72,7 @@ from src.hr.models import productivity as _hr_productivity
 # ─── improve ───────────────────────────────────────────────────────────
 from src.improve import models as _improve_models
 
-# ─── legacy ────────────────────────────────────────────────────────────
-# Q.22.C: plan.production_errors (backs /api/errors*)
-from src.legacy import models as _legacy_models
+# ─── (Q.61.32d) legacy/ removido; ProductionError migrou para quality/.
 
 # ─── ml ────────────────────────────────────────────────────────────────
 from src.ml.models import orm as _ml_orm
@@ -95,6 +93,7 @@ from src.profit.models import phase_bonus as _profit_phase_bonus
 from src.profit.models import pricing as _profit_pricing
 
 # ─── quality ───────────────────────────────────────────────────────────
+from src.quality.models import production_error as _quality_production_error  # Q.61.32d
 from src.quality.models import rework as _quality_rework
 
 # ─── reports ───────────────────────────────────────────────────────────

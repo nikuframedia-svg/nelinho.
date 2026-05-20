@@ -1,13 +1,13 @@
-"""ProdPlan ONE — Legacy models (Sprint Q.22.C).
+"""Q.61.32d — `ProductionError` movido de src/legacy/models.py.
 
-Models backing the ``/api/*`` compatibility endpoints.
+Mantém o mesmo `__tablename__` e schema (`plan.production_errors`)
+para preservar a tabela existente; só o caminho de import muda.
 
-:class:`ProductionError` maps the Nelo ERP quality-defect rows (the ERP
-records ~89.836 defects against phases of production orders). One row
-per defect detected at a phase. ``order_id`` is intentionally a bare
-UUID with **no FK constraint** — consistent with ``ProductionOrder`` —
-so the ERP ingest can land error rows even when the owning order has
-not yet been migrated to Postgres.
+Origem do model: Sprint Q.22.C. Os ERP records ~89.836 defeitos
+contra fases de production orders; uma linha por defeito detectado
+numa fase. `order_id` é UUID sem FK — consistente com `ProductionOrder`
+— para o ingest ERP landar defeitos antes da migration completa da
+ordem para Postgres.
 """
 
 from __future__ import annotations

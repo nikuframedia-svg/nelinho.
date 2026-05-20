@@ -33,7 +33,7 @@ from pydantic import BaseModel
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.legacy.models import ProductionError
+from src.quality.models import ProductionError  # Q.61.32d
 from src.quality.services.dashboard_service import QualityDashboardService
 from src.quality.services.impact_service import (
     ImpactService,
