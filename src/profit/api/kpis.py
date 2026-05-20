@@ -213,29 +213,49 @@ async def calculate_kpis(
         #
         # Sprint Q.12 — antes calculávamos `orders_completed / orders_total`,
         # mas isso não é FPY (uma ordem completada pode ter tido rework
-        # ou scrap). Sem tabela de defects, FPY genuíno não pode ser
-        # calculado, por isso devolvemos `None` com motivo claro em vez
-        # de uma métrica fabricada que entrava no Copilot.
+        # ou scrap).
+        # Q.62.E.4 — `KPIFactory.product_defect_rate` agora consolida a
+        # fórmula honesta: "fracção de ordens com >=1 retrabalho nos N
+        # dias". FPY = 1 - product_defect_rate. Quando o factory não tem
+        # dados (zero ordens ou rework_entry vazio) o factory devolve
+        # None — preservamos esse contrato com `reason="NO_SOURCE_DATA"`.
         quality_fpy = None
+        product_dr_decimal = None
+        try:
+            from src.profit.kpi_factory import KPIFactory as _KPIFactory
+
+            _kpi = _KPIFactory(session, tenant_id)
+            product_dr_decimal = await _kpi.product_defect_rate(window_days=90)
+            if product_dr_decimal is not None:
+                # product_defect_rate é [0,1]; FPY é [0,100].
+                quality_fpy = float((1 - product_dr_decimal) * 100)
+        except Exception as exc:  # noqa: BLE001  Q.62.E.4: factory best-effort, fallback honesto
+            logger.warning("KPIFactory.product_defect_rate failed: %s", exc)
+
         kpis["quality_fpy"] = KPIMetric(
-            value=None,
+            value=round(quality_fpy, 1) if quality_fpy is not None else None,
             updated_at=datetime.utcnow(),
-            citations=[],
-            reason="QUALITY_DEFECTS_TABLE_UNAVAILABLE",
+            citations=[create_calculation_citation(
+                "quality_fpy",
+                {"product_defect_rate": float(product_dr_decimal) if product_dr_decimal is not None else None, "window_days": 90},
+                f"FPY: {quality_fpy:.1f}% (1 - product_defect_rate × 100)",
+            )] if quality_fpy is not None else [],
+            reason="NO_SOURCE_DATA" if quality_fpy is None else None,
         )
-        
-        # 5. Rework Rate: orders com erros / total orders
+
+        # 5. Rework Rate: orders com erros / total orders. Q.62.E.4 — vem
+        # directamente do product_defect_rate (já lá em cima).
         rework_rate = None
-        if orders_total > 0 and quality_fpy is not None:
-            rework_rate = 100.0 - quality_fpy
-        
+        if product_dr_decimal is not None:
+            rework_rate = float(product_dr_decimal * 100)
+
         kpis["rework_rate"] = KPIMetric(
             value=round(rework_rate, 1) if rework_rate is not None else None,
             updated_at=datetime.utcnow(),
             citations=[create_calculation_citation(
                 "rework_rate",
-                {"quality_fpy": quality_fpy},
-                f"Taxa de retrabalho: {rework_rate:.1f}%"
+                {"product_defect_rate": float(product_dr_decimal) if product_dr_decimal is not None else None, "window_days": 90},
+                f"Taxa de retrabalho: {rework_rate:.1f}%",
             )] if rework_rate is not None else [],
             reason="NO_SOURCE_DATA" if rework_rate is None else None,
         )
