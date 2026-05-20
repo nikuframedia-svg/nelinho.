@@ -1,9 +1,7 @@
-// CausalPanels — constantes e helper partilhados (Q.60.X).
-import { getApiBase } from '../../lib/api';
-
-export const TENANT = { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' };
-// Q.21.A — porta única via api.ts (concorda com VITE_API_URL).
-export const BASE = getApiBase();
+// CausalPanels — helper partilhado (Q.60.X).
+// Q.61.25 — TENANT/BASE removidos: panels migrados para causalApi.ts
+// (que usa request() com tenant + trace_id automaticos via apiFetch).
+// Resta o `isoDays` (utility de datas).
 
 export function isoDays(offset: number): string {
   const d = new Date();

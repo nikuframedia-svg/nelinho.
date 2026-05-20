@@ -1,8 +1,9 @@
 // CausalPanels · ErroTreePanel (Q.60.X). ZERO MOCKS — endpoints reais.
+// Q.61.25 — via causalApi em vez de fetch directo.
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { Panel, ZipToneBadge } from '../../dark';
-import { TENANT, BASE } from '../causalShared';
+import { causalPost } from '../../../lib/api/causalApi';
 
 export const ERRO_TREE_TRIGGERS = ['quality_drop', 'throughput_drop', 'delay_spike'] as const;
 type ErroTreeTrigger = (typeof ERRO_TREE_TRIGGERS)[number];
@@ -13,19 +14,12 @@ export function ErroTreePanel() {
   const [phaseId, setPhaseId] = useState('');
 
   const m = useMutation({
-    mutationFn: async () => {
-      const r = await fetch(`${BASE}/v1/explain/diagnostics/investigate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...TENANT },
-        body: JSON.stringify({
-          trigger,
-          period_days: periodDays,
-          phase_id: phaseId.trim() || null,
-        }),
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return r.json();
-    },
+    mutationFn: () =>
+      causalPost('/v1/explain/diagnostics/investigate', {
+        trigger,
+        period_days: periodDays,
+        phase_id: phaseId.trim() || null,
+      }),
   });
 
   const result = m.data as

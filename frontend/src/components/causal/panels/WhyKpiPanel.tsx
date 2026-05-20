@@ -1,16 +1,13 @@
 // CausalPanels · WhyKpiPanel (Q.60.X). ZERO MOCKS — endpoints reais.
+// Q.61.25 — via causalApi.causalGet em vez de fetch directo.
 import { useQuery } from '@tanstack/react-query';
 import { Panel, EmptyState } from '../../dark';
-import { TENANT, BASE } from '../causalShared';
+import { causalGet } from '../../../lib/api/causalApi';
 
 export function WhyKpiPanel() {
   const q = useQuery({
     queryKey: ['kpis-snapshot-explained'],
-    queryFn: async () => {
-      const r = await fetch(`${BASE}/kpis/snapshot-explained`, { headers: TENANT });
-      if (!r.ok) return null;
-      return r.json();
-    },
+    queryFn: () => causalGet('/kpis/snapshot-explained'),
     staleTime: 60_000,
     retry: 0,
   });

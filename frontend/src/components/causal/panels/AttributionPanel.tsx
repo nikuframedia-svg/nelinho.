@@ -1,8 +1,9 @@
 // CausalPanels · AttributionPanel (Q.60.X). ZERO MOCKS — endpoints reais.
+// Q.61.25 — via causalApi.causalGet em vez de fetch directo.
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Panel, ZipToneBadge } from '../../dark';
-import { TENANT, BASE } from '../causalShared';
+import { causalGet } from '../../../lib/api/causalApi';
 
 export function AttributionPanel() {
   const [target, setTarget] = useState('throughput_eur_day');
@@ -10,14 +11,10 @@ export function AttributionPanel() {
 
   const q = useQuery({
     queryKey: ['attribution', target, sampleSize],
-    queryFn: async () => {
-      const r = await fetch(
-        `${BASE}/v1/explain/attribution?target=${encodeURIComponent(target)}&sample_size=${sampleSize}`,
-        { headers: TENANT },
-      );
-      if (!r.ok) return null;
-      return r.json();
-    },
+    queryFn: () =>
+      causalGet(
+        `/v1/explain/attribution?target=${encodeURIComponent(target)}&sample_size=${sampleSize}`,
+      ),
     enabled: false,
     retry: 0,
   });

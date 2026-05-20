@@ -1,23 +1,16 @@
 // CausalPanels · PoetiqPanel (Q.60.X). ZERO MOCKS — endpoints reais.
+// Q.61.25 — via causalApi em vez de fetch directo.
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { Panel } from '../../dark';
-import { TENANT, BASE } from '../causalShared';
+import { causalPost } from '../../../lib/api/causalApi';
 
 export function PoetiqPanel() {
   const [goal, setGoal] = useState('Maximizar throughput sem violar safety_net');
   const [rounds, setRounds] = useState(3);
 
   const m = useMutation({
-    mutationFn: async () => {
-      const r = await fetch(`${BASE}/v1/copilot/poetiq/propose`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...TENANT },
-        body: JSON.stringify({ goal, rounds }),
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return r.json();
-    },
+    mutationFn: () => causalPost('/v1/copilot/poetiq/propose', { goal, rounds }),
   });
 
   const result = m.data as

@@ -1,24 +1,22 @@
 // CausalPanels · ReichenbachPanel (Q.60.X). ZERO MOCKS — endpoints reais.
+// Q.61.25 — via causalApi em vez de fetch directo.
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { Panel, ZipToneBadge } from '../../dark';
-import { TENANT, BASE } from '../causalShared';
+import { causalPost } from '../../../lib/api/causalApi';
 
 export function ReichenbachPanel() {
   const [phasesStr, setPhasesStr] = useState('laminagem,acabamento');
   const [periodDays, setPeriodDays] = useState(7);
 
   const m = useMutation({
-    mutationFn: async () => {
+    mutationFn: () => {
       const phases = phasesStr.split(',').map((s) => s.trim()).filter(Boolean);
       if (phases.length < 2) throw new Error('Mínimo 2 fases (separadas por vírgula).');
-      const r = await fetch(`${BASE}/v1/explain/diagnostics/common-cause`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...TENANT },
-        body: JSON.stringify({ deviating_phases: phases, period_days: periodDays }),
+      return causalPost('/v1/explain/diagnostics/common-cause', {
+        deviating_phases: phases,
+        period_days: periodDays,
       });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return r.json();
     },
   });
 

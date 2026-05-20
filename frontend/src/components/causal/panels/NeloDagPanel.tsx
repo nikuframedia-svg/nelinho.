@@ -1,8 +1,9 @@
 // CausalPanels · NeloDagPanel (Q.60.X). ZERO MOCKS — endpoints reais.
+// Q.61.25 — via causalApi em vez de fetch directo.
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Panel, ZipToneBadge } from '../../dark';
-import { TENANT, BASE } from '../causalShared';
+import { causalGet } from '../../../lib/api/causalApi';
 
 export function NeloDagPanel() {
   const [tauMax, setTauMax] = useState(2);
@@ -11,14 +12,10 @@ export function NeloDagPanel() {
 
   const q = useQuery({
     queryKey: ['nelo-dag', tauMax, alpha, sampleSize],
-    queryFn: async () => {
-      const r = await fetch(
-        `${BASE}/v1/explain/discover?tau_max=${tauMax}&alpha=${alpha}&sample_size=${sampleSize}`,
-        { headers: TENANT },
-      );
-      if (!r.ok) return null;
-      return r.json();
-    },
+    queryFn: () =>
+      causalGet(
+        `/v1/explain/discover?tau_max=${tauMax}&alpha=${alpha}&sample_size=${sampleSize}`,
+      ),
     enabled: false,
     retry: 0,
   });

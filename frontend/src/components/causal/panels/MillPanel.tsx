@@ -1,8 +1,10 @@
 // CausalPanels · MillPanel (Q.60.X). ZERO MOCKS — endpoints reais.
+// Q.61.25 — via causalApi em vez de fetch directo.
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { Panel } from '../../dark';
-import { TENANT, BASE, isoDays } from '../causalShared';
+import { isoDays } from '../causalShared';
+import { causalPost } from '../../../lib/api/causalApi';
 
 export function MillPanel() {
   const [goodStart, setGoodStart] = useState(isoDays(-30));
@@ -11,21 +13,14 @@ export function MillPanel() {
   const [badEnd, setBadEnd] = useState(isoDays(0));
 
   const m = useMutation({
-    mutationFn: async () => {
-      const r = await fetch(`${BASE}/v1/explain/diagnostics/what-changed`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...TENANT },
-        body: JSON.stringify({
-          good_period_start: goodStart,
-          good_period_end: goodEnd,
-          bad_period_start: badStart,
-          bad_period_end: badEnd,
-          metric: 'error_rate',
-        }),
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return r.json();
-    },
+    mutationFn: () =>
+      causalPost('/v1/explain/diagnostics/what-changed', {
+        good_period_start: goodStart,
+        good_period_end: goodEnd,
+        bad_period_start: badStart,
+        bad_period_end: badEnd,
+        metric: 'error_rate',
+      }),
   });
 
   const result = m.data as
