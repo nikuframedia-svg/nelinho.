@@ -223,6 +223,66 @@ class EmployeeExtrasService:
         )
 
     # ─────────────────────────────────────────────────────────────────────
+    # Q.62.C.1 — Team-wide defect rate (Hipotese A: comportamento da equipa)
+    # ─────────────────────────────────────────────────────────────────────
+
+    async def team_defect_rate(
+        self, *, window_days: int = 90,
+    ) -> float:
+        """Hipótese A: comportamento da equipa toda no tenant.
+
+        Mesma fórmula Laplace do `quality_score()` per-employee, mas
+        agregada — soma operações e defeitos de TODOS os operadores
+        do tenant dentro da janela de `window_days`::
+
+            rate = (sum(defects) + α) / (sum(ops) + β)
+
+        α=1, β=10 (consistente com `quality_score`). Range [0, 1].
+
+        Q.62.C — usado pelo `KPIFactory.team_defect_rate()` para dashboards
+        executivos que querem saber "a equipa está a fazer bem?"
+        (distinct de `product_defect_rate` que mede qualidade dos barcos
+        entregues, ver `FactoryMapService._defect_rate_from_db`).
+
+        Implementação: count de `ProductionSchedule` com operador atribuído
+        + count de `ReworkEntry` com causer atribuído. Sem fallback curated
+        — quando governance está vazia, retorna o Laplace floor (0.1)
+        que sinaliza "sem histórico" honestamente.
+        """
+        from datetime import timedelta, timezone
+
+        now_utc = datetime.now(timezone.utc)
+        since_date = (now_utc - timedelta(days=window_days)).date()
+
+        # Total ops: ProductionSchedule com operador atribuído na janela.
+        # `scheduled_start_date` é Date (não datetime); filtramos por date.
+        ops_stmt = select(func.count(ProductionSchedule.id)).where(
+            and_(
+                ProductionSchedule.tenant_id == self.tenant_id,
+                ProductionSchedule.assigned_employee_id.is_not(None),
+                ProductionSchedule.scheduled_start_date >= since_date,
+            )
+        )
+        ops = int((await self.session.execute(ops_stmt)).scalar_one() or 0)
+
+        # Total defects: ReworkEntry com causer atribuído na janela.
+        # `detected_at` é datetime tz-aware.
+        since = now_utc - timedelta(days=window_days)
+        rework_stmt = select(func.count(ReworkEntry.id)).where(
+            and_(
+                ReworkEntry.tenant_id == self.tenant_id,
+                ReworkEntry.causer_employee_id.is_not(None),
+                ReworkEntry.detected_at >= since,
+            )
+        )
+        defects = int(
+            (await self.session.execute(rework_stmt)).scalar_one() or 0
+        )
+
+        rate = (defects + SMOOTHING_ALPHA) / (ops + SMOOTHING_BETA)
+        return round(rate, 4)
+
+    # ─────────────────────────────────────────────────────────────────────
     # Skill matrix
     # ─────────────────────────────────────────────────────────────────────
 

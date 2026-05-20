@@ -85,29 +85,7 @@ async def test_throughput_mtd_ytd_trend_all_delegate(monkeypatch):
     assert calls == {"today": 1, "mtd": 1, "ytd": 1, "trend": 1}
 
 
-@pytest.mark.asyncio
-async def test_defect_rate_raises_not_implemented_until_q62():
-    """KPI ainda nao consolidado — falha alto em vez de mascarar."""
-    from src.profit.kpi_factory import KPIFactory
-
-    factory = KPIFactory(AsyncMock(), TENANT)
-    with pytest.raises(NotImplementedError, match="Q.62"):
-        await factory.defect_rate()
-
-
-@pytest.mark.asyncio
-async def test_oee_raises_not_implemented_until_q62():
-    from src.profit.kpi_factory import KPIFactory
-
-    factory = KPIFactory(AsyncMock(), TENANT)
-    with pytest.raises(NotImplementedError, match="Q.62"):
-        await factory.oee()
-
-
-@pytest.mark.asyncio
-async def test_otd_raises_not_implemented_until_q62():
-    from src.profit.kpi_factory import KPIFactory
-
-    factory = KPIFactory(AsyncMock(), TENANT)
-    with pytest.raises(NotImplementedError, match="Q.62"):
-        await factory.otd()
+# Q.62.C.2 + C.3 — tests `defect_rate/oee/otd` raising NotImplementedError
+# foram substituidos por testes que confirmam que o KPIFactory expoe os
+# nomes inequivocos (team_defect_rate, product_defect_rate, oee,
+# otd_actual_pct, otd_risk). Ver tests/profit/test_kpi_factory_q62_c.py.
