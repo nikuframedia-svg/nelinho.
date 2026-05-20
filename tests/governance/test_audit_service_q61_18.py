@@ -1,13 +1,14 @@
-"""Q.61.18 — pipeline unificado de auditoria.
+"""Q.61.18 + Q.66.B.1 — pipeline unificado de auditoria.
 
 `src/governance/audit_service.audit_change` e a UNICA forma de criar
 uma `AuditLog` row em todo o backend. Estes testes pinam:
 
   * Forma da row (campos populados como esperado).
   * Side-effect: `session.add(audit)` foi chamado, sem commit.
-  * trace_id (Q.61.12) auto-injectado no `reason` quando ContextVar
-    tem valor.
-  * Ausencia de trace_id deixa reason intacto.
+  * trace_id (Q.61.12) auto-populado na COLUNA `trace_id` (Q.66.B.1) —
+    antes era hackado no `reason`.
+  * Ausencia de trace_id deixa coluna `trace_id` a None e reason intacto.
+  * `reason` nunca mais leva o prefixo `[trace_id=...]`.
 """
 
 from __future__ import annotations
@@ -62,8 +63,9 @@ async def test_audit_change_creates_row_with_expected_fields():
     assert row.new_values == {"status": "PROPOSED"}
     assert row.old_values is None
     assert row.actor_id == ACTOR
-    # Sem trace_id no contexto -> reason intacto.
+    # Sem trace_id no contexto -> reason intacto, coluna trace_id a None.
     assert row.reason == "propose"
+    assert row.trace_id is None
 
     # Side-effect: adicionada a session, mas sem commit (caller controla).
     assert session.added == [row]
@@ -71,9 +73,9 @@ async def test_audit_change_creates_row_with_expected_fields():
 
 
 @pytest.mark.asyncio
-async def test_audit_change_prefixes_reason_with_trace_id():
-    """Q.61.18 + Q.61.12: trace_id automatica no reason ate Q.61.18.1
-    adicionar coluna dedicada."""
+async def test_audit_change_writes_trace_id_to_dedicated_column():
+    """Q.66.B.1: trace_id vai para a COLUNA `trace_id`, nao para o
+    `reason`. Antes (Q.61.18) era prefixado como `[trace_id=...]`."""
     session = _CapturingSession()
     token = set_trace_id("test-trace-abc")
     try:
@@ -91,17 +93,25 @@ async def test_audit_change_prefixes_reason_with_trace_id():
     finally:
         reset_trace_id(token)
 
-    assert row.reason == "[trace_id=test-trace-abc] approve"
+    # Q.66.B.1: trace_id na coluna dedicada.
+    assert row.trace_id == "test-trace-abc"
+    # `reason` fica LIMPO — sem prefixo.
+    assert row.reason == "approve"
+    assert "trace_id" not in (row.reason or "")
     assert row.action == "UPDATE"
     assert row.old_values == {"status": "PROPOSED"}
 
 
 @pytest.mark.asyncio
 async def test_audit_change_accepts_none_reason():
-    """`reason=None` continua a funcionar — com ou sem trace_id."""
+    """`reason=None` continua a funcionar — com ou sem trace_id.
+
+    Q.66.B.1: trace_id e independente do reason — pode haver trace_id
+    sem reason e vice-versa.
+    """
     session = _CapturingSession()
 
-    # Sem trace_id.
+    # Sem trace_id, sem reason.
     row = await audit_change(
         session,
         tenant_id=TENANT,
@@ -111,8 +121,10 @@ async def test_audit_change_accepts_none_reason():
         old_values={"sha": "abc"},
     )
     assert row.reason is None
+    assert row.trace_id is None
 
-    # Com trace_id no contexto.
+    # Com trace_id no contexto, sem reason: trace_id vai para a coluna,
+    # reason fica None.
     token = set_trace_id("xyz")
     try:
         row2 = await audit_change(
@@ -124,7 +136,8 @@ async def test_audit_change_accepts_none_reason():
         )
     finally:
         reset_trace_id(token)
-    assert row2.reason == "[trace_id=xyz]"
+    assert row2.reason is None
+    assert row2.trace_id == "xyz"
 
 
 @pytest.mark.asyncio

@@ -69,6 +69,8 @@ class AuditLog(Base):
     
     # Context
     reason: Mapped[Optional[str]] = mapped_column(Text)
+    # Q.66.B.1 — trace_id dedicado (antes era hackado no `reason`).
+    trace_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     ip_address: Mapped[Optional[str]] = mapped_column(String(50))
     user_agent: Mapped[Optional[str]] = mapped_column(String(500))
     

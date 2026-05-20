@@ -1,4 +1,4 @@
-"""Q.61.18 — pipeline UNICO de auditoria.
+"""Q.61.18 + Q.66.B.1 — pipeline UNICO de auditoria.
 
 Antes do Q.61.18 a escrita em `core.audit_log` estava espalhada:
   * Q.61.10 inseriu o primeiro consumidor inline em
@@ -6,7 +6,7 @@ Antes do Q.61.18 a escrita em `core.audit_log` estava espalhada:
   * O resto dos servicos (governance.service, plan.services, workforce.*)
     nao escrevia auditoria.
 
-Q.61.18 consolida: existe UMA forma de criar uma audit row, com a
+Q.61.18 consolidou: existe UMA forma de criar uma audit row, com a
 mesma assinatura em todo o backend:
 
     from src.governance.audit_service import audit_change
@@ -21,11 +21,10 @@ mesma assinatura em todo o backend:
         reason="propose",
     )
 
-O trace_id (Q.61.12) e auto-injectado via `get_trace_id()` no `reason`
-ate Q.61.18.1 adicionar coluna dedicada. Tabela `core.audit_log` ainda
-nao tem `trace_id`, por isso e prefixado no `reason` como
-`[trace_id=<uuid>] <razao original>`. Quando Q.61.18.1 (migration)
-adicionar coluna, esta funcao migra sem mexer nos call-sites.
+Q.66.B.1 substituiu o hack `[trace_id=<uuid>] <reason>` por uma coluna
+dedicada `core.audit_log.trace_id` (indexed). O `trace_id` continua a
+vir do `get_trace_id()` (ContextVar populado pelo middleware Q.61.12)
+mas e escrito directamente na coluna — o `reason` fica limpo.
 
 Invariante 7 ("audit_log escrito na MESMA transaccao que a mudanca de
 estado") fica enforced no contrato: a funcao recebe a session do
@@ -45,18 +44,6 @@ from src.shared.observability import get_trace_id
 
 
 AuditAction = Literal["INSERT", "UPDATE", "DELETE"]
-
-
-def _wrap_reason_with_trace_id(reason: Optional[str]) -> Optional[str]:
-    """Prefixa o reason com `[trace_id=<uuid>]` se houver trace_id no
-    contexto. Quando Q.61.18.1 adicionar coluna `core.audit_log.trace_id`,
-    esta funcao migra para usar a coluna directamente."""
-    trace_id = get_trace_id()
-    if trace_id is None:
-        return reason
-    if reason is None:
-        return f"[trace_id={trace_id}]"
-    return f"[trace_id={trace_id}] {reason}"
 
 
 async def audit_change(
@@ -88,12 +75,14 @@ async def audit_change(
         new_values: snapshot dos campos chave depois (None se DELETE).
         actor_id: user_id de quem agiu (None se sistema).
         actor_role: role do actor (admin, operator, etc.).
-        reason: razao em PT-PT. Sera prefixado com trace_id se houver.
+        reason: razao em PT-PT (limpa — Q.66.B.1 ja nao prefixa
+            trace_id aqui).
         ip_address: opcional, do middleware HTTP.
         user_agent: opcional, do request.
 
     Returns:
-        A instancia `AuditLog` ja adicionada a session.
+        A instancia `AuditLog` ja adicionada a session. O `trace_id`
+        e auto-populado a partir do ContextVar (`get_trace_id()`).
     """
     audit = AuditLog(
         tenant_id=tenant_id,
@@ -104,7 +93,8 @@ async def audit_change(
         new_values=new_values,
         actor_id=actor_id,
         actor_role=actor_role,
-        reason=_wrap_reason_with_trace_id(reason),
+        reason=reason,
+        trace_id=get_trace_id(),
         ip_address=ip_address,
         user_agent=user_agent,
     )
