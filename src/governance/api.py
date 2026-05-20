@@ -38,6 +38,10 @@ router = APIRouter(prefix="/v1/governance", tags=["Governance"])
 from src.governance.yaml_policy.api import router as _yaml_policy_router
 router.include_router(_yaml_policy_router)
 
+# Q.61.19 — audit_log sub-router (GET /v1/governance/audit-logs)
+from src.governance.audit_log_api import router as _audit_log_router
+router.include_router(_audit_log_router)
+
 
 # ============================================================================
 # SCHEMAS
