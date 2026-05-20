@@ -129,6 +129,7 @@ FASE 1B (CRIT-13..16, 23), FASE 2 (CRIT-02/17/18 atomicity), FASE 3 (HIGH-41..56
 - **Q.61.31** (no-fix) — `aprendizagem/` não existe; só `aprendi/`. Audit overnight errado novamente.
 - **Q.61.33** (no-delete) — 4 dos 5 "satélites suspeitos" (twin, sandbox, improve, search) estão **vivos** (routers montados em main.py). Apenas `infrastructure/erp/sqlserver/nelo_erp.py` (356L NeloERPAdapter shadow-mode) tem 0 importadores; **valor potencial** quando ERP real entrar — documentar, não apagar. Audit overnight errado a marcá-los suspeitos.
 - **Q.61.34** Outbox observability — `GET /v1/outbox/status` (`src/shared/api/outbox_status.py`). Retorna `pending/published/failed/dlq/retry_pending` + `oldest_pending_age_seconds` para alarmar quando o dispatcher para de drenar. Suporta `?include_all_tenants=true` para operator central. Dispatcher já tinha retry + DLQ + SKIP LOCKED; Q.61.34 só adiciona a observabilidade. 5 testes via StubSession. Backoff exponencial fica para Q.61.34.1 (precisa de migration).
+- **Q.61.35** Distributed scheduler lock — novo `src/shared/scheduler_lock.py` com decorator `with_advisory_lock(name)` que usa `pg_try_advisory_lock`. Aplicado a `_dpo_finetune_job` (GPU, ~30min) + `_causal_discovery_job` (PCMCI+, ~45min). Em multi-worker, só 1 processo corre o job por janela; outros skip com log `job_skipped lock_held`. Fora-de-Postgres: graceful fallback (executa sem lock). 7 testes; canary 668/668.
 
 ## Test count progression
 

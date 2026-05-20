@@ -562,8 +562,16 @@ async def _preference_weights_retrain_job(tenant_id: UUID) -> None:
         )
 
 
+from src.shared.scheduler_lock import with_advisory_lock
+
+
+@with_advisory_lock("dpo_finetune")
 async def _dpo_finetune_job(tenant_id: UUID) -> None:
     """Sprint R.5.4 — weekly DPO fine-tune candidate (Camada 3).
+
+    Q.61.35 — protegido por pg_try_advisory_lock("dpo_finetune"). Em
+    multi-worker, so 1 processo corre o DPO por janela (GPU + 30min
+    de compute caro). Outros skip com log "job_skipped lock_held".
 
     Runs Sunday 03:00 UTC. Reads ConfigStore key
     ``learning.fine_tune.enabled`` and bails if it's false (default).
@@ -661,8 +669,12 @@ async def _dpo_finetune_job(tenant_id: UUID) -> None:
         )
 
 
+@with_advisory_lock("causal_discovery")
 async def _causal_discovery_job(tenant_id: UUID) -> None:
     """Sprint Q.13.D D.2 — weekly PCMCI+ causal-discovery run.
+
+    Q.61.35 — protegido por advisory lock. PCMCI+ corre 15-45min;
+    em multi-node so 1 processo por janela.
 
     Gated by ``learning.discovery.enabled`` (ConfigStore, default False).
     When the flag is on, the job runs :func:`discover_edges` and
