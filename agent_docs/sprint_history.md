@@ -109,6 +109,7 @@ FASE 1B (CRIT-13..16, 23), FASE 2 (CRIT-02/17/18 atomicity), FASE 3 (HIGH-41..56
 - **Q.61.08** Pre-commit ganha 2 hooks fast (~4.5s combinados): `verify-invariants-static` (invariantes CX/C/F/E/D/ST/WG/CO/ME/H0 + AST testes vazios, sem pytest) + `lint-drift-gate` (BLE001 + Q.61.07 contra baseline). Trava regressão antes do push, sem precisar de canary completo.
 - **Q.61.09** Bug SoD em `decisions.py:127` — `propose` deixa de criar `DecisionApproval` placeholder (`approver_id=user_id` era enganador); `approve` passa a `find_or_create` por (decision_id, approver_id). A tabela `decision_approvals` agora contém só aprovações reais. Novo `tests/shared/test_decisions_propose_q61_09.py` com 5 testes; canary shared+governance 628/628.
 - **Q.61.10** Unit-of-Work em `propose_decision` — `async with session.begin_nested():` envolve `DecisionRun INSERT` + `AuditLog INSERT` na mesma transacção (cumpre invariante 7: audit na mesma tx que a mudança de estado). 2 testes novos (`test_propose_writes_audit_log_in_same_uow`, `test_propose_rolls_back_when_audit_fails`). Canary 630/630.
+- **Q.61.11** Kafka publish via outbox em `governance/service.py:propose_decision` — antes fazia `await publish_event(...)` síncrono (bloqueava ~30s se broker down); agora escreve `EventOutbox` row na mesma tx. Dispatcher background (já existe em `outbox_dispatcher.py`) drena com retry + DLQ. Teste novo `test_propose_writes_event_outbox_not_sync_publish_q61_11`. Canary 631/631.
 
 ## Test count progression
 

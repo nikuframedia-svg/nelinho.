@@ -152,8 +152,71 @@ class TestProposeDecision:
         assert result["proposed_by"] == "alice"
         assert result["prev_hash"] is None  # first in chain
         assert len(result["audit_hash"]) == 64
-        assert len(fake_session.added) == 1
+        # Q.61.11 — propose adiciona DecisionRun + 1 EventOutbox (outbox
+        # pattern). Antes era apenas 1 row porque o publish era sincrono
+        # fora da tx; agora a atomicidade entre escrita e evento e parte
+        # do contrato.
+        added_types = {type(o).__name__ for o in fake_session.added}
+        assert "DecisionRun" in added_types
+        assert "EventOutbox" in added_types
         assert fake_session.flush_calls >= 1
+
+    async def test_propose_writes_event_outbox_not_sync_publish_q61_11(
+        self, fake_session, tenant_id, monkeypatch,
+    ):
+        """Q.61.11 regression: propose NAO chama publish_event sincrono.
+
+        Bug historico: governance/service.py:358 fazia
+        `await publish_event(Topics.DECISION_PROPOSED, event)`. Se o
+        broker Kafka nao respondia, o worker uvicorn bloqueava o
+        timeout default (>30s). Agora a propose escreve uma linha
+        EventOutbox na mesma tx; o dispatcher background publica.
+
+        Este teste pina:
+          1. publish_event nao e chamado durante propose
+          2. EventOutbox row e criado com payload correcto + status=pending
+        """
+        from src.shared.outbox_models import EventOutbox
+
+        publish_calls: list = []
+
+        async def _spy_publish(*args, **kwargs):
+            publish_calls.append((args, kwargs))
+            return True
+
+        monkeypatch.setattr(
+            "src.shared.kafka_client.publish_event", _spy_publish,
+            raising=True,
+        )
+
+        fake_session.queue_scalar(None)  # _get_last_decision_hash
+        svc = GovernanceService(fake_session, tenant_id)
+
+        await svc.propose_decision(
+            decision_type="scenario_publish",
+            title="Outbox test",
+            action_data={"k": "v"},
+            proposed_by="alice",
+        )
+
+        assert publish_calls == [], (
+            f"Q.61.11 regression: propose chamou publish_event "
+            f"sincronamente ({len(publish_calls)} calls). Devia escrever "
+            "EventOutbox row e deixar o dispatcher background publicar."
+        )
+
+        outbox_rows = [o for o in fake_session.added if isinstance(o, EventOutbox)]
+        assert len(outbox_rows) == 1, (
+            f"esperado 1 EventOutbox row, encontrei {len(outbox_rows)}"
+        )
+        outbox = outbox_rows[0]
+        assert outbox.event_type == "DECISION_PROPOSED"
+        assert outbox.aggregate_type == "decision_run"
+        assert outbox.status == "pending"
+        assert outbox.tenant_id == tenant_id
+        assert outbox.payload["decision_type"] == "scenario_publish"
+        assert outbox.payload["title"] == "Outbox test"
+        assert outbox.payload["proposed_by"] == "alice"
 
     async def test_uses_default_policy_when_type_unknown(self, fake_session, tenant_id):
         fake_session.queue_scalar(None)

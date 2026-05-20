@@ -326,10 +326,14 @@ class GovernanceService:
 
         logger.info(f"Decision proposed: {decision_id_uuid} ({decision_type})")
 
-        # Build the event up-front so deferred and eager paths share the
-        # same payload — keeps the bus shape stable regardless of which
-        # caller is responsible for publishing.
-        from src.shared.kafka_client import EventBase, Topics, publish_event
+        # Q.61.11 — outbox pattern. Antes, este sitio fazia
+        # `await publish_event(Topics.DECISION_PROPOSED, event)` sincrono;
+        # se o broker Kafka nao respondia, o handler bloqueava o default
+        # timeout (>30s) e o worker uvicorn ficava preso. Agora escrevemos
+        # uma linha em `EventOutbox` na MESMA tx que o decision_run, e o
+        # dispatcher background (src.shared.outbox_dispatcher) publica
+        # quando o Kafka voltar — at-least-once com idempotency_key.
+        from src.shared.kafka_client import EventBase
 
         event = EventBase(
             event_type="DECISION_PROPOSED",
@@ -354,12 +358,16 @@ class GovernanceService:
             # outer commit lands. We don't touch the bus here.
             return self._run_to_dict(decision_run), event
 
-        try:
-            await publish_event(Topics.DECISION_PROPOSED, event)
-        except Exception as exc:  # pragma: no cover — best-effort
-            logger.warning(
-                "DECISION_PROPOSED publish failed for %s: %s", decision_run.id, exc,
-            )
+        from src.shared.outbox_models import EventOutbox
+
+        self.db.add(EventOutbox(
+            tenant_id=self.tenant_id,
+            aggregate_id=decision_run.id,
+            aggregate_type="decision_run",
+            event_type="DECISION_PROPOSED",
+            payload=event.payload,
+            status="pending",
+        ))
 
         return self._run_to_dict(decision_run), None
     
