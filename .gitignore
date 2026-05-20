@@ -140,6 +140,9 @@ frontend/src/lib/api/generated/
 # Q.62.A.1 — pg_dump backups (rotativos, grandes).
 backups/
 
+# Q.62.E.2 — Q.55 experiment console outputs (regravavel via script).
+scripts/q55_run_console.txt
+
 # Excel temp files (Office lock files)
 ~$*.xlsx
 ~$*.xls
