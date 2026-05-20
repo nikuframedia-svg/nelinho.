@@ -43,6 +43,14 @@ class EventOutbox(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now(), index=True
     )
     published_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Q.66.E.1: backoff exponencial entre retries. NULL = elegivel ja (default
+    # para events novos). Quando o dispatcher falha, set para
+    # `now() + min(2^retry_count s, 300s)` ANTES de incrementar retry_count.
+    # SELECT do dispatcher exclui events com next_retry_at no futuro.
+    next_retry_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     
     # Sprint S3: declare the UNIQUE constraint that has lived only in
     # migration 003 until now. Keeps the ORM model honest — anything that
