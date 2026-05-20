@@ -101,3 +101,61 @@ jobs:
 
       - name: Unit tests (Vitest)
         run: npm run test
+
+  # Q.61.17 — alembic check: falha se `Base.metadata` (modelos SQLA via
+  # model_registry, Q.61.14) divergir de HEAD migration. Sobe Postgres
+  # como service, aplica `alembic upgrade head`, depois `alembic check`.
+  # Apanha o pattern "alguem adiciona coluna ao modelo sem migration".
+  alembic:
+    name: Alembic schema vs migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: prodplan
+          POSTGRES_PASSWORD: prodplan
+          POSTGRES_DB: prodplan_one
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-test.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-test.txt
+
+      - name: Wait for Postgres
+        run: |
+          for i in {1..30}; do
+            pg_isready -h localhost -p 5432 -U prodplan && break
+            sleep 1
+          done
+
+      - name: Apply migrations
+        env:
+          DATABASE_URL: postgresql+asyncpg://prodplan:prodplan@localhost:5432/prodplan_one
+          PYTHONPATH: .
+        run: alembic upgrade head
+
+      - name: Alembic check (model_registry vs HEAD)
+        env:
+          DATABASE_URL: postgresql+asyncpg://prodplan:prodplan@localhost:5432/prodplan_one
+          PYTHONPATH: .
+        run: alembic check
