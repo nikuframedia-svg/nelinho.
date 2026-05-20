@@ -17,30 +17,11 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from src.shared.database import Base
 from src.shared.config import settings
 
-# Import all model modules
-from src.core.models import tenant, tenant_configuration, product, machine, employee, operation, bom, rates
-from src.copilot import models as copilot_models
-from src.dqa import models as dqa_models
-from src.supply import models as supply_models
-from src.shared.models import governance  # Decision ledger models
-from src.twin import models as twin_models  # Digital Twin scenario models
-from src.copilot.alerts import models as copilot_alerts_models  # Proactive alerts
-from src.ml.models import orm as ml_orm_models  # ML model artifacts (Sprint G)
-from src.plan.cpo import commits as plan_commits_models  # Schedule-as-Code (Sprint K)
-from src.plan.models import transport as plan_transport_models  # Sprint P.2
-from src.plan.models import routing_template as plan_routing_template_models  # Sprint P.4
-from src.profit.models import pricing as profit_pricing_models  # Sprint Q.0/Q.2
-from src.quality.models import rework as quality_rework_models  # Sprint R.1
-from src.plan.models import mold as plan_mold_models  # Sprint R.6
-# FASE -1.3 — imports em falta detectados na auditoria (CRIT-20)
-from src.plan.models import schedule as plan_schedule_models  # ProductionSchedule
-from src.plan.models import order as plan_order_models
-from src.plan.models import mrp as plan_mrp_models
-from src.plan.models import phase_gap as plan_phase_gap_models  # migration 023
-from src.factory_data_product.models import curated as factory_curated_models  # migrations 028, 029
-from src.sandbox import models as sandbox_models  # migration 030
-from src.improve import models as improve_models  # migration 031
-from src.core.models import etl_run as core_etl_run_models  # migration 047 (Q.20.A)
+# Q.61.14 — single source of truth for model imports. Em vez da lista
+# manual (que divergiu de bootstrap_dev_full.py em ~12 modulos), todos
+# os call-sites importam aqui. Adicionar um modelo novo => adicionar
+# em UM sitio (model_registry.py) => Alembic + bootstrap apanham juntos.
+from src.shared import model_registry  # noqa: F401  Q.61.14 (side-effect import)
 
 # this is the Alembic Config object
 config = context.config
