@@ -68,15 +68,17 @@ export const errorsApi = {
     if (params.sortBy) queryParams.set('sortBy', params.sortBy);
     if (params.sortOrder) queryParams.set('sortOrder', params.sortOrder);
     
-    return request<ErrorsResponse>(`/api/errors?${queryParams.toString()}`);
+    // Q.61.32c — migrado de /api/errors para /v1/quality/errors.
+    return request<ErrorsResponse>(`/v1/quality/errors?${queryParams.toString()}`);
   },
-  
+
   /**
    * Get aggregate statistics for all errors (uses full database).
    * This is NOT paginated - returns totals from all 89,836 errors.
    */
   stats: (): Promise<ErrorsStats> =>
-    request<ErrorsStats>('/api/errors/stats'),
+    // Q.61.32c — migrado de /api/errors/stats para /v1/quality/errors/stats.
+    request<ErrorsStats>('/v1/quality/errors/stats'),
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════

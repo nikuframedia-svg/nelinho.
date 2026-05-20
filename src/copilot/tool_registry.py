@@ -149,9 +149,10 @@ CATEGORY_PATTERNS = {
     ToolCategory.DATA_READ: [
         r"^GET /v1/factory/",
         r"^GET /v1/explain/",
-        # Q.61.32a — /api/orders → /v1/plan/orders; Q.61.32c trata errors.
+        # Q.61.32a — /api/orders → /v1/plan/orders
+        # Q.61.32c — /api/errors → /v1/quality/errors
         r"^GET /v1/plan/orders",
-        r"^GET /api/errors",
+        r"^GET /v1/quality/errors",
     ],
     ToolCategory.DATA_WRITE: [
         r"^POST /v1/factory/ingest",
