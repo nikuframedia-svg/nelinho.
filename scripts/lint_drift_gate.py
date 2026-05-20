@@ -25,10 +25,15 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 BASELINE_FILE = REPO_ROOT / "scripts" / "lint_baseline.json"
 
 # Regras que vivem em drift mode — count actual e o teto.
-DRIFT_RULES = ["BLE001"]
+# Python (ruff) — chaves directas do nome da regra ruff:
+PYTHON_DRIFT_RULES = ["BLE001"]
+# Frontend (ESLint) — chave logica + matcher no output:
+FRONTEND_DRIFT_RULES = {
+    "Q61_07_no_direct_fetch": "Q.61.07",  # match contra texto do erro
+}
 
 
-def count_violations(rule: str) -> int:
+def count_python_violations(rule: str) -> int:
     """Conta violacoes de uma regra em src/ via ruff."""
     proc = subprocess.run(
         [
@@ -39,6 +44,32 @@ def count_violations(rule: str) -> int:
     )
     # ruff sai != 0 quando ha violations — isto e o ponto, nao falha do gate.
     return sum(1 for line in proc.stdout.splitlines() if f": {rule} " in line)
+
+
+def count_frontend_violations(needle: str) -> int:
+    """Conta linhas no output do ESLint que contenham o texto `needle`."""
+    frontend_dir = REPO_ROOT / "frontend"
+    if not frontend_dir.exists():
+        return 0
+    proc = subprocess.run(
+        [
+            "npx", "eslint",
+            "-c", "eslint.mocks.config.js", "--no-config-lookup",
+            "src/**/*.{ts,tsx}",
+            "--no-error-on-unmatched-pattern",
+        ],
+        capture_output=True, text=True, cwd=frontend_dir, shell=True,
+    )
+    return sum(1 for line in proc.stdout.splitlines() if needle in line)
+
+
+def count_all() -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for rule in PYTHON_DRIFT_RULES:
+        counts[rule] = count_python_violations(rule)
+    for key, needle in FRONTEND_DRIFT_RULES.items():
+        counts[key] = count_frontend_violations(needle)
+    return counts
 
 
 def load_baseline() -> dict[str, int]:
@@ -63,7 +94,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    current = {rule: count_violations(rule) for rule in DRIFT_RULES}
+    current = count_all()
     baseline = load_baseline()
 
     if args.update:
@@ -74,7 +105,7 @@ def main() -> int:
         return 0
 
     failures = []
-    for rule in DRIFT_RULES:
+    for rule in sorted(current):
         cur = current[rule]
         base = baseline.get(rule)
         if base is None:

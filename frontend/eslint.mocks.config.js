@@ -31,6 +31,30 @@ export const zeroMocksRestrictedSyntax = [
   },
 ]
 
+// Q.61.07 — bloqueia `fetch(...)` directo em `src/pages/` e `src/components/`.
+// `lib/api/` continua a ser o ÚNICO ponto que faz HTTP. Pages/components que
+// queiram fazer um request novo: adicionam função em `lib/api/<domain>Api.ts`.
+//
+// **Severity = 'warn'** porque ha 50 sites pre-existentes (audit Q.61);
+// o gate real de CI e `scripts/lint_drift_gate.py` (compara count vs
+// baseline). Vaga 5 (Q.61.25) migra os 50; entao sobe para 'error'.
+//
+// Excepções permitidas:
+//   * `src/lib/api/**`     — onde o `apiFetch` real vive.
+//   * `src/test/**`        — testes podem fazer `fetch` para o MSW mock server.
+//   * `src/mocks/**`       — MSW handlers.
+export const noDirectFetchRestrictedSyntax = [
+  'warn',
+  {
+    // CallExpression onde o callee é o identifier `fetch` (não membro,
+    // ex: `apiFetch()` não bate; `window.fetch()` também não bate).
+    selector: "CallExpression[callee.type='Identifier'][callee.name='fetch']",
+    message:
+      'Q.61.07: `fetch(...)` directo proibido em `src/pages/` e `src/components/`. ' +
+      'Adiciona uma função em `src/lib/api/<domain>Api.ts` e usa-a aqui — fonte única + tracing.',
+  },
+]
+
 export default defineConfig([
   { ignores: ['dist'] },
   {
@@ -47,5 +71,15 @@ export default defineConfig([
       'react-refresh': reactRefresh,
     },
     rules: { 'no-restricted-syntax': zeroMocksRestrictedSyntax },
+  },
+  // Q.61.07 — anti-fetch directo SÓ em pages/components.
+  // `lib/api/`, testes e mocks ficam livres (vivem onde a chamada
+  // tem de ser feita).
+  {
+    files: ['src/pages/**/*.{ts,tsx}', 'src/components/**/*.{ts,tsx}'],
+    languageOptions: { parser: tseslint.parser },
+    linterOptions: { reportUnusedDisableDirectives: 'off' },
+    plugins: { '@typescript-eslint': tseslint.plugin },
+    rules: { 'no-restricted-syntax': noDirectFetchRestrictedSyntax },
   },
 ])

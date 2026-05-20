@@ -105,6 +105,7 @@ FASE 1B (CRIT-13..16, 23), FASE 2 (CRIT-02/17/18 atomicity), FASE 3 (HIGH-41..56
 - **Q.61.04** ACTION_WIRING roundtrip — `tests/governance/test_action_wiring_roundtrip_q61_04.py` faz parse do TS `frontend/src/components/regras/ruleHelpers.ts` e compara keys + wired flags com backend `dispatchers.ACTION_WIRING`. Antes só havia teste "backend tem entry por ActionType"; agora drift backend↔frontend falha o CI.
 - **Q.61.05** Mutmut baseline script — `scripts/mutation_test.ps1` + `mutmut>=2.5,<3` em requirements-test. Smoke/decisions/yaml_policy/cpo/all targets; saída em `scripts/mutmut_baseline.json`. **Não corrido** nesta sessão (lento); Luis pode kick-off com `pwsh scripts/mutation_test.ps1 -Module smoke`.
 - **Q.61.06** Stop-the-bleeding lint: `S110` + `T201` adicionados a `ruff.toml` (11 sites fixados com `# noqa: <rule>  Q.61.06: <razão>`). Para `BLE001` (370 sites, demasiado para mass-fix), novo `scripts/lint_drift_gate.py` com baseline em `scripts/lint_baseline.json` — falha CI se count sobe (Larson De-risk, sem orthogonal damage de massa de `# noqa`).
+- **Q.61.07** ESLint anti-direct-fetch — regra `no-restricted-syntax` em `eslint.mocks.config.js` que apanha `fetch(...)` directo em `src/pages/` e `src/components/` (50 sites pré-existentes em warn; Vaga 5 migra-os). Drift gate estendido com `Q61_07_no_direct_fetch` (50 baseline) — count >50 falha CI.
 
 ## Test count progression
 
