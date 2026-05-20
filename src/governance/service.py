@@ -22,6 +22,8 @@ from uuid import UUID, uuid4
 from sqlalchemy import select, and_, or_, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.governance.audit_service import audit_change
+
 from .models import (
     DecisionRun,
     Approval,
@@ -31,6 +33,22 @@ from .models import (
     KillSwitchActive,
     DEFAULT_POLICIES,
 )
+
+
+def _coerce_actor_uuid(value: Optional[str]) -> Optional[UUID]:
+    """Best-effort coerce a free-form actor string to UUID for audit_log.
+
+    ``proposed_by`` / ``approved_by`` are ``String(100)`` on the model
+    (sometimes a UUID, sometimes a label like ``yaml_policy:rule_xyz``).
+    ``core.audit_log.actor_id`` is a UUID column — if we can't parse,
+    leave it NULL and rely on ``reason`` for the human-readable trail.
+    """
+    if not value:
+        return None
+    try:
+        return UUID(value)
+    except (TypeError, ValueError):
+        return None
 
 
 # Risk severity ordering (used by auto-approval + timeline grouping).
@@ -321,6 +339,22 @@ class GovernanceService:
         )
 
         self.db.add(decision_run)
+        await audit_change(
+            self.db,
+            tenant_id=self.tenant_id,
+            entity_type="decision_run",
+            entity_id=decision_id_uuid,
+            action="INSERT",
+            new_values={
+                "decision_type": decision_type,
+                "title": title,
+                "status": initial_status,
+                "risk_level": risk_level,
+                "autonomy_level": decision_run.autonomy_level,
+            },
+            actor_id=_coerce_actor_uuid(proposed_by),
+            reason="propor decisão",
+        )
         await self.db.flush()
 
         logger.info(f"Decision proposed: {decision_id_uuid} ({decision_type})")
@@ -423,8 +457,9 @@ class GovernanceService:
             raise ValueError(f"User {approved_by} has already voted on this decision")
 
         # Create approval record
+        approval_id = uuid4()
         approval = Approval(
-            id=uuid4(),
+            id=approval_id,
             tenant_id=self.tenant_id,
             decision_run_id=decision_run.id,
             action=action.value,
@@ -437,6 +472,24 @@ class GovernanceService:
             ),
         )
         self.db.add(approval)
+        await audit_change(
+            self.db,
+            tenant_id=self.tenant_id,
+            entity_type="approval",
+            entity_id=approval_id,
+            action="INSERT",
+            new_values={
+                "decision_run_id": str(decision_run.id),
+                "action": action.value,
+                "approver_role": approver_role,
+                "rejection_category": (
+                    rejection_category if action == ApprovalAction.REJECT else None
+                ),
+            },
+            actor_id=_coerce_actor_uuid(approved_by),
+            actor_role=approver_role,
+            reason=f"aprovação: {action.value}",
+        )
 
         # Update status
         if action == ApprovalAction.REJECT:
@@ -1467,15 +1520,27 @@ class GovernanceService:
         )
         row = existing.scalar_one_or_none()
         now = datetime.now(timezone.utc)
+        # Composite PK (tenant_id, scope) — use decision_id as entity_id
+        # since the kill-switch row has no surrogate UUID.
+        audit_snapshot = {
+            "scope": scope,
+            "decision_id": str(decision_id),
+            "activated_by": activated_by,
+            "reason": reason,
+        }
         if row is None:
-            self.db.add(KillSwitchActive(
-                tenant_id=self.tenant_id,
-                scope=scope,
-                decision_id=decision_id,
-                activated_at=now,
-                activated_by=activated_by,
-                reason=reason,
-            ))
+            ks_row = KillSwitchActive(
+                tenant_id=self.tenant_id, scope=scope, decision_id=decision_id,
+                activated_at=now, activated_by=activated_by, reason=reason,
+            )
+            self.db.add(ks_row)
+            await audit_change(
+                self.db, tenant_id=self.tenant_id, entity_type="kill_switch",
+                entity_id=decision_id, action="INSERT",
+                new_values=audit_snapshot,
+                actor_id=_coerce_actor_uuid(activated_by),
+                reason="activação de kill switch",
+            )
         else:
             row.decision_id = decision_id
             row.activated_at = now
@@ -1483,6 +1548,13 @@ class GovernanceService:
             row.reason = reason
             row.deactivated_at = None
             row.deactivated_by = None
+            await audit_change(
+                self.db, tenant_id=self.tenant_id, entity_type="kill_switch",
+                entity_id=decision_id, action="UPDATE",
+                new_values=audit_snapshot,
+                actor_id=_coerce_actor_uuid(activated_by),
+                reason="reactivação de kill switch",
+            )
 
     async def is_kill_switch_active(
         self,

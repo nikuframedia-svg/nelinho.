@@ -44,6 +44,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.governance.audit_service import audit_change
 from src.governance.models import (
     PreferenceRule,
     PreferenceRuleStatus,
@@ -122,8 +123,9 @@ class PreferenceRuleDetector:
             if sig in rejected_signatures:
                 re_emitted_skipped += 1
                 continue
+            rule_id = uuid4()
             rule = PreferenceRule(
-                id=uuid4(),
+                id=rule_id,
                 tenant_id=self.tenant_id,
                 type=candidate["type"],
                 description=candidate["description"],
@@ -133,6 +135,21 @@ class PreferenceRuleDetector:
                 detected_from_commits=candidate["commit_ids"],
             )
             self.session.add(rule)
+            await audit_change(
+                self.session,
+                tenant_id=self.tenant_id,
+                entity_type="preference_rule",
+                entity_id=rule_id,
+                action="INSERT",
+                new_values={
+                    "type": candidate["type"],
+                    "status": PreferenceRuleStatus.DETECTED.value,
+                    "confidence": float(candidate["confidence"]),
+                    "sample_count": len(candidate["commit_ids"]),
+                },
+                actor_id=None,  # detector é job background, sem actor
+                reason="detector aprendeu regra",
+            )
             persisted.append(rule)
 
         await self.session.flush()

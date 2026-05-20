@@ -24,6 +24,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.governance.audit_service import audit_change
 from src.governance.yaml_policy.models import (
     RuleLifecycleStatus,
     RuleRevisionAction,
@@ -125,6 +126,22 @@ class RuleProposalService:
         )
         self.session.add(row)
         await self.session.flush()  # populate row.id for the revision
+
+        await audit_change(
+            self.session,
+            tenant_id=self.tenant_id,
+            entity_type="tenant_rule",
+            entity_id=row.id,
+            action="INSERT",
+            new_values={
+                "rule_id": rule.id,
+                "status": RuleLifecycleStatus.PROPOSED.value,
+                "event_type": rule.when.event.value,
+                "description": rule.description,
+            },
+            actor_id=proposed_by_user_id,
+            reason="propor regra YAML",
+        )
 
         rev = TenantRuleRevision(
             tenant_id=self.tenant_id,
