@@ -50,13 +50,15 @@ def _load_mirror_modules() -> None:
     module is logged at debug level, not an error.
     """
     for mod in (
-        "master_data",   # Q.20.B
-        "molds",         # Q.20.C
-        "skills",        # Q.20.D
-        "quality",       # Q.20.E
-        "time_mining",   # Q.20.F
-        "stock",         # Q.52.K
-        "calendar",      # Q.53.B
+        "master_data",       # Q.20.B
+        "molds",             # Q.20.C
+        "skills",            # Q.20.D
+        "quality",           # Q.20.E
+        "time_mining",       # Q.20.F
+        "stock",             # Q.52.K
+        "calendar",          # Q.53.B
+        "inventory_ledger",  # Q.64.A — desbloqueia shortage-risks
+        "material_master",   # Q.64.B — alimenta ShortageDetector
     ):
         try:
             __import__(f"src.adapters.nelo.etl.{mod}")
