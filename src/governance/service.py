@@ -286,7 +286,6 @@ class GovernanceService:
             if await self._auto_approval_allowed(
                 decision_type=decision_type,
                 risk_level=risk_level,
-                scenario_id=scenario_id,
             ):
                 initial_status = DecisionStatus.APPROVED.value
                 logger.info(
@@ -1176,7 +1175,6 @@ class GovernanceService:
         *,
         decision_type: str,
         risk_level: str,
-        scenario_id: Optional[str] = None,
         trust_index: Optional[float] = None,
     ) -> bool:
         """Check TenantConfig for `governance.auto_approval.{decision_type}.*`.
@@ -1184,22 +1182,22 @@ class GovernanceService:
         Returns True iff ALL of:
           * `auto_approval.{decision_type}.enabled=True`
           * decision's risk level ≤ `auto_approval.{decision_type}.risk_ceiling`
-          * resolved trust_index ≥ ``_TRUST_GATE_THRESHOLD``
+          * caller-provided ``trust_index`` ≥ ``_TRUST_GATE_THRESHOLD``
 
-        Sprint Q.12 Onda 1.4 — the previous version skipped the trust
-        gate when ``trust_index`` was ``None`` "so legacy flows stay
-        green". In practice :meth:`propose_decision` *never* passed a
-        trust_index, so the gate never fired. Now we resolve a trust
-        index from the scenario commit (when available) and refuse to
-        auto-approve when it can't be resolved — better to surface a
-        decision for human review than to silently widen the gate.
+        Q.66.A.3 — removed the ``scenario_id`` auto-resolution path. The
+        previous ``_resolve_trust_index`` called ``CommitsService.
+        get_by_scenario_id`` which never existed; the ``try/except``
+        masked the ``AttributeError`` and always returned ``None``, so
+        the resolution was dead code from day one. The deeper reason:
+        ``SandboxScenario`` (the only caller passing scenario_id) does
+        not run CPO (sandbox/service.py:128 — "Doesn't run the CPO"),
+        so there is no commit to resolve to. Connecting them would be a
+        product change, not a refactor. The caller must now pass
+        ``trust_index`` explicitly when it has one.
 
         Falls back to False on any error — auto-approval is a
         power-user feature, never the default.
         """
-        if trust_index is None:
-            trust_index = await self._resolve_trust_index(scenario_id)
-
         if trust_index is None:
             logger.info(
                 "Trust gate blocked auto-approval: tenant=%s type=%s "
@@ -1231,33 +1229,11 @@ class GovernanceService:
             logger.warning("auto-approval check failed: %s", exc)
             return False
 
-    async def _resolve_trust_index(
-        self, scenario_id: Optional[str],
-    ) -> Optional[float]:
-        """Return the trust_index of the schedule commit referenced by
-        ``scenario_id``, or ``None`` if it can't be resolved.
-
-        Lazy-imports the commits service so governance stays free of
-        plan dependencies at import time. Any failure (including the
-        plan module not being installed in this build) is logged and
-        treated as "no trust available" — never as "trust=high".
-        """
-        if not scenario_id:
-            return None
-        try:
-            from src.plan.cpo.commits import CommitsService
-
-            commits = CommitsService(self.db, self.tenant_id)
-            commit = await commits.get_by_scenario_id(scenario_id)
-            if commit is None or commit.trust_index is None:
-                return None
-            return float(commit.trust_index)
-        except Exception as exc:  # pragma: no cover — defensive
-            logger.debug(
-                "trust_index resolution failed (scenario=%s): %s",
-                scenario_id, exc,
-            )
-            return None
+    # Q.66.A.3 — `_resolve_trust_index` removed. It called
+    # `CommitsService.get_by_scenario_id` which never existed, so the
+    # try/except always swallowed an AttributeError and returned None.
+    # The root cause (no link between SandboxScenario and ScheduleCommit)
+    # is a product gap, not a refactor — see commit message + sprint_history.
 
     # =========================================================================
     # Existing methods continue below

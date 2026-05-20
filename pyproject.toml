@@ -138,5 +138,4 @@ ignore_imports = [
     "src.governance.preference_learning.detector -> src.plan.cpo.commits",
     "src.governance.preference_learning.dpo_dataset_builder -> src.plan.cpo.commits",
     "src.governance.preference_learning.learning_metrics_service -> src.plan.cpo.commits",
-    "src.governance.service -> src.plan.cpo.commits",
 ]
