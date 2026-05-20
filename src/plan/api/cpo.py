@@ -262,7 +262,7 @@ async def schedule_cpo_async(
         redis: ArqRedis = await create_pool(
             RedisSettings.from_dsn(_settings.redis_url),
         )
-    except Exception as exc:  # pragma: no cover — Redis down e raro
+    except Exception as exc:  # noqa: BLE001  Q.62.D.2: Redis pool creation; 503 narrow contract  # pragma: no cover
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Arq queue unavailable (Redis): {exc}",
@@ -310,7 +310,7 @@ async def get_schedule_job_status(
         redis = await create_pool(
             RedisSettings.from_dsn(_settings.redis_url),
         )
-    except Exception as exc:  # pragma: no cover
+    except Exception as exc:  # noqa: BLE001  Q.62.D.2: Redis pool creation (polling); 503 narrow contract  # pragma: no cover
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Arq queue unavailable (Redis): {exc}",
@@ -332,7 +332,7 @@ async def get_schedule_job_status(
                 raw_result = await job.result(timeout=0.1)
                 if isinstance(raw_result, dict):
                     result = raw_result
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001  Q.62.D.2: Arq job.result() re-raises any exception type; propagamos como str
                 # job completou mas com erro — `result()` re-raises.
                 error_str = str(exc)
 

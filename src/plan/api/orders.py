@@ -268,7 +268,7 @@ async def list_orders_paginated(
             "hasNextPage": page < total_pages,
             "hasPreviousPage": page > 1,
         }
-    except Exception as e:  # Q.61.32a: comportamento copiado tal-qual; Q.62 limpa BLE001
+    except Exception as e:  # noqa: BLE001  Q.62.E.1: comportamento copiado tal-qual em Q.61.32a (legacy fallback)
         error_str = str(e).lower()
         if (
             "connection refused" in error_str
@@ -349,7 +349,7 @@ async def orders_stats(
             "withTransport": with_transport,
             "phaseDistribution": phase_distribution,
         }
-    except Exception as e:  # Q.61.32a: comportamento copiado tal-qual; Q.62 limpa BLE001
+    except Exception as e:  # noqa: BLE001  Q.62.E.1: comportamento copiado tal-qual em Q.61.32a (legacy fallback)
         error_str = str(e).lower()
         if (
             "connection refused" in error_str

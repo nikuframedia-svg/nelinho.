@@ -389,7 +389,7 @@ async def list_allocations_paginated(
             "hasNextPage": page < total_pages,
             "hasPreviousPage": page > 1,
         }
-    except Exception as e:  # Q.61.32b: comportamento copiado tal-qual; Q.62 limpa BLE001
+    except Exception as e:  # noqa: BLE001  Q.62.E.1: comportamento copiado tal-qual em Q.61.32b (legacy fallback)
         error_str = str(e).lower()
         if (
             "connection refused" in error_str
@@ -491,7 +491,7 @@ async def allocations_stats(
             "topPhases": top_phases,
             "topEmployees": top_employees,
         }
-    except Exception as e:  # Q.61.32b: comportamento copiado tal-qual; Q.62 limpa BLE001
+    except Exception as e:  # noqa: BLE001  Q.62.E.1: comportamento copiado tal-qual em Q.61.32b (legacy fallback)
         error_str = str(e).lower()
         if (
             "connection refused" in error_str

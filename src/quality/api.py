@@ -539,7 +539,7 @@ async def errors_stats(
                 for phase, count in top_phase_rows
             ],
         }
-    except Exception as e:  # Q.61.32c: comportamento copiado tal-qual; Q.62 limpa BLE001
+    except Exception as e:  # noqa: BLE001  Q.62.E.1: comportamento copiado tal-qual em Q.61.32c (legacy fallback)
         error_str = str(e).lower()
         if any(
             m in error_str
@@ -632,7 +632,7 @@ async def list_errors_paginated(
             "hasNextPage": page < total_pages,
             "hasPreviousPage": page > 1,
         }
-    except Exception as e:  # Q.61.32c: comportamento copiado tal-qual; Q.62 limpa BLE001
+    except Exception as e:  # noqa: BLE001  Q.62.E.1: comportamento copiado tal-qual em Q.61.32c (legacy fallback)
         error_str = str(e).lower()
         if any(
             m in error_str
