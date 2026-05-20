@@ -93,8 +93,16 @@ async def lifespan(app: FastAPI):
     except Exception as sentry_error:
         logger.warning(f"Sentry setup failed: {sentry_error}")
     
+    # Q.61.22 — track de subsistemas degradados para health endpoint expor.
+    # Antes do Q.61.22 cada step do startup era sequencial; um Kafka lento
+    # podia atrasar tudo. Agora init_db continua primeiro (deps de schema),
+    # mas Redis + Kafka + tool registry + YAML refresh paralelizam com
+    # asyncio.gather(return_exceptions=True).
+    degraded_subsystems: list[str] = []
+    app.state.degraded_subsystems = degraded_subsystems
+
     try:
-        # Initialize database (opcional - permite iniciar sem DB para testes)
+        # 1) DB primeiro (deps de schema para tudo o resto).
         try:
             await init_db()
             logger.info("Database initialized")
@@ -102,44 +110,47 @@ async def lifespan(app: FastAPI):
             logger.warning(f"Database connection failed: {db_error}")
             logger.warning("Backend iniciado SEM base de dados. Algumas funcionalidades estarão limitadas.")
             logger.warning("Para usar o COPILOT completo, inicia o PostgreSQL.")
-        
-        # Initialize Redis (opcional)
-        try:
-            await get_redis()
-            logger.info("Redis connected")
-        except Exception as redis_error:
-            logger.warning(f"Redis connection failed: {redis_error}")
-            logger.warning("Backend iniciado SEM Redis. Rate limiting usará fallback em memória.")
-        
-        # Initialize Kafka producer (opcional)
-        if not settings.is_development:
-            try:
-                await get_producer()
-                logger.info("Kafka producer started")
-            except Exception as kafka_error:
-                logger.warning(f"Kafka connection failed: {kafka_error}")
+            degraded_subsystems.append("database")
 
-        # Pre-warm the Copilot tool registry so the first /v1/tools call
-        # doesn't incur an OpenAPI parse round-trip.
-        try:
+        # 2) Subsistemas paralelizaveis (Q.61.22). asyncio.gather com
+        # return_exceptions=True garante que um Kafka caido nao atrasa o
+        # Redis nem o YAML refresh.
+
+        async def _init_redis():
+            await get_redis()
+
+        async def _init_kafka():
+            if settings.is_development:
+                return  # dev nao precisa de producer obrigatorio
+            await get_producer()
+
+        async def _warm_tool_registry():
             from src.copilot.tool_registry import get_tool_registry
             await get_tool_registry()
-            logger.info("Tool registry pre-warmed")
-        except Exception as tr_error:
-            logger.warning(f"Tool registry pre-warm failed: {tr_error}")
 
-        # Q.17.D — load active YAML policy rules into the runtime engine
-        # so they start firing on the first matching event without a
-        # cold-start refresh. Best-effort: failure here doesn't block
-        # startup (engine stays empty; rules can still be approved).
-        try:
+        async def _refresh_yaml_policy():
             from src.governance.yaml_policy.runtime import startup_refresh
             from src.shared.database import async_session_factory
             async with async_session_factory() as _session:
-                _count = await startup_refresh(_session)
-            logger.info(f"YAML policy engine warmed: {_count} active rules")
-        except Exception as engine_error:
-            logger.warning(f"YAML policy engine warmup failed: {engine_error}")
+                count = await startup_refresh(_session)
+            logger.info(f"YAML policy engine warmed: {count} active rules")
+
+        parallel_steps = [
+            ("redis", _init_redis()),
+            ("kafka", _init_kafka()),
+            ("tool_registry", _warm_tool_registry()),
+            ("yaml_policy", _refresh_yaml_policy()),
+        ]
+        results = await asyncio.gather(
+            *(coro for _, coro in parallel_steps),
+            return_exceptions=True,
+        )
+        for (name, _), result in zip(parallel_steps, results):
+            if isinstance(result, Exception):
+                logger.warning(f"{name} startup failed: {result}")
+                degraded_subsystems.append(name)
+            else:
+                logger.info(f"{name} ready")
 
         # Start background scheduler (alerts scan + daily feedback).
         # In production, list active tenants here from the DB; for dev we start
