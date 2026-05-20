@@ -107,39 +107,26 @@ async def propose_decision(
     
     session.add(decision)
     await session.flush()
-    
-    # Create approval records based on SoD policy
+
+    # Q.61.09 — NAO criamos DecisionApproval no propose. O bug original
+    # (linha 127 historica) escrevia approver_id=user_id, ou seja, o
+    # proposer aparecia como o seu proprio approver pendente. A tabela
+    # decision_approvals passa a representar SO aprovacoes reais — quem
+    # ja agiu, quando, com que decisao. A lista de approvers pendentes
+    # e derivada de `required_approver_roles - approvers_que_ja_agiram`
+    # no GET /decisions/{id} (sem placeholders enganadores).
     from src.shared.auth.rbac import SOD_POLICIES, Role
-    
+
     required_approver_roles = SOD_POLICIES.get(
         request.action_type,
         SOD_POLICIES.get("GENERIC_ACTION", [Role.MANAGER_OPERATIONS])
     )
-    
-    # In a real system, we would query users by role here
-    # For now, we create a placeholder approval record that can be fulfilled by any user with the required role
-    # The actual approval will be checked against SoD policies when /approve is called
-    from src.shared.models.governance import DecisionApproval, ApprovalStatus
-    
-    # Create approval placeholder (or create for specific users if we have them)
-    # For demo purposes, we create one approval record marked as PENDING
-    # In production, this would query the user table for users with the required roles
-    approval = DecisionApproval(
-        decision_id=decision.id,
-        approver_id=user_id,  # Placeholder - in production, this would be a valid approver UUID
-        status=ApprovalStatus.PENDING.value,
-        comment=None,
-        approved_at=None,
-    )
-    session.add(approval)
-    
-    await session.flush()
-    
+
     logger.info(
         f"Decision proposed: id={decision.id}, title={request.title}, "
         f"action_type={request.action_type}, required_roles={[r.value for r in required_approver_roles]}"
     )
-    
+
     return {
         "id": str(decision.id),
         "status": "proposed",
@@ -302,22 +289,34 @@ async def approve_decision(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=error_message or "SoD check failed",
         )
-    
-    # Create approval record
-    approval = DecisionApproval(
-        decision_id=decision_id,
-        approver_id=user_id,
-        status=ApprovalStatus.APPROVED.value,
-        comment=request.comment,
-        approved_at=datetime.utcnow(),
+
+    # Q.61.09 — find_or_create. Antes do Q.61.09 o propose criava sempre
+    # um placeholder com approver_id=proposer; quando este endpoint
+    # corria, criava-se um SEGUNDO row, deixando o primeiro orfao. Agora
+    # so existem rows reais.
+    existing_q = select(DecisionApproval).where(
+        DecisionApproval.decision_id == decision_id,
+        DecisionApproval.approver_id == user_id,
     )
-    
-    session.add(approval)
-    
+    existing = (await session.execute(existing_q)).scalar_one_or_none()
+    if existing is not None:
+        existing.status = ApprovalStatus.APPROVED.value
+        existing.comment = request.comment
+        existing.approved_at = datetime.utcnow()
+    else:
+        approval = DecisionApproval(
+            decision_id=decision_id,
+            approver_id=user_id,
+            status=ApprovalStatus.APPROVED.value,
+            comment=request.comment,
+            approved_at=datetime.utcnow(),
+        )
+        session.add(approval)
+
     # Update decision status
     decision.status = DecisionStatus.APPROVED.value
     await session.flush()
-    
+
     await session.commit()
     
     logger.info(f"Decision approved: id={decision_id}, approver={user_id}")
