@@ -1,21 +1,25 @@
-"""Q.61.12 — trace_id end-to-end.
+"""Q.61.12 + Q.61.37 — trace_id end-to-end + structlog.
 
-Frontend `lib/api/client.ts` injecta `X-Request-Id`. Esta camada extrai
-no middleware HTTP, mete em `contextvars`, e os call-sites (logs,
-audit, outbox event) leem daqui. Resultado: 1 HTTP request →
-trace_id consistente em todos os logs/eventos.
-
-Q.61.12 cobre o esqueleto:
+Q.61.12 instalou:
   * `trace_id_var` ContextVar (async-safe).
   * `get_trace_id()` / `set_trace_id()` helpers.
   * `TraceIdMiddleware` (ASGI BaseHTTPMiddleware) que extrai header
     `X-Request-Id` ou gera UUID novo, faz set+token, ecoa em
     response.headers["X-Request-Id"].
-  * `TraceIdLogFilter` que anexa `trace_id` a cada LogRecord.
+  * `TraceIdLogFilter` que anexa `trace_id` a cada LogRecord stdlib.
 
-Q.61.37 (Vaga 8) substitui logging stdlib por structlog + OTel; ai
-o `add_trace_id` vira processor structlog e este filter sai. Ate la,
-este modulo basta para correlacionar HTTP request -> logs.
+Q.61.37 adiciona structlog setup:
+  * `configure_structlog()` instala o pipeline com:
+      - timestamp ISO
+      - log level
+      - trace_id processor (le do ContextVar)
+      - JSON renderer (machine-parsable; OTel-ready)
+  * `get_logger(name)` devolve um structlog BoundLogger.
+  * Logging stdlib continua a funcionar (compat) — call-sites com
+    `logging.getLogger(__name__)` ganham trace_id via filter.
+
+Migracao de call-sites e touched-file pays — nao mexer em massa
+(Karpathy failure mode #3).
 """
 
 from __future__ import annotations
@@ -90,10 +94,73 @@ class TraceIdLogFilter(logging.Filter):
         return True
 
 
+# ─── Q.61.37 — structlog setup ────────────────────────────────────────
+
+
+def _add_trace_id_processor(_logger, _method_name, event_dict):
+    """structlog processor — injecta trace_id (Q.61.12 ContextVar)
+    em cada event dict.
+
+    Tipos compativeis com structlog.types.Processor.
+    """
+    tid = _trace_id_var.get()
+    if tid is not None:
+        event_dict["trace_id"] = tid
+    return event_dict
+
+
+def configure_structlog(json_logs: bool = True) -> None:
+    """Q.61.37 — instala o pipeline structlog.
+
+    Idempotente — chamar varias vezes nao parte nada.
+
+    Args:
+        json_logs: True (default) renderiza para JSON (production).
+            False usa ConsoleRenderer (dev local — mais legivel).
+    """
+    import structlog
+
+    renderer = (
+        structlog.processors.JSONRenderer()
+        if json_logs
+        else structlog.dev.ConsoleRenderer()
+    )
+
+    structlog.configure(
+        processors=[
+            structlog.stdlib.add_log_level,
+            structlog.processors.TimeStamper(fmt="iso", utc=True),
+            _add_trace_id_processor,
+            structlog.processors.format_exc_info,
+            renderer,
+        ],
+        wrapper_class=structlog.stdlib.BoundLogger,
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        cache_logger_on_first_use=True,
+    )
+
+
+def get_logger(name: str | None = None):
+    """Q.61.37 — devolve structlog BoundLogger.
+
+    Uso:
+        from src.shared.observability import get_logger
+        logger = get_logger(__name__)
+        logger.info("event_name", key1="value1", entity_id=str(eid))
+
+    Equivalente a logging.getLogger() em compat (BoundLogger emite via
+    stdlib handlers no fim do pipeline).
+    """
+    import structlog
+    return structlog.get_logger(name)
+
+
 __all__ = [
     "HEADER",
     "TraceIdLogFilter",
     "TraceIdMiddleware",
+    "configure_structlog",
+    "get_logger",
     "get_trace_id",
     "reset_trace_id",
     "set_trace_id",

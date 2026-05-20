@@ -71,6 +71,15 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting ProdPlan ONE...")
 
+    # Q.61.37 — structlog setup. Idempotente; chamar antes de tudo
+    # para que os logs subsequentes saiam ja estruturados.
+    try:
+        from src.shared.observability import configure_structlog
+        # Dev usa ConsoleRenderer (legivel); prod JSON.
+        configure_structlog(json_logs=not settings.is_development)
+    except Exception as struct_error:
+        logger.warning(f"structlog setup failed: {struct_error}")
+
     # Sprint Q.13.B (B1) — OpenTelemetry tracing setup. No-op when
     # OTEL_TRACES_EXPORTER is unset OR opentelemetry packages aren't
     # installed; logs the outcome either way. Must run BEFORE the rest
