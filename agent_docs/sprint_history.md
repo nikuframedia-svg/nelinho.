@@ -128,6 +128,7 @@ FASE 1B (CRIT-13..16, 23), FASE 2 (CRIT-02/17/18 atomicity), FASE 3 (HIGH-41..56
 - **Q.61.29** Trust Index v1 apagado (297L) — 3 regras (`date_ordering`, `quantity_sanity`, `worker_uniqueness`) extraídas para `src/dqa/consistency_rules.py` como funções puras + `consistency_score()` agregador. 9 testes em `test_consistency_rules.py` migrados sem perder cobertura. Canary dqa+governance+shared 723/723.
 - **Q.61.31** (no-fix) — `aprendizagem/` não existe; só `aprendi/`. Audit overnight errado novamente.
 - **Q.61.33** (no-delete) — 4 dos 5 "satélites suspeitos" (twin, sandbox, improve, search) estão **vivos** (routers montados em main.py). Apenas `infrastructure/erp/sqlserver/nelo_erp.py` (356L NeloERPAdapter shadow-mode) tem 0 importadores; **valor potencial** quando ERP real entrar — documentar, não apagar. Audit overnight errado a marcá-los suspeitos.
+- **Q.61.34** Outbox observability — `GET /v1/outbox/status` (`src/shared/api/outbox_status.py`). Retorna `pending/published/failed/dlq/retry_pending` + `oldest_pending_age_seconds` para alarmar quando o dispatcher para de drenar. Suporta `?include_all_tenants=true` para operator central. Dispatcher já tinha retry + DLQ + SKIP LOCKED; Q.61.34 só adiciona a observabilidade. 5 testes via StubSession. Backoff exponencial fica para Q.61.34.1 (precisa de migration).
 
 ## Test count progression
 

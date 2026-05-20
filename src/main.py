@@ -592,6 +592,10 @@ app.include_router(activity_router)  # /v1/activity/recent — outbox poll for L
 app.include_router(ml_router)  # ML learning infrastructure (Sprint G)
 app.include_router(copilot_poetiq_router)  # POETIQ copilot↔CPO loop (Sprint K.4)
 
+# Q.61.34 — outbox observability (GET /v1/outbox/status)
+from src.shared.api.outbox_status import router as outbox_status_router
+app.include_router(outbox_status_router)
+
 
 # API info
 @app.get("/", tags=["Info"])
