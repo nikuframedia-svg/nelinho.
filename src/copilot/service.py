@@ -337,7 +337,8 @@ class CopilotService:
             )
 
         # 7. Call Ollama (com fallback agentic para generic)
-        model = settings.ollama_model
+        # Q.68.D1: per-task override; fallback automático para `ollama_model`.
+        model = settings.model_for("chat")
         ollama_client = get_ollama_client()
 
         try:

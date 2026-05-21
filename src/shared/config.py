@@ -192,7 +192,38 @@ class Settings(BaseSettings):
     )
     copilot_sql_max_rows: int = Field(default=200, ge=1, le=10000)
     copilot_sql_timeout_s: int = Field(default=5, ge=1, le=60)
-    
+
+    # Q.68.D1 — Per-task model override (todos opcionais; None = usa `ollama_model`).
+    # Permite ao Luis correr `gemma4:e4b` para chat + `qwen3.5:9b` para fact-pack
+    # sem reescrever callers. Resolvido via `settings.model_for(task)`.
+    copilot_model_chat: Optional[str] = Field(
+        default=None,
+        description="Override do modelo para a chamada principal de chat ao LLM (service.py:call_llm_for_intent). None → fallback para `ollama_model`.",
+    )
+    copilot_model_tool_dispatch: Optional[str] = Field(
+        default=None,
+        description="Override para o agent loop do `ToolExecutor` (chamadas que escolhem qual tool invocar). None → fallback para `ollama_model`.",
+    )
+    copilot_model_classify: Optional[str] = Field(
+        default=None,
+        description="Override para tarefas analíticas/fact-pack (RLM agent, classify, summarize). None → fallback para `ollama_model`.",
+    )
+
+    def model_for(self, task: str) -> str:
+        """Devolve o modelo a usar para a tarefa pedida.
+
+        Tarefas suportadas: ``chat``, ``tool_dispatch``, ``classify``.
+        Cada uma pode ter override via env (``COPILOT_MODEL_CHAT`` etc.);
+        se não houver, cai-back para ``ollama_model`` (default global).
+        """
+        if task == "chat" and self.copilot_model_chat:
+            return self.copilot_model_chat
+        if task == "tool_dispatch" and self.copilot_model_tool_dispatch:
+            return self.copilot_model_tool_dispatch
+        if task == "classify" and self.copilot_model_classify:
+            return self.copilot_model_classify
+        return self.ollama_model
+
     @property
     def cors_origins_list(self) -> List[str]:
         """Parse CORS origins into a list."""

@@ -349,7 +349,8 @@ async def build_rlm_diagnostic_response(
 
     state_query = FactoryStateQuery(state=None, queries=semantic_queries)
 
-    model = settings.ollama_model
+    # Q.68.D1: tarefa analítica (fact-pack assembly) — usa override classify.
+    model = settings.model_for("classify")
 
     async def _rlm_llm(turns: List[AgentTurn]) -> str:
         """Adapta o transcript do RLM ao OllamaClient.chat (texto cru).
@@ -759,7 +760,7 @@ async def store_copilot_audit(
             {"errors": validation_errors} if validation_errors else None
         ),
         citations={"citations": citations},
-        model=settings.ollama_model,
+        model=settings.model_for("classify"),
         tokens=llm_response.get("meta", {}).get("tokens"),
         latency_ms=latency_ms,
         actor_id=actor_id,
