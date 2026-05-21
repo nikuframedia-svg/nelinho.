@@ -128,6 +128,11 @@ class SandboxService:
         ``after_state``. Doesn't run the CPO — the heavy simulation
         lives in the Twin module; sandbox is a quick-look projection.
 
+        Q.67.5.C: sandbox NÃO computa trust_index. Auto-approval por
+        trust requer ScheduleCommit do CPO real (via
+        ``/v1/plan/cpo/schedule`` async) ou Twin (via
+        ``/v1/twin/scenarios/<id>/solve``). Ver ``src/sandbox/CLAUDE.md``.
+
         Sprint Q.12 Onda 3.1 — uses the ``version`` column as an
         optimistic-lock CAS so two concurrent simulate calls can't
         both flip the status. The previous implementation read the

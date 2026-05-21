@@ -328,8 +328,11 @@ class ErroTreeDetector:
         self._repo = DiagnosticsRepository(session, tenant_id)
         # Order: most-prevalent cause first (mold). Worker before
         # overload because worker problems are easier to act on.
-        # Material detector deferred to a follow-up sprint (no lot data
-        # in NELO curated layer today).
+        # Q.67.3.E: Material detector bloqueado pendente ingestão de
+        # material_lot data (issue Q.68.D — não há fonte ERP actual).
+        # Ver Q.67.1.D explanation_engine para mesmo bloqueio. Quando
+        # lot data estiver disponível, implementar detector que
+        # correlaciona retrabalho com lot/batch ID.
         self._detectors: List[_Detector] = [
             MoldDetector(self._repo),
             WorkerDetector(self._repo),
