@@ -175,6 +175,23 @@ class Settings(BaseSettings):
     copilot_rate_limit_per_hour: int = Field(default=60, ge=1)
     copilot_rate_limit_per_day: int = Field(default=300, ge=1)
     copilot_trust_index_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
+
+    # Q.67.4 — Copilot SQL livre (role read-only Postgres).
+    # Conexão separada com role `nelinho_copilot` (SELECT-only); aplica
+    # `deploy/postgres/q67_copilot_role.sql` em prod uma vez.
+    # Em dev, deixa unset — fallback para `database_url` é seguro porque
+    # o `sql_runner` valida SELECT-only via regex antes de executar.
+    copilot_database_url: Optional[str] = Field(
+        default=None,
+        description=(
+            "Conexão Postgres async com role read-only (`nelinho_copilot`) "
+            "para o tool `run_sql` do copiloto. Em prod, OBRIGATÓRIO. "
+            "Em dev, None cai-back para `database_url` (regex SELECT-only "
+            "no sql_runner continua a proteger)."
+        ),
+    )
+    copilot_sql_max_rows: int = Field(default=200, ge=1, le=10000)
+    copilot_sql_timeout_s: int = Field(default=5, ge=1, le=60)
     
     @property
     def cors_origins_list(self) -> List[str]:
