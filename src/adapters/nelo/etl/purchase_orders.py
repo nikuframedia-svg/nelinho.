@@ -22,14 +22,15 @@ Mapping concreto:
 * `movement_id`              → `erp_movement_id` (idempotency key)
 * `f"PO-{movement_id}"`      → `po_number` (slug determinístico)
 * `entity_id`                → `supplier_erp_id`
-* `f"Fornecedor {entity_id}"` → `supplier_name` (placeholder; lookup
-                                ENTIDADE futuro — TODO Q.65+)
+* `f"Fornecedor {entity_id}"` → `supplier_name` (placeholder; Q.67.1.A:
+                                bloqueado pendente ENTIDADE mirror — issue Q.68.A)
 * `product_id`               → `product_code` (string)
 * `quantity`                 → `qty_ordered`
 * 0                          → `qty_received` (até haver receipt tracking)
 * `moved_at`                 → `ordered_at`
-* `moved_at + 30 dias`       → `eta` (placeholder; ETA real vive em
-                                MOVIMENTO_FORNECEDOR.MOVFOR_ETA — TODO)
+* `moved_at + 30 dias`       → `eta` (placeholder; Q.67.1.A: bloqueado
+                                pendente MOVIMENTO_FORNECEDOR helper service
+                                + leitura de MOVFOR_ETA — issue Q.68.A)
 * "ORDERED" (legacy alias)   → na verdade `PO_STATUS_OPEN` ("OPEN")
 * "EUR"                      → `currency_code` (não persistido — model
                                 não tem coluna; mantemos só `unit_cost`
@@ -89,7 +90,10 @@ def _map_movement_to_po(row: MovementRow) -> Optional[Dict[str, Any]]:
     # `unit_price` em € no ERP. O model `PurchaseOrder` (Q.53.D) ainda
     # não tem coluna `unit_cost`/`total_cost`; quando for adicionada,
     # o mapping abaixo enriquece a row. Por agora a precisão fica no
-    # ERP e o frontend mostra apenas `qty_ordered`. TODO Q.65+.
+    # ERP e o frontend mostra apenas `qty_ordered`.
+    # Q.67.1.A: bloqueado pendente migration alembic
+    # (`supply.purchase_orders.unit_cost`/`total_cost` Numeric(18,6)) — a
+    # drift chain está congelada em Q.62.A. Issue Q.68.A.
     _ = Decimal(str(row.unit_price or 0)).quantize(_Q6)  # touch unit_price to surface schema drift
 
     # `moved_at` é datetime; o model guarda `ordered_at` como Date.
@@ -98,7 +102,10 @@ def _map_movement_to_po(row: MovementRow) -> Optional[Dict[str, Any]]:
 
     # Supplier name placeholder. ENTIDADE lookup é caro (uma query por
     # PO ou um join 30k linhas) — fica para um mirror futuro que
-    # popule ENTIDADE local e o JOIN seja local. TODO Q.65+.
+    # popule ENTIDADE local e o JOIN seja local.
+    # Q.67.1.A: bloqueado pendente ENTIDADE mirror (adapter novo grande:
+    # MOVIMENTO_FORNECEDOR.MOVFOR_ENTIDADE → ENTIDADE.ENT_NOME).
+    # Issue Q.68.A.
     supplier_name = (
         f"Fornecedor {row.entity_id}" if row.entity_id else "Fornecedor desconhecido"
     )
