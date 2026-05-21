@@ -398,9 +398,9 @@ def _print_row(result: Dict[str, Any]) -> None:
 
 async def main() -> int:
     print(f"Model: {MODEL}")
-    print(f"Endpoint: http://localhost:11434")
+    print("Endpoint: http://localhost:11434")
     print(f"Scenarios: {len(SCENARIOS)}")
-    print(f"Baseline (pre-kernel-tool): 1/5 pass, avg coherence 0.572")
+    print("Baseline (pre-kernel-tool): 1/5 pass, avg coherence 0.572")
 
     client = OllamaClient()
     try:

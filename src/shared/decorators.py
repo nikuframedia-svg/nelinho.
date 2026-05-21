@@ -341,7 +341,7 @@ def _resolve_tenant_id(
                     return UUID(value)
                 except ValueError:
                     pass
-        except Exception:
+        except Exception:  # noqa: S110  Q.61.06: tenant_id extraction fallback; downstream uses default
             pass
     if args:
         self = args[0]

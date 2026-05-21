@@ -81,7 +81,7 @@ class _FakeSession:
     def __init__(self, rows: List[ProductionSchedule]) -> None:
         self.rows = list(rows)
 
-    async def execute(self, stmt):  # noqa: ANN001 — test stub
+    async def execute(self, stmt):
         params = {}
         try:
             params = stmt.compile().params  # type: ignore[attr-defined]

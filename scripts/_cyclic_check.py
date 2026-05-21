@@ -73,7 +73,7 @@ def find_cycles() -> list[list[str]]:
 
 
 cycles = find_cycles()
-print(f"=== Module-level cyclic-import check ===\n")
+print("=== Module-level cyclic-import check ===\n")
 print(f"Modules examined: {len(modules)}")
 print(f"Edges (X -> Y means src.X imports from src.Y): {sum(len(v) for v in graph.values())}")
 print()

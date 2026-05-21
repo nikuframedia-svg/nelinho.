@@ -1,0 +1,49 @@
+{
+  "trace_id": "09_audit_query",
+  "intent_label": "audit_query",
+  "purpose": "Audit log para ordem específica — intent generic; LLM devolve ANSWER com intent data_integrity (auditoria de mudanças).",
+  "input": {
+    "user_query": "mostra-me audit log para a ordem 12345",
+    "context_window_hours": 168
+  },
+  "canonical_llm_response": {
+    "type": "ANSWER",
+    "intent": "data_integrity",
+    "summary": "Ordem 12345 tem 4 entries de audit log nos últimos 30 dias.",
+    "facts": [
+      {
+        "text": "Audit log ordem 12345: criada 2026-04-22, schedule revisto 2x, fechada 2026-05-15.",
+        "citations": [
+          {
+            "source_type": "db",
+            "ref": "table:audit_log;order_id:12345",
+            "label": "Audit log ordem 12345",
+            "confidence": 0.97,
+            "trust_index": 0.95
+          }
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "action_type": "OPEN_ENTITY",
+        "label": "Abrir ordem 12345",
+        "requires_approval": false,
+        "payload": {"entity_type": "production_order", "entity_id": "12345"}
+      }
+    ],
+    "warnings": [],
+    "meta": {"model": "gemma3:e4b", "tokens": 130, "latency_ms": 200, "validation_passed": true}
+  },
+  "expected_shape": {
+    "type": "ANSWER",
+    "intent_in": ["data_integrity", "generic"],
+    "has_summary": true,
+    "min_facts": 1,
+    "max_facts": 5,
+    "actions_count_range": [0, 3],
+    "warnings_count_range": [0, 2],
+    "meta_must_have_keys": ["model", "tokens", "latency_ms", "validation_passed"]
+  },
+  "stability_pinned_at": "2026-05-20"
+}

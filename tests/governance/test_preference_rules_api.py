@@ -81,7 +81,7 @@ class _FakeSession:
         self.flush_calls = 0
         self.last_stmt: Any = None
 
-    async def execute(self, stmt):  # noqa: ANN001 — test stub
+    async def execute(self, stmt):
         self.last_stmt = stmt
 
         class _Scalars:

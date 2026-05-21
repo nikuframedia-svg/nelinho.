@@ -16,12 +16,16 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from statistics import median
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
-import numpy as np
-from sklearn.ensemble import GradientBoostingRegressor
-from sklearn.model_selection import train_test_split
+# Q.59.F.3 — numpy/sklearn movidos para dentro de `train()`. Estavam
+# top-level e custavam ~500 ms no arranque (sklearn é pesado). Com PEP
+# 563 (from __future__ import annotations, em vigor neste ficheiro) as
+# anotações são strings, por isso `Optional[GradientBoostingRegressor]`
+# resolve-se em tempo de check, não em tempo de import.
+if TYPE_CHECKING:
+    from sklearn.ensemble import GradientBoostingRegressor
 
 from src.ml.jobs.base import RetrainJob
 from src.ml.models_domain._common import encode_categoricals, wmape
@@ -60,6 +64,11 @@ class DurationModel:
         """
         if not rows:
             raise ValueError("DurationModel.train called with empty rows")
+
+        # Q.59.F.3 — imports diferidos para fora do startup.
+        import numpy as np
+        from sklearn.ensemble import GradientBoostingRegressor
+        from sklearn.model_selection import train_test_split
 
         targets = np.asarray([float(r.get("horas_reais", 0.0) or 0.0) for r in rows])
         valid_mask = targets > 0

@@ -124,7 +124,7 @@ async def start_notify_listener() -> bool:
         if _listener_conn is not None:
             try:
                 await _listener_conn.close()
-            except Exception:
+            except Exception:  # noqa: S110  Q.61.06: close during error path; nothing to do
                 pass
         _listener_conn = None
         return False
@@ -148,11 +148,11 @@ async def stop_notify_listener() -> None:
             await _listener_conn.remove_listener(
                 _PG_NOTIFY_CHANNEL, _on_notify,
             )
-        except Exception:
+        except Exception:  # noqa: S110  Q.61.06: teardown best-effort
             pass
         try:
             await _listener_conn.close()
-        except Exception:
+        except Exception:  # noqa: S110  Q.61.06: teardown best-effort
             pass
     _listener_conn = None
     _listener_task = None

@@ -15,10 +15,14 @@ from __future__ import annotations
 
 import logging
 from datetime import date
-from typing import Awaitable, Callable, Dict, List, Optional
+from typing import Awaitable, Callable, Dict, List, Optional, Union
 from uuid import UUID
 
 from .runner import EtlRunResult
+
+#: ``since`` aceita uma única data (igual para todos os mirrors) ou um
+#: dict {mirror: data} — watermark por mirror (Q.54.A, sync incremental).
+SinceArg = Union[date, Dict[str, date], None]
 
 logger = logging.getLogger(__name__)
 
@@ -46,11 +50,16 @@ def _load_mirror_modules() -> None:
     module is logged at debug level, not an error.
     """
     for mod in (
-        "master_data",   # Q.20.B
-        "molds",         # Q.20.C
-        "skills",        # Q.20.D
-        "quality",       # Q.20.E
-        "time_mining",   # Q.20.F
+        "master_data",       # Q.20.B
+        "molds",             # Q.20.C
+        "skills",            # Q.20.D
+        "quality",           # Q.20.E
+        "time_mining",       # Q.20.F
+        "stock",             # Q.52.K
+        "calendar",          # Q.53.B
+        "inventory_ledger",  # Q.64.A — desbloqueia shortage-risks
+        "material_master",   # Q.64.B — alimenta ShortageDetector
+        "purchase_orders",   # Q.64.D — desbloqueia tab Entregas
     ):
         try:
             __import__(f"src.adapters.nelo.etl.{mod}")
@@ -58,12 +67,26 @@ def _load_mirror_modules() -> None:
             logger.debug("etl mirror module not present yet: %s", mod)
 
 
+def _since_for(since: SinceArg, mirror: str) -> Optional[date]:
+    """Resolve o watermark ``since`` para um mirror concreto.
+
+    ``since`` pode ser ``None``, uma data única (aplicada a todos) ou um
+    dict ``{mirror: data}`` — neste caso um mirror sem entrada recebe
+    ``None`` e usa o seu look-back por defeito.
+    """
+    if since is None:
+        return None
+    if isinstance(since, dict):
+        return since.get(mirror)
+    return since
+
+
 async def run_nelo_sync(
     *,
     only: Optional[List[str]] = None,
     exclude: Optional[List[str]] = None,
     tenant_id: Optional[UUID] = None,
-    since: Optional[date] = None,
+    since: SinceArg = None,
 ) -> List[EtlRunResult]:
     """Run the ERP→Postgres sync.
 
@@ -72,7 +95,9 @@ async def run_nelo_sync(
       is excluded from the nightly job).
     * ``tenant_id`` — defaults to the dev tenant.
     * ``since`` — watermark forwarded to incremental mirrors (quality,
-      time_mining).
+      time_mining…). Uma única data aplica-se a todos; um dict
+      ``{mirror: data}`` dá um watermark por mirror (sync incremental
+      Q.54.A).
 
     Returns one :class:`EtlRunResult` per mirror that ran. A single
     failing mirror is recorded (``status='error'``) and the others still
@@ -120,7 +145,7 @@ async def run_nelo_sync(
                     result = await _MIRRORS[name](
                         session=session,
                         tenant_id=tenant_id,
-                        since=since,
+                        since=_since_for(since, name),
                     )
                     await session.commit()
                 results.append(result)
@@ -137,3 +162,44 @@ async def run_nelo_sync(
         await close_engine()
 
     return results
+
+
+async def last_sync_watermarks(
+    session,
+    tenant_id: UUID,
+    mirrors: List[str],
+) -> Dict[str, date]:
+    """Watermark por mirror — a data do último ``core.etl_run`` com sucesso.
+
+    Para o sync incremental (Q.54.A): cada mirror que suporta ``since``
+    arranca a janela na data em que terminou da última vez, em vez de
+    reler sempre o look-back inteiro. Lê o ``MAX(finished_at)`` por
+    ``source`` entre as corridas ``status='ok'``.
+
+    Um mirror que nunca correu (ou nunca correu com sucesso) não entra no
+    dict — o mirror cai no seu look-back por defeito, que é o
+    comportamento certo para um primeiro arranque.
+    """
+    from sqlalchemy import func, select
+
+    from src.core.models.etl_run import EtlRun
+
+    if not mirrors:
+        return {}
+
+    stmt = (
+        select(EtlRun.source, func.max(EtlRun.finished_at))
+        .where(EtlRun.tenant_id == tenant_id)
+        .where(EtlRun.source.in_(list(mirrors)))
+        .where(EtlRun.status == "ok")
+        .where(EtlRun.finished_at.isnot(None))
+        .group_by(EtlRun.source)
+    )
+    rows = (await session.execute(stmt)).all()
+    out: Dict[str, date] = {}
+    for source, finished_at in rows:
+        if finished_at is not None:
+            # `finished_at` é datetime tz-aware; o `since` dos mirrors é
+            # uma data — converter aqui evita o bug tz-aware vs naive.
+            out[str(source)] = finished_at.date()
+    return out

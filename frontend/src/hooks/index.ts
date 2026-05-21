@@ -78,3 +78,10 @@ export type {
   UseLiveDashboardRefreshOptions,
   UseLiveDashboardRefreshResult,
 } from './useLiveDashboardRefresh';
+
+// Q.52.C — empty state honesto para respostas PARTIAL/degradadas
+export {
+  useHonestEmptyState,
+  detectHonestEmptyState,
+} from './useHonestEmptyState';
+export type { HonestEmptyState } from './useHonestEmptyState';

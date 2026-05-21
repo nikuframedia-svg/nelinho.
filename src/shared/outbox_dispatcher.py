@@ -14,10 +14,10 @@ Job that runs every 5 seconds (or configurable interval):
 import asyncio
 import logging
 from contextlib import AbstractAsyncContextManager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .outbox_models import EventOutbox, EventDLQ
@@ -70,9 +70,20 @@ class OutboxDispatcher:
         # dispatcher instances can run in parallel without publishing the same
         # event twice. Postgres-only; the test suite uses fakes that ignore
         # `with_for_update`, so this is a no-op there.
+        #
+        # Q.66.E.1: respeitar `next_retry_at`. Events sem next_retry_at (novos
+        # ou pre-Q.66.E.1) sao sempre elegiveis. Events com next_retry_at no
+        # futuro ficam fora deste batch — o proximo ciclo apanha-os quando o
+        # backoff expirar. Isto trava o busy-loop quando Kafka oscila.
         stmt = (
             select(EventOutbox)
             .where(EventOutbox.status == "pending")
+            .where(
+                or_(
+                    EventOutbox.next_retry_at.is_(None),
+                    EventOutbox.next_retry_at <= func.now(),
+                )
+            )
             .order_by(EventOutbox.created_at.asc())
             .limit(self.batch_size)
             .with_for_update(skip_locked=True)
@@ -139,10 +150,25 @@ class OutboxDispatcher:
                 )
             
             except Exception as e:
+                # Q.66.E.1: backoff exponencial. Calcular ANTES de incrementar
+                # retry_count para que:
+                #   retry_count=0 (1a falha) -> 2^0 = 1s
+                #   retry_count=1 (2a falha) -> 2^1 = 2s
+                #   retry_count=2            -> 4s
+                #   retry_count=4            -> 16s
+                #   retry_count=8            -> 256s
+                #   retry_count>=9           -> capped a 300s (5min)
+                # Sem isto, Kafka instavel = dispatcher loop 5x em ~25s e
+                # event vai para DLQ sem dar tempo a Kafka recuperar.
+                delay_seconds = min(2 ** event.retry_count, 300)
+                event.next_retry_at = datetime.now(tz=timezone.utc) + timedelta(
+                    seconds=delay_seconds
+                )
+
                 # Mark as failed, increment retry
                 event.retry_count += 1
                 event.error_message = str(e)
-                
+
                 if event.retry_count >= 5:
                     # Move to DLQ
                     event.status = "failed"

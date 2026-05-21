@@ -280,7 +280,7 @@ class SchedulingAdapter:
                 bump_silent_fallback(
                     "scheduling_adapter", f"cpo_v4_failed:{type(e).__name__}",
                 )
-            except Exception:  # pragma: no cover — defensive
+            except Exception:  # noqa: S110  Q.61.06: metrics best-effort
                 pass
             fallback = self._schedule_heuristic(operations, machines, horizon_start, horizon_end)
             fallback.warnings.append(f"CPO v4 failed ({e}) - used heuristic fallback")

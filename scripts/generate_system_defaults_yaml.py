@@ -20,7 +20,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from src.core.services.default_configs import DEFAULT_SEEDS  # noqa: E402
+from src.core.services.default_configs import DEFAULT_SEEDS
 
 OUTPUT = REPO_ROOT / "config" / "yaml" / "system_defaults.yaml"
 

@@ -15,6 +15,7 @@ with the Sprint Q endpoints:
 
 from __future__ import annotations
 
+import logging
 from datetime import date
 from decimal import Decimal
 from typing import Optional
@@ -23,7 +24,10 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import and_, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
+
+log = logging.getLogger(__name__)
 
 from src.profit.models.pricing import ProductPricing
 from src.profit.services.dashboard_metrics_service import DashboardMetricsService
@@ -125,6 +129,25 @@ async def get_oee(
         result = await svc.calculate(df, dt, group_by=gb)  # type: ignore[arg-type]
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (RuntimeError, OSError, SQLAlchemyError) as exc:
+        # OEE is computed from the live NELO ERP (SQL Server / OF_FP).
+        # When that adapter is not configured or unreachable (e.g. dev
+        # without SQL Server) the read raises — degrade honestly with a
+        # 200 + erp_available:false instead of a 500. The frontend
+        # `useHonestEmptyState` picks up the marker and shows the reason.
+        log.warning("OEE indisponível — adaptador NELO offline: %s", exc)
+        return {
+            "date_from": df.isoformat(),
+            "date_to": dt.isoformat(),
+            "group_by": gb,
+            "overall": None,
+            "breakdown": [],
+            "erp_available": False,
+            "unavailable_reason": (
+                "Os dados de OEE vêm do ERP NELO (SQL Server / OF_FP), "
+                "que não está ligado neste ambiente."
+            ),
+        }
 
     return {
         "date_from": result.date_from.isoformat(),
@@ -132,6 +155,8 @@ async def get_oee(
         "group_by": result.group_by,
         "overall": _oee_item_to_dict(result.overall),
         "breakdown": [_oee_item_to_dict(b) for b in result.breakdown],
+        "erp_available": True,
+        "unavailable_reason": None,
     }
 
 
@@ -489,3 +514,148 @@ async def set_product_pricing(
         "sale_value_default_eur": float(row.sale_value_default_eur),
         "valid_from": row.valid_from.isoformat(),
     }
+
+
+# ─── /margin-by-segment (Q.53.C — margem por país / agente) ──────────────
+
+from src.profit.services.cost_ledger_service import CostLedgerService
+from src.profit.services.objectives_service import ObjectivesService
+from src.profit.services.segment_service import MarginSegmentService
+
+
+@router.get("/margin-by-segment")
+async def get_margin_by_segment(
+    dimension: str = Query(
+        "country",
+        description="Dimensão de segmentação: country | agent",
+    ),
+    tenant_id: UUID = Depends(get_tenant_id),
+):
+    """Q.53.C — margem agregada por dimensão de negócio.
+
+    `dimension=country` parte do país do cliente; `dimension=agent` usa a
+    referência comercial. Os dados vêm do ERP NELO; quando o adaptador
+    está offline degrada com `erp_available=false` (sem inventar números).
+
+    `tenant_id` é exigido (header) por consistência com o resto da API,
+    mas os dados NELO são tenant-agnósticos (DB único MAR-KAYAKS).
+    """
+    svc = MarginSegmentService()
+    try:
+        return await svc.margin_by_segment(dimension)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+
+# ─── /kpis/objectives (Q.53.C — bandas-alvo do CEO) ──────────────────────
+
+@router.get("/kpis/objectives")
+async def get_kpi_objectives(
+    pp1_window_days: int = Query(90, ge=1, le=365),
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Q.53.C — bandas-alvo do CEO + sinal de impacto-PP1.
+
+    Devolve `low/target/high` por KPI (faturação/dia, OTD, FPY,
+    retrabalho) com defaults semeados em código e override por
+    `TenantConfiguration` da categoria `cost`. Inclui o `pp1_impact`: €
+    poupado por sugestões aceites (decisões executadas) na janela.
+    """
+    svc = ObjectivesService(session, tenant_id)
+    return await svc.objectives(pp1_window_days=pp1_window_days)
+
+
+# ─── /cost-ledger (Q.53.C — ledger de custos consolidado) ────────────────
+
+@router.get("/cost-ledger")
+async def get_cost_ledger(
+    date_from: Optional[date] = Query(None, alias="from"),
+    date_to: Optional[date] = Query(None, alias="to"),
+    limit: int = Query(2000, ge=1, le=5000),
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Q.53.C — ledger de custos consolidado para a futura página Custos.
+
+    Consolida os `CostCalculation` persistidos num único ledger: custo
+    por centro de custo, COGS detalhado por barco, margem por produto e
+    ranking de drivers de custo. Ordens sem cálculo aparecem como
+    `calculated=false` — nada é imputado.
+    """
+    svc = CostLedgerService(session, tenant_id)
+    return await svc.ledger(date_from=date_from, date_to=date_to, limit=limit)
+
+
+# ─── /cost-reduction-suggestions (Q.54.H — sugestões accionáveis) ────────
+
+from src.profit.services.cost_reduction_service import CostReductionService
+
+
+class CostReductionRequest(BaseModel):
+    """Janela e limite da análise de sugestões de redução de custo."""
+
+    date_from: Optional[date] = None
+    date_to: Optional[date] = None
+    limit: int = 20
+
+
+class SuggestionToDecisionRequest(BaseModel):
+    """Promove uma sugestão (o dict devolvido por /cost-reduction-suggestions)
+    a `DecisionRun` no Inbox de governança."""
+
+    suggestion: dict
+    proposed_by: str = "custos-ui"
+
+
+@router.post("/cost-reduction-suggestions")
+async def post_cost_reduction_suggestions(
+    req: CostReductionRequest,
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Q.54.H — sugestões accionáveis de redução de custo.
+
+    Analisa os `CostCalculation` persistidos, deteta barcos/centros de
+    custo acima da mediana do tipo de produto e devolve uma sugestão por
+    desvio. O texto explicativo é redigido pelo LLM (Ollama); os números
+    vêm todos da análise determinística. POST porque a análise corre
+    sobre uma janela e invoca o LLM — não é uma leitura barata.
+    """
+    svc = CostReductionService(session, tenant_id)
+    return await svc.suggestions(
+        date_from=req.date_from,
+        date_to=req.date_to,
+        limit=max(1, min(req.limit, 100)),
+    )
+
+
+@router.post(
+    "/cost-reduction-suggestions/decision",
+    status_code=status.HTTP_201_CREATED,
+)
+async def post_suggestion_to_decision(
+    req: SuggestionToDecisionRequest,
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Q.54.H — transforma uma sugestão aceite numa Decisão.
+
+    Cria um `DecisionRun` do tipo `cost_reduction` no Inbox de
+    governança — fica a aguardar aprovação humana. O `expected_impact`
+    leva o `eur_saved` (o excesso determinístico), por isso quando a
+    decisão for executada conta para o KPI "Poupado por sugestões".
+    """
+    svc = CostReductionService(session, tenant_id)
+    try:
+        return await svc.create_decision_from_suggestion(
+            req.suggestion, proposed_by=req.proposed_by
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Sugestão sem o campo obrigatório: {exc}",
+        ) from exc

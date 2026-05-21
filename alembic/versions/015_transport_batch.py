@@ -15,6 +15,10 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Q.61.15 — pre-create schema (so este migration corra contra DB
+    # fresca sem depender de init_db.create_all que costumava criar todos
+    # os schemas). 018b/018 criam plan/quality, mas 015 chega primeiro.
+    op.execute("CREATE SCHEMA IF NOT EXISTS plan")
     op.create_table(
         'transport_batch',
         sa.Column('id', postgresql.UUID(as_uuid=True), primary_key=True),

@@ -34,6 +34,10 @@ SCHEDULE_STATUS_VALUES = (
 def upgrade() -> None:
     op.execute("CREATE SCHEMA IF NOT EXISTS plan")
 
+    # Q.61.15 — usar postgresql.ENUM consistentemente (sa.Enum no
+    # column-level ignora create_type=False e tenta criar o tipo
+    # mesmo apos schedule_status.create(checkfirst=True) -> DuplicateObject
+    # numa DB fresca).
     schedule_status = postgresql.ENUM(
         *SCHEDULE_STATUS_VALUES,
         name='schedule_status',
@@ -92,10 +96,10 @@ def upgrade() -> None:
         # Assignment
         sa.Column('assigned_employee_id', postgresql.UUID(as_uuid=True), nullable=True),
 
-        # Status
+        # Status — usar postgresql.ENUM (sa.Enum ignora create_type=False).
         sa.Column(
             'status',
-            sa.Enum(
+            postgresql.ENUM(
                 *SCHEDULE_STATUS_VALUES,
                 name='schedule_status',
                 create_type=False,

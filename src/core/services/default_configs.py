@@ -175,6 +175,14 @@ DEFAULT_SEEDS: list[ConfigSeed] = [
     ("quality", "skill_bottleneck_threshold", 25, "int",
      "WF12 — fases com < N workers aptos flagged as skill bottleneck "
      "(Pintura=22, Colagem Golas=13, Desmolde=16)"),
+    # Q.67.1.C — severity da gate `no_duplicate_business_keys`. NELO tem
+    # duplicados estruturais que a transformação deduplica; default
+    # WARNING não bloqueia o import. Tenants com dados já limpos podem
+    # mudar para BLOCKING via /regras → quality sem mexer no código.
+    # Aceita "blocking" | "warning" | "info" (case-insensitive).
+    ("quality", "duplicates.severity", "WARNING", "string",
+     "Severity reported by the duplicate-business-keys quality gate "
+     "(blocking|warning|info)."),
 
     # Sprint Q.8 (CEO confirmation 2026-04-26): NELO has no numeric
     # maintenance policy — molds go to maintenance after visual inspection.

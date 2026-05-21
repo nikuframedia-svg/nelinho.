@@ -150,23 +150,21 @@ async def test_auto_approval_allowed_when_trust_index_at_or_above_075(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_auto_approval_blocked_when_trust_index_unresolvable(monkeypatch):
-    """Sprint Q.12 Onda 1.4 — the previous version of the gate skipped
-    the trust check when ``trust_index=None`` was passed, so legacy
-    callers that never knew about TI were silently auto-approved.
-    `propose_decision` was one of those, which made the whole gate a
-    no-op in production.
+async def test_auto_approval_blocked_when_caller_omits_trust_index(monkeypatch):
+    """Q.66.A.3 — when the caller doesn't pass ``trust_index``, the gate
+    BLOCKS auto-approval by design (better a row for human review than a
+    silent rubber-stamp).
 
-    Now the gate resolves TI from the scenario's commit when the
-    caller didn't pass one explicitly. When neither path produces a
-    value, auto-approval is BLOCKED by design — better a row for human
-    review than a silent rubber-stamp. This test pins that contract.
+    Pre-Q.66.A.3 the gate tried to auto-resolve TI via
+    ``_resolve_trust_index(scenario_id)``, but that method called a
+    non-existent ``CommitsService.get_by_scenario_id`` and always
+    returned ``None`` — dead code masked by a try/except. The deeper
+    reason: SandboxScenario (the only caller passing scenario_id) does
+    not run CPO, so there is no commit to resolve to. Connecting them
+    would be a product change. Auto-resolution removed; callers that
+    have a TI must pass it explicitly.
     """
     svc = GovernanceService(db=AsyncMock(), tenant_id=TENANT)
-    # `_resolve_trust_index(None)` returns None — no scenario, no TI.
-    monkeypatch.setattr(
-        svc, "_resolve_trust_index", AsyncMock(return_value=None),
-    )
     monkeypatch.setattr(
         "src.core.services.tenant_config_service.TenantConfigService",
         lambda *_a, **_kw: _FakeCfg({
@@ -178,19 +176,14 @@ async def test_auto_approval_blocked_when_trust_index_unresolvable(monkeypatch):
         decision_type="reschedule_order",
         risk_level="LOW",
     )
-    assert allowed is False  # unresolvable TI → blocked, not silently allowed
+    assert allowed is False  # missing TI → blocked, not silently allowed
 
 
 @pytest.mark.asyncio
-async def test_auto_approval_uses_resolved_trust_index_when_caller_omits(monkeypatch):
-    """Contrapositive of the test above: when `_resolve_trust_index`
-    DOES return a value (a scenario was attached to the decision),
-    the gate uses it. Verifies the resolution path is wired and not
-    just a permissive fall-through."""
+async def test_auto_approval_uses_caller_provided_trust_index(monkeypatch):
+    """Contrapositive of the test above: when the caller passes a TI
+    ≥ 0.75, the gate uses it (after config + risk checks)."""
     svc = GovernanceService(db=AsyncMock(), tenant_id=TENANT)
-    monkeypatch.setattr(
-        svc, "_resolve_trust_index", AsyncMock(return_value=0.85),
-    )
     monkeypatch.setattr(
         "src.core.services.tenant_config_service.TenantConfigService",
         lambda *_a, **_kw: _FakeCfg({
@@ -201,9 +194,9 @@ async def test_auto_approval_uses_resolved_trust_index_when_caller_omits(monkeyp
     allowed = await svc._auto_approval_allowed(
         decision_type="reschedule_order",
         risk_level="LOW",
-        scenario_id="some-scenario-id",
+        trust_index=0.85,
     )
-    assert allowed is True  # resolved 0.85 ≥ 0.75 + risk LOW ≤ HIGH ceiling
+    assert allowed is True  # 0.85 ≥ 0.75 + risk LOW ≤ HIGH ceiling
 
 
 @pytest.mark.asyncio

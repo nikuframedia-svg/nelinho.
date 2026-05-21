@@ -419,7 +419,9 @@ class AlertsEngine:
             entity_refs=candidate.get("entity_refs", []),
             status=STATUS_ACTIVE,
         )
-        self.session.add(alert)
+        # Q.66.B.3: CopilotAlert e ALERTA (notificacao para o utilizador),
+        # nao state autoritativo — vive em copilot.alert, nao governance.
+        self.session.add(alert)  # noqa: audit_coverage  # alert notification, not gov state
         return True
 
 

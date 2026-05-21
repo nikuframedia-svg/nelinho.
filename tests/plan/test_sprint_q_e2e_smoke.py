@@ -27,18 +27,18 @@ from fastapi.testclient import TestClient
 
 def test_q1_trust_v2_imports_clean():
     """Q.1 — TrustIndex v2 module + gates must import without error."""
-    from src.dqa.trust_v2 import (  # noqa: F401
+    from src.dqa.trust_v2 import (
         SCOPE_FACTORY,
         TrustComponents,
         TrustIndexV2Calculator,
         TrustWeights,
     )
-    from src.dqa.trust_gates import (  # noqa: F401
+    from src.dqa.trust_gates import (
         TrustGate,
         gate_allows,
         load_gate_config,
     )
-    from src.dqa.trust_signals import curated_signals_provider  # noqa: F401
+    from src.dqa.trust_signals import curated_signals_provider
 
     weights = TrustWeights()
     assert abs(weights.total() - 1.0) < 1e-6, "v2 weights must sum to 1.0"
@@ -399,7 +399,7 @@ def test_r1_learning_metrics_endpoints_registered():
 
 def test_r1_learning_metrics_service_imports_clean():
     """The service + dataclasses must import without touching the DB."""
-    from src.governance.preference_learning import (  # noqa: F401
+    from src.governance.preference_learning import (
         DEFAULT_MIN_REASON_LEN,
         LearningMetricsService,
         PairStats,

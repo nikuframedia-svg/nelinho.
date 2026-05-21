@@ -75,52 +75,51 @@ async def calculate_kpis(
     kpis = {}
     
     try:
-        # 1. Orders stats
-        orders_total_query = select(func.count(func.distinct(ProductionSchedule.order_id))).where(
-            ProductionSchedule.tenant_id == tenant_id
-        )
-        orders_total_result = await session.execute(orders_total_query)
-        orders_total = orders_total_result.scalar() or 0
-        
-        orders_in_progress_query = select(func.count(func.distinct(ProductionSchedule.order_id))).where(
-            and_(
-                ProductionSchedule.tenant_id == tenant_id,
-                ProductionSchedule.status == ScheduleStatus.IN_PROGRESS,
+        # 1. Orders stats — Q.55.B.3: contar `plan.production_orders` (a
+        # tabela real, 521 ordens) em vez de `plan.production_schedules`
+        # (output do scheduler, 159 linhas esparsas → contagens a zero,
+        # e era daí que vinha o "não tenho dados" do copiloto).
+        from src.plan.models.order import ProductionOrder
+
+        orders_total = (await session.execute(
+            select(func.count()).where(ProductionOrder.tenant_id == tenant_id)
+        )).scalar() or 0
+
+        orders_in_progress = (await session.execute(
+            select(func.count()).where(
+                ProductionOrder.tenant_id == tenant_id,
+                ProductionOrder.status == "IN_PROGRESS",
             )
-        )
-        orders_in_progress_result = await session.execute(orders_in_progress_query)
-        orders_in_progress = orders_in_progress_result.scalar() or 0
-        
-        orders_completed_query = select(func.count(func.distinct(ProductionSchedule.order_id))).where(
-            and_(
-                ProductionSchedule.tenant_id == tenant_id,
-                ProductionSchedule.status == ScheduleStatus.COMPLETED,
+        )).scalar() or 0
+
+        orders_completed = (await session.execute(
+            select(func.count()).where(
+                ProductionOrder.tenant_id == tenant_id,
+                ProductionOrder.status == "COMPLETED",
             )
-        )
-        orders_completed_result = await session.execute(orders_completed_query)
-        orders_completed = orders_completed_result.scalar() or 0
-        
+        )).scalar() or 0
+
         # Query hash para citations
         query_hash = hashlib.sha256(f"orders_stats_{tenant_id}".encode()).hexdigest()[:16]
         
         kpis["orders_total"] = KPIMetric(
             value=float(orders_total) if orders_total > 0 else None,
             updated_at=datetime.utcnow(),
-            citations=[create_db_citation("plan.production_schedules", query_hash, f"Total de ordens: {orders_total}")] if orders_total > 0 else [],
+            citations=[create_db_citation("plan.production_orders", query_hash, f"Total de ordens: {orders_total}")] if orders_total > 0 else [],
             reason="NO_SOURCE_DATA" if orders_total == 0 else None,
         )
         
         kpis["orders_in_progress"] = KPIMetric(
             value=float(orders_in_progress) if orders_in_progress > 0 else None,
             updated_at=datetime.utcnow(),
-            citations=[create_db_citation("plan.production_schedules", query_hash, f"Ordens em progresso: {orders_in_progress}")] if orders_in_progress > 0 else [],
+            citations=[create_db_citation("plan.production_orders", query_hash, f"Ordens em progresso: {orders_in_progress}")] if orders_in_progress > 0 else [],
             reason="NO_SOURCE_DATA" if orders_in_progress == 0 else None,
         )
         
         kpis["orders_completed"] = KPIMetric(
             value=float(orders_completed) if orders_completed > 0 else None,
             updated_at=datetime.utcnow(),
-            citations=[create_db_citation("plan.production_schedules", query_hash, f"Ordens completadas: {orders_completed}")] if orders_completed > 0 else [],
+            citations=[create_db_citation("plan.production_orders", query_hash, f"Ordens completadas: {orders_completed}")] if orders_completed > 0 else [],
             reason="NO_SOURCE_DATA" if orders_completed == 0 else None,
         )
         
@@ -144,8 +143,12 @@ async def calculate_kpis(
         phases_total_result = await session.execute(phases_total_query)
         phases_total = phases_total_result.scalar() or 0
         
+        # Q.55.B.3 — exigir `phases_started > 0`. Com `production_schedules`
+        # esparso (159 linhas, nenhuma iniciada) isto dava 0/total = 0.0,
+        # e o copiloto reportava "Disponibilidade: 0,00%" como se fosse uma
+        # leitura real. Sem fases iniciadas não há dado — devolver None.
         availability = None
-        if phases_total > 0:
+        if phases_total > 0 and phases_started > 0:
             availability = (phases_started / phases_total) * 100.0
         
         kpis["availability"] = KPIMetric(
@@ -210,29 +213,49 @@ async def calculate_kpis(
         #
         # Sprint Q.12 — antes calculávamos `orders_completed / orders_total`,
         # mas isso não é FPY (uma ordem completada pode ter tido rework
-        # ou scrap). Sem tabela de defects, FPY genuíno não pode ser
-        # calculado, por isso devolvemos `None` com motivo claro em vez
-        # de uma métrica fabricada que entrava no Copilot.
+        # ou scrap).
+        # Q.62.E.4 — `KPIFactory.product_defect_rate` agora consolida a
+        # fórmula honesta: "fracção de ordens com >=1 retrabalho nos N
+        # dias". FPY = 1 - product_defect_rate. Quando o factory não tem
+        # dados (zero ordens ou rework_entry vazio) o factory devolve
+        # None — preservamos esse contrato com `reason="NO_SOURCE_DATA"`.
         quality_fpy = None
+        product_dr_decimal = None
+        try:
+            from src.profit.kpi_factory import KPIFactory as _KPIFactory
+
+            _kpi = _KPIFactory(session, tenant_id)
+            product_dr_decimal = await _kpi.product_defect_rate(window_days=90)
+            if product_dr_decimal is not None:
+                # product_defect_rate é [0,1]; FPY é [0,100].
+                quality_fpy = float((1 - product_dr_decimal) * 100)
+        except Exception as exc:
+            logger.warning("KPIFactory.product_defect_rate failed: %s", exc)
+
         kpis["quality_fpy"] = KPIMetric(
-            value=None,
+            value=round(quality_fpy, 1) if quality_fpy is not None else None,
             updated_at=datetime.utcnow(),
-            citations=[],
-            reason="QUALITY_DEFECTS_TABLE_UNAVAILABLE",
+            citations=[create_calculation_citation(
+                "quality_fpy",
+                {"product_defect_rate": float(product_dr_decimal) if product_dr_decimal is not None else None, "window_days": 90},
+                f"FPY: {quality_fpy:.1f}% (1 - product_defect_rate × 100)",
+            )] if quality_fpy is not None else [],
+            reason="NO_SOURCE_DATA" if quality_fpy is None else None,
         )
-        
-        # 5. Rework Rate: orders com erros / total orders
+
+        # 5. Rework Rate: orders com erros / total orders. Q.62.E.4 — vem
+        # directamente do product_defect_rate (já lá em cima).
         rework_rate = None
-        if orders_total > 0 and quality_fpy is not None:
-            rework_rate = 100.0 - quality_fpy
-        
+        if product_dr_decimal is not None:
+            rework_rate = float(product_dr_decimal * 100)
+
         kpis["rework_rate"] = KPIMetric(
             value=round(rework_rate, 1) if rework_rate is not None else None,
             updated_at=datetime.utcnow(),
             citations=[create_calculation_citation(
                 "rework_rate",
-                {"quality_fpy": quality_fpy},
-                f"Taxa de retrabalho: {rework_rate:.1f}%"
+                {"product_defect_rate": float(product_dr_decimal) if product_dr_decimal is not None else None, "window_days": 90},
+                f"Taxa de retrabalho: {rework_rate:.1f}%",
             )] if rework_rate is not None else [],
             reason="NO_SOURCE_DATA" if rework_rate is None else None,
         )
@@ -346,7 +369,7 @@ async def get_kpi_snapshot_explained(
     
     Returns KPI values along with root cause analysis for each KPI.
     """
-    from src.shared.explanation_engine import ExplanationEngine
+    from src.profit.explanation_engine import ExplanationEngine
     
     # Get snapshot
     kpis = await calculate_kpis(session, tenant_id)

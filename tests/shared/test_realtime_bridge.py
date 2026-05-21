@@ -208,7 +208,8 @@ async def test_snapshot_reports_subscriber_count():
 @pytest.mark.asyncio
 async def test_start_without_aiokafka_logs_and_stays_unhealthy(monkeypatch):
     """If the broker is unreachable `start()` should NOT raise. The
-    bridge stays in an unhealthy state and the SSE endpoint will 503."""
+    bridge stays unhealthy; the SSE endpoint then serves a degraded
+    heartbeat-only stream (Q.59.A — no longer a 503)."""
     import src.shared.realtime.bridge as bridge_module
 
     # Force the "aiokafka absent" branch for a deterministic path.

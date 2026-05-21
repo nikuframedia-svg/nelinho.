@@ -37,7 +37,7 @@ logging.basicConfig(
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-EXCEL_PATH = REPO_ROOT / "Folha_IA_extra.xlsx"
+EXCEL_PATH = REPO_ROOT / "data" / "external" / "Folha_IA_extra.xlsx"
 REPORT_PATH = REPO_ROOT / "docs" / "sprint-validation-report.md"
 
 sys.path.insert(0, str(REPO_ROOT))
@@ -181,7 +181,11 @@ def phase_b_ingest(report: Report):
     from src.factory_data_product.ingest.engine import IngestEngine
 
     if not EXCEL_PATH.exists():
-        report.add_bug(f"Excel not found at {EXCEL_PATH}")
+        report.add_bug(
+            f"Excel not found at {EXCEL_PATH}. "
+            "Corre `.venv\\Scripts\\python.exe scripts/fetch_folha_ia.py` "
+            "para instruções de como obter o ficheiro (Q.67.2.D)."
+        )
         sys.exit(1)
 
     engine = IngestEngine()
@@ -255,7 +259,7 @@ def phase_c_counts(report: Report, engine, ingestion_id):
     for row in raw_rows:
         name = row.get("sheet_name") or row.get("sheet") or "?"
         by_sheet[name] = by_sheet.get(name, 0) + 1
-    print(f"  RAW per-sheet:")
+    print("  RAW per-sheet:")
     for k, v in sorted(by_sheet.items()):
         print(f"    {k}: {v:,}")
 
@@ -340,7 +344,7 @@ def phase_d_semantic(report: Report, engine):
         if status == "DRIFT" and isinstance(obs, (int, float)):
             if abs(obs - expected) / expected <= 0.10:
                 status = "PASS"
-                note = f"within 10% band"
+                note = "within 10% band"
         report.add(Finding(label, expected, obs, status, note))
 
     # get_quality - top errors

@@ -1,0 +1,42 @@
+{
+  "trace_id": "06_mold_health",
+  "intent_label": "mold_health",
+  "purpose": "Pergunta sobre saúde de moldes — não bate em keywords KPI específicas (no token 'oee'/'fpy'/'rework') por isso cai em generic.",
+  "input": {
+    "user_query": "qual o estado dos moldes K1?",
+    "context_window_hours": 24
+  },
+  "canonical_llm_response": {
+    "type": "ANSWER",
+    "intent": "generic",
+    "summary": "8 moldes K1 activos, 2 em manutenção preventiva.",
+    "facts": [
+      {
+        "text": "Moldes K1 activos: 8 / Total 10 (2 em PM).",
+        "citations": [
+          {
+            "source_type": "db",
+            "ref": "table:molds;family:K1",
+            "label": "Moldes K1",
+            "confidence": 0.93,
+            "trust_index": 0.88
+          }
+        ]
+      }
+    ],
+    "actions": [],
+    "warnings": [],
+    "meta": {"model": "gemma3:e4b", "tokens": 95, "latency_ms": 150, "validation_passed": true}
+  },
+  "expected_shape": {
+    "type": "ANSWER",
+    "intent_in": ["generic", "explain_plan_change"],
+    "has_summary": true,
+    "min_facts": 1,
+    "max_facts": 5,
+    "actions_count_range": [0, 3],
+    "warnings_count_range": [0, 2],
+    "meta_must_have_keys": ["model", "tokens", "latency_ms", "validation_passed"]
+  },
+  "stability_pinned_at": "2026-05-20"
+}

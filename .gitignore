@@ -20,6 +20,7 @@ htmlcov/
 *.egg-info/
 dist/
 build/
+.mutmut-cache
 
 # Claude Code local settings (per-machine, not to be tracked)
 .claude/
@@ -85,6 +86,10 @@ lerna-debug.log*
 wheels/
 *.whl
 
+# ML registry artifacts — joblib pickles written by the training jobs;
+# the registry row is in the DB, the binary is regenerable, not versioned.
+ml_artifacts/
+
 # Testing
 .pytest_cache/
 .coverage
@@ -127,6 +132,17 @@ dmypy.json
 # Legacy
 legacy/__pycache__/
 
+# Q.62.E.10 — Orval-generated hooks AGORA versionados (single source of
+# truth para o contract OpenAPI; regerar via `npm run gen:api` quando o
+# OpenAPI muda). Linha previa que ignorava `frontend/src/lib/api/generated/`
+# foi removida em Q.62.E.10 apos Q.62.E.7 corrigir o erro TS no factory.ts.
+
+# Q.62.A.1 — pg_dump backups (rotativos, grandes).
+backups/
+
+# Q.62.E.2 — Q.55 experiment console outputs (regravavel via script).
+scripts/q55_run_console.txt
+
 # Excel temp files (Office lock files)
 ~$*.xlsx
 ~$*.xls
@@ -151,6 +167,11 @@ legacy/__pycache__/
 # *.xlsx
 # *.csv
 
+# Q.67.2.D — external data files (Folha_IA_extra.xlsx etc.) ficam fora
+# do git; ver scripts/fetch_folha_ia.py para o sha256 known-good.
+data/external/
+!data/external/.gitkeep
+
 
 
 
@@ -161,3 +182,18 @@ legacy/__pycache__/
 
 
 models/
+# Q.67.6.B5 — packages `models/` legítimos em código fonte (não dataset/ML
+# artifacts). Mais granular que `!src/**/models/` para evitar bypass futuro.
+!src/governance/models/
+!src/core/models/
+!src/copilot/models/
+!src/ml/models/
+
+# Q.61.05 — mutmut state (regravavel via scripts/mutation_test.ps1)
+mutmut-cache/
+.mutmut-cache/
+html/  # mutmut html report output
+
+# Q.62.E.10 — orval generated/ AGORA versionados (ver linha 135 acima).
+# Esta segunda entrada foi removida; mantemos comentario para historia.
+

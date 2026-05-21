@@ -120,7 +120,10 @@ class PricingService:
                 valid_until=datetime.fromisoformat(result.valid_until.replace("Z", "+00:00")) if result.valid_until else None,
                 currency_code=result.currency,
             )
-            self.session.add(rec)
+            # Q.66.B.3: PricingRecommendation e sugestao calculada por
+            # estrategia (cost-plus / margin-target / market), nao state
+            # autoritativo — adopcao gera DecisionRun que audita-se.
+            self.session.add(rec)  # noqa: audit_coverage  # pricing recommendation, not gov state
             saved.append(rec)
         
         await self.session.flush()

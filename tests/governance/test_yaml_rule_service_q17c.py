@@ -13,7 +13,6 @@ The tests focus on:
 
 from __future__ import annotations
 
-from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -21,8 +20,6 @@ import pytest
 from src.governance.yaml_policy.models import (
     RuleLifecycleStatus,
     RuleRevisionAction,
-    TenantRule,
-    TenantRuleRevision,
 )
 from src.governance.yaml_policy.rule_schema import (
     ActionType,
@@ -33,77 +30,7 @@ from src.governance.yaml_policy.service import (
     RuleProposalError,
     RuleProposalService,
 )
-
-
-# ---------------------------------------------------------------------------
-# Fakes
-# ---------------------------------------------------------------------------
-
-
-class _FakeResult:
-    def __init__(self, value: Any):
-        self._value = value
-
-    def scalars(self):
-        return self
-
-    def all(self):
-        return list(self._value) if isinstance(self._value, list) else []
-
-    def scalar_one_or_none(self):
-        if isinstance(self._value, list):
-            return self._value[0] if self._value else None
-        return self._value
-
-
-class FakeSession:
-    """Minimal AsyncSession stand-in.
-
-    Only implements the methods RuleProposalService uses:
-    ``add``, ``flush``, ``execute``. Stores objects in two lists by type
-    so we can assert what landed without needing real SQL.
-    """
-
-    def __init__(self):
-        self.rules: list[TenantRule] = []
-        self.revisions: list[TenantRuleRevision] = []
-        self.flush_count = 0
-
-    def add(self, obj: Any) -> None:
-        if isinstance(obj, TenantRule):
-            if obj.id is None:
-                obj.id = uuid4()
-            self.rules.append(obj)
-        elif isinstance(obj, TenantRuleRevision):
-            if obj.id is None:
-                obj.id = uuid4()
-            self.revisions.append(obj)
-
-    async def flush(self) -> None:
-        # Mimic real flush: assign UUIDs to anything missing one
-        for r in self.rules:
-            if r.id is None:
-                r.id = uuid4()
-        self.flush_count += 1
-
-    async def execute(self, stmt) -> _FakeResult:
-        # We don't parse the statement — for these tests, the service
-        # only does a couple of select shapes. We respond with current
-        # in-memory state in matching form. Keep it simple: list_rules
-        # returns all rules; get_rule returns first match by rule_id;
-        # get_revisions returns by rule_db_id. The caller's filtering
-        # logic (status filter, etc.) is exercised by inspecting the
-        # service-side post-conditions, not this fixture.
-        compiled = str(stmt.compile(compile_kwargs={"literal_binds": False}))
-        if "FROM governance.yaml_policy_rule" in compiled and "rule_id =" in compiled:
-            # get_rule(rule_id) — find by rule_id
-            return _FakeResult(list(self.rules))
-        if "FROM governance.yaml_policy_rule" in compiled:
-            # list_rules
-            return _FakeResult(list(self.rules))
-        if "FROM governance.yaml_policy_rule_revision" in compiled:
-            return _FakeResult(list(self.revisions))
-        return _FakeResult([])
+from tests.conftest import FakeRuleSession as FakeSession  # Q.61.02: unificado
 
 
 # ---------------------------------------------------------------------------

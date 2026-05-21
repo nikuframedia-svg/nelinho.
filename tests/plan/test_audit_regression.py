@@ -9,17 +9,20 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import List
+from typing import TYPE_CHECKING, List
 from uuid import uuid4
 
 import pytest
+
+if TYPE_CHECKING:  # resolves the "BOMAdapter" string annotation below
+    from src.plan.engines.bom_adapter import BOMAdapter
 
 # ---------------------------------------------------------------------------
 # CRIT-11 — BOM cycle detection (FASE 1A.4)
 # ---------------------------------------------------------------------------
 
 
-def _make_bom(parents: List[tuple[str, str]]) -> "BOMAdapter":  # type: ignore[name-defined]
+def _make_bom(parents: List[tuple[str, str]]) -> "BOMAdapter":
     """Build an in-memory BOM from a list of (parent, child) edges.
     Each unique node gets a default item."""
     from src.plan.engines.bom_adapter import BOMAdapter, BOMComponent, BOMItem

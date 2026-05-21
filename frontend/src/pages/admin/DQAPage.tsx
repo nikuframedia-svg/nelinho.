@@ -169,7 +169,7 @@ export function DQAPage() {
             </DarkCard>
             <DarkCard>
               <div className="flex items-center gap-3">
-                <div className="p-2 bg-slate-700/40 rounded-lg">
+                <div className="p-2 bg-dark-600 rounded-lg">
                   <Info size={20} className="text-slate-300" />
                 </div>
                 <div>
@@ -216,7 +216,7 @@ export function DQAPage() {
                   return (
                     <div
                       key={key}
-                      className="flex items-center justify-between p-3 bg-slate-800/50 rounded-lg border border-slate-700/50"
+                      className="flex items-center justify-between p-3 bg-dark-700 rounded-lg border border-bd-1"
                     >
                       <div className="flex items-center gap-3 flex-1">
                         <div className="flex-1">
@@ -231,7 +231,7 @@ export function DQAPage() {
                         </div>
                       </div>
                       <div className="flex items-center gap-4">
-                        <div className="w-32 h-2 bg-slate-700 rounded-full overflow-hidden">
+                        <div className="w-32 h-2 bg-dark-600 rounded-full overflow-hidden">
                           <div
                             className={`h-full rounded-full ${
                               v >= 0.75
@@ -268,7 +268,7 @@ export function DQAPage() {
                 {gateEntries.map(({ key, allowed, threshold }) => (
                   <div
                     key={key}
-                    className="flex items-center justify-between p-3 bg-slate-800/50 rounded-lg"
+                    className="flex items-center justify-between p-3 bg-dark-700 rounded-lg border border-bd-1"
                   >
                     <div className="flex items-center gap-3">
                       {allowed ? (

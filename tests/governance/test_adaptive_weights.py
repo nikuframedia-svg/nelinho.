@@ -55,7 +55,7 @@ class _FakeSession:
         self.added: List[Any] = []
         self.flush_calls = 0
 
-    async def execute(self, _stmt):  # noqa: ANN001 — test stub
+    async def execute(self, _stmt):
         class _R:
             def __init__(self, rows: List[Any]) -> None:
                 self._rows = rows

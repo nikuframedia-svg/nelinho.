@@ -20,6 +20,38 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.quality.models.rework import ReworkEntry
 
 
+async def most_frequent_error_code(
+    session: AsyncSession,
+    tenant_id: UUID,
+    *,
+    since: Optional[datetime] = None,
+    until: Optional[datetime] = None,
+) -> Optional[str]:
+    """The `error_code` with the most rework events in the window.
+
+    Used as the honest default for the diagnostic endpoints (root-cause,
+    impact) when the caller does not pick one — the tab opens on whatever
+    defect is actually hurting the factory most, never on a guessed code.
+    Returns ``None`` when there is no rework at all.
+    """
+    since = since or datetime.now(timezone.utc) - timedelta(days=90)
+    until = until or datetime.now(timezone.utc)
+    stmt = (
+        select(ReworkEntry.error_code, func.count(ReworkEntry.id).label("n"))
+        .where(
+            and_(
+                ReworkEntry.tenant_id == tenant_id,
+                ReworkEntry.detected_at >= since,
+                ReworkEntry.detected_at <= until,
+            )
+        )
+        .group_by(ReworkEntry.error_code)
+        .order_by(func.count(ReworkEntry.id).desc())
+        .limit(1)
+    )
+    return (await session.execute(stmt)).scalars().first()
+
+
 class ImpactService:
     def __init__(self, session: AsyncSession, tenant_id: UUID) -> None:
         self.session = session

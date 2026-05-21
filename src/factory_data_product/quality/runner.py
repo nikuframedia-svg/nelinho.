@@ -79,31 +79,39 @@ class QualityRunner:
             try:
                 logger.info(f"Running check: {check_id}")
                 check_result = self._run_check(check, raw_rows, context)
-                
+
+                # Q.67.1.C — the result's severity wins over the
+                # registered one. The duplicates check resolves it from
+                # tenant_config["quality.duplicates.severity"], so the
+                # operator can flip WARNING ↔ BLOCKING without a code
+                # change. Fall back to the registered severity for
+                # checks that don't override.
+                effective_severity = check_result.severity or check.severity
+
                 # Store result
                 result.checks.append({
                     "check_id": check_id,
-                    "severity": check.severity.value,
+                    "severity": effective_severity.value,
                     "passed": check_result.passed,
                     "details": check_result.details,
                     "message": check_result.message,
                 })
-                
+
                 # Aggregate
                 if check_result.passed:
                     result.passed_checks += 1
                 else:
-                    if check.severity == CheckSeverity.BLOCKING:
+                    if effective_severity == CheckSeverity.BLOCKING:
                         result.failed_blocking += 1
                         result.blocking_failures.append(
                             check_result.message or f"Check {check_id} failed"
                         )
-                    elif check.severity == CheckSeverity.WARNING:
+                    elif effective_severity == CheckSeverity.WARNING:
                         result.failed_warning += 1
                         result.warnings.append(
                             check_result.message or f"Check {check_id} warning"
                         )
-                
+
             except Exception as e:
                 logger.error(f"Error running check {check_id}: {e}")
                 result.checks.append({
@@ -113,7 +121,7 @@ class QualityRunner:
                     "details": {"error": str(e)},
                     "message": f"Check error: {e!s}",
                 })
-                
+
                 if check.severity == CheckSeverity.BLOCKING:
                     result.failed_blocking += 1
                     result.blocking_failures.append(f"Check {check_id} error: {e!s}")

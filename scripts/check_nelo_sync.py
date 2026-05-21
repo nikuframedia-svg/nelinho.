@@ -44,7 +44,7 @@ async def main() -> None:
             sch, tbl = r["table_schema"], r["table_name"]
             try:
                 n = await conn.fetchval(f'SELECT count(*) FROM "{sch}"."{tbl}"')
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 print(f"  {sch}.{tbl:38s}  ERRO: {type(e).__name__}")
                 continue
             total += n
@@ -59,7 +59,7 @@ async def main() -> None:
                 "WHERE duration_p50_h IS NOT NULL"
             )
             print(f"  routing_template_phase com duration_p50_h: {with_dur:,}")
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             print(f"  (check de duracoes falhou: {type(e).__name__}: {e})")
 
         print()

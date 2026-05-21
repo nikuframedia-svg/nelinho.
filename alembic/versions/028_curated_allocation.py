@@ -17,7 +17,8 @@ from sqlalchemy.dialects.postgresql import UUID as PGUUID
 
 
 revision = '028_curated_allocation'
-down_revision = '027_decision_rejection_category'
+# Q.62.A.2 — rebase: 028b cria factory_meta.ingestion_run, FK target.
+down_revision = '028b_q62_factory_meta'
 branch_labels = None
 depends_on = None
 

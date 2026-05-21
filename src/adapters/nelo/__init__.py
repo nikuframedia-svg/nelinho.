@@ -42,8 +42,10 @@ from .schemas import (
     PhaseRow,
     ProductOrderCount,
     ProductRow,
+    ProductStockRow,
     RoutingRow,
     ScheduleRow,
+    WarehouseStockRow,
 )
 
 __all__ = [
@@ -63,10 +65,12 @@ __all__ = [
     "ProductComponent",
     "ProductOrderCount",
     "ProductRow",
+    "ProductStockRow",
     "ProductionPhase",
     "ProductPhase",
     "RoutingRow",
     "ScheduleRow",
+    "WarehouseStockRow",
     "WorkOrder",
     "WorkOrderPhase",
 ]

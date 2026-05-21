@@ -14,7 +14,9 @@ from src.supply.material_service import (
     MaterialService,
     NegativeStockBlockedError,
 )
+from src.supply.purchase_order_service import PurchaseOrderService
 from src.supply.rop_calculator import ROPCalculator
+from src.supply.stockout_predictor import StockoutPredictor
 
 __all__ = [
     "ABCAnalysis",
@@ -23,7 +25,9 @@ __all__ = [
     "MaterialNotFoundError",
     "MaterialService",
     "NegativeStockBlockedError",
+    "PurchaseOrderService",
     "ROPCalculator",
+    "StockoutPredictor",
 ]
 
 

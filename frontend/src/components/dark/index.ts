@@ -133,3 +133,50 @@ export type {
   ZipBoat,
 } from './ZipAtoms';
 
+// ─── Sprint Q.52.B — átomos + primitivas do design NELO.html ────────────────
+// Port fiel de design/nelo/project/src/atoms.jsx ("dark Apple-like minimal").
+// Geometria e tokens batem certo com o protótipo. Distintos dos átomos legacy
+// (KPICard / BoatCard / WorkerAvatar / SegmentedControl / Modal) — as páginas
+// da Onda 1 consomem estes; as legacy ficam até as páginas dependentes migrarem.
+export { KPIBig } from './KPIBig';
+export type { KPIBigProps, KPIBigStatus } from './KPIBig';
+export { ConsequenceBox } from './ConsequenceBox';
+export type {
+  ConsequenceBoxProps,
+  ConsequenceAlternative,
+} from './ConsequenceBox';
+export { RiskBadge } from './RiskBadge';
+export type { RiskBadgeProps, RiskTone } from './RiskBadge';
+export { ObjectiveBar } from './ObjectiveBar';
+export type { ObjectiveBarProps } from './ObjectiveBar';
+export { ScoreBar } from './ScoreBar';
+export type { ScoreBarProps } from './ScoreBar';
+export { BarsMini } from './BarsMini';
+export type { BarsMiniProps, BarsMiniDatum } from './BarsMini';
+export { OEERing } from './OEERing';
+export type { OEERingProps } from './OEERing';
+export { Sheet } from './Sheet';
+export type { SheetProps } from './Sheet';
+export { Segmented } from './Segmented';
+export type { SegmentedProps, SegmentedOption } from './Segmented';
+export { NeloBoatCard } from './NeloBoatCard';
+export type {
+  NeloBoatCardProps,
+  NeloBoat,
+  NeloBoatStatus,
+} from './NeloBoatCard';
+export { NeloWorkerAvatar } from './NeloWorkerAvatar';
+export type { NeloWorkerAvatarProps, NeloWorker } from './NeloWorkerAvatar';
+export { useCountUp } from './useCountUp';
+
+// Primitivas partilhadas (>1 página) — DnD HTML5 + grelha de timeline.
+export { useDraggable, useDropZone } from './useDragDrop';
+export type { DragKind, DragPayload } from './useDragDrop';
+export { TimelineLanes } from './TimelineLanes';
+export type {
+  TimelineLanesProps,
+  TimelineSlot,
+  TimelineLane,
+  TimelineItem,
+} from './TimelineLanes';
+

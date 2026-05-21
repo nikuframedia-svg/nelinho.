@@ -13,10 +13,16 @@ Endpoints under `/v1/quality/*`:
     GET    /impact                         — QA03 cumulative impact per error
     GET    /quality/by-supplier            — QA04 / O.8 supplier quality analytics
     GET    /quality/by-lot                 — QA04 lot-level quality
+
+Q.61.32c — migrados de /api/errors* (legacy):
+    GET    /v1/quality/errors              — paginated production errors
+    GET    /v1/quality/errors/stats        — aggregate by severity/phase/desc
 """
 
 from __future__ import annotations
 
+import logging
+import math
 from datetime import datetime
 from decimal import Decimal
 from typing import Any, Optional
@@ -24,10 +30,15 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.quality.models import ProductionError  # Q.61.32d
 from src.quality.services.dashboard_service import QualityDashboardService
-from src.quality.services.impact_service import ImpactService
+from src.quality.services.impact_service import (
+    ImpactService,
+    most_frequent_error_code,
+)
 from src.quality.services.rework_service import (
     ReworkNotFoundError,
     ReworkService,
@@ -35,7 +46,10 @@ from src.quality.services.rework_service import (
 from src.quality.services.root_cause_analyzer import RootCauseAnalyzer
 from src.quality.services.supplier_quality_service import SupplierQualityService
 from src.quality.services.worker_ranking_service import WorkerRankingService
+from src.shared.auth.headers import require_tenant_header
 from src.shared.database import get_session
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/quality", tags=["Quality"])
 
@@ -144,6 +158,75 @@ async def resolve_rework(
     return _rework_to_dict(row)
 
 
+# ─── Q.54.S — qualidade dos moldes (camada curada) ────────────────────────
+
+@router.get("/molds")
+async def list_mold_quality(
+    limit: int = Query(60, ge=1, le=510),
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Moldes reais com o seu histórico de defeitos.
+
+    Junta o master curado (``factory_curated.mold``, 510 moldes) com os
+    eventos de qualidade (``quality_event``), agregados por molde e
+    ordenados pelos que mais defeitos causam.
+
+    Distinto de ``/v1/plan/molds/*`` — esse serve o catálogo de
+    planeamento (``plan.mold``), num espaço de IDs (``MLD_ID``) que não
+    casa com os dados de defeitos. Este expõe os moldes que a fábrica
+    realmente usou, keyed por ``molde_id`` — o mesmo das tabelas de
+    qualidade. Read-only.
+    """
+    from sqlalchemy import desc, func, select
+
+    from src.factory_data_product.models.curated import (
+        CuratedMold,
+        CuratedQualityEvent,
+    )
+
+    stmt = (
+        select(
+            CuratedMold.molde_id,
+            CuratedMold.molde_nome,
+            CuratedMold.tipo,
+            CuratedMold.em_manutencao,
+            func.count(CuratedQualityEvent.id).label("defect_events"),
+            func.coalesce(
+                func.sum(CuratedQualityEvent.quantidade), 0
+            ).label("defect_qty"),
+            func.max(CuratedQualityEvent.data_evento).label("last_defect"),
+        )
+        .select_from(CuratedMold)
+        .join(
+            CuratedQualityEvent,
+            CuratedQualityEvent.molde_id == CuratedMold.molde_id,
+            isouter=True,
+        )
+        .group_by(
+            CuratedMold.molde_id,
+            CuratedMold.molde_nome,
+            CuratedMold.tipo,
+            CuratedMold.em_manutencao,
+        )
+        .order_by(desc("defect_qty"), desc("defect_events"))
+        .limit(limit)
+    )
+    rows = (await session.execute(stmt)).all()
+    return [
+        {
+            "molde_id": r[0],
+            "nome": r[1],
+            "tipo": r[2],
+            "em_manutencao": bool(r[3]),
+            "defect_events": int(r[4] or 0),
+            "defect_qty": int(r[5] or 0),
+            "last_defect": r[6].isoformat() if r[6] else None,
+        }
+        for r in rows
+    ]
+
+
 # ─── R.3 — Worker ranking ─────────────────────────────────────────────────
 
 @router.get("/workers/ranking")
@@ -209,13 +292,30 @@ async def first_pass_yield(
 
 @router.get("/root-cause")
 async def root_cause(
-    error_code: str,
+    error_code: Optional[str] = None,
     since: Optional[datetime] = None,
     until: Optional[datetime] = None,
     top_n_per_dimension: int = 5,
     tenant_id: UUID = Depends(get_tenant_id),
     session: AsyncSession = Depends(get_session),
 ):
+    """QA09 — causa-raiz por dimensão para um `error_code`.
+
+    Quando `error_code` é omitido, usa o defeito mais frequente da janela
+    (`most_frequent_error_code`) — a tab Diagnóstico nunca abre partida.
+    Devolve `error_code: None` + dimensões vazias quando não há retrabalho.
+    """
+    if not error_code:
+        error_code = await most_frequent_error_code(
+            session, tenant_id, since=since, until=until
+        )
+    if not error_code:
+        return {
+            "error_code": None,
+            "dimensions": {},
+            "total_events": 0,
+            "reason": "Sem retrabalho registado na janela.",
+        }
     svc = RootCauseAnalyzer(session, tenant_id)
     return await svc.analyse(
         error_code=error_code, since=since, until=until,
@@ -227,12 +327,31 @@ async def root_cause(
 
 @router.get("/impact")
 async def impact_analysis(
-    error_code: str,
+    error_code: Optional[str] = None,
     since: Optional[datetime] = None,
     until: Optional[datetime] = None,
     tenant_id: UUID = Depends(get_tenant_id),
     session: AsyncSession = Depends(get_session),
 ):
+    """QA03 — impacto cumulativo (€, horas) de um `error_code`.
+
+    Quando `error_code` é omitido, usa o defeito mais frequente da janela.
+    Devolve `error_code: None` + zeros quando não há retrabalho.
+    """
+    if not error_code:
+        error_code = await most_frequent_error_code(
+            session, tenant_id, since=since, until=until
+        )
+    if not error_code:
+        return {
+            "error_code": None,
+            "events": 0,
+            "affected_orders": 0,
+            "cost_estimate_eur": 0.0,
+            "hours_lost": 0.0,
+            "share_pct_of_total_rework": 0.0,
+            "reason": "Sem retrabalho registado na janela.",
+        }
     svc = ImpactService(session, tenant_id)
     return await svc.impact_by_error(
         error_code=error_code, since=since, until=until,
@@ -265,3 +384,273 @@ async def quality_by_lot(
     svc = SupplierQualityService(session, tenant_id)
     items = await svc.by_lot(since=since, until=until, top_n=top_n)
     return {"items": items, "count": len(items)}
+
+
+# ─── Q.53.A — ML defect risk + hull zones + ROI (Qualidade page tabs) ─────
+
+@router.get("/defect-risk")
+async def defect_risk(
+    top_n: int = Query(50, ge=1, le=200),
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Tab "Predições" — P(defeito) per in-progress order from the active
+    `QualityRiskModel`. Trains+promotes a model on first use when the
+    registry is empty; degrades with `model_available=false` when the
+    quality history is too thin to train.
+    """
+    from src.quality.services.defect_risk_service import DefectRiskService
+
+    svc = DefectRiskService(session, tenant_id)
+    return await svc.defect_risk(top_n=top_n)
+
+
+@router.get("/defect-zones")
+async def defect_zones(
+    since: Optional[datetime] = None,
+    until: Optional[datetime] = None,
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Tab "Mapa do casco" — rework events aggregated by hull zone for the
+    SVG. Always returns every canonical zone (count 0 when clean).
+    """
+    from src.quality.services.defect_zone_service import DefectZoneService
+
+    svc = DefectZoneService(session, tenant_id)
+    return await svc.zones(since=since, until=until)
+
+
+@router.get("/roi-actions")
+async def roi_actions(
+    since: Optional[datetime] = None,
+    until: Optional[datetime] = None,
+    top_n: int = Query(25, ge=1, le=100),
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Tab "Custos-ROI" — € saved vs invested per quality action, ranked by
+    net return, from `quality.rework_entry` + the error catalog.
+    """
+    from src.quality.services.roi_service import ROIService
+
+    svc = ROIService(session, tenant_id)
+    return await svc.roi_by_action(since=since, until=until, top_n=top_n)
+
+
+# ─── Q.61.32c — Migrado de src/legacy/api.py ─────────────────────────
+#
+# Endpoints abaixo vinham de `src/legacy/api.py` sob `/api/errors*`.
+# Comportamento copiado tal-qual (incluindo fallback fail-soft em DB
+# outage, com `undefinedtable` adicionado ao matcher para o caso em que
+# a tabela `plan.production_errors` ainda não foi criada). Q.62 limpa
+# o BLE001 em conjunto.
+#
+# Estes 2 endpoints usam `require_tenant_header` (fail-closed, Q.12 Onda
+# 0.1), não o local `get_tenant_id` do resto do módulo — preserva a
+# garantia de Q.18.A.4.
+
+_EMPTY_ERRORS_STATS = {
+    "total": 0,
+    "bySeverity": {"minor": 0, "major": 0, "critical": 0},
+    "ordersWithErrors": 0,
+    "topDescriptions": [],
+    "topPhases": [],
+}
+
+_SEVERITY_LABELS = {1: "Minor", 2: "Major", 3: "Critical"}
+
+
+@router.get("/errors/stats")
+async def errors_stats(
+    tenant_id: UUID = Depends(require_tenant_header),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Estatísticas agregadas sobre `plan.production_errors`.
+
+    Migrado em Q.61.32c de `/api/errors/stats`. Shape preserva
+    `ErrorsStats` do frontend. DB indisponível ou tabela em falta
+    devolve `_EMPTY_ERRORS_STATS` (não 5xx) para a Qualidade renderizar
+    estado vazio.
+    """
+    try:
+        total = (
+            await session.execute(
+                select(func.count())
+                .select_from(ProductionError)
+                .where(ProductionError.tenant_id == tenant_id)
+            )
+        ).scalar() or 0
+
+        severity_rows = (
+            await session.execute(
+                select(ProductionError.severity, func.count())
+                .where(ProductionError.tenant_id == tenant_id)
+                .group_by(ProductionError.severity)
+            )
+        ).all()
+        by_severity = {"minor": 0, "major": 0, "critical": 0}
+        bucket = {1: "minor", 2: "major", 3: "critical"}
+        for severity, count in severity_rows:
+            key = bucket.get(severity)
+            if key:
+                by_severity[key] += count
+
+        orders_with_errors = (
+            await session.execute(
+                select(func.count(func.distinct(ProductionError.order_id))).where(
+                    and_(
+                        ProductionError.tenant_id == tenant_id,
+                        ProductionError.order_id.isnot(None),
+                    )
+                )
+            )
+        ).scalar() or 0
+
+        top_desc_rows = (
+            await session.execute(
+                select(ProductionError.description, func.count().label("c"))
+                .where(ProductionError.tenant_id == tenant_id)
+                .group_by(ProductionError.description)
+                .order_by(func.count().desc())
+                .limit(10)
+            )
+        ).all()
+        top_phase_rows = (
+            await session.execute(
+                select(ProductionError.phase_name, func.count().label("c"))
+                .where(ProductionError.tenant_id == tenant_id)
+                .group_by(ProductionError.phase_name)
+                .order_by(func.count().desc())
+                .limit(10)
+            )
+        ).all()
+
+        return {
+            "total": total,
+            "bySeverity": by_severity,
+            "ordersWithErrors": orders_with_errors,
+            "topDescriptions": [
+                {"description": desc, "count": count}
+                for desc, count in top_desc_rows
+            ],
+            "topPhases": [
+                {"phase": phase, "count": count}
+                for phase, count in top_phase_rows
+            ],
+        }
+    except Exception as e:
+        error_str = str(e).lower()
+        if any(
+            m in error_str
+            for m in (
+                "connection refused",
+                "operationalerror",
+                "interfaceerror",
+                "undefinedtable",
+            )
+        ):
+            logger.warning("DB unavailable in errors_stats, returning empty: %s", e)
+            return dict(_EMPTY_ERRORS_STATS)
+        raise
+
+
+@router.get("/errors")
+async def list_errors_paginated(
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    pageSize: int = Query(20, ge=1, le=100, description="Items per page"),
+    severity: Optional[int] = Query(None, ge=1, le=3, description="Filter by severity 1-3"),
+    phase: Optional[str] = Query(None, description="Filter by phase name"),
+    search: Optional[str] = Query(None, description="Search in description or phase name"),
+    sortBy: str = Query("severity", description="Sort field: id, severity, description, orderId"),
+    sortOrder: str = Query("desc", description="Sort order: asc, desc"),
+    tenant_id: UUID = Depends(require_tenant_header),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Lista paginada de production errors.
+
+    Migrado em Q.61.32c de `/api/errors`. Shape preserva `ErrorsResponse`
+    do frontend (camelCase + `hasNextPage`/`hasPreviousPage`).
+    """
+    try:
+        query = select(ProductionError).where(ProductionError.tenant_id == tenant_id)
+
+        if severity is not None:
+            query = query.where(ProductionError.severity == severity)
+        if phase:
+            query = query.where(ProductionError.phase_name == phase)
+        if search:
+            pattern = f"%{search}%"
+            query = query.where(
+                or_(
+                    ProductionError.description.ilike(pattern),
+                    ProductionError.phase_name.ilike(pattern),
+                )
+            )
+
+        total = (
+            await session.execute(
+                select(func.count()).select_from(query.subquery())
+            )
+        ).scalar() or 0
+
+        sort_field_map = {
+            "id": ProductionError.id,
+            "severity": ProductionError.severity,
+            "description": ProductionError.description,
+            "orderId": ProductionError.order_id,
+        }
+        sort_field = sort_field_map.get(sortBy, ProductionError.severity)
+        query = query.order_by(
+            sort_field.asc() if sortOrder.lower() == "asc" else sort_field.desc()
+        )
+
+        offset = (page - 1) * pageSize
+        query = query.limit(pageSize).offset(offset)
+
+        errors = (await session.execute(query)).scalars().all()
+        data = [
+            {
+                "id": str(err.id),
+                "orderId": str(err.order_id) if err.order_id else None,
+                "phaseName": err.phase_name,
+                "evalPhaseName": err.eval_phase_name,
+                "description": err.description,
+                "severity": err.severity,
+                "severityLabel": _SEVERITY_LABELS.get(err.severity, "Minor"),
+            }
+            for err in errors
+        ]
+
+        total_pages = math.ceil(total / pageSize) if pageSize > 0 else 0
+        return {
+            "data": data,
+            "total": total,
+            "page": page,
+            "pageSize": pageSize,
+            "totalPages": total_pages,
+            "hasNextPage": page < total_pages,
+            "hasPreviousPage": page > 1,
+        }
+    except Exception as e:
+        error_str = str(e).lower()
+        if any(
+            m in error_str
+            for m in (
+                "connection refused",
+                "operationalerror",
+                "interfaceerror",
+                "undefinedtable",
+            )
+        ):
+            logger.warning("DB unavailable in list_errors_paginated, returning empty: %s", e)
+            return {
+                "data": [],
+                "total": 0,
+                "page": page,
+                "pageSize": pageSize,
+                "totalPages": 0,
+                "hasNextPage": False,
+                "hasPreviousPage": False,
+            }
+        raise

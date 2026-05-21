@@ -19,6 +19,14 @@ Sprint Q.13.A — closing Spelke axiom 7 gap. Originally compared only
 None of those would have been caught. Now the seven dimensions of the
 v2 fitness function are checked, each with a tunable tolerance so
 random GA noise doesn't flip safety net unnecessarily.
+
+Sprint Q.54.G — closes the last two holes in Spelke axiom 7. The
+decoder also emits `lam_utilization` (% scheduled minutes in Laminagem
+— the bottleneck phase) and `idle_ratio` (horizon-normalised idle).
+Both fed MAP-Elites as diversity axes but were invisible to the
+safety net, so a candidate could drain the bottleneck or balloon the
+idle ratio while tardiness/OTD stayed flat. They are now guardrails:
+nine dimensions total.
 """
 
 from __future__ import annotations
@@ -40,6 +48,8 @@ logger = logging.getLogger(__name__)
 #   * avg_quality_risk: 10% rise tolerated
 #   * setups: 15% rise tolerated
 #   * total_idle_hours: 20% rise tolerated
+#   * lam_utilization: 5pp drop tolerated  (Sprint Q.54.G)
+#   * idle_ratio: 5pp rise tolerated       (Sprint Q.54.G)
 #
 # These percentages live here rather than ConfigStore because they are
 # correctness invariants, not tenant policy. A tenant changing them
@@ -50,6 +60,27 @@ _QUALITY_RISK_TOLERANCE = 0.10  # 10% rise ok
 _SETUP_TIME_TOLERANCE = 0.15  # 15% rise ok
 _IDLE_TOLERANCE = 0.20  # 20% rise ok
 _MAKESPAN_HARD_CAP = 1.5  # 1.5× baseline makespan cap
+
+# Sprint Q.54.G — closing the last two holes in Spelke axiom 7.
+# `lam_utilization` and `idle_ratio` were emitted by the decoder
+# (decoder.py — Sprint A ME1/F2) and consumed by MAP-Elites as
+# diversity axes, but the safety net never compared them. A candidate
+# could quietly drain Laminagem utilisation (the factory's bottleneck
+# phase — 88.5% dual-resource) or balloon the idle ratio while keeping
+# tardiness/OTD flat, and ship. Now both are checked.
+#
+# `lam_utilization` is a percentage (0-100); the decoder reports the
+# share of scheduled minutes spent in LAMINAGEM* phases. It is an
+# *absolute* metric, so the guardrail is an absolute drop in percentage
+# POINTS, not a relative %: a candidate whose lam_utilization is 5pp
+# below baseline is degrading the bottleneck and loses.
+#
+# `idle_ratio` is a fraction (0-1); we already gate `total_idle_hours`
+# relatively, but that scales with team size and horizon. `idle_ratio`
+# is the normalised version — guarded with an absolute 5pp rise so a
+# candidate can't trade idle hours for a longer horizon and slip past.
+_LAM_UTILIZATION_TOLERANCE_PP = 5.0   # 5 percentage-point drop ok
+_IDLE_RATIO_TOLERANCE = 0.05          # 5 percentage-point (0.05) rise ok
 
 
 def _gather_violations(
@@ -170,11 +201,49 @@ def _gather_violations(
                 f"{(1 + _IDLE_TOLERANCE):.0%}×baseline={base_v:.2f}",
             ))
 
+    # ── Sprint Q.54.G — Laminagem utilisation + idle_ratio guardrails ──
+
+    # Laminagem utilisation (lam_utilization, % of scheduled minutes in
+    # LAMINAGEM* phases): HIGHER is better — Laminagem is the factory's
+    # bottleneck (88.5% dual-resource, the binding constraint on the
+    # €30-35K/day target). A candidate that drains it more than 5
+    # percentage points below baseline is hiding a throughput loss the
+    # other KPIs may not catch. Absolute pp comparison, not relative %:
+    # a 5pp drop from 60→55 is the same severity as 20→15.
+    cand_lam = candidate.get("lam_utilization")
+    base_lam = baseline.get("lam_utilization")
+    if cand_lam is not None and base_lam is not None:
+        cand_v = float(cand_lam)
+        base_v = float(base_lam)
+        if cand_v < base_v - _LAM_UTILIZATION_TOLERANCE_PP - 1e-6:
+            violations.append((
+                "lam_utilization",
+                f"lam_util={cand_v:.2f}% < baseline={base_v:.2f}% "
+                f"- {_LAM_UTILIZATION_TOLERANCE_PP:.0f}pp",
+            ))
+
+    # Idle ratio (idle_ratio, fraction in [0,1]): HIGHER is worse. This
+    # is the horizon-normalised twin of total_idle_hours — a candidate
+    # could keep idle_hours flat while stretching the horizon, and slip
+    # the relative total_idle_hours check. idle_ratio closes that gap.
+    # Absolute pp comparison (0.05 = 5pp).
+    cand_ir = candidate.get("idle_ratio")
+    base_ir = baseline.get("idle_ratio")
+    if cand_ir is not None and base_ir is not None:
+        cand_v = float(cand_ir)
+        base_v = float(base_ir)
+        if cand_v > base_v + _IDLE_RATIO_TOLERANCE + 1e-6:
+            violations.append((
+                "idle_ratio",
+                f"idle_ratio={cand_v:.4f} > baseline={base_v:.4f} "
+                f"+ {_IDLE_RATIO_TOLERANCE:.2f}",
+            ))
+
     return violations
 
 
 def is_worse_than_baseline(candidate: Dict[str, Any], baseline: Dict[str, Any]) -> bool:
-    """True if the candidate fails any of the seven safety-net
+    """True if the candidate fails any of the nine safety-net
     guardrails. Each violation is logged at WARNING level so operators
     can see why a particular run flipped to baseline.
     """

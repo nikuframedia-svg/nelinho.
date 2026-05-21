@@ -343,7 +343,7 @@ def calculate_oee_metrics(xlsx):
             type_with_errors = len(type_orders[type_orders['Of_Id'].isin(orders_with_errors)])
             type_fpy = (len(type_orders) - type_with_errors) / len(type_orders)
             fpy_by_family[kayak_type] = {
-                'totalOrders': int(len(type_orders)),
+                'totalOrders': len(type_orders),
                 'ordersWithErrors': int(type_with_errors),
                 'fpy': round(type_fpy * 100, 1)
             }
@@ -362,7 +362,7 @@ def calculate_oee_metrics(xlsx):
                 'avgStandardTime': round(phase_avg_std, 2),
                 'avgActualTime': round(phase_avg_actual, 2),
                 'performance': round(phase_performance * 100, 1),
-                'recordCount': int(len(phase_data))
+                'recordCount': len(phase_data)
             })
     
     performance_by_phase.sort(key=lambda x: x['recordCount'], reverse=True)
@@ -375,13 +375,13 @@ def calculate_oee_metrics(xlsx):
         'totalOrders': int(total_orders),
         'ordersInProgress': int(orders_in_progress),
         'ordersCompleted': int(orders_completed),
-        'ordersWithErrors': int(len(orders_with_errors)),
+        'ordersWithErrors': len(orders_with_errors),
         'ordersWithoutErrors': int(orders_fpy),
         'reworkRate': round((1 - quality_rate) * 100, 1),
         'avgStandardTime': round(avg_std, 2),
         'avgActualTime': round(avg_actual, 2),
-        'phasesStarted': int(len(phases_started)),
-        'totalPhases': int(len(df_phases_of)),
+        'phasesStarted': len(phases_started),
+        'totalPhases': len(df_phases_of),
         'fpyByFamily': fpy_by_family,
         'performanceByPhase': performance_by_phase[:15],  # Top 15 phases
         # Flags to indicate which metrics are estimates vs real data
@@ -474,7 +474,7 @@ def calculate_quality_analysis(xlsx):
     })
     
     quality_analysis = {
-        'totalErrors': int(len(df_errors)),
+        'totalErrors': len(df_errors),
         'topErrors': top_errors,
         'errorsBySeverity': errors_by_severity,
         'errorsByPhase': errors_by_phase,

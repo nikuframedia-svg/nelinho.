@@ -1,18 +1,22 @@
 /**
  * TopBar — port literal de design/nelo-zip/src/shell.jsx Topbar.
  *
- * Layout: search 320px (bg-2) + flex-1 spacer + LiveBadge + date longo +
+ * Layout: search 360px (bg-2) + flex-1 spacer + LiveBadge + date longo +
  * botão "Assistente" (Sparkles icon, azul quando aberto).
+ *
+ * Q.52.S — a caixa de pesquisa é um <input> real: Enter navega para
+ * `/pesquisa?q=…` (SearchResultsPage, GET /v1/search). ⌘K continua a abrir
+ * a paleta de comandos para navegação rápida.
  *
  * Sem UmweltSwitcher / Notifications / Breadcrumbs (zip não tem).
  * User chip vive na Sidebar footer (zip pattern).
  *
- * Sprint Q.18.ZIP.shell.
+ * Sprint Q.18.ZIP.shell · Q.52.S.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type FormEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Search, Sparkles } from 'lucide-react';
-import { useCommandPalette } from '../../hooks';
 import { LiveBadge } from '../dark/LiveBadge';
 import { UmweltPills } from './UmweltPills';
 
@@ -40,13 +44,21 @@ function openCopilot() {
 }
 
 export function TopBar() {
-  const { open: openCommandPalette } = useCommandPalette();
+  const navigate = useNavigate();
   const [now, setNow] = useState(nowLabels());
+  const [term, setTerm] = useState('');
 
   useEffect(() => {
     const id = window.setInterval(() => setNow(nowLabels()), 30_000);
     return () => window.clearInterval(id);
   }, []);
+
+  function onSearchSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const q = term.trim();
+    if (q.length === 0) return;
+    navigate(`/pesquisa?q=${encodeURIComponent(q)}`);
+  }
 
   return (
     <header
@@ -54,42 +66,51 @@ export function TopBar() {
       style={{
         height: 52,
         flexShrink: 0,
-        background: 'var(--bg-0)',
-        padding: '0 24px',
-        gap: 16,
+        background: 'rgba(0,0,0,0.6)',
+        backdropFilter: 'saturate(180%) blur(20px)',
+        WebkitBackdropFilter: 'saturate(180%) blur(20px)',
+        borderBottom: '1px solid var(--bd-1)',
+        padding: '0 16px',
+        gap: 14,
       }}
     >
-      {/* Search */}
-      <button
-        type="button"
-        onClick={openCommandPalette}
-        className="flex items-center gap-2 text-text-dark-tertiary hover:text-text-dark-secondary transition-colors"
+      {/* Search — Enter navega para /pesquisa */}
+      <form
+        onSubmit={onSearchSubmit}
+        className="flex items-center gap-2"
+        role="search"
         style={{
-          width: 320,
+          width: 360,
+          height: 32,
           background: 'var(--bg-2)',
           border: '1px solid var(--bd-1)',
           borderRadius: 'var(--r-md)',
-          padding: '6px 12px',
+          padding: '5px 11px',
         }}
-        title="Procurar (⌘K)"
-        aria-label="Procurar"
       >
-        <Search size={14} className="shrink-0" />
-        <span className="flex-1 text-left truncate" style={{ fontSize: 13 }}>
-          Procurar barco, operador, fase...
-        </span>
+        <Search size={13} className="shrink-0 text-text-dark-tertiary" />
+        <input
+          type="search"
+          value={term}
+          onChange={(e) => setTerm(e.target.value)}
+          placeholder="Procurar barco, operador, fase…"
+          aria-label="Pesquisar"
+          className="flex-1 bg-transparent outline-none border-none text-text-dark-primary placeholder:text-text-dark-tertiary"
+          style={{ fontSize: 12 }}
+        />
         <span
-          className="text-text-dark-tertiary"
+          className="mono text-text-dark-tertiary shrink-0"
           style={{
             fontSize: 10,
-            padding: '1px 6px',
+            padding: '1px 5px',
+            background: 'var(--bg-3)',
             border: '1px solid var(--bd-1)',
             borderRadius: 4,
           }}
         >
           ⌘K
         </span>
-      </button>
+      </form>
 
       <div className="flex-1" />
 
@@ -115,16 +136,16 @@ export function TopBar() {
         onClick={openCopilot}
         className="inline-flex items-center gap-1.5 font-medium transition-colors"
         style={{
-          padding: '6px 12px',
+          padding: '0 11px',
           height: 32,
           background: 'var(--bg-2)',
-          color: 'var(--fg-1)',
+          color: 'var(--fg-0)',
           border: '1px solid var(--bd-2)',
           borderRadius: 'var(--r-md)',
           fontSize: 12,
         }}
       >
-        <Sparkles size={14} />
+        <Sparkles size={13} />
         Assistente
       </button>
     </header>

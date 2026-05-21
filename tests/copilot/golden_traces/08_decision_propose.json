@@ -1,0 +1,49 @@
+{
+  "trace_id": "08_decision_propose",
+  "intent_label": "decision_propose",
+  "purpose": "Proposta de decisão (reassign worker) — intent generic; LLM devolve PROPOSAL com action CREATE_DECISION_PR + requires_approval=true.",
+  "input": {
+    "user_query": "propoe uma decisao para reassign worker X",
+    "context_window_hours": 24
+  },
+  "canonical_llm_response": {
+    "type": "PROPOSAL",
+    "intent": "explain_plan_change",
+    "summary": "Proposta: reassign operador X de Laminagem para Cura (cobre gap).",
+    "facts": [
+      {
+        "text": "Operador X tem skill Cura (nível 3) e Laminagem (nível 2).",
+        "citations": [
+          {
+            "source_type": "db",
+            "ref": "table:workforce_skills;operator:X",
+            "label": "Skills do operador X",
+            "confidence": 0.95,
+            "trust_index": 0.92
+          }
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "action_type": "CREATE_DECISION_PR",
+        "label": "Reassign X: Laminagem -> Cura",
+        "requires_approval": true,
+        "payload": {"operator_id": "X", "from_phase": "laminagem", "to_phase": "cura"}
+      }
+    ],
+    "warnings": [],
+    "meta": {"model": "gemma3:e4b", "tokens": 180, "latency_ms": 280, "validation_passed": true}
+  },
+  "expected_shape": {
+    "type": "PROPOSAL",
+    "intent_in": ["explain_plan_change", "generic"],
+    "has_summary": true,
+    "min_facts": 1,
+    "max_facts": 5,
+    "actions_count_range": [1, 3],
+    "warnings_count_range": [0, 2],
+    "meta_must_have_keys": ["model", "tokens", "latency_ms", "validation_passed"]
+  },
+  "stability_pinned_at": "2026-05-20"
+}

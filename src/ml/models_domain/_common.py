@@ -8,9 +8,14 @@ Shared helpers for the Sprint H models.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Sequence, Tuple
 
-import numpy as np
+# Q.59.F.3 — numpy fica fora do startup. Estava top-level e era pulled
+# transitivamente por duration/quality_risk/otd_risk. PEP 563 (from
+# __future__ import annotations) torna `np.ndarray` num forward-ref
+# string, portanto resolve só em type-check.
+if TYPE_CHECKING:
+    import numpy as np
 
 
 def encode_categoricals(
@@ -18,7 +23,7 @@ def encode_categoricals(
     categorical_cols: Sequence[str],
     numeric_cols: Sequence[str],
     vocabulary: Dict[str, List[str]] = None,
-) -> Tuple[np.ndarray, Dict[str, List[str]]]:
+) -> Tuple["np.ndarray", Dict[str, List[str]]]:
     """
     One-hot encode `categorical_cols` and concatenate with `numeric_cols`.
 
@@ -29,6 +34,8 @@ def encode_categoricals(
     Unknown categorical values at inference time are encoded as all zeros
     (their dimension is just absent from the row's one-hot vector).
     """
+    import numpy as np  # Q.59.F.3 — diferido para fora do startup
+
     inferred = vocabulary is None
     vocab: Dict[str, List[str]] = {} if inferred else {k: list(v) for k, v in vocabulary.items()}
 
@@ -66,6 +73,8 @@ def wmape(y_true: Sequence[float], y_pred: Sequence[float]) -> float:
 
     WMAPE = sum(|y_true - y_pred|) / sum(|y_true|)
     """
+    import numpy as np  # Q.59.F.3 — diferido
+
     y_true_arr = np.asarray(y_true, dtype=np.float64)
     y_pred_arr = np.asarray(y_pred, dtype=np.float64)
     denom = float(np.abs(y_true_arr).sum())

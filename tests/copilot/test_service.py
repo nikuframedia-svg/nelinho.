@@ -303,6 +303,11 @@ class TestRlmDiagnostic:
             )
 
         monkeypatch.setattr("src.copilot.rlm.agent.run_rlm_agent", _fake_rlm)
+        # Q.55.B.2 — o RLM só corre quando a camada semântica tem dados.
+        # Stub para o engine in-memory contar como "com dados" no teste.
+        monkeypatch.setattr(
+            CopilotService, "_resolve_semantic_queries", lambda self: object(),
+        )
 
         svc = _make_service(fake_session, tenant_id)
         req = _make_request("Porque caiu o OEE esta semana?")
@@ -331,6 +336,9 @@ class TestRlmDiagnostic:
             )
 
         monkeypatch.setattr("src.copilot.rlm.agent.run_rlm_agent", _fake_rlm)
+        monkeypatch.setattr(
+            CopilotService, "_resolve_semantic_queries", lambda self: object(),
+        )
         mock_ollama.queue_chat(valid_llm_response_factory(intent="generic"))
 
         svc = _make_service(fake_session, tenant_id)
@@ -351,6 +359,9 @@ class TestRlmDiagnostic:
             raise RuntimeError("kernel indisponível")
 
         monkeypatch.setattr("src.copilot.rlm.agent.run_rlm_agent", _boom)
+        monkeypatch.setattr(
+            CopilotService, "_resolve_semantic_queries", lambda self: object(),
+        )
         mock_ollama.queue_chat(valid_llm_response_factory(intent="generic"))
 
         svc = _make_service(fake_session, tenant_id)
@@ -359,3 +370,26 @@ class TestRlmDiagnostic:
 
         assert resp.type == "ANSWER"
         assert len(mock_ollama.chat_calls) == 1
+
+    async def test_rag_failure_faz_rollback_e_completa(
+        self, fake_session, tenant_id, patched_service_deps, mock_ollama,
+        monkeypatch, valid_llm_response_factory,
+    ):
+        """Q.55.B.2.1 — uma falha no RAG (ex.: tabela `copilot_rag_chunk`
+        ausente) aborta a transação asyncpg. O pedido tem de recuperar com
+        rollback e responder na mesma, não cascatear InFailedSQLTransaction."""
+        async def _rag_boom(session, tenant_id, query, top_k=8):
+            raise RuntimeError('relation "copilot_rag_chunk" does not exist')
+
+        monkeypatch.setattr("src.copilot.service.retrieve_rag_chunks", _rag_boom)
+        monkeypatch.setattr(
+            CopilotService, "_resolve_semantic_queries", lambda self: None,
+        )
+        mock_ollama.queue_chat(valid_llm_response_factory(intent="generic"))
+
+        svc = _make_service(fake_session, tenant_id)
+        # "gargalo" → intent diagnostic → o caminho RAG é exercitado.
+        resp, audit = await svc.process_ask(_make_request("Onde está o gargalo?"))
+
+        assert resp.type == "ANSWER"
+        assert fake_session.rollback_calls >= 1

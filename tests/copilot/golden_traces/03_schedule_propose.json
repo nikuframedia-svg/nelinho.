@@ -1,0 +1,49 @@
+{
+  "trace_id": "03_schedule_propose",
+  "intent_label": "schedule_propose",
+  "purpose": "Pedido de proposta de schedule — intent interno generic; LLM devolve PROPOSAL com action CREATE_DECISION_PR.",
+  "input": {
+    "user_query": "propoe um schedule para 2026-05-25",
+    "context_window_hours": 48
+  },
+  "canonical_llm_response": {
+    "type": "PROPOSAL",
+    "intent": "explain_plan_change",
+    "summary": "Proposta de schedule para 2026-05-25 com 14 ordens prioritárias.",
+    "facts": [
+      {
+        "text": "14 ordens K1/K2 prontas para iniciar Laminagem em 2026-05-25.",
+        "citations": [
+          {
+            "source_type": "db",
+            "ref": "table:production_orders;ready:2026-05-25",
+            "label": "Ordens prontas",
+            "confidence": 0.9,
+            "trust_index": 0.85
+          }
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "action_type": "CREATE_DECISION_PR",
+        "label": "Criar Decision PR para schedule 2026-05-25",
+        "requires_approval": true,
+        "payload": {"target_date": "2026-05-25"}
+      }
+    ],
+    "warnings": [],
+    "meta": {"model": "gemma3:e4b", "tokens": 200, "latency_ms": 350, "validation_passed": true}
+  },
+  "expected_shape": {
+    "type": "PROPOSAL",
+    "intent_in": ["explain_plan_change", "generic"],
+    "has_summary": true,
+    "min_facts": 1,
+    "max_facts": 5,
+    "actions_count_range": [1, 3],
+    "warnings_count_range": [0, 2],
+    "meta_must_have_keys": ["model", "tokens", "latency_ms", "validation_passed"]
+  },
+  "stability_pinned_at": "2026-05-20"
+}

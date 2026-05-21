@@ -5,12 +5,15 @@ ProdPlan ONE - Allocation Service
 Business logic for employee allocation.
 """
 
+import logging
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from sqlalchemy import select, and_
+logger = logging.getLogger(__name__)
+
+from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.hr.models.allocation import HRAllocation, AllocationStatus
@@ -22,9 +25,27 @@ from src.hr.engines.allocation_adapter import (
     AllocationResult,
 )
 from src.core.models.rates import LaborRate
+from src.plan.models.order import ProductionOrder
 from src.plan.models.schedule import ProductionSchedule
+from src.plan.services.operation_resolver import OperationResolver
+from src.plan.services.phase_classification import (
+    is_completed_phase,
+    is_workable_phase,
+)
 from src.shared.kafka_client import publish_event, Topics
 from src.shared.events import EmployeeAllocatedEvent, LaborCostCommittedEvent
+
+
+class AllocationError(Exception):
+    """Base — uma atribuição foi recusada por uma razão de negócio."""
+
+
+class OrderNotAllocatableError(AllocationError):
+    """Ordem inexistente ou já fora do chão de fábrica (→ HTTP 409)."""
+
+
+class PhaseNotStartedError(AllocationError):
+    """Ordem ainda não arrancou — fase 'Pendente'/'Não Laminado' (→ HTTP 422)."""
 
 
 class AllocationService:
@@ -190,7 +211,7 @@ class AllocationService:
             })
             
             # Publish event
-            await publish_event(
+            await self._publish_best_effort(
                 Topics.EMPLOYEE_ALLOCATED,
                 EmployeeAllocatedEvent(
                     tenant_id=self.tenant_id,
@@ -214,7 +235,7 @@ class AllocationService:
             order_cost = sum(a["estimated_cost"] for a in order_allocations)
             order_hours = sum(a["allocated_hours"] for a in order_allocations)
             
-            await publish_event(
+            await self._publish_best_effort(
                 Topics.LABOR_COST_COMMITTED,
                 LaborCostCommittedEvent(
                     tenant_id=self.tenant_id,
@@ -237,24 +258,54 @@ class AllocationService:
         allocation_date: date,
         allocated_hours: Decimal = Decimal("8"),
     ) -> HRAllocation:
-        """Q.31.D.2 — atribui um operador a um barco para um dia.
+        """Q.31.D.2 / Q.55.B — atribui um operador a um barco para um dia.
 
-        O frontend arrasta operador → barco; aqui resolvemos a operação
-        concreta a partir da `ProductionSchedule` — a fase agendada para
-        esse dia com a menor `operation_sequence`. `HRAllocation.
-        operation_id` é FK obrigatória, por isso sem schedule não há
-        atribuição possível: levanta `ValueError` (a API → 409).
+        O frontend arrasta operador → barco. `HRAllocation.operation_id`
+        é FK obrigatória para `core.operations`; resolvemo-la assim:
+
+        * se houver uma `ProductionSchedule` a cobrir o dia, usamos a
+          sua operação (a fase agendada mais precisa);
+        * senão, resolvemos a operação de routing a partir da FASE
+          ACTUAL da ordem (`OperationResolver`) — não exigimos um
+          schedule sintético, que raramente cobre hoje.
+
+        Recusa de negócio (Q.55.B):
+        * ordem inexistente ou em fase terminal → `OrderNotAllocatableError`
+          (a API → 409);
+        * ordem ainda não arrancada (fase "Pendente") → `PhaseNotStartedError`
+          (a API → 422) — não há operação de trabalho a que atribuir.
 
         O custo é informativo: `hourly_rate` vem de `core.labor_rates`
         (linha efectiva mais recente até `allocation_date`); operador
         sem taxa entra a 0 — o custo nunca é inventado.
         """
-        schedule = await self._resolve_schedule(order_id, allocation_date)
-        if schedule is None:
-            raise ValueError(
-                f"Sem operação agendada para a ordem {order_id} em "
-                f"{allocation_date.isoformat()} — não é possível atribuir."
+        order = await self._load_order(order_id)
+        if order is None:
+            raise OrderNotAllocatableError(
+                f"Ordem {order_id} não existe — não é possível atribuir."
             )
+        phase = order.current_phase_name
+        if is_completed_phase(phase):
+            raise OrderNotAllocatableError(
+                f"Ordem {order_id} já saiu do chão de fábrica "
+                f"(fase '{phase}') — não é possível atribuir."
+            )
+        if not is_workable_phase(phase):
+            raise PhaseNotStartedError(
+                f"Ordem {order_id} ainda não arrancou (fase '{phase}') — "
+                f"não há operação de trabalho a que atribuir um operador."
+            )
+
+        # `operation_id`: schedule a cobrir o dia dá a fase exacta; sem
+        # ele, resolve-se a operação de routing pela fase actual.
+        schedule = await self._resolve_schedule(order_id, allocation_date)
+        if schedule is not None:
+            operation_id = schedule.operation_id
+        else:
+            operation = await OperationResolver(
+                self.session, self.tenant_id
+            ).resolve_phase_operation(phase)
+            operation_id = operation.id
 
         rate = await self._employee_rate(employee_id, allocation_date)
         estimated_cost = allocated_hours * rate
@@ -263,7 +314,7 @@ class AllocationService:
             tenant_id=self.tenant_id,
             employee_id=employee_id,
             order_id=order_id,
-            operation_id=schedule.operation_id,
+            operation_id=operation_id,
             allocation_date=allocation_date,
             allocated_hours=allocated_hours,
             hourly_rate=rate,
@@ -273,14 +324,14 @@ class AllocationService:
         )
         self.session.add(allocation)
 
-        await publish_event(
+        await self._publish_best_effort(
             Topics.EMPLOYEE_ALLOCATED,
             EmployeeAllocatedEvent(
                 tenant_id=self.tenant_id,
                 payload={
                     "employee_id": str(employee_id),
                     "order_id": order_id,
-                    "operation_id": str(schedule.operation_id),
+                    "operation_id": str(operation_id),
                     "allocated_hours": float(allocated_hours),
                     "estimated_cost": float(estimated_cost),
                 },
@@ -289,6 +340,27 @@ class AllocationService:
 
         await self.session.flush()
         return allocation
+
+    async def _load_order(self, order_id: str) -> Optional[ProductionOrder]:
+        """Carrega a `ProductionOrder` por id.
+
+        Aceita o `id` UUID (o que o frontend manda) e também o
+        `legacy_id` numérico (a chave que o histórico ERP usa). Sem
+        match → `None`.
+        """
+        conditions = []
+        parsed = self._safe_uuid(order_id)
+        if parsed is not None:
+            conditions.append(ProductionOrder.id == parsed)
+        if order_id.isdigit():
+            conditions.append(ProductionOrder.legacy_id == int(order_id))
+        if not conditions:
+            return None
+        stmt = select(ProductionOrder).where(
+            ProductionOrder.tenant_id == self.tenant_id,
+            or_(*conditions),
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def _resolve_schedule(
         self, order_id: str, allocation_date: date
@@ -422,6 +494,22 @@ class AllocationService:
             "allocations_count": len(allocations),
         }
     
+    async def _publish_best_effort(self, topic, event) -> None:
+        """Publica um evento sem deixar uma falha do bus rebentar a atribuição.
+
+        Q.55.E.1 — a `HRAllocation` já está na transacção da BD: é a fonte
+        de verdade. Um Kafka offline (dev) ou em outage (prod) não pode
+        reverter uma atribuição confirmada — o evento é só uma notificação
+        a jusante. A falha fica registada para reconciliação posterior.
+        """
+        try:
+            await publish_event(topic, event)
+        except Exception as exc:
+            logger.warning(
+                "publish_event(%s) falhou (best-effort, ignorado): %s",
+                topic, exc,
+            )
+
     def _is_uuid(self, value: str) -> bool:
         try:
             UUID(value)

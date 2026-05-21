@@ -1,0 +1,54 @@
+{
+  "trace_id": "10_escalation",
+  "intent_label": "escalation",
+  "purpose": "Como escalar problema crítico — intent generic; LLM devolve ANSWER com runbook action e warning LOW_TRUST_INDEX (recomendação não baseada em dados).",
+  "input": {
+    "user_query": "como escalo um problema critico de cura?",
+    "context_window_hours": 24
+  },
+  "canonical_llm_response": {
+    "type": "ANSWER",
+    "intent": "generic",
+    "summary": "Problema crítico de cura: contactar chefe de turno + runbook escalation_critical.",
+    "facts": [
+      {
+        "text": "Procedimento: STOP fase, alertar chefe turno via runbook escalation_critical.",
+        "citations": [
+          {
+            "source_type": "rag",
+            "ref": "rag:doc:sop_escalation_critical;chunk:3",
+            "label": "SOP Escalation crítica",
+            "confidence": 0.82,
+            "trust_index": 0.78
+          }
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "action_type": "RUN_RUNBOOK",
+        "label": "Correr runbook escalation_critical",
+        "requires_approval": true,
+        "payload": {"runbook_id": "escalation_critical"}
+      }
+    ],
+    "warnings": [
+      {
+        "code": "LOW_TRUST_INDEX",
+        "message": "Resposta baseada em SOP estatico (sem leitura ao vivo do estado da cura)."
+      }
+    ],
+    "meta": {"model": "gemma3:e4b", "tokens": 160, "latency_ms": 230, "validation_passed": true}
+  },
+  "expected_shape": {
+    "type": "ANSWER",
+    "intent_in": ["generic"],
+    "has_summary": true,
+    "min_facts": 1,
+    "max_facts": 5,
+    "actions_count_range": [0, 3],
+    "warnings_count_range": [0, 2],
+    "meta_must_have_keys": ["model", "tokens", "latency_ms", "validation_passed"]
+  },
+  "stability_pinned_at": "2026-05-20"
+}

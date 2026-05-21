@@ -7,6 +7,7 @@ Async Redis client for caching and session management.
 
 import json
 import logging
+import time
 from datetime import timedelta
 from typing import Any, Optional, TypeVar, Type
 from uuid import UUID
@@ -19,6 +20,12 @@ from .config import settings
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
+
+
+class RedisUnavailable(RuntimeError):
+    """Redis está inacessível — levantada de imediato com o circuit breaker
+    aberto, para um endpoint cacheado não pagar o `socket_connect_timeout`
+    em cada pedido quando o Redis está em baixo (o caso normal em dev)."""
 
 
 class RedisClient:
@@ -48,7 +55,10 @@ class RedisClient:
             max_connections=settings.redis_pool_size,
             decode_responses=True,
             socket_timeout=5.0,
-            socket_connect_timeout=2.0,
+            # Q.54.M — connect timeout curto: o Redis é opcional (em dev está
+            # em baixo). 0.5s chega de sobra para um Redis local; o circuit
+            # breaker em `get_redis()` evita pagar isto a cada pedido.
+            socket_connect_timeout=0.5,
         )
         self._client = redis.Redis(connection_pool=self._pool)
         
@@ -209,13 +219,42 @@ class RedisClient:
 # Global instance
 _redis_client: Optional[RedisClient] = None
 
+# Q.54.M — circuit breaker. Sem isto, cada endpoint cacheado pagava o
+# `socket_connect_timeout` (2s antes; 0.5s agora) em TODOS os pedidos
+# quando o Redis está em baixo — era a causa da página Fábrica congelar
+# ~2s por carregamento em dev. Depois de uma falha de ligação marcamos o
+# Redis como em baixo durante uma janela de arrefecimento e `get_redis()`
+# falha de imediato (`RedisUnavailable`) até a janela passar.
+_REDIS_DOWN_COOLDOWN_SECONDS = 60.0
+_redis_down_until: float = 0.0
+
 
 async def get_redis() -> RedisClient:
-    """Get or create the global Redis client."""
-    global _redis_client
-    if _redis_client is None:
-        _redis_client = RedisClient()
-        await _redis_client.connect()
+    """Devolve o cliente Redis global, ligando-o uma vez.
+
+    Levanta :class:`RedisUnavailable` de imediato enquanto o circuit
+    breaker estiver aberto — os chamadores tratam isto como "sem cache" e
+    seguem para o cálculo, sem bloquear o pedido à espera do timeout.
+    """
+    global _redis_client, _redis_down_until
+    if _redis_client is not None and _redis_client._client is not None:
+        return _redis_client
+
+    if time.monotonic() < _redis_down_until:
+        raise RedisUnavailable("Redis indisponível (circuit breaker aberto)")
+
+    client = RedisClient()
+    try:
+        await client.connect()
+    except Exception:
+        _redis_down_until = time.monotonic() + _REDIS_DOWN_COOLDOWN_SECONDS
+        logger.warning(
+            "Redis indisponível — circuit breaker aberto por %.0fs",
+            _REDIS_DOWN_COOLDOWN_SECONDS,
+        )
+        raise
+    _redis_client = client
+    _redis_down_until = 0.0
     return _redis_client
 
 

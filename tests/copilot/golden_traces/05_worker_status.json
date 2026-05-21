@@ -1,0 +1,54 @@
+{
+  "trace_id": "05_worker_status",
+  "intent_label": "worker_status",
+  "purpose": "Pergunta sobre alocação de trabalhadores — intent generic; LLM devolve ANSWER com 1-3 facts.",
+  "input": {
+    "user_query": "quem esta alocado a Cura hoje?",
+    "context_window_hours": 12
+  },
+  "canonical_llm_response": {
+    "type": "ANSWER",
+    "intent": "generic",
+    "summary": "5 operadores alocados à Cura no turno actual.",
+    "facts": [
+      {
+        "text": "Cura T1: 3 operadores (alocação activa).",
+        "citations": [
+          {
+            "source_type": "db",
+            "ref": "table:allocations;phase:cura;shift:T1",
+            "label": "Alocações Cura T1",
+            "confidence": 0.95,
+            "trust_index": 0.90
+          }
+        ]
+      },
+      {
+        "text": "Cura T2: 2 operadores (alocação activa).",
+        "citations": [
+          {
+            "source_type": "db",
+            "ref": "table:allocations;phase:cura;shift:T2",
+            "label": "Alocações Cura T2",
+            "confidence": 0.95,
+            "trust_index": 0.90
+          }
+        ]
+      }
+    ],
+    "actions": [],
+    "warnings": [],
+    "meta": {"model": "gemma3:e4b", "tokens": 110, "latency_ms": 180, "validation_passed": true}
+  },
+  "expected_shape": {
+    "type": "ANSWER",
+    "intent_in": ["generic"],
+    "has_summary": true,
+    "min_facts": 1,
+    "max_facts": 5,
+    "actions_count_range": [0, 3],
+    "warnings_count_range": [0, 2],
+    "meta_must_have_keys": ["model", "tokens", "latency_ms", "validation_passed"]
+  },
+  "stability_pinned_at": "2026-05-20"
+}

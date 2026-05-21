@@ -52,8 +52,10 @@ from .schemas import (
     PhaseRow,
     ProductOrderCount,
     ProductRow,
+    ProductStockRow,
     RoutingRow,
     ScheduleRow,
+    WarehouseStockRow,
 )
 
 # ─── Engine ─────────────────────────────────────────────────────────────
@@ -517,6 +519,45 @@ async def list_products(limit: int = 50_000) -> list[ProductRow]:
     return [ProductRow(**r) for r in rows]
 
 
+async def list_product_stock(limit: int = 50_000) -> list[ProductStockRow]:
+    """Live on-hand stock cache (`P_STOCK` / `P_STOCKMIN`) per product.
+
+    Reads `dbo.PRODUTO` directly — the ERP keeps a per-product on-hand
+    cache there, so a current snapshot does not need the 12M-row
+    `MOVIMENTO` ledger.
+    """
+    sql = f"""
+    SELECT TOP {int(limit)}
+        p.P_ID       AS product_id,
+        p.P_STOCK    AS stock,
+        p.P_STOCKMIN AS stock_min
+    FROM dbo.PRODUTO p WITH (NOLOCK)
+    ORDER BY p.P_ID
+    """
+    rows = await _fetch_all(sql)
+    return [ProductStockRow(**r) for r in rows]
+
+
+async def list_stock_by_warehouse(limit: int = 200_000) -> list[WarehouseStockRow]:
+    """Per-warehouse on-hand stock from the ERP view
+    `dbo.produto_stocks_por_armazem` (~8 k rows).
+
+    The granular truth the factory uses — stock split across the ~20
+    warehouses. Used by the supply stock mirror.
+    """
+    sql = f"""
+    SELECT TOP {int(limit)}
+        v.P_ID       AS product_id,
+        v.Armazem_Id AS warehouse_id,
+        v.Armazem    AS warehouse_name,
+        v.Stock      AS stock
+    FROM dbo.produto_stocks_por_armazem v WITH (NOLOCK)
+    ORDER BY v.P_ID, v.Armazem_Id
+    """
+    rows = await _fetch_all(sql)
+    return [WarehouseStockRow(**r) for r in rows]
+
+
 async def list_entities(internal_only: bool = False, limit: int = 20_000) -> list[EntityRow]:
     """Entities from `ENTIDADE`. `internal_only=True` restricts to the
     factory operators.
@@ -659,7 +700,9 @@ __all__: Sequence[str] = (
     "list_open_orders",
     "list_operations",
     "list_phases",
+    "list_product_stock",
     "list_products",
     "list_recent_movements",
+    "list_stock_by_warehouse",
     "top_products_by_orders",
 )

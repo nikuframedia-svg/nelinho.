@@ -24,7 +24,7 @@ class _FakeSession:
     def __init__(self, events: List[MoldMaintenanceEvent]) -> None:
         self._events = list(events)
 
-    async def execute(self, stmt):  # noqa: ANN001 — test stub
+    async def execute(self, stmt):
         events = self._events
 
         class _Scalars:

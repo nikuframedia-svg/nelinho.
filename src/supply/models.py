@@ -12,7 +12,18 @@ from decimal import Decimal
 from typing import Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, String, Integer, Float, Date, DateTime, Numeric, Text, func
+from sqlalchemy import (
+    Boolean,
+    String,
+    Integer,
+    Float,
+    Date,
+    DateTime,
+    Numeric,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -197,6 +208,127 @@ class StockReconciliation(TenantBase):
     resolved_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     resolved_ledger_entry_id: Mapped[Optional[UUID]] = mapped_column(
         PG_UUID(as_uuid=True), nullable=True,
+    )
+
+
+# ============================================================================
+# Q.52.K — per-warehouse stock, mirrored from the NELO ERP
+# ============================================================================
+
+class WarehouseStock(TenantBase):
+    """Per-warehouse on-hand stock — snapshot mirrored from the NELO ERP.
+
+    Source is the ERP view `dbo.produto_stocks_por_armazem` (the factory's
+    own stock-by-warehouse view). One row per (tenant, product, warehouse).
+    `product_code` matches `core.products.product_code` (== the ERP
+    `P_ID`). Refreshed by the supply stock ETL mirror; `synced_at` records
+    when the snapshot was taken.
+
+    This is a *snapshot*, not a ledger — the ERP owns the movement
+    history. Re-syncing upserts each (product, warehouse) row in place.
+    """
+
+    __tablename__ = "warehouse_stock"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "product_code", "warehouse_id",
+            name="uq_warehouse_stock_tenant_product_warehouse",
+        ),
+        {"schema": "supply"},
+    )
+
+    product_code: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    warehouse_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    warehouse_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    stock: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6), nullable=False, default=Decimal("0"),
+    )
+    synced_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
+    )
+
+
+# ============================================================================
+# Q.53.D — purchase-order tracking (supplier deliveries)
+# ============================================================================
+
+# Reception status. A PO is `OPEN` until the goods arrive, then `RECEIVED`
+# (fully) or `PARTIAL` (some lines short). `CANCELLED` is a terminal close.
+PO_STATUS_OPEN = "OPEN"
+PO_STATUS_PARTIAL = "PARTIAL"
+PO_STATUS_RECEIVED = "RECEIVED"
+PO_STATUS_CANCELLED = "CANCELLED"
+PO_STATUSES = (PO_STATUS_OPEN, PO_STATUS_PARTIAL, PO_STATUS_RECEIVED, PO_STATUS_CANCELLED)
+
+
+class PurchaseOrder(TenantBase):
+    """A supplier purchase order — one line per material ordered.
+
+    Q.53.D — backs the "Entregas" tab of the Materiais page: tracking of
+    what was ordered, from whom, how much, the ETA and the reception
+    state. The factory's source of truth is the ERP NELO `MOVIMENTO`
+    table (movement type 9 = "Pedidos a fornecedor"); the supply ETL
+    `purchase_orders` mirrors those rows here so the UI does not hit the
+    12M-row ledger live.
+
+    `erp_movement_id` is the originating `MOV_ID` when the row was
+    mirrored from the ERP; it is `NULL` for POs created inside ProdPlan
+    (e.g. by the MRP suggestion flow). The unique constraint on
+    (tenant, erp_movement_id) makes the ETL upsert idempotent — re-syncing
+    never duplicates a PO. Rows with no ERP origin keep `erp_movement_id`
+    NULL and are not covered by the uniqueness rule (Postgres treats
+    NULLs as distinct).
+
+    `qty_ordered` / `qty_received` are kept separate so a PARTIAL
+    delivery is honest: `qty_received < qty_ordered` and the outstanding
+    quantity is the difference.
+    """
+
+    __tablename__ = "purchase_orders"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "erp_movement_id",
+            name="uq_purchase_orders_tenant_erp_movement",
+        ),
+        {"schema": "supply"},
+    )
+
+    # ERP origin — MOV_ID of the MOVIMENTO row (type 9). NULL = born here.
+    erp_movement_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # Human-facing PO reference (ERP order number or internal slug).
+    po_number: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
+
+    # Supplier — free-form name + optional ERP entity id (ENTIDADE.E_ID).
+    supplier_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    supplier_erp_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # Material — `product_code` matches `core.products.product_code`.
+    product_code: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    product_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    qty_ordered: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6), nullable=False, default=Decimal("0"),
+    )
+    qty_received: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6), nullable=False, default=Decimal("0"),
+    )
+    unit_of_measure: Mapped[str] = mapped_column(String(20), nullable=False, default="UN")
+
+    ordered_at: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    eta: Mapped[Optional[date]] = mapped_column(Date, nullable=True, index=True)
+    received_at: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=PO_STATUS_OPEN, index=True,
+    )
+
+    # 'erp_nelo_movimento' when mirrored from the ERP, 'prodplan' otherwise.
+    source: Mapped[str] = mapped_column(String(40), nullable=False, default="prodplan")
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    synced_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(),
     )
 
 

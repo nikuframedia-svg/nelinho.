@@ -19,6 +19,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.governance.audit_service import audit_change
 from src.plan.models.routing_template import (
     ModelRoutingAssignment,
     RoutingTemplate,
@@ -63,6 +64,22 @@ class RoutingTemplateService:
             model_coverage=model_coverage,
         )
         self.session.add(template)
+        await audit_change(
+            self.session,
+            tenant_id=self.tenant_id,
+            entity_type="routing_template",
+            entity_id=template.id,
+            action="INSERT",
+            old_values=None,
+            new_values={
+                "code": code,
+                "name": name,
+                "phase_count": len(phases),
+                "model_coverage": model_coverage,
+                "active": True,
+            },
+            reason="Q.66.B.3 — template de routing criado",
+        )
         for idx, phase in enumerate(phases, start=1):
             phase_row = RoutingTemplatePhase(
                 id=uuid4(),
@@ -79,6 +96,22 @@ class RoutingTemplateService:
                 alternative_group_id=phase.get("alternative_group_id"),
             )
             self.session.add(phase_row)
+            await audit_change(
+                self.session,
+                tenant_id=self.tenant_id,
+                entity_type="routing_template_phase",
+                entity_id=phase_row.id,
+                action="INSERT",
+                old_values=None,
+                new_values={
+                    "template_id": str(template.id),
+                    "seq": phase_row.seq,
+                    "phase_id": phase_row.phase_id,
+                    "requires_mold": phase_row.requires_mold,
+                    "can_skip": phase_row.can_skip,
+                },
+                reason="Q.66.B.3 — fase de template de routing criada",
+            )
         await self.session.flush()
         return template
 
@@ -144,6 +177,20 @@ class RoutingTemplateService:
             alt_template_id=alt_template_id,
         )
         self.session.add(row)
+        await audit_change(
+            self.session,
+            tenant_id=self.tenant_id,
+            entity_type="model_routing_assignment",
+            entity_id=row.id,
+            action="INSERT",
+            old_values=None,
+            new_values={
+                "model_id": model_id,
+                "primary_template_id": str(primary_template_id),
+                "alt_template_id": str(alt_template_id) if alt_template_id else None,
+            },
+            reason="Q.66.B.3 — atribuicao de routing a modelo",
+        )
         await self.session.flush()
         return row
 

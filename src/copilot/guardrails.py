@@ -9,9 +9,13 @@ import logging
 import re
 from typing import Dict, List, Any, Tuple
 
-from src.copilot.schemas import CopilotResponse, Action
+from src.copilot.schemas import CopilotResponse, Action, ChartSpec
 
 logger = logging.getLogger(__name__)
+
+
+# Tipos de gráfico permitidos (closed whitelist — espelha ChartSpec.type).
+ALLOWED_CHART_TYPES = {"line", "bar", "gauge", "scatter", "heatmap"}
 
 
 # Padrões de prompt injection (simplificado - pode ser melhorado)
@@ -104,6 +108,56 @@ def validate_actions(actions: List[Dict[str, Any]]) -> Tuple[bool, List[str]]:
             errors.append(f"Ação '{action_type}' não está no allow-list")
     
     return len(errors) == 0, errors
+
+
+def normalize_charts(charts: Any) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Normalizar e validar os gráficos emitidos pelo LLM.
+
+    Segue o mesmo princípio dos guardrails de actions/citations: o LLM é
+    falível, por isso descartamos silenciosamente gráficos malformados em
+    vez de rebentar a resposta inteira. Um gráfico só sobrevive se passar
+    pelo :class:`ChartSpec` Pydantic — closed whitelist de ``type`` e
+    ``data`` não-vazia (não há gráfico sem dados reais).
+
+    Returns:
+        (charts_validos, warnings) — gráficos prontos para o schema e uma
+        lista de mensagens sobre os que foram descartados.
+    """
+    out: List[Dict[str, Any]] = []
+    warnings: List[str] = []
+
+    if charts is None:
+        return out, warnings
+    if not isinstance(charts, list):
+        warnings.append(
+            f"charts deve ser uma lista, recebido {type(charts).__name__} — ignorado"
+        )
+        return out, warnings
+
+    for i, chart in enumerate(charts):
+        if not isinstance(chart, dict):
+            warnings.append(f"Gráfico {i} não é um objeto — ignorado")
+            continue
+        chart_type = chart.get("type")
+        if chart_type not in ALLOWED_CHART_TYPES:
+            warnings.append(
+                f"Gráfico {i} com type inválido '{chart_type}' — ignorado"
+            )
+            continue
+        try:
+            spec = ChartSpec(
+                type=chart_type,
+                title=str(chart.get("title", "")),
+                data=chart.get("data", []),
+                config=chart.get("config", {}) if isinstance(chart.get("config"), dict) else {},
+            )
+        except Exception as exc:  # ValidationError do Pydantic
+            warnings.append(f"Gráfico {i} rejeitado pela validação: {exc}")
+            logger.warning(f"normalize_charts descartou gráfico {i}: {exc}")
+            continue
+        out.append(spec.model_dump())
+
+    return out, warnings
 
 
 def validate_response_structure(

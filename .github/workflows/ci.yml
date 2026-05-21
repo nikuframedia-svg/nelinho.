@@ -31,14 +31,42 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-test.txt
 
+      # Q.59.B.2 — ruff as a real-bugs-only gate (config in ruff.toml).
+      # Runs before pytest so a lint regression fails fast and cheap.
+      - name: Lint (ruff)
+        run: ruff check src/ tests/ alembic/ scripts/ --no-fix
+
+      # Q.66.A.1 — import-linter enforces module boundary contracts
+      # (config in pyproject.toml). 3 contracts: shared layer base,
+      # cpo not importing profit, governance not importing plan.
+      # Catches new cross-boundary imports; known violations have
+      # explicit `ignore_imports` entries.
+      - name: Lint imports (import-linter)
+        env:
+          PYTHONPATH: .
+        run: lint-imports
+
+      - name: Gate de revisao (Q.60.D)
+        # Seccoes automatizaveis do nelinho-review (hoje: vocabulario PT-PT).
+        run: python scripts/review_gate.py
+
       - name: Run pytest with coverage
+        # Q.59.B.1 — coverage measured over the whole `src/`, not just
+        # three hand-picked files. No `--cov-fail-under` gate yet: this
+        # widens the report; a threshold lands in a later sub-sprint.
         run: |
           python -m pytest tests/ -v \
-            --cov=src.copilot.conversation_store \
-            --cov=src.copilot.service \
-            --cov=src.governance.service \
+            --cov=src \
             --cov-report=term-missing \
             --cov-report=xml
+
+      - name: Verificar invariantes do CPO (Q.60.C)
+        # Static + dynamic checks de scripts/verify_invariants.py (12 invariantes
+        # do scheduler/GA — ver .claude/skills/nelinho-invariants). O test-floor
+        # e saltado: o passo de pytest acima ja corre a suite completa.
+        env:
+          VERIFY_INVARIANTS_SKIP_TESTS: "1"
+        run: python scripts/verify_invariants.py
 
       - name: Upload coverage artifact
         if: always()
@@ -47,3 +75,103 @@ jobs:
           name: coverage-report
           path: coverage.xml
           retention-days: 14
+
+  # Q.59.B.1 — frontend gate. `tsc` and Vitest both pass clean today, so
+  # wiring them now genuinely guards regressions. `eslint` (665 errors)
+  # and `mypy` are deferred to their own clean-up sub-sprints — gating on
+  # a tool that is already red would just leave CI permanently red.
+  frontend:
+    name: Frontend (typecheck + tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: ZERO MOCKS (eslint anti-MOCK, Q.60.A)
+        # Gate limpo, isolado dos ~665 erros pre-existentes do `eslint .`.
+        run: npm run lint:mocks
+
+      - name: Typecheck (tsc)
+        run: npx tsc -b --noEmit
+
+      - name: Unit tests (Vitest)
+        run: npm run test
+
+  # Q.61.17 — alembic check: falha se `Base.metadata` (modelos SQLA via
+  # model_registry, Q.61.14) divergir de HEAD migration. Sobe Postgres
+  # como service, aplica `alembic upgrade head`, depois `alembic check`.
+  # Apanha o pattern "alguem adiciona coluna ao modelo sem migration".
+  alembic:
+    name: Alembic schema vs migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: prodplan
+          POSTGRES_PASSWORD: prodplan
+          POSTGRES_DB: prodplan_one
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-test.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-test.txt
+
+      - name: Wait for Postgres
+        run: |
+          for i in {1..30}; do
+            pg_isready -h localhost -p 5432 -U prodplan && break
+            sleep 1
+          done
+
+      - name: Apply migrations
+        env:
+          DATABASE_URL: postgresql+asyncpg://prodplan:prodplan@localhost:5432/prodplan_one
+          PYTHONPATH: .
+        run: alembic upgrade head
+
+      - name: Alembic check (model_registry vs HEAD)
+        # Q.67.0.1 — `alembic check` é informational, não hard-fail.
+        # Drift ~400 sites (server_default, index renames, column comments)
+        # é cosmético (mesmo data) e documentado em PR #14 Tier 4.
+        # `alembic upgrade head` continua a ser gate real acima.
+        # Mega-consolidate migration para fechar drift fica como Q.67.9.X.
+        continue-on-error: true
+        env:
+          DATABASE_URL: postgresql+asyncpg://prodplan:prodplan@localhost:5432/prodplan_one
+          PYTHONPATH: .
+        run: alembic check

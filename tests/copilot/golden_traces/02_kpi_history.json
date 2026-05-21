@@ -1,0 +1,54 @@
+{
+  "trace_id": "02_kpi_history",
+  "intent_label": "kpi_history",
+  "purpose": "Pergunta histórica sobre OEE — LLM devolve intent explain_oee com facts numéricos.",
+  "input": {
+    "user_query": "como esteve o OEE na última semana?",
+    "context_window_hours": 168
+  },
+  "canonical_llm_response": {
+    "type": "ANSWER",
+    "intent": "explain_oee",
+    "summary": "OEE médio da última semana: 73.2% (target 78%).",
+    "facts": [
+      {
+        "text": "OEE médio últimos 7 dias: 73.2%.",
+        "citations": [
+          {
+            "source_type": "calculation",
+            "ref": "calc:oee;window:7d",
+            "label": "Cálculo OEE 7d",
+            "confidence": 0.88,
+            "trust_index": 0.82
+          }
+        ]
+      },
+      {
+        "text": "Pior dia: terça (68.4%).",
+        "citations": [
+          {
+            "source_type": "calculation",
+            "ref": "calc:oee;day:tue",
+            "label": "OEE diário",
+            "confidence": 0.85,
+            "trust_index": 0.80
+          }
+        ]
+      }
+    ],
+    "actions": [],
+    "warnings": [],
+    "meta": {"model": "gemma3:e4b", "tokens": 120, "latency_ms": 180, "validation_passed": true}
+  },
+  "expected_shape": {
+    "type": "ANSWER",
+    "intent_in": ["explain_oee", "generic"],
+    "has_summary": true,
+    "min_facts": 1,
+    "max_facts": 5,
+    "actions_count_range": [0, 3],
+    "warnings_count_range": [0, 2],
+    "meta_must_have_keys": ["model", "tokens", "latency_ms", "validation_passed"]
+  },
+  "stability_pinned_at": "2026-05-20"
+}

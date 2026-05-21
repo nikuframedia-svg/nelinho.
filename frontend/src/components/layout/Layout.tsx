@@ -11,9 +11,9 @@ import { useCommandPalette, useKeyboardShortcuts, useSchemaDrift } from '../../h
 import { SchemaDriftAlert } from '../palantir';
 
 /**
- * Q.18.UI.A.1 — Layout reorganizado para o brief FRONTEND_DESIGN_PROMPT:
- * Sidebar lateral 256px (3 grupos PT-PT) + TopBar fina (52px, search/
- * notificações/data) + main com margin-left para acomodar a Sidebar.
+ * Q.52.A — Layout afinado ao design NELO.html:
+ * Sidebar lateral 220px (3 grupos PT-PT) + TopBar fina (52px, search/
+ * data/assistente) + main com margin-left para acomodar a Sidebar.
  *
  * O AlphaHeader (TopBar horizontal em inglês com mocks) foi apagado.
  */
@@ -32,8 +32,8 @@ export function Layout() {
   return (
     <div className="min-h-screen bg-bg-base">
       <Sidebar />
-      {/* Sidebar é fixed 240px. Empurrar conteúdo. */}
-      <div className="flex flex-col min-h-screen" style={{ marginLeft: 240 }}>
+      {/* Sidebar é fixed 220px. Empurrar conteúdo. */}
+      <div className="flex flex-col min-h-screen" style={{ marginLeft: 220 }}>
         <TopBar />
         <main className="flex-1 min-h-[calc(100vh-52px)]">
           <Outlet />

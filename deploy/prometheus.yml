@@ -1,0 +1,58 @@
+# Q.61.38 — Prometheus config nativa (sem Docker).
+#
+# Como instalar (Windows / WSL / Linux):
+#   1. Download prometheus binary -> deploy/prometheus/
+#   2. Run: prometheus --config.file=deploy/prometheus.yml --storage.tsdb.path=./var/prometheus
+#   3. Sobe em localhost:9090 (web UI + queries)
+#   4. Grafana scape: aponta data source a http://localhost:9090
+#
+# Em produccao, criar systemd unit como deploy/systemd/prometheus.service
+# (template no fim deste plano).
+#
+# Frequencia: 4×/minuto (15s scrape interval) por default — suficiente
+# para acompanhar drift sem inundar a TSDB.
+
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: nelo-on-prem
+    env: prod
+
+# Alertmanager (opcional, sem alertas configurados ainda)
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []  # alertmanager:9093 quando se ligar
+
+# Rules — drift gate metrics (futuro Q.61.38.1)
+rule_files: []
+  # - "rules/nelinho_slo.yml"
+
+scrape_configs:
+  # ProdPlan ONE API — /metrics endpoint em src/main.py:522
+  - job_name: nelinho-api
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - "localhost:8001"
+        labels:
+          service: nelinho-api
+          tier: backend
+
+  # Prometheus self-monitoring (essencial — apanha problemas no scraper)
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - "localhost:9090"
+        labels:
+          service: prometheus
+          tier: monitoring
+
+  # Node exporter (CPU/RAM/disk) — instalar separadamente:
+  #   download https://prometheus.io/download/#node_exporter
+  #   correr: node_exporter
+  # - job_name: node
+  #   static_configs:
+  #     - targets: ["localhost:9100"]

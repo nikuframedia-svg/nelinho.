@@ -65,7 +65,7 @@ class _FakeSession:
         self.rows = list(rows)
         self.committed = False
 
-    async def execute(self, stmt):  # noqa: ANN001 — test stub
+    async def execute(self, stmt):
         try:
             params = stmt.compile().params
         except Exception:

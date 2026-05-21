@@ -1,115 +1,12 @@
-/**
- * Audit Trail Page
- * 
- * Displays audit logs and decision governance trail.
- * Uses REAL API data - NO mock data.
- * 
- * Integrates with:
- * - Decision Governance API: /v1/governance/decisions
- * - Entity Changes API: (placeholder for when implemented)
- */
-
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { 
-  History, 
-  Filter, 
-  Download, 
-  User, 
-  Eye, 
-  Loader2,
-  ShieldCheck,
-  CheckCircle,
-  XCircle,
-  AlertTriangle,
-  RotateCcw,
-  Hash,
-  Info,
-  AlertCircle,
-} from 'lucide-react';
+import { History, Filter, Download, User, Eye, Loader2, ShieldCheck, CheckCircle, XCircle, AlertTriangle, RotateCcw, Hash, Info, AlertCircle } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/Dialog';
 import { DarkPageLayout } from '../../layouts';
-import {
-  DarkCard,
-  DarkButton,
-  DarkBadge,
-  DarkTable,
-  DarkTableHead,
-  DarkTableBody,
-  DarkTableRow,
-  DarkTableHeader,
-  DarkTableCell,
-  DarkPillButton,
-  DarkInput,
-  DarkSelect,
-  DarkIconButton,
-} from '../../components/dark';
+import { DarkCard, DarkButton, DarkBadge, DarkTable, DarkTableHead, DarkTableBody, DarkTableRow, DarkTableHeader, DarkTableCell, DarkPillButton, DarkInput, DarkSelect, DarkIconButton } from '../../components/dark';
 import { governanceApi } from '../../lib/factoryApi';
 import type { DecisionRun } from '../../lib/factoryApi';
-import { getApiBase } from '../../lib/api';
-
-// Q.21.A — porta única via api.ts (concorda com VITE_API_URL).
-const API_BASE = getApiBase();
-
-// ============================================================================
-// TYPES
-// ============================================================================
-
-interface AuditLog {
-  id: string;
-  timestamp: string;
-  user_id: string;
-  user_name?: string;
-  entity_type: string;
-  entity_id: string;
-  action: string;
-  changes: Record<string, any>;
-  before_state?: Record<string, any> | null;
-  after_state?: Record<string, any> | null;
-  metadata?: Record<string, any>;
-}
-
-type ViewMode = 'table' | 'timeline';
-type TabMode = 'audit' | 'decisions';
-
-// ============================================================================
-// API FUNCTIONS
-// ============================================================================
-
-async function fetchAuditLogs(filters: {
-  entity_type?: string;
-  user?: string;
-  date_from?: string;
-  date_to?: string;
-}): Promise<AuditLog[]> {
-  const tenantId = localStorage.getItem('tenant_id') || '00000000-0000-0000-0000-000000000000';
-  
-  const params = new URLSearchParams();
-  if (filters.entity_type) params.append('entity_type', filters.entity_type);
-  if (filters.user) params.append('user', filters.user);
-  if (filters.date_from) params.append('date_from', filters.date_from);
-  if (filters.date_to) params.append('date_to', filters.date_to);
-  
-  const response = await fetch(`${API_BASE}/v1/governance/audit-logs?${params}`, {
-    headers: {
-      'X-Tenant-Id': tenantId,
-    },
-  });
-  
-  if (!response.ok) {
-    // If 404, endpoint not yet implemented - return empty array with notice
-    if (response.status === 404) {
-      return [];
-    }
-    throw new Error(`Failed to fetch audit logs: ${response.status}`);
-  }
-  
-  return response.json();
-}
-
-// ============================================================================
-// COMPONENT
-// ============================================================================
+import { fetchAuditLogs, type AuditLog, type ViewMode, type TabMode } from './auditTrailTypes';
 
 export function AuditTrailPage() {
   const queryClient = useQueryClient();

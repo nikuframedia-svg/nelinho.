@@ -1,0 +1,42 @@
+# nelinho — reverse-proxy para a demo remota via Tailscale (Windows, casa).
+# ===========================================================================
+# Serve o build estático do frontend na raiz e faz proxy de /v1 e /api para o
+# uvicorn local (127.0.0.1:8001). HTTP simples — o tailnet do Tailscale já
+# cifra tudo (WireGuard). NÃO é o ficheiro de produção Linux (deploy/Caddyfile).
+#
+# Antes de arrancar:
+#   1. `npm run build` na pasta frontend  -> gera frontend/dist/
+#   2. Substituir 100.x.x.x abaixo pelo IP do tailnet do host (`tailscale ip -4`)
+#   3. uvicorn a correr em 127.0.0.1:8001 (skill /nitro, passos 1-2)
+#
+# Arrancar:  caddy start --config deploy/Caddyfile.tailscale
+# Parar:     caddy stop
+# (`caddy start` corre em background; precisa da admin API local em :2019, que
+#  só escuta em 127.0.0.1 — não fica exposta no tailnet.)
+
+{
+    auto_https off
+}
+
+:80 {
+    # Escutar SÓ no IP do tailnet — o app não fica exposto na rede de casa.
+    bind 100.75.136.9
+
+    encode zstd gzip
+
+    # API → uvicorn. SSE (/v1/realtime/events) faz auto-flush no Caddy.
+    @api path /v1/* /api/* /health /healthz /readyz /docs /openapi.json
+    handle @api {
+        reverse_proxy 127.0.0.1:8001 {
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+        }
+    }
+
+    # Tudo o resto → build estático do frontend, com fallback SPA.
+    handle {
+        root * C:/Users/User/nelinho/frontend/dist
+        try_files {path} /index.html
+        file_server
+    }
+}

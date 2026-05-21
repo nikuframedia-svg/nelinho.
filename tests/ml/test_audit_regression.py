@@ -31,7 +31,7 @@ class _StubRetrainJob:
     def __init__(self, features: List[Dict[str, Any]]):
         self._features = features
 
-    def extract_features(self, tenant_id):  # noqa: D401 — abstract impl
+    def extract_features(self, tenant_id):
         return self._features
 
     def train(self, features) -> Tuple[Any, int]:
@@ -48,7 +48,7 @@ class TestRetrainJobEmptyDataset:
 
         # Subclass at runtime to inherit the abstract lifecycle from
         # RetrainJob while keeping our stub features.
-        Job = type(  # noqa: N806 — class factory pattern
+        Job = type(
             "Job",
             (_StubRetrainJob, RetrainJob),
             {"model_name": "stub_empty"},

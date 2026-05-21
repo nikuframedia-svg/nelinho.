@@ -309,6 +309,13 @@ categories:
       data_type: int
       description: WF12 — fases com < N workers aptos flagged as skill bottleneck (Pintura=22, Colagem
         Golas=13, Desmolde=16)
+    - key: duplicates.severity
+      value: WARNING
+      data_type: string
+      description: Severity reported by the duplicate-business-keys quality gate
+        (blocking|warning|info). Q.67.1.C — default WARNING preserves NELO behaviour
+        (the transform step dedupes by business key + ingestion_id); tenants with
+        already-clean data may escalate to BLOCKING via /regras → quality.
   mold:
     description: Mould health weights and maintenance threshold.
     settings:

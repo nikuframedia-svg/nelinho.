@@ -14,6 +14,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.governance.audit_service import audit_change
 from src.plan.models.mrp import MaterialRequirement, PurchaseOrder, POStatus
 from src.plan.engines.mrp_adapter import MRPAdapter, GrossRequirement, InventoryPosition, RequirementSource
 from src.plan.engines.bom_adapter import BOMAdapter
@@ -117,6 +118,7 @@ class MRPService:
         # Save requirements to database
         for suggestion in result.purchase_suggestions:
             requirement = MaterialRequirement(
+                id=uuid4(),
                 tenant_id=self.tenant_id,
                 mrp_run_id=mrp_run_id,
                 material_id=UUID(suggestion["item_id"]) if self._is_uuid(suggestion["item_id"]) else None,
@@ -129,7 +131,23 @@ class MRPService:
                 is_purchased=True,
             )
             self.session.add(requirement)
-        
+            await audit_change(
+                self.session,
+                tenant_id=self.tenant_id,
+                entity_type="material_requirement",
+                entity_id=requirement.id,
+                action="INSERT",
+                old_values=None,
+                new_values={
+                    "mrp_run_id": mrp_run_id,
+                    "material_id": str(requirement.material_id) if requirement.material_id else None,
+                    "net_requirement": float(requirement.net_requirement or 0),
+                    "order_date": requirement.order_date.isoformat() if requirement.order_date else None,
+                    "due_date": requirement.due_date.isoformat() if requirement.due_date else None,
+                },
+                reason="Q.66.B.3 — requisito de material planeado pelo MRP",
+            )
+
         await self.session.flush()
 
         # Publish event
@@ -207,6 +225,7 @@ class MRPService:
             po_number = f"PO-{datetime.now().strftime('%Y%m%d')}-{po_sequence:04d}"
             
             po = PurchaseOrder(
+                id=uuid4(),
                 tenant_id=self.tenant_id,
                 po_number=po_number,
                 supplier_id=UUID(suggestion["supplier_id"]) if suggestion.get("supplier_id") else None,
@@ -219,8 +238,26 @@ class MRPService:
                 status=POStatus.DRAFT,
                 mrp_run_id=mrp_run_id,
             )
-            
+
             self.session.add(po)
+            await audit_change(
+                self.session,
+                tenant_id=self.tenant_id,
+                entity_type="purchase_order",
+                entity_id=po.id,
+                action="INSERT",
+                old_values=None,
+                new_values={
+                    "po_number": po_number,
+                    "supplier_id": str(po.supplier_id) if po.supplier_id else None,
+                    "material_id": str(po.material_id) if po.material_id else None,
+                    "order_quantity": float(po.order_quantity or 0),
+                    "total_cost": float(po.total_cost or 0),
+                    "status": POStatus.DRAFT.value,
+                    "mrp_run_id": mrp_run_id,
+                },
+                reason="Q.66.B.3 — purchase order criada (DRAFT)",
+            )
             created_pos.append(po)
             
             # Publish event

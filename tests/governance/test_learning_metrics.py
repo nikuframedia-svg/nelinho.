@@ -47,7 +47,7 @@ class _FakeSession:
     def __init__(self, *batches: List[Any]) -> None:
         self._batches: List[List[Any]] = [list(b) for b in batches]
 
-    async def execute(self, _stmt):  # noqa: ANN001 — test stub
+    async def execute(self, _stmt):
         rows = self._batches.pop(0) if self._batches else []
 
         class _R:

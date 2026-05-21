@@ -42,7 +42,7 @@ class _FakeSession:
     def __init__(self, users: List[User]) -> None:
         self.users = list(users)
 
-    async def execute(self, stmt):  # noqa: ANN001 — test stub
+    async def execute(self, stmt):
         params = stmt.compile().params
         uuids = [v for v in params.values() if isinstance(v, UUID)]
         strs = [v for v in params.values() if isinstance(v, str)]

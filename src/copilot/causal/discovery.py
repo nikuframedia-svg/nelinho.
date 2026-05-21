@@ -369,7 +369,10 @@ async def persist_discovery_report(
         candidate_edges=[e.to_json() for e in report.candidate_edges],
         review_status=CausalDiscoveryStatus.PENDING.value,
     )
-    session.add(row)
+    # Q.66.B.3: CausalDiscoveryReport e output de ML (descoberta causal
+    # automatica de candidate edges), nao state autoritativo de governance.
+    # Workflow de aprovacao das edges vive em CausalDiscoveryStatus.PENDING.
+    session.add(row)  # noqa: audit_coverage  # ML discovery output, not gov state
     return row
 
 

@@ -79,6 +79,7 @@ def _build_dispatch_context(
                 entity_refs=list(alert_payload.get("entity_refs", []) or []),
                 status=STATUS_ACTIVE,
             )
+            # noqa: audit_coverage  # alerta é log/notificação, não state autoritativo — RuleFiring já regista o trigger
             session.add(row)
             # Caller controls commit; if they don't, autocommit on
             # request close still flushes. Don't raise on persist

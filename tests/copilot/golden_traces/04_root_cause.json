@@ -1,0 +1,42 @@
+{
+  "trace_id": "04_root_cause",
+  "intent_label": "root_cause",
+  "purpose": "Pergunta causal — _detect_intent retorna 'diagnostic' (palavra 'porque'); RLM agent falha (sem semantic layer nos tests) e cai para LLM normal.",
+  "input": {
+    "user_query": "porque e que a fase Laminagem esta atrasada?",
+    "context_window_hours": 72
+  },
+  "canonical_llm_response": {
+    "type": "ANSWER",
+    "intent": "generic",
+    "summary": "Laminagem atrasada por falta de pares qualificados na pós-cura.",
+    "facts": [
+      {
+        "text": "Apenas 2 pares Laminagem disponíveis nas últimas 8h vs requisito de 4.",
+        "citations": [
+          {
+            "source_type": "calculation",
+            "ref": "calc:workforce;phase:laminagem;window:8h",
+            "label": "Workforce snapshot 8h",
+            "confidence": 0.78,
+            "trust_index": 0.72
+          }
+        ]
+      }
+    ],
+    "actions": [],
+    "warnings": [],
+    "meta": {"model": "gemma3:e4b", "tokens": 180, "latency_ms": 240, "validation_passed": true}
+  },
+  "expected_shape": {
+    "type": "ANSWER",
+    "intent_in": ["generic", "explain_plan_change"],
+    "has_summary": true,
+    "min_facts": 1,
+    "max_facts": 5,
+    "actions_count_range": [0, 3],
+    "warnings_count_range": [0, 2],
+    "meta_must_have_keys": ["model", "tokens", "latency_ms", "validation_passed"]
+  },
+  "stability_pinned_at": "2026-05-20"
+}

@@ -59,7 +59,7 @@ class ToolExecutor:
         executor = ToolExecutor(registry)
         final_response, tool_log = await executor.execute_with_tools(
             user_query="qual é o backlog?",
-            model="gemma4:e4b",
+            model=settings.model_for("tool_dispatch"),
             system_prompt="You are a factory advisor...",
             history=[...],
         )

@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.shared.database import get_session
-from src.twin.service import TwinService
+from src.twin.service import TwinService, TwinValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +62,11 @@ class SimulationResult(BaseModel):
     status: str
     kpis: Dict[str, Any]
     comparison: Optional[Dict[str, Any]] = None
+    # `mode` is honest: "projecao_linear" = KPIs from linear delta
+    # projection only; "solver_cpsat" = CP-SAT ran automatically.
+    mode: str = "projecao_linear"
+    mode_reason: Optional[str] = None
+    solver: Optional[Dict[str, Any]] = None
     simulated_at: str
 
 
@@ -119,7 +124,7 @@ async def get_baseline_state(service: TwinService = Depends(get_twin_service)):
     marked with reason. Data comes from the Factory Data Product semantic
     layer when ingestion has run.
     """
-    baseline = service._create_baseline_state()
+    baseline = await service._create_baseline_state()
 
     available: Dict[str, Any] = {}
     blocked: Dict[str, Any] = {}
@@ -231,6 +236,12 @@ async def apply_delta(
             description=delta.description,
             applied_by=user,
         )
+    except TwinValidationError as e:
+        # Q.54.I — input inválido (entity_type desconhecido, NaN/inf,
+        # percentagem fora de gama) → 422, não 400/404.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)
+        )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -254,6 +265,13 @@ async def simulate_scenario(
 ):
     try:
         result = await service.simulate(scenario_id)
+    except TwinValidationError as e:
+        # Q.54.I — delta inválido num cenário existente → 422 (erro de
+        # input). Tem de ser apanhado ANTES do `except ValueError` porque
+        # TwinValidationError é subclasse de ValueError.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)
+        )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
@@ -268,6 +286,9 @@ async def simulate_scenario(
         status="simulated",
         kpis=result.get("after", {}),
         comparison=result.get("delta_summary"),
+        mode=result.get("mode", "projecao_linear"),
+        mode_reason=result.get("mode_reason"),
+        solver=result.get("solver"),
         simulated_at=result.get("simulated_at", datetime.now(timezone.utc).isoformat()),
     )
 
@@ -296,6 +317,11 @@ async def solve_scenario(
             operations=request.operations,
             machines=request.machines,
             time_limit_sec=request.time_limit_sec,
+        )
+    except TwinValidationError as e:
+        # Q.54.I — delta inválido → 422 (antes do except ValueError).
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))

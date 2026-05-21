@@ -83,7 +83,10 @@ class ReworkService:
             context=context or {},
             notes=notes,
         )
-        self.session.add(row)
+        # Q.66.B.3: ReworkEntry e evento operacional (detecao de retrabalho
+        # com causer/chefe/mold/custo), nao state autoritativo de governance —
+        # auditoria propria via Kafka REWORK_ENTRY_CREATED + tabela quality.
+        self.session.add(row)  # noqa: audit_coverage  # quality event, kafka-audited, not gov state
         await self.session.flush()
 
         try:
@@ -218,7 +221,10 @@ class ErrorCatalogService:
             mold_related=mold_related,
             active=True,
         )
-        self.session.add(row)
+        # Q.66.B.3: ErrorCatalog upsert e seed/sync da taxonomia de erros
+        # (admin config raramente alterada, severity_hint + preventive_action),
+        # nao state operacional autoritativo. ReworkEntry e que e o evento.
+        self.session.add(row)  # noqa: audit_coverage  # taxonomy upsert, not gov state
         await self.session.flush()
         return row
 

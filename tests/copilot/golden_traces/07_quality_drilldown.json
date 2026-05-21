@@ -1,0 +1,54 @@
+{
+  "trace_id": "07_quality_drilldown",
+  "intent_label": "quality_drilldown",
+  "purpose": "Drill-down a defeitos — intent generic (sem 'resumo'/'summary'); LLM devolve ANSWER com quality_summary.",
+  "input": {
+    "user_query": "quais foram os defeitos da semana passada?",
+    "context_window_hours": 168
+  },
+  "canonical_llm_response": {
+    "type": "ANSWER",
+    "intent": "quality_summary",
+    "summary": "14 defeitos registados última semana, 6 em Laminagem.",
+    "facts": [
+      {
+        "text": "Total de defeitos 7d: 14 (FPY 91.3%).",
+        "citations": [
+          {
+            "source_type": "calculation",
+            "ref": "calc:defects;window:7d",
+            "label": "Defeitos 7d",
+            "confidence": 0.9,
+            "trust_index": 0.86
+          }
+        ]
+      },
+      {
+        "text": "Top fase: Laminagem (6 defeitos, 42.8%).",
+        "citations": [
+          {
+            "source_type": "calculation",
+            "ref": "calc:defects;by:phase",
+            "label": "Defeitos por fase",
+            "confidence": 0.88,
+            "trust_index": 0.84
+          }
+        ]
+      }
+    ],
+    "actions": [],
+    "warnings": [],
+    "meta": {"model": "gemma3:e4b", "tokens": 140, "latency_ms": 210, "validation_passed": true}
+  },
+  "expected_shape": {
+    "type": "ANSWER",
+    "intent_in": ["quality_summary", "generic"],
+    "has_summary": true,
+    "min_facts": 1,
+    "max_facts": 5,
+    "actions_count_range": [0, 3],
+    "warnings_count_range": [0, 2],
+    "meta_must_have_keys": ["model", "tokens", "latency_ms", "validation_passed"]
+  },
+  "stability_pinned_at": "2026-05-20"
+}

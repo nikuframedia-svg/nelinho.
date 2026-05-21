@@ -109,10 +109,14 @@ async def test_create_scenario_persists_to_db():
 @pytest.mark.asyncio
 async def test_apply_delta_appends_with_incrementing_sequence():
     """Calling apply_delta twice on the same scenario yields sequences
-    0 and 1 — the autoincrement comes from max(existing) + 1."""
+    0 and 1 — the autoincrement comes from max(existing) + 1.
+
+    Q.54.I — usa `entity_type` reais (a validação Q.54.I rejeita tipos
+    fora da whitelist); o patch fica vazio para não accionar a validação
+    numérica — este teste só exercita o auto-incremento da sequência."""
     existing_delta = ScenarioDelta(
         id=uuid4(), tenant_id=TENANT, scenario_id=uuid4(),
-        sequence=0, entity_type="m", entity_key="A", patch={"x": 1},
+        sequence=0, entity_type="capacity_adjustment", entity_key="A", patch={},
     )
     sc = _stub_scenario(deltas=[existing_delta])
     existing_delta.scenario_id = sc.id
@@ -122,7 +126,7 @@ async def test_apply_delta_appends_with_incrementing_sequence():
 
     new_delta = await svc.apply_delta(
         scenario_id=sc.id,
-        entity_type="m", entity_key="B", patch={"y": 2},
+        entity_type="standard_time", entity_key="B", patch={},
         applied_by="luis",
     )
     assert new_delta.sequence == 1

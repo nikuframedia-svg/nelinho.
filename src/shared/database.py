@@ -6,6 +6,7 @@ Async SQLAlchemy 2.0 setup with PostgreSQL.
 Includes multi-tenancy base model and session management.
 """
 
+import logging
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import AsyncGenerator, Optional
@@ -21,6 +22,8 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from .config import settings
+
+logger = logging.getLogger(__name__)
 
 # Naming convention for constraints (helps with migrations)
 NAMING_CONVENTION = {
@@ -114,6 +117,45 @@ async_session_factory = async_sessionmaker(
 )
 
 
+# ─── Q.62.B.2 — Row-Level Security tenant filter ──────────────────────
+#
+# Cada nova transacao injecta `SET LOCAL app.tenant_id` consoante o
+# ContextVar `current_tenant_id_var` (definido pelo middleware FastAPI
+# ou por `tenant_scope()` em background tasks). As policies RLS criadas
+# em migration 056_q62_b_rls_enable filtram queries automaticamente.
+#
+# `SET LOCAL` (não `SET`) — libertado no commit/rollback, não vaza para
+# proximo checkout do pool.
+#
+# Sem tenant_id setado (background task que esqueceu de set explicito,
+# request sem header), `current_setting('app.tenant_id', true)` devolve
+# string vazia. O cast para UUID falha silenciosamente -> RLS rejeita
+# todas as rows (fail-closed).
+
+
+@event.listens_for(engine.sync_engine, "begin")
+def _set_tenant_id_on_transaction_begin(conn):
+    """Q.62.B.2 — injecta SET LOCAL app.tenant_id no início de cada tx.
+
+    `engine.sync_engine` é o sync engine subjacente ao async engine.
+    Eventos disparados aqui aplicam-se a ambos os modos.
+    """
+    # Import local para evitar import circular (tenant_context não
+    # precisa de database.py).
+    from src.shared.auth.tenant_context import get_tenant_id as _get_tid
+
+    tid = _get_tid()
+    if tid is None:
+        # Sem tenant set — RLS bloqueia tudo (fail-closed). Não levantamos
+        # erro aqui porque queries de migration/health-check podem
+        # legitimamente correr sem tenant.
+        return
+    # Uso de exec_driver_sql para evitar parsing SQLAlchemy + escape de
+    # UUID inline. UUID validado pelo type system Python antes de chegar
+    # aqui, mas defesa em profundidade: str() é seguro.
+    conn.exec_driver_sql(f"SET LOCAL app.tenant_id = '{tid}'")
+
+
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     """
     Dependency for getting database session.
@@ -158,45 +200,50 @@ async def get_session_context() -> AsyncGenerator[AsyncSession, None]:
             await session.close()
 
 
-class TenantSession:
-    """
-    Tenant-scoped session wrapper.
-    
-    Automatically filters queries by tenant_id.
-    """
-    
-    def __init__(self, session: AsyncSession, tenant_id: UUID):
-        self._session = session
-        self.tenant_id = tenant_id
-    
-    @property
-    def session(self) -> AsyncSession:
-        return self._session
-    
-    async def execute(self, statement, **kwargs):
-        """Execute a statement with automatic tenant filtering."""
-        return await self._session.execute(statement, **kwargs)
-    
-    async def commit(self):
-        await self._session.commit()
-    
-    async def rollback(self):
-        await self._session.rollback()
-    
-    def add(self, instance):
-        """Add instance, automatically setting tenant_id if applicable."""
-        if hasattr(instance, "tenant_id") and instance.tenant_id is None:
-            instance.tenant_id = self.tenant_id
-        self._session.add(instance)
-    
-    def add_all(self, instances):
-        """Add multiple instances, setting tenant_id on each."""
-        for instance in instances:
-            self.add(instance)
-
-
 async def init_db() -> None:
-    """Initialize database tables."""
+    """Verify schema is up-to-date with Alembic migrations (Q.61.16).
+
+    Production path: `alembic upgrade head` corre ANTES do uvicorn
+    arrancar. Esta funcao apenas verifica que o DB tem uma revision
+    aplicada; se nao tem, crash early em vez de criar silenciosamente.
+
+    Pre-Q.61.16 isto fazia `Base.metadata.create_all` em todos os
+    arranques — mascarava drift entre Alembic e o modelo SQLA (ex:
+    se um modelo novo nao estivesse em `alembic/env.py`, create_all
+    criava a tabela e producao via `alembic upgrade head` deixava-a
+    orfa). Q.61.14 fechou o lado da deteccao (model_registry); Q.61.16
+    fecha o lado da producao.
+
+    Para tests/fixtures/bootstrap_dev: usar `init_db_create_all()`.
+    """
+    from alembic.runtime.migration import MigrationContext
+
+    async with engine.connect() as conn:
+        def _check_revision(sync_conn):
+            ctx = MigrationContext.configure(sync_conn)
+            return ctx.get_current_revision()
+
+        rev = await conn.run_sync(_check_revision)
+
+    if rev is None:
+        raise RuntimeError(
+            "DB schema not initialized (alembic_version table empty or "
+            "absent). Run `alembic upgrade head` before starting the app."
+        )
+    logger.info("DB schema at revision %s", rev)
+
+
+async def init_db_create_all() -> None:
+    """Test/dev path — cria tabelas via metadata, sem Alembic.
+
+    Usado por:
+      * tests (fixtures async)
+      * scripts/bootstrap_dev_full.py (dev fresh setup)
+      * scripts ad-hoc que precisam de schema rapido
+
+    NUNCA chamar de producao. Use `alembic upgrade head` antes do
+    uvicorn arrancar.
+    """
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 

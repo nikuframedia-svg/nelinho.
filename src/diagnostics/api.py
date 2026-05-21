@@ -10,6 +10,9 @@ Endpoints:
         — per-module health rollup (imports, routes, tests, TODOs)
   GET /v1/diagnostics/infrastructure
         — DB, Redis, Kafka, Ollama pings
+  GET /v1/diagnostics/erp-connection
+        — Nelo ERP link status: masked URL, connected/offline, per-mirror
+          last sync from core.etl_run, row counts, lag (Sprint Q.53.F)
   GET /v1/diagnostics/full
         — modules + infra + trust + commit cadence (the "single click"
           dashboard answer)
@@ -38,6 +41,7 @@ from .service import (
     check_ollama,
     check_redis,
     collect_commit_cadence,
+    collect_erp_connection,
     collect_module_health,
     collect_routes_by_module,
     collect_trust_index,
@@ -110,6 +114,28 @@ async def get_infrastructure(
             "unhealthy": sum(1 for i in items if not i["healthy"]),
         },
     }
+
+
+@router.get("/erp-connection")
+async def get_erp_connection(
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """State of the ERP NELO integration (Sprint Q.53.F).
+
+    Answers "is the factory ERP linked, and is the data fresh?" — the
+    `/infrastructure` endpoint pings DB/Redis/Kafka/Ollama but never the
+    ERP itself. This one:
+
+    * masks the connection URL (no credentials leak);
+    * does a real round-trip when `sqlserver_enabled` (offline if down);
+    * lists the last sync per mirror from `core.etl_run`;
+    * reports row counts + lag since the last successful sync.
+
+    Best-effort: a dead ERP or a missing `core.etl_run` table yields a
+    degraded-but-shaped 200, never a 500.
+    """
+    return await collect_erp_connection(session, tenant_id)
 
 
 @router.get("/full")

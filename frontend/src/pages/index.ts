@@ -13,7 +13,8 @@ export { CustomersPage } from './core/CustomersPage';
 export { SuppliersPage } from './core/SuppliersPage';
 
 // PLAN Module
-export { SchedulingPage } from './plan/SchedulingPage';
+// SchedulingPage removida em Q.53.G — Planeamento consolidado em
+// pages/planeamento/PlaneamentoPage.tsx (rota /scheduling redireciona).
 export { MRPPage } from './plan/MRPPage';
 export { CapacityPage } from './plan/CapacityPage';
 

@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, and_, or_, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.governance.audit_service import audit_change
 from src.shared.auth.headers import require_tenant_header, require_user_uuid
 from src.shared.database import get_session
 from src.shared.models.governance import SharedDecisionRun, DecisionApproval, DecisionStatus, ApprovalStatus
@@ -91,7 +92,10 @@ async def propose_decision(
     
     Creates DecisionRun with status "PROPOSED" and routes to approvers based on SoD policy.
     """
-    # Create decision proposal
+    # Q.61.10 — Unit-of-Work: DecisionRun INSERT + AuditLog INSERT
+    # numa unica transaccao (savepoint). Se a auditoria falhar, a
+    # decision tambem rollback — invariante 7 (audit na MESMA tx que
+    # a mudanca de estado) deixa de depender de disciplina humana.
     decision = SharedDecisionRun(
         tenant_id=tenant_id,
         title=request.title,
@@ -104,42 +108,43 @@ async def propose_decision(
         proposed_by=user_id,
         proposed_at=datetime.utcnow(),
     )
-    
-    session.add(decision)
-    await session.flush()
-    
-    # Create approval records based on SoD policy
+
+    async with session.begin_nested():
+        session.add(decision)
+        await session.flush()  # populates decision.id
+
+        # Q.61.09 — NAO criamos DecisionApproval no propose. A tabela
+        # decision_approvals contem so aprovacoes reais. Approvers pendentes
+        # sao derivados de `required_approver_roles - users_que_ja_agiram`.
+        # Q.61.18 — audit via service unificado (em vez de inline).
+        await audit_change(
+            session,
+            tenant_id=tenant_id,
+            entity_type="decision_run",
+            entity_id=decision.id,
+            action="INSERT",
+            new_values={
+                "title": request.title,
+                "action_type": request.action_type,
+                "target": request.target,
+                "status": DecisionStatus.PROPOSED.value,
+            },
+            actor_id=user_id,
+            reason="decision proposed",
+        )
+
     from src.shared.auth.rbac import SOD_POLICIES, Role
-    
+
     required_approver_roles = SOD_POLICIES.get(
         request.action_type,
         SOD_POLICIES.get("GENERIC_ACTION", [Role.MANAGER_OPERATIONS])
     )
-    
-    # In a real system, we would query users by role here
-    # For now, we create a placeholder approval record that can be fulfilled by any user with the required role
-    # The actual approval will be checked against SoD policies when /approve is called
-    from src.shared.models.governance import DecisionApproval, ApprovalStatus
-    
-    # Create approval placeholder (or create for specific users if we have them)
-    # For demo purposes, we create one approval record marked as PENDING
-    # In production, this would query the user table for users with the required roles
-    approval = DecisionApproval(
-        decision_id=decision.id,
-        approver_id=user_id,  # Placeholder - in production, this would be a valid approver UUID
-        status=ApprovalStatus.PENDING.value,
-        comment=None,
-        approved_at=None,
-    )
-    session.add(approval)
-    
-    await session.flush()
-    
+
     logger.info(
         f"Decision proposed: id={decision.id}, title={request.title}, "
         f"action_type={request.action_type}, required_roles={[r.value for r in required_approver_roles]}"
     )
-    
+
     return {
         "id": str(decision.id),
         "status": "proposed",
@@ -302,22 +307,34 @@ async def approve_decision(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=error_message or "SoD check failed",
         )
-    
-    # Create approval record
-    approval = DecisionApproval(
-        decision_id=decision_id,
-        approver_id=user_id,
-        status=ApprovalStatus.APPROVED.value,
-        comment=request.comment,
-        approved_at=datetime.utcnow(),
+
+    # Q.61.09 — find_or_create. Antes do Q.61.09 o propose criava sempre
+    # um placeholder com approver_id=proposer; quando este endpoint
+    # corria, criava-se um SEGUNDO row, deixando o primeiro orfao. Agora
+    # so existem rows reais.
+    existing_q = select(DecisionApproval).where(
+        DecisionApproval.decision_id == decision_id,
+        DecisionApproval.approver_id == user_id,
     )
-    
-    session.add(approval)
-    
+    existing = (await session.execute(existing_q)).scalar_one_or_none()
+    if existing is not None:
+        existing.status = ApprovalStatus.APPROVED.value
+        existing.comment = request.comment
+        existing.approved_at = datetime.utcnow()
+    else:
+        approval = DecisionApproval(
+            decision_id=decision_id,
+            approver_id=user_id,
+            status=ApprovalStatus.APPROVED.value,
+            comment=request.comment,
+            approved_at=datetime.utcnow(),
+        )
+        session.add(approval)
+
     # Update decision status
     decision.status = DecisionStatus.APPROVED.value
     await session.flush()
-    
+
     await session.commit()
     
     logger.info(f"Decision approved: id={decision_id}, approver={user_id}")

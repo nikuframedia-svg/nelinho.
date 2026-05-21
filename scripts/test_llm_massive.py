@@ -442,7 +442,7 @@ def _classify_failure(
             if "unknown DAG node" in str(q["result"].get("error", ""))
         ]
         if node_errors:
-            return ("wrong_node_id", f"all causal_query attempts hit unknown nodes")
+            return ("wrong_node_id", "all causal_query attempts hit unknown nodes")
         return ("unclassified", f"queries: {queries}, errors: {[q['result'].get('error') for q in queries_with_errors]}")
 
     if not scenario["needs_kernel"]:
@@ -680,7 +680,7 @@ async def amain(args) -> int:
         scenarios = scenarios[: args.limit]
 
     print(f"Model: {MODEL}")
-    print(f"Endpoint: http://localhost:11434")
+    print("Endpoint: http://localhost:11434")
     print(f"Scenarios: {len(scenarios)} (of {len(SCENARIOS)} total)")
     print()
     print(f"{'#':>5}  {'verdict':<6} {'cat':<8} {'name':<34}  ({'ms':>6})  detail")

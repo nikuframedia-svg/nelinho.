@@ -76,6 +76,7 @@ class ReworkEntry(TenantBase):
         Index("ix_rework_entry_causer", "causer_employee_id"),
         Index("ix_rework_entry_error_code", "error_code"),
         Index("ix_rework_entry_mold", "mold_id"),
+        Index("ix_rework_entry_location_zone", "location_zone"),
         Index("ix_rework_entry_tenant_detected", "tenant_id", "detected_at"),
         {"schema": "quality"},
     )
@@ -100,6 +101,12 @@ class ReworkEntry(TenantBase):
 
     phase_id_causer: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     phase_id_rework: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+
+    # Q.53.A — hull zone the defect affected (casco / conves / cockpit /
+    # interior / acabamento / molde / montagem / outro). Nullable: the NELO
+    # checklist has no explicit zone, so it is derived from error_code +
+    # phase. Drives the "Mapa do casco" SVG on the Qualidade page.
+    location_zone: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
 
     error_code: Mapped[str] = mapped_column(String(64), nullable=False)
     error_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

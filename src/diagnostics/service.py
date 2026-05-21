@@ -365,6 +365,191 @@ async def collect_trust_index(session, tenant_id: UUID) -> dict[str, Any]:
         return {"error": type(exc).__name__, "source": "fallback"}
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# ERP connection diagnostics (Sprint Q.53.F)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# The five ERP→Postgres mirrors. Each writes one `core.etl_run` row per
+# run (`source` column). The dashboard wants "when did this last sync".
+ERP_MIRRORS: tuple[str, ...] = (
+    "master",
+    "molds",
+    "skills",
+    "quality",
+    "time_mining",
+    "stock",
+)
+
+
+def mask_db_url(url: str | None) -> str:
+    """Mask a SQLAlchemy connection URL for safe display.
+
+    Strips the password (and, defensively, the username) so the
+    dashboard can show *which* server the ERP adapter points at without
+    leaking credentials. ``mssql+aioodbc://nelo:secret@erp.lan:1433/DB``
+    becomes ``mssql+aioodbc://***@erp.lan:1433/DB``.
+    """
+    if not url:
+        return "(não configurado)"
+    # Split scheme://rest
+    if "://" not in url:
+        return "***"
+    scheme, _, rest = url.partition("://")
+    # rest = [credentials@]host[/path][?query]
+    if "@" in rest:
+        _creds, _, host_part = rest.partition("@")
+        rest = f"***@{host_part}"
+    return f"{scheme}://{rest}"
+
+
+async def _erp_health_check() -> tuple[bool, str, float | None]:
+    """Round-trip a trivial query against the configured Nelo ERP.
+
+    Returns ``(connected, detail, latency_ms)``. When the ERP is disabled
+    in config we never open a connection — ``connected`` is False with a
+    clear "disabled" detail rather than a misleading error.
+    """
+    from src.shared.config import settings
+
+    if not getattr(settings, "sqlserver_enabled", False):
+        return False, "sqlserver_enabled=False (ERP desligado na config)", None
+    if not getattr(settings, "sqlserver_url", None):
+        return False, "sqlserver_url não configurado", None
+
+    t0 = time.monotonic()
+    try:
+        from sqlalchemy import text
+        from src.adapters.nelo.services import get_engine
+
+        async def _ping() -> bool:
+            engine = get_engine()
+            async with engine.connect() as conn:
+                result = await conn.execute(text("SELECT 1"))
+                return result.scalar() == 1
+
+        healthy = await asyncio.wait_for(_ping(), timeout=5.0)
+        latency = (time.monotonic() - t0) * 1000.0
+        if healthy:
+            return True, "SELECT 1 OK", latency
+        return False, "SELECT 1 não devolveu 1", latency
+    except asyncio.TimeoutError:
+        return False, "health check expirou (5s)", (time.monotonic() - t0) * 1000.0
+    except Exception as exc:
+        # Sanitised — type only, never raw connection-string fragments.
+        logger.warning("ERP health check failed: %r", exc)
+        return False, type(exc).__name__, (time.monotonic() - t0) * 1000.0
+
+
+async def collect_erp_connection(session, tenant_id: UUID) -> dict[str, Any]:
+    """Live status of the Nelo ERP integration.
+
+    Surfaces, for the admin health page:
+
+    * masked connection URL + enabled flag;
+    * connected/offline — a real round-trip when the ERP is enabled;
+    * per-mirror last sync from ``core.etl_run`` (status, row counts);
+    * lag (seconds + human) since the most recent successful sync.
+
+    All sub-parts are best-effort: a missing ``core.etl_run`` table or a
+    dead ERP yields a degraded-but-shaped response, never a 500.
+    """
+    from datetime import datetime, timezone
+
+    from src.shared.config import settings
+
+    enabled = bool(getattr(settings, "sqlserver_enabled", False))
+    masked_url = mask_db_url(getattr(settings, "sqlserver_url", None))
+
+    connected, detail, latency_ms = await _erp_health_check()
+
+    # Per-mirror last run from core.etl_run.
+    mirrors: list[dict[str, Any]] = []
+    last_sync_at: datetime | None = None
+    sync_error: str | None = None
+    try:
+        from sqlalchemy import desc, select
+        from src.core.models.etl_run import EtlRun
+
+        for source in ERP_MIRRORS:
+            stmt = (
+                select(EtlRun)
+                .where((EtlRun.tenant_id == tenant_id) & (EtlRun.source == source))
+                .order_by(desc(EtlRun.started_at))
+                .limit(1)
+            )
+            run = (await session.execute(stmt)).scalar_one_or_none()
+            if run is None:
+                mirrors.append({
+                    "source": source,
+                    "status": "never_synced",
+                    "last_run_at": None,
+                    "finished_at": None,
+                    "rows_read": 0,
+                    "rows_inserted": 0,
+                    "rows_updated": 0,
+                    "rows_skipped": 0,
+                    "error": None,
+                })
+                continue
+            finished = run.finished_at
+            mirrors.append({
+                "source": source,
+                "status": run.status,
+                "last_run_at": (
+                    run.started_at.isoformat() if run.started_at else None
+                ),
+                "finished_at": finished.isoformat() if finished else None,
+                "rows_read": int(run.rows_read or 0),
+                "rows_inserted": int(run.rows_inserted or 0),
+                "rows_updated": int(run.rows_updated or 0),
+                "rows_skipped": int(run.rows_skipped or 0),
+                "error": run.error,
+            })
+            # Track the latest *successful* finished sync for lag.
+            if run.status == "ok" and finished is not None:
+                cand = finished
+                if cand.tzinfo is None:
+                    cand = cand.replace(tzinfo=timezone.utc)
+                if last_sync_at is None or cand > last_sync_at:
+                    last_sync_at = cand
+    except Exception as exc:
+        logger.warning("collect_erp_connection etl_run read failed: %r", exc)
+        sync_error = type(exc).__name__
+
+    # Lag since last successful sync.
+    lag_seconds: int | None = None
+    lag_human: str | None = None
+    if last_sync_at is not None:
+        now = datetime.now(timezone.utc)
+        delta = now - last_sync_at
+        lag_seconds = max(0, int(delta.total_seconds()))
+        hours, rem = divmod(lag_seconds, 3600)
+        minutes = rem // 60
+        if hours >= 24:
+            lag_human = f"{hours // 24}d {hours % 24}h"
+        elif hours:
+            lag_human = f"{hours}h {minutes}m"
+        else:
+            lag_human = f"{minutes}m"
+
+    total_rows = sum(m["rows_read"] for m in mirrors)
+
+    return {
+        "enabled": enabled,
+        "url_masked": masked_url,
+        "connected": connected,
+        "detail": detail,
+        "latency_ms": round(latency_ms, 1) if latency_ms is not None else None,
+        "mirrors": mirrors,
+        "last_sync_at": last_sync_at.isoformat() if last_sync_at else None,
+        "lag_seconds": lag_seconds,
+        "lag_human": lag_human,
+        "total_rows_last_sync": total_rows,
+        "sync_history_error": sync_error,
+        "sampled_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 async def collect_commit_cadence(session, tenant_id: UUID) -> dict[str, Any]:
     """How many ScheduleCommit rows in the last 7 days, plus the latest."""
     try:

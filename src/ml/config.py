@@ -57,6 +57,13 @@ DEFAULT_HYPERPARAMS: Dict[str, Dict[str, Any]] = {
         "max_depth": 3,
         "learning_rate": 0.10,
     },
+    # Sprint Q.54.F — order-level on-time-delivery risk classifier.
+    # Same family/shape as quality_risk (binary GBClassifier).
+    "otd_risk": {
+        "n_estimators": 120,
+        "max_depth": 3,
+        "learning_rate": 0.10,
+    },
     "surrogate": {
         "n_estimators": 120,
         "max_depth": 8,

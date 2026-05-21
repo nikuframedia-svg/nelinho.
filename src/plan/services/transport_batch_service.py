@@ -16,6 +16,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.governance.audit_service import audit_change
 from src.plan.models.transport import TransportBatch, TransportBatchAssignment
 
 
@@ -48,6 +49,23 @@ class TransportBatchService:
             status="OPEN",
         )
         self.session.add(row)
+        await audit_change(
+            self.session,
+            tenant_id=self.tenant_id,
+            entity_type="transport_batch",
+            entity_id=row.id,
+            action="INSERT",
+            old_values=None,
+            new_values={
+                "code": code,
+                "transport_date": transport_date.isoformat(),
+                "truck_capacity_units": truck_capacity_units,
+                "priority": priority,
+                "destination": destination,
+                "status": "OPEN",
+            },
+            reason="Q.66.B.3 — batch de transporte criado",
+        )
         await self.session.flush()
         return row
 
@@ -78,6 +96,19 @@ class TransportBatchService:
             order_id=order_id,
         )
         self.session.add(link)
+        await audit_change(
+            self.session,
+            tenant_id=self.tenant_id,
+            entity_type="transport_batch_assignment",
+            entity_id=link.id,
+            action="INSERT",
+            old_values=None,
+            new_values={
+                "batch_id": str(batch_id),
+                "order_id": str(order_id),
+            },
+            reason="Q.66.B.3 — ordem atribuida a batch de transporte",
+        )
         await self.session.flush()
         return link
 

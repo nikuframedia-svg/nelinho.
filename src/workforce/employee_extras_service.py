@@ -34,6 +34,7 @@ from src.core.models.employee import Employee
 from src.factory_data_product.models.curated import (
     CuratedAllocation,
     CuratedOrderPhase,
+    CuratedQualityEvent,
     CuratedSkillMatrix,
 )
 from src.plan.models.schedule import ProductionSchedule
@@ -94,6 +95,42 @@ class SkillMatrixRow:
 
 
 @dataclass
+class QualificationMetrics:
+    """Q.53.E — os 3 sinais de qualificação que faltavam.
+
+    Até agora a página workforce só expunha quality-score, skill-match e
+    defect-rate. Estes 3 completam o fit-score que a página Fábrica usa:
+
+    * `recency_days` — dias desde a última operação (na fase/área pedida,
+      ou em qualquer fase quando `scope` é None). `None` = sem histórico.
+    * `versatility` — nº de fases distintas em que o operador é apto/já
+      trabalhou. Quanto maior, mais flexível para o scheduler.
+    * `productivity` — operações por dia ao longo do histórico observado
+      (ops_total / span_dias). `None` quando não dá para calcular.
+    """
+
+    employee_id: UUID
+    recency_days: Optional[int]
+    versatility: int
+    productivity: Optional[float]
+    ops_total: int
+    scope: Optional[str]  # phase_id/area filtrado, ou None = global
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "employee_id": str(self.employee_id),
+            "recency_days": self.recency_days,
+            "versatility": self.versatility,
+            "productivity": (
+                round(self.productivity, 3)
+                if self.productivity is not None else None
+            ),
+            "ops_total": self.ops_total,
+            "scope": self.scope,
+        }
+
+
+@dataclass
 class OperationHistoryRow:
     schedule_id: UUID
     order_id: str
@@ -141,9 +178,27 @@ class EmployeeExtrasService:
         completed without rework") because the rework table doesn't
         cover every op and the schedule table is the only authoritative
         per-worker counter we have today.
+
+        Q.54.P — quando ``ProductionSchedule`` não tem linhas para o
+        operador (o caso real hoje: 0 das 159 linhas têm operador
+        atribuído), cai na camada ERP curada: 131k linhas em
+        ``factory_curated.allocation`` (operações) e 97k em
+        ``quality_event`` (defeitos). É o mesmo fallback que o
+        ``skill_matrix`` já fazia — sem ele todos os operadores saíam
+        como "sem histórico" quando o histórico real existe.
         """
+        emp = await self._get_employee(employee_id)
+        code = emp.employee_code if emp is not None else None
+
+        # Camada de governança: ProductionSchedule + ReworkEntry.
         ops = await self._count_ops(employee_id)
-        defects = await self._count_rework(employee_id)
+        if ops > 0:
+            defects = await self._count_rework(employee_id)
+        else:
+            # ProductionSchedule não cobre este operador → histórico real
+            # do ERP na camada curada, keyed por employee_code.
+            ops = await self._count_curated_ops(code)
+            defects = await self._count_curated_defects(code)
 
         if ops == 0 and defects == 0:
             return QualityScoreResult(
@@ -166,6 +221,66 @@ class EmployeeExtrasService:
             defect_rate=rate,
             method="laplace_smoothed",
         )
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Q.62.C.1 — Team-wide defect rate (Hipotese A: comportamento da equipa)
+    # ─────────────────────────────────────────────────────────────────────
+
+    async def team_defect_rate(
+        self, *, window_days: int = 90,
+    ) -> float:
+        """Hipótese A: comportamento da equipa toda no tenant.
+
+        Mesma fórmula Laplace do `quality_score()` per-employee, mas
+        agregada — soma operações e defeitos de TODOS os operadores
+        do tenant dentro da janela de `window_days`::
+
+            rate = (sum(defects) + α) / (sum(ops) + β)
+
+        α=1, β=10 (consistente com `quality_score`). Range [0, 1].
+
+        Q.62.C — usado pelo `KPIFactory.team_defect_rate()` para dashboards
+        executivos que querem saber "a equipa está a fazer bem?"
+        (distinct de `product_defect_rate` que mede qualidade dos barcos
+        entregues, ver `FactoryMapService._defect_rate_from_db`).
+
+        Implementação: count de `ProductionSchedule` com operador atribuído
+        + count de `ReworkEntry` com causer atribuído. Sem fallback curated
+        — quando governance está vazia, retorna o Laplace floor (0.1)
+        que sinaliza "sem histórico" honestamente.
+        """
+        from datetime import timedelta, timezone
+
+        now_utc = datetime.now(timezone.utc)
+        since_date = (now_utc - timedelta(days=window_days)).date()
+
+        # Total ops: ProductionSchedule com operador atribuído na janela.
+        # `scheduled_start_date` é Date (não datetime); filtramos por date.
+        ops_stmt = select(func.count(ProductionSchedule.id)).where(
+            and_(
+                ProductionSchedule.tenant_id == self.tenant_id,
+                ProductionSchedule.assigned_employee_id.is_not(None),
+                ProductionSchedule.scheduled_start_date >= since_date,
+            )
+        )
+        ops = int((await self.session.execute(ops_stmt)).scalar_one() or 0)
+
+        # Total defects: ReworkEntry com causer atribuído na janela.
+        # `detected_at` é datetime tz-aware.
+        since = now_utc - timedelta(days=window_days)
+        rework_stmt = select(func.count(ReworkEntry.id)).where(
+            and_(
+                ReworkEntry.tenant_id == self.tenant_id,
+                ReworkEntry.causer_employee_id.is_not(None),
+                ReworkEntry.detected_at >= since,
+            )
+        )
+        defects = int(
+            (await self.session.execute(rework_stmt)).scalar_one() or 0
+        )
+
+        rate = (defects + SMOOTHING_ALPHA) / (ops + SMOOTHING_BETA)
+        return round(rate, 4)
 
     # ─────────────────────────────────────────────────────────────────────
     # Skill matrix
@@ -219,13 +334,17 @@ class EmployeeExtrasService:
 
         # Phases the worker has actually done but that aren't in the
         # curated matrix — surface them as `can_do=True, nivel=None`.
+        # Q.54.P — `phase_name` vem agora do histórico (`fase_nome` do
+        # CuratedOrderPhase). Sem ele o fit-score recebia só o `fase_id`
+        # (código "5") e nunca casava com o nome da fase do barco
+        # ("Pintura Acabamento") → dizia "Sem experiência" a quem tinha.
         for phase_id, hist in history_by_phase.items():
             if phase_id in seen_phases:
                 continue
             out.append(
                 SkillMatrixRow(
                     phase_id=phase_id,
-                    phase_name=None,
+                    phase_name=hist.get("phase_name"),
                     can_do=True,
                     nivel=None,
                     ops_count=hist["ops_count"],
@@ -235,6 +354,93 @@ class EmployeeExtrasService:
 
         out.sort(key=lambda r: (-r.ops_count, r.phase_id))
         return out
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Qualification metrics (Q.53.E) — recency / versatility / productivity
+    # ─────────────────────────────────────────────────────────────────────
+
+    async def qualification_metrics(
+        self,
+        employee_id: UUID,
+        *,
+        phase_id: Optional[str] = None,
+        area_group: Optional[str] = None,
+    ) -> QualificationMetrics:
+        """Os 3 sinais de qualificação em falta para o fit-score.
+
+        Deriva tudo da `skill_matrix` (que já junta curated + histórico
+        real ERP), evitando uma segunda passagem por queries. Read-only.
+
+        * `phase_id` — quando dado, recency é a recência *nessa fase*.
+        * `area_group` — quando dado (e `phase_id` não), recency/ops são
+          escopados às fases desse grupo de área. Senão, global.
+        """
+        from src.workforce.levels import area_group_for_phase
+
+        rows = await self.skill_matrix(employee_id)
+
+        # Recorte do escopo: fase exacta > grupo de área > global.
+        if phase_id is not None:
+            scope = phase_id
+            scoped = [r for r in rows if r.phase_id == phase_id]
+        elif area_group is not None:
+            scope = area_group
+            scoped = [
+                r for r in rows
+                if area_group_for_phase(r.phase_name, r.phase_id) == area_group
+            ]
+        else:
+            scope = None
+            scoped = rows
+
+        # Versatilidade: nº de fases distintas onde é apto OU já trabalhou.
+        versatility = sum(
+            1 for r in rows if r.can_do or r.ops_count > 0
+        )
+
+        # Recência: menor nº de dias desde a última operação no escopo.
+        today = datetime.now()
+        recency_days: Optional[int] = None
+        for r in scoped:
+            if r.last_used_at is None:
+                continue
+            last = r.last_used_at
+            # last_used_at pode ser tz-naive (combine de date) — comparar
+            # naive com naive para não rebentar com TypeError.
+            if last.tzinfo is not None:
+                last = last.replace(tzinfo=None)
+            delta = (today - last).days
+            if delta < 0:
+                delta = 0
+            if recency_days is None or delta < recency_days:
+                recency_days = delta
+
+        # Produtividade: ops_total / span_dias observado no escopo.
+        ops_total = sum(r.ops_count for r in scoped)
+        last_dates = [
+            (r.last_used_at.replace(tzinfo=None)
+             if r.last_used_at and r.last_used_at.tzinfo
+             else r.last_used_at)
+            for r in scoped
+            if r.last_used_at is not None
+        ]
+        productivity: Optional[float] = None
+        if ops_total > 0 and last_dates:
+            # Sem datas de início por fase, usamos o intervalo entre a
+            # operação mais antiga e mais recente como proxy do span.
+            span_days = (max(last_dates) - min(last_dates)).days
+            # span 0 (uma só fase / mesmo dia) → assume 1 dia para não
+            # dividir por zero nem inflar a produtividade ao infinito.
+            productivity = ops_total / max(1, span_days)
+
+        return QualificationMetrics(
+            employee_id=employee_id,
+            recency_days=recency_days,
+            versatility=versatility,
+            productivity=productivity,
+            ops_total=ops_total,
+            scope=scope,
+        )
 
     # ─────────────────────────────────────────────────────────────────────
     # Operation history
@@ -317,6 +523,67 @@ class EmployeeExtrasService:
         )
         result = await self.session.execute(stmt)
         return int(result.scalar_one() or 0)
+
+    async def _count_curated_ops(self, employee_code: Optional[str]) -> int:
+        """Nº de operações no histórico ERP curado (`factory_curated.allocation`).
+
+        Q.54.P — usado quando `ProductionSchedule` não cobre o operador. A
+        camada curada tem 131k alocações reais, keyed por `funcionario_id`
+        = `employee_code`.
+        """
+        if not employee_code:
+            return 0
+        try:
+            stmt = select(func.count(CuratedAllocation.id)).where(
+                CuratedAllocation.funcionario_id == employee_code
+            )
+            result = await self.session.execute(stmt)
+            return int(result.scalar_one() or 0)
+        except Exception as exc:  # pragma: no cover — defensivo
+            logger.warning(
+                "curated ops count failed for employee_code=%s: %s",
+                employee_code,
+                exc,
+            )
+            return 0
+
+    async def _count_curated_defects(self, employee_code: Optional[str]) -> int:
+        """Defeitos atribuíveis ao operador via o histórico ERP curado.
+
+        Q.54.P — `factory_curated.quality_event` regista erros por
+        `(of_id, fase_id)`, sem operador. Atribui-se a um operador
+        cruzando com as fases-de-ordem em que ele trabalhou:
+        ``allocation → order_phase → quality_event``. Soma `quantidade`
+        (nº de erros do evento).
+        """
+        if not employee_code:
+            return 0
+        try:
+            stmt = (
+                select(func.coalesce(func.sum(CuratedQualityEvent.quantidade), 0))
+                .select_from(CuratedAllocation)
+                .join(
+                    CuratedOrderPhase,
+                    CuratedOrderPhase.fase_of_id == CuratedAllocation.fase_of_id,
+                )
+                .join(
+                    CuratedQualityEvent,
+                    and_(
+                        CuratedQualityEvent.of_id == CuratedOrderPhase.of_id,
+                        CuratedQualityEvent.fase_id == CuratedOrderPhase.fase_id,
+                    ),
+                )
+                .where(CuratedAllocation.funcionario_id == employee_code)
+            )
+            result = await self.session.execute(stmt)
+            return int(result.scalar_one() or 0)
+        except Exception as exc:  # pragma: no cover — defensivo
+            logger.warning(
+                "curated defects count failed for employee_code=%s: %s",
+                employee_code,
+                exc,
+            )
+            return 0
 
     async def _curated_skills_for(
         self, employee_code: Optional[str],
@@ -420,6 +687,7 @@ class EmployeeExtrasService:
             stmt = (
                 select(
                     CuratedOrderPhase.fase_id.label("phase_id"),
+                    CuratedOrderPhase.fase_nome.label("phase_name"),
                     func.count(CuratedAllocation.id).label("ops_count"),
                     func.max(CuratedOrderPhase.data_fim).label("last_used_at"),
                 )
@@ -428,12 +696,12 @@ class EmployeeExtrasService:
                     CuratedOrderPhase.fase_of_id == CuratedAllocation.fase_of_id,
                 )
                 .where(CuratedAllocation.funcionario_id == employee_code)
-                .group_by(CuratedOrderPhase.fase_id)
+                .group_by(CuratedOrderPhase.fase_id, CuratedOrderPhase.fase_nome)
             )
             rows = (await self.session.execute(stmt)).all()
             out: list[dict[str, Any]] = []
             for r in rows:
-                last = r[2]
+                last = r[3]
                 last_dt: Optional[datetime] = None
                 if last is not None:
                     last_dt = (
@@ -443,7 +711,8 @@ class EmployeeExtrasService:
                 out.append(
                     {
                         "phase_id": r[0],
-                        "ops_count": int(r[1] or 0),
+                        "phase_name": r[1],
+                        "ops_count": int(r[2] or 0),
                         "last_used_at": last_dt,
                     }
                 )

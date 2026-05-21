@@ -258,6 +258,35 @@ class ProductRow(_Frozen):
     cost_price: float
 
 
+class ProductStockRow(_Frozen):
+    """Stock cache from `dbo.PRODUTO` — `P_STOCK` / `P_STOCKMIN` per product.
+
+    The ERP keeps a per-product on-hand cache directly on the catalogue
+    row, so a current snapshot does not need to fold the 12M-row
+    `MOVIMENTO` ledger. Quantities are in the product's own unit.
+    """
+
+    product_id: int  # P_ID
+    stock: float  # P_STOCK — on-hand
+    stock_min: float  # P_STOCKMIN — minimum
+
+
+class WarehouseStockRow(_Frozen):
+    """One row of `dbo.produto_stocks_por_armazem` — the ERP's own
+    per-warehouse on-hand view (`P_ID` × `Armazem`).
+
+    This is the granular truth the factory uses: stock split across the
+    ~20 warehouses (Laminagem, Pintura, Montagem, Camião Nelo…). It does
+    not necessarily sum to `PRODUTO.P_STOCK`, which is a separate cached
+    aggregate maintained by the ERP.
+    """
+
+    product_id: int  # P_ID
+    warehouse_id: int  # Armazem_Id
+    warehouse_name: str  # Armazem
+    stock: float  # Stock — on-hand in that warehouse
+
+
 # ─── Entities / operators (vw_pp1_entities) ────────────────────────────
 
 

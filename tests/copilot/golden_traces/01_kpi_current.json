@@ -1,0 +1,42 @@
+{
+  "trace_id": "01_kpi_current",
+  "intent_label": "kpi_current",
+  "purpose": "User pergunta KPI actual (OEE) — fluxo curto, intent kpi_current detectado, fast-path desactivado nos tests, vai por LLM com intent explain_oee.",
+  "input": {
+    "user_query": "qual o throughput de hoje?",
+    "context_window_hours": 24
+  },
+  "canonical_llm_response": {
+    "type": "ANSWER",
+    "intent": "explain_oee",
+    "summary": "Throughput de hoje: 14.7 barcos/dia (target 14 atingido).",
+    "facts": [
+      {
+        "text": "Throughput diário actual: 14.7 barcos/dia.",
+        "citations": [
+          {
+            "source_type": "db",
+            "ref": "table:production_orders;date:today",
+            "label": "Production Orders (hoje)",
+            "confidence": 0.92,
+            "trust_index": 0.85
+          }
+        ]
+      }
+    ],
+    "actions": [],
+    "warnings": [],
+    "meta": {"model": "gemma3:e4b", "tokens": 80, "latency_ms": 120, "validation_passed": true}
+  },
+  "expected_shape": {
+    "type": "ANSWER",
+    "intent_in": ["explain_oee", "generic"],
+    "has_summary": true,
+    "min_facts": 1,
+    "max_facts": 5,
+    "actions_count_range": [0, 3],
+    "warnings_count_range": [0, 2],
+    "meta_must_have_keys": ["model", "tokens", "latency_ms", "validation_passed"]
+  },
+  "stability_pinned_at": "2026-05-20"
+}

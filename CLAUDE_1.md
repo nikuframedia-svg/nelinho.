@@ -1,3 +1,9 @@
+<!-- ============================================================
+     ARQUIVADO 2026-05-19 (Q.60.E) — documento histórico, NÃO usar.
+     Versão antiga do CLAUDE.md (cobre só Q.1–Q.6).
+     Fonte de verdade actual: ./CLAUDE.md + ./agent_docs/.
+     ============================================================ -->
+
 # CLAUDE.md — PP1-Nelo
 
 ## Quem és

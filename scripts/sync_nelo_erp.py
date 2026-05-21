@@ -1,7 +1,8 @@
 """Q.20.G — ERP→Postgres sync CLI.
 
-Runs the registered Q.20 ETL mirrors (``master``, ``molds``, ``skills``,
-``quality``, ``time_mining``) via :func:`src.adapters.nelo.etl.sync.run_nelo_sync`.
+Runs the registered ETL mirrors (``master``, ``molds``, ``skills``,
+``quality``, ``time_mining``, ``stock``) via
+:func:`src.adapters.nelo.etl.sync.run_nelo_sync`.
 Each mirror writes a ``core.etl_run`` audit row; this CLI prints a
 human-readable summary and exits 0 when every mirror succeeded, 1 if any
 mirror reported an error.
@@ -68,7 +69,7 @@ async def main(argv: list[str]) -> int:
     print(f"NELO ERP-to-Postgres sync at {datetime.now():%Y-%m-%d %H:%M:%S}")
     try:
         results = await run_nelo_sync(only=args.only, exclude=args.exclude, since=since)
-    except Exception as exc:  # noqa: BLE001 — top-level reporter
+    except Exception as exc:
         print(f"[FAIL] sync aborted: {type(exc).__name__}: {exc}")
         return 1
 

@@ -10,6 +10,7 @@ from .schedule import ProductionSchedule, ScheduleStatus
 from .mrp import MaterialRequirement, PurchaseOrder
 from .order import ProductionOrder, OrderStatus
 from .phase_gap import PhaseTransitionGap
+from .factory_calendar import FactoryCalendarDay
 
 __all__ = [
     "ProductionSchedule",
@@ -19,6 +20,7 @@ __all__ = [
     "ProductionOrder",
     "OrderStatus",
     "PhaseTransitionGap",
+    "FactoryCalendarDay",
 ]
 
 

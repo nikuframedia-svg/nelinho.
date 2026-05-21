@@ -47,7 +47,22 @@ class ProductionRecord:
     
     @property
     def oee_percent(self) -> Decimal:
-        """Calculate simplified OEE (efficiency × quality / 100)."""
+        """Q.62.E.6 — `simplified_oee` por registo, NÃO o OEE factory-wide.
+
+        Cálculo: `efficiency × quality / 100`. **Falta availability** —
+        este property funciona ao nível de UMA `ProductionRecord` onde
+        não há sinal de paragens/idle time per row. É um proxy útil
+        para "este operador, neste registo, foi bom?", não um KPI
+        executivo.
+
+        Para o **OEE factory-wide canónico** (availability × performance ×
+        quality), usar `src.profit.kpi_factory.KPIFactory.oee(date_from,
+        date_to)` que delega para `OEEService.calculate()`.
+
+        Os 2 nomes existem por design — semânticas distintas. Comparáveis
+        com `worker_quality_score` vs `factory_defect_rate`: per-pessoa
+        vs factory-wide são KPIs diferentes.
+        """
         return (self.efficiency_percent * self.quality_percent / 100).quantize(
             Decimal("0.1"), rounding=ROUND_HALF_UP
         )

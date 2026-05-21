@@ -81,7 +81,7 @@ class _FakeSession:
     def __init__(self, commits: List[ScheduleCommit]) -> None:
         self._commits = commits
 
-    async def execute(self, _stmt):  # noqa: ANN001 — test stub
+    async def execute(self, _stmt):
         class _Scalars:
             def __init__(self, rows: List[Any]) -> None:
                 self._rows = rows

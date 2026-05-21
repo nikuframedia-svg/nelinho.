@@ -29,21 +29,8 @@ export function PageHelpButton({ helpId }: Props) {
 
   function go(id: PageHelpId) {
     setOpen(false);
-    // Mapear PageHelpId → URL canónica.
-    const URL_BY_ID: Record<PageHelpId, string> = {
-      direcao: '/direcao',
-      inbox: '/inbox',
-      'plano-producao': '/plano-producao',
-      atribuicao: '/atribuicao',
-      oee: '/oee',
-      qualidade: '/qualidade',
-      operadores: '/operadores',
-      expedicao: '/expedicao',
-      aprendizagem: '/aprendizagem',
-      regras: '/regras',
-      definicoes: '/definicoes',
-    };
-    navigate(URL_BY_ID[id]);
+    // O `PageHelpId` é o próprio segmento de rota — navega directo.
+    navigate(`/${id}`);
   }
 
   return (
