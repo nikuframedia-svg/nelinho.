@@ -12,12 +12,66 @@ Shared fixtures for unit tests. Strategy:
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, AsyncGenerator, Dict, List, Optional
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
+
+
+# ---------------------------------------------------------------------------
+# Q.68.3.2 — Module-level helpers (extracted utilities)
+# ---------------------------------------------------------------------------
+
+_UUID_RE = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+    re.IGNORECASE,
+)
+
+
+def extract_uuid_params(query: Any) -> List[str]:
+    """Q.68.3.2 — Extract UUID strings from a SQLAlchemy statement.
+
+    Looks at both:
+      * the rendered SQL text (``str(stmt)`` or compiled SQL), and
+      * the bindparam values (``stmt.compile().params``).
+
+    Returns a list preserving order: text matches first, then bindparam
+    UUID-like values. Duplicates are kept (call-site can dedupe). Robust
+    to non-compilable inputs (returns ``[]`` from text path and skips
+    bindparams).
+
+    Used by ``tests/plan/test_worker_operations_endpoint.py``,
+    ``tests/shared/test_auth_login_q31g.py``, and other DOMAIN variants
+    that need to assert which UUIDs were bound to a query.
+    """
+    found: List[str] = []
+
+    # Text-mode extraction — works on plain strings or anything with __str__.
+    try:
+        text = str(query)
+        found.extend(_UUID_RE.findall(text))
+    except Exception:
+        pass
+
+    # Bindparam extraction — only for SQLA Compilable objects.
+    compile_fn = getattr(query, "compile", None)
+    if callable(compile_fn):
+        try:
+            compiled = compile_fn()
+            params = getattr(compiled, "params", None)
+            if isinstance(params, dict):
+                for value in params.values():
+                    sval = str(value)
+                    if _UUID_RE.fullmatch(sval):
+                        found.append(sval)
+        except Exception:
+            # Non-compilable statement (raw SQL string, Mock) — text path only.
+            pass
+
+    return found
 
 
 # ---------------------------------------------------------------------------
@@ -71,6 +125,13 @@ class FakeSession:
         self.commit_calls: int = 0
         self.rollback_calls: int = 0
         self.deleted: List[Any] = []
+        # ---- Q.68.3.2 — multi-batch queue, entity registry, behavioural flags
+        self._batches: List[List[Any]] = []
+        self._entities: Dict[tuple, Any] = {}
+        self.add_should_raise: bool = False
+        self.raise_on_execute: bool = False
+        self.executed: int = 0
+        self.executed_stmts: List[Any] = []
 
     def queue_scalar(self, value: Any) -> None:
         """Queue a value for the next `(await session.execute(...)).scalar_one_or_none()`."""
@@ -80,9 +141,48 @@ class FakeSession:
         """Queue a list for the next `(await session.execute(...)).scalars().all()`."""
         self._scalars_queue.append(list(values))
 
+    # ===== Q.68.3.2 — helpers novos =====
+
+    def queue_batch(self, rows: List[Any]) -> None:
+        """Q.68.3.2 — Append a batch of rows to the multi-batch queue.
+
+        Each subsequent ``execute()`` call consumes one batch (FIFO). When
+        the multi-batch queue is non-empty it takes precedence over the
+        legacy ``_scalars_queue`` — once it drains, ``execute()`` falls
+        back to the legacy queue.
+
+        Use this when a service issues several distinct SELECTs and you
+        want to script the answers in order. See
+        ``tests/governance/test_learning_metrics.py`` and
+        ``tests/plan/test_cpo_commit_orders_q54d.py`` for callsites.
+        """
+        self._batches.append(list(rows))
+
+    def register_entity(self, model: Any, pk: Any, row: Any) -> None:
+        """Q.68.3.2 — Pre-populate the session with a row identifiable by
+        ``(Model, pk)`` for use by ``session.get(Model, pk)``.
+
+        ``model`` is keyed by ``__name__`` so subclasses / re-imports
+        share the same slot. ``pk`` is stringified so callers can pass
+        UUIDs, ints, or strings interchangeably.
+        """
+        self._entities[(model.__name__, str(pk))] = row
+
+    async def get(self, model: Any, pk: Any) -> Any:
+        """Q.68.3.2 — ``AsyncSession.get`` equivalent (pk lookup).
+
+        Returns the row registered via :meth:`register_entity`, or
+        ``None`` if no such row exists. Used by
+        ``tests/plan/test_co1_decision_recording.py`` and
+        ``tests/copilot/test_copilot_api_characterization_q66_d.py``.
+        """
+        return self._entities.get((model.__name__, str(pk)))
+
     # Session surface ------------------------------------------------------
 
     def add(self, obj: Any) -> None:
+        if self.add_should_raise:
+            raise RuntimeError("FakeSession.add_should_raise=True")
         self.added.append(obj)
 
     async def delete(self, obj: Any) -> None:
@@ -110,6 +210,16 @@ class FakeSession:
         return _FakeNestedTransaction()
 
     async def execute(self, stmt: Any) -> "_FakeResult":
+        self.executed += 1
+        self.executed_stmts.append(stmt)
+        if self.raise_on_execute:
+            raise RuntimeError("FakeSession.raise_on_execute=True")
+        # Q.68.3.2 — multi-batch queue takes precedence when populated.
+        if self._batches:
+            batch = self._batches.pop(0)
+            # If the batch is a single scalar wrapper (rare), it still
+            # works because _FakeResult exposes scalar() over self._scalar.
+            return _FakeResult(batch[0] if batch else None, batch)
         scalar = self._scalar_queue.pop(0) if self._scalar_queue else None
         scalars = self._scalars_queue.pop(0) if self._scalars_queue else []
         return _FakeResult(scalar, scalars)
