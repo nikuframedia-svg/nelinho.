@@ -48,6 +48,11 @@ FRONTEND_REGEX_RULES = {
 # drift gate impede crescer (Larson: stop the bleeding).
 PYTHON_CUSTOM_RULES = {
     "Q66_B2_audit_coverage_violations": "tools/lint_audit_coverage.py",
+    # Q.68.3.5 — Fase D: standalone _FakeSession classes (não-subclasse do
+    # canónico em tests/conftest.py). Baseline=4 (outliers documentados):
+    # Q.66 char outlier, 80L SQL introspection, LEGACY paralelo, _SqlFakeSession.
+    # Novos tests TÊM de subclassificar FakeSession do canónico.
+    "Q68_3_fakesession_local_definitions": "tools/lint_fakesession_locals.py",
 }
 
 

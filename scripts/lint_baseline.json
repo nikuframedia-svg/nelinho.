@@ -1,6 +1,7 @@
 {
-  "BLE001": 383,
+  "BLE001": 389,
   "Q61_07_no_direct_fetch": 5,
   "Q61_28_any_annotation": 3,
-  "Q66_B2_audit_coverage_violations": 0
+  "Q66_B2_audit_coverage_violations": 0,
+  "Q68_3_fakesession_local_definitions": 4
 }
