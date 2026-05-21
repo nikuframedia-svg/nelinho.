@@ -19,7 +19,7 @@ export function SandboxVisualizer({
   isProposing = false,
 }: SandboxVisualizerProps) {
   // Helper to format values
-  const formatValue = (value: any): string => {
+  const formatValue = (value: unknown): string => {
     if (typeof value === 'number') {
       return value.toFixed(2);
     }
@@ -33,7 +33,7 @@ export function SandboxVisualizer({
   };
 
   // Helper to determine if a delta is positive/negative
-  const getDeltaColor = (delta: any): 'positive' | 'negative' | 'neutral' => {
+  const getDeltaColor = (delta: unknown): 'positive' | 'negative' | 'neutral' => {
     if (typeof delta === 'number') {
       return delta > 0 ? 'positive' : delta < 0 ? 'negative' : 'neutral';
     }
@@ -41,7 +41,7 @@ export function SandboxVisualizer({
   };
 
   // Extract KPI changes
-  const kpiChanges: Array<{ metric: string; before: any; after: any; delta: any; unit?: string }> = [];
+  const kpiChanges: Array<{ metric: string; before: unknown; after: unknown; delta: unknown; unit?: string }> = [];
   const commonMetrics = ['kpi_otd', 'oee', 'quality_fpy', 'inventory_level', 'margin', 'availability', 'performance'];
 
   commonMetrics.forEach((metric) => {
@@ -61,7 +61,7 @@ export function SandboxVisualizer({
   });
 
   // Extract other changes
-  const otherChanges: Array<{ key: string; before: any; after: any; delta: any }> = [];
+  const otherChanges: Array<{ key: string; before: unknown; after: unknown; delta: unknown }> = [];
   Object.keys(beforeState).forEach((key) => {
     if (!commonMetrics.includes(key) && afterState[key] !== undefined) {
       otherChanges.push({

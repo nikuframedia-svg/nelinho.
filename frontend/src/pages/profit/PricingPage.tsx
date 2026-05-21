@@ -4,7 +4,23 @@ import { DollarSign, Play, AlertTriangle, Loader2, TrendingUp, Percent } from 'l
 import { DarkPageLayout } from '../../layouts';
 import { DarkCard, DarkStatCard, DarkTable, DarkTableHead, DarkTableBody, DarkTableRow, DarkTableHeader, DarkTableCell, DarkButton, DarkPillButton, DarkBadge, DarkSearchInput } from '../../components/dark';
 import { pricingApi, productsApi } from '../../lib/api';
+import type { MutationError } from '../../lib/api-helpers';
 import { useToastContext } from '../../components/ToastProvider';
+
+interface ProductLite {
+  id?: string;
+  product_type?: string;
+}
+interface PricingItem {
+  id?: string;
+  product_name?: string;
+  product_code?: string;
+  product_type?: string;
+  cogs?: number;
+  current_price?: number;
+  recommended_price?: number;
+  margin_pct?: number;
+}
 
 export function PricingPage() {
   const [filterCategory, setFilterCategory] = useState<string>('ALL');
@@ -24,12 +40,14 @@ export function PricingPage() {
   });
 
   const categories = useMemo((): string[] => {
-    const cats = new Set<string>(products.map((p: any) => p.product_type as string).filter(Boolean));
+    const cats = new Set<string>(
+      (products as ProductLite[]).map((p) => p.product_type ?? '').filter(Boolean)
+    );
     return ['ALL', ...Array.from(cats)];
   }, [products]);
 
   const filteredPricing = useMemo(() => {
-    return pricingData.filter((item: any) => {
+    return (pricingData as PricingItem[]).filter((item) => {
       const matchesCategory = filterCategory === 'ALL' || item.product_type === filterCategory;
       const matchesSearch = !search ||
         item.product_name?.toLowerCase().includes(search.toLowerCase()) ||
@@ -39,10 +57,10 @@ export function PricingPage() {
   }, [pricingData, filterCategory, search]);
 
   const stats = useMemo(() => {
-    const avgMargin = filteredPricing.length ? filteredPricing.reduce((sum: number, p: any) => sum + (p.margin_pct || 0), 0) / filteredPricing.length : 0;
-    const avgPrice = filteredPricing.length ? filteredPricing.reduce((sum: number, p: any) => sum + (p.recommended_price || 0), 0) / filteredPricing.length : 0;
-    const underpriced = filteredPricing.filter((p: any) => p.margin_pct < 20).length;
-    const optimal = filteredPricing.filter((p: any) => p.margin_pct >= 20 && p.margin_pct <= 40).length;
+    const avgMargin = filteredPricing.length ? filteredPricing.reduce((sum, p) => sum + (p.margin_pct || 0), 0) / filteredPricing.length : 0;
+    const avgPrice = filteredPricing.length ? filteredPricing.reduce((sum, p) => sum + (p.recommended_price || 0), 0) / filteredPricing.length : 0;
+    const underpriced = filteredPricing.filter((p) => (p.margin_pct ?? 0) < 20).length;
+    const optimal = filteredPricing.filter((p) => (p.margin_pct ?? 0) >= 20 && (p.margin_pct ?? 0) <= 40).length;
     return { avgMargin, avgPrice, underpriced, optimal, count: filteredPricing.length };
   }, [filteredPricing]);
 
@@ -50,7 +68,7 @@ export function PricingPage() {
     mutationFn: () => pricingApi.recommend({ order_id: 'all' }),
     onMutate: () => setIsCalculating(true),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['pricing'] }); toast.success('Pricing recommendations generated'); },
-    onError: (err: any) => toast.error(err.message || 'Calculation failed'),
+    onError: (err: MutationError) => toast.error(err.message || 'Calculation failed'),
     onSettled: () => setIsCalculating(false),
   });
 
@@ -112,19 +130,19 @@ export function PricingPage() {
               </DarkTableRow>
             </DarkTableHead>
             <DarkTableBody>
-              {filteredPricing.slice(0, 50).map((pricing: any, i: number) => (
+              {filteredPricing.slice(0, 50).map((pricing, i: number) => (
                 <DarkTableRow key={pricing.id || i}>
                   <DarkTableCell className="text-text-white">{pricing.product_name || '-'}</DarkTableCell>
                   <DarkTableCell mono className="text-text-tertiary">{pricing.product_code || '-'}</DarkTableCell>
                   <DarkTableCell mono>€{(pricing.cogs || 0).toFixed(2)}</DarkTableCell>
                   <DarkTableCell mono>€{(pricing.current_price || 0).toFixed(2)}</DarkTableCell>
                   <DarkTableCell mono className="text-accent">€{(pricing.recommended_price || 0).toFixed(2)}</DarkTableCell>
-                  <DarkTableCell mono className={pricing.margin_pct < 20 ? 'text-danger' : pricing.margin_pct > 40 ? 'text-success' : 'text-text-primary'}>
+                  <DarkTableCell mono className={(pricing.margin_pct ?? 0) < 20 ? 'text-danger' : (pricing.margin_pct ?? 0) > 40 ? 'text-success' : 'text-text-primary'}>
                     {(pricing.margin_pct || 0).toFixed(1)}%
                   </DarkTableCell>
                   <DarkTableCell>
-                    <DarkBadge variant={pricing.margin_pct < 20 ? 'danger' : pricing.margin_pct > 40 ? 'success' : 'warning'} dot>
-                      {pricing.margin_pct < 20 ? 'Low' : pricing.margin_pct > 40 ? 'High' : 'Optimal'}
+                    <DarkBadge variant={(pricing.margin_pct ?? 0) < 20 ? 'danger' : (pricing.margin_pct ?? 0) > 40 ? 'success' : 'warning'} dot>
+                      {(pricing.margin_pct ?? 0) < 20 ? 'Low' : (pricing.margin_pct ?? 0) > 40 ? 'High' : 'Optimal'}
                     </DarkBadge>
                   </DarkTableCell>
                 </DarkTableRow>

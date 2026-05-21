@@ -91,8 +91,8 @@ export const scenariosApi = {
   get: (id: string) =>
     request<any>(`/v1/profit/scenarios/${id}`),
   
-  create: (data: any) =>
-    request<any>('/v1/profit/scenarios', { method: 'POST', body: JSON.stringify(data) }),
+  create: (data: Record<string, unknown>) =>
+    request<unknown>('/v1/profit/scenarios', { method: 'POST', body: JSON.stringify(data) }),
   
   run: (id: string) =>
     request<any>(`/v1/profit/scenarios/${id}/run`, { method: 'POST' }),

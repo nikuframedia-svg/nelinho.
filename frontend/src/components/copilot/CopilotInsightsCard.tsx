@@ -27,7 +27,7 @@ interface InsightItem {
   title: string;
   text?: string;
   description?: string;
-  citations?: any[];
+  citations?: Array<{ label?: string; ref?: string; [k: string]: unknown }>;
   suggested_runbooks?: string[];
   suggested_actions?: string[];
   affected_phases?: string[];
@@ -564,7 +564,7 @@ export function CopilotInsightsCard() {
                       </p>
                       {explanations[item.id].warnings && explanations[item.id].warnings.length > 0 && (
                         <div className="mt-2 space-y-1">
-                          {explanations[item.id].warnings.map((warning: any, wIdx: number) => (
+                          {explanations[item.id].warnings.map((warning: { message?: string }, wIdx: number) => (
                             <p key={wIdx} className="text-xs text-red-400 pl-4 border-l-2 border-red-500/50">
                               ⚠️ {warning.message}
                             </p>
@@ -573,7 +573,7 @@ export function CopilotInsightsCard() {
                       )}
                       {explanations[item.id].facts && explanations[item.id].facts.length > 0 && (
                         <div className="mt-2 space-y-1">
-                          {explanations[item.id].facts.map((fact: any, fIdx: number) => (
+                          {explanations[item.id].facts.map((fact: { text?: string }, fIdx: number) => (
                             <p key={fIdx} className="text-xs text-slate-500 pl-4 border-l-2 border-slate-600">
                               • {fact.text}
                             </p>

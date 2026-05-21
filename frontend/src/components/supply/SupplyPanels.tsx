@@ -53,7 +53,7 @@ export function ForecastPanel() {
     },
   });
 
-  const fc = m.data as { forecast?: ForecastPoint[]; method?: string; quality?: any } | undefined;
+  const fc = m.data as { forecast?: ForecastPoint[]; method?: string; quality?: unknown } | undefined;
   const points = fc?.forecast ?? [];
   const max = Math.max(...points.map((p) => p.yhat_upper ?? p.yhat ?? 0), 1);
 
@@ -94,12 +94,12 @@ export function ForecastPanel() {
               <span style={{ color: 'var(--fg-3)' }}>Method</span>
               <span style={{ color: 'var(--fg-1)' }}>{fc?.method ?? '—'}</span>
             </div>
-            {fc?.quality && (
+            {fc?.quality ? (
               <div className="flex justify-between">
                 <span style={{ color: 'var(--fg-3)' }}>Quality</span>
-                <span className="font-mono" style={{ color: 'var(--fg-1)' }}>{JSON.stringify(fc.quality).slice(0, 60)}</span>
+                <span className="font-mono" style={{ color: 'var(--fg-1)' }}>{String(JSON.stringify(fc.quality)).slice(0, 60)}</span>
               </div>
-            )}
+            ) : null}
             <div className="space-y-1">
               {points.slice(0, 14).map((p, i) => {
                 const pct = ((p.yhat ?? 0) / max) * 100;
@@ -299,7 +299,7 @@ export function AbcPanel() {
     },
   });
 
-  const data = m.data as { items?: AbcItem[]; summary?: any } | undefined;
+  const data = m.data as { items?: AbcItem[]; summary?: unknown } | undefined;
   const items = data?.items ?? [];
   const a = items.filter((it) => it.abc_class === 'A').length;
   const b = items.filter((it) => it.abc_class === 'B').length;

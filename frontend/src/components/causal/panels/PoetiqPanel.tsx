@@ -15,11 +15,11 @@ export function PoetiqPanel() {
 
   const result = m.data as
     | {
-        proposal?: any;
-        delta?: any;
-        cpo_kpis?: any;
+        proposal?: unknown;
+        delta?: unknown;
+        cpo_kpis?: unknown;
         commit_sha?: string;
-        diff_vs_parent?: any;
+        diff_vs_parent?: unknown;
       }
     | undefined;
 
@@ -73,11 +73,11 @@ export function PoetiqPanel() {
                 </span>
               </div>
             )}
-            {result.cpo_kpis && (
+            {result.cpo_kpis ? (
               <pre className="text-[10px] font-mono overflow-x-auto" style={{ color: 'var(--fg-2)' }}>
-                {JSON.stringify(result.cpo_kpis, null, 2).slice(0, 600)}
+                {String(JSON.stringify(result.cpo_kpis, null, 2)).slice(0, 600)}
               </pre>
-            )}
+            ) : null}
           </div>
         )}
       </div>

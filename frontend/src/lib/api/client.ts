@@ -176,15 +176,16 @@ export async function request<T>(
         }
         return fetchResponse;
       });
-    } catch (circuitError: any) {
+    } catch (rawCircuitError: unknown) {
+      const circuitError = rawCircuitError as { message?: string };
       // Circuit breaker rejected (circuit is open)
       if (circuitError.message?.includes('Circuit breaker is open')) {
-        const errorObj = new Error('Backend indisponível. Circuit breaker está aberto.');
-        (errorObj as any).status = 503;
+        const errorObj = new Error('Backend indisponível. Circuit breaker está aberto.') as Error & { status?: number };
+        errorObj.status = 503;
         throw errorObj;
       }
       // Re-throw network errors or HTTP 5xx errors
-      throw circuitError;
+      throw rawCircuitError;
     }
 
     if (!response.ok) {
@@ -249,20 +250,21 @@ export async function request<T>(
     }
 
     return await response.json();
-  } catch (error: any) {
+  } catch (rawError: unknown) {
+    const error = rawError as { status?: number; message?: string };
     // Network errors or other fetch failures - retry if applicable
     if (retryCount < maxRetries && !error.status) {
       const retryDelay = initialDelay * Math.pow(2, retryCount);
-      
+
       // Show toast notification on first retry
       if (retryCount === 0 && toastContext) {
         toastContext.info(`Erro de ligação. Tentando reconectar em ${retryDelay / 1000}s...`);
       }
-      
+
       await delay(retryDelay);
       return request<T>(endpoint, options, retryCount + 1);
     }
-    
+
     // Log only final network errors (after all retries)
     if (retryCount >= maxRetries) {
       logToEndpoint('api.ts', 'network error after retries', {
@@ -271,8 +273,8 @@ export async function request<T>(
         url,
       }, 'C');
     }
-    
-    throw error;
+
+    throw rawError;
   }
 }
 

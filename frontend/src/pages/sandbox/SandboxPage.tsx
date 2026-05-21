@@ -5,8 +5,20 @@ import { format } from 'date-fns';
 import { DarkPageLayout } from '../../layouts';
 import { DarkCard, DarkStatCard, DarkTable, DarkTableHead, DarkTableBody, DarkTableRow, DarkTableHeader, DarkTableCell, DarkButton, DarkPillButton, DarkBadge, DarkIconButton } from '../../components/dark';
 import { sandboxApi } from '../../lib/api';
+import type { MutationError, MutationPayload } from '../../lib/api-helpers';
 import { FormModal, DeleteConfirmDialog, type FormField } from '../../components/ui';
 import { useToastContext } from '../../components/ToastProvider';
+
+interface SandboxScenario {
+  id: string;
+  name?: string;
+  description?: string;
+  status?: string;
+  created_at?: string;
+  base_scenario?: string;
+  impact?: number;
+  changes_count?: number;
+}
 
 export function SandboxPage() {
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
@@ -24,40 +36,40 @@ export function SandboxPage() {
 
   const filteredScenarios = useMemo(() => {
     if (filterStatus === 'ALL') return scenarios;
-    return scenarios.filter((s: any) => s.status === filterStatus);
+    return (scenarios as SandboxScenario[]).filter((s) => s.status ===filterStatus);
   }, [scenarios, filterStatus]);
 
   const stats = useMemo(() => ({
     total: scenarios.length,
-    draft: scenarios.filter((s: any) => s.status === 'DRAFT').length,
-    simulated: scenarios.filter((s: any) => s.status === 'SIMULATED').length,
-    published: scenarios.filter((s: any) => s.status === 'PUBLISHED').length,
+    draft: (scenarios as SandboxScenario[]).filter((s) => s.status ==='DRAFT').length,
+    simulated: (scenarios as SandboxScenario[]).filter((s) => s.status ==='SIMULATED').length,
+    published: (scenarios as SandboxScenario[]).filter((s) => s.status ==='PUBLISHED').length,
   }), [scenarios]);
 
   const createMutation = useMutation({
-    mutationFn: (data: any) => sandboxApi.createScenario(data),
+    mutationFn: (data: MutationPayload) => sandboxApi.createScenario(data),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['sandbox'] }); setIsCreateModalOpen(false); toast.success('Sandbox created'); },
-    onError: (err: any) => toast.error(err.message || 'Error'),
+    onError: (err: MutationError) => toast.error(err.message || 'Error'),
   });
 
   const simulateMutation = useMutation({
     mutationFn: (id: string) => sandboxApi.simulate(id),
     onMutate: (id) => setSimulatingId(id),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['sandbox'] }); toast.success('Simulation completed'); },
-    onError: (err: any) => toast.error(err.message || 'Simulation failed'),
+    onError: (err: MutationError) => toast.error(err.message || 'Simulation failed'),
     onSettled: () => setSimulatingId(null),
   });
 
   const publishMutation = useMutation({
     mutationFn: (id: string) => sandboxApi.publish(id),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['sandbox'] }); toast.success('Changes published'); },
-    onError: (err: any) => toast.error(err.message || 'Publish failed'),
+    onError: (err: MutationError) => toast.error(err.message || 'Publish failed'),
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => sandboxApi.deleteScenario ? sandboxApi.deleteScenario(id) : Promise.resolve(),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['sandbox'] }); setIsDeleteModalOpen(false); setDeletingId(null); toast.success('Sandbox deleted'); },
-    onError: (err: any) => toast.error(err.message || 'Error'),
+    onError: (err: MutationError) => toast.error(err.message || 'Error'),
   });
 
   const sandboxFields: FormField[] = [
@@ -135,7 +147,7 @@ export function SandboxPage() {
               </DarkTableRow>
             </DarkTableHead>
             <DarkTableBody>
-              {filteredScenarios.map((scenario: any) => (
+              {filteredScenarios.map((scenario: SandboxScenario) => (
                 <DarkTableRow key={scenario.id}>
                   <DarkTableCell>
                     <div><p className="font-semibold text-text-white">{scenario.name}</p>{scenario.description && <p className="text-xs text-text-tertiary truncate max-w-xs">{scenario.description}</p>}</div>

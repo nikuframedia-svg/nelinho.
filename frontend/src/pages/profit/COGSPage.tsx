@@ -4,8 +4,26 @@ import { DollarSign, Play, AlertTriangle, Loader2, TrendingUp } from 'lucide-rea
 import { DarkPageLayout } from '../../layouts';
 import { DarkCard, DarkStatCard, DarkTable, DarkTableHead, DarkTableBody, DarkTableRow, DarkTableHeader, DarkTableCell, DarkButton, DarkPillButton, DarkSearchInput } from '../../components/dark';
 import { cogsApi, productsApi } from '../../lib/api';
+import type { MutationError } from '../../lib/api-helpers';
 import { BarChart } from '../../components/charts';
 import { useToastContext } from '../../components/ToastProvider';
+
+interface ProductLite {
+  id?: string;
+  product_type?: string;
+  product_code?: string;
+  product_name?: string;
+}
+interface CogsItem {
+  id?: string;
+  product_name?: string;
+  product_code?: string;
+  product_type?: string;
+  material_cost?: number;
+  labor_cost?: number;
+  overhead_cost?: number;
+  total_cogs?: number;
+}
 
 // Sprint Q.12 — formatador único pt-PT. Antes `toLocaleString()` sem args
 // herdava o locale do browser e em EN-US mostrava "€1,234.56" em vez de
@@ -35,12 +53,14 @@ export function COGSPage() {
   });
 
   const categories = useMemo((): string[] => {
-    const cats = new Set<string>(products.map((p: any) => p.product_type as string).filter(Boolean));
+    const cats = new Set<string>(
+      (products as ProductLite[]).map((p) => p.product_type ?? '').filter(Boolean)
+    );
     return ['ALL', ...Array.from(cats)];
   }, [products]);
 
   const filteredCOGS = useMemo(() => {
-    return cogsData.filter((item: any) => {
+    return (cogsData as CogsItem[]).filter((item) => {
       const matchesCategory = filterCategory === 'ALL' || item.product_type === filterCategory;
       const matchesSearch = !search ||
         item.product_name?.toLowerCase().includes(search.toLowerCase()) ||
@@ -50,16 +70,17 @@ export function COGSPage() {
   }, [cogsData, filterCategory, search]);
 
   const stats = useMemo(() => {
-    const totalCOGS = filteredCOGS.reduce((sum: number, c: any) => sum + (c.total_cogs || 0), 0);
+    const totalCOGS = filteredCOGS.reduce((sum, c) => sum + (c.total_cogs || 0), 0);
     const avgCOGS = filteredCOGS.length ? totalCOGS / filteredCOGS.length : 0;
-    const totalMaterials = filteredCOGS.reduce((sum: number, c: any) => sum + (c.material_cost || 0), 0);
-    const totalLabor = filteredCOGS.reduce((sum: number, c: any) => sum + (c.labor_cost || 0), 0);
+    const totalMaterials = filteredCOGS.reduce((sum, c) => sum + (c.material_cost || 0), 0);
+    const totalLabor = filteredCOGS.reduce((sum, c) => sum + (c.labor_cost || 0), 0);
     return { totalCOGS, avgCOGS, totalMaterials, totalLabor, count: filteredCOGS.length };
   }, [filteredCOGS]);
 
   const chartData = useMemo(() => {
-    return filteredCOGS.slice(0, 10).map((c: any) => ({
+    return filteredCOGS.slice(0, 10).map((c) => ({
       name: c.product_code || 'Product',
+      value: c.total_cogs || 0,
       COGS: c.total_cogs || 0,
     }));
   }, [filteredCOGS]);
@@ -68,7 +89,7 @@ export function COGSPage() {
     mutationFn: () => cogsApi.calculate({ order_id: 'all' }),
     onMutate: () => setIsCalculating(true),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['cogs'] }); toast.success('COGS calculated'); },
-    onError: (err: any) => toast.error(err.message || 'Calculation failed'),
+    onError: (err: MutationError) => toast.error(err.message || 'Calculation failed'),
     onSettled: () => setIsCalculating(false),
   });
 
@@ -138,7 +159,7 @@ export function COGSPage() {
                 </DarkTableRow>
               </DarkTableHead>
               <DarkTableBody>
-                {filteredCOGS.slice(0, 50).map((cogs: any, i: number) => (
+                {filteredCOGS.slice(0, 50).map((cogs, i: number) => (
                   <DarkTableRow key={cogs.id || i}>
                     <DarkTableCell className="text-text-white">{cogs.product_name || '-'}</DarkTableCell>
                     <DarkTableCell mono className="text-text-tertiary">{cogs.product_code || '-'}</DarkTableCell>

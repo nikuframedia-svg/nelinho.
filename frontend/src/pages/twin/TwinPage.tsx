@@ -5,8 +5,26 @@ import { format } from 'date-fns';
 import { DarkPageLayout } from '../../layouts';
 import { DarkCard, DarkStatCard, DarkTable, DarkTableHead, DarkTableBody, DarkTableRow, DarkTableHeader, DarkTableCell, DarkButton, DarkPillButton, DarkBadge, DarkIconButton } from '../../components/dark';
 import { twinApi } from '../../lib/api';
+import type { MutationError, MutationPayload } from '../../lib/api-helpers';
+import type { ScenarioTemplate } from '../../types';
 import { FormModal, DeleteConfirmDialog, type FormField } from '../../components/ui';
 import { useToastContext } from '../../components/ToastProvider';
+
+interface ScenarioLite {
+  id: string;
+  title?: string;
+  description?: string;
+  status?: string;
+  created_at?: string;
+  results?: {
+    improvement?: number | string;
+    before_state?: Record<string, unknown>;
+    after_state?: Record<string, unknown>;
+  };
+  scenario_hash?: string;
+  reproducibility_hash?: string;
+  [key: string]: unknown;
+}
 import { BlockedMetricsNotice } from '../../components/capabilities';
 import { ScenarioDiffViewer } from '../../components/twin';
 
@@ -19,9 +37,9 @@ export function TwinPage() {
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [simulatingId, setSimulatingId] = useState<string | null>(null);
-  const [compareScenario, setCompareScenario] = useState<any | null>(null);
+  const [compareScenario, setCompareScenario] = useState<ScenarioLite | null>(null);
   const [showTemplates, setShowTemplates] = useState(false);
-  const [, setSelectedTemplate] = useState<any | null>(null);
+  const [, setSelectedTemplate] = useState<ScenarioTemplate | null>(null);
   const toast = useToastContext();
   const queryClient = useQueryClient();
 
@@ -32,34 +50,37 @@ export function TwinPage() {
 
   const filteredScenarios = useMemo(() => {
     if (filterStatus === 'ALL') return scenarios;
-    return scenarios.filter((s: any) => s.status === filterStatus);
+    return (scenarios as ScenarioLite[]).filter((s) => s.status ===filterStatus);
   }, [scenarios, filterStatus]);
 
   const stats = useMemo(() => ({
     total: scenarios.length,
-    draft: scenarios.filter((s: any) => s.status === 'DRAFT').length,
-    simulated: scenarios.filter((s: any) => s.status === 'SIMULATED').length,
-    solved: scenarios.filter((s: any) => s.status === 'SOLVED').length,
+    draft: (scenarios as ScenarioLite[]).filter((s) => s.status ==='DRAFT').length,
+    simulated: (scenarios as ScenarioLite[]).filter((s) => s.status ==='SIMULATED').length,
+    solved: (scenarios as ScenarioLite[]).filter((s) => s.status ==='SOLVED').length,
   }), [scenarios]);
 
   const createMutation = useMutation({
-    mutationFn: (data: any) => twinApi.createScenario(data),
+    mutationFn: (data: MutationPayload) => twinApi.createScenario({
+      title: String(data.title ?? ''),
+      description: data.description ? String(data.description) : undefined,
+    }),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['twin'] }); setIsCreateModalOpen(false); toast.success('Scenario created'); },
-    onError: (err: any) => toast.error(err.message || 'Error'),
+    onError: (err: MutationError) => toast.error(err.message || 'Error'),
   });
 
   const simulateMutation = useMutation({
     mutationFn: (id: string) => twinApi.simulate(id),
     onMutate: (id) => setSimulatingId(id),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['twin'] }); toast.success('Simulation completed'); },
-    onError: (err: any) => toast.error(err.message || 'Simulation failed'),
+    onError: (err: MutationError) => toast.error(err.message || 'Simulation failed'),
     onSettled: () => setSimulatingId(null),
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => twinApi.deleteScenario(id),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['twin'] }); setIsDeleteModalOpen(false); setDeletingId(null); toast.success('Scenario deleted'); },
-    onError: (err: any) => toast.error(err.message || 'Error'),
+    onError: (err: MutationError) => toast.error(err.message || 'Error'),
   });
 
   const scenarioFields: FormField[] = [
@@ -165,7 +186,7 @@ export function TwinPage() {
               </DarkTableRow>
             </DarkTableHead>
             <DarkTableBody>
-              {filteredScenarios.map((scenario: any) => (
+              {filteredScenarios.map((scenario: ScenarioLite) => (
                 <DarkTableRow key={scenario.id}>
                   <DarkTableCell>
                     <div><p className="font-semibold text-text-white">{scenario.title}</p>{scenario.description && <p className="text-xs text-text-tertiary truncate max-w-xs">{scenario.description}</p>}</div>
@@ -235,8 +256,8 @@ export function TwinPage() {
             />
           </div>
           <ScenarioDiffViewer
-            beforeState={compareScenario.results.before_state || {}}
-            afterState={compareScenario.results.after_state || {}}
+            beforeState={(compareScenario.results.before_state || {}) as Record<string, number | null>}
+            afterState={(compareScenario.results.after_state || {}) as Record<string, number | null>}
             title={`Simulation Results: ${compareScenario.title}`}
             showBlockedMetrics
             showTrust

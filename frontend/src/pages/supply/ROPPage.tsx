@@ -5,6 +5,17 @@ import { DarkPageLayout } from '../../layouts';
 import { DarkCard, DarkStatCard, DarkTable, DarkTableHead, DarkTableBody, DarkTableRow, DarkTableHeader, DarkTableCell, DarkPillButton, DarkBadge, DarkSearchInput } from '../../components/dark';
 import { supplyApi } from '../../lib/api';
 
+interface RopItem {
+  id?: string;
+  product_name?: string;
+  product_code?: string;
+  quantity?: number;
+  reorder_point?: number;
+  safety_stock?: number;
+  lead_time_days?: number;
+  supplier_name?: string;
+}
+
 export function ROPPage() {
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
   const [search, setSearch] = useState('');
@@ -15,10 +26,10 @@ export function ROPPage() {
   });
 
   const filteredROP = useMemo(() => {
-    return ropData.filter((item: any) => {
+    return (ropData as RopItem[]).filter((item) => {
       const matchesStatus = filterStatus === 'ALL' ||
-        (filterStatus === 'REORDER' && item.quantity <= item.reorder_point) ||
-        (filterStatus === 'OK' && item.quantity > item.reorder_point);
+        (filterStatus === 'REORDER' && (item.quantity ?? 0) <= (item.reorder_point ?? 0)) ||
+        (filterStatus === 'OK' && (item.quantity ?? 0) > (item.reorder_point ?? 0));
       const matchesSearch = !search ||
         item.product_name?.toLowerCase().includes(search.toLowerCase()) ||
         item.product_code?.toLowerCase().includes(search.toLowerCase());
@@ -26,12 +37,15 @@ export function ROPPage() {
     });
   }, [ropData, filterStatus, search]);
 
-  const stats = useMemo(() => ({
-    total: ropData.length,
-    needsReorder: ropData.filter((i: any) => i.quantity <= i.reorder_point).length,
-    safetyStock: ropData.filter((i: any) => i.quantity <= i.safety_stock).length,
-    ok: ropData.filter((i: any) => i.quantity > i.reorder_point).length,
-  }), [ropData]);
+  const stats = useMemo(() => {
+    const items = ropData as RopItem[];
+    return {
+      total: items.length,
+      needsReorder: items.filter((i) => (i.quantity ?? 0) <= (i.reorder_point ?? 0)).length,
+      safetyStock: items.filter((i) => (i.quantity ?? 0) <= (i.safety_stock ?? 0)).length,
+      ok: items.filter((i) => (i.quantity ?? 0) > (i.reorder_point ?? 0)).length,
+    };
+  }, [ropData]);
 
   if (error) {
     return (
@@ -85,7 +99,7 @@ export function ROPPage() {
               </DarkTableRow>
             </DarkTableHead>
             <DarkTableBody>
-              {filteredROP.slice(0, 50).map((item: any, i: number) => (
+              {filteredROP.slice(0, 50).map((item, i: number) => (
                 <DarkTableRow key={item.id || i}>
                   <DarkTableCell className="text-text-white">{item.product_name || '-'}</DarkTableCell>
                   <DarkTableCell mono className="text-text-tertiary">{item.product_code || '-'}</DarkTableCell>
@@ -94,8 +108,8 @@ export function ROPPage() {
                   <DarkTableCell mono>{item.safety_stock || 0}</DarkTableCell>
                   <DarkTableCell>{item.lead_time_days || 0} days</DarkTableCell>
                   <DarkTableCell>
-                    <DarkBadge variant={item.quantity <= item.safety_stock ? 'danger' : item.quantity <= item.reorder_point ? 'warning' : 'success'} dot>
-                      {item.quantity <= item.safety_stock ? 'Critical' : item.quantity <= item.reorder_point ? 'Reorder' : 'OK'}
+                    <DarkBadge variant={(item.quantity ?? 0) <= (item.safety_stock ?? 0) ? 'danger' : (item.quantity ?? 0) <= (item.reorder_point ?? 0) ? 'warning' : 'success'} dot>
+                      {(item.quantity ?? 0) <= (item.safety_stock ?? 0) ? 'Critical' : (item.quantity ?? 0) <= (item.reorder_point ?? 0) ? 'Reorder' : 'OK'}
                     </DarkBadge>
                   </DarkTableCell>
                 </DarkTableRow>

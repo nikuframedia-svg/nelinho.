@@ -12,9 +12,10 @@ const queryClient = new QueryClient({
     queries: {
       refetchOnWindowFocus: false,
       // Don't retry on 503 (Service Unavailable) or 5xx errors
-      retry: (failureCount, error: any) => {
+      retry: (failureCount, rawError: unknown) => {
+        const error = rawError as { status?: number; message?: string } | null;
         // Don't retry if it's a server error (5xx)
-        if (error?.status >= 500) return false;
+        if ((error?.status ?? 0) >= 500) return false;
         // Don't retry if database is unavailable
         if (error?.message?.includes('Database') || error?.message?.includes('503')) return false;
         // Otherwise, retry up to 1 time

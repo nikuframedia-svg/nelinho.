@@ -4,8 +4,21 @@ import { Package, Play, AlertTriangle, Loader2 } from 'lucide-react';
 import { DarkPageLayout } from '../../layouts';
 import { DarkCard, DarkStatCard, DarkTable, DarkTableHead, DarkTableBody, DarkTableRow, DarkTableHeader, DarkTableCell, DarkButton, DarkPillButton, DarkBadge, DarkSearchInput } from '../../components/dark';
 import { supplyApi } from '../../lib/api';
+import type { MutationError } from '../../lib/api-helpers';
 import { DonutChart } from '../../components/charts';
 import { useToastContext } from '../../components/ToastProvider';
+
+interface ABCItem {
+  id?: string;
+  product_name?: string;
+  product_code?: string;
+  abc_class?: 'A' | 'B' | 'C' | string;
+  consumption_value?: number;
+  cumulative_pct?: number;
+  annual_usage?: number;
+  unit_cost?: number;
+  annual_value?: number;
+}
 
 export function ABCPage() {
   const [filterClass, setFilterClass] = useState<string>('ALL');
@@ -20,7 +33,7 @@ export function ABCPage() {
   });
 
   const filteredABC = useMemo(() => {
-    return abcData.filter((item: any) => {
+    return (abcData as ABCItem[]).filter((item) => {
       const matchesClass = filterClass === 'ALL' || item.abc_class === filterClass;
       const matchesSearch = !search ||
         item.product_name?.toLowerCase().includes(search.toLowerCase()) ||
@@ -29,12 +42,15 @@ export function ABCPage() {
     });
   }, [abcData, filterClass, search]);
 
-  const stats = useMemo(() => ({
-    total: abcData.length,
-    classA: abcData.filter((i: any) => i.abc_class === 'A').length,
-    classB: abcData.filter((i: any) => i.abc_class === 'B').length,
-    classC: abcData.filter((i: any) => i.abc_class === 'C').length,
-  }), [abcData]);
+  const stats = useMemo(() => {
+    const items = abcData as ABCItem[];
+    return {
+      total: items.length,
+      classA: items.filter((i) => i.abc_class === 'A').length,
+      classB: items.filter((i) => i.abc_class === 'B').length,
+      classC: items.filter((i) => i.abc_class === 'C').length,
+    };
+  }, [abcData]);
 
   const donutData = useMemo(() => [
     { name: 'Class A', value: stats.classA, color: '#4fd1c5' },
@@ -46,7 +62,7 @@ export function ABCPage() {
     mutationFn: () => supplyApi.calculateABC(),
     onMutate: () => setIsCalculating(true),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['abc'] }); toast.success('ABC analysis completed'); },
-    onError: (err: any) => toast.error(err.message || 'Calculation failed'),
+    onError: (err: MutationError) => toast.error(err.message || 'Calculation failed'),
     onSettled: () => setIsCalculating(false),
   });
 
@@ -114,7 +130,7 @@ export function ABCPage() {
               </DarkTableRow>
             </DarkTableHead>
             <DarkTableBody>
-              {filteredABC.slice(0, 50).map((item: any, i: number) => (
+              {filteredABC.slice(0, 50).map((item, i: number) => (
                 <DarkTableRow key={item.id || i}>
                   <DarkTableCell className="text-text-white">{item.product_name || '-'}</DarkTableCell>
                   <DarkTableCell mono className="text-text-tertiary">{item.product_code || '-'}</DarkTableCell>

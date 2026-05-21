@@ -25,6 +25,10 @@ import {
 } from '../../components/dark';
 import { FormModal, type FormField } from '../../components/ui';
 import { ratesApi, employeesApi, machinesApi } from '../../lib/api';
+import type { MutationError, EntityLite } from '../../lib/api-helpers';
+
+type EmployeeLite = EntityLite & { employee_name?: string; employee_code?: string };
+type MachineLite = EntityLite & { machine_name?: string; machine_code?: string };
 import { useToastContext } from '../../components/ToastProvider';
 import { format } from 'date-fns';
 
@@ -123,7 +127,7 @@ export function RatesPage() {
       queryClient.invalidateQueries({ queryKey: ['rates', 'labor'] });
       setIsFormModalOpen(false);
     },
-    onError: (err: any) => {
+    onError: (err: MutationError) => {
       toastError(err.message || 'Error adding labor rate');
     },
   });
@@ -135,7 +139,7 @@ export function RatesPage() {
       queryClient.invalidateQueries({ queryKey: ['rates', 'machine'] });
       setIsFormModalOpen(false);
     },
-    onError: (err: any) => {
+    onError: (err: MutationError) => {
       toastError(err.message || 'Error adding machine rate');
     },
   });
@@ -147,7 +151,7 @@ export function RatesPage() {
       queryClient.invalidateQueries({ queryKey: ['rates', 'overhead'] });
       setIsFormModalOpen(false);
     },
-    onError: (err: any) => {
+    onError: (err: MutationError) => {
       toastError(err.message || 'Error adding overhead rate');
     },
   });
@@ -155,18 +159,18 @@ export function RatesPage() {
   // Form field definitions
   const employeeOptions = useMemo(
     () =>
-      employees.map((e: any) => ({
+      (employees as EmployeeLite[]).map((e) => ({
         value: e.id,
-        label: `${e.employee_name} (${e.employee_code})`,
+        label: `${e.employee_name ?? ''} (${e.employee_code ?? ''})`,
       })),
     [employees]
   );
 
   const machineOptions = useMemo(
     () =>
-      machines.map((m: any) => ({
+      (machines as MachineLite[]).map((m) => ({
         value: m.id,
-        label: `${m.machine_name} (${m.machine_code})`,
+        label: `${m.machine_name ?? ''} (${m.machine_code ?? ''})`,
       })),
     [machines]
   );
@@ -475,7 +479,7 @@ export function RatesPage() {
               </DarkTableHead>
               <DarkTableBody>
                 {laborRates.map((rate) => {
-                  const employee = employees.find((e: any) => e.id === rate.employee_id);
+                  const employee = (employees as EmployeeLite[]).find((e) => e.id === rate.employee_id);
                   return (
                     <DarkTableRow key={rate.id}>
                       <DarkTableCell>
@@ -528,7 +532,7 @@ export function RatesPage() {
               </DarkTableHead>
               <DarkTableBody>
                 {machineRates.map((rate) => {
-                  const machine = machines.find((m: any) => m.id === rate.machine_id);
+                  const machine = (machines as MachineLite[]).find((m) => m.id === rate.machine_id);
                   return (
                     <DarkTableRow key={rate.id}>
                       <DarkTableCell>

@@ -179,7 +179,7 @@ export function DeltaWizard({
   const selectedConfig = DELTA_CONFIGS.find(c => c.type === selectedType);
 
   // Handle field change
-  const handleFieldChange = (key: string, value: any) => {
+  const handleFieldChange = (key: string, value: unknown) => {
     setFieldValues(prev => ({ ...prev, [key]: value }));
   };
 

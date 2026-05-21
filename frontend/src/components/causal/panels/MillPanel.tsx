@@ -27,8 +27,8 @@ export function MillPanel() {
     | {
         verdict?: string;
         metric_comparison?: { delta?: number; cohens_d?: number };
-        changes_found?: any[];
-        unchanged?: any[];
+        changes_found?: Array<{ dimension?: string; before?: unknown; after?: unknown; impact?: number; category?: string; change?: string; correlation?: number }>;
+        unchanged?: unknown[];
       }
     | undefined;
 
@@ -94,7 +94,7 @@ export function MillPanel() {
             )}
             {(result.changes_found ?? []).length > 0 && (
               <ul className="space-y-1" style={{ color: 'var(--fg-2)' }}>
-                {result.changes_found!.slice(0, 6).map((c: any, i: number) => (
+                {result.changes_found!.slice(0, 6).map((c, i: number) => (
                   <li key={i} className="flex justify-between">
                     <span>
                       {c.category} — {c.change}

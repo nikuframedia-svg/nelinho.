@@ -8,23 +8,25 @@ interface CopilotActionsProps {
     action_type: string;
     label: string;
     requires_approval: boolean;
-    payload: any;
+    payload: Record<string, unknown>;
   }>;
   suggestionId: string;
 }
 
+type ActionResult = { message?: string } & Record<string, unknown>;
+
 export function CopilotActions({ actions, suggestionId }: CopilotActionsProps) {
-  const [dryRunResult, setDryRunResult] = useState<any>(null);
+  const [dryRunResult, setDryRunResult] = useState<ActionResult | null>(null);
 
   const actionMutation = useMutation({
-    mutationFn: (data: { action_type: string; payload: any }) =>
+    mutationFn: (data: { action_type: string; payload: Record<string, unknown> }) =>
       copilotApi.action({
-        action_type: data.action_type as any,
+        action_type: data.action_type,
         suggestion_id: suggestionId,
         payload: data.payload,
       }),
     onSuccess: (result) => {
-      setDryRunResult(result);
+      setDryRunResult(result as ActionResult);
     },
   });
 

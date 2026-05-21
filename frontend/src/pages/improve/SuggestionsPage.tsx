@@ -4,7 +4,20 @@ import { Sparkles, Play, AlertTriangle, Loader2, Check, X, Lightbulb, TrendingUp
 import { DarkPageLayout } from '../../layouts';
 import { DarkCard, DarkStatCard, DarkTable, DarkTableHead, DarkTableBody, DarkTableRow, DarkTableHeader, DarkTableCell, DarkButton, DarkPillButton, DarkBadge, DarkIconButton } from '../../components/dark';
 import { improveApi } from '../../lib/api';
+import type { MutationError } from '../../lib/api-helpers';
 import { useToastContext } from '../../components/ToastProvider';
+
+interface SuggestionItem {
+  id: string;
+  title?: string;
+  description?: string;
+  status?: 'PENDING' | 'APPROVED' | 'REJECTED' | string;
+  domain?: string;
+  impact?: number;
+  confidence?: number;
+  recommended_action?: string;
+  created_at?: string;
+}
 
 export function SuggestionsPage() {
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
@@ -19,23 +32,28 @@ export function SuggestionsPage() {
   });
 
   const filteredSuggestions = useMemo(() => {
-    return suggestions.filter((s: any) => {
+    return (suggestions as SuggestionItem[]).filter((s) => {
       const matchesStatus = filterStatus === 'ALL' || s.status === filterStatus;
       const matchesDomain = filterDomain === 'ALL' || s.domain === filterDomain;
       return matchesStatus && matchesDomain;
     });
   }, [suggestions, filterStatus, filterDomain]);
 
-  const stats = useMemo(() => ({
-    total: suggestions.length,
-    pending: suggestions.filter((s: any) => s.status === 'PENDING').length,
-    approved: suggestions.filter((s: any) => s.status === 'APPROVED').length,
-    rejected: suggestions.filter((s: any) => s.status === 'REJECTED').length,
-    totalImpact: suggestions.filter((s: any) => s.status === 'APPROVED').reduce((sum: number, s: any) => sum + (s.impact || 0), 0),
-  }), [suggestions]);
+  const stats = useMemo(() => {
+    const items = suggestions as SuggestionItem[];
+    return {
+      total: items.length,
+      pending: items.filter((s) => s.status === 'PENDING').length,
+      approved: items.filter((s) => s.status === 'APPROVED').length,
+      rejected: items.filter((s) => s.status === 'REJECTED').length,
+      totalImpact: items.filter((s) => s.status === 'APPROVED').reduce((sum, s) => sum + (s.impact || 0), 0),
+    };
+  }, [suggestions]);
 
   const domains = useMemo((): string[] => {
-    const d = new Set<string>(suggestions.map((s: any) => s.domain as string).filter(Boolean));
+    const d = new Set<string>(
+      (suggestions as SuggestionItem[]).map((s) => s.domain ?? '').filter(Boolean)
+    );
     return ['ALL', ...Array.from(d)];
   }, [suggestions]);
 
@@ -43,20 +61,20 @@ export function SuggestionsPage() {
     mutationFn: () => improveApi.generateSuggestions({ limit: 10 }),
     onMutate: () => setIsGenerating(true),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['suggestions'] }); toast.success('Suggestions generated'); },
-    onError: (err: any) => toast.error(err.message || 'Generation failed'),
+    onError: (err: MutationError) => toast.error(err.message || 'Generation failed'),
     onSettled: () => setIsGenerating(false),
   });
 
   const approveMutation = useMutation({
     mutationFn: (id: string) => improveApi.approveSuggestion(id),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['suggestions'] }); toast.success('Suggestion approved'); },
-    onError: (err: any) => toast.error(err.message || 'Error'),
+    onError: (err: MutationError) => toast.error(err.message || 'Error'),
   });
 
   const rejectMutation = useMutation({
     mutationFn: (id: string) => improveApi.rejectSuggestion(id),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['suggestions'] }); toast.success('Suggestion rejected'); },
-    onError: (err: any) => toast.error(err.message || 'Error'),
+    onError: (err: MutationError) => toast.error(err.message || 'Error'),
   });
 
   if (error) {
@@ -136,13 +154,13 @@ export function SuggestionsPage() {
               </DarkTableRow>
             </DarkTableHead>
             <DarkTableBody>
-              {filteredSuggestions.map((suggestion: any) => (
+              {filteredSuggestions.map((suggestion: SuggestionItem) => (
                 <DarkTableRow key={suggestion.id}>
                   <DarkTableCell>
                     <div><p className="font-semibold text-text-white">{suggestion.title}</p>{suggestion.description && <p className="text-xs text-text-tertiary truncate max-w-md">{suggestion.description}</p>}</div>
                   </DarkTableCell>
                   <DarkTableCell><DarkBadge variant="info">{suggestion.domain || 'General'}</DarkBadge></DarkTableCell>
-                  <DarkTableCell mono className={suggestion.impact > 0 ? 'text-success' : 'text-text-tertiary'}>
+                  <DarkTableCell mono className={(suggestion.impact ?? 0) > 0 ? 'text-success' : 'text-text-tertiary'}>
                     {suggestion.impact ? `+${suggestion.impact.toFixed(1)}%` : '-'}
                   </DarkTableCell>
                   <DarkTableCell>

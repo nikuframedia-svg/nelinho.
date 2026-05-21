@@ -72,7 +72,7 @@ export function Dashboard() {
 
   // Calculate critical/high counts for alert banner - using REAL data
   const criticalCount = (skillsData?.data?.critical_phases ?? 0) + 
-    (bottlenecksData?.data?.bottlenecks?.filter((b: any) => b.is_critical)?.length ?? 0);
+    (bottlenecksData?.data?.bottlenecks?.filter((b: { is_critical?: boolean }) => b.is_critical)?.length ?? 0);
   const highCount = (skillsData?.data?.high_risk_phases ?? 0);
 
   // Build action items for "O Que Fazer Hoje" - using REAL data

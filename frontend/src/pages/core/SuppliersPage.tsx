@@ -6,6 +6,7 @@ import { DarkCard, DarkStatCard, DarkTable, DarkTableHead, DarkTableBody, DarkTa
 import { FormModal, DeleteConfirmDialog, type FormField } from '../../components/ui';
 import { suppliersApi } from '../../lib/api';
 import type { Supplier } from '../../types';
+import type { MutationError, MutationPayload } from '../../lib/api-helpers';
 import { useToastContext } from '../../components/ToastProvider';
 
 const materialCategoryOptions = ['STEEL', 'WOOD', 'PACKAGING', 'CONSUMABLES', 'COMPONENTS', 'OTHER'];
@@ -57,9 +58,9 @@ export function SuppliersPage() {
     components: suppliers.filter(s => s.material_category === 'COMPONENTS').length,
   }), [suppliers]);
 
-  const createMutation = useMutation({ mutationFn: (data: any) => suppliersApi.create(data), onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['suppliers'] }); setIsCreateModalOpen(false); toast.success('Supplier created'); }, onError: (error: any) => toast.error(error.message || 'Error') });
-  const updateMutation = useMutation({ mutationFn: ({ id, data }: { id: string; data: any }) => suppliersApi.update(id, data), onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['suppliers'] }); setIsEditModalOpen(false); setEditingSupplier(null); toast.success('Supplier updated'); }, onError: (error: any) => toast.error(error.message || 'Error') });
-  const deleteMutation = useMutation({ mutationFn: (id: string) => suppliersApi.delete(id), onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['suppliers'] }); setIsDeleteModalOpen(false); setDeletingSupplierId(null); toast.success('Supplier deleted'); }, onError: (error: any) => toast.error(error.message || 'Error') });
+  const createMutation = useMutation({ mutationFn: (data: MutationPayload) => suppliersApi.create(data), onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['suppliers'] }); setIsCreateModalOpen(false); toast.success('Supplier created'); }, onError: (error: MutationError) => toast.error(error.message || 'Error') });
+  const updateMutation = useMutation({ mutationFn: ({ id, data }: { id: string; data: MutationPayload }) => suppliersApi.update(id, data), onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['suppliers'] }); setIsEditModalOpen(false); setEditingSupplier(null); toast.success('Supplier updated'); }, onError: (error: MutationError) => toast.error(error.message || 'Error') });
+  const deleteMutation = useMutation({ mutationFn: (id: string) => suppliersApi.delete(id), onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['suppliers'] }); setIsDeleteModalOpen(false); setDeletingSupplierId(null); toast.success('Supplier deleted'); }, onError: (error: MutationError) => toast.error(error.message || 'Error') });
 
   const supplierFields: FormField[] = [
     { name: 'supplier_code', label: 'Supplier Code', type: 'text', required: true },

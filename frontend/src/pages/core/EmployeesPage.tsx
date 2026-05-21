@@ -12,6 +12,7 @@ import { DarkPageLayout } from '../../layouts';
 import { DarkCard, DarkStatCard, DarkButton, DarkPillButton, DarkBadge, DarkSearchInput, DarkSelect, DarkIconButton } from '../../components/dark';
 import { FormModal, DeleteConfirmDialog, type FormField } from '../../components/ui';
 import { employeesApi, workforceEmployeesApi } from '../../lib/api';
+import type { MutationError, MutationPayload, EntityLite } from '../../lib/api-helpers';
 import { useToastContext } from '../../components/ToastProvider';
 import { type Employee } from './employeesTypes';
 import { EmployeeHistoryModal, EmployeeQualityModal, EmployeeCompareModal } from './employeesModals';
@@ -45,16 +46,32 @@ export function EmployeesPage() {
 
   const employees: Employee[] = useMemo(() => {
     if (!employeesList) return [];
-    return (Array.isArray(employeesList) ? employeesList : []).map((e: any) => ({
-      id: e.id || e.employee_id || '',
-      name: e.name || e.employee_name || '',
-      employee_code: e.employee_code || '',
-      status: e.status || 'ACTIVE',
-      skills: e.skills || e.skill_names || [],
-      skillIds: e.skill_ids || [],
-      department: e.department || 'Unknown',
-      shift_pattern: e.shift_pattern || undefined,
-    }));
+    return (Array.isArray(employeesList) ? employeesList : []).map((raw: EntityLite) => {
+      // Shape varia entre /v1/core/employees e /v1/workforce/employees;
+      // mapeamos defensivamente sem perder type-safety dos consumers.
+      const e = raw as EntityLite & {
+        employee_id?: string;
+        name?: string;
+        employee_name?: string;
+        employee_code?: string;
+        status?: string;
+        skills?: string[];
+        skill_names?: string[];
+        skill_ids?: string[];
+        department?: string;
+        shift_pattern?: string;
+      };
+      return {
+        id: e.id || e.employee_id || '',
+        name: e.name || e.employee_name || '',
+        employee_code: e.employee_code || '',
+        status: e.status || 'ACTIVE',
+        skills: e.skills || e.skill_names || [],
+        skillIds: e.skill_ids || [],
+        department: e.department || 'Unknown',
+        shift_pattern: e.shift_pattern || undefined,
+      };
+    });
   }, [employeesList]);
 
   const departments = useMemo(() => {
@@ -106,18 +123,18 @@ export function EmployeesPage() {
       queryClient.invalidateQueries({ queryKey: ['employees'] });
       setIsFormModalOpen(false);
     },
-    onError: (err: any) => toastError(err.message || 'Error adding employee'),
+    onError: (err: MutationError) => toastError(err.message || 'Error adding employee'),
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: any }) => employeesApi.update(id, data),
+    mutationFn: ({ id, data }: { id: string; data: MutationPayload }) => employeesApi.update(id, data),
     onSuccess: () => {
       success('Employee updated successfully');
       queryClient.invalidateQueries({ queryKey: ['employees'] });
       setIsFormModalOpen(false);
       setEditingEmployee(null);
     },
-    onError: (err: any) => toastError(err.message || 'Error updating employee'),
+    onError: (err: MutationError) => toastError(err.message || 'Error updating employee'),
   });
 
   const deleteMutation = useMutation({
@@ -129,7 +146,7 @@ export function EmployeesPage() {
       setIsDeleteConfirmOpen(false);
       setDeletingEmployee(null);
     },
-    onError: (err: any) => toastError(err.message || 'Erro ao desactivar'),
+    onError: (err: MutationError) => toastError(err.message || 'Erro ao desactivar'),
   });
 
   // Sprint Q.3 — CSV export of currently filtered list (frontend-only).

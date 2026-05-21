@@ -4,8 +4,20 @@ import { TrendingUp, Play, AlertTriangle, Loader2 } from 'lucide-react';
 import { DarkPageLayout } from '../../layouts';
 import { DarkCard, DarkTable, DarkTableHead, DarkTableBody, DarkTableRow, DarkTableHeader, DarkTableCell, DarkButton, DarkPillButton, DarkSearchInput } from '../../components/dark';
 import { supplyApi } from '../../lib/api';
+import type { MutationError } from '../../lib/api-helpers';
 import { LineChart } from '../../components/charts';
 import { useToastContext } from '../../components/ToastProvider';
+
+interface ForecastItem {
+  id?: string;
+  product_name?: string;
+  product_code?: string;
+  weekly_forecast?: number[];
+  current_stock?: number;
+  avg_weekly_demand?: number;
+  total_forecast?: number;
+  weeks_of_stock?: number;
+}
 
 export function ForecastPage() {
   const [horizonWeeks, setHorizonWeeks] = useState<number>(12);
@@ -21,7 +33,7 @@ export function ForecastPage() {
 
   const filteredForecast = useMemo(() => {
     if (!search) return forecastData;
-    return forecastData.filter((f: any) =>
+    return (forecastData as ForecastItem[]).filter((f) =>
       f.product_name?.toLowerCase().includes(search.toLowerCase()) ||
       f.product_code?.toLowerCase().includes(search.toLowerCase())
     );
@@ -31,7 +43,7 @@ export function ForecastPage() {
     mutationFn: () => supplyApi.generateForecast({ horizon_weeks: horizonWeeks }),
     onMutate: () => setIsGenerating(true),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['forecast'] }); toast.success('Forecast generated'); },
-    onError: (err: any) => toast.error(err.message || 'Generation failed'),
+    onError: (err: MutationError) => toast.error(err.message || 'Generation failed'),
     onSettled: () => setIsGenerating(false),
   });
 
@@ -103,14 +115,14 @@ export function ForecastPage() {
                 </DarkTableRow>
               </DarkTableHead>
               <DarkTableBody>
-                {filteredForecast.slice(0, 50).map((forecast: any, i: number) => (
+                {(filteredForecast as ForecastItem[]).slice(0, 50).map((forecast, i: number) => (
                   <DarkTableRow key={forecast.id || i}>
                     <DarkTableCell className="text-text-white">{forecast.product_name || '-'}</DarkTableCell>
                     <DarkTableCell mono className="text-text-tertiary">{forecast.product_code || '-'}</DarkTableCell>
                     <DarkTableCell mono>{forecast.current_stock || 0}</DarkTableCell>
                     <DarkTableCell mono>{(forecast.avg_weekly_demand || 0).toFixed(1)}</DarkTableCell>
                     <DarkTableCell mono>{forecast.total_forecast || 0}</DarkTableCell>
-                    <DarkTableCell mono className={forecast.weeks_of_stock < 4 ? 'text-danger' : forecast.weeks_of_stock < 8 ? 'text-amber' : 'text-success'}>
+                    <DarkTableCell mono className={(forecast.weeks_of_stock ?? 0) < 4 ? 'text-danger' : (forecast.weeks_of_stock ?? 0) < 8 ? 'text-amber' : 'text-success'}>
                       {(forecast.weeks_of_stock || 0).toFixed(1)}
                     </DarkTableCell>
                   </DarkTableRow>

@@ -3,8 +3,16 @@
  *
  * Infra partilhada (request/retry/circuit-breaker) em ./client.ts.
  * Re-exportado por ./index.ts — importar sempre de 'lib/api'.
+ *
+ * Q.68.4.D — payloads tipados como `Record<string, unknown>`; responses
+ * legadas mantêm alias `ApiResponse` (eslint-disable local) enquanto a
+ * migração para DTOs Orval (Q.68.4.E) não estiver completa.
  */
 import { request, filterParams } from './client';
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type ApiResponse = any;
+type Payload = Record<string, unknown>;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // PLAN MODULE - Production Planning
@@ -32,8 +40,8 @@ export const schedulingApi = {
   list: (params?: { status?: string }) =>
     request<any>(`/v1/plan/schedule?${new URLSearchParams(filterParams(params))}`),
   
-  create: (data: any) =>
-    request<any>('/v1/plan/schedule', { method: 'POST', body: JSON.stringify(data) }),
+  create: (data: Payload) =>
+    request<ApiResponse>('/v1/plan/schedule', { method: 'POST', body: JSON.stringify(data) }),
   
   run: (id: string) =>
     request<any>(`/v1/plan/schedule/${id}/run`, { method: 'POST' }),
@@ -62,8 +70,8 @@ export const mrpApi = {
   get: (id: string) =>
     request<any>(`/v1/plan/mrp/runs/${id}`),
   
-  run: (data: any) =>
-    request<any>('/v1/plan/mrp/run', { method: 'POST', body: JSON.stringify(data) }),
+  run: (data: Payload) =>
+    request<ApiResponse>('/v1/plan/mrp/run', { method: 'POST', body: JSON.stringify(data) }),
   
   getItems: (runId: string) =>
     request<any>(`/v1/plan/mrp/runs/${runId}/items`),
@@ -132,8 +140,8 @@ export const planApi = {
     request<any>(`/v1/plan/mrp/results${params?.limit ? `?limit=${params.limit}` : ''}`),
   
   // Calculate MRP
-  calculateMRP: (data: any) =>
-    request<any>('/v1/plan/mrp/calculate', { method: 'POST', body: JSON.stringify(data) }),
+  calculateMRP: (data: Payload) =>
+    request<ApiResponse>('/v1/plan/mrp/calculate', { method: 'POST', body: JSON.stringify(data) }),
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════

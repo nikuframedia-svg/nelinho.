@@ -22,10 +22,24 @@ export interface DependencyGraphData {
  * Transform skills risk API data to PhaseRisk format for components
  * Now using REAL DATA from the ingested Excel file!
  */
-export function transformApiToPhaseRisks(apiData: any): PhaseRisk[] {
+interface PhaseRiskRaw {
+  fase_id?: string | number;
+  id?: string | number;
+  fase_nome?: string;
+  name?: string;
+  active_workers?: number;
+  aptos_count?: number;
+  backlog_hours?: number;
+  risk_score?: number;
+}
+interface PhaseRiskApiData {
+  data?: { phases_with_risk?: PhaseRiskRaw[] };
+}
+export function transformApiToPhaseRisks(apiData: PhaseRiskApiData | unknown): PhaseRisk[] {
+  const typed = apiData as PhaseRiskApiData;
   // If we have phases from the API, transform them
-  if (apiData?.data?.phases_with_risk) {
-    return apiData.data.phases_with_risk.map((p: any) => {
+  if (typed?.data?.phases_with_risk) {
+    return typed.data.phases_with_risk.map((p) => {
       const aptosActive = p.active_workers || p.aptos_count || 1;
       const backlog = p.backlog_hours || 0;
       const riskScore = p.risk_score || Math.max(0, Math.min(100, 100 - (aptosActive * 15) + (backlog / 50)));

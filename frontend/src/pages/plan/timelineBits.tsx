@@ -9,7 +9,7 @@ import { type CpoAlternativeEnriched, type CpoCommit } from '../../lib/api';
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
 /** Format a KPI numeric value for the hero card. Falls back to string. */
-export function fmtKpi(v: any): string {
+export function fmtKpi(v: unknown): string {
   if (typeof v === 'number') {
     if (Math.abs(v) >= 1000) return v.toFixed(0);
     if (Math.abs(v) >= 10) return v.toFixed(1);

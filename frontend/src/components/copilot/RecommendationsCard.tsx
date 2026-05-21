@@ -177,7 +177,7 @@ export function RecommendationsCard() {
                         </p>
                         {explanation[index].facts && explanation[index].facts.length > 0 && (
                           <div className="mt-2 space-y-1">
-                            {explanation[index].facts.map((fact: any, fIdx: number) => (
+                            {explanation[index].facts.map((fact: { text?: string }, fIdx: number) => (
                               <p key={fIdx} className="text-xs text-white/70 pl-4 border-l-2 border-white/20">
                                 • {fact.text}
                               </p>

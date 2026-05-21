@@ -72,7 +72,7 @@ async function fetchRecentActivity(maxItems: number): Promise<ActivityItem[]> {
     : Array.isArray(payload)
     ? payload
     : [];
-  return raw.map((it: any) => ({
+  return (raw as Array<Record<string, unknown> & { timestamp: string | Date }>).map((it) => ({
     ...it,
     timestamp: new Date(it.timestamp),
   })) as ActivityItem[];

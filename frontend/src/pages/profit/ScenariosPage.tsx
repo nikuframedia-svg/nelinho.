@@ -5,8 +5,20 @@ import { format } from 'date-fns';
 import { DarkPageLayout } from '../../layouts';
 import { DarkCard, DarkStatCard, DarkTable, DarkTableHead, DarkTableBody, DarkTableRow, DarkTableHeader, DarkTableCell, DarkButton, DarkPillButton, DarkBadge, DarkIconButton } from '../../components/dark';
 import { scenariosApi } from '../../lib/api';
+import type { MutationError, MutationPayload } from '../../lib/api-helpers';
 import { FormModal, DeleteConfirmDialog, type FormField } from '../../components/ui';
 import { useToastContext } from '../../components/ToastProvider';
+
+interface ScenarioLite {
+  id: string;
+  name?: string;
+  description?: string;
+  type?: string;
+  status?: string;
+  created_at?: string;
+  impact?: number;
+  [key: string]: unknown;
+}
 
 export function ScenariosPage() {
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
@@ -24,34 +36,34 @@ export function ScenariosPage() {
 
   const filteredScenarios = useMemo(() => {
     if (filterStatus === 'ALL') return scenarios;
-    return scenarios.filter((s: any) => s.status === filterStatus);
+    return (scenarios as ScenarioLite[]).filter((s) => s.status ===filterStatus);
   }, [scenarios, filterStatus]);
 
   const stats = useMemo(() => ({
     total: scenarios.length,
-    draft: scenarios.filter((s: any) => s.status === 'DRAFT').length,
-    simulated: scenarios.filter((s: any) => s.status === 'SIMULATED').length,
-    applied: scenarios.filter((s: any) => s.status === 'APPLIED').length,
+    draft: (scenarios as ScenarioLite[]).filter((s) => s.status ==='DRAFT').length,
+    simulated: (scenarios as ScenarioLite[]).filter((s) => s.status ==='SIMULATED').length,
+    applied: (scenarios as ScenarioLite[]).filter((s) => s.status ==='APPLIED').length,
   }), [scenarios]);
 
   const createMutation = useMutation({
-    mutationFn: (data: any) => scenariosApi.create(data),
+    mutationFn: (data: MutationPayload) => scenariosApi.create(data),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['scenarios'] }); setIsCreateModalOpen(false); toast.success('Scenario created'); },
-    onError: (err: any) => toast.error(err.message || 'Error'),
+    onError: (err: MutationError) => toast.error(err.message || 'Error'),
   });
 
   const simulateMutation = useMutation({
     mutationFn: (id: string) => scenariosApi.simulate({ base_order_id: id }),
     onMutate: (id) => setSimulatingId(id),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['scenarios'] }); toast.success('Simulation completed'); },
-    onError: (err: any) => toast.error(err.message || 'Simulation failed'),
+    onError: (err: MutationError) => toast.error(err.message || 'Simulation failed'),
     onSettled: () => setSimulatingId(null),
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => scenariosApi.delete(id),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['scenarios'] }); setIsDeleteModalOpen(false); setDeletingId(null); toast.success('Scenario deleted'); },
-    onError: (err: any) => toast.error(err.message || 'Error'),
+    onError: (err: MutationError) => toast.error(err.message || 'Error'),
   });
 
   const scenarioFields: FormField[] = [
@@ -115,7 +127,7 @@ export function ScenariosPage() {
               </DarkTableRow>
             </DarkTableHead>
             <DarkTableBody>
-              {filteredScenarios.map((scenario: any) => (
+              {filteredScenarios.map((scenario: ScenarioLite) => (
                 <DarkTableRow key={scenario.id}>
                   <DarkTableCell>
                     <div><p className="font-semibold text-text-white">{scenario.name}</p>{scenario.description && <p className="text-xs text-text-tertiary truncate max-w-xs">{scenario.description}</p>}</div>
@@ -127,7 +139,7 @@ export function ScenariosPage() {
                       {scenario.status || 'DRAFT'}
                     </DarkBadge>
                   </DarkTableCell>
-                  <DarkTableCell mono className={scenario.impact > 0 ? 'text-success' : scenario.impact < 0 ? 'text-danger' : 'text-text-tertiary'}>
+                  <DarkTableCell mono className={(scenario.impact ?? 0) > 0 ? 'text-success' : (scenario.impact ?? 0) < 0 ? 'text-danger' : 'text-text-tertiary'}>
                     {scenario.impact ? `${scenario.impact > 0 ? '+' : ''}${scenario.impact.toFixed(1)}%` : '-'}
                   </DarkTableCell>
                   <DarkTableCell align="right">

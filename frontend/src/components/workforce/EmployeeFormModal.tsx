@@ -9,6 +9,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { FormModal, type FormField } from '../ui';
 import { employeesApi, workforceEmployeesApi } from '../../lib/api';
+import type { MutationError, MutationPayload } from '../../lib/api-helpers';
 
 // Q.18 fix-workforce — mapping nível inicial (1-3, 1=melhor) → quality score
 // Laplace [1-10] que o sistema usa para derivar o nível. Útil para definir
@@ -71,7 +72,7 @@ interface Props {
   isOpen: boolean;
   onClose: () => void;
   /** Quando definido, modal opera em modo edit. */
-  editing?: { id: string; [k: string]: any } | null;
+  editing?: { id: string; [k: string]: unknown } | null;
   onSuccess?: (msg: string) => void;
   onError?: (msg: string) => void;
 }
@@ -98,18 +99,20 @@ export function EmployeeFormModal({ isOpen, onClose, editing, onSuccess, onError
         score,
         reason: `Nível inicial ${nivelStr} definido manualmente via /equipa Add/Edit form`,
       });
-    } catch (err: any) {
+    } catch (rawErr: unknown) {
       // Não falha o flow — só avisa.
+      const err = rawErr as { message?: string };
       onError?.(`Operador gravado, mas nível não foi gravado: ${err?.message ?? 'erro'}`);
     }
   }
 
   const createMutation = useMutation({
-    mutationFn: async (data: any) => {
+    mutationFn: async (data: MutationPayload) => {
       const { nivel_inicial, ...payload } = data;
-      const created = await employeesApi.create(payload);
-      const newId = (created as any)?.id ?? (created as any)?.employee_id;
-      if (newId) await maybeOverrideLevel(String(newId), nivel_inicial);
+      const created = await employeesApi.create(payload as MutationPayload);
+      const createdShape = created as { id?: string; employee_id?: string } | null;
+      const newId = createdShape?.id ?? createdShape?.employee_id;
+      if (newId) await maybeOverrideLevel(String(newId), nivel_inicial as string | undefined);
       return created;
     },
     onSuccess: () => {
@@ -117,14 +120,14 @@ export function EmployeeFormModal({ isOpen, onClose, editing, onSuccess, onError
       invalidate();
       onClose();
     },
-    onError: (err: any) => onError?.(err?.message ?? 'Erro ao criar operador.'),
+    onError: (err: MutationError) => onError?.(err?.message ?? 'Erro ao criar operador.'),
   });
 
   const updateMutation = useMutation({
-    mutationFn: async ({ id, data }: { id: string; data: any }) => {
+    mutationFn: async ({ id, data }: { id: string; data: MutationPayload }) => {
       const { nivel_inicial, ...payload } = data;
-      const updated = await employeesApi.update(id, payload);
-      await maybeOverrideLevel(id, nivel_inicial);
+      const updated = await employeesApi.update(id, payload as MutationPayload);
+      await maybeOverrideLevel(id, nivel_inicial as string | undefined);
       return updated;
     },
     onSuccess: () => {
@@ -132,10 +135,10 @@ export function EmployeeFormModal({ isOpen, onClose, editing, onSuccess, onError
       invalidate();
       onClose();
     },
-    onError: (err: any) => onError?.(err?.message ?? 'Erro ao actualizar operador.'),
+    onError: (err: MutationError) => onError?.(err?.message ?? 'Erro ao actualizar operador.'),
   });
 
-  const handleSubmit = (data: any) => {
+  const handleSubmit = (data: MutationPayload) => {
     if (editing?.id) {
       updateMutation.mutate({ id: editing.id, data });
     } else {

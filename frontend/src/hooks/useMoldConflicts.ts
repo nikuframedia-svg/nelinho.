@@ -23,11 +23,22 @@ export function useMoldConflicts() {
       
       if (response && response.data && response.data.conflicts) {
         // Transform API response to MoldConflict type
-        const transformedConflicts: MoldConflict[] = response.data.conflicts.map((conflict: any, index: number) => ({
+        type RawConflict = {
+          id?: string;
+          mold_id?: string;
+          molde_id?: string;
+          date?: string;
+          severity?: 'high' | 'medium' | 'low' | string;
+          orders?: string[];
+          ordens?: string[];
+          estimated_delay_hours?: number;
+          delay_hours?: number;
+        };
+        const transformedConflicts: MoldConflict[] = (response.data.conflicts as RawConflict[]).map((conflict, index: number) => ({
           id: conflict.id || `mc-${index}`,
-          mold_id: conflict.mold_id || conflict.molde_id,
+          mold_id: conflict.mold_id || conflict.molde_id || '',
           date: conflict.date || new Date().toISOString().split('T')[0],
-          severity: conflict.severity || 'medium',
+          severity: (conflict.severity as 'high' | 'medium' | 'low') || 'medium',
           orders: conflict.orders || conflict.ordens || [],
           estimated_delay_hours: conflict.estimated_delay_hours || conflict.delay_hours || 0,
         }));
@@ -38,11 +49,19 @@ export function useMoldConflicts() {
         // Handle theoretical conflicts format
         const theoreticalConflicts = response.data.theoretical_conflicts;
         if (Array.isArray(theoreticalConflicts)) {
-          const transformedConflicts: MoldConflict[] = theoreticalConflicts.map((conflict: any, index: number) => ({
+          type TheoreticalConflict = {
+            molde_id?: string;
+            molde?: string | number;
+            date?: string;
+            conflicting_phases?: number;
+            order_ids?: string[];
+            estimated_delay?: number;
+          };
+          const transformedConflicts: MoldConflict[] = (theoreticalConflicts as TheoreticalConflict[]).map((conflict, index: number) => ({
             id: `mc-${index}`,
-            mold_id: conflict.molde_id || `M${conflict.molde || index}`,
+            mold_id: conflict.molde_id || `M${conflict.molde ?? index}`,
             date: conflict.date || new Date().toISOString().split('T')[0],
-            severity: conflict.conflicting_phases > 3 ? 'high' : conflict.conflicting_phases > 1 ? 'medium' : 'low',
+            severity: (conflict.conflicting_phases ?? 0) > 3 ? 'high' : (conflict.conflicting_phases ?? 0) > 1 ? 'medium' : 'low',
             orders: conflict.order_ids || [],
             estimated_delay_hours: conflict.estimated_delay || 0,
           }));

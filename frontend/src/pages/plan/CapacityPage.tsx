@@ -6,6 +6,18 @@ import { DarkCard, DarkStatCard, DarkTable, DarkTableHead, DarkTableBody, DarkTa
 import { planApi, machinesApi } from '../../lib/api';
 import { BarChart } from '../../components/charts';
 
+interface CapacityItem {
+  id?: string;
+  resource_name?: string;
+  resource_type?: string;
+  machine_name?: string;
+  utilization?: number;
+  available_hours?: number;
+  used_hours?: number;
+  loaded_hours?: number;
+  capacity_hours?: number;
+}
+
 export function CapacityPage() {
   const { data: capacityData = [], isLoading, error } = useQuery({
     queryKey: ['capacity', 'analysis'],
@@ -20,16 +32,18 @@ export function CapacityPage() {
   const stats = useMemo(() => {
     if (!capacityData.length) return { avgUtilization: 0, bottlenecks: 0, underutilized: 0, optimal: 0 };
     const total = capacityData.length;
-    const avgUtilization = capacityData.reduce((sum: number, c: any) => sum + (c.utilization || 0), 0) / total;
-    const bottlenecks = capacityData.filter((c: any) => c.utilization > 90).length;
-    const underutilized = capacityData.filter((c: any) => c.utilization < 50).length;
-    const optimal = capacityData.filter((c: any) => c.utilization >= 50 && c.utilization <= 90).length;
+    const items = capacityData as CapacityItem[];
+    const avgUtilization = items.reduce((sum, c) => sum + (c.utilization || 0), 0) / total;
+    const bottlenecks = items.filter((c) => (c.utilization ?? 0) > 90).length;
+    const underutilized = items.filter((c) => (c.utilization ?? 0) < 50).length;
+    const optimal = items.filter((c) => (c.utilization ?? 0) >= 50 && (c.utilization ?? 0) <= 90).length;
     return { avgUtilization, bottlenecks, underutilized, optimal };
   }, [capacityData]);
 
   const chartData = useMemo(() => {
-    return capacityData.slice(0, 10).map((c: any) => ({
+    return (capacityData as CapacityItem[]).slice(0, 10).map((c) => ({
       name: c.resource_name || c.machine_name || 'Resource',
+      value: c.utilization || 0,
       Utilization: c.utilization || 0,
     }));
   }, [capacityData]);
@@ -93,7 +107,7 @@ export function CapacityPage() {
                 </DarkTableRow>
               </DarkTableHead>
               <DarkTableBody>
-                {capacityData.slice(0, 30).map((item: any, i: number) => (
+                {(capacityData as CapacityItem[]).slice(0, 30).map((item, i: number) => (
                   <DarkTableRow key={item.id || i}>
                     <DarkTableCell className="text-text-white">{item.resource_name || item.machine_name || '-'}</DarkTableCell>
                     <DarkTableCell className="text-text-tertiary">{item.resource_type || 'Machine'}</DarkTableCell>
@@ -102,12 +116,12 @@ export function CapacityPage() {
                     <DarkTableCell>
                       <div className="flex items-center gap-2">
                         <div className="flex-1 h-2 bg-bg-elevated rounded-full overflow-hidden max-w-24">
-                          <div 
+                          <div
                             className={`h-full rounded-full ${
-                              item.utilization > 90 ? 'bg-danger' : 
-                              item.utilization < 50 ? 'bg-amber' : 'bg-success'
-                            }`} 
-                            style={{ width: `${Math.min(item.utilization || 0, 100)}%` }} 
+                              (item.utilization ?? 0) > 90 ? 'bg-danger' :
+                              (item.utilization ?? 0) < 50 ? 'bg-amber' : 'bg-success'
+                            }`}
+                            style={{ width: `${Math.min(item.utilization || 0, 100)}%` }}
                           />
                         </div>
                         <span className="text-xs text-text-tertiary w-12">{(item.utilization || 0).toFixed(1)}%</span>
@@ -115,10 +129,10 @@ export function CapacityPage() {
                     </DarkTableCell>
                     <DarkTableCell>
                       <DarkBadge variant={
-                        item.utilization > 90 ? 'danger' :
-                        item.utilization < 50 ? 'warning' : 'success'
+                        (item.utilization ?? 0) > 90 ? 'danger' :
+                        (item.utilization ?? 0) < 50 ? 'warning' : 'success'
                       } dot>
-                        {item.utilization > 90 ? 'Bottleneck' : item.utilization < 50 ? 'Low' : 'Optimal'}
+                        {(item.utilization ?? 0) > 90 ? 'Bottleneck' : (item.utilization ?? 0) < 50 ? 'Low' : 'Optimal'}
                       </DarkBadge>
                     </DarkTableCell>
                   </DarkTableRow>

@@ -2,6 +2,7 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { decisionsApi, type DecisionRun, type ApprovalRequest } from '../../lib/api';
+import type { MutationError } from '../../lib/api-helpers';
 import { useToastContext } from '../../components/ToastProvider';
 import { type DecisionStatus, type Severity, ANTIFATIGUE_THRESHOLD, ANTIFATIGUE_TOP_N, deriveSeverity } from './decisionsHelpers';
 
@@ -49,7 +50,7 @@ export function useDecisionsState() {
       queryClient.invalidateQueries({ queryKey: ['decisions'] });
       toast.success('Decision approved successfully');
     },
-    onError: (err: any) => toast.error(err.message || 'Failed to approve'),
+    onError: (err: MutationError) => toast.error(err.message || 'Failed to approve'),
   });
 
   // Execute mutation
@@ -59,7 +60,7 @@ export function useDecisionsState() {
       queryClient.invalidateQueries({ queryKey: ['decisions'] });
       toast.success('Decision executed successfully');
     },
-    onError: (err: any) => toast.error(err.message || 'Failed to execute'),
+    onError: (err: MutationError) => toast.error(err.message || 'Failed to execute'),
   });
 
   // Rollback mutation
@@ -69,7 +70,7 @@ export function useDecisionsState() {
       queryClient.invalidateQueries({ queryKey: ['decisions'] });
       toast.success('Decision rolled back successfully');
     },
-    onError: (err: any) => toast.error(err.message || 'Failed to rollback'),
+    onError: (err: MutationError) => toast.error(err.message || 'Failed to rollback'),
   });
 
   // Sprint Q.9 Onda 3.4 — bulk approve mutation. Backend route accepts
@@ -89,7 +90,7 @@ export function useDecisionsState() {
       setSelectedIds(new Set());
       toast.success(`Bulk approve: ${data.ok} ok, ${data.failed} falharam`);
     },
-    onError: (err: any) => toast.error(err.message || 'Bulk approve failed'),
+    onError: (err: MutationError) => toast.error(err.message || 'Bulk approve failed'),
   });
 
   // Sprint Q.13.C C.3.2 — Plan v4 §8 WG05 "modificar antes de aprovar".
@@ -109,7 +110,7 @@ export function useDecisionsState() {
       queryClient.invalidateQueries({ queryKey: ['decisions'] });
       toast.success('Decision payload updated');
     },
-    onError: (err: any) => toast.error(err.message || 'Modify failed'),
+    onError: (err: MutationError) => toast.error(err.message || 'Modify failed'),
   });
 
   const decisions = decisionsData?.items || [];

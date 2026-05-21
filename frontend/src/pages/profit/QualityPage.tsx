@@ -133,7 +133,7 @@ export function QualityPage() {
   // Process error data by type for the chart
   const errorsByType = useMemo(() => {
     if (!qualityResponse?.data?.by_type) return [];
-    return qualityResponse.data.by_type.map((item: any) => ({
+    return qualityResponse.data.by_type.map((item: { error_type?: string; count?: number; percentage?: number }) => ({
       name: item.error_type || 'Unknown',
       count: item.count || 0,
       percentage: item.percentage || 0,
@@ -143,7 +143,7 @@ export function QualityPage() {
   // Process error data by phase
   const errorsByPhase = useMemo(() => {
     if (!qualityResponse?.data?.by_phase) return [];
-    return qualityResponse.data.by_phase.slice(0, 10).map((item: any) => ({
+    return qualityResponse.data.by_phase.slice(0, 10).map((item: { fase_nome?: string; count?: number }) => ({
       name: item.fase_nome || 'Unknown',
       value: item.count || 0,
     }));
@@ -277,7 +277,7 @@ export function QualityPage() {
                 </DarkTableRow>
               </DarkTableHead>
               <DarkTableBody>
-                {errorsByType.map((errorType: any) => (
+                {errorsByType.map((errorType) => (
                   <DarkTableRow key={errorType.name}>
                     <DarkTableCell className="text-white font-medium">
                       {errorType.name}

@@ -32,7 +32,7 @@ export interface CopilotResponse {
     action_type: "CREATE_DECISION_PR" | "DRY_RUN" | "OPEN_ENTITY" | "RUN_RUNBOOK";
     label: string;
     requires_approval: boolean;
-    payload: any;
+    payload: Record<string, unknown>;
   }>;
   warnings: Array<{
     code: "INSUFFICIENT_EVIDENCE" | "SECURITY_FLAG" | "LOW_TRUST_INDEX" | "MODEL_OFFLINE" | "VALIDATION_FAILED" | "SERVICE_ERROR";
@@ -52,9 +52,9 @@ export interface DailyFeedbackResponse {
     severity: "INFO" | "WARN" | "CRITICAL";
     title: string;
     text: string;
-    citations: any[];
+    citations: Array<{ label: string; ref?: string; [k: string]: unknown }>;
     suggested_runbooks: string[];
-    suggested_actions: any[];
+    suggested_actions: unknown[];
   }>;
   generated_at: string;
   last_updated: string;

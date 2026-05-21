@@ -5,6 +5,17 @@ import { DarkPageLayout } from '../../layouts';
 import { DarkCard, DarkStatCard, DarkTable, DarkTableHead, DarkTableBody, DarkTableRow, DarkTableHeader, DarkTableCell, DarkPillButton, DarkBadge, DarkSearchInput } from '../../components/dark';
 import { supplyApi } from '../../lib/api';
 
+interface InventoryItem {
+  id?: string;
+  product_name?: string;
+  product_code?: string;
+  quantity?: number;
+  reorder_point?: number;
+  unit_cost?: number;
+  location?: string;
+  last_movement_date?: string;
+}
+
 export function InventoryPage() {
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
   const [search, setSearch] = useState('');
@@ -15,10 +26,10 @@ export function InventoryPage() {
   });
 
   const filteredInventory = useMemo(() => {
-    return inventory.filter((item: any) => {
+    return (inventory as InventoryItem[]).filter((item) => {
       const matchesStatus = filterStatus === 'ALL' ||
-        (filterStatus === 'LOW' && item.quantity <= item.reorder_point) ||
-        (filterStatus === 'OK' && item.quantity > item.reorder_point);
+        (filterStatus === 'LOW' && (item.quantity ?? 0) <= (item.reorder_point ?? 0)) ||
+        (filterStatus === 'OK' && (item.quantity ?? 0) > (item.reorder_point ?? 0));
       const matchesSearch = !search ||
         item.product_name?.toLowerCase().includes(search.toLowerCase()) ||
         item.product_code?.toLowerCase().includes(search.toLowerCase());
@@ -26,12 +37,15 @@ export function InventoryPage() {
     });
   }, [inventory, filterStatus, search]);
 
-  const stats = useMemo(() => ({
-    total: inventory.length,
-    lowStock: inventory.filter((i: any) => i.quantity <= i.reorder_point).length,
-    outOfStock: inventory.filter((i: any) => i.quantity === 0).length,
-    totalValue: inventory.reduce((sum: number, i: any) => sum + (i.quantity * (i.unit_cost || 0)), 0),
-  }), [inventory]);
+  const stats = useMemo(() => {
+    const items = inventory as InventoryItem[];
+    return {
+      total: items.length,
+      lowStock: items.filter((i) => (i.quantity ?? 0) <= (i.reorder_point ?? 0)).length,
+      outOfStock: items.filter((i) => (i.quantity ?? 0) === 0).length,
+      totalValue: items.reduce((sum, i) => sum + ((i.quantity ?? 0) * (i.unit_cost ?? 0)), 0),
+    };
+  }, [inventory]);
 
   if (error) {
     return (
@@ -81,7 +95,7 @@ export function InventoryPage() {
               </DarkTableRow>
             </DarkTableHead>
             <DarkTableBody>
-              {filteredInventory.slice(0, 50).map((item: any, i: number) => (
+              {filteredInventory.slice(0, 50).map((item, i: number) => (
                 <DarkTableRow key={item.id || i}>
                   <DarkTableCell className="text-text-white">{item.product_name || '-'}</DarkTableCell>
                   <DarkTableCell mono className="text-text-tertiary">{item.product_code || '-'}</DarkTableCell>
@@ -90,8 +104,8 @@ export function InventoryPage() {
                   <DarkTableCell mono>€{(item.unit_cost || 0).toFixed(2)}</DarkTableCell>
                   <DarkTableCell mono>€{((item.quantity || 0) * (item.unit_cost || 0)).toFixed(2)}</DarkTableCell>
                   <DarkTableCell>
-                    <DarkBadge variant={item.quantity === 0 ? 'danger' : item.quantity <= item.reorder_point ? 'warning' : 'success'} dot>
-                      {item.quantity === 0 ? 'Out of Stock' : item.quantity <= item.reorder_point ? 'Low Stock' : 'OK'}
+                    <DarkBadge variant={(item.quantity ?? 0) === 0 ? 'danger' : (item.quantity ?? 0) <= (item.reorder_point ?? 0) ? 'warning' : 'success'} dot>
+                      {(item.quantity ?? 0) === 0 ? 'Out of Stock' : (item.quantity ?? 0) <= (item.reorder_point ?? 0) ? 'Low Stock' : 'OK'}
                     </DarkBadge>
                   </DarkTableCell>
                 </DarkTableRow>

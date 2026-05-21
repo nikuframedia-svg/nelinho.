@@ -40,10 +40,10 @@ export const factoryApi = {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export const sandboxApi = {
-  createScenario: (data: any) => 
-    request<any>('/v1/sandbox/scenarios', { 
-      method: 'POST', 
-      body: JSON.stringify(data) 
+  createScenario: (data: Record<string, unknown>) =>
+    request<unknown>('/v1/sandbox/scenarios', {
+      method: 'POST',
+      body: JSON.stringify(data)
     }),
   
   getScenario: (scenarioId: string) => 
@@ -133,10 +133,10 @@ export const kpiRegistryApi = {
   getBlocked: () => 
     request<any>('/v1/kpi/blocked'),
   
-  calculate: (data: { kpi_id: string; scope?: any; period?: any }) => 
-    request<any>('/v1/kpi/calculate', { 
-      method: 'POST', 
-      body: JSON.stringify(data) 
+  calculate: (data: { kpi_id: string; scope?: Record<string, unknown>; period?: Record<string, unknown> }) =>
+    request<unknown>('/v1/kpi/calculate', {
+      method: 'POST',
+      body: JSON.stringify(data)
     }),
   
   getDomains: () =>

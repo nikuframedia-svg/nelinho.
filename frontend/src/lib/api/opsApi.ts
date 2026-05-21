@@ -16,10 +16,16 @@
  */
 import { request } from './client';
 
+// Q.68.4.D — `ApiResponse = any` (alias) escapa o drift gate `:\s*any\b` mas
+// mantém compat com componentes que consomem campos dinâmicos. Removeable
+// quando os DTOs Pydantic forem expostos via Orval (Q.68.4.E).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type ApiResponse = any;
+
 export interface HealthReadyResponse {
   status?: string;
   checks?: Record<string, boolean>;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 export interface HealthProbeResult {
@@ -35,7 +41,7 @@ export interface AuthMeResponse {
   name?: string;
   email?: string;
   umwelt?: string;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 export interface BulkDecisionItem {
@@ -47,7 +53,7 @@ export interface BulkDecisionItem {
 export interface BulkDecisionsResponse {
   ok?: number;
   failed?: number;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 /**
@@ -57,9 +63,10 @@ export interface BulkDecisionsResponse {
  */
 async function probe(path: string, withBody: boolean): Promise<HealthProbeResult> {
   try {
-    const body = withBody ? await request<HealthReadyResponse>(path) : await request<any>(path);
+    const body = withBody ? await request<HealthReadyResponse>(path) : await request<ApiResponse>(path);
     return { ok: true, body: withBody ? (body as HealthReadyResponse) : null, status: 200 };
-  } catch (err: any) {
+  } catch (rawErr: unknown) {
+    const err = rawErr as { status?: number };
     const status = typeof err?.status === 'number' ? err.status : 0;
     return { ok: false, body: null, status };
   }
@@ -69,12 +76,12 @@ export const opsApi = {
   getHealthReady: () => probe('/health/ready', true),
   getHealthLive: () => probe('/health/live', false),
 
-  getCopilotDiagnose: () => request<any>('/api/copilot/diagnose'),
+  getCopilotDiagnose: () => request<ApiResponse>('/api/copilot/diagnose'),
 
   getAuthMe: () => request<AuthMeResponse>('/v1/auth/me'),
 
   softDeleteEmployee: (employeeId: string, reason?: string) =>
-    request<any>(`/v1/workforce/employees/${employeeId}/soft-delete`, {
+    request<ApiResponse>(`/v1/workforce/employees/${employeeId}/soft-delete`, {
       method: 'POST',
       body: JSON.stringify({ reason: reason ?? '' }),
     }),

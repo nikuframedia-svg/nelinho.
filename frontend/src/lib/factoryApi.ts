@@ -636,7 +636,7 @@ export interface RunbookExecution {
   status: string;
   started_at: string;
   completed_at?: string;
-  results: any[];
+  results: unknown[];
 }
 
 export const runbooksApi = {
@@ -689,7 +689,7 @@ export interface MetricDefinition {
 }
 
 export interface ExplainedValue {
-  value: any;
+  value: unknown;
   unit: string;
   display: string;
   status: string;
@@ -698,7 +698,7 @@ export interface ExplainedValue {
     formula: string;
     inputs: Array<{
       name: string;
-      value: any;
+      value: unknown;
       source: string;
       coverage_pct: number;
     }>;

@@ -5,9 +5,9 @@
 
 export class ApiError extends Error {
   status?: number;
-  response?: any;
-  
-  constructor(message: string, status?: number, response?: any) {
+  response?: unknown;
+
+  constructor(message: string, status?: number, response?: unknown) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
@@ -58,11 +58,12 @@ export function getErrorMessage(error: unknown): string {
   // Fallback to error message or response detail
   if (isApiError(error)) {
     // Try to get detail from response
-    if (error.response?.detail) {
-      return error.response.detail;
+    const resp = error.response as { detail?: string; message?: string } | undefined;
+    if (resp?.detail) {
+      return resp.detail;
     }
-    if (error.response?.message) {
-      return error.response.message;
+    if (resp?.message) {
+      return resp.message;
     }
     return error.message || 'Ocorreu um erro ao comunicar com o servidor.';
   }
@@ -120,7 +121,7 @@ export function getErrorStatus(error: unknown): number | undefined {
     return error.status;
   }
   if (typeof error === 'object' && error !== null && 'status' in error) {
-    return (error as any).status;
+    return (error as { status?: number }).status;
   }
   return undefined;
 }

@@ -6,6 +6,7 @@ import { DarkCard, DarkStatCard, DarkTable, DarkTableHead, DarkTableBody, DarkTa
 import { FormModal, DeleteConfirmDialog, type FormField } from '../../components/ui';
 import { customersApi } from '../../lib/api';
 import type { Customer } from '../../types';
+import type { MutationError, MutationPayload } from '../../lib/api-helpers';
 import { useToastContext } from '../../components/ToastProvider';
 
 const segmentOptions = ['RETAIL', 'WHOLESALE', 'BULK', 'OEM', 'DISTRIBUTOR'];
@@ -57,21 +58,21 @@ export function CustomersPage() {
   }), [customers]);
 
   const createMutation = useMutation({
-    mutationFn: (data: any) => customersApi.create(data),
+    mutationFn: (data: MutationPayload) => customersApi.create(data),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['customers'] }); setIsCreateModalOpen(false); toast.success('Customer created'); },
-    onError: (error: any) => toast.error(error.message || 'Error'),
+    onError: (error: MutationError) => toast.error(error.message || 'Error'),
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: any }) => customersApi.update(id, data),
+    mutationFn: ({ id, data }: { id: string; data: MutationPayload }) => customersApi.update(id, data),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['customers'] }); setIsEditModalOpen(false); setEditingCustomer(null); toast.success('Customer updated'); },
-    onError: (error: any) => toast.error(error.message || 'Error'),
+    onError: (error: MutationError) => toast.error(error.message || 'Error'),
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => customersApi.delete(id),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['customers'] }); setIsDeleteModalOpen(false); setDeletingCustomerId(null); toast.success('Customer deleted'); },
-    onError: (error: any) => toast.error(error.message || 'Error'),
+    onError: (error: MutationError) => toast.error(error.message || 'Error'),
   });
 
   const customerFields: FormField[] = [

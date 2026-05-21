@@ -6,6 +6,14 @@ import { DarkCard, DarkStatCard, DarkTable, DarkTableHead, DarkTableBody, DarkTa
 import { explainApi } from '../../lib/api';
 import { ExplainDrawer } from '../../components/explain';
 
+interface MetricLite {
+  id: string;
+  name?: string;
+  domain?: string;
+  unit?: string;
+  description?: string;
+}
+
 // PALANTIR-LEVEL COMPONENTS
 import { ModuleErrorBoundary } from '../../components/palantir';
 
@@ -20,7 +28,7 @@ export function ExplainPage() {
 
   const filteredCatalog = useMemo(() => {
     if (!search) return catalog;
-    return catalog.filter((m: any) =>
+    return (catalog as MetricLite[]).filter((m) =>
       m.name?.toLowerCase().includes(search.toLowerCase()) ||
       m.id?.toLowerCase().includes(search.toLowerCase()) ||
       m.domain?.toLowerCase().includes(search.toLowerCase())
@@ -28,8 +36,9 @@ export function ExplainPage() {
   }, [catalog, search]);
 
   const stats = useMemo(() => {
-    const domains = new Set(catalog.map((m: any) => m.domain));
-    return { total: catalog.length, domains: domains.size };
+    const items = catalog as MetricLite[];
+    const domains = new Set(items.map((m) => m.domain));
+    return { total: items.length, domains: domains.size };
   }, [catalog]);
 
   if (error) {
@@ -93,7 +102,7 @@ export function ExplainPage() {
               </DarkTableRow>
             </DarkTableHead>
             <DarkTableBody>
-              {filteredCatalog.map((metric: any) => (
+              {filteredCatalog.map((metric: MetricLite) => (
                 <DarkTableRow key={metric.id}>
                   <DarkTableCell className="text-text-white font-medium">{metric.name}</DarkTableCell>
                   <DarkTableCell mono className="text-text-tertiary">{metric.id}</DarkTableCell>

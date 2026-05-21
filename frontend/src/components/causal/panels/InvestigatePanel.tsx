@@ -17,7 +17,7 @@ export function InvestigatePanel() {
   });
 
   const result = m.data as
-    | { metric_id?: string; value?: number; source?: string; unit?: string; computed_at?: string; scope?: any; period?: any }
+    | { metric_id?: string; value?: number; source?: string; unit?: string; computed_at?: string; scope?: Record<string, unknown>; period?: Record<string, unknown> }
     | undefined;
 
   return (

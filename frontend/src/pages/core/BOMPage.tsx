@@ -8,6 +8,15 @@ import { bomApi, productsApi } from '../../lib/api';
 import type { BOMItem } from '../../types';
 import { useToastContext } from '../../components/ToastProvider';
 
+// Q.68.4.D — shape mínima do produto consumido nesta página; o response
+// `productsApi.list()` ainda devolve `unknown` (legacy alias).
+interface ProductLite {
+  id: string;
+  product_code?: string;
+  product_name?: string;
+}
+type MutationError = Error & { message?: string };
+
 export function BOMPage() {
   const [selectedProductId, setSelectedProductId] = useState<string>('');
   const [search, setSearch] = useState('');
@@ -38,34 +47,34 @@ export function BOMPage() {
   const filteredBomItems = useMemo(() => {
     if (!selectedProductId) return [];
     return bomItems.filter(item => {
-      const componentProduct = allProducts.find((p: any) => p.id === item.component_product_id);
+      const componentProduct = allProducts.find((p: ProductLite) => p.id === item.component_product_id);
       const componentName = componentProduct?.product_name || item.component_product_id;
       return componentName.toLowerCase().includes(search.toLowerCase());
     });
   }, [bomItems, search, allProducts, selectedProductId]);
 
-  const selectedProduct = useMemo(() => products.find((p: any) => p.id === selectedProductId), [products, selectedProductId]);
+  const selectedProduct = useMemo(() => products.find((p: ProductLite) => p.id === selectedProductId), [products, selectedProductId]);
 
   const createMutation = useMutation({
-    mutationFn: (data: any) => bomApi.create(data),
+    mutationFn: (data: Record<string, unknown>) => bomApi.create(data),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['bom', selectedProductId] }); setIsCreateModalOpen(false); toast.success('BOM item added'); },
-    onError: (error: any) => toast.error(error.message || 'Error'),
+    onError: (error: MutationError) => toast.error(error.message || 'Error'),
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: any }) => bomApi.update(id, data),
+    mutationFn: ({ id, data }: { id: string; data: Record<string, unknown> }) => bomApi.update(id, data),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['bom', selectedProductId] }); setIsEditModalOpen(false); setEditingItem(null); toast.success('BOM item updated'); },
-    onError: (error: any) => toast.error(error.message || 'Error'),
+    onError: (error: MutationError) => toast.error(error.message || 'Error'),
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => bomApi.delete(id),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['bom', selectedProductId] }); setIsDeleteModalOpen(false); setDeletingItemId(null); toast.success('BOM item deleted'); },
-    onError: (error: any) => toast.error(error.message || 'Error'),
+    onError: (error: MutationError) => toast.error(error.message || 'Error'),
   });
 
   const bomFields: FormField[] = [
-    { name: 'component_product_id', label: 'Component', type: 'select', required: true, options: allProducts.map((p: any) => ({ value: p.id, label: `${p.product_code} - ${p.product_name}` })) },
+    { name: 'component_product_id', label: 'Component', type: 'select', required: true, options: allProducts.map((p: ProductLite) => ({ value: p.id, label: `${p.product_code} - ${p.product_name}` })) },
     { name: 'quantity_per', label: 'Quantity', type: 'number', required: true, min: 0, step: 0.01 },
     { name: 'unit_of_measure', label: 'Unit', type: 'text', placeholder: 'UN' },
     { name: 'sequence', label: 'Sequence', type: 'number', min: 0 },
@@ -74,7 +83,7 @@ export function BOMPage() {
     { name: 'notes', label: 'Notes', type: 'textarea' },
   ];
 
-  const productOptions = products.map((p: any) => ({ value: p.id, label: `${p.product_code} - ${p.product_name}` }));
+  const productOptions = products.map((p: ProductLite) => ({ value: p.id, label: `${p.product_code} - ${p.product_name}` }));
 
   return (
     <DarkPageLayout
@@ -145,7 +154,7 @@ export function BOMPage() {
             </DarkTableHead>
             <DarkTableBody>
               {filteredBomItems.map((item) => {
-                const componentProduct = allProducts.find((p: any) => p.id === item.component_product_id);
+                const componentProduct = allProducts.find((p: ProductLite) => p.id === item.component_product_id);
                 return (
                   <DarkTableRow key={item.id}>
                     <DarkTableCell mono>{item.sequence}</DarkTableCell>

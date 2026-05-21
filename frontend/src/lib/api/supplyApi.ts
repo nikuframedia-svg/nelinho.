@@ -83,17 +83,20 @@ export const supplyApi = {
       body: JSON.stringify(data),
     }),
   
-  // Additional methods for compatibility
-  generateForecast: (data: any) =>
+  // Additional methods for compatibility — payload tipado, response ainda
+  // genérica (legacy; trocar por DTOs Pydantic é Q.68.4.E).
+  generateForecast: (data: Record<string, unknown>) =>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     request<any>('/v1/supply/forecast', { method: 'POST', body: JSON.stringify(data) }),
-  
-  getROP: () =>
-    request<any>('/v1/supply/rop'),
-  
-  getABC: () =>
-    request<any>('/v1/supply/abc'),
-  
-  calculateABC: (data?: any) =>
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  getROP: () => request<any>('/v1/supply/rop'),
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  getABC: () => request<any>('/v1/supply/abc'),
+
+  calculateABC: (data?: Record<string, unknown>) =>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     request<any>('/v1/supply/abc', { method: 'POST', body: JSON.stringify(data || {}) }),
 
   // ─────────────────────────────────────────────────────────────────────

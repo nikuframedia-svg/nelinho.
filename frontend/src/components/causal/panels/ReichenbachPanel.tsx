@@ -21,7 +21,7 @@ export function ReichenbachPanel() {
   });
 
   const result = m.data as
-    | { verdict?: string; common_causes?: any[]; independent_causes?: any[]; checks_run?: number }
+    | { verdict?: string; common_causes?: Array<{ entity?: string; type?: string; details?: string }>; independent_causes?: unknown[]; checks_run?: number }
     | undefined;
 
   return (
@@ -81,7 +81,7 @@ export function ReichenbachPanel() {
                   Causas comuns ({result.common_causes!.length})
                 </div>
                 <ul className="space-y-1" style={{ color: 'var(--fg-2)' }}>
-                  {result.common_causes!.map((c: any, i: number) => (
+                  {result.common_causes!.map((c, i: number) => (
                     <li key={i} className="font-mono">
                       {JSON.stringify(c).slice(0, 120)}
                     </li>

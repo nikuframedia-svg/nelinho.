@@ -29,6 +29,7 @@ import {
 } from '../../components/dark';
 import { FormModal, DeleteConfirmDialog, type FormField } from '../../components/ui';
 import { productsApi } from '../../lib/api';
+import type { MutationError, MutationPayload, EntityLite } from '../../lib/api-helpers';
 import { useToastContext } from '../../components/ToastProvider';
 
 interface Product {
@@ -70,20 +71,23 @@ export function ProductsPage() {
   // Convert API data to Product interface
   const products: Product[] = useMemo(() => {
     if (!productsList) return [];
-    return (Array.isArray(productsList) ? productsList : []).map((p: any) => ({
-      id: p.id || p.product_id || '',
-      name: p.name || p.product_name || '',
-      product_code: p.product_code || '',
-      type: p.type || p.product_type || '',
-      weightDismold: p.weight_dismold || p.weightDismold || 0,
-      weightFinish: p.weight_finish || p.weightFinish || 0,
-      gelDeck: p.gel_deck || p.gelDeck || 0,
-      gelHull: p.gel_hull || p.gelHull || 0,
-      status: p.status || 'ACTIVE',
-      category: p.category || '',
-      lead_time_days: p.lead_time_days || 0,
-      standard_cost: p.standard_cost || 0,
-    }));
+    return (Array.isArray(productsList) ? productsList : []).map((raw: EntityLite) => {
+      const p = raw as EntityLite & Record<string, unknown>;
+      return {
+        id: (p.id as string) || (p.product_id as string) || '',
+        name: (p.name as string) || (p.product_name as string) || '',
+        product_code: (p.product_code as string) || '',
+        type: (p.type as string) || (p.product_type as string) || '',
+        weightDismold: (p.weight_dismold as number) || (p.weightDismold as number) || 0,
+        weightFinish: (p.weight_finish as number) || (p.weightFinish as number) || 0,
+        gelDeck: (p.gel_deck as number) || (p.gelDeck as number) || 0,
+        gelHull: (p.gel_hull as number) || (p.gelHull as number) || 0,
+        status: (p.status as string) || 'ACTIVE',
+        category: (p.category as string) || '',
+        lead_time_days: (p.lead_time_days as number) || 0,
+        standard_cost: (p.standard_cost as number) || 0,
+      };
+    });
   }, [productsList]);
 
   // Get unique product types from data
@@ -130,20 +134,20 @@ export function ProductsPage() {
       queryClient.invalidateQueries({ queryKey: ['products'] });
       setIsFormModalOpen(false);
     },
-    onError: (err: any) => {
+    onError: (err: MutationError) => {
       toastError(err.message || 'Erro ao adicionar produto');
     },
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: any }) => productsApi.update(id, data),
+    mutationFn: ({ id, data }: { id: string; data: MutationPayload }) => productsApi.update(id, data),
     onSuccess: () => {
       success('Produto atualizado com sucesso');
       queryClient.invalidateQueries({ queryKey: ['products'] });
       setIsFormModalOpen(false);
       setEditingProduct(null);
     },
-    onError: (err: any) => {
+    onError: (err: MutationError) => {
       toastError(err.message || 'Erro ao atualizar produto');
     },
   });
@@ -156,7 +160,7 @@ export function ProductsPage() {
       setIsDeleteConfirmOpen(false);
       setDeletingProduct(null);
     },
-    onError: (err: any) => {
+    onError: (err: MutationError) => {
       toastError(err.message || 'Erro ao eliminar produto');
     },
   });

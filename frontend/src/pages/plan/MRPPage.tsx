@@ -4,7 +4,23 @@ import { Package, Play, AlertTriangle, Loader2, RefreshCw, Download, TrendingDow
 import { DarkPageLayout } from '../../layouts';
 import { DarkCard, DarkStatCard, DarkTable, DarkTableHead, DarkTableBody, DarkTableRow, DarkTableHeader, DarkTableCell, DarkButton, DarkPillButton, DarkBadge } from '../../components/dark';
 import { planApi } from '../../lib/api';
+import type { MutationError } from '../../lib/api-helpers';
 import { useToastContext } from '../../components/ToastProvider';
+
+interface MrpItem {
+  id?: string;
+  material_name?: string;
+  material_code?: string;
+  product_name?: string;
+  product_code?: string;
+  shortage?: number;
+  action?: 'ORDER' | 'OK' | string;
+  required_qty?: number;
+  required?: number;
+  available_qty?: number;
+  on_hand?: number;
+  lead_time_days?: number;
+}
 
 export function MRPPage() {
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
@@ -24,13 +40,13 @@ export function MRPPage() {
       queryClient.invalidateQueries({ queryKey: ['mrp'] });
       toast.success('MRP calculation completed');
     },
-    onError: (err: any) => toast.error(err.message || 'Calculation failed'),
+    onError: (err: MutationError) => toast.error(err.message || 'Calculation failed'),
     onSettled: () => setIsCalculating(false),
   });
 
   const filteredResults = useMemo(() => {
     if (filterStatus === 'ALL') return mrpResults;
-    return mrpResults.filter((r: any) => {
+    return (mrpResults as MrpItem[]).filter((r) => {
       if (filterStatus === 'SHORTAGE') return r.shortage && r.shortage > 0;
       if (filterStatus === 'ORDER') return r.action === 'ORDER';
       if (filterStatus === 'OK') return !r.shortage || r.shortage <= 0;
@@ -38,12 +54,15 @@ export function MRPPage() {
     });
   }, [mrpResults, filterStatus]);
 
-  const stats = useMemo(() => ({
-    total: mrpResults.length,
-    shortages: mrpResults.filter((r: any) => r.shortage && r.shortage > 0).length,
-    toOrder: mrpResults.filter((r: any) => r.action === 'ORDER').length,
-    ok: mrpResults.filter((r: any) => !r.shortage || r.shortage <= 0).length,
-  }), [mrpResults]);
+  const stats = useMemo(() => {
+    const items = mrpResults as MrpItem[];
+    return {
+      total: items.length,
+      shortages: items.filter((r) => r.shortage && r.shortage > 0).length,
+      toOrder: items.filter((r) => r.action === 'ORDER').length,
+      ok: items.filter((r) => !r.shortage || r.shortage <= 0).length,
+    };
+  }, [mrpResults]);
 
   if (error) {
     return (
@@ -111,13 +130,13 @@ export function MRPPage() {
               </DarkTableRow>
             </DarkTableHead>
             <DarkTableBody>
-              {filteredResults.slice(0, 50).map((item: any, i: number) => (
+              {(filteredResults as MrpItem[]).slice(0, 50).map((item, i: number) => (
                 <DarkTableRow key={item.id || i}>
                   <DarkTableCell className="text-text-white">{item.material_name || item.product_name || '-'}</DarkTableCell>
                   <DarkTableCell mono className="text-text-tertiary">{item.material_code || item.product_code || '-'}</DarkTableCell>
                   <DarkTableCell mono>{item.on_hand || 0}</DarkTableCell>
                   <DarkTableCell mono>{item.required || 0}</DarkTableCell>
-                  <DarkTableCell mono className={item.shortage > 0 ? 'text-danger' : 'text-success'}>{item.shortage || 0}</DarkTableCell>
+                  <DarkTableCell mono className={(item.shortage ?? 0) > 0 ? 'text-danger' : 'text-success'}>{item.shortage || 0}</DarkTableCell>
                   <DarkTableCell>
                     {item.action === 'ORDER' ? (
                       <DarkBadge variant="warning" icon={<ShoppingCart size={12} />}>Order</DarkBadge>
@@ -126,8 +145,8 @@ export function MRPPage() {
                     )}
                   </DarkTableCell>
                   <DarkTableCell>
-                    <DarkBadge variant={item.shortage > 0 ? 'danger' : 'success'} dot>
-                      {item.shortage > 0 ? 'Shortage' : 'OK'}
+                    <DarkBadge variant={(item.shortage ?? 0) > 0 ? 'danger' : 'success'} dot>
+                      {(item.shortage ?? 0) > 0 ? 'Shortage' : 'OK'}
                     </DarkBadge>
                   </DarkTableCell>
                 </DarkTableRow>

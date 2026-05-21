@@ -95,7 +95,7 @@ async function checkEndpointAvailability(): Promise<boolean> {
 export async function logToEndpoint(
   location: string,
   message: string,
-  data: any,
+  data: unknown,
   hypothesisId: string
 ): Promise<void> {
   const logEntry = {
@@ -171,10 +171,10 @@ export async function logToEndpoint(
 /**
  * Save log entry to localStorage
  */
-function saveToLocalStorage(logEntry: any): void {
+function saveToLocalStorage(logEntry: unknown): void {
   try {
     const existingLogs = localStorage.getItem('debug_logs');
-    const logs: any[] = existingLogs ? JSON.parse(existingLogs) : [];
+    const logs: unknown[] = existingLogs ? JSON.parse(existingLogs) : [];
     
     // Add new log
     logs.push(logEntry);

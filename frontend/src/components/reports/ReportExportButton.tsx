@@ -50,7 +50,7 @@ export function ReportExportButton({ defaultTemplate = 'producao', className = '
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return r.json();
     },
-    onSuccess: (data: any) => {
+    onSuccess: (data: { status?: string; template_id?: string; message?: string; content?: string; filename?: string }) => {
       if (data?.status === 'not_implemented') {
         alert(`Template "${data.template_id}" ainda não implementado: ${data.message ?? ''}`);
         return;

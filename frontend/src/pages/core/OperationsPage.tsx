@@ -33,6 +33,7 @@ import {
 } from '../../components/dark';
 import { FormModal, DeleteConfirmDialog, type FormField } from '../../components/ui';
 import { operationsApi, machinesApi } from '../../lib/api';
+import type { MutationError, MutationPayload, EntityLite } from '../../lib/api-helpers';
 import { useToastContext } from '../../components/ToastProvider';
 
 interface Phase {
@@ -74,18 +75,21 @@ export function OperationsPage() {
 
   const phases: Phase[] = useMemo(() => {
     if (!operationsList) return [];
-    return (Array.isArray(operationsList) ? operationsList : []).map((op: any) => ({
-      id: op.id || op.operation_id || '',
-      name: op.name || op.operation_name || '',
-      operation_code: op.operation_code || '',
-      sequence: op.sequence || op.sequence_number || 0,
-      isProduction: op.is_production ?? op.isProduction ?? true,
-      isAutomatic: op.is_automatic ?? op.isAutomatic ?? false,
-      status: op.status || 'ACTIVE',
-      machine_id: op.machine_id,
-      std_time_minutes: op.std_time_minutes,
-      setup_time_minutes: op.setup_time_minutes,
-    }));
+    return (Array.isArray(operationsList) ? operationsList : []).map((raw: EntityLite) => {
+      const op = raw as EntityLite & Record<string, unknown>;
+      return {
+        id: (op.id as string) || (op.operation_id as string) || '',
+        name: (op.name as string) || (op.operation_name as string) || '',
+        operation_code: (op.operation_code as string) || '',
+        sequence: (op.sequence as number) || (op.sequence_number as number) || 0,
+        isProduction: (op.is_production as boolean | undefined) ?? (op.isProduction as boolean | undefined) ?? true,
+        isAutomatic: (op.is_automatic as boolean | undefined) ?? (op.isAutomatic as boolean | undefined) ?? false,
+        status: (op.status as string) || 'ACTIVE',
+        machine_id: op.machine_id as string | undefined,
+        std_time_minutes: op.std_time_minutes as number | undefined,
+        setup_time_minutes: op.setup_time_minutes as number | undefined,
+      };
+    });
   }, [operationsList]);
 
   const filteredPhases = useMemo(() => {
@@ -113,25 +117,28 @@ export function OperationsPage() {
 
   const machineOptions = useMemo(() => [
     { value: '', label: '-- No Machine --' },
-    ...machines.map((m: any) => ({ value: m.id, label: `${m.machine_name} (${m.machine_code})` })),
+    ...(machines as EntityLite[]).map((raw) => {
+      const m = raw as EntityLite & { machine_name?: string; machine_code?: string };
+      return { value: m.id, label: `${m.machine_name ?? ''} (${m.machine_code ?? ''})` };
+    }),
   ], [machines]);
 
   const createMutation = useMutation({
     mutationFn: operationsApi.create,
     onSuccess: () => { success('Operation added'); queryClient.invalidateQueries({ queryKey: ['operations'] }); setIsFormModalOpen(false); },
-    onError: (err: any) => toastError(err.message || 'Error'),
+    onError: (err: MutationError) => toastError(err.message || 'Error'),
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: any }) => operationsApi.update(id, data),
+    mutationFn: ({ id, data }: { id: string; data: MutationPayload }) => operationsApi.update(id, data),
     onSuccess: () => { success('Operation updated'); queryClient.invalidateQueries({ queryKey: ['operations'] }); setIsFormModalOpen(false); setEditingPhase(null); },
-    onError: (err: any) => toastError(err.message || 'Error'),
+    onError: (err: MutationError) => toastError(err.message || 'Error'),
   });
 
   const deleteMutation = useMutation({
     mutationFn: operationsApi.delete,
     onSuccess: () => { success('Operation deleted'); queryClient.invalidateQueries({ queryKey: ['operations'] }); setIsDeleteConfirmOpen(false); setDeletingPhase(null); },
-    onError: (err: any) => toastError(err.message || 'Error'),
+    onError: (err: MutationError) => toastError(err.message || 'Error'),
   });
 
   const operationFormFields: FormField[] = [

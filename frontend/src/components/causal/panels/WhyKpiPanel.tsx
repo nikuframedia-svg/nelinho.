@@ -13,7 +13,12 @@ export function WhyKpiPanel() {
   });
 
   const data = q.data as
-    | { oee?: any; availability?: any; otd?: any; quality?: any }
+    | {
+        oee?: { value?: number; [k: string]: unknown };
+        availability?: { value?: number; [k: string]: unknown };
+        otd?: { value?: number; [k: string]: unknown };
+        quality?: { value?: number; [k: string]: unknown };
+      }
     | undefined
     | null;
 

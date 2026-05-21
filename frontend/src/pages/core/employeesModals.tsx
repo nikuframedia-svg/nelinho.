@@ -4,6 +4,7 @@ import { useQueries, useQuery, useMutation, useQueryClient } from '@tanstack/rea
 import { X } from 'lucide-react';
 import { DarkCard, DarkButton, DarkBadge, DarkIconButton } from '../../components/dark';
 import { workforceEmployeesApi } from '../../lib/api';
+import type { MutationError } from '../../lib/api-helpers';
 import { type Employee } from './employeesTypes';
 
 export const HISTORY_PAGE_SIZE = 25;
@@ -145,7 +146,7 @@ export function EmployeeQualityModal({
       queryClient.invalidateQueries({ queryKey: ['workforce', 'quality-score', employee.id] });
       onClose();
     },
-    onError: (err: any) => onError(err.message || 'Erro ao guardar override'),
+    onError: (err: MutationError) => onError(err.message || 'Erro ao guardar override'),
   });
 
   const currentScore = override ?? data?.score ?? 5;

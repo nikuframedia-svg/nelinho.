@@ -31,6 +31,7 @@ import {
 import { FormModal, type FormField } from '../../components/ui';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogCloseButton } from '../../components/ui';
 import { tenantsApi } from '../../lib/api';
+import type { MutationError, MutationPayload } from '../../lib/api-helpers';
 import { useToastContext } from '../../components/ToastProvider';
 import { format } from 'date-fns';
 
@@ -112,20 +113,20 @@ export function TenantsPage() {
       queryClient.invalidateQueries({ queryKey: ['tenants'] });
       setIsFormModalOpen(false);
     },
-    onError: (err: any) => {
+    onError: (err: MutationError) => {
       toastError(err.message || 'Error creating tenant');
     },
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: any }) => tenantsApi.update(id, data),
+    mutationFn: ({ id, data }: { id: string; data: MutationPayload }) => tenantsApi.update(id, data),
     onSuccess: () => {
       success('Tenant updated successfully');
       queryClient.invalidateQueries({ queryKey: ['tenants'] });
       setIsFormModalOpen(false);
       setEditingTenant(null);
     },
-    onError: (err: any) => {
+    onError: (err: MutationError) => {
       toastError(err.message || 'Error updating tenant');
     },
   });
@@ -136,7 +137,7 @@ export function TenantsPage() {
       success('Tenant activated successfully');
       queryClient.invalidateQueries({ queryKey: ['tenants'] });
     },
-    onError: (err: any) => {
+    onError: (err: MutationError) => {
       toastError(err.message || 'Error activating tenant');
     },
   });
@@ -147,7 +148,7 @@ export function TenantsPage() {
       success('Tenant suspended successfully');
       queryClient.invalidateQueries({ queryKey: ['tenants'] });
     },
-    onError: (err: any) => {
+    onError: (err: MutationError) => {
       toastError(err.message || 'Error suspending tenant');
     },
   });
@@ -160,7 +161,7 @@ export function TenantsPage() {
       setIsSubscriptionModalOpen(false);
       setSubscriptionTenant(null);
     },
-    onError: (err: any) => {
+    onError: (err: MutationError) => {
       toastError(err.message || 'Error updating subscription');
     },
   });

@@ -45,7 +45,7 @@ export function WorkforceDashboard() {
   });
   const simulatorEmployees = useMemo(
     () =>
-      (Array.isArray(employeesData) ? employeesData : []).map((e: any) => ({
+      (Array.isArray(employeesData) ? employeesData : []).map((e: { id?: string | number; employee_name?: string; name?: string }) => ({
         id: String(e.id),
         name: e.employee_name ?? e.name ?? '—',
         currentPhases: [] as string[],

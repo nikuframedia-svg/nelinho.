@@ -31,7 +31,7 @@ export function ErroTreePanel() {
           credible_interval_95: { low: number; high: number };
           evidence: string[];
         } | null;
-        chain?: any[];
+        chain?: unknown[];
         steps_checked?: number;
         recommendation?: string;
       }

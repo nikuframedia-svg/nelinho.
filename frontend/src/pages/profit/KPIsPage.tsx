@@ -186,7 +186,10 @@ export function KPIsPage() {
 
   const allKPIsNull = useMemo(() => {
     if (!kpiSnapshot) return true;
-    return Object.values(kpiSnapshot).every((v: any) => v?.value === null || v?.value === undefined);
+    return Object.values(kpiSnapshot).every((v) => {
+      const kpi = v as { value?: unknown } | null | undefined;
+      return kpi?.value === null || kpi?.value === undefined;
+    });
   }, [kpiSnapshot]);
 
   if (error) {

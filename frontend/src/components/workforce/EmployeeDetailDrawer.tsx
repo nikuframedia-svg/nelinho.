@@ -101,7 +101,7 @@ export function EmployeeDetailDrawer({
       setConfirmDelete(false);
       onClose();
     },
-    onError: (err: any) => onError?.(err?.message ?? 'Erro ao desactivar.'),
+    onError: (err: Error & { message?: string }) => onError?.(err?.message ?? 'Erro ao desactivar.'),
   });
 
   if (!open) return null;

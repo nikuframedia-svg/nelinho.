@@ -232,12 +232,13 @@ export function useCopilotDrawerState({
               idempotency_key,
               ...entityFields,
             });
-          } catch (error: any) {
+          } catch (rawError: unknown) {
+            const error = rawError as { status?: number };
             if (error?.status === 401) {
               setCurrentConversationId(null);
               return await copilotApi.ask({ user_query: query, idempotency_key, ...entityFields });
             }
-            throw error;
+            throw rawError;
           }
         }
         return await copilotApi.ask({ user_query: query, idempotency_key, ...entityFields });
@@ -250,7 +251,7 @@ export function useCopilotDrawerState({
     // mudam de identidade em cada render → re-disparam o effect → setMessages
     // adicionava a resposta 2× no UI, agravado por StrictMode em dev).
     onSuccess: (response, query) => {
-      if (!response || typeof response !== 'object' || !(response as any).suggestion_id) {
+      if (!response || typeof response !== 'object' || !(response as { suggestion_id?: string }).suggestion_id) {
         const errorMsg: Message = {
           id: `error-${Date.now()}`,
           role: 'copilot',
@@ -287,13 +288,22 @@ export function useCopilotDrawerState({
         refetchConversations();
       }
     },
-    onError: (error: any) => {
+    onError: (rawError: unknown) => {
       let userMessage = 'Ocorreu um erro ao comunicar com o COPILOT. Tenta novamente.';
       let warningCode: 'MODEL_OFFLINE' | 'VALIDATION_FAILED' = 'MODEL_OFFLINE';
 
+      const error = rawError as {
+        message?: string;
+        response?: {
+          data?: {
+            summary?: string;
+            warnings?: Array<{ code?: string; message?: string }>;
+          };
+        };
+      };
       if (error?.response?.data?.warnings) {
         const warnings = error.response.data.warnings;
-        const validationWarning = warnings.find((w: any) => w.code === 'VALIDATION_FAILED');
+        const validationWarning = warnings.find((w) => w.code === 'VALIDATION_FAILED');
         if (validationWarning) {
           userMessage = validationWarning.message || 'Não consegui validar a resposta do COPILOT. Tenta novamente.';
           warningCode = 'VALIDATION_FAILED';

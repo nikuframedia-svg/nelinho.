@@ -92,7 +92,7 @@ export function FactoryPulseQueryPanel({ viewId, name }: { viewId: string | null
   });
 
   const data = q.data as
-    | { view_id?: string; rows?: any[]; row_count?: number; fields?: string[]; trust_score?: number; disclaimers?: string[] }
+    | { view_id?: string; rows?: Array<Record<string, unknown>>; row_count?: number; fields?: string[]; trust_score?: number; disclaimers?: string[] }
     | undefined
     | null;
 

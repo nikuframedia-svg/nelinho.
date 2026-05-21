@@ -42,7 +42,7 @@ export default function InboxDecisoesPage() {
     queryFn: async () => {
       const fetchTotal = async (status?: string) => {
         try {
-          const r: any = await decisionsApi.list({ status, page_size: 1 });
+          const r = await decisionsApi.list({ status, page_size: 1 }) as { total?: number } | null;
           return r?.total ?? 0;
         } catch {
           return 0;
@@ -64,7 +64,7 @@ export default function InboxDecisoesPage() {
     queryKey: ['inbox', 'list', tab, refreshKey],
     queryFn: async () => {
       try {
-        return (await decisionsApi.list({ status: STATUS_BY_TAB[tab], page_size: 20 })) as any;
+        return (await decisionsApi.list({ status: STATUS_BY_TAB[tab], page_size: 20 })) as unknown;
       } catch {
         return null;
       }
@@ -73,8 +73,8 @@ export default function InboxDecisoesPage() {
     retry: 0,
   });
 
-  const items: any[] = useMemo(() => {
-    const data: any = list.data;
+  const items: unknown[] = useMemo(() => {
+    const data = list.data as { items?: unknown[]; decisions?: unknown[] } | unknown[] | null | undefined;
     if (!data) return [];
     if (Array.isArray(data)) return data;
     return data.items ?? data.decisions ?? [];
@@ -143,7 +143,7 @@ export default function InboxDecisoesPage() {
           </div>
         ) : (
           <div className="flex flex-col page-enter" style={{ gap: 14 }}>
-            {items.map((d, idx) => (
+            {(items as InboxDecision[]).map((d, idx) => (
               <SuggestionCardZip
                 key={d.id ?? idx}
                 decision={d}
@@ -159,14 +159,33 @@ export default function InboxDecisoesPage() {
   );
 }
 
+interface InboxSandbox {
+  priority?: string;
+  confidence?: number;
+  why?: string;
+  if_accept?: string[];
+  if_reject?: string[];
+  alternative?: { label?: string; detail?: string };
+  source?: string;
+  [k: string]: unknown;
+}
+interface InboxDecision {
+  id: string;
+  sandbox_result?: InboxSandbox;
+  title?: string;
+  status?: string;
+  proposed_at?: string;
+  [k: string]: unknown;
+}
+
 function SuggestionCardZip({
   decision,
   onDecided,
 }: {
-  decision: any;
+  decision: InboxDecision;
   onDecided: () => void;
 }) {
-  const sandbox = decision.sandbox_result ?? {};
+  const sandbox: InboxSandbox = decision.sandbox_result ?? {};
 
   // Q.30.B — aprovar/rejeitar a decisão directamente no Inbox.
   const decideMutation = useMutation({

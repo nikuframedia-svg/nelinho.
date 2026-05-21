@@ -33,6 +33,7 @@ import {
 } from '../../components/dark';
 import { FormModal, DeleteConfirmDialog, type FormField } from '../../components/ui';
 import { machinesApi } from '../../lib/api';
+import type { MutationError, MutationPayload, EntityLite } from '../../lib/api-helpers';
 import { useToastContext } from '../../components/ToastProvider';
 
 interface Machine {
@@ -70,17 +71,20 @@ export function MachinesPage() {
 
   const machines: Machine[] = useMemo(() => {
     if (!machinesList) return [];
-    return (Array.isArray(machinesList) ? machinesList : []).map((m: any) => ({
-      id: m.id || m.machine_id || '',
-      machine_code: m.machine_code || '',
-      machine_name: m.machine_name || '',
-      machine_type: m.machine_type || 'OTHER',
-      status: m.status || 'ACTIVE',
-      location: m.location || undefined,
-      work_center: m.work_center || undefined,
-      capacity_units_per_hour: m.capacity_units_per_hour || undefined,
-      available_hours_per_day: m.available_hours_per_day || undefined,
-    }));
+    return (Array.isArray(machinesList) ? machinesList : []).map((raw: EntityLite) => {
+      const m = raw as EntityLite & Record<string, unknown>;
+      return {
+        id: (m.id as string) || (m.machine_id as string) || '',
+        machine_code: (m.machine_code as string) || '',
+        machine_name: (m.machine_name as string) || '',
+        machine_type: (m.machine_type as string) || 'OTHER',
+        status: (m.status as string) || 'ACTIVE',
+        location: (m.location as string | undefined) || undefined,
+        work_center: (m.work_center as string | undefined) || undefined,
+        capacity_units_per_hour: (m.capacity_units_per_hour as number | undefined) || undefined,
+        available_hours_per_day: (m.available_hours_per_day as number | undefined) || undefined,
+      };
+    });
   }, [machinesList]);
 
   const machineTypes = useMemo(() => {
@@ -127,18 +131,18 @@ export function MachinesPage() {
       queryClient.invalidateQueries({ queryKey: ['machines'] });
       setIsFormModalOpen(false);
     },
-    onError: (err: any) => toastError(err.message || 'Error adding machine'),
+    onError: (err: MutationError) => toastError(err.message || 'Error adding machine'),
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: any }) => machinesApi.update(id, data),
+    mutationFn: ({ id, data }: { id: string; data: MutationPayload }) => machinesApi.update(id, data),
     onSuccess: () => {
       success('Machine updated successfully');
       queryClient.invalidateQueries({ queryKey: ['machines'] });
       setIsFormModalOpen(false);
       setEditingMachine(null);
     },
-    onError: (err: any) => toastError(err.message || 'Error updating machine'),
+    onError: (err: MutationError) => toastError(err.message || 'Error updating machine'),
   });
 
   const deleteMutation = useMutation({
@@ -149,7 +153,7 @@ export function MachinesPage() {
       setIsDeleteConfirmOpen(false);
       setDeletingMachine(null);
     },
-    onError: (err: any) => toastError(err.message || 'Error deleting machine'),
+    onError: (err: MutationError) => toastError(err.message || 'Error deleting machine'),
   });
 
   const machineFormFields: FormField[] = [
