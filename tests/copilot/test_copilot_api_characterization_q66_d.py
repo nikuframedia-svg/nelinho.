@@ -593,20 +593,33 @@ async def test_reset_circuit_returns_success_status():
 
 @pytest.mark.asyncio
 async def test_health_returns_status_when_ollama_online():
-    """/health → status=healthy + chaves ollama/embeddings_model/rate_limit."""
+    """/health → status=ok + subsystems.ollama=up + circuit_breaker=closed
+    (Q.68.1.C: sanitized shape — NÃO expõe URLs/modelo/rate-limit)."""
+    from src.shared.auth.jwt_handler import UserContext
+
     fake_client = SimpleNamespace(
         _circuit_open_until=None,
+        _failure_count=0,
         base_url="http://localhost:11434",
         reset_circuit_breaker=lambda: None,
         health_check=AsyncMock(return_value=True),
     )
+    fake_user = UserContext(
+        user_id=uuid4(),
+        tenant_id=uuid4(),
+        role="manager_operations",
+    )
     with patch.object(copilot_api, "get_ollama_client", return_value=fake_client):
-        result = await copilot_health()
-    assert result["status"] == "healthy"
-    assert result["ollama"] == "online"
-    assert "embeddings_model" in result
-    assert "rate_limit" in result
-    assert "per_hour" in result["rate_limit"]
+        result = await copilot_health(_user=fake_user)
+    assert result["status"] == "ok"
+    assert result["subsystems"]["ollama"] == "up"
+    assert result["circuit_breaker"] == "closed"
+    assert "timestamp" in result
+    # Q.68.1.C: shape mínima — NÃO expõe URLs/modelo/rate-limit
+    assert "ollama_base_url" not in result
+    assert "ollama_model" not in result
+    assert "rate_limit" not in result
+    assert "embeddings_model" not in result
 
 
 # ──────────────────────────────────────────────────────────────────────────

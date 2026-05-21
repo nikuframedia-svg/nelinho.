@@ -93,56 +93,65 @@ async def reset_circuit_breaker():
 
 
 @router.get("/health")
-async def copilot_health():
+async def copilot_health(
+    _user: UserContext = Depends(get_current_user),
+):
     """
-    Health check do COPILOT.
+    Health check do COPILOT (auth required — Q.68.1.C).
 
-    Verifica: Ollama, DB, embeddings, rate limit.
+    Verifica: Ollama subsystem + circuit breaker state.
+
+    Response shape é mínima de propósito: NÃO expõe URLs internos
+    (`ollama_base_url`), nome de modelo (`ollama_model`), nem rate-limit
+    config — atacante autenticado não deve mapear infra interna.
     """
+    timestamp = datetime.now(timezone.utc).isoformat()
     try:
         ollama_client = _api.get_ollama_client()
 
         # Se circuit breaker está aberto, tentar resetar se já passou tempo suficiente
-        if hasattr(ollama_client, '_circuit_open_until') and ollama_client._circuit_open_until:
-            remaining = (ollama_client._circuit_open_until - datetime.now(timezone.utc)).total_seconds()
+        circuit_open_until = getattr(ollama_client, "_circuit_open_until", None)
+        if circuit_open_until is not None:
+            remaining = (circuit_open_until - datetime.now(timezone.utc)).total_seconds()
             if remaining < 0:
                 # Circuit já deveria estar fechado, resetar manualmente
                 ollama_client.reset_circuit_breaker()
                 logger.info("Circuit breaker resetado no health check")
+                circuit_open_until = None
 
         ollama_online = await ollama_client.health_check()
 
-        # Log detalhado para debugging
-        if not ollama_online:
-            circuit_info = "fechado"
-            if hasattr(ollama_client, '_circuit_open_until') and ollama_client._circuit_open_until:
-                remaining = (ollama_client._circuit_open_until - datetime.now(timezone.utc)).total_seconds()
-                circuit_info = f"aberto (fecha em {remaining:.1f}s)"
+        if circuit_open_until is None:
+            circuit_state = "closed"
+        elif datetime.now(timezone.utc) < circuit_open_until:
+            circuit_state = "open"
+        else:
+            circuit_state = "half_open"
 
+        if not ollama_online:
             logger.warning(
-                f"Ollama está offline. Base URL: {ollama_client.base_url}. "
-                f"Circuit breaker: {circuit_info}. "
-                f"Failure count: {getattr(ollama_client, '_failure_count', 0)}"
+                "Ollama offline. circuit=%s failure_count=%d",
+                circuit_state,
+                getattr(ollama_client, "_failure_count", 0),
             )
 
         return {
-            "status": "healthy" if ollama_online else "degraded",
-            "ollama": "online" if ollama_online else "offline",
-            "embeddings_model": getattr(settings, "copilot_embeddings_model", "all-minilm"),
-            "ollama_base_url": ollama_client.base_url,
-            "ollama_model": settings.ollama_model,
-            "rate_limit": {
-                "per_hour": settings.copilot_rate_limit_per_hour,
-                "per_day": settings.copilot_rate_limit_per_day,
+            "status": "ok" if ollama_online else "degraded",
+            "subsystems": {
+                "ollama": "up" if ollama_online else "down",
             },
+            "circuit_breaker": circuit_state,
+            "timestamp": timestamp,
         }
     except Exception as e:
         logger.error(f"Erro no health check do COPILOT: {e}", exc_info=True)
         return {
-            "status": "error",
-            "ollama": "offline",
-            "error": str(e),
-            "embeddings_model": getattr(settings, "copilot_embeddings_model", "all-minilm"),
+            "status": "down",
+            "subsystems": {
+                "ollama": "down",
+            },
+            "circuit_breaker": "unknown",
+            "timestamp": timestamp,
         }
 
 
