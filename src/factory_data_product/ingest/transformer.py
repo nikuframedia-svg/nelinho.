@@ -339,8 +339,10 @@ class RawToCuratedTransformer:
 
             estado = self._safe_str(payload.get("MoldeEstado"))
             # em_manutencao é derivado: NELO usa estado=4 ("manutenção"). O
-            # dicionário completo de estados ainda não foi confirmado pelo
-            # CEO (TODO Sprint Q.8b); por agora só a string "4" / int 4.
+            # comportamento pinned em tests/factory_data_product/
+            # test_transformer_q67_1b.py.
+            # Q.67.1.B: bloqueado pendente confirmação Luis do dict completo
+            # de MoldeEstado vindo de NELO ERP (issue Q.68.B).
             em_manutencao = str(estado).strip() == "4" if estado is not None else False
 
             mold = {
