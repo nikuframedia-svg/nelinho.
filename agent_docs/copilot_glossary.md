@@ -71,3 +71,18 @@ Usado por:
   até 25× do real.
 - **produto_stocks_por_armazem** — fonte real de stock no ERP. Espelhado em
   `supply.warehouse_stock` (Q.52.K).
+
+## Tabelas de tempo / duração de fase (Q.68.C)
+
+- **`factory_curated.order_phase`** — fonte canónica de `horas_reais` /
+  `horas_previstas` / `horas_standard` por (`of_id`, `fase_id`). Usar para
+  responder a "tempo médio fase X" ou "duração real vs prevista". Populada
+  pelo mirror ETL `time_mining` (ver [[project_erp_realtime_write]]).
+- **`plan.routing_template_phase`** — duração planeada por fase do template
+  de routing (não real). Coluna `duration_p50_h` quando o `time_mining`
+  conseguiu derivar p50 do histórico ERP.
+- **`plan.phase_transition_gap`** — 16 transições de cura/secagem (Q.13).
+  Química, não filas — `NELO_CURING_GAPS_SEED` em `state.py`.
+- **AVG/p50 por fase em SQL** — `SELECT fase_nome, AVG(horas_reais)
+  FROM factory_curated.order_phase WHERE data_inicio >= now() - interval
+  '30 days' GROUP BY fase_nome` (com `run_sql` Q.67.4.C).
