@@ -39,6 +39,10 @@ import type { CopilotResponse } from '../../lib/copilot-types';
 import { CopilotChatMessage } from '../../components/copilot/CopilotChatMessage';
 import { CopilotContextRail } from '../../components/copilot/CopilotContextRail';
 import {
+  SqlAccordion,
+  type ToolCall,
+} from '../../components/copilot/SqlAccordion';
+import {
   COPILOT_MODES,
   nowLabel,
   type ChatMessage,
@@ -546,14 +550,27 @@ export default function CopilotPage() {
                 </p>
               </div>
             ) : (
-              messages.map((m) => (
-                <CopilotChatMessage
-                  key={m.id}
-                  message={m}
-                  onAction={(a) => actionMutation.mutate(a)}
-                  actionPending={actionMutation.isPending}
-                />
-              ))
+              messages.map((m) => {
+                // `tool_calls` é Q.67.4.F — campo opcional na resposta
+                // estruturada com as queries SQL que o copiloto executou.
+                // `lib/copilot-types.ts` ainda não o declara (consolidação
+                // backend pendente), por isso lemos via cast local.
+                const toolCalls = (
+                  m.response as unknown as { tool_calls?: ToolCall[] } | undefined
+                )?.tool_calls;
+                return (
+                  <div key={m.id} className="flex flex-col">
+                    <CopilotChatMessage
+                      message={m}
+                      onAction={(a) => actionMutation.mutate(a)}
+                      actionPending={actionMutation.isPending}
+                    />
+                    {!m.typing && toolCalls && toolCalls.length > 0 && (
+                      <SqlAccordion toolCalls={toolCalls} />
+                    )}
+                  </div>
+                );
+              })
             )}
           </div>
 
