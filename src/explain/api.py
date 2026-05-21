@@ -42,7 +42,7 @@ from src.explain.routers.metrics import router as _metrics_router
 # from this module; legacy callers may also import the schemas or the
 # catalogue dict. Surface them all here so the decomposition is invisible
 # to consumers.
-from src.explain.routers.metrics import (  # noqa: F401  (re-export)
+from src.explain.routers.metrics import (
     METRIC_CATALOG,
     Citation,
     CommitExplanation,

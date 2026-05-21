@@ -32,17 +32,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .decision_approver import (
     DecisionApprover,
-    RISK_ORDER,  # noqa: F401 — re-exported for callers/tests.
-    _risk_at_or_below,  # noqa: F401
+    RISK_ORDER,
+    _risk_at_or_below,
 )
 from .decision_executor import DecisionExecutor
-from .decision_proposer import DecisionProposer, _coerce_actor_uuid  # noqa: F401
+from .decision_proposer import DecisionProposer, _coerce_actor_uuid
 from .decision_query import (
     DecisionQuery,
-    _aware,  # noqa: F401
-    _group_sort_key,  # noqa: F401
-    _impact_magnitude,  # noqa: F401
-    _isoformat,  # noqa: F401
+    _aware,
+    _group_sort_key,
+    _impact_magnitude,
+    _isoformat,
 )
 from .decision_rollbacker import DecisionRollbacker
 from .models import DEFAULT_POLICIES

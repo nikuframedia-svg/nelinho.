@@ -42,7 +42,7 @@ async def test_quality_fpy_uses_kpi_factory_product_defect_rate():
     ) as mock_factory:
         try:
             kpis = await calculate_kpis(session, _TENANT)
-        except Exception:  # noqa: BLE001  defensivo — session mock pode falhar
+        except Exception:
             # mesmo assim verificar que o factory foi chamado
             pass
 

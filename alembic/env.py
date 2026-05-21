@@ -21,7 +21,7 @@ from src.shared.config import settings
 # manual (que divergiu de bootstrap_dev_full.py em ~12 modulos), todos
 # os call-sites importam aqui. Adicionar um modelo novo => adicionar
 # em UM sitio (model_registry.py) => Alembic + bootstrap apanham juntos.
-from src.shared import model_registry  # noqa: F401  Q.61.14 (side-effect import)
+from src.shared import model_registry
 
 # this is the Alembic Config object
 config = context.config

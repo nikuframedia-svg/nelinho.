@@ -24,12 +24,12 @@ MIN_TABLES = 100
 
 def test_model_registry_imports_cleanly():
     """Smoke: registry corre todos os imports sem ImportError."""
-    from src.shared import model_registry  # noqa: F401
+    from src.shared import model_registry
 
 
 def test_registry_registers_at_least_min_tables():
     """Floor de tabelas registadas. Se cair, alguem partiu o registry."""
-    from src.shared import model_registry  # noqa: F401
+    from src.shared import model_registry
     from src.shared.database import Base
 
     tables = Base.metadata.tables
@@ -43,7 +43,7 @@ def test_registry_includes_tables_that_were_orphans_pre_q61_14():
     """As tabelas que eram orfas no alembic/env.py antes do Q.61.14
     DEVEM estar no registry. Apanha regressao se alguem reverte.
     """
-    from src.shared import model_registry  # noqa: F401
+    from src.shared import model_registry
     from src.shared.database import Base
 
     table_names = set(Base.metadata.tables.keys())

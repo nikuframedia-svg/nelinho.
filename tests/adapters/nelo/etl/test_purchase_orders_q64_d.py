@@ -195,7 +195,7 @@ async def test_mirror_purchase_orders_upserts_only_type_9():
     ) as mock_upsert:
         try:
             await mirror_purchase_orders(session=fake_session, tenant_id=TENANT)
-        except Exception:  # noqa: BLE001  EtlRunner setup pode falhar no fake
+        except Exception:
             pass
 
     # Confirmar que upsert foi chamado com PurchaseOrder.

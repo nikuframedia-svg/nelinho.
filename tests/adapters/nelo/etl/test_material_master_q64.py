@@ -109,7 +109,7 @@ async def test_mirror_material_master_uses_runner():
     ) as mock_upsert:
         try:
             await mirror_material_master(session=fake_session, tenant_id=TENANT)
-        except Exception:  # noqa: BLE001  EtlRunner setup pode falhar
+        except Exception:
             pass
 
     if mock_upsert.await_count > 0:

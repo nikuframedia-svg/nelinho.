@@ -32,9 +32,9 @@ def test_get_logger_returns_bound_logger():
     configure_structlog(json_logs=True)
     log = get_logger("test_q61_37")
     # BoundLogger expoe info/warning/error etc.
-    assert callable(getattr(log, "info"))
-    assert callable(getattr(log, "warning"))
-    assert callable(getattr(log, "error"))
+    assert callable(log.info)
+    assert callable(log.warning)
+    assert callable(log.error)
 
 
 def test_trace_id_processor_includes_id_when_set():

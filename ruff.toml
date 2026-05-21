@@ -65,10 +65,17 @@ ignore = [
 [lint.per-file-ignores]
 # Test code is DAMP and full of throwaway bindings — relax the
 # "unused/style" detectors that fire on fixtures and assertions.
+# S110 (try-except-pass): tests usam para verificar side-effects
+# (e.g. mock_upsert.await_count > 0) mesmo quando o fluxo falha — é
+# intencional e não dá para mascarar com noqa em todos os sítios.
 "tests/**/*.py" = [
     "F841", "B011", "B017", "B018",
     "RUF059", "B007", "RUF005", "RUF007", "RUF009", "RUF015",
+    "S110",
 ]
 "alembic/versions/*.py" = ["E402", "F401"]  # migrations are special
 # Ad-hoc one-off scripts — not production code; relax unused/style noise.
-"scripts/**/*.py" = ["E402", "F841", "B007", "RUF005", "RUF046"]
+# T201 (print): scripts/ são CLI tools, print() é o output canónico.
+# S110 (try-except-pass): defensivo em CLI tools que não devem crashar em
+# best-effort cleanup; manter como warning local mas não falhar o CI.
+"scripts/**/*.py" = ["E402", "F841", "B007", "RUF005", "RUF046", "T201", "S110"]

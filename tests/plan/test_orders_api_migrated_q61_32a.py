@@ -147,7 +147,7 @@ class _PaginatedSession:
         self._last_stmt = text
 
         # 1. `select(func.count()).select_from(subquery)` → scalar() = total
-        if "count(*)" in text or "count(" in text and "anon_" in text:
+        if "count(*)" in text or ("count(" in text and "anon_" in text):
             orders = self._orders
 
             class _Scalar:
@@ -172,7 +172,7 @@ class _PaginatedSession:
             return _Result()
 
         # 2. group_by(current_phase_name) → phase distribution
-        if "group_by" in text or "current_phase_name" in text and "count" in text:
+        if "group_by" in text or ("current_phase_name" in text and "count" in text):
             rows = []
 
             class _RowsResult:

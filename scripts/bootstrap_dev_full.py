@@ -29,7 +29,7 @@ DEV_TENANT_CODE = "nelo-dev"
 # divergiam do alembic/env.py em ~12 modulos — bootstrap criava tabelas
 # que producao via `alembic upgrade head` deixava por criar.
 def _import_all_models() -> None:
-    from src.shared import model_registry  # noqa: F401
+    from src.shared import model_registry
 
 
 _SCHEMAS = (

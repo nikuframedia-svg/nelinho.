@@ -180,7 +180,7 @@ async def test_mirror_inventory_ledger_upserts_rows_via_runner():
     ) as mock_upsert:
         try:
             await mirror_inventory_ledger(session=fake_session, tenant_id=TENANT)
-        except Exception:  # noqa: BLE001  EtlRunner pode precisar de mais setup
+        except Exception:
             pass
 
     # Confirmar que upsert foi chamado pelo menos uma vez com InventoryLedgerEntry.

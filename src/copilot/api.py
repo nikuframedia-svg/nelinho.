@@ -30,27 +30,27 @@ from fastapi import APIRouter
 # e ``_api.<name>(...)`` para que o monkey-patch propague.
 # ──────────────────────────────────────────────────────────────────────────
 
-from src.copilot.actions import (  # noqa: F401  — re-exports para patches
+from src.copilot.actions import (
     ActionExecutor,
     ActionHandlerNotImplementedError,
     ActionMode,
 )
-from src.copilot.jobs.daily_feedback import (  # noqa: F401  — re-export
+from src.copilot.jobs.daily_feedback import (
     generate_daily_feedback,
 )
-from src.copilot.ollama_client import get_ollama_client  # noqa: F401  — re-export
-from src.copilot.rag import ingest_document  # noqa: F401  — re-export
-from src.copilot.rate_limiter import get_rate_limiter  # noqa: F401  — re-export
-from src.copilot.recommendations import (  # noqa: F401  — re-export
+from src.copilot.ollama_client import get_ollama_client
+from src.copilot.rag import ingest_document
+from src.copilot.rate_limiter import get_rate_limiter
+from src.copilot.recommendations import (
     generate_recommendations,
 )
-from src.copilot.service import CopilotService  # noqa: F401  — re-export
-from src.governance.audit_service import audit_change  # noqa: F401  — re-export
+from src.copilot.service import CopilotService
+from src.governance.audit_service import audit_change
 
 # Dependencies partilhadas (precisam de estar disponíveis quando os
 # sub-routers fazem ``from src.copilot import api as _api`` para evitar
 # import circular — vivem em ``routers/_common.py``).
-from src.copilot.routers._common import (  # noqa: F401  — re-export
+from src.copilot.routers._common import (
     dev_only,
     get_tenant_id,
 )
@@ -61,7 +61,7 @@ from src.copilot.routers._common import (  # noqa: F401  — re-export
 # quando os handlers forem invocados.
 # ──────────────────────────────────────────────────────────────────────────
 
-from src.copilot.routers.actions import (  # noqa: E402  — re-export handlers
+from src.copilot.routers.actions import (
     _run_copilot_action,
     execute_action,
     execute_action_dev,
@@ -69,7 +69,7 @@ from src.copilot.routers.actions import (  # noqa: E402  — re-export handlers
     rollback_action,
 )
 from src.copilot.routers.actions import router as _actions_router
-from src.copilot.routers.ask import (  # noqa: E402  — re-export handlers
+from src.copilot.routers.ask import (
     ask_copilot,
     ask_copilot_dev,
     explain_recommendations,
@@ -82,7 +82,7 @@ from src.copilot.routers.ask import (  # noqa: E402  — re-export handlers
     get_recommendations_dev,
 )
 from src.copilot.routers.ask import router as _ask_router
-from src.copilot.routers.conversations import (  # noqa: E402  — re-export
+from src.copilot.routers.conversations import (
     archive_conversation,
     create_conversation,
     get_conversation_messages,
@@ -91,7 +91,7 @@ from src.copilot.routers.conversations import (  # noqa: E402  — re-export
     send_message,
 )
 from src.copilot.routers.conversations import router as _conversations_router
-from src.copilot.routers.health import (  # noqa: E402  — re-export
+from src.copilot.routers.health import (
     copilot_health,
     execute_sandbox,
     ingest_rag_document,
@@ -99,7 +99,7 @@ from src.copilot.routers.health import (  # noqa: E402  — re-export
     reset_circuit_breaker,
 )
 from src.copilot.routers.health import router as _health_router
-from src.copilot.routers.suggestions import (  # noqa: E402  — re-export
+from src.copilot.routers.suggestions import (
     get_suggestion,
     submit_user_feedback,
 )

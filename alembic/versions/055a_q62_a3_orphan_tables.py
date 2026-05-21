@@ -74,7 +74,7 @@ def upgrade() -> None:
 
     # Import o model_registry para garantir que todos os models estao
     # registados em Base.metadata antes de chamar Table.create.
-    from src.shared import model_registry  # noqa: F401
+    from src.shared import model_registry
     from src.shared.database import Base
 
     bind = op.get_bind()
