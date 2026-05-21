@@ -25,6 +25,7 @@ from fastapi.testclient import TestClient
 from src.plan.api.schedule import router as schedule_router
 from src.plan.models.schedule import ProductionSchedule, ScheduleStatus
 from src.shared.database import get_session
+from tests.conftest import FakeSession
 
 
 TENANT = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
@@ -73,16 +74,24 @@ def _make_row(
     )
 
 
-class _FakeSession:
-    """Just enough of AsyncSession to let the endpoint execute a filtered
-    select. We capture the seeded rows + inspect the compiled params to
-    apply the tenant / employee / day filters the real DB would."""
+# Q.68.3.4 — _FakeSession era um stub de 50L com filtro
+# (tenant_id, employee_id, day_lo, day_hi) em Python sobre os params
+# compilados, mais sort multi-key. Substituído por subclasse local
+# concentrada no filtro/sort — devolve via ``queue_scalars``.
+class _FakeSession(FakeSession):
+    """Q.68.3.4 — subclasse local sobre o canónico.
+
+    O endpoint emite um SELECT filtrado por tenant + employee + janela
+    de dia. O canónico não inspecciona ``compile().params``; aplicamos
+    o filtro em Python a partir desses params e enfileiramos a lista
+    ordenada antes de servir o ``execute``.
+    """
 
     def __init__(self, rows: List[ProductionSchedule]) -> None:
+        super().__init__()
         self.rows = list(rows)
 
-    async def execute(self, stmt):
-        params = {}
+    async def execute(self, stmt):  # type: ignore[override]
         try:
             params = stmt.compile().params  # type: ignore[attr-defined]
         except Exception:
@@ -92,7 +101,7 @@ class _FakeSession:
         employee_id = None
         day_lo = None
         day_hi = None
-        for key, value in params.items():
+        for value in params.values():
             if isinstance(value, UUID) and tenant_id is None:
                 tenant_id = value
             elif isinstance(value, UUID):
@@ -120,22 +129,8 @@ class _FakeSession:
             r.scheduled_start_time or time.min,
             r.operation_sequence,
         ))
-
-        class _Scalars:
-            def __init__(self, rows_: List[ProductionSchedule]) -> None:
-                self._rows = rows_
-
-            def all(self) -> List[ProductionSchedule]:
-                return list(self._rows)
-
-        class _Result:
-            def __init__(self, rows_: List[ProductionSchedule]) -> None:
-                self._rows = rows_
-
-            def scalars(self) -> _Scalars:
-                return _Scalars(self._rows)
-
-        return _Result(hits)
+        self.queue_scalars(hits)
+        return await super().execute(stmt)
 
 
 def _make_app(rows: List[ProductionSchedule]) -> FastAPI:

@@ -14,28 +14,18 @@ import pytest
 
 from src.plan.api.mold import list_mold_maintenance
 from src.plan.models.mold import MoldMaintenanceEvent
+from tests.conftest import FakeSession
 
 TENANT = UUID("00000000-0000-0000-0000-000000000001")
 
 
-class _FakeSession:
-    """AsyncSession mínima: devolve os eventos semeados num select."""
-
-    def __init__(self, events: List[MoldMaintenanceEvent]) -> None:
-        self._events = list(events)
-
-    async def execute(self, stmt):
-        events = self._events
-
-        class _Scalars:
-            def all(self) -> List[MoldMaintenanceEvent]:
-                return list(events)
-
-        class _Result:
-            def scalars(self) -> _Scalars:
-                return _Scalars()
-
-        return _Result()
+# Q.68.3.4 — _FakeSession previously held a 15-line execute() that
+# wrapped a fixed rows list. Replaced by the canónico ``FakeSession``
+# with a single ``queue_scalars(events)`` call per test.
+def _session_with(events: List[MoldMaintenanceEvent]) -> FakeSession:
+    session = FakeSession()
+    session.queue_scalars(events)
+    return session
 
 
 def _event(mold_id: UUID, **kw: Any) -> MoldMaintenanceEvent:
@@ -52,7 +42,7 @@ def _event(mold_id: UUID, **kw: Any) -> MoldMaintenanceEvent:
 @pytest.mark.asyncio
 async def test_list_maintenance_returns_event_dicts():
     mid = uuid4()
-    session = _FakeSession([
+    session = _session_with([
         _event(mid, status="planned"),
         _event(mid, status="completed", maintenance_type="corrective"),
     ])
@@ -69,6 +59,6 @@ async def test_list_maintenance_returns_event_dicts():
 @pytest.mark.asyncio
 async def test_list_maintenance_empty_is_empty_list():
     out = await list_mold_maintenance(
-        mold_id=uuid4(), tenant_id=TENANT, session=_FakeSession([]),  # type: ignore[arg-type]
+        mold_id=uuid4(), tenant_id=TENANT, session=_session_with([]),  # type: ignore[arg-type]
     )
     assert out == []

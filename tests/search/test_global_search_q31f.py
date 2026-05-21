@@ -19,31 +19,34 @@ from src.plan.models.mold import Mold
 from src.plan.models.order import ProductionOrder
 from src.quality.models.rework import ErrorCatalog
 from src.search.api import global_search
+from tests.conftest import FakeSession
 
 TENANT = UUID("00000000-0000-0000-0000-000000000001")
 
 
-class _FakeSession:
-    """AsyncSession mínima: devolve linhas conforme a entidade do select."""
+class _FakeSession(FakeSession):
+    """Q.68.3.4 — subclasse local sobre o canónico.
+
+    O endpoint emite 4 SELECTs distintos (ProductionOrder, Employee,
+    Mold, ErrorCatalog). Cada um traz uma entidade diferente no
+    ``column_descriptions[0]["entity"]``; dispatchamos a lista certa
+    com base na entidade.
+    """
 
     def __init__(self, by_entity: dict[Any, list]) -> None:
-        self.by_entity = by_entity
+        super().__init__()
+        self.by_entity = dict(by_entity)
         self.calls = 0
 
-    async def execute(self, stmt):
+    async def execute(self, stmt: Any):  # type: ignore[override]
         self.calls += 1
-        entity = stmt.column_descriptions[0]["entity"]
+        try:
+            entity = stmt.column_descriptions[0]["entity"]
+        except Exception:
+            entity = None
         rows = self.by_entity.get(entity, [])
-
-        class _Scalars:
-            def all(self_):
-                return list(rows)
-
-        class _Result:
-            def scalars(self_):
-                return _Scalars()
-
-        return _Result()
+        self.queue_scalars(rows)
+        return await super().execute(stmt)
 
 
 def _order(**kw) -> ProductionOrder:

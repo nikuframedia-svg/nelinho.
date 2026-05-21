@@ -23,6 +23,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from src.profit.services.bonus_payout_service import BonusPayoutService
+from tests.conftest import FakeSession
 
 
 _TENANT = UUID("11111111-1111-1111-1111-111111111111")
@@ -49,16 +50,25 @@ class _PhaseBonusRow:
         self.valid_to = valid_to
 
 
-class _FakeSession:
-    """AsyncSession stand-in: parses the `where(...)` filter chain on
-    each `execute(select(PhaseBonusPayout))` and returns the highest
-    `valid_from` row that passes (mirroring the service's
-    .order_by(valid_from.desc()).limit(1) ordering)."""
+# Q.68.3.4 — _FakeSession era um stub de 50L com whereclause walking
+# para extrair (product_id, phase_id, ref) e ordenação descendente por
+# valid_from. Mantemos o helper SQL inline mas usamos o canónico como
+# base — só o filtro é específico deste teste.
+class _FakeSession(FakeSession):
+    """Q.68.3.4 — subclasse local com WHERE-clause introspection.
+
+    BonusPayoutService.get_bonus emite SELECT(PhaseBonusPayout) WHERE
+    product_id == :p AND phase_id == :ph AND valid_from <= :ref AND
+    (valid_to is None OR valid_to >= :ref) ORDER BY valid_from DESC
+    LIMIT 1. Caminhamos a árvore de cláusulas em Python para recuperar
+    (p, ph, ref) e devolvemos a row mais recente que casa.
+    """
 
     def __init__(self, rows: List[_PhaseBonusRow]) -> None:
+        super().__init__()
         self._rows = list(rows)
 
-    async def execute(self, stmt):
+    async def execute(self, stmt):  # type: ignore[override]
         # Walk the WHERE clauses to recover (product_id, phase_id, ref).
         wanted_product = None
         wanted_phase = None
@@ -68,8 +78,6 @@ class _FakeSession:
         except AttributeError:
             clauses = []
 
-        # Pull product/phase + the on_date guards (`valid_from <= ref` /
-        # `valid_to >= ref` / `valid_to is None`).
         for clause in clauses:
             try:
                 left_name = clause.left.name
@@ -84,7 +92,6 @@ class _FakeSession:
             elif left_name == "phase_id":
                 wanted_phase = right_value
             elif left_name == "valid_from":
-                # `valid_from <= ref`
                 ref = right_value
             elif left_name == "valid_to":
                 ref = ref or right_value
@@ -98,17 +105,8 @@ class _FakeSession:
             and (r.valid_to is None or r.valid_to >= ref)
         ]
         matches.sort(key=lambda r: r.valid_from, reverse=True)
-
-        winner = matches[0] if matches else None
-
-        class _R:
-            def __init__(self, item):
-                self._item = item
-
-            def scalar_one_or_none(self):
-                return self._item
-
-        return _R(winner)
+        self.queue_scalar(matches[0] if matches else None)
+        return await super().execute(stmt)
 
 
 # ───────────────────────────────────────────────────────────────────────────

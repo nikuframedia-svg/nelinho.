@@ -103,7 +103,13 @@ def _user() -> UserContext:
 
 
 class _FakeSession:
-    """Session ad-hoc para characterization: captura add/get/execute/commit."""
+    """Q.68.3.4: kept local — Q.66.D characterization outlier.
+
+    Session ad-hoc para characterization: captura add/get/execute/commit.
+    Esta é a surface mais larga do projecto (stub_get/stub_execute, id
+    auto-fill, created_at auto, rollback flag); subclassear o canónico
+    aqui complicaria o test em vez de o simplificar.
+    """
 
     def __init__(self) -> None:
         self.staged: List[Any] = []

@@ -28,6 +28,7 @@ from src.plan.services.cpo_commit_orders import (
 )
 from src.shared.auth.headers import require_tenant_header
 from src.shared.database import get_session
+from tests.conftest import FakeSession
 
 
 TENANT = UUID("00000000-0000-0000-0000-000000000001")
@@ -226,42 +227,22 @@ class TestMergeCommitWithOrders:
 # ─── Endpoint GET /v1/plan/cpo/commits/{sha}/orders ───────────────────────
 
 
-class _FakeResult:
-    def __init__(self, scalar=None, scalars_list=None):
-        self._scalar = scalar
-        self._scalars_list = scalars_list
-
-    def scalar_one_or_none(self):
-        return self._scalar
-
-    def scalars(self):
-        rows = self._scalars_list or []
-
-        class _S:
-            def all(_self):
-                return list(rows)
-
-        return _S()
-
-
-class _FakeSession:
-    """Sessão mínima: devolve o commit no primeiro execute, as ordens no
-    segundo, os empregados no terceiro. A ordem segue o código do endpoint."""
-
-    def __init__(self, *, commit, orders, employees):
-        self._commit = commit
-        self._orders = orders
-        self._employees = employees
-        self._calls = 0
-
-    async def execute(self, stmt):
-        self._calls += 1
-        if self._calls == 1:
-            # CommitsService.get_by_sha / get_latest
-            return _FakeResult(scalar=self._commit)
-        if self._calls == 2:
-            return _FakeResult(scalars_list=self._orders)
-        return _FakeResult(scalars_list=self._employees)
+# Q.68.3.4 — _FakeSession era um stub de 30L com 3-call sequence
+# (commit scalar → orders scalars → employees scalars). O canónico tem
+# ``queue_scalar`` + ``queue_scalars`` em ordem FIFO; este helper
+# preserva o constructor-API original mas usa as filas canónicas.
+def _FakeSession(*, commit, orders, employees) -> FakeSession:
+    session = FakeSession()
+    # 1º execute → CommitsService.get_by_sha / get_latest (scalar)
+    session.queue_scalar(commit)
+    session.queue_scalars([])  # filler para a primeira chamada (não usado)
+    # 2º execute → orders (scalars)
+    session.queue_scalar(None)
+    session.queue_scalars(list(orders))
+    # 3º execute → employees (scalars)
+    session.queue_scalar(None)
+    session.queue_scalars(list(employees))
+    return session
 
 
 class _FakeEmployee:

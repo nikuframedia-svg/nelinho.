@@ -29,6 +29,7 @@ import pytest
 import src.shared.decorators as decorators
 from src.governance.models import RuleFiring, RuleFiringOutcome
 from src.shared.decorators import record_rule_firing
+from tests.conftest import FakeSession
 
 
 _TENANT = UUID("11111111-1111-1111-1111-111111111111")
@@ -39,40 +40,43 @@ _TENANT = UUID("11111111-1111-1111-1111-111111111111")
 # ───────────────────────────────────────────────────────────────────────────
 
 
-class _FakeResult:
-    def __init__(self, value: Any = None):
-        self._value = value
+# Q.68.3.4 — _FakeSession era um stub de 25L com aliases ``staged``,
+# ``executes`` (list of tuples), ``commits``/``rolls_back`` integers, e
+# uma lookup ``existing_for_dedupe`` que devolve sempre o mesmo row.
+# Subclasse local mantém os aliases para preservar assertions.
+class _FakeSession(FakeSession):
+    """Q.68.3.4 — subclasse local sobre o canónico.
 
-    def scalar_one_or_none(self):
-        return self._value
-
-
-class _FakeSession:
-    """Captures `add` + `execute` calls. ``existing_for_dedupe`` lets
-    a test simulate "an open row already exists" without setting up a
-    real DB query path."""
+    O decorator @record_rule_firing chama `add()` (insert) e/ou
+    `execute()` (dedupe lookup + update). Mapeamos os nomes históricos
+    (``staged``, ``executes``, ``commits``, ``rolls_back``) sobre os
+    contadores canónicos. A lookup de dedupe devolve sempre o row
+    pre-configurado via ``queue_scalar``.
+    """
 
     def __init__(self, existing_for_dedupe: Optional[RuleFiring] = None):
-        self.staged: List[Any] = []
-        self.executes: List[tuple] = []
-        self.commits = 0
-        self.rolls_back = 0
+        super().__init__()
         self._existing = existing_for_dedupe
 
-    def add(self, instance: Any) -> None:
-        self.staged.append(instance)
+    @property
+    def staged(self) -> List[Any]:
+        return self.added
 
-    async def execute(self, stmt) -> _FakeResult:
-        self.executes.append(("execute", str(type(stmt).__name__)))
-        # First execute is the SELECT (dedupe lookup) when dedupe_key
-        # is set; subsequent are the UPDATE.
-        return _FakeResult(self._existing)
+    @property
+    def executes(self) -> List[tuple]:
+        return [("execute", type(s).__name__) for s in self.executed_stmts]
 
-    async def commit(self) -> None:
-        self.commits += 1
+    @property
+    def commits(self) -> int:  # type: ignore[override]
+        return self.commit_calls
 
-    async def rollback(self) -> None:
-        self.rolls_back += 1
+    @property
+    def rolls_back(self) -> int:
+        return self.rollback_calls
+
+    async def execute(self, stmt):  # type: ignore[override]
+        self.queue_scalar(self._existing)
+        return await super().execute(stmt)
 
 
 def _patch_session(monkeypatch, session: _FakeSession):

@@ -32,6 +32,7 @@ from src.governance.ab_framework import (
 )
 from src.governance.models import RuleFiring, RuleFiringOutcome
 from src.shared.decorators import record_rule_firing
+from tests.conftest import FakeSession
 
 
 _T1 = UUID("11111111-1111-1111-1111-111111111111")
@@ -252,27 +253,19 @@ def test_credible_interval_rejects_invalid_levels():
 # ───────────────────────────────────────────────────────────────────────────
 
 
-class _FakeResult:
-    def __init__(self, value: Any = None):
-        self._value = value
+# Q.68.3.4 — _FakeSession era um stub de 12L com ``staged`` (list) e
+# ``committed`` (bool) flags. Subclasse local mantém os aliases sobre o
+# canónico.
+class _FakeSession(FakeSession):
+    """Q.68.3.4 — subclasse local: empty result + commit flag."""
 
-    def scalar_one_or_none(self):
-        return self._value
+    @property
+    def staged(self) -> list:
+        return self.added
 
-
-class _FakeSession:
-    def __init__(self):
-        self.staged: list = []
-        self.committed = False
-
-    def add(self, instance):
-        self.staged.append(instance)
-
-    async def execute(self, stmt):
-        return _FakeResult(None)
-
-    async def commit(self):
-        self.committed = True
+    @property
+    def committed(self) -> bool:
+        return self.commit_calls > 0
 
 
 def _patch_session(monkeypatch, session: _FakeSession):

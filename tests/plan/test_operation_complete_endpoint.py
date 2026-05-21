@@ -24,6 +24,7 @@ from fastapi.testclient import TestClient
 from src.plan.api.schedule import router as schedule_router
 from src.plan.models.schedule import ProductionSchedule, ScheduleStatus
 from src.shared.database import get_session
+from tests.conftest import FakeSession
 
 TENANT = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 OTHER_TENANT = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
@@ -58,35 +59,34 @@ def _make_row(
     )
 
 
-class _FakeSession:
-    """Mínimo de AsyncSession: select-by-(id,tenant), flush e commit."""
+# Q.68.3.4 — _FakeSession era um stub de 25L. Substituído por subclasse
+# do canónico — mantemos o filtro por UUIDs (id + tenant) em Python e
+# usamos ``queue_scalar`` para o ``scalar_one_or_none`` esperado.
+class _FakeSession(FakeSession):
+    """Q.68.3.4 — subclasse local sobre o canónico.
+
+    O endpoint emite SELECT WHERE id == :id AND tenant_id == :tid; aqui
+    extraímos ambos os UUIDs dos params compilados e devolvemos a row
+    que casa (ou None) via ``queue_scalar``.
+    """
 
     def __init__(self, rows: List[ProductionSchedule]) -> None:
+        super().__init__()
         self.rows = list(rows)
-        self.committed = False
 
-    async def execute(self, stmt):
+    @property
+    def committed(self) -> bool:
+        return self.commit_calls > 0
+
+    async def execute(self, stmt):  # type: ignore[override]
         try:
             params = stmt.compile().params
         except Exception:
             params = {}
         uuids = {v for v in params.values() if isinstance(v, UUID)}
         hits = [r for r in self.rows if r.id in uuids and r.tenant_id in uuids]
-
-        class _Result:
-            def __init__(self, rows_):
-                self._rows = rows_
-
-            def scalar_one_or_none(self):
-                return self._rows[0] if self._rows else None
-
-        return _Result(hits)
-
-    async def flush(self) -> None:
-        pass
-
-    async def commit(self) -> None:
-        self.committed = True
+        self.queue_scalar(hits[0] if hits else None)
+        return await super().execute(stmt)
 
 
 def _make_app(rows: List[ProductionSchedule]) -> FastAPI:

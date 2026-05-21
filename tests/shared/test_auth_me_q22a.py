@@ -15,6 +15,7 @@ needs a usable ``CurrentUser``. Tests cover:
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 from uuid import UUID
 
 from fastapi import FastAPI
@@ -22,6 +23,7 @@ from fastapi.testclient import TestClient
 
 from src.shared.api.auth_me import router as auth_me_router
 from src.shared.database import get_session
+from tests.conftest import FakeSession
 
 TENANT = UUID("00000000-0000-0000-0000-000000000001")
 OTHER_TENANT = UUID("00000000-0000-0000-0000-000000000002")
@@ -38,33 +40,27 @@ def _user(*, tenant_id=TENANT):
     )
 
 
-class _FakeResult:
-    def __init__(self, row):
-        self._row = row
+class _FakeSession(FakeSession):
+    """Q.68.3.4 — subclasse local sobre o canónico.
 
-    def scalar_one_or_none(self):
-        return self._row
-
-
-class _FakeSession:
-    """AsyncSession stand-in: `execute` yields the configured row.
-
-    The endpoint applies the ``tenant_id`` filter in SQL; the fake
-    instead checks it in Python so cross-tenant isolation is exercised
-    without a real DB.
+    O endpoint /v1/auth/me consulta ``shared.users`` por
+    (tenant_id, user_id) e espera ``scalar_one_or_none``. O canónico
+    serve ``scalar`` via ``queue_scalar``; aqui aplicamos o filtro de
+    cross-tenant em Python e usamos a flag ``raise_on_execute`` já
+    promovida ao canónico.
     """
 
     def __init__(self, row):
+        super().__init__()
         self._row = row
-        self.raise_on_execute = False
 
-    async def execute(self, _stmt):
+    async def execute(self, stmt: Any):  # type: ignore[override]
         if self.raise_on_execute:
             raise RuntimeError("DB unavailable")
         # Mimic the WHERE tenant_id == ... filter.
-        if self._row is not None and self._row.tenant_id != TENANT:
-            return _FakeResult(None)
-        return _FakeResult(self._row)
+        match = self._row if (self._row is not None and self._row.tenant_id == TENANT) else None
+        self.queue_scalar(match)
+        return await super().execute(stmt)
 
 
 def _build_app(session):

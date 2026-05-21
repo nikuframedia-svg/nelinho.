@@ -28,6 +28,7 @@ from src.governance.models import (
 )
 from src.governance.preference_learning import PreferenceRuleDetector
 from src.plan.cpo.commits import ScheduleCommit
+from tests.conftest import FakeSession
 
 
 TENANT = UUID("11111111-1111-1111-1111-111111111111")
@@ -64,21 +65,27 @@ def _make_commit(
     )
 
 
-class _FakeSession:
+class _FakeSession(FakeSession):
+    """Q.68.3.4 — subclasse local sobre o canónico.
+
+    O detector emite 2 SELECTs distintos (ScheduleCommit + opcionalmente
+    PreferenceRule para anti-re-emit). Dispatchamos por
+    ``column_descriptions[0]["entity"]``.
+    """
+
     def __init__(
         self,
         commits: List[ScheduleCommit],
         *,
         rejected_rules: List[PreferenceRule] | None = None,
     ) -> None:
+        super().__init__()
         self._commits = commits
         # Sprint R.2 — detector now also queries PreferenceRule(status=REJECTED)
         # to suppress re-emits. Default empty so existing tests stay green.
         self._rejected_rules = list(rejected_rules or [])
-        self.added: List[Any] = []
-        self.flush_calls = 0
 
-    async def execute(self, stmt):
+    async def execute(self, stmt: Any):  # type: ignore[override]
         rows: List[Any] = self._commits
         try:
             entity = stmt.column_descriptions[0].get("entity")
@@ -86,28 +93,8 @@ class _FakeSession:
                 rows = self._rejected_rules
         except Exception:
             pass
-
-        class _R:
-            def __init__(self, items):
-                self._items = items
-
-            def scalars(self):
-                class _S:
-                    def __init__(self, items):
-                        self._items = items
-
-                    def all(self):
-                        return list(self._items)
-
-                return _S(self._items)
-
-        return _R(rows)
-
-    def add(self, obj):
-        self.added.append(obj)
-
-    async def flush(self):
-        self.flush_calls += 1
+        self.queue_scalars(rows)
+        return await super().execute(stmt)
 
 
 # ---------------------------------------------------------------------------

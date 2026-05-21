@@ -36,6 +36,7 @@ from src.plan.services.phase_classification import (
 )
 from src.shared.auth.headers import require_tenant_header
 from src.shared.database import get_session
+from tests.conftest import FakeSession
 
 TENANT = UUID("00000000-0000-0000-0000-000000000001")
 
@@ -124,31 +125,19 @@ def test_property_terminal_phase_iff_completed_status(phase_name):
 # ─── reconcile_order_statuses ────────────────────────────────────────────
 
 
-class _FakeSession:
-    """Sessão async mínima: um execute(select) devolve as ordens; add()
-    acumula linhas de audit; commit() é no-op."""
+# Q.68.3.4 — _FakeSession, _FilteringSession, _EndpointSession eram 3
+# stubs locais de 15-25L. Substituídos por subclasses do canónico que
+# preservam o filtro de CANCELLED + routing template fallback.
+class _FakeSession(FakeSession):
+    """Q.68.3.4 — subclasse local: ``execute`` devolve sempre a mesma lista."""
 
     def __init__(self, orders):
-        self._orders = list(orders)
-        self.added: list = []
+        super().__init__()
+        self._orders_seed = list(orders)
 
-    async def execute(self, _stmt):
-        orders = self._orders
-
-        class _R:
-            def scalars(self_inner):
-                return self_inner
-
-            def all(self_inner):
-                return list(orders)
-
-        return _R()
-
-    def add(self, obj):
-        self.added.append(obj)
-
-    async def commit(self):
-        pass
+    async def execute(self, _stmt):  # type: ignore[override]
+        self.queue_scalars(self._orders_seed)
+        return await super().execute(_stmt)
 
 
 def _order(legacy_id: int, phase: str, status: OrderStatus) -> ProductionOrder:
@@ -207,31 +196,22 @@ async def test_reconcile_is_idempotent():
     assert session.added == []
 
 
-class _FilteringSession:
-    """Sessão que honra o WHERE status != CANCELLED da query do reconciler
-    — devolve só as ordens não-canceladas, como o Postgres faria."""
+class _FilteringSession(FakeSession):
+    """Q.68.3.4 — subclasse local que honra ``WHERE status != CANCELLED``.
+
+    O reconciler emite SELECT ... WHERE status != CANCELLED; o canónico
+    não inspecciona o stmt, por isso aplicamos o filtro em Python antes
+    de enfileirar.
+    """
 
     def __init__(self, orders):
+        super().__init__()
         self._all = list(orders)
-        self.added: list = []
 
-    async def execute(self, _stmt):
+    async def execute(self, _stmt):  # type: ignore[override]
         rows = [o for o in self._all if o.status is not OrderStatus.CANCELLED]
-
-        class _R:
-            def scalars(self_inner):
-                return self_inner
-
-            def all(self_inner):
-                return list(rows)
-
-        return _R()
-
-    def add(self, obj):
-        self.added.append(obj)
-
-    async def commit(self):
-        pass
+        self.queue_scalars(rows)
+        return await super().execute(_stmt)
 
 
 @pytest.mark.asyncio
@@ -254,41 +234,27 @@ async def test_reconcile_never_touches_cancelled_orders():
 # ─── GET /v1/plan/orders/active ──────────────────────────────────────────
 
 
-class _EndpointSession:
-    """Sessão que devolve ordens para a query principal e, para a query de
-    ordenação de fases (Q.54.O), as linhas de routing.
+class _EndpointSession(FakeSession):
+    """Q.68.3.4 — subclasse local com dispatch por SQL substring.
 
-    `routing` é uma lista de tuplos ``(phase_name, posição_média)``; vazia
-    (default) → o endpoint cai no dicionário estático ``NELO_PHASE_ORDER``.
+    GET /orders/active emite duas queries: a principal sobre orders
+    (devolvida via scalars) e, em Q.54.O, uma sobre routing_template_phase
+    devolvida via ``.all()`` directo (tuplos). O canónico expõe ``.all()``
+    via ``_FakeResult`` ao consumir a queue_scalars — basta dispatchar a
+    fila certa antes de chamar o super().
     """
 
     def __init__(self, orders, routing=None):
-        self._orders = list(orders)
-        self._routing = list(routing or [])
+        super().__init__()
+        self._orders_seed = list(orders)
+        self._routing_seed = list(routing or [])
 
-    async def execute(self, stmt):
+    async def execute(self, stmt):  # type: ignore[override]
         if "routing_template_phase" in str(stmt).lower():
-            rows = self._routing
-
-            class _RoutingResult:
-                def all(self_inner):
-                    return list(rows)
-
-            return _RoutingResult()
-
-        orders = self._orders
-
-        class _R:
-            def scalars(self_inner):
-                return self_inner
-
-            def all(self_inner):
-                return list(orders)
-
-        return _R()
-
-    async def commit(self):
-        pass
+            self.queue_scalars(self._routing_seed)
+        else:
+            self.queue_scalars(self._orders_seed)
+        return await super().execute(stmt)
 
 
 def _app(session) -> FastAPI:

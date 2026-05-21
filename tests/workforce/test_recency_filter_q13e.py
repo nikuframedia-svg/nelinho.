@@ -22,36 +22,34 @@ from uuid import UUID
 import pytest
 
 from src.workforce.service import WorkforceService
+from tests.conftest import FakeSession
 
 
 _TENANT = UUID("11111111-1111-1111-1111-111111111111")
 
 
-class _FakeResult:
-    def __init__(self, rows: List[tuple[str]]):
-        self._rows = rows
+# Q.68.3.4 — _FakeSession era um stub de 15L que devolvia tuples (não
+# scalars) e tinha um flag `raise_on_execute`. O canónico já tem o flag
+# e ``queue_scalars`` serve tuplos via ``Result.all()``.
+class _FakeSession(FakeSession):
+    """Q.68.3.4 — subclasse fina sobre o canónico.
 
-    def all(self):
-        return list(self._rows)
-
-
-class _FakeSession:
-    """Async DB stand-in. Captures executed statements and returns
-    a configurable row set."""
+    O serviço lê ``execute(stmt).all()`` (multi-coluna implícita: a coluna
+    é só o funcionario_id). O canónico já entrega as rows via ``.all()``
+    (ver `_FakeResult.all`). Usamos a flag ``raise_on_execute`` promovida
+    em Q.68.3.2.
+    """
 
     def __init__(self, rows: List[tuple[str]] | None = None,
                  raise_on_execute: bool = False) -> None:
-        self.rows = rows or []
+        super().__init__()
         self.raise_on_execute = raise_on_execute
-        self.last_stmt = None
-        self.executed = 0
+        self._rows_seed = list(rows or [])
 
-    async def execute(self, stmt):
-        self.last_stmt = stmt
-        self.executed += 1
-        if self.raise_on_execute:
-            raise RuntimeError("simulated DB error")
-        return _FakeResult(self.rows)
+    async def execute(self, stmt: Any):  # type: ignore[override]
+        # Re-arm a batch antes de cada execute (always-returns-same-set).
+        self.queue_scalars(self._rows_seed)
+        return await super().execute(stmt)
 
 
 @pytest.mark.asyncio

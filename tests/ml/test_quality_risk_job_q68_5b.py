@@ -25,6 +25,8 @@ from uuid import UUID
 
 import pytest
 
+from tests.conftest import FakeSession
+
 
 TENANT = UUID("11111111-1111-1111-1111-111111111111")
 
@@ -32,23 +34,31 @@ TENANT = UUID("11111111-1111-1111-1111-111111111111")
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+#
+# Q.68.3.4 — _FakeSession was a 13-line stub with `commits`/`rollbacks`
+# integer counters. The canónico FakeSession already tracks
+# ``commit_calls``/``rollback_calls`` — we use those directly and tests
+# read them via the `.commits`/`.rollbacks` aliases set as properties.
 
 
-class _FakeSession:
-    """Minimal async session — only commit/rollback are exercised."""
+class _QualityRiskFakeSession(FakeSession):
+    """Q.68.3.4 — subclasse fina sobre o canónico.
 
-    def __init__(self) -> None:
-        self.commits = 0
-        self.rollbacks = 0
+    Os testes deste módulo só inspeccionam ``session.commits``/``rollbacks``
+    como inteiros — mapeamos via aliases sobre os contadores canónicos
+    ``commit_calls``/``rollback_calls``.
+    """
 
-    async def commit(self) -> None:
-        self.commits += 1
+    @property
+    def commits(self) -> int:  # type: ignore[override]
+        return self.commit_calls
 
-    async def rollback(self) -> None:
-        self.rollbacks += 1
+    @property
+    def rollbacks(self) -> int:
+        return self.rollback_calls
 
 
-def _patch_session(monkeypatch, session: _FakeSession) -> None:
+def _patch_session(monkeypatch, session: _QualityRiskFakeSession) -> None:
     """Replace ``get_session_context`` with one yielding ``session``.
 
     Two patch points: the job's local import + the shared module so
@@ -113,7 +123,7 @@ def _patch_defect_service(monkeypatch, payload: dict[str, Any] | Exception) -> N
 async def test_score_returns_empty_when_no_active_model(monkeypatch):
     from src.ml.jobs.quality_risk import score_quality_risk_for_tenant
 
-    session = _FakeSession()
+    session = _QualityRiskFakeSession()
     _patch_session(monkeypatch, session)
     _patch_registry(monkeypatch, active_version=None)
     _patch_defect_service(
@@ -140,7 +150,7 @@ async def test_score_returns_empty_when_no_active_model(monkeypatch):
 async def test_score_returns_metrics_with_active_model(monkeypatch):
     from src.ml.jobs.quality_risk import score_quality_risk_for_tenant
 
-    session = _FakeSession()
+    session = _QualityRiskFakeSession()
     _patch_session(monkeypatch, session)
     _patch_registry(monkeypatch, active_version=7)
     _patch_defect_service(
@@ -171,7 +181,7 @@ async def test_score_handles_zero_orders_active_model(monkeypatch):
     """Edge case: model is active but no in-progress orders to score."""
     from src.ml.jobs.quality_risk import score_quality_risk_for_tenant
 
-    session = _FakeSession()
+    session = _QualityRiskFakeSession()
     _patch_session(monkeypatch, session)
     _patch_registry(monkeypatch, active_version=4)
     _patch_defect_service(
@@ -193,7 +203,7 @@ async def test_score_swallows_service_failure(monkeypatch, caplog):
     """A DefectRiskService crash must not leak into the scheduler."""
     from src.ml.jobs.quality_risk import score_quality_risk_for_tenant
 
-    session = _FakeSession()
+    session = _QualityRiskFakeSession()
     _patch_session(monkeypatch, session)
     _patch_registry(monkeypatch, active_version=2)
     _patch_defect_service(monkeypatch, RuntimeError("predictor exploded"))
@@ -223,7 +233,7 @@ async def test_score_is_idempotent(monkeypatch):
     """
     from src.ml.jobs.quality_risk import score_quality_risk_for_tenant
 
-    session = _FakeSession()
+    session = _QualityRiskFakeSession()
     _patch_session(monkeypatch, session)
     _patch_registry(monkeypatch, active_version=5)
     _patch_defect_service(

@@ -30,6 +30,7 @@ import pytest
 
 from src.shared.outbox_dispatcher import OutboxDispatcher
 from src.shared.outbox_models import EventOutbox
+from tests.conftest import FakeSession
 
 
 def _make_event(
@@ -55,39 +56,39 @@ def _make_event(
     return e
 
 
-class _FakeResult:
-    def __init__(self, items: list[EventOutbox]):
-        self._items = items
+# Q.68.3.4 — _FakeSession era um stub de 25L com `captured_stmt`,
+# `committed`, `rolled_back` flags. O canónico já tem `executed_stmts`
+# (Q.68.3.2) + `commit_calls`/`rollback_calls`; este wrapper só ajusta
+# os nomes para preservar as assertions originais.
+class _FakeSession(FakeSession):
+    """Q.68.3.4 — subclasse local sobre o canónico.
 
-    def scalars(self):
-        return self
-
-    def all(self):
-        return list(self._items)
-
-
-class _FakeSession:
-    """Captura o stmt do dispatcher e devolve `events_to_return`."""
+    O dispatcher consulta uma vez (SELECT pending events) e devolve a
+    lista via ``scalars().all()``. As assertions inspecccionam o último
+    statement capturado (``captured_stmt``) + bandeiras de commit/
+    rollback. Mapeamos esses nomes para os contadores canónicos.
+    """
 
     def __init__(self, events_to_return: list[EventOutbox]):
-        self._events = events_to_return
-        self.captured_stmt: Any = None
-        self.committed = False
-        self.rolled_back = False
-        self.added: list[Any] = []
+        super().__init__()
+        self._events_seed = list(events_to_return)
 
-    async def execute(self, stmt):
-        self.captured_stmt = stmt
-        return _FakeResult(self._events)
+    @property
+    def captured_stmt(self) -> Any:
+        return self.executed_stmts[-1] if self.executed_stmts else None
 
-    def add(self, obj):
-        self.added.append(obj)
+    @property
+    def committed(self) -> bool:
+        return self.commit_calls > 0
 
-    async def commit(self):
-        self.committed = True
+    @property
+    def rolled_back(self) -> bool:
+        return self.rollback_calls > 0
 
-    async def rollback(self):
-        self.rolled_back = True
+    async def execute(self, stmt: Any):  # type: ignore[override]
+        # Always-returns-same-set: re-arm a batch antes de cada execute.
+        self.queue_scalars(self._events_seed)
+        return await super().execute(stmt)
 
 
 # -----------------------------------------------------------------------------

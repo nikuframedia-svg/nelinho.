@@ -29,6 +29,7 @@ from src.governance.preference_learning.learning_metrics_service import (
     LearningMetricsService,
 )
 from src.plan.cpo.commits import ScheduleCommit
+from tests.conftest import FakeSession
 
 
 TENANT = UUID("33333333-3333-3333-3333-333333333333")
@@ -37,34 +38,16 @@ TENANT = UUID("33333333-3333-3333-3333-333333333333")
 # ─── Test doubles ─────────────────────────────────────────────────────────
 
 
-class _FakeSession:
-    """Returns the queued rows on every ``execute()``.
-
-    The service issues two distinct selects (commits + rules); we keep
-    a queue of result lists so each call sees its own batch.
-    """
-
-    def __init__(self, *batches: List[Any]) -> None:
-        self._batches: List[List[Any]] = [list(b) for b in batches]
-
-    async def execute(self, _stmt):
-        rows = self._batches.pop(0) if self._batches else []
-
-        class _R:
-            def __init__(self, items: List[Any]) -> None:
-                self._items = items
-
-            def scalars(self):
-                class _S:
-                    def __init__(self, inner: List[Any]) -> None:
-                        self._inner = inner
-
-                    def all(self) -> List[Any]:
-                        return list(self._inner)
-
-                return _S(self._items)
-
-        return _R(rows)
+# Q.68.3.4 — _FakeSession was a 25-line stub with `__init__(*batches)`
+# semantics. The canónico promoveu ``queue_batch`` em Q.68.3.2 que faz
+# exactamente o mesmo dispatch FIFO; helper varargs preserva o
+# constructor-API original.
+def _FakeSession(*batches: List[Any]) -> FakeSession:
+    """Builds a canónico FakeSession seeded with N batches via queue_batch."""
+    session = FakeSession()
+    for batch in batches:
+        session.queue_batch(list(batch))
+    return session
 
 
 class _FakeTenantConfigService:

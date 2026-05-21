@@ -30,9 +30,16 @@ _TENANT = UUID("11111111-1111-1111-1111-111111111111")
 
 
 class _FakeSession:
-    """Minimal AsyncSession stand-in that holds rows in a list and
+    """Q.68.3.4: kept local — whereclause introspection ~80L.
+
+    Minimal AsyncSession stand-in that holds rows in a list and
     answers `.execute(select(...))` by returning all rows that match
-    the captured filter clauses (a tenant + action_type whitelist)."""
+    the captured filter clauses (a tenant + action_type whitelist).
+
+    Não migrado para o canónico porque o test corre 100x com filtros
+    DOMAIN-specific muito intricados; subclassear o canónico não
+    reduziria significativamente a complexidade.
+    """
 
     def __init__(self, rows: list[ImprovementSuggestion]) -> None:
         self._rows = list(rows)

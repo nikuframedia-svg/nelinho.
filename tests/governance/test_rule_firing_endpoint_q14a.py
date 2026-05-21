@@ -23,6 +23,7 @@ from src.governance.api import (
     update_rule_firing_outcome,
 )
 from src.governance.models import RuleFiring, RuleFiringOutcome
+from tests.conftest import FakeSession
 
 
 _TENANT = UUID("11111111-1111-1111-1111-111111111111")
@@ -34,40 +35,39 @@ _OTHER_TENANT = UUID("22222222-2222-2222-2222-222222222222")
 # ───────────────────────────────────────────────────────────────────────────
 
 
-class _FakeResult:
-    def __init__(self, rows: List[Any] | Any = None):
-        self._rows = rows
+# Q.68.3.4 — _FakeSession era um stub de 60L com UPDATE detection +
+# whereclause flattening (operator.eq/ge/lt) + filter + sort + dispatch
+# entre `scalar_one_or_none` (com filtro id) e `scalars().all()` (lista).
+# Subclasse local mantém o helper SQL mas reusa o canónico.
+class _FakeSession(FakeSession):
+    """Q.68.3.4 — subclasse local com UPDATE/SELECT dispatch e
+    whereclause walking sobre operator.eq/ge/lt.
 
-    def scalars(self):
-        return self
+    Mapeamos ``committed`` (bool) sobre ``commit_calls``. Para SELECTs
+    com filtro por ``id``, devolvemos ``scalar_one_or_none``; senão,
+    lista via ``scalars().all()``.
+    """
 
-    def all(self):
-        return list(self._rows) if isinstance(self._rows, list) else []
-
-    def scalar_one_or_none(self):
-        return self._rows
-
-
-class _FakeSession:
     def __init__(self, rows: List[RuleFiring]):
+        super().__init__()
         self._rows = rows
         self._patch_target_id: Optional[UUID] = None
-        self.committed = False
         self.last_update_values: dict = {}
 
-    async def execute(self, stmt):
-        # `update()` statements have a different visit name. Use that
-        # instead of stringification (more robust).
-        if type(stmt).__name__.lower().startswith("update"):
-            return _FakeResult([])
+    @property
+    def committed(self) -> bool:
+        return self.commit_calls > 0
 
-        # SELECT — flatten the whereclause tree into individual binary
-        # expressions, then filter rows in Python. SQLAlchemy 2.x
-        # produces a `BinaryExpression` for a single `.where(...)` and
-        # a `BooleanClauseList` for multiple `.where(...)` chained.
+    async def execute(self, stmt):  # type: ignore[override]
+        # `update()` statements have a different visit name.
+        if type(stmt).__name__.lower().startswith("update"):
+            self.queue_scalars([])
+            return await super().execute(stmt)
+
+        # SELECT — flatten whereclause and filter in Python.
         binary_exprs = list(_flatten_clauses(stmt.whereclause))
 
-        wanted = {
+        wanted: dict[str, Any] = {
             "tenant_id": None,
             "rule_id": None,
             "outcome": None,
@@ -82,8 +82,6 @@ class _FakeSession:
                 op_name = getattr(clause.operator, "__name__", "")
             except AttributeError:
                 continue
-            # SQLAlchemy operators surface as `operator.eq`/`ge`/`lt` —
-            # use `__name__` rather than fragile string parsing.
             if left_name == "fired_at" and op_name == "ge":
                 wanted["since"] = right_value
             elif left_name == "fired_at" and op_name == "lt":
@@ -109,13 +107,12 @@ class _FakeSession:
 
         matches.sort(key=lambda r: r.fired_at, reverse=True)
 
-        # If there's an id filter, the endpoint expects a scalar_one_or_none.
+        # If there's an id filter, the endpoint expects scalar_one_or_none.
         if wanted["id"] is not None:
-            return _FakeResult(matches[0] if matches else None)
-        return _FakeResult(matches)
-
-    async def commit(self):
-        self.committed = True
+            self.queue_scalar(matches[0] if matches else None)
+        else:
+            self.queue_scalars(matches)
+        return await super().execute(stmt)
 
 
 def _flatten_clauses(node):

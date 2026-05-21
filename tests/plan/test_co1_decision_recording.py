@@ -22,6 +22,7 @@ from src.plan.cpo.commits import (
     ScheduleCommit,
     _build_rejected_record,
 )
+from tests.conftest import FakeSession
 
 
 TENANT = UUID("11111111-1111-1111-1111-111111111111")
@@ -49,18 +50,20 @@ def _make_commit_with_alternatives(alternatives: List[Dict[str, Any]]) -> Schedu
     )
 
 
-class _FakeSession:
-    """Minimal async session that returns a pre-seeded commit on .get()."""
+# Q.68.3.4 — _FakeSession was a 6-line stub whose only special method was
+# `get(_model, _id) -> commit`. The canónico FakeSession.get() does the
+# lookup by (model, pk) — we register the commit and return the session.
+def _session_with(commit: ScheduleCommit) -> FakeSession:
+    session = FakeSession()
+    # CommitsService.record_decision calls `session.get(ScheduleCommit,
+    # commit_id)` — register the commit under any pk via wildcard.
+    session.register_entity(ScheduleCommit, commit.id, commit)
+    return session
 
-    def __init__(self, commit: ScheduleCommit) -> None:
-        self._commit = commit
-        self.flush_calls = 0
 
-    async def get(self, _model, _id):
-        return self._commit
-
-    async def flush(self):
-        self.flush_calls += 1
+# Historic name kept so callsites stay readable; the helper above is the
+# entry point.
+_FakeSession = _session_with  # type: ignore[assignment]
 
 
 # ---------------------------------------------------------------------------

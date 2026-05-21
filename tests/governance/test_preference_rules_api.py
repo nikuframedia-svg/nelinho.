@@ -32,6 +32,7 @@ from src.governance.preference_learning.rule_service import (
     PreferenceRuleNotFoundError,
     PreferenceRuleService,
 )
+from tests.conftest import FakeSession
 
 
 TENANT = UUID("33333333-3333-3333-3333-333333333333")
@@ -65,60 +66,41 @@ def _make_rule(
     return rule
 
 
-class _FakeSession:
-    """Minimum surface to satisfy PreferenceRuleService without a live DB.
+# Q.68.3.4 — _FakeSession era um stub de 50L com ghost-id detection
+# via ``_extract_rule_id_from_stmt`` e ``_stmt_has_ghost_id`` (helpers
+# do próprio módulo). Subclasse local mantém os helpers e reusa o
+# canónico — preservamos o dispatch entre list/get/ghost.
+class _FakeSession(FakeSession):
+    """Q.68.3.4 — subclasse local com ghost-id detection.
 
-    Returns the seeded list on ``list_rules`` queries and, when a
-    ``rule.id`` UUID appears in the compiled parameters (``get_rule``),
-    filters down to that single row. We only treat a parameter as a
-    rule_id if it matches an id already in the fake store — this
-    prevents the tenant_id parameter (also a UUID) from being mistaken
-    for a rule id.
+    PreferenceRuleService emite vários SELECTs:
+      * list_rules → returns full list
+      * get_rule(rid) com rid existente → returns single match
+      * get_rule(rid) com rid inexistente → returns empty (404)
+    Os helpers ``_extract_rule_id_from_stmt`` / ``_stmt_has_ghost_id``
+    são privados deste teste e implementam essa lógica.
     """
 
     def __init__(self, rules: List[PreferenceRule]) -> None:
+        super().__init__()
         self.rules = list(rules)
-        self.flush_calls = 0
         self.last_stmt: Any = None
 
-    async def execute(self, stmt):
+    async def execute(self, stmt):  # type: ignore[override]
         self.last_stmt = stmt
-
-        class _Scalars:
-            def __init__(self, rows: List[PreferenceRule]) -> None:
-                self._rows = rows
-
-            def all(self) -> List[PreferenceRule]:
-                return list(self._rows)
-
-            def one_or_none(self) -> Optional[PreferenceRule]:
-                return self._rows[0] if self._rows else None
-
-        class _Result:
-            def __init__(self, rows: List[PreferenceRule]) -> None:
-                self._rows = rows
-
-            def scalars(self) -> _Scalars:
-                return _Scalars(self._rows)
-
-            def scalar_one_or_none(self) -> Optional[PreferenceRule]:
-                return self._rows[0] if self._rows else None
-
         known_ids = {r.id for r in self.rules}
         rid = _extract_rule_id_from_stmt(stmt, known_ids)
         if rid is not None:
             match = [r for r in self.rules if r.id == rid]
-            return _Result(match)
-        # Also honour a "ghost id" query (get_rule on a missing UUID):
-        # if the statement carries a UUID that is NOT our tenant and not
-        # a seeded rule, return an empty result rather than the full
-        # list so the 404 path lights up correctly.
-        if _stmt_has_ghost_id(stmt, known_ids, tenant_id=TENANT):
-            return _Result([])
-        return _Result(list(self.rules))
-
-    async def flush(self) -> None:
-        self.flush_calls += 1
+            self.queue_scalar(match[0] if match else None)
+            self.queue_scalars(match)
+        elif _stmt_has_ghost_id(stmt, known_ids, tenant_id=TENANT):
+            self.queue_scalar(None)
+            self.queue_scalars([])
+        else:
+            self.queue_scalar(self.rules[0] if self.rules else None)
+            self.queue_scalars(list(self.rules))
+        return await super().execute(stmt)
 
 
 def _extract_rule_id_from_stmt(

@@ -20,6 +20,7 @@ from src.shared.api.auth_login import LoginRequest, RefreshRequest, login, refre
 from src.shared.auth.jwt_handler import create_refresh_token, verify_token
 from src.shared.auth.passwords import hash_password, verify_password
 from src.shared.models.user import User
+from tests.conftest import FakeSession
 
 TENANT = UUID("00000000-0000-0000-0000-000000000001")
 ZERO = UUID("00000000-0000-0000-0000-000000000000")
@@ -36,13 +37,22 @@ def _user(*, email: str, password: str | None, role: str = "manager_operations")
     )
 
 
-class _FakeSession:
-    """AsyncSession mínima: resolve o select(User) por tenant + email."""
+# Q.68.3.4 — _FakeSession era um stub de 20L. Substituído por subclasse
+# do canónico que mantém a inspecção de params (UUIDs + strs) e usa
+# ``queue_scalar`` para o ``scalar_one_or_none`` esperado.
+class _FakeSession(FakeSession):
+    """Q.68.3.4 — subclasse local sobre o canónico.
+
+    O endpoint /v1/auth/login emite SELECT(User) WHERE tenant_id == :t
+    AND email == :e. Extraímos ``tenant`` (UUID) e ``email`` (str) dos
+    params compilados e filtramos a lista em memória.
+    """
 
     def __init__(self, users: List[User]) -> None:
+        super().__init__()
         self.users = list(users)
 
-    async def execute(self, stmt):
+    async def execute(self, stmt):  # type: ignore[override]
         params = stmt.compile().params
         uuids = [v for v in params.values() if isinstance(v, UUID)]
         strs = [v for v in params.values() if isinstance(v, str)]
@@ -52,12 +62,8 @@ class _FakeSession:
             u for u in self.users
             if u.tenant_id == tenant and u.email.lower() == email
         ]
-
-        class _Result:
-            def scalar_one_or_none(self_: Any):
-                return hits[0] if hits else None
-
-        return _Result()
+        self.queue_scalar(hits[0] if hits else None)
+        return await super().execute(stmt)
 
 
 # ── passwords ──────────────────────────────────────────────────────────────

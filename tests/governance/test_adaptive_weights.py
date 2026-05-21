@@ -34,6 +34,7 @@ from src.governance.preference_learning.adaptive_weights import (
     load_adaptive_weights,
 )
 from src.plan.cpo.commits import ScheduleCommit
+from tests.conftest import FakeSession
 
 
 TENANT = UUID("22222222-2222-2222-2222-222222222222")
@@ -42,41 +43,27 @@ TENANT = UUID("22222222-2222-2222-2222-222222222222")
 # ─── Test doubles ──────────────────────────────────────────────────────────
 
 
-class _FakeSession:
-    """Lets the retainer iterate over hand-crafted ScheduleCommit rows.
+# Q.68.3.4 — _FakeSession era um stub de 25L que devolvia a lista de
+# commits a TODOS os execute() (sem filtros). Substituído por uma
+# pequena helper que constrói um FakeSession canónico com a mesma lista
+# em queue para ser servida sempre que `execute()` for chamado.
+class _FakeSession(FakeSession):
+    """Q.68.3.4 — subclasse 1-line que devolve sempre a mesma lista.
 
-    `execute(stmt)` ignores the statement and always returns the same
-    `_FakeResult` — tests don't need the where clause to actually filter,
-    they control the set they pass in.
+    A retainer chama `execute()` várias vezes consecutivas (uma vez por
+    sub-query); este shim recompõe a fila a cada chamada para manter o
+    comportamento original de "sempre os mesmos commits".
     """
 
     def __init__(self, commits: List[ScheduleCommit]) -> None:
-        self._commits = commits
-        self.added: List[Any] = []
-        self.flush_calls = 0
+        super().__init__()
+        self._commits_seed = list(commits)
 
-    async def execute(self, _stmt):
-        class _R:
-            def __init__(self, rows: List[Any]) -> None:
-                self._rows = rows
-
-            def scalars(self):
-                class _S:
-                    def __init__(self, rows: List[Any]) -> None:
-                        self._rows = rows
-
-                    def all(self) -> List[Any]:
-                        return list(self._rows)
-
-                return _S(self._rows)
-
-        return _R(self._commits)
-
-    def add(self, obj: Any) -> None:
-        self.added.append(obj)
-
-    async def flush(self) -> None:
-        self.flush_calls += 1
+    async def execute(self, stmt: Any):  # type: ignore[override]
+        # Re-arm uma batch antes de cada execute para preservar o
+        # comportamento "always-returns-same-set" do stub original.
+        self.queue_scalars(self._commits_seed)
+        return await super().execute(stmt)
 
 
 class _FakeTenantConfigService:
