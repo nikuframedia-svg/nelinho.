@@ -136,6 +136,8 @@ export function PainelDiarioPage(): ReactNode {
     [snap],
   );
 
+  // Defensivo legítimo: enquanto a query carrega ou falha mostramos um
+  // estado vazio explícito; o ErrorBoundary da rota apanha um throw real.
   const alerts: CopilotAlert[] = alertsQuery.data ?? [];
   const criticalCount = alerts.filter(
     (a) => a.severity.toUpperCase() === 'CRITICAL',

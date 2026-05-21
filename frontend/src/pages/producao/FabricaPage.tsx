@@ -107,7 +107,8 @@ export function FabricaPage(): ReactNode {
   );
 
   // No modo "plano" as ordens vêm do commit optimizado; no modo "estado"
-  // vêm do snapshot cru.
+  // vêm do snapshot cru. Defensivo legítimo: enquanto a query corre o
+  // array é o vazio; ErrorBoundary da rota /fabrica trata um throw real.
   const rawOrders = ordersQuery.data ?? [];
   const planOrders = planQuery.data?.orders ?? [];
   const orders: ActiveOrderCard[] =

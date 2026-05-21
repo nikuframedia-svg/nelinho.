@@ -12,13 +12,30 @@
  * `POST /api/copilot/action`).
  */
 
-import type { ReactNode } from 'react';
+import { lazy, Suspense, type ReactNode } from 'react';
 import { FileText, AlertTriangle, Check, Play, ExternalLink } from 'lucide-react';
 import { DarkBadge } from '../dark';
 import type { CopilotResponse } from '../../lib/copilot-types';
-import { CopilotChart } from './CopilotChart';
 import type { ChatMessage, CopilotResponseWithCharts } from './copilotPageHelpers';
 import { WARNING_LABELS } from './copilotPageHelpers';
+
+// Q.68.5.E — lazy split: CopilotChart pulls in recharts (~150kB). Só
+// carrega quando a resposta tem `charts: ChartSpec[]` (raro nas factuais).
+const CopilotChart = lazy(() =>
+  import('./CopilotChart').then((m) => ({ default: m.CopilotChart })),
+);
+
+/** Placeholder enquanto o chunk do recharts ainda não chegou. */
+function ChartFallback() {
+  return (
+    <div
+      className="rounded-md border border-bd-1 bg-bg-2 px-3 py-2.5 text-[11px] text-fg-3 text-center"
+      style={{ height: 220 }}
+    >
+      A carregar gráfico…
+    </div>
+  );
+}
 
 const ACTION_ICON: Record<string, ReactNode> = {
   CREATE_DECISION_PR: <Check size={12} />,
@@ -68,12 +85,14 @@ function ResponseBody({
         </div>
       )}
 
-      {/* Gráficos gerados pelo copiloto (Q.53.L) */}
+      {/* Gráficos gerados pelo copiloto (Q.53.L) — lazy (Q.68.5.E) */}
       {charts.length > 0 && (
         <div className="flex flex-col gap-2">
-          {charts.map((chart, i) => (
-            <CopilotChart key={i} spec={chart} />
-          ))}
+          <Suspense fallback={<ChartFallback />}>
+            {charts.map((chart, i) => (
+              <CopilotChart key={i} spec={chart} />
+            ))}
+          </Suspense>
         </div>
       )}
 
