@@ -12,20 +12,9 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { X, Clock, CheckCircle2, AlertCircle, History } from 'lucide-react';
 import { Panel, ZipToneBadge, EmptyState } from '../dark';
-import { getApiBase } from '../../lib/api';
-
-const TENANT = { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' };
-// Q.21.A — porta única via api.ts (concorda com VITE_API_URL).
-const BASE = getApiBase();
-
-interface SkillRow {
-  phase_id: string;
-  phase_name?: string;
-  can_do: boolean;
-  nivel?: number | null;
-  ops_count: number;
-  last_used_at?: string | null;
-}
+import { skillMatrixApi } from '../../lib/api';
+import { workforceKeys } from '../../lib/api/keys';
+import type { WorkforceSkillMatrixRow as SkillRow } from '../../lib/api/workforceApi';
 
 function daysSince(iso: string | null | undefined): number | null {
   if (!iso) return null;
@@ -64,12 +53,10 @@ export function SkillMatrixDrawer({ open, employeeId, employeeName, onClose }: D
   const [filter12m, setFilter12m] = useState(false);
 
   const q = useQuery({
-    queryKey: ['skill-matrix', employeeId],
-    queryFn: async () => {
+    queryKey: workforceKeys.skillMatrix(employeeId),
+    queryFn: () => {
       if (!employeeId) return null;
-      const r = await fetch(`${BASE}/v1/workforce/employees/${employeeId}/skill-matrix`, { headers: TENANT });
-      if (!r.ok) return null;
-      return r.json();
+      return skillMatrixApi.getEmployeeMatrix(employeeId).catch(() => null);
     },
     enabled: open && !!employeeId,
     retry: 0,
@@ -207,12 +194,11 @@ interface OnSelectFn {
 
 export function SkillRecencyPanel({ onSelect }: { onSelect?: OnSelectFn }) {
   const empQ = useQuery({
-    queryKey: ['workforce-employees'],
-    queryFn: async () => {
-      const r = await fetch(`${BASE}/v1/workforce/employees?limit=200`, { headers: TENANT });
-      if (!r.ok) return { items: [] as EmployeeRow[] };
-      return r.json();
-    },
+    queryKey: workforceKeys.employees(200),
+    queryFn: () =>
+      skillMatrixApi
+        .listEmployees(200)
+        .catch(() => ({ items: [] as EmployeeRow[] })),
     staleTime: 60_000,
     retry: 0,
   });

@@ -12,21 +12,9 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Database, Activity, Lock } from 'lucide-react';
 import { Panel, ZipToneBadge, EmptyState } from '../dark';
-import { getApiBase } from '../../lib/api';
-
-const TENANT = { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' };
-// Q.21.A — porta única via api.ts (concorda com VITE_API_URL).
-const BASE = getApiBase();
-
-interface SemanticView {
-  view_id: string;
-  name: string;
-  description?: string;
-  fields?: string[];
-  is_sensitive?: boolean;
-  trust_score?: number | null;
-  disclaimers?: string[];
-}
+import { dataProductApi } from '../../lib/api';
+import { dataProductKeys } from '../../lib/api/keys';
+import type { SemanticView } from '../../lib/api/dataProductApi';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // FactoryPulseListPanel — todas as views
@@ -34,12 +22,8 @@ interface SemanticView {
 
 export function FactoryPulseListPanel({ onSelect }: { onSelect?: (id: string, name: string) => void }) {
   const q = useQuery({
-    queryKey: ['factory-semantic-views'],
-    queryFn: async () => {
-      const r = await fetch(`${BASE}/v1/factory/semantic`, { headers: TENANT });
-      if (!r.ok) return null;
-      return r.json();
-    },
+    queryKey: dataProductKeys.semanticViews(),
+    queryFn: () => dataProductApi.listSemanticViews().catch(() => null),
     staleTime: 5 * 60_000,
     retry: 0,
   });
@@ -98,12 +82,10 @@ export function FactoryPulseListPanel({ onSelect }: { onSelect?: (id: string, na
 
 export function FactoryPulseQueryPanel({ viewId, name }: { viewId: string | null; name: string | null }) {
   const q = useQuery({
-    queryKey: ['factory-semantic-query', viewId],
-    queryFn: async () => {
+    queryKey: dataProductKeys.semanticQuery(viewId),
+    queryFn: () => {
       if (!viewId) return null;
-      const r = await fetch(`${BASE}/v1/factory/semantic/${viewId}?limit=15`, { headers: TENANT });
-      if (!r.ok) return null;
-      return r.json();
+      return dataProductApi.querySemanticView(viewId, 15).catch(() => null);
     },
     enabled: !!viewId,
     retry: 0,

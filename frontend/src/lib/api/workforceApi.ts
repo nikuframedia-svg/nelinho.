@@ -181,6 +181,51 @@ export interface AllocationsStats {
   topEmployees: Array<{ employee: string; count: number }>;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// SKILL MATRIX API — Q.18.ZIP.A.Onda7 (G. Workforce)
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// Q.67.2.C — migração de fetch() directos em SkillMatrixDrawer.tsx para o
+// fetch layer central (`request` injecta tenant/user/trace_id).
+
+// Renamed to avoid clash with qualityApi.SkillMatrixRow re-exported via index.ts.
+export interface WorkforceSkillMatrixRow {
+  phase_id: string;
+  phase_name?: string;
+  can_do: boolean;
+  nivel?: number | null;
+  ops_count: number;
+  last_used_at?: string | null;
+}
+
+export interface SkillMatrixResponse {
+  phases?: WorkforceSkillMatrixRow[];
+  total?: number;
+}
+
+export interface WorkforceEmployeeRow {
+  employee_id?: string;
+  id?: string;
+  name?: string;
+  job_title?: string;
+}
+
+export interface WorkforceEmployeesResponse {
+  items?: WorkforceEmployeeRow[];
+}
+
+export const skillMatrixApi = {
+  getEmployeeMatrix: (employeeId: string) =>
+    request<SkillMatrixResponse>(
+      `/v1/workforce/employees/${employeeId}/skill-matrix`,
+    ),
+
+  listEmployees: (limit = 200) =>
+    request<WorkforceEmployeesResponse>(
+      `/v1/workforce/employees?limit=${limit}`,
+    ),
+};
+
 export const allocationsApiPaginated = {
   /**
    * Fetch paginated allocations from the backend.
