@@ -113,12 +113,52 @@ async def seed_configs(tenant_id: UUID) -> int:
         return written
 
 
+async def seed_rag_schema_docs(tenant_id: UUID) -> int:
+    """Q.68.1.D — Seed RAG schema docs em dev (idempotente).
+
+    O cron nightly `_copilot_schema_reindex_job` (Q.67.4.E) só corre
+    04:00 UTC, por isso em dev a tabela `copilot_rag_chunk` ficaria
+    vazia até next morning ou run manual. Este passo garante que um
+    bootstrap fresco já tem os chunks indexados.
+
+    Skip silencioso (com warning) quando `copilot_rag_chunk` não foi
+    criada — caso comum em dev sem pgvector (create_all faz skip
+    explícito ao topo deste ficheiro).
+    """
+    from src.copilot.rag import ingest_schema_docs
+    from src.shared.database import async_session_factory
+
+    async with async_session_factory() as session:
+        chunks = await ingest_schema_docs(
+            session=session,
+            tenant_id=tenant_id,
+            force=False,  # safe: incremental, não apaga
+        )
+        await session.commit()
+    log.info("seeded %d RAG schema chunks for tenant %s", chunks, tenant_id)
+    return chunks
+
+
 async def main() -> None:
     await ensure_schemas()
     await create_all_tables()
     tid = await ensure_tenant()
     written = await seed_configs(tid)
-    print(f"OK — DB ready, tenant {tid}, {written} configs seeded")
+
+    # Q.68.1.D — Seed RAG schema docs (best-effort, pgvector-dependent).
+    rag_chunks = 0
+    try:
+        rag_chunks = await seed_rag_schema_docs(tid)
+    except Exception as exc:
+        log.warning(
+            "RAG seed skipped (pgvector ausente em dev?): %s",
+            exc,
+        )
+
+    print(
+        f"OK — DB ready, tenant {tid}, {written} configs seeded, "
+        f"{rag_chunks} RAG chunks"
+    )
 
 
 if __name__ == "__main__":
