@@ -182,6 +182,12 @@ data/external/
 
 
 models/
+# Q.67.6.B5 — packages `models/` legítimos em código fonte (não dataset/ML
+# artifacts). Mais granular que `!src/**/models/` para evitar bypass futuro.
+!src/governance/models/
+!src/core/models/
+!src/copilot/models/
+!src/ml/models/
 
 # Q.61.05 — mutmut state (regravavel via scripts/mutation_test.ps1)
 mutmut-cache/
