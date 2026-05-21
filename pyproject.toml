@@ -131,7 +131,12 @@ forbidden_modules = ["src.plan"]
 ignore_imports = [
     "src.governance.action_executor -> src.plan.services.mold_service",
     "src.governance.action_executor -> src.plan.services.scheduling_service",
-    "src.governance.api -> src.plan.cpo.commits",
+    # Q.68.0.0b: Q.66.D.3 + Q.67.6.B5 decomp moveu o caller de
+    # src.governance.api para src.governance.routers.decisions (mesma
+    # função semântica — endpoint POST /v1/governance/decisions/{id}/approve
+    # chama commits.* para registar approval no commit). Ignore actualizada
+    # para o novo path.
+    "src.governance.routers.decisions -> src.plan.cpo.commits",
     "src.governance.preference_learning.adaptive_weights -> src.plan.cpo.commits",
     "src.governance.preference_learning.detector -> src.plan.cpo.commits",
     "src.governance.preference_learning.dpo_dataset_builder -> src.plan.cpo.commits",
