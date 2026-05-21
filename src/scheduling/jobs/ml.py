@@ -38,12 +38,35 @@ async def _mold_health_scan_job(tenant_id: UUID) -> None:
 
 
 async def _quality_risk_scoring_job(tenant_id: UUID) -> None:
-    """Stub for Sprint R.2 — real scoring wired when ProductionSchedule flow
-    has enough data. The job logs today so observability is consistent."""
-    logger.info(
-        "quality_risk_scoring tenant=%s (stub — wire scoring model when ready)",
-        tenant_id,
-    )
+    """Q.68.5.B — corre quality-risk scoring para um tenant.
+
+    Substitui o stub silencioso original (Sprint R.2): delega no
+    :func:`src.ml.jobs.quality_risk.score_quality_risk_for_tenant`, que
+    abre a sessão, invoca o ``DefectRiskService`` e devolve métricas
+    uniformes. Nunca propaga excepções — o scheduler tolera falhas
+    transitórias do registry/ML e tenta na próxima tick.
+    """
+    started = datetime.utcnow()
+    try:
+        from src.ml.jobs.quality_risk import score_quality_risk_for_tenant
+
+        result = await score_quality_risk_for_tenant(tenant_id)
+        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        logger.info(
+            "quality_risk_scoring tenant=%s scored=%s high_risk=%s "
+            "model_version=%s model_available=%s elapsed_ms=%s",
+            tenant_id,
+            result.get("scored", 0),
+            result.get("high_risk", 0),
+            result.get("model_version"),
+            result.get("model_available", False),
+            elapsed_ms,
+        )
+    except Exception as exc:
+        logger.warning(
+            "quality_risk_scoring tenant=%s failed: %s",
+            tenant_id, exc, exc_info=True,
+        )
 
 
 async def _multivariate_drift_job(tenant_id: UUID) -> None:
