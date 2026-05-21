@@ -170,9 +170,12 @@ class ExplanationEngine:
                 # Check if this machine has multiple late orders
                 causes["Capacity Constraints"]["count"] += 1
         
-        # For now, evenly distribute among available causes
-        # TODO: Enhance with actual machine breakdown data, material tracking, etc.
-        
+        # Q.67.1.D: bloqueado pendente ingestao de machine_breakdown table +
+        # material lot tracking (issue Q.68.D - nao ha fonte ERP actual).
+        # Heuristica actual: machine_id IS NULL -> Machine Issues; senao ->
+        # Capacity Constraints. Setup Delays e Material Shortages ficam a
+        # zero ate haver ingestao real (equipment_failure / material_lot).
+
         return causes
     
     def _weight_by_impact(
