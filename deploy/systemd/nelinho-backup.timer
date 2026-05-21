@@ -1,0 +1,22 @@
+[Unit]
+# Q.68.2.C — daily trigger for the nelinho Postgres backup.
+# Fires the corresponding nelinho-backup.service oneshot.
+Description=Daily nelinho Postgres backup at 03:00 UTC
+Documentation=file:///opt/nelinho/agent_docs/bootstrap_recovery.md
+
+[Timer]
+# 03:00 UTC daily — chosen to land after the nightly ERP sync window
+# (APScheduler runs the 5 mirrors at ~02:00–02:45 UTC, Q.25.D).
+OnCalendar=*-*-* 03:00:00 UTC
+
+# Catch missed runs (box was off at 03:00) on next boot.
+Persistent=true
+
+# Add up to 5 min of randomised delay so multi-node deployments don't
+# hammer the backup target at the same wall-clock second.
+RandomizedDelaySec=300
+
+Unit=nelinho-backup.service
+
+[Install]
+WantedBy=timers.target

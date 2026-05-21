@@ -1,0 +1,43 @@
+[Unit]
+# Q.68.2.C — nelinho Postgres backup (pg_dump custom format).
+# Triggered by nelinho-backup.timer (daily 03:00 UTC).
+Description=nelinho Postgres backup (pg_dump)
+Documentation=file:///opt/nelinho/agent_docs/bootstrap_recovery.md
+After=postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+User=nelinho
+Group=nelinho
+
+# Backup env (POSTGRES_PASSWORD, NELINHO_BACKUP_DIR, retention, offsite
+# target). Keep mode 0600 — contains the DB password.
+EnvironmentFile=/etc/nelinho/backup.env
+
+WorkingDirectory=/opt/nelinho
+ExecStart=/opt/nelinho/scripts/backup_db.sh
+
+# Resource ceiling — pg_dump on the NELO DB (~few GB) easily fits here.
+MemoryMax=1G
+CPUQuota=100%
+
+# Hardening — only allow writes to the backup dir + workdir tmp.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadWritePaths=/var/backups/nelinho /var/log/nelinho
+
+# stdout/stderr → journald (queryable via `journalctl -u nelinho-backup`).
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nelinho-backup
+
+[Install]
+WantedBy=multi-user.target
