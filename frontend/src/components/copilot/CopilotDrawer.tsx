@@ -4,6 +4,7 @@ import type { CopilotResponse } from '../../lib/api';
 import { CopilotMessage } from './CopilotMessage';
 import type { CopilotDrawerProps, Message } from './copilotDrawerTypes';
 import { useCopilotDrawerState } from './useCopilotDrawerState';
+import { setSecure } from '../../lib/secureStorage';
 
 export function CopilotDrawer({
   isOpen, onClose, initialQuery, openedViaFab = false, initialEntityType, initialEntityId,
@@ -188,7 +189,8 @@ export function CopilotDrawer({
                       <button
                         onClick={() => {
                           setCurrentConversationId(conv.id);
-                          localStorage.setItem('copilot_current_conversation_id', conv.id);
+                          // Q.68.5.C — conversation_id encriptado.
+                          void setSecure('copilot_current_conversation_id', conv.id);
                           // Carregar mensagens desta conversa
                           copilotApi.getConversationMessages(conv.id)
                             .then(data => {

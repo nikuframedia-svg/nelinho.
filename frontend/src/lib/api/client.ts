@@ -10,6 +10,7 @@
 import { getErrorMessage } from '../api-errors';
 import { logToEndpoint } from '../logger';
 import { getCircuitBreaker } from '../circuit-breaker';
+import { getSecureCached } from '../secureStorage';
 
 // Q.21.A — porta única. O `.env` de dev usa 8001 e o backend arranca em 8001
 // (ver agent_docs/HANDOFF.md §4.7). O fallback aqui tem de concordar com o
@@ -119,8 +120,9 @@ export async function request<T>(
   const retryableStatuses = retryConfig.retryableStatuses ?? RETRYABLE_STATUSES;
   const initialDelay = retryConfig.initialDelay ?? INITIAL_RETRY_DELAY;
   
-  // Obter token de autenticação do localStorage
-  const token = localStorage.getItem('auth_token') || localStorage.getItem('token');
+  // Obter token de autenticação (Q.68.5.C — encriptado via Web Crypto;
+  // `getSecureCached` lê do cache in-memory hidratado em `main.tsx`).
+  const token = getSecureCached('auth_token') || getSecureCached('token');
   // Q.18.AUTH — dev tenant default. Backend (Q.12 Onda 0.1) rejeita zero UUID
   // explicitamente (`Invalid tenant: zero UUID is reserved`). 000…001 é a
   // dev tenant seeded por scripts/bootstrap_dev_tenant.py. Ver plano Q.18.AUTH.

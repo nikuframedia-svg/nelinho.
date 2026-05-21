@@ -5,6 +5,20 @@ import App from './App';
 import './index.css';
 import { CapabilitiesProvider } from './providers';
 import { UmweltProvider } from './lib/umwelt';
+import { primeSecureCache } from './lib/secureStorage';
+
+// Q.68.5.C — hidrata o cache in-memory das chaves sensíveis ANTES do
+// React montar. A fetch layer (`lib/api/client.ts`) lê tokens síncronos
+// via `getSecureCached`; sem este prime, o primeiro request iria sem
+// Authorization. Fire-and-forget — o boot do React não espera (latência
+// de PBKDF2 é ~5-20ms em hardware moderno).
+void primeSecureCache([
+  'auth_token',
+  'refresh_token',
+  'copilot_current_conversation_id',
+  'copilot.activeConversation',
+  'copilot.pendingAsk',
+]);
 
 // Create QueryClient with smart retry logic
 const queryClient = new QueryClient({

@@ -8,6 +8,7 @@
  * Erros caught são tipados como `unknown` e destructurados via type guard local.
  */
 import { request, API_BASE } from './client';
+import { getSecureCached } from '../secureStorage';
 
 // Estrutura do erro propagado por request() — `Error` com campos extra anexados.
 type ApiError = Error & { status?: number; response?: unknown; message?: string };
@@ -39,7 +40,8 @@ export type { CopilotAskRequest, CopilotResponse, DailyFeedbackResponse };
 export const copilotApi = {
   ask: async (data: CopilotAskRequest) => {
     // Verificar se há token - se não houver, usar diretamente o endpoint dev
-    const token = localStorage.getItem('auth_token') || localStorage.getItem('token');
+    // Q.68.5.C — token encriptado via Web Crypto; cache in-memory.
+    const token = getSecureCached('auth_token') || getSecureCached('token');
     
     if (!token) {
       // Sem token, usar diretamente endpoint dev (sem autenticação)
@@ -199,7 +201,8 @@ export const copilotApi = {
   // Conversations API
   createConversation: (title?: string) => {
     // Se não houver token, rejeitar imediatamente (sem fazer chamada)
-    const token = typeof window !== 'undefined' ? (localStorage.getItem('auth_token') || localStorage.getItem('token')) : null;
+    // Q.68.5.C — getSecureCached lê do cache in-memory (hidratado no boot).
+    const token = typeof window !== 'undefined' ? (getSecureCached('auth_token') || getSecureCached('token')) : null;
     if (!token) {
       const error = new Error('Authentication required') as ApiError;
       error.status = 401;
@@ -217,7 +220,8 @@ export const copilotApi = {
   
   listConversations: (params?: { limit?: number; offset?: number; archived?: boolean }) => {
     // Se não houver token, retornar imediatamente array vazio (sem fazer chamada)
-    const token = typeof window !== 'undefined' ? (localStorage.getItem('auth_token') || localStorage.getItem('token')) : null;
+    // Q.68.5.C — getSecureCached lê do cache in-memory.
+    const token = typeof window !== 'undefined' ? (getSecureCached('auth_token') || getSecureCached('token')) : null;
     if (!token) {
       return Promise.resolve([]);
     }

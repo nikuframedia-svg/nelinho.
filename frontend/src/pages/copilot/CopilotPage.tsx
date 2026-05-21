@@ -30,24 +30,36 @@
  *     o `send_message` injecta agora o `conversation_id` no `process_ask`.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Sparkles, Plus, Search, Send, MessageSquare } from 'lucide-react';
 import { DarkPageLayout } from '../../layouts';
 import { copilotApi } from '../../lib/api';
 import type { CopilotResponse } from '../../lib/copilot-types';
 import { CopilotChatMessage } from '../../components/copilot/CopilotChatMessage';
-import { CopilotContextRail } from '../../components/copilot/CopilotContextRail';
-import {
-  SqlAccordion,
-  type ToolCall,
-} from '../../components/copilot/SqlAccordion';
 import {
   COPILOT_MODES,
   nowLabel,
   type ChatMessage,
   type CopilotMode,
 } from '../../components/copilot/copilotPageHelpers';
+import { getSecureCached, setSecure, removeSecure } from '../../lib/secureStorage';
+// Tipo apenas — não puxa o módulo para o chunk principal.
+import type { ToolCall } from '../../components/copilot/SqlAccordion';
+
+// Q.68.5.E — lazy chunks: o /copilot quase nunca abre toolCalls nem precisa
+// do rail antes do utilizador escrever. Atrasar estes módulos reduz o chunk
+// inicial e dá melhor TTI quando a página é aberta.
+const SqlAccordion = lazy(() =>
+  import('../../components/copilot/SqlAccordion').then((m) => ({
+    default: m.SqlAccordion,
+  })),
+);
+const CopilotContextRail = lazy(() =>
+  import('../../components/copilot/CopilotContextRail').then((m) => ({
+    default: m.CopilotContextRail,
+  })),
+);
 
 let msgSeq = 0;
 const nextId = () => `m-${Date.now()}-${msgSeq++}`;
@@ -70,31 +82,37 @@ interface PendingAsk {
 }
 
 function hasAuthToken(): boolean {
-  return !!(localStorage.getItem('auth_token') || localStorage.getItem('token'));
+  // Q.68.5.C — token encriptado; cache in-memory hidratado no boot.
+  return !!(getSecureCached('auth_token') || getSecureCached('token'));
 }
 
+// Q.68.5.C — PENDING e ACTIVE_CONV agora encriptados via Web Crypto.
+// `readPending` é sync (consumido em useState init); lê do cache
+// hidratado por `primeSecureCache` em main.tsx. Antes da hidratação
+// completa devolve null — não é problema porque é tratado como "sem
+// pergunta em curso", que é o estado neutro.
 function readPending(): PendingAsk | null {
   try {
-    const raw = localStorage.getItem(PENDING_KEY);
+    const raw = getSecureCached(PENDING_KEY);
     if (!raw) return null;
     const p = JSON.parse(raw) as PendingAsk;
     if (!p.startedAt || Date.now() - p.startedAt > PENDING_TIMEOUT_MS) {
-      localStorage.removeItem(PENDING_KEY);
+      removeSecure(PENDING_KEY);
       return null;
     }
     return p;
   } catch {
-    localStorage.removeItem(PENDING_KEY);
+    removeSecure(PENDING_KEY);
     return null;
   }
 }
 
 function writePending(p: PendingAsk): void {
-  localStorage.setItem(PENDING_KEY, JSON.stringify(p));
+  void setSecure(PENDING_KEY, JSON.stringify(p));
 }
 
 function clearPending(): void {
-  localStorage.removeItem(PENDING_KEY);
+  removeSecure(PENDING_KEY);
 }
 
 function clockLabel(epochMs: number): string {
@@ -107,7 +125,8 @@ function clockLabel(epochMs: number): string {
 export default function CopilotPage() {
   const queryClient = useQueryClient();
   const [activeConversation, setActiveConversation] = useState<string | null>(
-    () => localStorage.getItem(ACTIVE_CONV_KEY),
+    // Q.68.5.C — lê do cache in-memory (hidratado no boot via main.tsx).
+    () => getSecureCached(ACTIVE_CONV_KEY),
   );
   const [pending, setPending] = useState<PendingAsk | null>(() => readPending());
   const [mode, setMode] = useState<CopilotMode>('factual');
@@ -118,10 +137,10 @@ export default function CopilotPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Espelhar a conversa activa no localStorage — é daqui que o restauro
-  // ao voltar à página a vai buscar.
+  // ao voltar à página a vai buscar. Q.68.5.C — encriptado.
   useEffect(() => {
-    if (activeConversation) localStorage.setItem(ACTIVE_CONV_KEY, activeConversation);
-    else localStorage.removeItem(ACTIVE_CONV_KEY);
+    if (activeConversation) void setSecure(ACTIVE_CONV_KEY, activeConversation);
+    else removeSecure(ACTIVE_CONV_KEY);
   }, [activeConversation]);
 
   // Uma pergunta em curso só é recuperável se tiver uma conversa real
@@ -566,7 +585,15 @@ export default function CopilotPage() {
                       actionPending={actionMutation.isPending}
                     />
                     {!m.typing && toolCalls && toolCalls.length > 0 && (
-                      <SqlAccordion toolCalls={toolCalls} />
+                      <Suspense
+                        fallback={
+                          <div className="mt-2 text-[11px] text-fg-3 px-3 py-2">
+                            A carregar SQL consultada…
+                          </div>
+                        }
+                      >
+                        <SqlAccordion toolCalls={toolCalls} />
+                      </Suspense>
                     )}
                   </div>
                 );
@@ -615,12 +642,29 @@ export default function CopilotPage() {
           </div>
         </div>
 
-        {/* ─── Coluna 3 · contexto ─────────────────────────────────── */}
-        <CopilotContextRail
-          lastResponse={lastResponse}
-          onAction={(a) => actionMutation.mutate(a)}
-          actionPending={actionMutation.isPending}
-        />
+        {/* ─── Coluna 3 · contexto (lazy Q.68.5.E) ─────────────────── */}
+        <Suspense
+          fallback={
+            <div
+              style={{
+                background: 'var(--bg-1)',
+                border: '1px solid var(--bd-1)',
+                borderRadius: 'var(--r-lg)',
+                padding: 14,
+                fontSize: 11,
+                color: 'var(--fg-3)',
+              }}
+            >
+              A carregar contexto…
+            </div>
+          }
+        >
+          <CopilotContextRail
+            lastResponse={lastResponse}
+            onAction={(a) => actionMutation.mutate(a)}
+            actionPending={actionMutation.isPending}
+          />
+        </Suspense>
       </div>
     </DarkPageLayout>
   );

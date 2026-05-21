@@ -4,6 +4,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { copilotApi } from '../../lib/api';
 import type { CopilotResponse } from '../../lib/api';
 import type { CopilotDrawerProps, Message } from './copilotDrawerTypes';
+import { getSecure, getSecureCached, setSecure, removeSecure } from '../../lib/secureStorage';
 
 export function useCopilotDrawerState({
   isOpen, initialQuery, openedViaFab = false, initialEntityType, initialEntityId,
@@ -25,7 +26,8 @@ export function useCopilotDrawerState({
   });
 
   // List conversations - apenas tentar se houver token (caso contrário, silenciar erro)
-  const token = typeof window !== 'undefined' ? (localStorage.getItem('auth_token') || localStorage.getItem('token')) : null;
+  // Q.68.5.C — token encriptado; cache in-memory hidratado no boot (main.tsx).
+  const token = typeof window !== 'undefined' ? (getSecureCached('auth_token') || getSecureCached('token')) : null;
   const { data: conversations, refetch: refetchConversations, error: conversationsError } = useQuery({
     queryKey: ['copilot', 'conversations', showArchived],
     queryFn: () => copilotApi.listConversations({ limit: 20, archived: showArchived }),
@@ -88,7 +90,8 @@ export function useCopilotDrawerState({
       setInput('');
       // Limpar localStorage antigo quando criar nova conversa na BD
       localStorage.removeItem('copilot_messages');
-      localStorage.setItem('copilot_current_conversation_id', data.id);
+      // Q.68.5.C — conversation_id encriptado (pode revelar contexto do user).
+      void setSecure('copilot_current_conversation_id', data.id);
       refetchConversations();
       // Focar no input após criar conversa
       setTimeout(() => {
@@ -108,7 +111,7 @@ export function useCopilotDrawerState({
         // NÃO limpar mensagens - preservar a resposta do COPILOT
         // setMessages([]); // REMOVIDO - estava a limpar a resposta do COPILOT
         setInput('');
-        localStorage.removeItem('copilot_current_conversation_id');
+        removeSecure('copilot_current_conversation_id');
       } else {
         console.error('[COPILOT] Erro ao criar conversa:', error);
       }
@@ -168,14 +171,16 @@ export function useCopilotDrawerState({
   }, [health]);
 
   // Load conversation ID from localStorage on open
+  // Q.68.5.C — leitura async (ciphertext), cache hidrata no boot.
   useEffect(() => {
     if (isOpen && !currentConversationId) {
-      const savedConversationId = localStorage.getItem('copilot_current_conversation_id');
-      if (savedConversationId) {
-        setCurrentConversationId(savedConversationId);
-        // Tentar carregar mensagens desta conversa
-        copilotApi.getConversationMessages(savedConversationId)
-          .then(data => {
+      (async () => {
+        const savedConversationId = await getSecure('copilot_current_conversation_id');
+        if (savedConversationId) {
+          setCurrentConversationId(savedConversationId);
+          // Tentar carregar mensagens desta conversa
+          try {
+            const data = await copilotApi.getConversationMessages(savedConversationId);
             if (data && data.length > 0) {
               setMessages(data.map(m => ({
                 id: m.id,
@@ -184,14 +189,14 @@ export function useCopilotDrawerState({
                 timestamp: new Date(m.created_at),
               })));
             }
-          })
-          .catch(e => {
+          } catch (e) {
             console.error("Failed to load conversation messages:", e);
             // Se falhar, limpar localStorage e começar do zero
-            localStorage.removeItem('copilot_current_conversation_id');
+            removeSecure('copilot_current_conversation_id');
             setCurrentConversationId(null);
-          });
-      }
+          }
+        }
+      })();
     }
   }, [isOpen, currentConversationId]);
 

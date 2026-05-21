@@ -14,6 +14,7 @@ import { useMutation } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { LogIn, Lock } from 'lucide-react';
 import { authApi } from '../../lib/api';
+import { setSecure } from '../../lib/secureStorage';
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -22,10 +23,12 @@ export default function LoginPage() {
 
   const mutation = useMutation({
     mutationFn: () => authApi.login(email.trim(), password),
-    onSuccess: (resp) => {
-      localStorage.setItem('auth_token', resp.access_token);
+    onSuccess: async (resp) => {
+      // Q.68.5.C — tokens encriptados via Web Crypto. user_id/role
+      // continuam em plaintext (são identificadores, não segredos).
+      await setSecure('auth_token', resp.access_token);
       if (resp.refresh_token) {
-        localStorage.setItem('refresh_token', resp.refresh_token);
+        await setSecure('refresh_token', resp.refresh_token);
       }
       if (resp.user_id) localStorage.setItem('user_id', resp.user_id);
       if (resp.role) localStorage.setItem('user_role', resp.role);
