@@ -2,8 +2,8 @@
 # Sprint Q.17.A foundation. Generated from src/core/services/default_configs.py.
 # Edit this file directly going forward; default_configs.iter_seeds() reads it.
 #
-# Total settings: 183
-# Categories: 31
+# Total settings: 100
+# Categories: 14
 #
 version: 1
 schema_name: system_defaults.v1
@@ -312,10 +312,7 @@ categories:
     - key: duplicates.severity
       value: WARNING
       data_type: string
-      description: Severity reported by the duplicate-business-keys quality gate
-        (blocking|warning|info). Q.67.1.C — default WARNING preserves NELO behaviour
-        (the transform step dedupes by business key + ingestion_id); tenants with
-        already-clean data may escalate to BLOCKING via /regras → quality.
+      description: Severity reported by the duplicate-business-keys quality gate (blocking|warning|info).
   mold:
     description: Mould health weights and maintenance threshold.
     settings:
@@ -371,14 +368,6 @@ categories:
   copilot:
     description: Conversational copilot rate limits and diagnostic capabilities.
     settings:
-    - key: rate_limit.per_hour
-      value: 60
-      data_type: int
-      description: ''
-    - key: rate_limit.per_day
-      value: 300
-      data_type: int
-      description: ''
     - key: diagnostics.erro_tree.enabled
       value: false
       data_type: bool
@@ -398,22 +387,6 @@ categories:
       value: ollama
       data_type: string
       description: Sprint S.2 — flip to 'vllm' when vLLM container is ready
-    - key: ollama.model
-      value: gemma4:e4b
-      data_type: string
-      description: ''
-    - key: ollama.num_ctx
-      value: 8192
-      data_type: int
-      description: ''
-    - key: ollama.temperature
-      value: 0.1
-      data_type: float
-      description: ''
-    - key: ollama.keep_alive
-      value: 30m
-      data_type: string
-      description: ''
     - key: vllm.base_url
       value: http://vllm:8000
       data_type: string
@@ -429,14 +402,6 @@ categories:
       value: 30
       data_type: int
       description: ''
-    - key: shortage.horizon_days_default
-      value: 14
-      data_type: int
-      description: ''
-    - key: projection.days_ahead_default
-      value: 7
-      data_type: int
-      description: ''
   workforce:
     description: Worker tier boundaries, shift defaults, skill recency window.
     settings:
@@ -448,73 +413,6 @@ categories:
       value: 12
       data_type: int
       description: 'WF05 — tier boundary: mid < 12 months'
-    - key: shift.default_hours_per_day
-      value: 8.0
-      data_type: float
-      description: 95% turno único manhã per blueprint §2.8
-    - key: skill.recency_months
-      value: 12
-      data_type: int
-      description: Skill aptitude is only counted if the worker did the phase in the last N months.
-  routing:
-    description: Routing template + phase-uses-mold list + buffer factor.
-    settings:
-    - key: phases.requires_mold
-      value: LAMINAGEM,DESMOLDE,PINTURA_GEL_COAT,PREP_MOLDE
-      data_type: string
-      description: Comma-separated list of phase codes that need a mould slot. Override the regex inferrer
-        in `_phase_uses_mold` once per tenant.
-    - key: standards.buffer_factor
-      value: 2.0
-      data_type: float
-      description: Multiplier applied to FasesStandardModelos times when there is no historical data —
-        guards against the 25× standard-vs-real drift.
-    - key: ab_variant.enabled
-      value: true
-      data_type: bool
-      description: Sprint Q.9 — toggles the chromosome routing-variants A/B selector.
-  alertas:
-    description: Alert thresholds, severities, and recipient lists.
-    settings:
-    - key: delivery_risk.window_days
-      value: 3
-      data_type: int
-      description: Days-of-late threshold to flip OTD into red.
-    - key: mold_health.threshold
-      value: 70
-      data_type: int
-      description: Mold health below this number triggers AL08 maintenance alert.
-    - key: shortage.window_days
-      value: 14
-      data_type: int
-      description: Forecast horizon for material shortage detection.
-    - key: default.severity
-      value: warning
-      data_type: string
-      description: Fallback severity when an alert source omits one (info|warning|critical).
-    - key: delivery.recipients_email
-      value: ''
-      data_type: string
-      description: Comma-separated list of emails that receive delivery-risk alerts.
-  learning_rules:
-    description: Confidence thresholds for the rule detector + auto-revert window.
-    settings:
-    - key: confidence.auto_confirm
-      value: 0.95
-      data_type: float
-      description: Rules above this confidence skip manual review (default conservative).
-    - key: confidence.minimum
-      value: 0.7
-      data_type: float
-      description: Below this threshold a detected rule never reaches the operator.
-    - key: window.lookback_days
-      value: 30
-      data_type: int
-      description: Detector lookback window — match the nightly job in scheduler.py.
-    - key: auto_revert_after_days
-      value: 90
-      data_type: int
-      description: Confirmed rules auto-deactivate after this many days without reinforcement.
   learning:
     description: Heavy learning pipeline flags (DPO fine-tune, PCMCI+ discovery).
     settings:
@@ -529,30 +427,6 @@ categories:
   system:
     description: UI language/theme/format, audit retention, sliding rate limits.
     settings:
-    - key: rate_limit.copilot_respond.limit
-      value: 30
-      data_type: int
-      description: Max requests/window for /v1/copilot/respond per (tenant, actor).
-    - key: rate_limit.copilot_respond.window_seconds
-      value: 60
-      data_type: int
-      description: Sliding window length for /v1/copilot/respond rate limit.
-    - key: rate_limit.cpo_schedule.limit
-      value: 10
-      data_type: int
-      description: Max requests/window for /v1/plan/cpo/schedule per (tenant, actor).
-    - key: rate_limit.cpo_schedule.window_seconds
-      value: 60
-      data_type: int
-      description: Sliding window length for /v1/plan/cpo/schedule rate limit.
-    - key: rate_limit.preview_delta.limit
-      value: 60
-      data_type: int
-      description: Max requests/window for /v1/plan/cpo/preview-delta per (tenant, actor).
-    - key: rate_limit.preview_delta.window_seconds
-      value: 60
-      data_type: int
-      description: Sliding window length for /v1/plan/cpo/preview-delta rate limit.
     - key: language
       value: pt-PT
       data_type: string
@@ -561,42 +435,15 @@ categories:
       value: dark
       data_type: string
       description: UI theme (dark|light|auto).
-    - key: format.date
-      value: DD/MM/YYYY
-      data_type: string
-      description: Date format the UI renders.
     - key: format.currency
       value: EUR
       data_type: string
       description: ISO currency code for prices and KPIs.
-    - key: report.daily_email_hour
-      value: 8
-      data_type: int
-      description: UTC hour the daily report is scheduled (0-23).
     - key: audit.retention_days
       value: 90
       data_type: int
       description: Sprint Q.13.B — days before audit tables (CopilotActionLog, ApprovalRequest, ScheduleCommit.cpo_meta)
         are purged. Set to 0/negative to disable. Regulated tenants may extend to 365+.
-  rbac:
-    description: Default role + approval-required role + per-surface allowed roles.
-    settings:
-    - key: roles.default
-      value: operator
-      data_type: string
-      description: New users land in this role until promoted.
-    - key: approvals.require_role
-      value: manager
-      data_type: string
-      description: Role required to approve write-gate decisions (manager|admin).
-    - key: ceo_dashboard.allowed_roles
-      value: ceo,manager
-      data_type: string
-      description: Comma-separated list of roles that can read /v1/profit/dashboard/*.
-    - key: config.editable_by
-      value: admin
-      data_type: string
-      description: Role that can mutate ConfigStore keys (everyone else gets read-only UI).
   transporte:
     description: Truck capacity, modal load, regroup-by-client, completion fill ratio.
     settings:
@@ -608,242 +455,3 @@ categories:
       value: 50
       data_type: int
       description: Boats per truck — CEO baseline. Moda histórica = 26.
-    - key: buffer.days_before_dispatch
-      value: 2
-      data_type: int
-      description: Days a finished boat can wait before a truck departs.
-    - key: regroup.by_client
-      value: true
-      data_type: bool
-      description: Suggest regrouping shipments by customer when ≥3 are split.
-    - key: completion.min_fill_ratio
-      value: 0.5
-      data_type: float
-      description: Trigger a fill-the-truck suggestion when a batch is below this fraction.
-  notifications:
-    description: Channel master switches + quiet hours + batch coalescing.
-    settings:
-    - key: email.enabled
-      value: true
-      data_type: bool
-      description: Master switch for outbound email notifications.
-    - key: email.batch_window_minutes
-      value: 15
-      data_type: int
-      description: Coalesce non-critical alerts into batched emails on this cadence.
-    - key: slack.webhook_url
-      value: ''
-      data_type: string
-      description: Slack incoming webhook for CRITICAL alerts. Empty = disabled.
-    - key: sms.enabled
-      value: false
-      data_type: bool
-      description: SMS for after-hours critical alerts. Disabled by default.
-    - key: quiet_hours.start
-      value: '22:00'
-      data_type: string
-      description: Local time when non-critical channels go silent (HH:MM).
-    - key: quiet_hours.end
-      value: 07:00
-      data_type: string
-      description: Local time when non-critical channels resume.
-  reports:
-    description: Daily/weekly digest cadence and export format.
-    settings:
-    - key: daily.enabled
-      value: true
-      data_type: bool
-      description: Generate the daily ops report at the configured hour.
-    - key: daily.hour_utc
-      value: 8
-      data_type: int
-      description: UTC hour the daily report job runs (0-23).
-    - key: weekly.enabled
-      value: true
-      data_type: bool
-      description: Send a weekly KPI digest every Monday.
-    - key: format
-      value: pdf
-      data_type: string
-      description: 'Export format for the dashboard: pdf | xlsx | both.'
-    - key: ceo.recipients
-      value: ''
-      data_type: string
-      description: Comma-separated emails for the CEO digest. Empty = print only.
-  tablet:
-    description: Operator-tablet refresh rate, font scale, kiosk mode, offline buffer.
-    settings:
-    - key: refresh.seconds
-      value: 15
-      data_type: int
-      description: How often the tablet polls /v1/operador/queue.
-    - key: ui.font_scale
-      value: 1.0
-      data_type: float
-      description: Multiplier for default font size (1.0 = neutral, 1.25 = larger).
-    - key: ui.kiosk_mode
-      value: true
-      data_type: bool
-      description: Hide navigation chrome — full-screen single-task view.
-    - key: offline.queue_size
-      value: 50
-      data_type: int
-      description: Maximum problem-reports buffered locally when network drops.
-  sandbox:
-    description: Scenario simulation budgets + retention.
-    settings:
-    - key: scenario.budget_seconds
-      value: 30
-      data_type: int
-      description: Per-scenario CPO time limit when sandbox runs the real engine.
-    - key: scenario.max_active
-      value: 5
-      data_type: int
-      description: How many SIMULATING scenarios may run in parallel per tenant.
-    - key: scenario.retention_days
-      value: 30
-      data_type: int
-      description: Soft-delete sandbox scenarios after this many days.
-  twin:
-    description: Digital-twin scenario horizon and comparison cap.
-    settings:
-    - key: scenario.default_horizon_days
-      value: 14
-      data_type: int
-      description: Forward-look horizon for what-if scenarios.
-    - key: scenario.cache_ttl_seconds
-      value: 300
-      data_type: int
-      description: How long delta-view results are cached before recomputation.
-    - key: comparison.max_pairs
-      value: 4
-      data_type: int
-      description: Maximum scenarios shown side-by-side in the comparison view.
-  ml:
-    description: Retrain cadence, holdout fraction, promotion threshold.
-    settings:
-    - key: retrain.min_samples
-      value: 200
-      data_type: int
-      description: Minimum new samples required before a retrain job runs.
-    - key: retrain.window_days
-      value: 90
-      data_type: int
-      description: Lookback window the retrainer pulls features from.
-    - key: promotion.holdout_pct
-      value: 0.15
-      data_type: float
-      description: Fraction of the dataset reserved for the holdout score.
-    - key: promotion.min_score_improvement
-      value: 0.02
-      data_type: float
-      description: Required uplift over the live model before a candidate is promoted.
-  kpi_targets:
-    description: OTD/FPY/rework targets shown on the CEO dashboard.
-    settings:
-    - key: otd_pct
-      value: 95.0
-      data_type: float
-      description: On-Time Delivery target (%). Below this triggers a warning tile.
-    - key: fpy_pct
-      value: 80.0
-      data_type: float
-      description: First-pass yield target (%).
-    - key: rework_pct
-      value: 10.0
-      data_type: float
-      description: Maximum acceptable global rework rate (%).
-    - key: wip_max_boats
-      value: 540
-      data_type: int
-      description: WIP ceiling — Plan §2 estimated 220-540.
-  dqa:
-    description: Drift alert + freshness threshold + auto-repair toggle.
-    settings:
-    - key: drift.alert_threshold
-      value: 0.2
-      data_type: float
-      description: Schema drift fraction above which an alert fires.
-    - key: freshness.curated_max_age_h
-      value: 24.0
-      data_type: float
-      description: Hours after which curated rows are flagged stale.
-    - key: auto_repair.enabled
-      value: false
-      data_type: bool
-      description: Run the auto-repair pipeline on quarantined rows.
-  realtime:
-    description: SSE heartbeat + Kafka toggle + outbox flush batching.
-    settings:
-    - key: sse.heartbeat_seconds
-      value: 15
-      data_type: int
-      description: Server-sent-event heartbeat interval to keep middlebox proxies alive.
-    - key: kafka.enabled
-      value: false
-      data_type: bool
-      description: Toggle the Kafka publisher. When False the outbox table buffers.
-    - key: outbox.flush_batch_size
-      value: 100
-      data_type: int
-      description: How many outbox events the worker flushes per tick.
-  session:
-    description: Session timeout + step-up + remember-me lifetime.
-    settings:
-    - key: idle_timeout_minutes
-      value: 60
-      data_type: int
-      description: Sign out idle sessions after this many minutes.
-    - key: step_up.required_for_kill_switch
-      value: true
-      data_type: bool
-      description: Require fresh password challenge before /governance/kill-switch.
-    - key: remember_me_days
-      value: 14
-      data_type: int
-      description: Persistent session length when 'manter ligado' is checked.
-  dispatch:
-    description: Despacho policy — advance/delay tolerance + client priority.
-    settings:
-    - key: advance.max_days
-      value: 3
-      data_type: int
-      description: How many days early a boat may ship if the suggestion offers.
-    - key: delay.tolerance_days
-      value: 1
-      data_type: int
-      description: Tolerated slip before a delay suggestion fires.
-    - key: client_priority.enabled
-      value: true
-      data_type: bool
-      description: Honour the per-client priority list when suggesting regroupings.
-  explain:
-    description: Catalog cache + causal trace depth + fallback toggle.
-    settings:
-    - key: catalog.cache_ttl_seconds
-      value: 300
-      data_type: int
-      description: How long the metrics catalog is cached in memory.
-    - key: trace.max_depth
-      value: 5
-      data_type: int
-      description: Mill's-method causal chain max recursion depth.
-    - key: fallback.enabled
-      value: true
-      data_type: bool
-      description: Render the static catalog when a real causal trace is unavailable.
-  improve:
-    description: Suggestion cooldown, auto-dismiss horizon, min confidence.
-    settings:
-    - key: suggestion.cooldown_days
-      value: 7
-      data_type: int
-      description: Don't propose the same suggestion type twice within this window.
-    - key: auto_dismiss_after_days
-      value: 30
-      data_type: int
-      description: Suggestions ignored for this many days are soft-deleted.
-    - key: min_confidence
-      value: 0.6
-      data_type: float
-      description: Suggestions below this confidence stay in the operator backlog.

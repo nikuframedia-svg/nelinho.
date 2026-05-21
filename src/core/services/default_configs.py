@@ -213,8 +213,7 @@ DEFAULT_SEEDS: list[ConfigSeed] = [
      "(€35K/day ÷ 14.9 boats/day). Lift to ProductPricing in Q.9."),
 
     # ───────────────────────── copilot / llm ────────────────────────────────
-    ("copilot", "rate_limit.per_hour", 60, "int", ""),
-    ("copilot", "rate_limit.per_day", 300, "int", ""),
+    # Q.68.5.A — copilot.rate_limit.* removed (UNUSED; audit Q.67.3.C).
 
     # Sprint Q.15.0 — diagnostic capabilities flags. The system prompt
     # v2.2 lists tools (`investigate_quality_drop`, `find_common_cause`,
@@ -231,72 +230,40 @@ DEFAULT_SEEDS: list[ConfigSeed] = [
 
     ("llm", "backend", "ollama", "string",
      "Sprint S.2 — flip to 'vllm' when vLLM container is ready"),
-    ("llm", "ollama.model", "gemma4:e4b", "string", ""),
-    ("llm", "ollama.num_ctx", 8192, "int", ""),
-    ("llm", "ollama.temperature", 0.1, "float", ""),
-    ("llm", "ollama.keep_alive", "30m", "string", ""),
+    # Q.68.5.A — llm.ollama.* removed (UNUSED; src/copilot/ollama_client.py
+    # reads from src.shared.config.settings, not tenant DB).
     ("llm", "vllm.base_url", "http://vllm:8000", "string", ""),
     ("llm", "vllm.model", "Qwen2.5-7B-Instruct-AWQ", "string", ""),
 
     # ───────────────────────── factory map ──────────────────────────────────
     ("factory_map", "snapshot.cache_ttl_seconds", 30, "int", ""),
-    ("factory_map", "shortage.horizon_days_default", 14, "int", ""),
-    ("factory_map", "projection.days_ahead_default", 7, "int", ""),
+    # Q.68.5.A — shortage.horizon_days_default + projection.days_ahead_default
+    # removed (UNUSED; audit Q.67.3.C).
 
     # ───────────────────────── workforce ────────────────────────────────────
     ("workforce", "skill_tier.junior_max_months", 5, "int",
      "WF05 — tier boundary: junior < 5 months"),
     ("workforce", "skill_tier.mid_max_months", 12, "int",
      "WF05 — tier boundary: mid < 12 months"),
-    ("workforce", "shift.default_hours_per_day", 8.0, "float",
-     "95% turno único manhã per blueprint §2.8"),
-    # Sprint Q.13.E E.5 — skill recency filter window. Aptitude rows
-    # for funcionarios who haven't actually executed the phase in the
-    # last N months are filtered out of pair-formation + cascade
-    # analysis. 12 months chosen as the smallest window that still
-    # covers seasonal phases (sailing-season ramp-up, etc.).
-    ("workforce", "skill.recency_months", 12, "int",
-     "Skill aptitude is only counted if the worker did the phase in the last N months."),
+    # Q.68.5.A — workforce.shift.default_hours_per_day + workforce.skill.recency_months
+    # removed (UNUSED; audit Q.67.3.C).
 
     # ───────────────────────── routing (Sprint Q.9 Onda 3.6) ────────────────
-    # Plan v4 §11.1 — routing templates editáveis. Phase-uses-mold and
-    # default buffers come from here so the planner doesn't carry magic
-    # numbers (replacing the regex in routing_resolver.py:277).
-    ("routing", "phases.requires_mold",
-     "LAMINAGEM,DESMOLDE,PINTURA_GEL_COAT,PREP_MOLDE", "string",
-     "Comma-separated list of phase codes that need a mould slot. "
-     "Override the regex inferrer in `_phase_uses_mold` once per tenant."),
-    ("routing", "standards.buffer_factor", 2.0, "float",
-     "Multiplier applied to FasesStandardModelos times when there is "
-     "no historical data — guards against the 25× standard-vs-real drift."),
-    ("routing", "ab_variant.enabled", True, "bool",
-     "Sprint Q.9 — toggles the chromosome routing-variants A/B selector."),
+    # Q.68.5.A — routing.phases.requires_mold, routing.standards.buffer_factor,
+    # routing.ab_variant.enabled all removed (UNUSED; audit Q.67.3.C).
+    # The `_phase_uses_mold` regex inferrer no longer reads a tenant override.
 
     # ───────────────────────── alertas (Sprint Q.9 Onda 3.6) ────────────────
-    # Plan §11.1 — every alert on/off + threshold + recipient is editable.
-    ("alertas", "delivery_risk.window_days", 3, "int",
-     "Days-of-late threshold to flip OTD into red."),
-    ("alertas", "mold_health.threshold", 70, "int",
-     "Mold health below this number triggers AL08 maintenance alert."),
-    ("alertas", "shortage.window_days", 14, "int",
-     "Forecast horizon for material shortage detection."),
-    ("alertas", "default.severity", "warning", "string",
-     "Fallback severity when an alert source omits one (info|warning|critical)."),
-    ("alertas", "delivery.recipients_email", "", "string",
-     "Comma-separated list of emails that receive delivery-risk alerts."),
+    # Q.68.5.A — toda a categoria `alertas.*` removida (UNUSED; audit Q.67.3.C).
+    # As 5 keys (delivery_risk.window_days, mold_health.threshold,
+    # shortage.window_days, default.severity, delivery.recipients_email)
+    # tinham zero call-sites em src/ + frontend/src/ + tests/.
 
     # ───────────────────────── learning rules (Sprint Q.9 Onda 3.6) ─────────
-    # Plan §22-§26 — the manager toggles confidence thresholds + decides
-    # how aggressively the detector promotes rules from `detected` to
-    # `confirmed` automatically.
-    ("learning_rules", "confidence.auto_confirm", 0.95, "float",
-     "Rules above this confidence skip manual review (default conservative)."),
-    ("learning_rules", "confidence.minimum", 0.70, "float",
-     "Below this threshold a detected rule never reaches the operator."),
-    ("learning_rules", "window.lookback_days", 30, "int",
-     "Detector lookback window — match the nightly job in scheduler.py."),
-    ("learning_rules", "auto_revert_after_days", 90, "int",
-     "Confirmed rules auto-deactivate after this many days without reinforcement."),
+    # Q.68.5.A — toda a categoria `learning_rules.*` removida (UNUSED;
+    # audit Q.67.3.C). As 4 keys (confidence.auto_confirm,
+    # confidence.minimum, window.lookback_days, auto_revert_after_days)
+    # tinham zero call-sites.
 
     # ───────────────────────── learning (Sprint Q.13.D D.2) ─────────────────
     # Plan v4 §22-§26 + §29 — toggles for the heavy learning pipelines.
@@ -309,45 +276,22 @@ DEFAULT_SEEDS: list[ConfigSeed] = [
      "Camada 4 weekly PCMCI+ discovery proposes new SCM edges for review."),
 
     # ───────────────────────── system rate limits (Sprint Q.13.F F.1) ──────
-    # Plan v4 §11.2 — heavier endpoints get tighter sliding-window
-    # limits than the conversational copilot quota. Window is in
-    # seconds; limit is requests per window per (tenant, actor).
-    # Values default to permissive (operators rarely hit them); SREs
-    # tune via ConfigStore when traffic patterns shift.
-    ("system", "rate_limit.copilot_respond.limit", 30, "int",
-     "Max requests/window for /v1/copilot/respond per (tenant, actor)."),
-    ("system", "rate_limit.copilot_respond.window_seconds", 60, "int",
-     "Sliding window length for /v1/copilot/respond rate limit."),
-    ("system", "rate_limit.cpo_schedule.limit", 10, "int",
-     "Max requests/window for /v1/plan/cpo/schedule per (tenant, actor)."),
-    ("system", "rate_limit.cpo_schedule.window_seconds", 60, "int",
-     "Sliding window length for /v1/plan/cpo/schedule rate limit."),
-    ("system", "rate_limit.preview_delta.limit", 60, "int",
-     "Max requests/window for /v1/plan/cpo/preview-delta per (tenant, actor)."),
-    ("system", "rate_limit.preview_delta.window_seconds", 60, "int",
-     "Sliding window length for /v1/plan/cpo/preview-delta rate limit."),
+    # Q.68.5.A — system.rate_limit.* removed (UNUSED; audit Q.67.3.C).
+    # Os 6 sub-keys (copilot_respond/cpo_schedule/preview_delta x limit+window)
+    # nunca foram lidos por nenhum middleware.
 
     # ───────────────────────── rbac (Sprint Q.9 Onda 3.6) ───────────────────
-    # Plan §11.1 last bullet — quem vê o quê. The full RBAC table lives
-    # in the auth service; these defaults gate broad surfaces and let
-    # the operator demote a screen without code changes.
-    ("rbac", "roles.default", "operator", "string",
-     "New users land in this role until promoted."),
-    ("rbac", "approvals.require_role", "manager", "string",
-     "Role required to approve write-gate decisions (manager|admin)."),
-    ("rbac", "ceo_dashboard.allowed_roles", "ceo,manager", "string",
-     "Comma-separated list of roles that can read /v1/profit/dashboard/*."),
-    ("rbac", "config.editable_by", "admin", "string",
-     "Role that can mutate ConfigStore keys (everyone else gets read-only UI)."),
+    # Q.68.5.A — toda a categoria `rbac.*` (4 keys) removida (UNUSED; audit
+    # Q.67.3.C). RBAC vivo em src/shared/auth/rbac.py; estes defaults nunca
+    # foram consumidos.
 
     # ───────────────────────── system (Sprint Q.9 Onda 3.6) ─────────────────
-    # Plan §11.1 — language, theme, formats, RBAC, relatórios.
+    # Plan §11.1 — language, theme, formats, relatórios.
     ("system", "language", "pt-PT", "string", "UI language code (pt-PT|en|de)."),
     ("system", "theme", "dark", "string", "UI theme (dark|light|auto)."),
-    ("system", "format.date", "DD/MM/YYYY", "string", "Date format the UI renders."),
+    # Q.68.5.A — system.format.date + system.report.daily_email_hour
+    # removed (UNUSED; audit Q.67.3.C).
     ("system", "format.currency", "EUR", "string", "ISO currency code for prices and KPIs."),
-    ("system", "report.daily_email_hour", 8, "int",
-     "UTC hour the daily report is scheduled (0-23)."),
     ("system", "audit.retention_days", 90, "int",
      "Sprint Q.13.B — days before audit tables (CopilotActionLog, "
      "ApprovalRequest, ScheduleCommit.cpo_meta) are purged. Set to "
@@ -367,162 +311,60 @@ DEFAULT_SEEDS: list[ConfigSeed] = [
      "Modal real (boats/truck) — used by complete_truck detector to size suggestions."),
     ("transporte", "truck.capacity", 50, "int",
      "Boats per truck — CEO baseline. Moda histórica = 26."),
-    ("transporte", "buffer.days_before_dispatch", 2, "int",
-     "Days a finished boat can wait before a truck departs."),
-    ("transporte", "regroup.by_client", True, "bool",
-     "Suggest regrouping shipments by customer when ≥3 are split."),
-    ("transporte", "completion.min_fill_ratio", 0.5, "float",
-     "Trigger a fill-the-truck suggestion when a batch is below this fraction."),
+    # Q.68.5.A — transporte.buffer.days_before_dispatch + regroup.by_client +
+    # completion.min_fill_ratio removed (UNUSED; audit Q.67.3.C).
 
     # ───────────────────── notifications (Onda 3 follow-up) ─────────────────
-    # Plan §11.1 alertas → destinatários. `alertas` is the *what* (which
-    # alert types fire); `notifications` is the *how* (which channels
-    # carry them).
-    ("notifications", "email.enabled", True, "bool",
-     "Master switch for outbound email notifications."),
-    ("notifications", "email.batch_window_minutes", 15, "int",
-     "Coalesce non-critical alerts into batched emails on this cadence."),
-    ("notifications", "slack.webhook_url", "", "string",
-     "Slack incoming webhook for CRITICAL alerts. Empty = disabled."),
-    ("notifications", "sms.enabled", False, "bool",
-     "SMS for after-hours critical alerts. Disabled by default."),
-    ("notifications", "quiet_hours.start", "22:00", "string",
-     "Local time when non-critical channels go silent (HH:MM)."),
-    ("notifications", "quiet_hours.end", "07:00", "string",
-     "Local time when non-critical channels resume."),
+    # Q.68.5.A — toda a categoria `notifications.*` (6 keys) removida (UNUSED;
+    # audit Q.67.3.C). Email/Slack/SMS infra ainda nao implementada.
 
     # ───────────────────── reports (Onda 3 follow-up) ───────────────────────
-    # Plan §11.1 sistema — frequência de relatórios automáticos. Drives
-    # the daily_feedback + future weekly digest jobs.
-    ("reports", "daily.enabled", True, "bool",
-     "Generate the daily ops report at the configured hour."),
-    ("reports", "daily.hour_utc", 8, "int",
-     "UTC hour the daily report job runs (0-23)."),
-    ("reports", "weekly.enabled", True, "bool",
-     "Send a weekly KPI digest every Monday."),
-    ("reports", "format", "pdf", "string",
-     "Export format for the dashboard: pdf | xlsx | both."),
-    ("reports", "ceo.recipients", "", "string",
-     "Comma-separated emails for the CEO digest. Empty = print only."),
+    # Q.68.5.A — toda a categoria `reports.*` (5 keys) removida (UNUSED;
+    # audit Q.67.3.C). Daily/weekly digest jobs nao implementados.
 
     # ───────────────────── tablet (Onda 3 follow-up) ────────────────────────
-    # Plan §10 — tablet operador (chão de fábrica). Single-purpose UI;
-    # these knobs let the operator tune contrast/refresh without code.
-    ("tablet", "refresh.seconds", 15, "int",
-     "How often the tablet polls /v1/operador/queue."),
-    ("tablet", "ui.font_scale", 1.0, "float",
-     "Multiplier for default font size (1.0 = neutral, 1.25 = larger)."),
-    ("tablet", "ui.kiosk_mode", True, "bool",
-     "Hide navigation chrome — full-screen single-task view."),
-    ("tablet", "offline.queue_size", 50, "int",
-     "Maximum problem-reports buffered locally when network drops."),
+    # Q.68.5.A — toda a categoria `tablet.*` (4 keys) removida (UNUSED;
+    # audit Q.67.3.C). Tablet operador UI nao implementada.
 
     # ───────────────────── sandbox (Onda 3 follow-up) ───────────────────────
-    # Plan §13 — Layer 4b scenario simulation. The module today defaults
-    # to bounded budgets; expose them as configurable knobs.
-    ("sandbox", "scenario.budget_seconds", 30, "int",
-     "Per-scenario CPO time limit when sandbox runs the real engine."),
-    ("sandbox", "scenario.max_active", 5, "int",
-     "How many SIMULATING scenarios may run in parallel per tenant."),
-    ("sandbox", "scenario.retention_days", 30, "int",
-     "Soft-delete sandbox scenarios after this many days."),
+    # Q.68.5.A — toda a categoria `sandbox.*` (3 keys) removida (UNUSED;
+    # audit Q.67.3.C).
 
     # ───────────────────── twin (Onda 3 follow-up) ──────────────────────────
-    # Plan §13 — digital twin. Counterfactual computation defaults.
-    ("twin", "scenario.default_horizon_days", 14, "int",
-     "Forward-look horizon for what-if scenarios."),
-    ("twin", "scenario.cache_ttl_seconds", 300, "int",
-     "How long delta-view results are cached before recomputation."),
-    ("twin", "comparison.max_pairs", 4, "int",
-     "Maximum scenarios shown side-by-side in the comparison view."),
+    # Q.68.5.A — toda a categoria `twin.*` (3 keys) removida (UNUSED;
+    # audit Q.67.3.C).
 
     # ───────────────────── ml (Onda 3 follow-up) ────────────────────────────
-    # Plan §13 Layer 4b — feature extractors + retrain cadence. The ML
-    # registry consumes these to gate model promotion.
-    ("ml", "retrain.min_samples", 200, "int",
-     "Minimum new samples required before a retrain job runs."),
-    ("ml", "retrain.window_days", 90, "int",
-     "Lookback window the retrainer pulls features from."),
-    ("ml", "promotion.holdout_pct", 0.15, "float",
-     "Fraction of the dataset reserved for the holdout score."),
-    ("ml", "promotion.min_score_improvement", 0.02, "float",
-     "Required uplift over the live model before a candidate is promoted."),
+    # Q.68.5.A — toda a categoria `ml.*` (4 keys) removida (UNUSED;
+    # audit Q.67.3.C).
 
     # ───────────────────── kpi_targets (Onda 3 follow-up) ───────────────────
-    # Plan §9 CEO dashboard — every KPI shown to the CEO has a target;
-    # these keys define them so dashboards/charts don't hardcode them.
-    ("kpi_targets", "otd_pct", 95.0, "float",
-     "On-Time Delivery target (%). Below this triggers a warning tile."),
-    ("kpi_targets", "fpy_pct", 80.0, "float",
-     "First-pass yield target (%)."),
-    ("kpi_targets", "rework_pct", 10.0, "float",
-     "Maximum acceptable global rework rate (%)."),
-    ("kpi_targets", "wip_max_boats", 540, "int",
-     "WIP ceiling — Plan §2 estimated 220-540."),
+    # Q.68.5.A — toda a categoria `kpi_targets.*` (4 keys) removida (UNUSED;
+    # audit Q.67.3.C). CEO dashboard usa valores hardcoded actualmente.
 
     # ───────────────────── dqa (Onda 3 follow-up) ───────────────────────────
-    # Plan §15 — DQA layer config (separate from the Trust *Index*
-    # weights, which live in `trust`). This bucket carries pipeline +
-    # baseline knobs.
-    ("dqa", "drift.alert_threshold", 0.20, "float",
-     "Schema drift fraction above which an alert fires."),
-    ("dqa", "freshness.curated_max_age_h", 24.0, "float",
-     "Hours after which curated rows are flagged stale."),
-    ("dqa", "auto_repair.enabled", False, "bool",
-     "Run the auto-repair pipeline on quarantined rows."),
+    # Q.68.5.A — toda a categoria `dqa.*` (3 keys) removida (UNUSED;
+    # audit Q.67.3.C). Trust Index weights vivem em `trust.*` (USED).
 
     # ───────────────────── realtime (Onda 3 follow-up) ──────────────────────
-    # Plan §13 Layer 1 — RLM event bus + SSE bridge. Operators tune the
-    # bus rather than touching env vars.
-    ("realtime", "sse.heartbeat_seconds", 15, "int",
-     "Server-sent-event heartbeat interval to keep middlebox proxies alive."),
-    ("realtime", "kafka.enabled", False, "bool",
-     "Toggle the Kafka publisher. When False the outbox table buffers."),
-    ("realtime", "outbox.flush_batch_size", 100, "int",
-     "How many outbox events the worker flushes per tick."),
+    # Q.68.5.A — toda a categoria `realtime.*` (3 keys) removida (UNUSED;
+    # audit Q.67.3.C). SSE/Kafka config vem de env vars.
 
     # ───────────────────── session (Onda 3 follow-up) ───────────────────────
-    # Plan §11.1 RBAC adjacency — session lifetime + step-up timeouts
-    # for sensitive routes (auto-approval gates, kill switch).
-    ("session", "idle_timeout_minutes", 60, "int",
-     "Sign out idle sessions after this many minutes."),
-    ("session", "step_up.required_for_kill_switch", True, "bool",
-     "Require fresh password challenge before /governance/kill-switch."),
-    ("session", "remember_me_days", 14, "int",
-     "Persistent session length when 'manter ligado' is checked."),
+    # Q.68.5.A — toda a categoria `session.*` (3 keys) removida (UNUSED;
+    # audit Q.67.3.C). Session lifecycle live em src/shared/auth/.
 
     # ───────────────────── dispatch (Onda 3 follow-up) ──────────────────────
-    # Plan §7 — Despacho rules separate from `transporte` (which is
-    # truck physics). Dispatch carries policy: client priority,
-    # advance/delay tolerance, regrouping aggressiveness.
-    ("dispatch", "advance.max_days", 3, "int",
-     "How many days early a boat may ship if the suggestion offers."),
-    ("dispatch", "delay.tolerance_days", 1, "int",
-     "Tolerated slip before a delay suggestion fires."),
-    ("dispatch", "client_priority.enabled", True, "bool",
-     "Honour the per-client priority list when suggesting regroupings."),
+    # Q.68.5.A — toda a categoria `dispatch.*` (3 keys) removida (UNUSED;
+    # audit Q.67.3.C). Despacho usa policy hardcoded actualmente.
 
     # ───────────────────── explain (Onda 3 follow-up) ───────────────────────
-    # Plan §13 Layer 4 — Explain catalog + causal traces. The blocked
-    # metrics list lives in `factory_data_product/config.py`; this
-    # category controls catalog rendering + cache.
-    ("explain", "catalog.cache_ttl_seconds", 300, "int",
-     "How long the metrics catalog is cached in memory."),
-    ("explain", "trace.max_depth", 5, "int",
-     "Mill's-method causal chain max recursion depth."),
-    ("explain", "fallback.enabled", True, "bool",
-     "Render the static catalog when a real causal trace is unavailable."),
+    # Q.68.5.A — toda a categoria `explain.*` (3 keys) removida (UNUSED;
+    # audit Q.67.3.C). Explain catalog usa defaults hardcoded.
 
     # ───────────────────── improve (Onda 3 follow-up) ───────────────────────
-    # Plan — the improve module ships seed suggestions; once Camada 1
-    # is wired (Onda 1) it consumes acceptance signals. These keys
-    # gate that behaviour without code changes.
-    ("improve", "suggestion.cooldown_days", 7, "int",
-     "Don't propose the same suggestion type twice within this window."),
-    ("improve", "auto_dismiss_after_days", 30, "int",
-     "Suggestions ignored for this many days are soft-deleted."),
-    ("improve", "min_confidence", 0.60, "float",
-     "Suggestions below this confidence stay in the operator backlog."),
+    # Q.68.5.A — toda a categoria `improve.*` (3 keys) removida (UNUSED;
+    # audit Q.67.3.C). Improve module usa defaults hardcoded.
 ]
 
 
