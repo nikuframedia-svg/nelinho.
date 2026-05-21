@@ -73,6 +73,30 @@ function Lazy({ children, count = 5 }: { children: ReactNode; count?: number }):
   );
 }
 
+/**
+ * Q.68.5.D — Wrapper que combina Lazy + ErrorBoundary por página.
+ *
+ * Substitui o anti-padrão `data ?? []` para mascarar erros: cada rota
+ * top-level fica isolada num boundary com label = nome da página, de
+ * forma a que um erro de render numa página não derrube o Layout
+ * (sidebar/topbar) inteiro.
+ */
+function LazyPage({
+  children,
+  label,
+  count = 5,
+}: {
+  children: ReactNode;
+  label: string;
+  count?: number;
+}): ReactNode {
+  return (
+    <ErrorBoundary label={label}>
+      <Lazy count={count}>{children}</Lazy>
+    </ErrorBoundary>
+  );
+}
+
 function App() {
   return (
     <ErrorBoundary>
@@ -93,26 +117,29 @@ function App() {
                   {/* Raiz → Painel diário. */}
                   <Route index element={<Navigate to="/painel" replace />} />
 
-                  {/* ── Páginas principais (Q.53: + Custos) ── */}
-                  <Route path="painel" element={<Lazy><PainelDiarioPage /></Lazy>} />
-                  <Route path="planeamento" element={<Lazy><PlaneamentoPage /></Lazy>} />
-                  <Route path="fabrica" element={<Lazy><FabricaPage /></Lazy>} />
-                  <Route path="expedicao" element={<Lazy><ExpedicaoPage /></Lazy>} />
-                  <Route path="equipa" element={<Lazy><EquipaPage /></Lazy>} />
-                  <Route path="qualidade" element={<Lazy><QualidadePage /></Lazy>} />
-                  <Route path="materiais" element={<Lazy><MateriaisPage /></Lazy>} />
-                  <Route path="simulacoes" element={<Lazy><SimulacoesPage /></Lazy>} />
-                  <Route path="custos" element={<Lazy><CustosPage /></Lazy>} />
-                  <Route path="regras" element={<Lazy><RegrasPage /></Lazy>} />
-                  <Route path="aprendi" element={<Lazy><AprendiPage /></Lazy>} />
-                  <Route path="copilot" element={<Lazy count={3}><CopilotPage /></Lazy>} />
-                  <Route path="configuracao" element={<Lazy><ConfiguracaoPage /></Lazy>} />
+                  {/* ── Páginas principais (Q.53: + Custos) ──
+                      Cada uma corre num ErrorBoundary próprio (Q.68.5.D) para
+                      isolar falhas de render — um erro numa página não derruba
+                      o Layout (sidebar/topbar). */}
+                  <Route path="painel" element={<LazyPage label="PainelDiario"><PainelDiarioPage /></LazyPage>} />
+                  <Route path="planeamento" element={<LazyPage label="Planeamento"><PlaneamentoPage /></LazyPage>} />
+                  <Route path="fabrica" element={<LazyPage label="Fabrica"><FabricaPage /></LazyPage>} />
+                  <Route path="expedicao" element={<LazyPage label="Expedicao"><ExpedicaoPage /></LazyPage>} />
+                  <Route path="equipa" element={<LazyPage label="Equipa"><EquipaPage /></LazyPage>} />
+                  <Route path="qualidade" element={<LazyPage label="Qualidade"><QualidadePage /></LazyPage>} />
+                  <Route path="materiais" element={<LazyPage label="Materiais"><MateriaisPage /></LazyPage>} />
+                  <Route path="simulacoes" element={<LazyPage label="Simulacoes"><SimulacoesPage /></LazyPage>} />
+                  <Route path="custos" element={<LazyPage label="Custos"><CustosPage /></LazyPage>} />
+                  <Route path="regras" element={<LazyPage label="Regras"><RegrasPage /></LazyPage>} />
+                  <Route path="aprendi" element={<LazyPage label="Aprendi"><AprendiPage /></LazyPage>} />
+                  <Route path="copilot" element={<LazyPage label="Copilot" count={3}><CopilotPage /></LazyPage>} />
+                  <Route path="configuracao" element={<LazyPage label="Configuracao"><ConfiguracaoPage /></LazyPage>} />
 
                   {/* ── Vista especial: Direção ── */}
-                  <Route path="direcao" element={<Lazy><DirecaoPage /></Lazy>} />
+                  <Route path="direcao" element={<LazyPage label="Direcao"><DirecaoPage /></LazyPage>} />
 
                   {/* ── Grupo Sistema (Q.53: + Conexão ERP, Ligações) ── */}
-                  <Route path="inbox" element={<Lazy><InboxDecisoesPage /></Lazy>} />
+                  <Route path="inbox" element={<LazyPage label="InboxDecisoes"><InboxDecisoesPage /></LazyPage>} />
                   <Route path="relatorios" element={<Lazy><RelatoriosPage /></Lazy>} />
                   <Route
                     path="dados-mestre"
