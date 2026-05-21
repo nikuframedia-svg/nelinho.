@@ -16,6 +16,7 @@ from fastapi import FastAPI
 # survive grep audits looking for the legacy import lines).
 from src.copilot.alerts.api import router as copilot_alerts_router
 from src.copilot.api import router as copilot_router
+from src.copilot.api_endpoints.copilot_tools_api import router as copilot_tools_router
 from src.copilot.api_endpoints.runbooks_api import router as runbooks_router
 from src.copilot.api_endpoints.tools_api import router as tools_router
 from src.copilot.poetiq import router as copilot_poetiq_router
@@ -82,6 +83,9 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(factory_router)  # Factory Data Product API (C10)
     app.include_router(runbooks_router)  # Runbooks API (P2 Enterprise)
     app.include_router(tools_router)  # Tool Registry API (P2 Enterprise)
+    app.include_router(
+        copilot_tools_router,
+    )  # Q.68.1.A — sql_runner + schema_introspection HTTP wrappers
     app.include_router(governance_router)  # Governance API (Approvals, SoD)
     app.include_router(preference_rules_router)  # Sprint E.3 — learned rules review
     app.include_router(
