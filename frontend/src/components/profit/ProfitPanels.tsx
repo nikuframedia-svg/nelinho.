@@ -12,11 +12,11 @@ import { useState } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { TrendingUp, Calculator, FileText, Sliders, Target } from 'lucide-react';
 import { Panel, ZipToneBadge, EmptyState } from '../dark';
-import { getApiBase } from '../../lib/api';
+import { profitDashboardApi, cogsApi, pricingApi, scenariosApi } from '../../lib/api';
+import { profitKeys } from '../../lib/api/keys';
 
-const TENANT = { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' };
-// Q.21.A — porta única via api.ts (concorda com VITE_API_URL).
-const BASE = getApiBase();
+// Q.67.2.A — fetches directos migrados para `lib/api/profitApi.ts`
+// (request() central com tenant/user/trace_id + circuit breaker).
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. ThroughputGauge
@@ -24,11 +24,13 @@ const BASE = getApiBase();
 
 export function ThroughputGauge() {
   const q = useQuery({
-    queryKey: ['profit-dashboard'],
+    queryKey: profitKeys.dashboard(),
     queryFn: async () => {
-      const r = await fetch(`${BASE}/v1/profit/dashboard`, { headers: TENANT });
-      if (!r.ok) return null;
-      return r.json();
+      try {
+        return await profitDashboardApi.get();
+      } catch {
+        return null;
+      }
     },
     staleTime: 60_000,
     retry: 0,
@@ -110,19 +112,12 @@ export function PricingPanel() {
   const [targetMargin, setTargetMargin] = useState(20);
 
   const m = useMutation({
-    mutationFn: async () => {
-      const r = await fetch(`${BASE}/v1/profit/pricing/recommend`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...TENANT },
-        body: JSON.stringify({
-          order_id: orderId,
-          base_markup_percent: markup,
-          target_margin_percent: targetMargin,
-        }),
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return r.json();
-    },
+    mutationFn: () =>
+      pricingApi.recommend({
+        order_id: orderId,
+        base_markup_percent: markup,
+        target_margin_percent: targetMargin,
+      }),
   });
 
   const data = m.data as
@@ -193,12 +188,14 @@ export function CogsDrawerPanel() {
   const [active, setActive] = useState('');
 
   const q = useQuery({
-    queryKey: ['cogs-order', active],
+    queryKey: profitKeys.cogsOrder(active),
     queryFn: async () => {
       if (!active) return null;
-      const r = await fetch(`${BASE}/v1/profit/cogs/orders/${encodeURIComponent(active)}`, { headers: TENANT });
-      if (!r.ok) return null;
-      return r.json();
+      try {
+        return await cogsApi.getOrderCOGS(active);
+      } catch {
+        return null;
+      }
     },
     enabled: !!active,
     retry: 0,
@@ -303,23 +300,16 @@ export function ScenarioPanel() {
   const [scrap, setScrap] = useState(1.0);
 
   const m = useMutation({
-    mutationFn: async () => {
-      const r = await fetch(`${BASE}/v1/profit/scenarios/simulate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...TENANT },
-        body: JSON.stringify({
-          base_order_id: orderId,
-          material_multiplier: material,
-          labor_multiplier: labor,
-          machine_multiplier: machine,
-          overhead_multiplier: overhead,
-          scrap_multiplier: scrap,
-          scenario_name: 'what_if',
-        }),
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return r.json();
-    },
+    mutationFn: () =>
+      scenariosApi.simulate({
+        base_order_id: orderId,
+        material_multiplier: material,
+        labor_multiplier: labor,
+        machine_multiplier: machine,
+        overhead_multiplier: overhead,
+        scrap_multiplier: scrap,
+        scenario_name: 'what_if',
+      }),
   });
 
   const data = m.data as
@@ -408,12 +398,14 @@ export function MarginPanel() {
   const [price, setPrice] = useState(1000);
 
   const q = useQuery({
-    queryKey: ['margin', orderId, price],
+    queryKey: profitKeys.margin(orderId, price),
     queryFn: async () => {
       if (!orderId.trim()) return null;
-      const r = await fetch(`${BASE}/v1/profit/cogs/orders/${encodeURIComponent(orderId)}/margin?selling_price=${price}`, { headers: TENANT });
-      if (!r.ok) return null;
-      return r.json();
+      try {
+        return await cogsApi.getOrderMargin(orderId, price);
+      } catch {
+        return null;
+      }
     },
     enabled: false,
     retry: 0,

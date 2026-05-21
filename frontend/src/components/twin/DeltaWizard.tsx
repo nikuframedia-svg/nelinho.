@@ -27,10 +27,9 @@ import {
   Shield,
   AlertCircle,
 } from 'lucide-react';
-import { getApiBase } from '../../lib/api';
+import { twinApi } from '../../lib/api';
 
-// Q.21.A — porta única via api.ts (concorda com VITE_API_URL).
-const API_BASE = getApiBase();
+// Q.67.2.A — fetches directos migrados para `lib/api/twinApi.ts`.
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // BLOCKED METRICS - Cannot be simulated (no source data)
@@ -184,54 +183,24 @@ export function DeltaWizard({
     setFieldValues(prev => ({ ...prev, [key]: value }));
   };
 
-  // Get tenant ID
-  const getTenantId = () => {
-    return localStorage.getItem('tenant_id') || '00000000-0000-0000-0000-000000000000';
-  };
-
   // Real API simulation
   const simulateImpact = async () => {
     if (!selectedType) return;
-    
+
     setIsSimulating(true);
     setSimulationError(null);
     setBlockedMetricsInSimulation([]);
-    
+
     try {
-      // Step 1: Apply delta to scenario
-      const deltaResponse = await fetch(`${API_BASE}/v1/twin/scenarios/${scenarioId}/apply-delta`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Tenant-Id': getTenantId(),
-        },
-        body: JSON.stringify({
-          entity_type: selectedType,
-          entity_key: fieldValues.phase_id || fieldValues.scope || 'all',
-          patch: fieldValues,
-        }),
+      // Step 1: Apply delta to scenario (tenant/user/trace_id via request()).
+      await twinApi.applyDelta(scenarioId, {
+        entity_type: selectedType,
+        entity_key: fieldValues.phase_id || fieldValues.scope || 'all',
+        patch: fieldValues,
       });
-      
-      if (!deltaResponse.ok) {
-        const errorData = await deltaResponse.json().catch(() => ({}));
-        throw new Error(errorData.detail || `Failed to apply delta: ${deltaResponse.status}`);
-      }
-      
-      // Step 2: Run simulation
-      const simulateResponse = await fetch(`${API_BASE}/v1/twin/scenarios/${scenarioId}/simulate`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Tenant-Id': getTenantId(),
-        },
-      });
-      
-      if (!simulateResponse.ok) {
-        const errorData = await simulateResponse.json().catch(() => ({}));
-        throw new Error(errorData.detail || `Simulation failed: ${simulateResponse.status}`);
-      }
-      
-      const result: SimulationResult = await simulateResponse.json();
+
+      // Step 2: Run simulation.
+      const result = (await twinApi.simulate(scenarioId)) as SimulationResult;
       
       // Step 3: Process results - filter out blocked metrics
       const impacts: MetricImpact[] = [];

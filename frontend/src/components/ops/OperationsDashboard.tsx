@@ -14,11 +14,11 @@ import { useState } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { Activity, Trash2, CheckSquare } from 'lucide-react';
 import { Panel, ZipToneBadge, EmptyState } from '../dark';
-import { getApiBase } from '../../lib/api';
+import { opsApi } from '../../lib/api';
+import { opsKeys } from '../../lib/api/keys';
 
-const TENANT = { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' };
-// Q.21.A — porta única via api.ts (concorda com VITE_API_URL).
-const BASE = getApiBase();
+// Q.67.2.A — fetches directos migrados para `lib/api/opsApi.ts`
+// (request() central injecta tenant/user/trace_id + circuit breaker).
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AA + BB. Health & OTel
@@ -26,19 +26,16 @@ const BASE = getApiBase();
 
 export function HealthPanel() {
   const readyQ = useQuery({
-    queryKey: ['health-ready'],
-    queryFn: async () => {
-      const r = await fetch(`${BASE}/health/ready`);
-      return { ok: r.ok, body: r.ok ? await r.json() : null, status: r.status };
-    },
+    queryKey: opsKeys.healthReady(),
+    queryFn: () => opsApi.getHealthReady(),
     refetchInterval: 30_000,
     retry: 0,
   });
 
   const liveQ = useQuery({
-    queryKey: ['health-live'],
+    queryKey: opsKeys.healthLive(),
     queryFn: async () => {
-      const r = await fetch(`${BASE}/health/live`);
+      const r = await opsApi.getHealthLive();
       return { ok: r.ok, status: r.status };
     },
     refetchInterval: 30_000,
@@ -90,11 +87,13 @@ export function HealthPanel() {
 
 export function RateLimitPanel() {
   const q = useQuery({
-    queryKey: ['copilot-diagnose'],
+    queryKey: opsKeys.copilotDiagnose(),
     queryFn: async () => {
-      const r = await fetch(`${BASE}/api/copilot/diagnose`, { headers: TENANT });
-      if (!r.ok) return null;
-      return r.json();
+      try {
+        return await opsApi.getCopilotDiagnose();
+      } catch {
+        return null;
+      }
     },
     staleTime: 60_000,
     retry: 0,
@@ -131,11 +130,13 @@ export function RateLimitPanel() {
 
 export function AuthPanel() {
   const q = useQuery({
-    queryKey: ['auth-me'],
+    queryKey: opsKeys.authMe(),
     queryFn: async () => {
-      const r = await fetch(`${BASE}/v1/auth/me`, { headers: TENANT });
-      if (!r.ok) return null;
-      return r.json();
+      try {
+        return await opsApi.getAuthMe();
+      } catch {
+        return null;
+      }
     },
     staleTime: 5 * 60_000,
     retry: 0,
@@ -181,13 +182,7 @@ export function SoftDeletePanel() {
   const m = useMutation({
     mutationFn: async () => {
       if (!empId.trim()) throw new Error('Employee ID obrigatório.');
-      const r = await fetch(`${BASE}/v1/workforce/employees/${empId.trim()}/soft-delete`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...TENANT },
-        body: JSON.stringify({ reason }),
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return r.json();
+      return opsApi.softDeleteEmployee(empId.trim(), reason);
     },
   });
 
@@ -243,13 +238,7 @@ export function BulkOperationsPanel() {
       const list = ids.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
       if (list.length === 0) throw new Error('Pelo menos um decision_id.');
       const items = list.map((id) => ({ decision_id: id, action, reason }));
-      const r = await fetch(`${BASE}/v1/governance/decisions/bulk`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...TENANT },
-        body: JSON.stringify({ items }),
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return r.json();
+      return opsApi.bulkDecisions(items);
     },
   });
 

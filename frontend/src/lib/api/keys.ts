@@ -92,3 +92,113 @@ export const ruleKeys = {
   detail: (id: string) => [...ruleKeys.details(), id] as const,
   firings: () => [...ruleKeys.all, 'firings'] as const,
 } as const;
+
+// ─── data product / semantic views (Q.67.2.C) ──────────────────────────
+
+export const dataProductKeys = {
+  all: ['dataProduct'] as const,
+  semanticViews: () => [...dataProductKeys.all, 'semantic-views'] as const,
+  semanticQuery: (viewId: string | null) =>
+    [...dataProductKeys.all, 'semantic-query', viewId] as const,
+} as const;
+
+// ─── workforce / skill matrix (Q.67.2.C) ───────────────────────────────
+
+export const workforceKeys = {
+  all: ['workforce'] as const,
+  employees: (limit?: number) =>
+    [...workforceKeys.all, 'employees', limit ?? null] as const,
+  skillMatrix: (employeeId: string | null) =>
+    [...workforceKeys.all, 'skill-matrix', employeeId] as const,
+} as const;
+
+// ─── profit (Q.67.2.A) ──────────────────────────────────────────────────
+//
+// Cobre os panels de ProfitPanels.tsx (Onda 10/J): dashboard € hoje,
+// COGS breakdown por order, margem dado preço de venda.
+
+export const profitKeys = {
+  all: ['profit'] as const,
+  dashboard: () => [...profitKeys.all, 'dashboard'] as const,
+  cogsOrder: (orderId: string) => [...profitKeys.all, 'cogs-order', orderId] as const,
+  margin: (orderId: string, sellingPrice: number) =>
+    [...profitKeys.all, 'margin', orderId, sellingPrice] as const,
+} as const;
+
+// ─── twin (Q.67.2.A) ────────────────────────────────────────────────────
+//
+// Digital Twin sandbox (Onda 17/Q): scenarios CRUD + compare.
+
+export const twinKeys = {
+  all: ['twin'] as const,
+  scenarios: () => [...twinKeys.all, 'scenarios'] as const,
+  compare: (scenarioId: string | null) =>
+    [...twinKeys.all, 'compare', scenarioId ?? 'none'] as const,
+} as const;
+
+// ─── ops (Q.67.2.A) ─────────────────────────────────────────────────────
+//
+// Painéis admin/ops: health, rate-limit (copilot/diagnose), auth/me.
+
+export const opsKeys = {
+  all: ['ops'] as const,
+  healthReady: () => [...opsKeys.all, 'health-ready'] as const,
+  healthLive: () => [...opsKeys.all, 'health-live'] as const,
+  copilotDiagnose: () => [...opsKeys.all, 'copilot-diagnose'] as const,
+  authMe: () => [...opsKeys.all, 'auth-me'] as const,
+} as const;
+
+// ─── ML registry (Q.67.2.B) ────────────────────────────────────────────
+//
+// Suporta MlRegistryPanel (Onda 16/P): lista de modelos, versões e
+// versão activa por modelo.
+
+export const mlKeys = {
+  all: ['ml'] as const,
+  models: () => [...mlKeys.all, 'models'] as const,
+  versions: (modelName: string | null | undefined) =>
+    [...mlKeys.all, 'versions', modelName ?? ''] as const,
+  active: (modelName: string | null | undefined) =>
+    [...mlKeys.all, 'active', modelName ?? ''] as const,
+} as const;
+
+// ─── Supply panels (Q.67.2.B) ──────────────────────────────────────────
+//
+// SupplyPanels (Onda 9/I): ROP calc + shortage alerts (copilot/alerts
+// filtered por source=shortage_detector). Forecast e ABC são mutations.
+
+export interface SupplyRopFilters {
+  skuId: string;
+  avgDailyDemand: number;
+  leadTimeDays: number;
+  leadTimeStdDev: number;
+  serviceLevel: number;
+}
+
+export const supplyKeys = {
+  all: ['supply'] as const,
+  rop: (filters: SupplyRopFilters) =>
+    [
+      ...supplyKeys.all,
+      'rop',
+      filters.skuId,
+      filters.avgDailyDemand,
+      filters.leadTimeDays,
+      filters.leadTimeStdDev,
+      filters.serviceLevel,
+    ] as const,
+  shortageAlerts: () =>
+    [...supplyKeys.all, 'copilot-alerts', 'shortage'] as const,
+} as const;
+
+// ─── Reports admin (Q.67.2.B) ──────────────────────────────────────────
+//
+// ReportsAdminPanel (Onda 18/R): 3 mutations (schedule, email, retention).
+// As lists ainda não existem como GET — keys preparam o terreno.
+
+export const reportsKeys = {
+  all: ['reports'] as const,
+  schedules: () => [...reportsKeys.all, 'schedules'] as const,
+  emails: () => [...reportsKeys.all, 'emails'] as const,
+  retentions: () => [...reportsKeys.all, 'retentions'] as const,
+} as const;

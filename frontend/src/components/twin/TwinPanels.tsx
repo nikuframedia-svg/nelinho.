@@ -13,11 +13,11 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { FlaskConical, Play, Trash2, Plus, RotateCcw } from 'lucide-react';
 import { Panel, ZipToneBadge, EmptyState } from '../dark';
-import { getApiBase } from '../../lib/api';
+import { twinApi } from '../../lib/api';
+import { twinKeys } from '../../lib/api/keys';
 
-const TENANT = { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' };
-// Q.21.A — porta única via api.ts (concorda com VITE_API_URL).
-const BASE = getApiBase();
+// Q.67.2.A — fetches directos migrados para `lib/api/copilotApi.ts:twinApi`
+// (request() central injecta tenant/user/trace_id + circuit breaker).
 
 interface Scenario {
   id?: string;
@@ -34,11 +34,13 @@ export function TwinDashboard() {
   const [newName, setNewName] = useState('');
 
   const listQ = useQuery({
-    queryKey: ['twin-scenarios'],
+    queryKey: twinKeys.scenarios(),
     queryFn: async () => {
-      const r = await fetch(`${BASE}/v1/twin/scenarios`, { headers: TENANT });
-      if (!r.ok) return [] as Scenario[];
-      return r.json();
+      try {
+        return await twinApi.listScenarios();
+      } catch {
+        return [] as Scenario[];
+      }
     },
     staleTime: 30_000,
     retry: 0,
@@ -47,67 +49,44 @@ export function TwinDashboard() {
   const scenarios = (listQ.data ?? []) as Scenario[];
 
   const createM = useMutation({
-    mutationFn: async () => {
-      const r = await fetch(`${BASE}/v1/twin/scenarios`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...TENANT },
-        body: JSON.stringify({ name: newName.trim(), description: 'Criado via UI Onda 17' }),
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return r.json();
-    },
+    // Backend espera `title` no body — twinApi central já reflecte isso
+    // (lib/api/copilotApi.ts:twinApi.createScenario).
+    mutationFn: () =>
+      twinApi.createScenario({ title: newName.trim(), description: 'Criado via UI Onda 17' }),
     onSuccess: () => {
       setNewName('');
-      qc.invalidateQueries({ queryKey: ['twin-scenarios'] });
+      qc.invalidateQueries({ queryKey: twinKeys.scenarios() });
     },
   });
 
   const simulateM = useMutation({
-    mutationFn: async (id: string) => {
-      const r = await fetch(`${BASE}/v1/twin/scenarios/${id}/simulate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...TENANT },
-        body: JSON.stringify({}),
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return r.json();
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['twin-scenarios'] }),
+    mutationFn: (id: string) => twinApi.simulate(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: twinKeys.scenarios() }),
   });
 
   const solveM = useMutation({
-    mutationFn: async (id: string) => {
-      const r = await fetch(`${BASE}/v1/twin/scenarios/${id}/solve`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...TENANT },
-        body: JSON.stringify({}),
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return r.json();
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['twin-compare', selected] }),
+    mutationFn: (id: string) => twinApi.solve(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: twinKeys.compare(selected) }),
   });
 
   const deleteM = useMutation({
     mutationFn: async (id: string) => {
-      const r = await fetch(`${BASE}/v1/twin/scenarios/${id}`, {
-        method: 'DELETE',
-        headers: TENANT,
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      await twinApi.deleteScenario(id);
       if (selected === id) setSelected(null);
       return true;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['twin-scenarios'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: twinKeys.scenarios() }),
   });
 
   const compareQ = useQuery({
-    queryKey: ['twin-compare', selected],
+    queryKey: twinKeys.compare(selected),
     queryFn: async () => {
       if (!selected) return null;
-      const r = await fetch(`${BASE}/v1/twin/scenarios/${selected}/compare`, { headers: TENANT });
-      if (!r.ok) return null;
-      return r.json();
+      try {
+        return await twinApi.compare(selected);
+      } catch {
+        return null;
+      }
     },
     enabled: !!selected,
     retry: 0,

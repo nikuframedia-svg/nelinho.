@@ -17,3 +17,5 @@ export * from './qualityApi';
 export * from './copilotApi';
 export * from './governanceApi';
 export * from './platformApi';
+export * from './dataProductApi';
+export * from './opsApi';
