@@ -292,28 +292,25 @@ def test_catalog_search_rejects_short_query(client):
 # GET /v1/explain/catalog/blocked/full + /available/full + /markdown
 # ============================================================================
 
-def test_catalog_blocked_full_is_shadowed_by_metric_full_route(client):
-    """KNOWN-BUG (characterized — do not "fix" silently in the refactor):
-
-    `/catalog/blocked/full` and `/catalog/available/full` are declared
-    AFTER `/catalog/{metric_id}/full`, so FastAPI matches them with
-    `metric_id="blocked"` / `metric_id="available"`. The handler then
-    returns 404 because no metric with that id exists.
-
-    The Fase 7 decomposition MUST either re-order the routes (move the
-    parameterised one to the bottom) or rename the literal paths — and
-    update this test deliberately.
+def test_catalog_blocked_full_resolves_to_specific_handler(client):
+    """Q.67.1.E fixed the shadowing bug — `/catalog/blocked/full` now
+    resolves to the literal handler (re-ordered ANTES de
+    `/catalog/{metric_id}/full`). Devolve dict com chave 'blocked'.
     """
     resp = client.get("/v1/explain/catalog/blocked/full")
-    assert resp.status_code == 404
-    assert "Metric 'blocked' not found" in resp.json()["detail"]
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "blocked" in body
+    assert isinstance(body["blocked"], list)
 
 
-def test_catalog_available_full_is_shadowed_by_metric_full_route(client):
-    """KNOWN-BUG (twin of `blocked/full`) — same shadowing."""
+def test_catalog_available_full_resolves_to_specific_handler(client):
+    """Q.67.1.E twin — `/catalog/available/full` resolve ao handler literal."""
     resp = client.get("/v1/explain/catalog/available/full")
-    assert resp.status_code == 404
-    assert "Metric 'available' not found" in resp.json()["detail"]
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "available" in body
+    assert isinstance(body["available"], list)
 
 
 def test_catalog_markdown_returns_format_and_content(client):

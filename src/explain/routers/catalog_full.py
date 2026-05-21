@@ -4,16 +4,16 @@ Hosts the comprehensive catalog endpoints driven by
 ``src.explain.catalog``:
 
 * ``GET /v1/explain/catalog/full``
-* ``GET /v1/explain/catalog/{metric_id}/full``
-* ``GET /v1/explain/catalog/search``
 * ``GET /v1/explain/catalog/blocked/full``
 * ``GET /v1/explain/catalog/available/full``
+* ``GET /v1/explain/catalog/search``
+* ``GET /v1/explain/catalog/{metric_id}/full``
 * ``GET /v1/explain/catalog/markdown``
 
-ROUTE ORDER MATTERS. The declarations here are intentionally kept in
-the same order as the legacy ``src.explain.api`` module so the FastAPI
-matcher behaviour is preserved — see the inline ``Q.66.D.4c TODO``
-above the two ``/full`` constants.
+ROUTE ORDER MATTERS. Specific literal paths (``/catalog/blocked/full``
+and ``/catalog/available/full``) MUST be declared BEFORE the generic
+``/catalog/{metric_id}/full`` — Q.67.1.E fix to the route-collision
+bug pinned in Q.66.D.4c.
 """
 
 from __future__ import annotations
@@ -80,53 +80,7 @@ async def get_full_metric_catalog(
     }
 
 
-@router.get("/catalog/{metric_id}/full")
-async def get_full_metric_definition(metric_id: str):
-    """
-    Get the complete definition for a specific metric.
-
-    Returns ALL metadata including:
-    - Formula and description (PT and EN)
-    - Data sources with trust and coverage
-    - Assumptions and forbidden claims
-    - How to improve actions
-    - Dependency chain
-    """
-    metric = get_metric(metric_id)
-
-    if not metric:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Metric '{metric_id}' not found in catalog."
-        )
-
-    return metric.to_dict()
-
-
-@router.get("/catalog/search")
-async def search_metric_catalog(
-    q: str = Query(..., min_length=2, description="Search query"),
-):
-    """
-    Search the metric catalog by name or description.
-
-    Searches in:
-    - Name (EN and PT)
-    - Description (EN and PT)
-    - Formula
-    """
-    results = search_metrics(q)
-
-    return {
-        "query": q,
-        "results": [m.to_dict() for m in results],
-        "total": len(results),
-    }
-
-
-# Q.66.D.4c TODO: bug pinned — declared after /catalog/{metric_id}/full so
-# FastAPI matches as path param → 404. Fix em sub-sprint futuro: re-order
-# routes OR rename paths.
+# Q.67.1.E: declarado ANTES de /catalog/{metric_id}/full — ordem matters em FastAPI
 @router.get("/catalog/blocked/full")
 async def get_full_blocked_metrics():
     """
@@ -157,9 +111,6 @@ async def get_full_blocked_metrics():
     }
 
 
-# Q.66.D.4c TODO: bug pinned — declared after /catalog/{metric_id}/full so
-# FastAPI matches as path param → 404. Fix em sub-sprint futuro: re-order
-# routes OR rename paths.
 @router.get("/catalog/available/full")
 async def get_full_available_metrics():
     """
@@ -187,6 +138,50 @@ async def get_full_available_metrics():
         ],
         "total": len(available),
     }
+
+
+@router.get("/catalog/search")
+async def search_metric_catalog(
+    q: str = Query(..., min_length=2, description="Search query"),
+):
+    """
+    Search the metric catalog by name or description.
+
+    Searches in:
+    - Name (EN and PT)
+    - Description (EN and PT)
+    - Formula
+    """
+    results = search_metrics(q)
+
+    return {
+        "query": q,
+        "results": [m.to_dict() for m in results],
+        "total": len(results),
+    }
+
+
+@router.get("/catalog/{metric_id}/full")
+async def get_full_metric_definition(metric_id: str):
+    """
+    Get the complete definition for a specific metric.
+
+    Returns ALL metadata including:
+    - Formula and description (PT and EN)
+    - Data sources with trust and coverage
+    - Assumptions and forbidden claims
+    - How to improve actions
+    - Dependency chain
+    """
+    metric = get_metric(metric_id)
+
+    if not metric:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Metric '{metric_id}' not found in catalog."
+        )
+
+    return metric.to_dict()
 
 
 @router.get("/catalog/markdown")
