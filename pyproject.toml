@@ -82,7 +82,6 @@ ignore_imports = [
     "src.shared.events.handlers -> src.plan.services.scheduling_service",
     "src.shared.events.handlers -> src.profit.services.cost_service",
     "src.shared.events.handlers -> src.profit.services.pricing_service",
-    "src.shared.explanation_engine -> src.plan.models.schedule",
 ]
 
 # Contract 2 — CPO (scheduler determinístico) não importa profit.

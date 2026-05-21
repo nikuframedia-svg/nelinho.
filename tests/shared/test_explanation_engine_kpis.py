@@ -16,7 +16,7 @@ from uuid import UUID
 
 import pytest
 
-from src.shared.explanation_engine import ExplanationEngine
+from src.profit.explanation_engine import ExplanationEngine
 
 
 TENANT = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")

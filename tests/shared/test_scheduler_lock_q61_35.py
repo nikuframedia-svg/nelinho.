@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.shared import scheduler_lock as sl
+from src.scheduling import scheduler_lock as sl
 
 
 # ─── lock key derivation ─────────────────────────────────────────────────

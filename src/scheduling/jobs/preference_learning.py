@@ -9,7 +9,7 @@ import logging
 from datetime import datetime
 from uuid import UUID
 
-from src.shared.scheduler_lock import with_advisory_lock
+from src.scheduling.scheduler_lock import with_advisory_lock
 
 logger = logging.getLogger(__name__)
 

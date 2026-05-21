@@ -369,7 +369,7 @@ async def get_kpi_snapshot_explained(
     
     Returns KPI values along with root cause analysis for each KPI.
     """
-    from src.shared.explanation_engine import ExplanationEngine
+    from src.profit.explanation_engine import ExplanationEngine
     
     # Get snapshot
     kpis = await calculate_kpis(session, tenant_id)
