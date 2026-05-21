@@ -21,6 +21,7 @@ from src.profit.services.labor_cost_service import (
     LaborCostService,
     build_labor_lines,
 )
+from tests.conftest import FakeSession
 
 TENANT = UUID("00000000-0000-0000-0000-000000000001")
 
@@ -77,22 +78,11 @@ def _line(
 # ── sessão falsa ──────────────────────────────────────────────────────────
 
 
-class _FakeResult:
-    def __init__(self, rows):
-        self._rows = rows
-
-    def all(self):
-        return self._rows
-
-
-class _FakeSession:
-    """Devolve taxas canned — (employee_code, effective_date, loaded_rate)."""
-
-    def __init__(self, rate_rows):
-        self._rows = rate_rows
-
-    async def execute(self, _stmt):
-        return _FakeResult(self._rows)
+def _session_with_rate_rows(rate_rows) -> FakeSession:
+    """Q.68.3.3 — Canonical FakeSession with rate rows queued for ``execute().all()``."""
+    session = FakeSession()
+    session.queue_scalars(list(rate_rows))
+    return session
 
 
 def _patch_adapter(monkeypatch, rows):
@@ -218,7 +208,7 @@ async def test_labor_cost_service_prices_order_from_erp(monkeypatch):
         _row(1002, 20345, phase_id=2, phase_name="Acabamento",
              start=datetime(2026, 1, 6, 9), end=datetime(2026, 1, 6, 15, 30)),
     ])
-    session = _FakeSession([
+    session = _session_with_rate_rows([
         ("20345", date(2026, 1, 1), Decimal("10.00")),
         ("20350", date(2026, 1, 1), Decimal("12.00")),
     ])
@@ -237,7 +227,7 @@ async def test_labor_cost_service_prices_order_from_erp(monkeypatch):
 async def test_labor_cost_service_empty_order_is_zero(monkeypatch):
     """OF sem execuções com operador → custo 0, não é erro."""
     _patch_adapter(monkeypatch, [])
-    svc = LaborCostService(_FakeSession([]), TENANT)
+    svc = LaborCostService(_session_with_rate_rows([]), TENANT)
     res = await svc.labor_cost(9000)
     assert res.total_labor_cost == Decimal("0")
     assert res.phase_count == 0
@@ -250,7 +240,7 @@ async def test_labor_cost_service_uses_latest_effective_rate(monkeypatch):
     _patch_adapter(monkeypatch, [
         _row(1001, 20345, start=datetime(2026, 1, 5, 8), end=datetime(2026, 1, 5, 12)),
     ])
-    session = _FakeSession([
+    session = _session_with_rate_rows([
         ("20345", date(2025, 1, 1), Decimal("8.00")),   # antiga
         ("20345", date(2026, 1, 1), Decimal("10.00")),  # mais recente
     ])

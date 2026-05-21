@@ -20,25 +20,17 @@ from fastapi.testclient import TestClient
 
 from src.quality.api import router as quality_router
 from src.shared.database import get_session
+from tests.conftest import FakeSession
 
 TENANT = "00000000-0000-0000-0000-000000000001"
 HEADERS = {"X-Tenant-Id": TENANT}
 
 
-class _FakeSession:
-    """Sessão que devolve linhas-tuplo fixas para a query agregada."""
-
-    def __init__(self, rows):
-        self._rows = list(rows)
-
-    async def execute(self, _stmt):
-        rows = self._rows
-
-        class _R:
-            def all(self_inner):
-                return list(rows)
-
-        return _R()
+def _session_with_rows(rows) -> FakeSession:
+    """Q.68.3.3 — Canonical FakeSession seeded for one ``execute().all()`` call."""
+    session = FakeSession()
+    session.queue_scalars(list(rows))
+    return session
 
 
 def _app(session) -> FastAPI:
@@ -53,7 +45,7 @@ def test_mold_quality_shapes_rows():
         ("70907", "1040136", "K1 Vanquish 7 ML", False, 2660, 2660, date(2026, 5, 1)),
         ("70025", "14", "Navigator", True, 0, 0, None),
     ]
-    client = TestClient(_app(_FakeSession(rows)))
+    client = TestClient(_app(_session_with_rows(rows)))
     resp = client.get("/v1/quality/molds", headers=HEADERS)
     assert resp.status_code == 200
     body = resp.json()
@@ -74,7 +66,7 @@ def test_mold_quality_shapes_rows():
 
 
 def test_mold_quality_empty_is_explicit_not_500():
-    client = TestClient(_app(_FakeSession([])))
+    client = TestClient(_app(_session_with_rows([])))
     resp = client.get("/v1/quality/molds", headers=HEADERS)
     assert resp.status_code == 200
     assert resp.json() == []

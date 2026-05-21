@@ -27,6 +27,7 @@ from src.explain.diagnostics.reichenbach import (
     SharedShiftCheck,
     SharedTransportCheck,
 )
+from tests.conftest import FakeSession
 
 
 _TENANT = UUID("11111111-1111-1111-1111-111111111111")
@@ -275,13 +276,9 @@ async def test_repo_upcoming_transport_volume_returns_zero_on_empty():
     """No batches → 0, not exception."""
     from src.explain.diagnostics.repository import DiagnosticsRepository
 
-    class _FakeResult:
-        def scalar(self): return 0
-
-    class _FakeSession:
-        async def execute(self, _stmt): return _FakeResult()
-
-    repo = DiagnosticsRepository(_FakeSession(), _TENANT)
+    session = FakeSession()
+    session.queue_scalar(0)  # next execute().scalar() → 0
+    repo = DiagnosticsRepository(session, _TENANT)
     out = await repo.upcoming_transport_volume(days_ahead=7)
     assert out == 0
 
@@ -291,10 +288,9 @@ async def test_repo_has_material_lot_tracking_false_today():
     """Without `CuratedMaterialLot` ORM, returns False — honest signal."""
     from src.explain.diagnostics.repository import DiagnosticsRepository
 
-    class _FakeSession:
-        async def execute(self, _stmt): raise RuntimeError("won't be called")
-
-    repo = DiagnosticsRepository(_FakeSession(), _TENANT)
+    session = FakeSession()
+    session.raise_on_execute = True  # repo must short-circuit before query
+    repo = DiagnosticsRepository(session, _TENANT)
     assert await repo.has_material_lot_tracking() is False
 
 
@@ -302,8 +298,7 @@ async def test_repo_has_material_lot_tracking_false_today():
 async def test_repo_has_shift_tracking_false_today():
     from src.explain.diagnostics.repository import DiagnosticsRepository
 
-    class _FakeSession:
-        async def execute(self, _stmt): raise RuntimeError("won't be called")
-
-    repo = DiagnosticsRepository(_FakeSession(), _TENANT)
+    session = FakeSession()
+    session.raise_on_execute = True
+    repo = DiagnosticsRepository(session, _TENANT)
     assert await repo.has_shift_tracking() is False

@@ -25,6 +25,7 @@ import pytest
 
 from src.copilot.api import post_causal_audit
 from src.copilot.models import CopilotMessage
+from tests.conftest import FakeSession
 
 
 _TENANT = UUID("11111111-1111-1111-1111-111111111111")
@@ -58,20 +59,6 @@ _VALID_CHAIN_DICT = {
 }
 
 
-class _FakeSession:
-    """Minimal AsyncSession stand-in: captures `add()` + commit calls."""
-
-    def __init__(self) -> None:
-        self.staged: list = []
-        self.committed = False
-
-    def add(self, instance: Any) -> None:
-        self.staged.append(instance)
-
-    async def commit(self) -> None:
-        self.committed = True
-
-
 # ───────────────────────────────────────────────────────────────────────────
 # Tests — call the endpoint function directly (FastAPI handler is async).
 # ───────────────────────────────────────────────────────────────────────────
@@ -79,7 +66,7 @@ class _FakeSession:
 
 @pytest.mark.asyncio
 async def test_post_causal_audit_persists_valid_chain():
-    session = _FakeSession()
+    session = FakeSession()
     payload: Dict[str, Any] = {
         "conversation_id": str(_CONVERSATION),
         "chain": dict(_VALID_CHAIN_DICT),
@@ -97,16 +84,16 @@ async def test_post_causal_audit_persists_valid_chain():
     assert "verification" in result
     assert "passed" in result["verification"]
     # Exactly one CopilotMessage row staged.
-    assert len(session.staged) == 1
-    assert isinstance(session.staged[0], CopilotMessage)
-    assert session.committed is True
+    assert len(session.added) == 1
+    assert isinstance(session.added[0], CopilotMessage)
+    assert session.commit_calls >= 1
 
 
 @pytest.mark.asyncio
 async def test_post_causal_audit_rejects_missing_conversation_id():
     from fastapi import HTTPException
 
-    session = _FakeSession()
+    session = FakeSession()
     with pytest.raises(HTTPException) as exc_info:
         await post_causal_audit(
             payload={"chain": dict(_VALID_CHAIN_DICT)},
@@ -116,14 +103,14 @@ async def test_post_causal_audit_rejects_missing_conversation_id():
         )
     assert exc_info.value.status_code == 400
     assert "conversation_id" in exc_info.value.detail
-    assert session.staged == []
+    assert session.added == []
 
 
 @pytest.mark.asyncio
 async def test_post_causal_audit_rejects_missing_chain():
     from fastapi import HTTPException
 
-    session = _FakeSession()
+    session = FakeSession()
     with pytest.raises(HTTPException) as exc_info:
         await post_causal_audit(
             payload={"conversation_id": str(_CONVERSATION)},
@@ -132,14 +119,14 @@ async def test_post_causal_audit_rejects_missing_chain():
             session=session,  # type: ignore[arg-type]
         )
     assert exc_info.value.status_code == 400
-    assert session.staged == []
+    assert session.added == []
 
 
 @pytest.mark.asyncio
 async def test_post_causal_audit_rejects_invalid_uuid():
     from fastapi import HTTPException
 
-    session = _FakeSession()
+    session = FakeSession()
     with pytest.raises(HTTPException) as exc_info:
         await post_causal_audit(
             payload={
@@ -161,7 +148,7 @@ async def test_post_causal_audit_rejects_malformed_chain():
     fix is to repair the chain, not retry."""
     from fastapi import HTTPException
 
-    session = _FakeSession()
+    session = FakeSession()
     bad_chain = {"question": "Why?"}  # missing required CausalChain fields
     with pytest.raises(HTTPException) as exc_info:
         await post_causal_audit(
@@ -179,7 +166,7 @@ async def test_post_causal_audit_rejects_malformed_chain():
 
 @pytest.mark.asyncio
 async def test_post_causal_audit_carries_optional_kernel_delta():
-    session = _FakeSession()
+    session = FakeSession()
     result = await post_causal_audit(
         payload={
             "conversation_id": str(_CONVERSATION),
@@ -191,7 +178,7 @@ async def test_post_causal_audit_carries_optional_kernel_delta():
         session=session,  # type: ignore[arg-type]
     )
     assert "audit_message_id" in result
-    msg = session.staged[0]
+    msg = session.added[0]
     payload = (msg.content_structured or {}).get("causal_audit") or {}
     assert payload.get("kernel_delta") == 0.42
 
@@ -200,7 +187,7 @@ async def test_post_causal_audit_carries_optional_kernel_delta():
 async def test_post_causal_audit_rejects_non_numeric_kernel_delta():
     from fastapi import HTTPException
 
-    session = _FakeSession()
+    session = FakeSession()
     with pytest.raises(HTTPException) as exc_info:
         await post_causal_audit(
             payload={

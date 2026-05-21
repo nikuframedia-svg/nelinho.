@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 import src.profit.api.kpis as kpis_module
 from src.profit.api.kpis import KPIMetric, router
 from src.shared.database import get_session
+from tests.conftest import FakeSession
 
 TENANT = UUID("00000000-0000-0000-0000-000000000001")
 
@@ -31,11 +32,13 @@ def _metric(value):
 
 
 class _FakeResult:
-    """Empty result — every KPI query yields no rows.
+    """Q.68.3.3 — Empty result — every KPI query yields no rows.
 
     The engine uses ``.all()`` (machine_breakdown) and ``.fetchall()``
     (otd) and ``.scalar()`` (counts); all degrade gracefully to "no
-    data" so the test stays deterministic and DB-free.
+    data" so the test stays deterministic and DB-free. The canonical
+    ``FakeSession._FakeResult`` covers ``.all()`` and ``.scalar()`` but
+    not ``.fetchall()`` — this thin wrapper adds it.
     """
 
     def all(self):
@@ -48,8 +51,14 @@ class _FakeResult:
         return 0
 
 
-class _FakeSession:
+class _KpiFakeSession(FakeSession):
+    """Subclass overrides ``execute()`` to return the wider ``_FakeResult``
+    above (which adds ``fetchall()``). Other surface (add/commit/flush…)
+    inherits from the canonical."""
+
     async def execute(self, _stmt):
+        self.executed += 1
+        self.executed_stmts.append(_stmt)
         return _FakeResult()
 
 
@@ -58,7 +67,7 @@ def _build_app(monkeypatch, kpis_payload):
         return kpis_payload
 
     async def _fake_session():
-        yield _FakeSession()
+        yield _KpiFakeSession()
 
     # Patch the calculator so we control the snapshot deterministically.
     # `monkeypatch` reverts it after the test — no cross-test bleed.

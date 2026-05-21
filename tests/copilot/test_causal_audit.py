@@ -34,6 +34,7 @@ from src.copilot.causal.audit import (
 )
 from src.copilot.jobs.abl_feedback import run_abl_feedback
 from src.copilot.models import CopilotMessage
+from tests.conftest import FakeSession
 
 
 TENANT = UUID("55555555-5555-5555-5555-555555555555")
@@ -42,34 +43,13 @@ TENANT = UUID("55555555-5555-5555-5555-555555555555")
 # ─── Test doubles ─────────────────────────────────────────────────────────
 
 
-class _FakeSession:
-    """Captures ``add()`` and replays ``execute()`` against a queued list."""
-
-    def __init__(self, rows: List[Any] | None = None) -> None:
-        self.added: List[Any] = []
-        self._rows = list(rows or [])
-
-    def add(self, obj: Any) -> None:
-        self.added.append(obj)
-
-    async def execute(self, _stmt):
-        rows = self._rows
-
-        class _R:
-            def __init__(self, items):
-                self._items = items
-
-            def scalars(self):
-                class _S:
-                    def __init__(self, items):
-                        self._items = items
-
-                    def all(self):
-                        return list(self._items)
-
-                return _S(self._items)
-
-        return _R(rows)
+def _make_session(rows: List[Any] | None = None) -> FakeSession:
+    """Q.68.3.3 — Build a canonical FakeSession with the given rows queued
+    for the next ``execute(...).scalars().all()`` call.
+    """
+    session = FakeSession()
+    session.queue_scalars(list(rows or []))
+    return session
 
 
 def _sign_mismatch_chain():
@@ -128,7 +108,7 @@ def _make_message(payload, *, created_at=None) -> CopilotMessage:
 
 def test_persist_chain_audit_writes_expected_payload():
     chain, verification, delta = _sign_mismatch_chain()
-    session = _FakeSession()
+    session = _make_session()
     conv = uuid4()
 
     msg = asyncio.run(persist_chain_audit(
@@ -171,7 +151,7 @@ def test_load_chain_pairs_for_date_hydrates_pydantic_models():
             "captured_at": datetime.now(timezone.utc).isoformat(),
         }
     }
-    session = _FakeSession([_make_message(payload)])
+    session = _make_session([_make_message(payload)])
 
     pairs = asyncio.run(load_chain_pairs_for_date(
         session, TENANT, date.today(),
@@ -186,7 +166,7 @@ def test_load_chain_pairs_for_date_hydrates_pydantic_models():
 
 
 def test_load_skips_messages_without_causal_audit_key():
-    session = _FakeSession([
+    session = _make_session([
         _make_message(None),                              # no payload
         _make_message({}),                                # missing key
         _make_message({"unrelated": {"foo": "bar"}}),     # other key
@@ -199,7 +179,7 @@ def test_load_skips_messages_without_causal_audit_key():
 
 def test_load_skips_malformed_audit_payloads():
     """Schema drift on either chain or verification → row skipped."""
-    session = _FakeSession([
+    session = _make_session([
         _make_message({CAUSAL_AUDIT_KEY: {"chain": "not a dict"}}),
         _make_message({CAUSAL_AUDIT_KEY: {
             "chain": {"missing": "required fields"},
@@ -235,7 +215,7 @@ def test_persist_then_load_feeds_abl_feedback_job(tmp_path: Path):
             "captured_at": datetime.now(timezone.utc).isoformat(),
         }
     }
-    session = _FakeSession([
+    session = _make_session([
         _make_message(bad_payload),
         _make_message(ok_payload),
     ])

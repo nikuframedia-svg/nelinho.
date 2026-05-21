@@ -15,7 +15,6 @@ Coverage:
 
 from __future__ import annotations
 
-from typing import List
 from uuid import UUID, uuid4
 
 import pytest
@@ -26,6 +25,7 @@ from src.factory_data_product.drift_bridge import (
     _summarise_drift,
     emit_drift_alert_if_any,
 )
+from tests.conftest import FakeSession
 
 
 TENANT = UUID("11111111-1111-1111-1111-111111111111")
@@ -82,24 +82,10 @@ class TestSummariseDrift:
         assert diff["columns_removed"] == {"A": ["y"]}
 
 
-class _FakeSession:
-    """Minimal async-compatible session: captures added rows + flush."""
-
-    def __init__(self):
-        self.added: List = []
-        self.flush_calls = 0
-
-    def add(self, obj):
-        self.added.append(obj)
-
-    async def flush(self):
-        self.flush_calls += 1
-
-
 class TestEmitDriftAlert:
     @pytest.mark.asyncio
     async def test_no_drift_emits_nothing(self):
-        session = _FakeSession()
+        session = FakeSession()
         snap = _snapshot({"A": ["x"]})
         alert_id = await emit_drift_alert_if_any(session, TENANT, INGESTION, [snap, snap])
         assert alert_id is None
@@ -107,7 +93,7 @@ class TestEmitDriftAlert:
 
     @pytest.mark.asyncio
     async def test_drift_emits_alert(self):
-        session = _FakeSession()
+        session = FakeSession()
         history = [
             _snapshot({"A": ["x"]}, ingestion_id="v1"),
             _snapshot({"A": ["x", "y"]}, ingestion_id="v2"),
@@ -126,7 +112,7 @@ class TestEmitDriftAlert:
 
     @pytest.mark.asyncio
     async def test_critical_when_column_removed(self):
-        session = _FakeSession()
+        session = FakeSession()
         history = [
             _snapshot({"A": ["x", "y"]}),
             _snapshot({"A": ["x"]}),

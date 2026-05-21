@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from src.adapters.nelo.etl.runner import EtlRunner
+from tests.conftest import FakeSession
 
 
 # ── Minimal test model (no schema, no PG types — runs on SQLite) ──────────
@@ -182,20 +183,8 @@ async def test_upsert_requires_key_fields(session):
 # ── audit lifecycle (fake session — no DB needed) ─────────────────────────
 
 
-class _FakeSession:
-    def __init__(self) -> None:
-        self.added: list = []
-        self.flushes = 0
-
-    def add(self, obj) -> None:
-        self.added.append(obj)
-
-    async def flush(self) -> None:
-        self.flushes += 1
-
-
 async def test_etl_run_audit_row_marked_ok_on_success():
-    fake = _FakeSession()
+    fake = FakeSession()
     async with EtlRunner(fake, TENANT, source="master") as run:  # type: ignore[arg-type]
         run.count_read(7)
         run.result.rows_inserted = 5
@@ -210,7 +199,7 @@ async def test_etl_run_audit_row_marked_ok_on_success():
 
 
 async def test_etl_run_audit_row_marked_error_on_exception():
-    fake = _FakeSession()
+    fake = FakeSession()
     with pytest.raises(ValueError, match="boom"):
         async with EtlRunner(fake, TENANT, source="quality") as run:  # type: ignore[arg-type]
             run.count_read(3)

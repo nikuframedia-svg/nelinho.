@@ -17,6 +17,7 @@ from src.profit.services.material_cost_service import (
     MaterialCostResult,
     MaterialCostService,
 )
+from tests.conftest import FakeSession
 
 TENANT = UUID("00000000-0000-0000-0000-000000000001")
 
@@ -24,22 +25,11 @@ TENANT = UUID("00000000-0000-0000-0000-000000000001")
 # ── sessao falsa ──────────────────────────────────────────────────────────
 
 
-class _FakeResult:
-    def __init__(self, rows):
-        self._rows = rows
-
-    def all(self):
-        return self._rows
-
-
-class _FakeSession:
-    """Devolve linhas de BOM canned — (qty, scrap, code, name, std_cost)."""
-
-    def __init__(self, rows):
-        self._rows = rows
-
-    async def execute(self, _stmt):
-        return _FakeResult(self._rows)
+def _session_with_rows(rows) -> FakeSession:
+    """Q.68.3.3 — Canonical FakeSession with BOM rows queued for ``execute().all()``."""
+    session = FakeSession()
+    session.queue_scalars(list(rows))
+    return session
 
 
 # ── nucleo puro ───────────────────────────────────────────────────────────
@@ -103,7 +93,7 @@ async def test_material_cost_service_sums_bom_from_db_rows():
         (Decimal("1"), Decimal("1.05"), "FOAM", "Foam FP", Decimal("10.00")),
         (Decimal("3"), Decimal("1.0"), "PARAF", "Parafuso", None),  # sem custo
     ]
-    svc = MaterialCostService(_FakeSession(rows), TENANT)
+    svc = MaterialCostService(_session_with_rows(rows), TENANT)
 
     res = await svc.material_cost(uuid4())
 
@@ -118,7 +108,7 @@ async def test_material_cost_service_sums_bom_from_db_rows():
 @pytest.mark.asyncio
 async def test_material_cost_service_empty_bom_is_zero():
     """Produto sem BOM -> custo 0, zero componentes (nao e erro)."""
-    svc = MaterialCostService(_FakeSession([]), TENANT)
+    svc = MaterialCostService(_session_with_rows([]), TENANT)
     res = await svc.material_cost(uuid4())
     assert res.total_material_cost == Decimal("0")
     assert res.component_count == 0

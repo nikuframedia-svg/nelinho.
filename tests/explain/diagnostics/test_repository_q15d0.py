@@ -22,6 +22,7 @@ import pytest
 
 from src.explain.diagnostics.repository import DiagnosticsRepository
 from src.explain.diagnostics.types import MoldUsage, WorkerStats
+from tests.conftest import FakeSession
 
 
 _TENANT = UUID("11111111-1111-1111-1111-111111111111")
@@ -33,37 +34,33 @@ _TENANT = UUID("11111111-1111-1111-1111-111111111111")
 
 
 class _FakeResult:
+    """Q.68.3.3 — Light spec for a single ``execute()`` result.
+
+    Holds either a ``value`` (consumed via ``Result.scalar()``) or a
+    list of ``rows`` (consumed via ``Result.all()``). The script
+    :func:`_repo` then plays each spec into the canonical
+    :class:`FakeSession` queues in order.
+    """
+
     def __init__(self, value: Any = None, rows: list = None):
-        self._value = value
-        self._rows = rows or []
-
-    def scalar(self):
-        return self._value
-
-    def all(self):
-        return self._rows
+        self.value = value
+        self.rows = rows or []
 
 
-class _FakeSession:
-    """Plays back a queue of pre-loaded `_FakeResult`s in execute order."""
-
-    def __init__(self, results: List[_FakeResult]):
-        self._results = list(results)
-        self.executed = 0
-
-    async def execute(self, _stmt):
-        if not self._results:
-            # Fall through: empty result so the repository's defensive
-            # branches kick in.
-            return _FakeResult(value=0, rows=[])
-        out = self._results.pop(0)
-        self.executed += 1
-        return out
-
-
-def _repo(results=None):
+def _repo(results: List[_FakeResult] | None = None) -> DiagnosticsRepository:
+    """Q.68.3.3 — Replays a list of :class:`_FakeResult` specs into the
+    canonical ``FakeSession`` queues so the repository can execute them
+    in order.
+    """
+    session = FakeSession()
+    for spec in results or []:
+        # Each execute() call consumes one scalar + one scalars batch.
+        # We script both so callers don't need to know which the repo
+        # method picks.
+        session.queue_scalar(spec.value)
+        session.queue_scalars(list(spec.rows))
     return DiagnosticsRepository(
-        session=_FakeSession(results or []),  # type: ignore[arg-type]
+        session=session,  # type: ignore[arg-type]
         tenant_id=_TENANT,
     )
 

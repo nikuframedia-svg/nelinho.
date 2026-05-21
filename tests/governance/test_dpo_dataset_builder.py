@@ -27,6 +27,7 @@ from src.governance.preference_learning.dpo_dataset_builder import (
     build_prompt,
 )
 from src.plan.cpo.commits import ScheduleCommit
+from tests.conftest import FakeSession
 
 
 TENANT = UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
@@ -77,26 +78,11 @@ def _commit(
     )
 
 
-class _FakeSession:
-    def __init__(self, commits: List[ScheduleCommit]) -> None:
-        self._commits = commits
-
-    async def execute(self, _stmt):
-        class _Scalars:
-            def __init__(self, rows: List[Any]) -> None:
-                self._rows = rows
-
-            def all(self) -> List[Any]:
-                return list(self._rows)
-
-        class _Result:
-            def __init__(self, rows: List[Any]) -> None:
-                self._rows = rows
-
-            def scalars(self) -> _Scalars:
-                return _Scalars(self._rows)
-
-        return _Result(list(self._commits))
+def _session_with_commits(commits: List[ScheduleCommit]) -> FakeSession:
+    """Q.68.3.3 — Canonical FakeSession with commits queued for ``execute().scalars().all()``."""
+    session = FakeSession()
+    session.queue_scalars(list(commits))
+    return session
 
 
 # ─── build_prompt ─────────────────────────────────────────────────────────
@@ -133,7 +119,7 @@ def test_emits_one_triplet_per_rejected_alternative():
             {"alt_idx": 1, "kpis": {"makespan_hours": 210.0, "setups": 8}},
         ], sha_suffix="a"),
     ]
-    builder = DPODatasetBuilder(_FakeSession(commits), TENANT)
+    builder = DPODatasetBuilder(_session_with_commits(commits), TENANT)
     triplets = asyncio.run(builder.build_to_list())
     assert len(triplets) == 2
     assert all(isinstance(t, DPOTriplet) for t in triplets)
@@ -146,7 +132,7 @@ def test_skips_commits_without_rejection():
         _commit(rejected=[], sha_suffix="a"),
         _commit(rejected=[{"alt_idx": 0, "kpis": {"makespan_hours": 200.0}}], sha_suffix="b"),
     ]
-    builder = DPODatasetBuilder(_FakeSession(commits), TENANT)
+    builder = DPODatasetBuilder(_session_with_commits(commits), TENANT)
     triplets = asyncio.run(builder.build_to_list())
     assert len(triplets) == 1
 
@@ -159,7 +145,7 @@ def test_skips_rejected_alt_without_kpis():
             {"alt_idx": 2, "kpis": {"makespan_hours": 195.0}},
         ], sha_suffix="c"),
     ]
-    builder = DPODatasetBuilder(_FakeSession(commits), TENANT)
+    builder = DPODatasetBuilder(_session_with_commits(commits), TENANT)
     triplets = asyncio.run(builder.build_to_list())
     assert len(triplets) == 1
     assert triplets[0].meta["alt_idx"] == 2
@@ -178,7 +164,7 @@ def test_min_reason_len_filters_commits_without_written_rationale():
             sha_suffix="e",
         ),
     ]
-    builder = DPODatasetBuilder(_FakeSession(commits), TENANT, min_reason_len=8)
+    builder = DPODatasetBuilder(_session_with_commits(commits), TENANT, min_reason_len=8)
     triplets = asyncio.run(builder.build_to_list())
     assert len(triplets) == 1
     assert "trade throughput" in triplets[0].chosen.lower()
@@ -192,7 +178,7 @@ def test_meta_copies_signal_and_commit_fields():
             sha_suffix="f",
         ),
     ]
-    builder = DPODatasetBuilder(_FakeSession(commits), TENANT)
+    builder = DPODatasetBuilder(_session_with_commits(commits), TENANT)
     triplets = asyncio.run(builder.build_to_list())
     meta = triplets[0].meta
     assert meta["decided_by"] == "alice"
@@ -207,7 +193,7 @@ def test_build_writes_valid_jsonl(tmp_path: Path):
         _commit(rejected=[{"alt_idx": 0, "kpis": {"makespan_hours": 190.0}}], sha_suffix="g"),
         _commit(rejected=[{"alt_idx": 0, "kpis": {"makespan_hours": 215.0}}], sha_suffix="h"),
     ]
-    builder = DPODatasetBuilder(_FakeSession(commits), TENANT)
+    builder = DPODatasetBuilder(_session_with_commits(commits), TENANT)
     output = tmp_path / "dpo.jsonl"
     report: DPOBuildReport = asyncio.run(builder.build(output_path=output))
 
@@ -230,7 +216,7 @@ def test_build_report_counts_scanned_and_used():
             {"alt_idx": 1, "kpis": {}},  # kpi-less, skipped within the commit
         ], sha_suffix="k"),
     ]
-    builder = DPODatasetBuilder(_FakeSession(commits), TENANT)
+    builder = DPODatasetBuilder(_session_with_commits(commits), TENANT)
     report = asyncio.run(builder.build(output_path=None))
     assert report.commits_scanned == 3
     assert report.commits_used == 2

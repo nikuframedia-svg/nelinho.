@@ -25,6 +25,7 @@ from uuid import uuid4
 import pytest
 
 from src.plan.api.cpo import _load_product_prices
+from tests.conftest import FakeSession
 
 
 TENANT_A = uuid4()
@@ -35,22 +36,11 @@ TENANT_A = uuid4()
 # ---------------------------------------------------------------------------
 
 
-class _FakeExecuteResult:
-    def __init__(self, rows: List[tuple]) -> None:
-        self._rows = rows
-
-    def all(self) -> List[tuple]:
-        return list(self._rows)
-
-
-class _FakeSession:
-    def __init__(self, rows: List[tuple]) -> None:
-        self._rows = rows
-        self.last_stmt = None
-
-    async def execute(self, stmt) -> _FakeExecuteResult:
-        self.last_stmt = stmt
-        return _FakeExecuteResult(self._rows)
+def _session_with_rows(rows: List[tuple]) -> FakeSession:
+    """Q.68.3.3 — Canonical FakeSession with ``rows`` queued for one ``execute().all()`` call."""
+    session = FakeSession()
+    session.queue_scalars(list(rows))
+    return session
 
 
 # ---------------------------------------------------------------------------
@@ -59,7 +49,7 @@ class _FakeSession:
 
 
 def test_load_product_prices_empty_table_returns_empty_dict():
-    session = _FakeSession([])
+    session = _session_with_rows([])
     prices = asyncio.run(_load_product_prices(session, TENANT_A))
     assert prices == {}
 
@@ -77,7 +67,7 @@ def test_load_product_prices_picks_first_row_per_product():
         # Product 2 — single row.
         (product_2, Decimal("1800.00"), today),
     ]
-    session = _FakeSession(rows)
+    session = _session_with_rows(rows)
     prices = asyncio.run(_load_product_prices(session, TENANT_A))
     assert prices[str(product_1)] == 2400.0  # latest
     assert prices[str(product_2)] == 1800.0

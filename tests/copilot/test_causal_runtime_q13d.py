@@ -21,6 +21,7 @@ import pytest
 
 from src.copilot.causal.runtime import record_causal_audit
 from src.copilot.models import CopilotMessage
+from tests.conftest import FakeSession
 
 
 # Valid edge in NELO_DAG that the verifier accepts: mold_age →
@@ -53,25 +54,9 @@ _TENANT = UUID("11111111-1111-1111-1111-111111111111")
 _CONVERSATION = UUID("22222222-2222-2222-2222-222222222222")
 
 
-class _FakeSession:
-    """In-memory stand-in for AsyncSession — captures `add` calls.
-
-    `record_causal_audit` only calls `session.add(msg)`; flush/commit
-    happens in the caller's transaction. So a tiny double is enough."""
-
-    def __init__(self) -> None:
-        self.staged: list = []
-        self.add_should_raise: bool = False
-
-    def add(self, instance) -> None:
-        if self.add_should_raise:
-            raise RuntimeError("simulated DB outage")
-        self.staged.append(instance)
-
-
 @pytest.mark.asyncio
 async def test_record_causal_audit_stages_audit_row():
-    session = _FakeSession()
+    session = FakeSession()
     msg = await record_causal_audit(
         session=session,  # type: ignore[arg-type]
         tenant_id=_TENANT,
@@ -89,13 +74,13 @@ async def test_record_causal_audit_stages_audit_row():
     assert "chain" in msg.content_structured["causal_audit"]
     assert "verification" in msg.content_structured["causal_audit"]
     # Exactly one row staged on the session.
-    assert len(session.staged) == 1
-    assert session.staged[0] is msg
+    assert len(session.added) == 1
+    assert session.added[0] is msg
 
 
 @pytest.mark.asyncio
 async def test_record_causal_audit_returns_none_on_malformed_chain():
-    session = _FakeSession()
+    session = FakeSession()
     bad_chain = {"question": "?"}  # missing required fields
     msg = await record_causal_audit(
         session=session,  # type: ignore[arg-type]
@@ -105,12 +90,12 @@ async def test_record_causal_audit_returns_none_on_malformed_chain():
     )
     assert msg is None
     # Nothing staged — verification failed before persist.
-    assert session.staged == []
+    assert session.added == []
 
 
 @pytest.mark.asyncio
 async def test_record_causal_audit_returns_none_on_persist_failure():
-    session = _FakeSession()
+    session = FakeSession()
     session.add_should_raise = True
     msg = await record_causal_audit(
         session=session,  # type: ignore[arg-type]
@@ -123,7 +108,7 @@ async def test_record_causal_audit_returns_none_on_persist_failure():
 
 @pytest.mark.asyncio
 async def test_record_causal_audit_carries_optional_kernel_delta():
-    session = _FakeSession()
+    session = FakeSession()
     msg = await record_causal_audit(
         session=session,  # type: ignore[arg-type]
         tenant_id=_TENANT,
@@ -142,7 +127,7 @@ async def test_record_causal_audit_validation_passed_propagates_to_message():
     the verification outcome — it's how downstream code (e.g. the
     Camada-4 ABL detector) decides whether the chain is "training
     material" (failed verification) or just an audit log."""
-    session = _FakeSession()
+    session = FakeSession()
     msg = await record_causal_audit(
         session=session,  # type: ignore[arg-type]
         tenant_id=_TENANT,

@@ -16,7 +16,6 @@ a future refactor could:
 
 from __future__ import annotations
 
-from typing import Any
 from uuid import UUID
 
 import pytest
@@ -31,19 +30,10 @@ from src.governance.models import (
     CausalDiscoveryReport,
     CausalDiscoveryStatus,
 )
+from tests.conftest import FakeSession
 
 
 _TENANT = UUID("11111111-1111-1111-1111-111111111111")
-
-
-class _FakeSession:
-    """Tiny `AsyncSession` stand-in: only `add(...)` is exercised."""
-
-    def __init__(self) -> None:
-        self.staged: list = []
-
-    def add(self, instance: Any) -> None:
-        self.staged.append(instance)
 
 
 @pytest.mark.asyncio
@@ -69,7 +59,7 @@ async def test_persist_discovery_report_round_trip():
         nodes_examined=27,
         candidate_edges=edges,
     )
-    session = _FakeSession()
+    session = FakeSession()
     row = await persist_discovery_report(
         session=session,  # type: ignore[arg-type]
         tenant_id=_TENANT,
@@ -92,7 +82,7 @@ async def test_persist_discovery_report_round_trip():
     assert first["is_new"] is True
     assert first["direction"] == "positive"
     # The session captured the staged row.
-    assert session.staged == [row]
+    assert session.added == [row]
 
 
 @pytest.mark.asyncio
@@ -108,7 +98,7 @@ async def test_persist_discovery_report_unavailable_carries_reason():
         nodes_examined=0,
         candidate_edges=[],
     )
-    session = _FakeSession()
+    session = FakeSession()
     row = await persist_discovery_report(
         session=session,  # type: ignore[arg-type]
         tenant_id=_TENANT,
