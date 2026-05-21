@@ -41,6 +41,7 @@ from src.scheduling.jobs.nelo_erp import (
     _nelo_erp_time_mining_job,
 )
 from src.scheduling.jobs.order_reconciliation import _order_status_reconcile_job
+from src.scheduling.jobs.outbox import _outbox_drain_job
 from src.scheduling.jobs.preference_learning import (
     _dpo_finetune_job,
     _preference_rule_detector_job,
@@ -189,6 +190,21 @@ def start_scheduler(
         trigger=CronTrigger(hour=4, minute=0, timezone="UTC"),
         id="copilot_schema_reindex",
         name="copilot_schema_reindex",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Q.68.1.B — drena event_outbox para Kafka cada 5s. Antes deste job
+    # o dispatcher só corria no shutdown (src/app/startup.py), por isso
+    # eventos pendentes ficavam orphaned após crash. coalesce=True +
+    # max_instances=1 previne corridas paralelas; FOR UPDATE SKIP LOCKED
+    # no SQL do dispatcher garante idempotência se houver múltiplos
+    # workers. No-op limpo quando Kafka indisponível.
+    _scheduler.add_job(
+        _outbox_drain_job,
+        trigger=IntervalTrigger(seconds=5),
+        id="outbox_drain",
+        name="outbox_drain",
         replace_existing=True,
         coalesce=True,
         max_instances=1,
