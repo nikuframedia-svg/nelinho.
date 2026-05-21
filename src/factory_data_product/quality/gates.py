@@ -103,7 +103,7 @@ async def load_quality_tenant_config(service: Any) -> Dict[str, Any]:
         return {}
     try:
         values = await service.get_category(TENANT_CONFIG_CATEGORY_QUALITY)
-    except Exception as exc:  # noqa: BLE001  Q.67.1.C: best-effort tenant config read
+    except Exception as exc:
         _log.warning(
             "load_quality_tenant_config: failed to read category %r (%s); "
             "falling back to defaults",

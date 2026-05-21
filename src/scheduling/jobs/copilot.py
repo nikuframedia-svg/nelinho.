@@ -46,5 +46,5 @@ async def _copilot_schema_reindex_job() -> None:
             "copilot_schema_reindex ok chunks=%d tenant=%s",
             chunks, tenant_id,
         )
-    except Exception as exc:  # noqa: BLE001  Q.67.4.E: best-effort nightly job
+    except Exception as exc:
         logger.warning("copilot_schema_reindex failed: %s", exc)
