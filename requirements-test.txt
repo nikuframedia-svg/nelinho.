@@ -95,3 +95,9 @@ import-linter>=2.0,<3
 # esconder mutation < 35% (Anthropic post-mortem Abril 2026). Mutmut e
 # o motor; o script e o gate.
 mutmut>=2.5,<3
+
+# Q.68.0.0c — arq queue (Q.62.D.1 CPO scheduler async). Necessario para
+# tests/plan/test_cpo_worker_q62_d.py + tests/plan/test_cpo_async_endpoints_q62_d.py
+# + tests/diagnostics/test_diagnostics_smoke.py (plan module imports
+# src.plan.cpo.worker que importa arq). Usa Redis como broker.
+arq>=0.26.0,<1.0

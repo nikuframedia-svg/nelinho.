@@ -1,6 +1,11 @@
 """Q.61.22 — lifespan paraleliza Redis/Kafka/tool_registry/YAML refresh.
 
-AST inspection do lifespan em src/main.py:
+AST inspection do lifespan (Q.67.6.C2 moveu de src/main.py para
+src/app/startup.py via src/app/lifespan.py). A logica gather + degraded
+ficou em src/app/startup.py:run_startup; src/app/lifespan.py apenas
+wrap-a num asynccontextmanager. Inspecciona-se ambos para cobrir o
+invariante completo.
+
   * usa `asyncio.gather` para paralelizar subsistemas
   * mantem `init_db` ANTES (e dep de schema; nao paraleliza)
   * usa `return_exceptions=True` para nao crashar startup se um cair
@@ -15,17 +20,31 @@ from pathlib import Path
 
 
 def _module_source() -> str:
-    import src.main as main_mod
-    return Path(inspect.getfile(main_mod)).read_text(encoding="utf-8")
+    """Source de src/app/startup.py (onde o gather + degraded vive
+    após Q.67.6.C2 decomp). Fallback para src/main.py para compat."""
+    try:
+        import src.app.startup as startup_mod
+        return Path(inspect.getfile(startup_mod)).read_text(encoding="utf-8")
+    except ImportError:
+        import src.main as main_mod
+        return Path(inspect.getfile(main_mod)).read_text(encoding="utf-8")
 
 
 def _lifespan_node() -> ast.FunctionDef | ast.AsyncFunctionDef:
+    """Localiza a função que contém o asyncio.gather invariante.
+    Pós Q.67.6.C2 é `run_startup` em src/app/startup.py; pre era
+    `lifespan` em src/main.py.
+    """
     tree = ast.parse(_module_source())
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if node.name == "lifespan":
-                return node
-    raise AssertionError("funcao lifespan nao encontrada em src/main.py")
+    for target_name in ("run_startup", "lifespan"):
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if node.name == target_name:
+                    return node
+    raise AssertionError(
+        "Q.67.6.C2 invariant: nem run_startup (src/app/startup.py) nem "
+        "lifespan (src/main.py) encontrados — alguém quebrou a decomp."
+    )
 
 
 def _calls(func_node, full_name: str) -> int:
