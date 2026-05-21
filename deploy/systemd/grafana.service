@@ -1,0 +1,72 @@
+# Q.68.2.D — Grafana dashboards systemd unit (template).
+#
+# Estado: muitas distros já trazem um `grafana-server.service` instalado pelo
+# pacote oficial (apt/yum). Nesse caso preferir um *drop-in* override em vez
+# de substituir o unit do pacote:
+#
+#     sudo mkdir -p /etc/systemd/system/grafana-server.service.d
+#     sudo cp deploy/systemd/grafana.service \
+#             /etc/systemd/system/grafana-server.service.d/override.conf
+#     # (manter apenas a secção [Service] no override)
+#     sudo systemctl daemon-reload
+#     sudo systemctl enable --now grafana-server
+#
+# Se Grafana foi instalado por binário standalone (sem pacote), copiar tal e
+# qual para /etc/systemd/system/grafana.service.
+#
+# Pré-requisitos:
+#   1. Instalar Grafana OSS >= 10.4 (apt repo oficial é o caminho rápido):
+#        curl -fsSL https://apt.grafana.com/gpg.key | sudo gpg --dearmor \
+#            -o /usr/share/keyrings/grafana.gpg
+#        echo "deb [signed-by=/usr/share/keyrings/grafana.gpg] \
+#            https://apt.grafana.com stable main" | sudo tee \
+#            /etc/apt/sources.list.d/grafana.list
+#        sudo apt update && sudo apt install -y grafana
+#   2. User `grafana` é criado pelo pacote; binário fica em
+#      /usr/sbin/grafana-server (apt) ou /usr/local/bin/grafana-server (binário).
+#   3. Config: aponta para o ficheiro do nelinho (deploy/grafana.ini), que faz
+#      provisioning automático dos dashboards em monitoring/grafana/dashboards/.
+
+[Unit]
+Description=Grafana dashboards (nelinho)
+Documentation=https://grafana.com/docs/grafana/latest/
+After=network-online.target prometheus.service
+Wants=network-online.target prometheus.service
+
+[Service]
+Type=simple
+User=grafana
+Group=grafana
+WorkingDirectory=/usr/share/grafana
+
+# Admin password vem do env (NUNCA hardcoded no .ini).
+#   /etc/grafana/env contém:   GF_SECURITY_ADMIN_PASSWORD=...
+#   sudo chmod 600 /etc/grafana/env  (contém segredos)
+EnvironmentFile=-/etc/grafana/env
+
+ExecStart=/usr/sbin/grafana-server \
+    --config=/opt/nelinho/deploy/grafana.ini \
+    --homepath=/usr/share/grafana \
+    --packaging=deb \
+    cfg:default.paths.logs=/var/log/grafana \
+    cfg:default.paths.data=/var/lib/grafana \
+    cfg:default.paths.plugins=/var/lib/grafana/plugins \
+    cfg:default.paths.provisioning=/etc/grafana/provisioning
+
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=10000
+
+# Hardening — Grafana só precisa escrever em data/log/plugins.
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/grafana /var/log/grafana /etc/grafana/provisioning
+NoNewPrivileges=true
+PrivateTmp=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=grafana
+
+[Install]
+WantedBy=multi-user.target
