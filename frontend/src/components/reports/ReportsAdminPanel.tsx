@@ -4,37 +4,41 @@
  *   - POST /v1/reports/schedule       (cron picker stub)
  *   - POST /v1/reports/email          (email delivery stub)
  *   - POST /v1/reports/retention      (GDPR retention picker stub)
+ *
+ * Q.67.2.B — migrado de `apiFetch` directo para `reportsApi` (lib/api/platformApi.ts;
+ * `setRetention` adicionado neste sub-sprint) + `reportsKeys` (lib/api/keys.ts).
+ * Tenant + trace_id injectados via `request()` (Q.61.12).
  */
 
 import { useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Calendar, Mail, Shield, Send } from 'lucide-react';
 import { Panel, ZipToneBadge } from '../dark';
-import { getApiBase } from '../../lib/api';
+import { reportsApi, type ReportTemplateId } from '../../lib/api/platformApi';
+import { reportsKeys } from '../../lib/api/keys';
 
-const TENANT = { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' };
-// Q.21.A — porta única via api.ts (concorda com VITE_API_URL).
-const BASE = getApiBase();
-
-const TEMPLATES = ['producao', 'cliente', 'qualidade', 'payroll', 'cogs', 'inventario'] as const;
+const TEMPLATES: ReadonlyArray<ReportTemplateId> = [
+  'producao',
+  'cliente',
+  'qualidade',
+  'payroll',
+  'cogs',
+  'inventario',
+];
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SchedulePanel
 // ═══════════════════════════════════════════════════════════════════════════
 
 export function SchedulePanel() {
-  const [tpl, setTpl] = useState<typeof TEMPLATES[number]>('producao');
+  const qc = useQueryClient();
+  const [tpl, setTpl] = useState<ReportTemplateId>('producao');
   const [cron, setCron] = useState('0 8 * * MON');
 
   const m = useMutation({
-    mutationFn: async () => {
-      const r = await fetch(`${BASE}/v1/reports/schedule`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...TENANT },
-        body: JSON.stringify({ template_id: tpl, cron, enabled: true }),
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return r.json();
+    mutationFn: () => reportsApi.createSchedule({ template_id: tpl, cron, enabled: true }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: reportsKeys.schedules() });
     },
   });
 
@@ -42,7 +46,7 @@ export function SchedulePanel() {
     <Panel title="Schedule auto (cron)" subtitle="POST /v1/reports/schedule">
       <div className="space-y-3">
         <div className="grid grid-cols-2 gap-2">
-          <select value={tpl} onChange={(e) => setTpl(e.target.value as any)}
+          <select value={tpl} onChange={(e) => setTpl(e.target.value as ReportTemplateId)}
             className="rounded-md border px-2 py-1.5 text-xs"
             style={{ background: 'var(--bg-2)', borderColor: 'var(--bd-1)', color: 'var(--fg-1)' }}>
             {TEMPLATES.map((t) => <option key={t} value={t}>{t}</option>)}
@@ -90,7 +94,8 @@ export function SchedulePanel() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export function EmailPanel() {
-  const [tpl, setTpl] = useState<typeof TEMPLATES[number]>('producao');
+  const qc = useQueryClient();
+  const [tpl, setTpl] = useState<ReportTemplateId>('producao');
   const [to, setTo] = useState('luis@nikufra.ai');
   const [cron, setCron] = useState('0 8 * * MON');
 
@@ -98,20 +103,21 @@ export function EmailPanel() {
     mutationFn: async () => {
       const recipients = to.split(',').map((s) => s.trim()).filter(Boolean);
       if (recipients.length === 0) throw new Error('Pelo menos um email destinatário.');
-      const r = await fetch(`${BASE}/v1/reports/email`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...TENANT },
-        body: JSON.stringify({ template_id: tpl, to: recipients, schedule_cron: cron || null }),
+      return reportsApi.email({
+        template_id: tpl,
+        to: recipients,
+        schedule_cron: cron || null,
       });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return r.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: reportsKeys.emails() });
     },
   });
 
   return (
     <Panel title="Email delivery" subtitle="POST /v1/reports/email (SMTP integration pending)">
       <div className="space-y-3">
-        <select value={tpl} onChange={(e) => setTpl(e.target.value as any)}
+        <select value={tpl} onChange={(e) => setTpl(e.target.value as ReportTemplateId)}
           className="w-full rounded-md border px-2 py-1.5 text-xs"
           style={{ background: 'var(--bg-2)', borderColor: 'var(--bd-1)', color: 'var(--fg-1)' }}>
           {TEMPLATES.map((t) => <option key={t} value={t}>{t}</option>)}
@@ -149,25 +155,21 @@ export function EmailPanel() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export function RetentionPanel() {
-  const [tpl, setTpl] = useState<typeof TEMPLATES[number]>('producao');
+  const qc = useQueryClient();
+  const [tpl, setTpl] = useState<ReportTemplateId>('producao');
   const [days, setDays] = useState(365);
 
   const m = useMutation({
-    mutationFn: async () => {
-      const r = await fetch(`${BASE}/v1/reports/retention`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...TENANT },
-        body: JSON.stringify({ template_id: tpl, retention_days: days }),
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return r.json();
+    mutationFn: () => reportsApi.setRetention({ template_id: tpl, retention_days: days }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: reportsKeys.retentions() });
     },
   });
 
   return (
     <Panel title="GDPR retention" subtitle="POST /v1/reports/retention (cleanup job pending)">
       <div className="space-y-3">
-        <select value={tpl} onChange={(e) => setTpl(e.target.value as any)}
+        <select value={tpl} onChange={(e) => setTpl(e.target.value as ReportTemplateId)}
           className="w-full rounded-md border px-2 py-1.5 text-xs"
           style={{ background: 'var(--bg-2)', borderColor: 'var(--bd-1)', color: 'var(--fg-1)' }}>
           {TEMPLATES.map((t) => <option key={t} value={t}>{t}</option>)}

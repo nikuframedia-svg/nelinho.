@@ -7,17 +7,19 @@
  *  3. RopPanel             — GET /v1/supply/rop/{sku_id}
  *  4. AbcPanel             — POST /v1/supply/abc
  *  5. ShortageAlertsPanel  — GET /v1/copilot/alerts (filter source)
+ *
+ * Q.67.2.B — migrado de `apiFetch` directo para `supplyApi`/`supplyAlertsApi`
+ * (lib/api/supplyApi.ts; `abcAnalysisFlat` + `supplyAlertsApi` adicionados
+ * neste sub-sprint) + `supplyKeys` (lib/api/keys.ts). Tenant + trace_id
+ * injectados via `request()` (Q.61.12).
  */
 
 import { useState } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { TrendingUp, Package, AlertTriangle, BarChart3, Calendar } from 'lucide-react';
 import { Panel, ZipToneBadge, EmptyState } from '../dark';
-import { getApiBase } from '../../lib/api';
-
-const TENANT = { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' };
-// Q.21.A — porta única via api.ts (concorda com VITE_API_URL).
-const BASE = getApiBase();
+import { supplyApi, supplyAlertsApi, type CopilotShortageAlert } from '../../lib/api/supplyApi';
+import { supplyKeys } from '../../lib/api/keys';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. ForecastPanel
@@ -43,13 +45,11 @@ export function ForecastPanel() {
         d.setDate(d.getDate() - (60 - i));
         return { ds: d.toISOString().slice(0, 10), y: 100 + Math.sin(i / 7) * 20 };
       });
-      const r = await fetch(`${BASE}/v1/supply/forecast`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...TENANT },
-        body: JSON.stringify({ sku_id: skuId, historical_data: sample, periods_ahead: periods }),
+      return supplyApi.forecast({
+        sku_id: skuId,
+        historical_data: sample,
+        periods_ahead: periods,
       });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return r.json();
     },
   });
 
@@ -172,13 +172,25 @@ export function RopPanel() {
   const [serviceLevel, setServiceLevel] = useState(0.95);
 
   const q = useQuery({
-    queryKey: ['rop', sku, avg, lead, std, serviceLevel],
+    queryKey: supplyKeys.rop({
+      skuId: sku,
+      avgDailyDemand: avg,
+      leadTimeDays: lead,
+      leadTimeStdDev: std,
+      serviceLevel,
+    }),
     queryFn: async () => {
       if (!sku.trim()) return null;
-      const url = `${BASE}/v1/supply/rop/${encodeURIComponent(sku)}?avg_daily_demand=${avg}&lead_time_days=${lead}&lead_time_std_dev=${std}&service_level=${serviceLevel}`;
-      const r = await fetch(url, { headers: TENANT });
-      if (!r.ok) return null;
-      return r.json();
+      try {
+        return await supplyApi.calculateROP(sku, {
+          avg_daily_demand: avg,
+          lead_time_days: lead,
+          lead_time_std_dev: std,
+          service_level: serviceLevel,
+        });
+      } catch {
+        return null;
+      }
     },
     enabled: false,
     retry: 0,
@@ -283,13 +295,7 @@ export function AbcPanel() {
         sku_id: `SKU-${String(i + 1).padStart(3, '0')}`,
         annual_value: Math.round(Math.random() * 100000),
       }));
-      const r = await fetch(`${BASE}/v1/supply/abc`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...TENANT },
-        body: JSON.stringify({ items: sample }),
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return r.json();
+      return supplyApi.abcAnalysisFlat({ items: sample });
     },
   });
 
@@ -369,28 +375,21 @@ export function AbcPanel() {
 // 5. ShortageAlertsPanel
 // ═══════════════════════════════════════════════════════════════════════════
 
-interface CopilotAlert {
-  id?: string;
-  source?: string;
-  severity?: string;
-  message?: string;
-  created_at?: string;
-  payload?: any;
-}
-
 export function ShortageAlertsPanel() {
   const q = useQuery({
-    queryKey: ['copilot-alerts', 'shortage'],
+    queryKey: supplyKeys.shortageAlerts(),
     queryFn: async () => {
-      const r = await fetch(`${BASE}/v1/copilot/alerts?source=shortage_detector&limit=20`, { headers: TENANT });
-      if (!r.ok) return { items: [] as CopilotAlert[] };
-      return r.json();
+      try {
+        return await supplyAlertsApi.listShortageAlerts(20);
+      } catch {
+        return { items: [] as CopilotShortageAlert[] };
+      }
     },
     staleTime: 60_000,
     retry: 0,
   });
 
-  const items = ((q.data as { items?: CopilotAlert[] } | undefined)?.items ?? []) as CopilotAlert[];
+  const items = ((q.data as { items?: CopilotShortageAlert[] } | undefined)?.items ?? []) as CopilotShortageAlert[];
 
   return (
     <Panel

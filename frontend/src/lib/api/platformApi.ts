@@ -469,18 +469,32 @@ export const reportsApi = {
       body: JSON.stringify(payload),
     }),
 
-  /** STUB — gera e tenta entregar por email; em dev vem `skipped`. */
+  /** STUB — gera e tenta entregar por email; em dev vem `skipped`.
+   *  Q.67.2.B — `schedule_cron` opcional (panel admin ReportsAdminPanel
+   *  permite agendar entrega periódica). */
   email: (payload: {
     template_id: ReportTemplateId;
     to: string[];
     format?: ReportFormat;
     since?: string;
     until?: string;
+    schedule_cron?: string | null;
   }) =>
     request<ReportEmailResponse>('/v1/reports/email', {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+
+  /** Q.67.2.B — define a janela de retenção GDPR (Q.22 D-G) para o template.
+   *  Actualiza `retention_days` em todos os schedules do template no tenant. */
+  setRetention: (payload: {
+    template_id: ReportTemplateId;
+    retention_days: number;
+  }) =>
+    request<{ template_id: string; retention_days: number; [k: string]: unknown }>(
+      '/v1/reports/retention',
+      { method: 'POST', body: JSON.stringify(payload) },
+    ),
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════

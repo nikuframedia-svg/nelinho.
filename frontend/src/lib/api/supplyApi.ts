@@ -33,10 +33,12 @@ export const supplyApi = {
     }),
   
   // Forecasting
+  // Q.67.2.B — `historical_data` aceita tanto `{date, quantity}` como `{ds, y}`
+  // (Prophet style). O backend lida com ambas as shapes.
   forecast: (data: {
     sku_id: string;
     periods_ahead?: number;
-    historical_data?: Array<{ date: string; quantity: number }>;
+    historical_data?: Array<{ date: string; quantity: number } | { ds: string; y: number }>;
   }) =>
     request<any>('/v1/supply/forecast', {
       method: 'POST',
@@ -93,6 +95,74 @@ export const supplyApi = {
   
   calculateABC: (data?: any) =>
     request<any>('/v1/supply/abc', { method: 'POST', body: JSON.stringify(data || {}) }),
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Q.67.2.B — helpers para SupplyPanels (ForecastPanel, AbcPanel, ShortageAlertsPanel)
+  // ─────────────────────────────────────────────────────────────────────
+
+  /** ABC analysis tolerante à shape legada `{items: [{sku_id, annual_value}]}`
+   *  do AbcPanel. Converte para `skus_list`, chama o backend e devolve um
+   *  array plano `[{sku_id, total_value, cumulative_pct, abc_class}]` para
+   *  consumo directo. */
+  abcAnalysisFlat: async (input: {
+    items: Array<{ sku_id: string; annual_value: number }>;
+  }): Promise<{
+    items: Array<{
+      sku_id: string;
+      total_value?: number;
+      cumulative_pct?: number;
+      abc_class?: 'A' | 'B' | 'C';
+    }>;
+  }> => {
+    const data = await request<any>('/v1/supply/abc', {
+      method: 'POST',
+      body: JSON.stringify({
+        skus_list: input.items.map((it) => ({
+          sku_id: it.sku_id,
+          value: it.annual_value,
+        })),
+      }),
+    });
+    const dist = data?.distribution ?? {};
+    const out: Array<{
+      sku_id: string;
+      total_value?: number;
+      cumulative_pct?: number;
+      abc_class?: 'A' | 'B' | 'C';
+    }> = [];
+    for (const klass of ['A', 'B', 'C'] as const) {
+      const bucket = dist[klass]?.skus ?? [];
+      for (const sku of bucket) {
+        out.push({
+          sku_id: sku.sku_id,
+          total_value: sku.total_value ?? sku.value,
+          cumulative_pct: sku.cumulative_pct,
+          abc_class: klass,
+        });
+      }
+    }
+    return { items: out };
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Q.67.2.B — Shortage alerts (copilot.alerts filtered por source=shortage_detector)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface CopilotShortageAlert {
+  id?: string;
+  source?: string;
+  severity?: string;
+  message?: string;
+  created_at?: string;
+  payload?: Record<string, unknown>;
+}
+
+export const supplyAlertsApi = {
+  listShortageAlerts: (limit = 20) =>
+    request<{ items?: CopilotShortageAlert[] }>(
+      `/v1/copilot/alerts?source=shortage_detector&limit=${limit}`,
+    ),
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════

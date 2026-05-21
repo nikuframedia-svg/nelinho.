@@ -7,27 +7,18 @@
  *   - POST /v1/ml/models/{name}/versions/{artifact_id}/promote  (promote/rollback)
  *
  * Promote para versão anterior actua como rollback.
+ *
+ * Q.67.2.B — migrado de `apiFetch` directo para `mlApi` (lib/api/platformApi.ts)
+ * + `mlKeys` (lib/api/keys.ts). Tenant + trace_id agora injectados via
+ * `request()` (Q.61.12).
  */
 
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Box, Star, RotateCcw, ChevronRight } from 'lucide-react';
 import { Panel, ZipToneBadge, EmptyState } from '../dark';
-import { getApiBase } from '../../lib/api';
-
-const TENANT = { 'X-Tenant-Id': '00000000-0000-0000-0000-000000000001' };
-// Q.21.A — porta única via api.ts (concorda com VITE_API_URL).
-const BASE = getApiBase();
-
-interface Artifact {
-  id?: string;
-  artifact_id?: string;
-  model_name?: string;
-  version?: string;
-  metrics?: Record<string, any>;
-  created_at?: string;
-  is_active?: boolean;
-}
+import { mlApi, type MlArtifact } from '../../lib/api/platformApi';
+import { mlKeys } from '../../lib/api/keys';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MlRegistryPanel
@@ -38,58 +29,59 @@ export function MlRegistryPanel() {
   const [selected, setSelected] = useState<string | null>(null);
 
   const modelsQ = useQuery({
-    queryKey: ['ml-models'],
+    queryKey: mlKeys.models(),
     queryFn: async () => {
-      const r = await fetch(`${BASE}/v1/ml/models`, { headers: TENANT });
-      if (!r.ok) return [] as string[];
-      return r.json();
+      try {
+        return await mlApi.listModels();
+      } catch {
+        return [] as string[];
+      }
     },
     staleTime: 60_000,
     retry: 0,
   });
 
   const versionsQ = useQuery({
-    queryKey: ['ml-versions', selected],
+    queryKey: mlKeys.versions(selected),
     queryFn: async () => {
-      if (!selected) return [] as Artifact[];
-      const r = await fetch(`${BASE}/v1/ml/models/${encodeURIComponent(selected)}/versions?limit=20`, { headers: TENANT });
-      if (!r.ok) return [] as Artifact[];
-      return r.json();
+      if (!selected) return [] as MlArtifact[];
+      try {
+        return await mlApi.listVersions(selected, { limit: 20 });
+      } catch {
+        return [] as MlArtifact[];
+      }
     },
     enabled: !!selected,
     retry: 0,
   });
 
-  const activeQ = useQuery({
-    queryKey: ['ml-active', selected],
+  const activeQ = useQuery<MlArtifact | null>({
+    queryKey: mlKeys.active(selected),
     queryFn: async () => {
       if (!selected) return null;
-      const r = await fetch(`${BASE}/v1/ml/models/${encodeURIComponent(selected)}/active`, { headers: TENANT });
-      if (!r.ok) return null;
-      return r.json();
+      try {
+        return await mlApi.getActive(selected);
+      } catch {
+        return null;
+      }
     },
     enabled: !!selected,
     retry: 0,
   });
 
   const models = (modelsQ.data ?? []) as string[];
-  const versions = (versionsQ.data ?? []) as Artifact[];
-  const active = activeQ.data as Artifact | null | undefined;
+  const versions = (versionsQ.data ?? []) as MlArtifact[];
+  const active = activeQ.data as MlArtifact | null | undefined;
   const activeId = (active as any)?.id ?? (active as any)?.artifact_id ?? null;
 
   const promoteM = useMutation({
     mutationFn: async (artifactId: string) => {
-      const r = await fetch(`${BASE}/v1/ml/models/${encodeURIComponent(selected!)}/versions/${artifactId}/promote`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...TENANT },
-        body: JSON.stringify({ via_governance: true }),
-      });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return r.json();
+      if (!selected) throw new Error('Sem modelo seleccionado');
+      return mlApi.promote(selected, artifactId, { via_governance: true });
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['ml-active', selected] });
-      qc.invalidateQueries({ queryKey: ['ml-versions', selected] });
+      qc.invalidateQueries({ queryKey: mlKeys.active(selected) });
+      qc.invalidateQueries({ queryKey: mlKeys.versions(selected) });
     },
   });
 
@@ -142,9 +134,9 @@ export function MlRegistryPanel() {
         ) : (
           <div className="space-y-2">
             {versions.map((v) => {
-              const id = v.id ?? v.artifact_id ?? '';
+              const id = v.id ?? '';
               const isActive = id === activeId;
-              const wmape = v.metrics?.wmape ?? v.metrics?.WMAPE;
+              const wmape = (v.metrics as any)?.wmape ?? (v.metrics as any)?.WMAPE;
               return (
                 <div
                   key={id}
