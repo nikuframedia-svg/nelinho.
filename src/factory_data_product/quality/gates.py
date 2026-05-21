@@ -9,6 +9,7 @@ Define all quality checks with:
 - check function: actual validation logic
 """
 
+import logging
 from dataclasses import dataclass, field as _dc_field
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Set
@@ -22,6 +23,94 @@ from src.factory_data_product.excel_columns import (
     Funcionarios as _Func,
 )
 from src.factory_data_product.models.meta import CheckSeverity
+
+_log = logging.getLogger(__name__)
+
+# Q.67.1.C — tenant_config key that controls the severity of the
+# duplicate-business-keys check. NELO data has structural duplicates
+# that the transform step dedupes via business key + ingestion_id, so
+# the default stays ``WARNING``; tenants with already-clean data can
+# escalate to ``BLOCKING`` from /regras → quality.
+TENANT_CONFIG_CATEGORY_QUALITY = "quality"
+TENANT_CONFIG_KEY_DUPLICATES_SEVERITY = "duplicates.severity"
+DEFAULT_DUPLICATES_SEVERITY: CheckSeverity = CheckSeverity.WARNING
+
+
+def _coerce_severity(value: Any, *, default: CheckSeverity) -> CheckSeverity:
+    """Best-effort parse of a config string/enum into ``CheckSeverity``.
+
+    Accepts ``CheckSeverity`` directly, the enum *value* string
+    (``"blocking"``/``"warning"``/``"info"``), or the enum *name*
+    (``"BLOCKING"``/``"WARNING"``/``"INFO"``). Falls back to ``default``
+    on anything unrecognised — quality gates must never crash because
+    the operator typed the wrong word in /regras.
+    """
+    if isinstance(value, CheckSeverity):
+        return value
+    if isinstance(value, str):
+        candidate = value.strip().lower()
+        if not candidate:
+            return default
+        for member in CheckSeverity:
+            if member.value == candidate or member.name.lower() == candidate:
+                return member
+        _log.warning(
+            "quality.duplicates.severity has unknown value %r; using default %s",
+            value, default.value,
+        )
+        return default
+    if value is None:
+        return default
+    _log.warning(
+        "quality.duplicates.severity has unsupported type %s; using default %s",
+        type(value).__name__, default.value,
+    )
+    return default
+
+
+def _resolve_duplicates_severity_from_context(
+    context: Optional[Dict[str, Any]],
+    *,
+    default: CheckSeverity = DEFAULT_DUPLICATES_SEVERITY,
+) -> CheckSeverity:
+    """Read the duplicates-check severity from a sync-friendly context dict.
+
+    Callers that hold an async ``TenantConfigService`` should preload
+    ``context["tenant_config"]`` (a ``{key: value}`` dict scoped to the
+    ``quality`` category — see ``load_quality_tenant_config``); the
+    sync check function then stays pure and testable.
+    """
+    if not context:
+        return default
+    raw = context.get("tenant_config") or {}
+    if not isinstance(raw, dict):
+        return default
+    return _coerce_severity(
+        raw.get(TENANT_CONFIG_KEY_DUPLICATES_SEVERITY),
+        default=default,
+    )
+
+
+async def load_quality_tenant_config(service: Any) -> Dict[str, Any]:
+    """Fetch the ``quality`` category from a ``TenantConfigService``.
+
+    Returned dict is shaped for direct use as ``context["tenant_config"]``
+    when running ``QualityRunner``. Failure is swallowed and returns ``{}``
+    so that an unreachable DB never blocks ingestion — the sync checks
+    fall back to their hard-coded defaults.
+    """
+    if service is None:
+        return {}
+    try:
+        values = await service.get_category(TENANT_CONFIG_CATEGORY_QUALITY)
+    except Exception as exc:  # pragma: no cover - best-effort
+        _log.warning(
+            "load_quality_tenant_config: failed to read category %r (%s); "
+            "falling back to defaults",
+            TENANT_CONFIG_CATEGORY_QUALITY, exc,
+        )
+        return {}
+    return dict(values) if isinstance(values, dict) else {}
 
 
 @dataclass
@@ -135,21 +224,32 @@ def check_required_columns_present(
 def check_no_duplicate_business_keys(
     raw_rows: List[Dict],
     context: Dict,
+    *,
+    severity: Optional[CheckSeverity] = None,
 ) -> CheckResult:
-    """Check for duplicate business keys."""
+    """Check for duplicate business keys.
+
+    Severity is resolved in priority order:
+    1. Explicit ``severity`` keyword argument (used by call-sites that
+       already resolved tenant config themselves).
+    2. ``context["tenant_config"]["quality.duplicates.severity"]`` (the
+       canonical path — see ``load_quality_tenant_config``).
+    3. ``DEFAULT_DUPLICATES_SEVERITY`` (``WARNING``) — preserves the
+       Sprint Q.4 behaviour for tenants that never override the key.
+    """
     duplicates = {}
-    
+
     # Group by sheet and check business keys
     seen_keys: Dict[str, Dict[str, int]] = {}
-    
+
     for row in raw_rows:
         sheet = row["sheet_name"]
         bk_hash = row.get("business_key_sha256")
-        
+
         if bk_hash:
             if sheet not in seen_keys:
                 seen_keys[sheet] = {}
-            
+
             if bk_hash in seen_keys[sheet]:
                 seen_keys[sheet][bk_hash] += 1
                 if sheet not in duplicates:
@@ -160,19 +260,25 @@ def check_no_duplicate_business_keys(
                 })
             else:
                 seen_keys[sheet][bk_hash] = 1
-    
+
     # Sprint Q.4 (≈2026-03): downgraded BLOCKING → WARNING porque o
     # ficheiro NELO original tem duplicados estruturais em
     # FasesOrdemFabrico que a etapa de transformação deduplica via
     # business key + ingestion_id. Bloquear paralisava todos os imports.
     # Sprint Q.12: documentar a alteração e expor `severity` para
-    # configuração futura (ver TODO).
-    # TODO(Sprint Q.13+): mover para `tenant_config["quality.duplicates"]`
-    #   com default `WARNING` e opção `BLOCKING` para tenants com dados
-    #   já limpos, em vez de hardcoded.
+    # configuração futura.
+    # Q.67.1.C: fechado — severity vem de
+    # tenant_config["quality.duplicates.severity"] (default WARNING).
+    # Tenants com dados já limpos podem escalar para BLOCKING via /regras
+    # → quality sem alteração de código.
+    if severity is None:
+        resolved_severity = _resolve_duplicates_severity_from_context(context)
+    else:
+        resolved_severity = severity
+
     return CheckResult(
         check_id="no_duplicate_business_keys",
-        severity=CheckSeverity.WARNING,
+        severity=resolved_severity,
         passed=len(duplicates) == 0,
         details={
             "duplicates_by_sheet": duplicates,
