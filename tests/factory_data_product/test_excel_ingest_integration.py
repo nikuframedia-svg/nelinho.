@@ -21,11 +21,16 @@ from pathlib import Path
 
 import pytest
 
-EXCEL_PATH = Path(__file__).resolve().parents[2] / "Folha_IA_extra.xlsx"
+EXCEL_PATH = (
+    Path(__file__).resolve().parents[2] / "data" / "external" / "Folha_IA_extra.xlsx"
+)
 
 pytestmark = pytest.mark.skipif(
     not EXCEL_PATH.exists(),
-    reason=f"{EXCEL_PATH.name} not available in this environment",
+    reason=(
+        f"{EXCEL_PATH.name} not available at {EXCEL_PATH}. Corre "
+        "scripts/fetch_folha_ia.py para instruções."
+    ),
 )
 
 

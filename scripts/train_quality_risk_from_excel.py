@@ -284,7 +284,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument(
         "--excel",
-        default="Folha_IA_extra.xlsx",
+        default="data/external/Folha_IA_extra.xlsx",
         help="Path to the NELO Excel export (default: %(default)s)",
     )
     parser.add_argument(
@@ -327,7 +327,12 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     excel_path = Path(args.excel).resolve()
     if not excel_path.exists():
-        logger.error("Excel file not found: %s", excel_path)
+        logger.error(
+            "Excel file not found: %s. Corre "
+            "`.venv\\Scripts\\python.exe scripts/fetch_folha_ia.py` "
+            "para instruções (Q.67.2.D — ficheiro fora do git).",
+            excel_path,
+        )
         return 2
 
     rows = load_dataset(excel_path)

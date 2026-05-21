@@ -1,6 +1,6 @@
 {
   "output_path": "data\\learning\\datasets\\excel_derived_v1.jsonl",
-  "excel_path": "Folha_IA_extra.xlsx",
+  "excel_path": "data/external/Folha_IA_extra.xlsx",
   "excel_sha256": "385963418468c45aac9cdd68bff3865bfd16d797f12f8de1eee3f22dfdea3836",
   "triplets_total": 183,
   "by_extractor": {

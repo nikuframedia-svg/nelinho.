@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 
 EXTRACTOR_VERSION = "v1.0"
 
-DEFAULT_EXCEL = Path("Folha_IA_extra.xlsx")
+DEFAULT_EXCEL = Path("data/external/Folha_IA_extra.xlsx")
 DEFAULT_OUTPUT = Path("data/learning/datasets/excel_derived_v1.jsonl")
 DEFAULT_MANIFEST = Path("data/learning/datasets/excel_derived_v1.manifest.json")
 

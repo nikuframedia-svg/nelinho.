@@ -35,7 +35,9 @@ from src.factory_data_product.models.curated import (
 )
 from src.shared.database import async_session_factory
 
-WORKBOOK = Path(__file__).resolve().parent.parent / "Folha_IA_extra.xlsx"
+WORKBOOK = (
+    Path(__file__).resolve().parent.parent / "data" / "external" / "Folha_IA_extra.xlsx"
+)
 SHEET = "Moldes"
 
 
@@ -49,6 +51,12 @@ def _s(value: object) -> str | None:
 
 def _read_moldes() -> list[dict[str, object]]:
     """Lê a folha Moldes → lista de dicts {coluna: valor}."""
+    if not WORKBOOK.exists():
+        raise SystemExit(
+            f"Workbook {WORKBOOK} não existe. Corre "
+            "`.venv\\Scripts\\python.exe scripts/fetch_folha_ia.py` "
+            "para instruções (Q.67.2.D — ficheiro fora do git)."
+        )
     wb = openpyxl.load_workbook(WORKBOOK, read_only=True, data_only=True)
     if SHEET not in wb.sheetnames:
         raise SystemExit(f"Folha '{SHEET}' não existe em {WORKBOOK.name}")

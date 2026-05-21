@@ -167,6 +167,11 @@ scripts/q55_run_console.txt
 # *.xlsx
 # *.csv
 
+# Q.67.2.D — external data files (Folha_IA_extra.xlsx etc.) ficam fora
+# do git; ver scripts/fetch_folha_ia.py para o sha256 known-good.
+data/external/
+!data/external/.gitkeep
+
 
 
 
