@@ -110,9 +110,20 @@ else:
           "default de generations nao encontrado")
 
 # D2 / ST1
-dec_src = Path("src/plan/cpo/decoder.py").read_text(encoding="utf-8")
+# Q.67.6.B3: decoder.py decomposto em decoder_helpers.py + decoder_resources.py
+# + decoder_kpis.py. min_gap_hours pode estar em qualquer um — concatena para
+# manter invariante "decoder layer chama min_gap_hours".
+_decoder_files = [
+    "src/plan/cpo/decoder.py",
+    "src/plan/cpo/decoder_helpers.py",
+    "src/plan/cpo/decoder_resources.py",
+    "src/plan/cpo/decoder_kpis.py",
+]
+dec_src = "\n".join(
+    Path(f).read_text(encoding="utf-8") for f in _decoder_files if Path(f).exists()
+)
 check("D2-curing", "min_gap_hours" in dec_src,
-      "decoder nao chama min_gap_hours")
+      "decoder layer (decoder.py + sub-modulos Q.67.6.B3) nao chama min_gap_hours")
 state_src = Path("src/plan/cpo/state.py").read_text(encoding="utf-8")
 check("ST1-data", "phase_transition_gaps" in state_src,
       "FactoryState sem phase_transition_gaps")
