@@ -15,10 +15,22 @@ REPO = Path(__file__).resolve().parents[2]
 
 # --- Φ5: CORS no longer wildcards methods/headers with credentials ----------
 
+def _read_app_bootstrap_text() -> str:
+    """Concatenate the FastAPI bootstrap surface — main.py + middleware_registry.
+
+    Q.67.6.C2 moved the CORS config out of `src/main.py` into
+    `src/app/middleware_registry.py`. These guard tests still defend the
+    same invariants; they just have to look in both files now.
+    """
+    main_text = (REPO / "src" / "main.py").read_text(encoding="utf-8")
+    mw_text = (REPO / "src" / "app" / "middleware_registry.py").read_text(encoding="utf-8")
+    return main_text + "\n" + mw_text
+
+
 def test_cors_methods_explicit_not_wildcard():
     """Strip comment lines before searching so doc/why notes can mention the
     old buggy directive without tripping the guard."""
-    text = (REPO / "src" / "main.py").read_text(encoding="utf-8")
+    text = _read_app_bootstrap_text()
     code_only = "\n".join(
         line for line in text.splitlines() if not line.lstrip().startswith("#")
     )
@@ -27,7 +39,7 @@ def test_cors_methods_explicit_not_wildcard():
 
 
 def test_cors_headers_listed_explicitly():
-    text = (REPO / "src" / "main.py").read_text(encoding="utf-8")
+    text = _read_app_bootstrap_text()
     # Sanity: explicit headers we expect the API to accept.
     for header in ("Authorization", "Content-Type", "X-Tenant-Id", "X-User-Id"):
         assert f'"{header}"' in text

@@ -33,6 +33,7 @@ SRC_DIR = REPO_ROOT / "src"
 # falha e força a actualização manual desta constante.
 MODULES = sorted([
     "src.adapters",
+    "src.app",  # Q.67.6.C2 — extraído de src/main.py god-file (startup/lifespan/registries)
     "src.copilot",
     "src.core",
     "src.diagnostics",
