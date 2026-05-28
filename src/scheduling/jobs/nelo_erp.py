@@ -47,7 +47,10 @@ async def _nelo_erp_sync_job() -> None:
 #: 5/5 min. Master/molds/skills mudam devagar (cadência nocturna chega);
 #: time_mining é pesado (cadência semanal). Estes três espelham dados
 #: que mudam ao longo do dia — stock, calendário, qualidade.
+#: Q.115.T: phase_history e worker_assignment adicionados ao incremental
+#: (15 min em vez de 5 — tabelas de alta cardinalidade).
 _INCREMENTAL_MIRRORS = ["stock", "calendar", "quality"]
+_INCREMENTAL_MIRRORS_PHASE = ["phase_history", "worker_assignment"]
 
 
 async def _nelo_erp_incremental_sync_job() -> None:
@@ -111,6 +114,62 @@ async def _nelo_erp_incremental_sync_job() -> None:
     except Exception as exc:
         logger.error(
             "nelo_erp_incremental_sync failed: %s", exc, exc_info=True,
+        )
+
+
+async def _nelo_erp_phase_history_incremental_job() -> None:
+    """Q.115.T — sync incremental phase_history + worker_assignment (15 min).
+
+    Alta cardinalidade — corre separado dos outros incrementais para nao
+    bloquear stock/calendar/quality. Watermark por mirror via core.etl_run.
+    No-op quando ``sqlserver_enabled=False``.
+    """
+    from src.shared.config import settings
+
+    if not settings.sqlserver_enabled:
+        logger.debug(
+            "nelo_erp_phase_history_incremental skipped — sqlserver_enabled=False"
+        )
+        return
+
+    from src.adapters.nelo.etl.sync import (
+        _load_mirror_modules,
+        last_sync_watermarks,
+        registered_mirrors,
+        run_nelo_sync,
+    )
+    from src.shared.database import get_session_context
+
+    _load_mirror_modules()
+    known = set(registered_mirrors())
+    selected = [m for m in _INCREMENTAL_MIRRORS_PHASE if m in known]
+    if not selected:
+        logger.warning(
+            "nelo_erp_phase_history_incremental — nenhum mirror registado "
+            "(esperados=%s)", _INCREMENTAL_MIRRORS_PHASE,
+        )
+        return
+
+    tenant_id = UUID("00000000-0000-0000-0000-000000000001")  # dev tenant
+    started = datetime.utcnow()
+    try:
+        async with get_session_context() as session:
+            watermarks = await last_sync_watermarks(session, tenant_id, selected)
+        results = await run_nelo_sync(
+            only=selected, tenant_id=tenant_id, since=watermarks,
+        )
+        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        failed = [r.source for r in results if r.status not in ("ok", "skipped")]
+        logger.info(
+            "nelo_erp_phase_history_incremental mirrors=%s watermarks=%s "
+            "failed=%s elapsed_ms=%s",
+            [r.source for r in results],
+            {k: v.isoformat() for k, v in watermarks.items()},
+            failed or "none", elapsed_ms,
+        )
+    except Exception as exc:
+        logger.error(
+            "nelo_erp_phase_history_incremental failed: %s", exc, exc_info=True,
         )
 
 

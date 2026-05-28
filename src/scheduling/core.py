@@ -37,6 +37,7 @@ from src.scheduling.jobs.ml import (
 )
 from src.scheduling.jobs.nelo_erp import (
     _nelo_erp_incremental_sync_job,
+    _nelo_erp_phase_history_incremental_job,
     _nelo_erp_sync_job,
     _nelo_erp_time_mining_job,
 )
@@ -46,6 +47,8 @@ from src.scheduling.jobs.preference_learning import (
     _preference_rule_detector_job,
     _preference_weights_retrain_job,
 )
+from src.scheduling.jobs.phase_operator_affinity import _phase_operator_affinity_job
+from src.scheduling.jobs.runbook_learning import _runbook_learning_job
 from src.scheduling.jobs.supply import _shortage_scan_job
 
 logger = logging.getLogger(__name__)
@@ -171,6 +174,18 @@ def start_scheduler(
         coalesce=True,
         max_instances=1,
     )
+    # Q.115.T — sync incremental phase_history + worker_assignment (15 min).
+    # Alta cardinalidade — job separado para nao bloquear stock/calendar.
+    # No-op quando sqlserver_enabled=False.
+    _scheduler.add_job(
+        _nelo_erp_phase_history_incremental_job,
+        trigger=IntervalTrigger(minutes=15),
+        id="nelo_erp_phase_history_incremental",
+        name="nelo_erp_phase_history_incremental",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
     # Q.54.B — reconciliação do estado das ordens com a fase actual.
     # Postgres-interna, corre sempre (independente de sqlserver_enabled).
     _scheduler.add_job(
@@ -290,6 +305,19 @@ def register_tenant(
         coalesce=True,
         max_instances=1,
     )
+    # Q.115.G — phase_operator_affinity: afinidade operador/fase.
+    # 03:30 UTC, após o preference_rule_detector (03:00). Recomputa
+    # scores a partir dos últimos 90d de fases_of_history. Idempotente.
+    _scheduler.add_job(
+        _phase_operator_affinity_job,
+        trigger=CronTrigger(hour=3, minute=30, timezone="UTC"),
+        args=[tenant_id],
+        id=f"phase_operator_affinity:{tenant_id}",
+        name=f"phase_operator_affinity[{tenant_id}]",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
     # Sprint D.4 — AdaptiveFitnessWeights (Camada 2). Weekly retrain on
     # Sunday 02:00 UTC so the weights the GA reads on Monday morning are
     # fresh. Weekly cadence (not daily) matches the sample budget: <50
@@ -365,6 +393,20 @@ def register_tenant(
         args=[tenant_id],
         id=f"improve_adoption_signal:{tenant_id}",
         name=f"improve_adoption_signal[{tenant_id}]",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Q.115.H — aprendizagem diária de runbooks (04:00 UTC).
+    # Lê top-20 error_codes mais frequentes nos últimos 30d e tenta
+    # construir runbooks a partir de padrões observados. Runbooks ficam
+    # em approved_by=NULL até aprovação humana — nunca actuam sozinhos.
+    _scheduler.add_job(
+        _runbook_learning_job,
+        trigger=CronTrigger(hour=4, minute=0, timezone="UTC"),
+        args=[tenant_id],
+        id=f"runbook_learning:{tenant_id}",
+        name=f"runbook_learning[{tenant_id}]",
         replace_existing=True,
         coalesce=True,
         max_instances=1,

@@ -43,6 +43,7 @@ from .schemas import (
     BomRow,
     EntityPhaseRow,
     EntityRow,
+    FasesOfHistoryRow,
     HealthCheckResult,
     MoldRow,
     MovementRow,
@@ -56,6 +57,7 @@ from .schemas import (
     RoutingRow,
     ScheduleRow,
     WarehouseStockRow,
+    WorkerAssignmentRow,
 )
 
 # ─── Engine ─────────────────────────────────────────────────────────────
@@ -664,6 +666,83 @@ async def count_movements_last_n_days(days: int = 30) -> int:
     return int(n or 0)
 
 
+# ─── Phase history (Q.115.T) ────────────────────────────────────────────
+
+
+async def list_phase_history(
+    since: "date | None" = None,
+    limit: int = 50_000,
+) -> list[FasesOfHistoryRow]:
+    """Historico de fases por OF de `dbo.FasesOf`.
+
+    Q.115.T: fonte para `plan.fases_of_history`. Ordena por fase_inicio ASC
+    para que o watermark incremental avance correctamente.
+
+    ``since`` filtra por `FaseOf_DataInicio >= since` (janela incremental).
+    ``limit`` e um cap de seguranca — full sync diario 3 anos passa um limit
+    generoso (ou None para sem limite no full sync, mas usar com cuidado em
+    tabela de 2.6M linhas).
+    """
+    top_clause = f"TOP {int(limit)}" if limit else ""
+    since_clause = (
+        f"WHERE fo.FaseOf_DataInicio >= :since_dt"
+        if since is not None
+        else ""
+    )
+    params: dict[str, Any] = {}
+    if since is not None:
+        params["since_dt"] = since
+    sql = f"""
+    SELECT {top_clause}
+        fo.OF_Id            AS of_id,
+        fo.FaseOf_Id        AS phase_id,
+        fo.FaseOf_DataInicio AS fase_inicio,
+        fo.FaseOf_DataFim    AS fase_fim,
+        fo.WorkerId          AS worker_id,
+        fo.MoldeId           AS mold_id
+    FROM dbo.FasesOf fo WITH (NOLOCK)
+    {since_clause}
+    ORDER BY fo.FaseOf_DataInicio ASC
+    """
+    rows = await _fetch_all(sql, params if params else None)
+    return [FasesOfHistoryRow(**r) for r in rows]
+
+
+async def list_worker_assignments(
+    since: "date | None" = None,
+    limit: int = 50_000,
+) -> list[WorkerAssignmentRow]:
+    """Atribuicoes de operadores a fases de `dbo.WorkerAssignment`.
+
+    Q.115.T: fonte para `hr.worker_phase_assignment`.
+    ``since`` filtra por `Atribuido_Em >= since`.
+    """
+    top_clause = f"TOP {int(limit)}" if limit else ""
+    since_clause = (
+        "WHERE wa.Atribuido_Em >= :since_dt"
+        if since is not None
+        else ""
+    )
+    params: dict[str, Any] = {}
+    if since is not None:
+        params["since_dt"] = since
+    sql = f"""
+    SELECT {top_clause}
+        wa.WorkerId      AS worker_id,
+        wa.OF_Id         AS of_id,
+        wa.FaseOf_Id     AS phase_id,
+        wa.Atribuido_Em  AS assigned_at,
+        wa.Iniciado_Em   AS started_at,
+        wa.Terminado_Em  AS ended_at,
+        wa.Tipo          AS tipo
+    FROM dbo.WorkerAssignment wa WITH (NOLOCK)
+    {since_clause}
+    ORDER BY wa.Atribuido_Em ASC
+    """
+    rows = await _fetch_all(sql, params if params else None)
+    return [WorkerAssignmentRow(**r) for r in rows]
+
+
 # ─── Health-check aggregate ─────────────────────────────────────────────
 
 
@@ -702,7 +781,9 @@ __all__: Sequence[str] = (
     "list_phases",
     "list_product_stock",
     "list_products",
+    "list_phase_history",
     "list_recent_movements",
     "list_stock_by_warehouse",
+    "list_worker_assignments",
     "top_products_by_orders",
 )
