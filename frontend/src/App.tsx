@@ -7,6 +7,7 @@ import { ContractDegradedBanner } from './components/ContractDegradedBanner';
 import { SkeletonLoader } from './components/ui/Skeleton';
 import { CommandPaletteProvider } from './hooks';
 import { RealtimeProvider } from './providers/RealtimeProvider';
+import { EntitySheetProvider, ActiveEntitySheet } from './components/entitySheets';
 
 /**
  * App router — Q.115.P (consolidação 4 páginas).
@@ -80,31 +81,34 @@ function App() {
           {/* Sprint D.2 — uma só ligação SSE partilhada para toda a app. */}
           <RealtimeProvider>
             <BrowserRouter>
-              <ContractDegradedBanner />
+              <EntitySheetProvider>
+                <ContractDegradedBanner />
 
-              <Routes>
-                {/* ── Standalone (fora do Layout, sem sidebar) ── */}
-                <Route path="/login" element={<Lazy count={3}><LoginPage /></Lazy>} />
-                {/* Q.52.Q — tablet do operador em ecrã inteiro. */}
-                <Route path="/operador" element={<Lazy count={3}><OperadorTabletPage /></Lazy>} />
+                <Routes>
+                  {/* ── Standalone (fora do Layout, sem sidebar) ── */}
+                  <Route path="/login" element={<Lazy count={3}><LoginPage /></Lazy>} />
+                  {/* Q.52.Q — tablet do operador em ecrã inteiro. */}
+                  <Route path="/operador" element={<Lazy count={3}><OperadorTabletPage /></Lazy>} />
 
-                <Route path="/" element={<Layout />}>
-                  {/* Raiz → Decisões (página principal Q.115). */}
-                  <Route index element={<Navigate to="/decisoes" replace />} />
+                  <Route path="/" element={<Layout />}>
+                    {/* Raiz → Decisões (página principal Q.115). */}
+                    <Route index element={<Navigate to="/decisoes" replace />} />
 
-                  {/* ── 4 páginas activas Q.115 ── */}
-                  <Route path="decisoes" element={<Lazy><DecisoesPage /></Lazy>} />
-                  <Route path="overall"  element={<Lazy count={4}><OverallPage /></Lazy>} />
-                  <Route path="llm"      element={<Lazy count={3}><LLMPage /></Lazy>} />
-                  <Route path="configuracoes" element={<Lazy><ConfiguracoesPage /></Lazy>} />
+                    {/* ── 4 páginas activas Q.115 ── */}
+                    <Route path="decisoes" element={<Lazy><DecisoesPage /></Lazy>} />
+                    <Route path="overall"  element={<Lazy count={4}><OverallPage /></Lazy>} />
+                    <Route path="llm"      element={<Lazy count={3}><LLMPage /></Lazy>} />
+                    <Route path="configuracoes" element={<Lazy><ConfiguracoesPage /></Lazy>} />
 
-                  {/* ── Pesquisa global (overlay) ── */}
-                  <Route path="pesquisa" element={<Lazy count={4}><SearchResultsPage /></Lazy>} />
+                    {/* ── Pesquisa global (overlay) ── */}
+                    <Route path="pesquisa" element={<Lazy count={4}><SearchResultsPage /></Lazy>} />
 
-                  {/* ── Catch-all → 404 PT-PT ── */}
-                  <Route path="*" element={<NotFoundPage />} />
-                </Route>
-              </Routes>
+                    {/* ── Catch-all → 404 PT-PT ── */}
+                    <Route path="*" element={<NotFoundPage />} />
+                  </Route>
+                </Routes>
+                <ActiveEntitySheet />
+              </EntitySheetProvider>
             </BrowserRouter>
           </RealtimeProvider>
         </ToastProvider>

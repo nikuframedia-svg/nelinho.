@@ -1,0 +1,529 @@
+"""Q.116.A — 4 endpoints agregadores para os sheets contextuais.
+
+READ-ONLY. Cada endpoint serve um sheet (Modelo / Fase / Cliente /
+Encomenda) do frontend nelinho. Reutiliza serviços e modelos existentes
+— zero lógica nova de negócio, só agregação.
+
+Endpoints:
+  GET /v1/entity/modelo/{model_id}       → ModeloSummary
+  GET /v1/entity/fase/{phase_id}         → FaseSummary
+  GET /v1/entity/cliente/{customer_id}   → ClienteSummary
+  GET /v1/entity/encomenda/{legacy_id}   → EncomendaSummary
+
+Padrões:
+  - `tenant_id` injectado via `require_tenant_header`.
+  - 404 quando a entidade principal não existe.
+  - Lista vazia (não 404) quando a entidade existe mas não tem
+    dados secundários (ex: modelo sem routing_template, fase sem
+    afinidades aprendidas).
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import List, Optional
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
+from sqlalchemy import and_, distinct, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.core.models.client_priority import ClientPriority
+from src.core.models.employee import Employee
+from src.core.models.partner import Customer
+from src.governance.models.boat_phase_score import BoatPhaseScore
+from src.governance.models.phase_operator_affinity import PhaseOperatorAffinity
+from src.plan.cpo.state import NELO_CURING_GAPS_SEED, normalize_phase_code
+from src.plan.models.order import OrderStatus, ProductionOrder
+from src.plan.models.routing_template import RoutingTemplatePhase
+from src.plan.services.phase_classification import is_completed_phase
+from src.plan.services.routing_template_service import (
+    RoutingTemplateNotFoundError,
+    RoutingTemplateService,
+)
+from src.shared.auth.headers import require_tenant_header
+from src.shared.database import get_session
+
+logger = logging.getLogger(__name__)
+
+
+# ─── Schemas ─────────────────────────────────────────────────────────────────
+
+
+class PhaseInTemplate(BaseModel):
+    seq: int
+    phase_id: str
+    phase_name: Optional[str]
+    duration_p50_h: Optional[float]
+    can_skip: bool
+
+
+class RoutingTemplateOut(BaseModel):
+    id: UUID
+    code: str
+    name: str
+    phase_count: int
+    phases: List[PhaseInTemplate]
+
+
+class ModeloSummary(BaseModel):
+    # `model_` é um namespace protegido em Pydantic v2; silenciamos o
+    # warning porque o domínio NELO usa "modelo" para barco (não LLM).
+    model_config = {"protected_namespaces": ()}
+
+    model_id: str
+    model_name: str
+    product_type: Optional[str]
+    routing_template: Optional[RoutingTemplateOut]
+    active_orders_count: int
+    in_production_count: int
+
+
+class OperatorScore(BaseModel):
+    operator_id: str
+    operator_name: str
+    score: float
+    sample_count: int
+
+
+class BoatScore(BaseModel):
+    boat_id: str
+    score: float
+    sample_count: int
+
+
+class CuringGap(BaseModel):
+    from_phase: str
+    to_phase: str
+    hours: float
+
+
+class FaseSummary(BaseModel):
+    phase_id: str
+    phase_name: str
+    top_operators: List[OperatorScore]
+    difficult_boats: List[BoatScore]
+    curing_gaps_in: List[CuringGap]
+    curing_gaps_out: List[CuringGap]
+
+
+class OrderInList(BaseModel):
+    legacy_id: int
+    product_name: str
+    current_phase_name: str
+    transport_date: Optional[str]
+    status: str
+
+
+class ClienteSummary(BaseModel):
+    customer_id: str
+    customer_name: str
+    priority: Optional[int]
+    active_orders_count: int
+    orders: List[OrderInList]
+
+
+class PhaseHistoryEntry(BaseModel):
+    phase_name: str
+    start_at: Optional[str]
+    end_at: Optional[str]
+
+
+class EncomendaSummary(BaseModel):
+    legacy_id: int
+    product_name: str
+    product_type: Optional[str]
+    customer_name: Optional[str]
+    status: str
+    current_phase_name: str
+    created_date: Optional[str]
+    transport_date: Optional[str]
+    completed_date: Optional[str]
+    phase_history: List[PhaseHistoryEntry]
+
+
+# ─── Router ──────────────────────────────────────────────────────────────────
+
+
+router = APIRouter(prefix="/v1/entity", tags=["Q.116.A Entity Summary"])
+
+
+# ─── Helpers ─────────────────────────────────────────────────────────────────
+
+
+def _status_value(order: ProductionOrder) -> str:
+    s = order.status
+    return s.value if hasattr(s, "value") else str(s)
+
+
+# ─── Endpoint: Modelo ────────────────────────────────────────────────────────
+
+
+@router.get("/modelo/{model_id}", response_model=ModeloSummary)
+async def get_modelo_summary(
+    model_id: str,
+    tenant_id: UUID = Depends(require_tenant_header),
+    session: AsyncSession = Depends(get_session),
+) -> ModeloSummary:
+    """Sheet "Modelo" — resumo de um modelo NELO.
+
+    `model_id` é a STRING business-key (product_name no ERP). Sem FK
+    rigorosa nesta versão porque o ERP mantém o identificador como string.
+    """
+    # 1. Sondamos production_orders por product_name — define se o modelo
+    #    "existe" (tem encomendas registadas).
+    orders_stmt = (
+        select(ProductionOrder)
+        .where(
+            and_(
+                ProductionOrder.tenant_id == tenant_id,
+                ProductionOrder.product_name == model_id,
+            )
+        )
+    )
+    orders_result = await session.execute(orders_stmt)
+    orders = list(orders_result.scalars().all())
+
+    # 2. product_type — primeiro hit não-nulo das encomendas, ou None.
+    product_type: Optional[str] = None
+    for o in orders:
+        if o.product_type:
+            product_type = o.product_type
+            break
+
+    # 3. Contagens: activas (não CANCELLED) e in_production (não terminal).
+    active_orders_count = 0
+    in_production_count = 0
+    for o in orders:
+        if o.status == OrderStatus.CANCELLED:
+            continue
+        if o.status == OrderStatus.IN_PROGRESS:
+            active_orders_count += 1
+            if not is_completed_phase(o.current_phase_name):
+                in_production_count += 1
+
+    # 4. Routing template — best-effort. None se o modelo ainda não foi
+    #    semeado em `model_routing_assignment`.
+    routing_template_out: Optional[RoutingTemplateOut] = None
+    svc = RoutingTemplateService(session, tenant_id)
+    try:
+        template_id = await svc.resolve_for_model(model_id=model_id, variant="A")
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning("resolve_for_model falhou para %s: %s", model_id, exc)
+        template_id = None
+
+    if template_id is not None:
+        try:
+            template = await svc.get_template(template_id)
+            phases = await svc.template_phases(template_id)
+        except RoutingTemplateNotFoundError:
+            template = None
+            phases = []
+        if template is not None:
+            phase_outs = [
+                PhaseInTemplate(
+                    seq=p.seq,
+                    phase_id=p.phase_id,
+                    phase_name=p.phase_name,
+                    duration_p50_h=(
+                        float(p.duration_p50_h) if p.duration_p50_h is not None else None
+                    ),
+                    can_skip=bool(p.can_skip),
+                )
+                for p in phases
+            ]
+            routing_template_out = RoutingTemplateOut(
+                id=template.id,
+                code=template.code,
+                name=template.name,
+                phase_count=template.phase_count,
+                phases=phase_outs,
+            )
+
+    return ModeloSummary(
+        model_id=model_id,
+        model_name=model_id,  # business-key é também o nome humano no NELO
+        product_type=product_type,
+        routing_template=routing_template_out,
+        active_orders_count=active_orders_count,
+        in_production_count=in_production_count,
+    )
+
+
+# ─── Endpoint: Fase ──────────────────────────────────────────────────────────
+
+
+@router.get("/fase/{phase_id}", response_model=FaseSummary)
+async def get_fase_summary(
+    phase_id: str,
+    tenant_id: UUID = Depends(require_tenant_header),
+    session: AsyncSession = Depends(get_session),
+) -> FaseSummary:
+    """Sheet "Fase" — resumo de uma fase de produção.
+
+    Devolve top-5 operadores (score DESC), top-5 barcos mais difíceis
+    (score ASC) e curing gaps onde a fase é destino (in) ou origem (out).
+
+    404 quando a fase não tem registos em NENHUMA fonte:
+    routing_template_phase, phase_operator_affinity, boat_phase_score,
+    nem aparece em NELO_CURING_GAPS_SEED.
+    """
+    # 1. Nome humano da fase — primeiro nome distinto no routing_template_phase.
+    phase_name_stmt = (
+        select(distinct(RoutingTemplatePhase.phase_name))
+        .where(
+            and_(
+                RoutingTemplatePhase.tenant_id == tenant_id,
+                RoutingTemplatePhase.phase_id == phase_id,
+            )
+        )
+        .limit(1)
+    )
+    phase_name_result = await session.execute(phase_name_stmt)
+    phase_name_row = phase_name_result.scalar_one_or_none()
+    phase_name = phase_name_row or phase_id
+    has_template_match = phase_name_row is not None
+
+    # 2. top_operators — top 5 por score DESC.
+    aff_stmt = (
+        select(PhaseOperatorAffinity)
+        .where(
+            and_(
+                PhaseOperatorAffinity.tenant_id == tenant_id,
+                PhaseOperatorAffinity.phase_id == phase_id,
+            )
+        )
+        .order_by(PhaseOperatorAffinity.score.desc())
+        .limit(5)
+    )
+    aff_result = await session.execute(aff_stmt)
+    affinities = list(aff_result.scalars().all())
+
+    operator_ids = list({a.operator_id for a in affinities})
+    emp_map: dict = {}
+    if operator_ids:
+        emp_stmt = select(Employee).where(
+            and_(
+                Employee.tenant_id == tenant_id,
+                Employee.id.in_(operator_ids),
+            )
+        )
+        emp_result = await session.execute(emp_stmt)
+        emp_map = {e.id: e.employee_name for e in emp_result.scalars().all()}
+
+    top_operators = [
+        OperatorScore(
+            operator_id=str(a.operator_id),
+            operator_name=emp_map.get(a.operator_id, str(a.operator_id)),
+            score=float(a.score),
+            sample_count=int(a.sample_count),
+        )
+        for a in affinities
+    ]
+
+    # 3. difficult_boats — top 5 por score ASC (mais difícil = score mais baixo).
+    boat_stmt = (
+        select(BoatPhaseScore)
+        .where(
+            and_(
+                BoatPhaseScore.tenant_id == tenant_id,
+                BoatPhaseScore.phase_id == phase_id,
+            )
+        )
+        .order_by(BoatPhaseScore.score.asc())
+        .limit(5)
+    )
+    boat_result = await session.execute(boat_stmt)
+    boat_rows = list(boat_result.scalars().all())
+    difficult_boats = [
+        BoatScore(
+            boat_id=r.boat_id,
+            score=float(r.score),
+            sample_count=int(r.sample_count),
+        )
+        for r in boat_rows
+    ]
+
+    # 4. Curing gaps — match case-insensitive contra NELO_CURING_GAPS_SEED.
+    norm_phase = normalize_phase_code(phase_id)
+    curing_gaps_in: List[CuringGap] = []
+    curing_gaps_out: List[CuringGap] = []
+    for from_phase, to_phase, hours, _reason, _n in NELO_CURING_GAPS_SEED:
+        if normalize_phase_code(to_phase) == norm_phase:
+            curing_gaps_in.append(
+                CuringGap(from_phase=from_phase, to_phase=to_phase, hours=float(hours))
+            )
+        if normalize_phase_code(from_phase) == norm_phase:
+            curing_gaps_out.append(
+                CuringGap(from_phase=from_phase, to_phase=to_phase, hours=float(hours))
+            )
+
+    # 5. 404 se NENHUMA fonte conhece a fase.
+    has_any_data = (
+        has_template_match
+        or bool(affinities)
+        or bool(boat_rows)
+        or bool(curing_gaps_in)
+        or bool(curing_gaps_out)
+    )
+    if not has_any_data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Fase {phase_id} sem registos no tenant",
+        )
+
+    return FaseSummary(
+        phase_id=phase_id,
+        phase_name=phase_name,
+        top_operators=top_operators,
+        difficult_boats=difficult_boats,
+        curing_gaps_in=curing_gaps_in,
+        curing_gaps_out=curing_gaps_out,
+    )
+
+
+# ─── Endpoint: Cliente ───────────────────────────────────────────────────────
+
+
+@router.get("/cliente/{customer_id}", response_model=ClienteSummary)
+async def get_cliente_summary(
+    customer_id: UUID,
+    tenant_id: UUID = Depends(require_tenant_header),
+    session: AsyncSession = Depends(get_session),
+) -> ClienteSummary:
+    """Sheet "Cliente" — resumo de um cliente.
+
+    404 quando `customer_id` não existe em core.customers. Lista de
+    encomendas é vazia quando o cliente existe mas ainda não tem
+    encomendas associadas.
+    """
+    # 1. Cliente — 404 se não existir.
+    cust_stmt = select(Customer).where(
+        and_(Customer.tenant_id == tenant_id, Customer.id == customer_id)
+    )
+    cust_result = await session.execute(cust_stmt)
+    customer = cust_result.scalar_one_or_none()
+    if customer is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Cliente {customer_id} não existe",
+        )
+
+    # 2. Prioridade — opcional (pode não estar definida).
+    cp_stmt = select(ClientPriority).where(
+        and_(
+            ClientPriority.tenant_id == tenant_id,
+            ClientPriority.client_id == customer_id,
+        )
+    )
+    cp_result = await session.execute(cp_stmt)
+    cp_row = cp_result.scalar_one_or_none()
+    priority = cp_row.priority if cp_row is not None else None
+
+    # 3. Encomendas associadas ao cliente.
+    # TODO Q.116.C: substituir esta junção por FK adequada
+    # production_orders.customer_id → core.customers.id. Por agora, o
+    # ProductionOrder não tem coluna `customer_name` populada de forma
+    # confiável (Q.53.I está pendente do sync ERP). Deixamos a query
+    # filtrada pelo nome do cliente como contrato, mas em DB stale
+    # devolverá lista vazia — é honesto.
+    orders_stmt = (
+        select(ProductionOrder)
+        .where(
+            and_(
+                ProductionOrder.tenant_id == tenant_id,
+                ProductionOrder.status != OrderStatus.CANCELLED,
+                # Filtro best-effort por customer_name string (Q.53.I).
+                ProductionOrder.product_name.is_not(None),
+            )
+        )
+        .order_by(ProductionOrder.created_date.desc().nullslast())
+        .limit(200)
+    )
+    orders_result = await session.execute(orders_stmt)
+    all_orders = list(orders_result.scalars().all())
+
+    # Filtra em Python pelo customer_name (atributo soft do model — pode
+    # não estar populado ainda).
+    customer_orders = [
+        o for o in all_orders if getattr(o, "customer_name", None) == customer.customer_name
+    ]
+
+    active_orders_count = sum(
+        1 for o in customer_orders if not is_completed_phase(o.current_phase_name)
+    )
+
+    orders_out = [
+        OrderInList(
+            legacy_id=int(o.legacy_id),
+            product_name=o.product_name,
+            current_phase_name=o.current_phase_name,
+            transport_date=(
+                o.transport_date.isoformat() if o.transport_date is not None else None
+            ),
+            status=_status_value(o),
+        )
+        for o in customer_orders[:20]
+    ]
+
+    return ClienteSummary(
+        customer_id=str(customer.id),
+        customer_name=customer.customer_name,
+        priority=priority,
+        active_orders_count=active_orders_count,
+        orders=orders_out,
+    )
+
+
+# ─── Endpoint: Encomenda ─────────────────────────────────────────────────────
+
+
+@router.get("/encomenda/{legacy_id}", response_model=EncomendaSummary)
+async def get_encomenda_summary(
+    legacy_id: int,
+    tenant_id: UUID = Depends(require_tenant_header),
+    session: AsyncSession = Depends(get_session),
+) -> EncomendaSummary:
+    """Sheet "Encomenda" — resumo de uma encomenda (production order).
+
+    `legacy_id` é o inteiro do ERP. 404 se não existir. `phase_history`
+    é uma lista vazia até a sincronização sync.WorkOrderPhase (Q.44.Z)
+    estar populada em produção — ver TODO inline.
+    """
+    stmt = select(ProductionOrder).where(
+        and_(
+            ProductionOrder.tenant_id == tenant_id,
+            ProductionOrder.legacy_id == legacy_id,
+        )
+    )
+    result = await session.execute(stmt)
+    order = result.scalar_one_or_none()
+    if order is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Encomenda legacy_id={legacy_id} não existe",
+        )
+
+    # TODO Q.116.A: phase_history virá quando sync.WorkOrderPhase
+    # (Q.44.Z, ver agent_docs/sprint_history.md) estiver em prod. Hoje
+    # não há tabela 1:N para histórico de fases ligada a
+    # ProductionOrder — devolver lista vazia é honesto, sem mock.
+    phase_history: List[PhaseHistoryEntry] = []
+
+    return EncomendaSummary(
+        legacy_id=int(order.legacy_id),
+        product_name=order.product_name,
+        product_type=order.product_type,
+        customer_name=getattr(order, "customer_name", None),
+        status=_status_value(order),
+        current_phase_name=order.current_phase_name,
+        created_date=order.created_date.isoformat() if order.created_date else None,
+        transport_date=(
+            order.transport_date.isoformat() if order.transport_date else None
+        ),
+        completed_date=(
+            order.completed_date.isoformat() if order.completed_date else None
+        ),
+        phase_history=phase_history,
+    )

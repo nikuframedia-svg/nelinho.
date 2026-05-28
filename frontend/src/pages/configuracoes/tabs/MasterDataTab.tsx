@@ -19,6 +19,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { DarkCard, DarkButton, DarkBadge, EmptyState } from '../../../components/dark';
+import { Clickable } from '../../../components/entitySheets';
 import { SkeletonLoader } from '../../../components/ui/Skeleton';
 import { ConfirmDestructiveModal } from '../../../components/configuracoes/ConfirmDestructiveModal';
 import { cancelActionsApi } from '../../../lib/api/masterDataApi';
@@ -62,27 +63,6 @@ function SeccaoOrdensFabrico() {
   const query = useQuery({
     queryKey: masterDataKeys.workOrders(),
     queryFn: () => cancelActionsApi.listWorkOrders(),
-  });
-
-  const cancelMutation = useMutation({
-    mutationFn: ({ ofId, reason }: { ofId: string; reason: string }) =>
-      cancelActionsApi.cancelWorkOrder(ofId, reason),
-    onSuccess: (data, vars) => {
-      queryClient.invalidateQueries({ queryKey: masterDataKeys.workOrders() });
-      toast.success(`OF ${vars.ofId} cancelada · trace_id=${shortTraceId(data.audit_trace_id)}`);
-      setModalOfId(null);
-    },
-    onError: (err, vars) => {
-      const { is409, is404 } = parseApiError(err);
-      if (is409) {
-        toast.error(`OF ${vars.ofId} já cancelada`);
-        setModalOfId(null);
-      } else if (is404) {
-        toast.error(`OF ${vars.ofId} não encontrada`);
-        setModalOfId(null);
-      }
-      // 422 tratado pelo ConfirmDestructiveModal (re-lança o erro)
-    },
   });
 
   const items = query.data ?? [];
@@ -169,7 +149,9 @@ function SeccaoOrdensFabrico() {
             <tbody>
               {filtered.map((o) => (
                 <tr key={o.of_id} className="border-b border-white/5 hover:bg-white/5">
-                  <td className="py-2 font-mono text-text-dark-primary">{o.of_id}</td>
+                  <td className="py-2 font-mono text-text-dark-primary">
+                    <Clickable kind="encomenda" id={o.of_id}>{o.of_id}</Clickable>
+                  </td>
                   <td className="py-2 text-text-dark-secondary">{o.modelo}</td>
                   <td className="py-2 text-text-dark-tertiary">{o.cliente}</td>
                   <td className="py-2 text-text-dark-tertiary">{o.fase_actual}</td>
@@ -300,7 +282,9 @@ function SeccaoEncomendas() {
             <tbody>
               {filtered.map((e) => (
                 <tr key={e.encomenda_id} className="border-b border-white/5 hover:bg-white/5">
-                  <td className="py-2 font-mono text-text-dark-primary">{e.encomenda_id}</td>
+                  <td className="py-2 font-mono text-text-dark-primary">
+                    <Clickable kind="encomenda" id={e.encomenda_id}>{e.encomenda_id}</Clickable>
+                  </td>
                   <td className="py-2 text-text-dark-secondary">{e.cliente}</td>
                   <td className="py-2 text-text-dark-tertiary">
                     {new Date(e.data).toLocaleDateString('pt-PT')}
@@ -447,7 +431,9 @@ function SeccaoBarcos() {
                     key={b.boat_id}
                     className={`border-b border-white/5 hover:bg-white/5 ${isRetired ? 'opacity-50' : ''}`}
                   >
-                    <td className="py-2 font-mono text-text-dark-primary">{b.boat_id}</td>
+                    <td className="py-2 font-mono text-text-dark-primary">
+                      <Clickable kind="encomenda" id={b.boat_id}>{b.boat_id}</Clickable>
+                    </td>
                     <td className="py-2 text-text-dark-secondary">{b.modelo_nome}</td>
                     <td className="py-2">
                       {isRetired ? (

@@ -18,6 +18,7 @@ import {
 import type { DragEndEvent } from '@dnd-kit/core';
 import { useQuery } from '@tanstack/react-query';
 import { GripVertical } from 'lucide-react';
+import { Clickable } from '../../../components/entitySheets';
 import { EmptyState } from '../../dark';
 import { Timeline, buildDaySlots, dateToSlotIndex } from '../Timeline';
 import type { TimelineLane, TimelineItem } from '../../dark';
@@ -65,7 +66,9 @@ function OpCard({ op, editable }: { op: ScheduledOp; editable: boolean }) {
     >
       {editable && <GripVertical size={9} className="text-slate-500 flex-shrink-0" />}
       <span className="text-slate-200 truncate font-medium">
-        {op.order_id ?? op.id.slice(0, 8)}
+        {op.order_id
+          ? <Clickable kind="encomenda" id={op.order_id}>{op.order_id}</Clickable>
+          : op.id.slice(0, 8)}
       </span>
       <span className="text-slate-400 truncate hidden sm:inline">
         · {op.phase_name}

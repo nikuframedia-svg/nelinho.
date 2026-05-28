@@ -28,3 +28,4 @@ export {
   learningApi as learningPlanApi,
 } from './learningApi';
 // runbookApi (Q.115.H) — já re-exportado via export * from './qualityApi' acima
+export * from './entityApi';

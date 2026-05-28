@@ -161,3 +161,8 @@ def register_routers(app: FastAPI) -> None:
     from src.learning.api_boat_scores import router as boat_scores_router
 
     app.include_router(boat_scores_router)
+
+    # Q.116.A — entity summaries (4 sheets contextuais)
+    from src.plan.api.entity_summary import router as entity_summary_router
+
+    app.include_router(entity_summary_router)

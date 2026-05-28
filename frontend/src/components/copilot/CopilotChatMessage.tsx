@@ -15,10 +15,30 @@
 import type { ReactNode } from 'react';
 import { FileText, AlertTriangle, Check, Play, ExternalLink } from 'lucide-react';
 import { DarkBadge } from '../dark';
+import { Clickable } from '../entitySheets';
 import type { CopilotResponse } from '../../lib/copilot-types';
 import { CopilotChart } from './CopilotChart';
 import type { ChatMessage, CopilotResponseWithCharts } from './copilotPageHelpers';
 import { WARNING_LABELS } from './copilotPageHelpers';
+
+// ─── Parser: converte "[kind:id]" em Clickable ─────────────────────────────────
+
+function renderWithClickables(text: string): ReactNode[] {
+  const re = /\[(modelo|fase|cliente|encomenda):([^\]]+)\]/g;
+  const out: ReactNode[] = [];
+  let lastIndex = 0;
+  let m: RegExpExecArray | null;
+  let key = 0;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > lastIndex) out.push(text.slice(lastIndex, m.index));
+    const kind = m[1] as 'modelo' | 'fase' | 'cliente' | 'encomenda';
+    const id = m[2];
+    out.push(<Clickable key={`c-${key++}`} kind={kind} id={id}>{id}</Clickable>);
+    lastIndex = re.lastIndex;
+  }
+  if (lastIndex < text.length) out.push(text.slice(lastIndex));
+  return out;
+}
 
 const ACTION_ICON: Record<string, ReactNode> = {
   CREATE_DECISION_PR: <Check size={12} />,
@@ -172,7 +192,7 @@ export function CopilotChatMessage({
             ● ● ●
           </span>
         ) : (
-          message.text
+          renderWithClickables(message.text)
         )}
       </div>
 

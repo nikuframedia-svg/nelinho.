@@ -27,6 +27,7 @@ import {
 } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Calendar, GripVertical, AlertTriangle } from 'lucide-react';
+import { Clickable } from '../../components/entitySheets';
 import { planKeys } from '../../lib/api/keys';
 import { cpoCommitsApi, planOperationsApi } from '../../lib/api';
 import type { CpoCommit } from '../../lib/api';
@@ -86,7 +87,9 @@ function OpCardDraggable({ op, editable }: { op: ScheduledOp; editable: boolean 
     >
       {editable && <GripVertical size={9} className="text-slate-500 flex-shrink-0" />}
       <span className="text-slate-200 truncate font-medium">
-        {op.order_id ?? op.id.slice(0, 8)}
+        {op.order_id
+          ? <Clickable kind="encomenda" id={op.order_id}>{op.order_id}</Clickable>
+          : op.id.slice(0, 8)}
       </span>
       {op.operator_name && (
         <span className="text-slate-500 truncate hidden sm:inline">
