@@ -1,15 +1,14 @@
 /**
- * OverallPage — Planeamento (Q.115.K).
+ * OverallPage — Planeamento (Q.115.K + Q.115.L).
  *
- * Página central de replaneamento: timeline −7d/+15d com drag-drop por fase.
- * Drag-drop usa @dnd-kit; drop chama optimistic update local + warning toast
- * (Q.115.C endpoint pendente).
- *
- * Layout: PageHeader (título + toggles) + Timeline scrollable por fase.
+ * 4 vistas: Por fase | Por barco | Por pessoa | Por expedição.
+ * Toggle URL-driven (?view=fase|barco|pessoa|expedicao).
+ * Drag-drop ligado ao POST /v1/plan/operations/reorder (Q.115.C).
+ * Erro 422 → toast PT-PT com axiom + reason_pt.
+ * Quality risk badge defensivo (esconde se 404).
  */
 
-import { useMemo, useState, useCallback } from 'react';
-import type { ReactNode } from 'react';
+import { useMemo, useState, useCallback, type ReactNode } from 'react';
 import {
   DndContext,
   PointerSensor,
@@ -19,7 +18,8 @@ import {
   useDraggable,
 } from '@dnd-kit/core';
 import type { DragEndEvent } from '@dnd-kit/core';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useSearchParams, Link } from 'react-router-dom';
 import {
   addDays,
   startOfDay,
@@ -28,12 +28,18 @@ import {
 import { ptBR } from 'date-fns/locale';
 import { Calendar, GripVertical, AlertTriangle } from 'lucide-react';
 import { planKeys } from '../../lib/api/keys';
-import { cpoCommitsApi } from '../../lib/api';
+import { cpoCommitsApi, planOperationsApi } from '../../lib/api';
 import type { CpoCommit } from '../../lib/api';
 import { PageHeader, DarkCard, DarkButton, EmptyState } from '../../components/dark';
 import { Timeline, buildDaySlots, dateToSlotIndex } from '../../components/overall/Timeline';
 import type { TimelineLane, TimelineItem } from '../../components/dark';
 import { useToastContext } from '../../components/ToastProvider';
+import { PorBarcoView } from '../../components/overall/views/PorBarcoView';
+import { PorPessoaView } from '../../components/overall/views/PorPessoaView';
+import { PorExpedicaoView } from '../../components/overall/views/PorExpedicaoView';
+import type { ScheduledOp } from '../../components/overall/types';
+import { AutoProposeOverlay } from '../../components/overall/AutoProposeOverlay';
+import { usePendingDecisions } from '../../hooks/usePendingDecisions';
 
 // ─── Constantes ──────────────────────────────────────────────────────────────
 
@@ -42,20 +48,16 @@ const DAYS_FUTURE = 15;
 
 // ─── Tipos internos ──────────────────────────────────────────────────────────
 
-interface ScheduledOp {
-  id: string;
-  phase_id: string;
-  phase_name: string;
-  order_id?: string;
-  product_id?: string;
-  operator_name?: string;
-  start?: string;
-  end?: string;
-  status?: string;
-}
-
 type ViewMode = 'ver' | 'editar';
 type TimelineScale = 'mes' | 'semana' | 'dia';
+type ViewTab = 'fase' | 'barco' | 'pessoa' | 'expedicao';
+
+const VIEW_LABELS: Record<ViewTab, string> = {
+  fase: 'Por fase',
+  barco: 'Por barco',
+  pessoa: 'Por pessoa',
+  expedicao: 'Por expedição',
+};
 
 // ─── Cor por estado ──────────────────────────────────────────────────────────
 
@@ -167,7 +169,6 @@ function PorFaseView({
 
   const slots = buildDaySlots(startDate, endDate);
 
-  // Agrupa fases únicas (preserva ordem de aparecimento)
   const phases = useMemo(() => {
     const seen = new Map<string, string>();
     for (const op of operations) {
@@ -178,7 +179,6 @@ function PorFaseView({
 
   const lanes: TimelineLane[] = phases.map(([id, label]) => ({ id, label }));
 
-  // Para cada (phaseId, slotId): lista de ops que começam nesse dia
   const opsByPhaseSlot = useMemo(() => {
     const map = new Map<string, ScheduledOp[]>();
     for (const op of operations) {
@@ -194,7 +194,6 @@ function PorFaseView({
     return map;
   }, [operations, slots, startDate]);
 
-  // TimelineItems: um item por (fase, slot) que tem ops
   const items: TimelineItem[] = useMemo(() => {
     const result: TimelineItem[] = [];
     for (const [key, ops] of opsByPhaseSlot.entries()) {
@@ -216,11 +215,11 @@ function PorFaseView({
     (event: DragEndEvent) => {
       if (!event.over) return;
       const opId = String(event.active.id);
-      const dropTarget = String(event.over.id); // phaseId__slotId
+      const dropTarget = String(event.over.id);
       const parts = dropTarget.split('__');
       if (parts.length < 2) return;
       const newPhaseId = parts[0];
-      const newDate = parts[parts.length - 1]; // slotId é yyyy-MM-dd
+      const newDate = parts[parts.length - 1];
       onDropPhaseDate(opId, newPhaseId, newDate);
     },
     [onDropPhaseDate],
@@ -255,12 +254,30 @@ function PorFaseView({
 
 export default function OverallPage(): ReactNode {
   const toast = useToastContext();
+  const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Badge decisões pendentes (Q.115.M)
+  const { decisions: pendingDecisions } = usePendingDecisions();
 
   const today = startOfDay(new Date());
   const [windowStart, setWindowStart] = useState(() => addDays(today, -DAYS_PAST));
   const [windowEnd, setWindowEnd] = useState(() => addDays(today, DAYS_FUTURE));
   const [scale, setScale] = useState<TimelineScale>('dia');
   const [mode, setMode] = useState<ViewMode>('ver');
+
+  // Vista activa por URL (?view=fase|barco|pessoa|expedicao)
+  const activeView = (searchParams.get('view') ?? 'fase') as ViewTab;
+  const setActiveView = useCallback(
+    (v: ViewTab) => {
+      setSearchParams((p) => {
+        const next = new URLSearchParams(p);
+        next.set('view', v);
+        return next;
+      });
+    },
+    [setSearchParams],
+  );
 
   // Optimistic local overrides: opId → { phase_id, start }
   const [localOverrides, setLocalOverrides] = useState<
@@ -288,6 +305,29 @@ export default function OverallPage(): ReactNode {
     refetchOnWindowFocus: false,
   });
 
+  // ── Mutation Q.115.C ───────────────────────────────────────────────────────
+  const reorderMutation = useMutation({
+    mutationFn: planOperationsApi.reorder,
+    onSuccess: (resp) => {
+      queryClient.invalidateQueries({ queryKey: planKeys.scheduleCurrent() });
+      // Limpa overrides locais (servidor é source of truth após commit)
+      setLocalOverrides(new Map());
+      toast.success(`Plano actualizado · ${resp.commit_sha.slice(0, 8)}`);
+    },
+    onError: (err: unknown) => {
+      const apiErr = err as { status?: number; data?: { axiom?: string; reason_pt?: string }; message?: string };
+      if (apiErr.status === 422 && apiErr.data?.axiom) {
+        toast.error(
+          `Violou axioma "${apiErr.data.axiom}": ${apiErr.data.reason_pt ?? 'sem detalhe'}`,
+        );
+      } else {
+        toast.error(`Erro: ${apiErr.message ?? 'falha desconhecida'}`);
+      }
+      // Rollback visual
+      setLocalOverrides(new Map());
+    },
+  });
+
   // ── Operações com overrides locais ─────────────────────────────────────────
   const operations: ScheduledOp[] = useMemo(() => {
     if (!commitDetail?.operations) return [];
@@ -299,36 +339,46 @@ export default function OverallPage(): ReactNode {
         phase_name: String(op.phase_name ?? op.phase_id ?? 'UNKNOWN'),
         order_id: op.order_id ? String(op.order_id) : undefined,
         product_id: op.product_id ? String(op.product_id) : undefined,
+        operator_id: op.operator_id ? String(op.operator_id) : undefined,
         operator_name: op.operator_name ? String(op.operator_name) : undefined,
+        cliente: op.client_name ? String(op.client_name) : undefined,
         start: override?.start ?? op.start,
         end: op.end,
+        duration_min: op.duration_min ?? undefined,
         status: op.status,
       } satisfies ScheduledOp;
     });
   }, [commitDetail, localOverrides]);
 
-  // ── Handler drag-drop ──────────────────────────────────────────────────────
-  const handleDropPhaseDate = useCallback(
-    (opId: string, newPhaseId: string, newDate: string) => {
+  // ── Handler drag-drop central ──────────────────────────────────────────────
+  const handleDrop = useCallback(
+    (opId: string, newPhase: string, newStartTs: string, newOperatorId?: string) => {
       // Optimistic local update
       setLocalOverrides((prev) => {
         const next = new Map(prev);
-        next.set(opId, { phase_id: newPhaseId, start: newDate });
+        next.set(opId, { phase_id: newPhase, start: newStartTs });
         return next;
       });
 
-      toast.warning('Endpoint Q.115.C pendente — guardando localmente. Rollback em 3s.');
-
-      // Rollback após 3s (Q.115.C ainda não existe)
-      setTimeout(() => {
-        setLocalOverrides((prev) => {
-          const next = new Map(prev);
-          next.delete(opId);
-          return next;
-        });
-      }, 3_000);
+      // Chama Q.115.C
+      reorderMutation.mutate({
+        operation_id: opId,
+        new_phase: newPhase,
+        new_start_ts: newStartTs,
+        new_operator_id: newOperatorId ?? null,
+      });
     },
-    [toast],
+    [reorderMutation],
+  );
+
+  // Handler legado para PorFaseView (recebe yyyy-MM-dd sem hora)
+  const handleDropPhaseDate = useCallback(
+    (opId: string, newPhaseId: string, newDate: string) => {
+      // newDate é yyyy-MM-dd, converte para ISO com hora
+      const newStartTs = newDate.includes('T') ? newDate : `${newDate}T08:00:00+00:00`;
+      handleDrop(opId, newPhaseId, newStartTs);
+    },
+    [handleDrop],
   );
 
   // ── Reset window ───────────────────────────────────────────────────────────
@@ -352,6 +402,18 @@ export default function OverallPage(): ReactNode {
         icon={<Calendar size={18} />}
         actions={
           <div className="flex items-center gap-2 flex-wrap">
+            {/* Badge decisões pendentes */}
+            {pendingDecisions.length > 0 && (
+              <Link
+                to="/decisoes"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-amber-500/50 bg-amber-500/10 text-xs font-medium text-amber-300 hover:bg-amber-500/20 transition-colors"
+                aria-label={`${pendingDecisions.length} decisões pendentes — ir para Decisões`}
+              >
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400" />
+                {pendingDecisions.length} decisão{pendingDecisions.length !== 1 ? 'ões' : ''} pendente{pendingDecisions.length !== 1 ? 's' : ''}
+              </Link>
+            )}
+
             {/* Toggle escala */}
             <div className="flex items-center gap-0.5 rounded-lg border border-slate-700 p-0.5 bg-slate-800">
               {(['dia', 'semana', 'mes'] as TimelineScale[]).map((s) => (
@@ -386,13 +448,35 @@ export default function OverallPage(): ReactNode {
         }
       />
 
-      <div className="flex-1 overflow-auto p-6 space-y-4">
+      <div className="flex-1 overflow-auto p-6 space-y-4 relative">
+        {/* Overlay auto-propose — fantasmas PROPOSED com aprovar/rejeitar inline (Q.115.M) */}
+        <AutoProposeOverlay />
+
+        {/* Toggle de vistas — URL-driven */}
+        <div className="flex items-center gap-0.5 rounded-lg border border-slate-700 p-0.5 bg-slate-800 w-fit">
+          {(['fase', 'barco', 'pessoa', 'expedicao'] as ViewTab[]).map((v) => (
+            <button
+              key={v}
+              onClick={() => setActiveView(v)}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition ${
+                activeView === v
+                  ? 'bg-teal-600 text-white'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              {VIEW_LABELS[v]}
+            </button>
+          ))}
+        </div>
+
         {/* Banner drag-drop activo */}
         {mode === 'editar' && (
           <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-xs text-amber-300">
             <AlertTriangle size={13} className="flex-shrink-0" />
-            Modo editar activo. Arrastar operação para outra fase/dia actualiza o estado local
-            apenas (Q.115.C pendente — sem persistência real).
+            Modo editar activo. Arrastar operação actualiza o plano via Q.115.C.
+            {reorderMutation.isPending && (
+              <span className="ml-1 text-teal-300">A guardar…</span>
+            )}
           </div>
         )}
 
@@ -425,19 +509,29 @@ export default function OverallPage(): ReactNode {
         )}
 
         {/* Sem operações no commit */}
-        {!loadingAny && !isError && latestCommit && commitDetail && operations.length === 0 && (
+        {!loadingAny && !isError && latestCommit && commitDetail && operations.length === 0 && activeView !== 'expedicao' && (
           <EmptyState
             title="Plano sem operações"
             hint="O commit activo não contém operações. Gera um novo plano no CPO."
           />
         )}
 
-        {/* Vista por fase */}
-        {!loadingAny && !isError && operations.length > 0 && (
+        {/* Vista por expedição — não depende de operations */}
+        {!loadingAny && !isError && activeView === 'expedicao' && (
+          <DarkCard className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-white">Por expedição</h2>
+            </div>
+            <PorExpedicaoView startDate={windowStart} endDate={windowEnd} />
+          </DarkCard>
+        )}
+
+        {/* Vistas que dependem de operations */}
+        {!loadingAny && !isError && operations.length > 0 && activeView !== 'expedicao' && (
           <DarkCard className="p-4">
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-sm font-semibold text-white">
-                Por fase
+                {VIEW_LABELS[activeView]}
               </h2>
               <span className="text-xs text-slate-500">
                 {operations.length} operações · commit{' '}
@@ -446,13 +540,36 @@ export default function OverallPage(): ReactNode {
                 </code>
               </span>
             </div>
-            <PorFaseView
-              operations={operations}
-              editable={mode === 'editar'}
-              startDate={windowStart}
-              endDate={windowEnd}
-              onDropPhaseDate={handleDropPhaseDate}
-            />
+
+            {activeView === 'fase' && (
+              <PorFaseView
+                operations={operations}
+                editable={mode === 'editar'}
+                startDate={windowStart}
+                endDate={windowEnd}
+                onDropPhaseDate={handleDropPhaseDate}
+              />
+            )}
+
+            {activeView === 'barco' && (
+              <PorBarcoView
+                operations={operations}
+                editable={mode === 'editar'}
+                startDate={windowStart}
+                endDate={windowEnd}
+                onDrop={handleDrop}
+              />
+            )}
+
+            {activeView === 'pessoa' && (
+              <PorPessoaView
+                operations={operations}
+                editable={mode === 'editar'}
+                startDate={windowStart}
+                endDate={windowEnd}
+                onDrop={handleDrop}
+              />
+            )}
           </DarkCard>
         )}
       </div>

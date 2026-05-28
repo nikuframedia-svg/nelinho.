@@ -123,6 +123,9 @@ export const profitKeys = {
   cogsOrder: (orderId: string) => [...profitKeys.all, 'cogs-order', orderId] as const,
   margin: (orderId: string, sellingPrice: number) =>
     [...profitKeys.all, 'margin', orderId, sellingPrice] as const,
+  // Q.115.M — preview defensivo por commit SHA (esconde se 404)
+  preview: (commitSha: string) =>
+    [...profitKeys.all, 'preview', commitSha] as const,
 } as const;
 
 // ─── twin (Q.67.2.A) ────────────────────────────────────────────────────
@@ -231,4 +234,22 @@ export const userInputKeys = {
   all: ['user-input'] as const,
   lists: () => [...userInputKeys.all, 'list'] as const,
   list: (status?: string) => [...userInputKeys.lists(), status ?? 'all'] as const,
+} as const;
+
+// ─── learning / affinities (Q.115.G) + plan-vs-actual (Q.115.V) ─────────
+
+export const learningKeys = {
+  all: ['learning'] as const,
+  affinities: (params?: { operator_id?: string; phase_id?: string }) =>
+    [...learningKeys.all, 'affinities', params ?? {}] as const,
+  planVsActual: (params?: { days?: number }) =>
+    [...learningKeys.all, 'plan-vs-actual', params ?? {}] as const,
+} as const;
+
+// ─── quality risk preview (Q.115.E) ─────────────────────────────────────
+
+export const qualityRiskKeys = {
+  all: ['quality-risk'] as const,
+  preview: (operatorId: string, boatId: string, phaseId: string) =>
+    [...qualityRiskKeys.all, 'preview', operatorId, boatId, phaseId] as const,
 } as const;

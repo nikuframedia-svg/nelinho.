@@ -408,6 +408,56 @@ export const cpoCommitsApi = {
   },
 };
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// PLAN OPERATIONS REORDER API (Q.115.C) — drag-drop manual
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface ReorderRequest {
+  operation_id: string;
+  new_phase: string;
+  new_start_ts: string; // ISO 8601 com tz
+  new_operator_id?: string | null;
+}
+
+export interface ReorderResponse {
+  commit_sha: string;
+  delta_summary: Record<string, unknown>;
+}
+
+export const planOperationsApi = {
+  /** POST /v1/plan/operations/reorder — valida axiomas Spelke, cria novo ScheduleCommit. */
+  reorder: (body: ReorderRequest) =>
+    request<ReorderResponse>('/v1/plan/operations/reorder', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// LEARNING AFFINITIES API (Q.115.G)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface AffinitySignal {
+  operator_id: string;
+  operator_name: string;
+  phase_id: string;
+  phase_name: string;
+  score: number;
+  sample_count: number;
+  last_computed_at: string;
+}
+
+export const learningAffinitiesApi = {
+  list: (params?: { phase_id?: string; operator_id?: string; top?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.phase_id) qs.set('phase_id', params.phase_id);
+    if (params?.operator_id) qs.set('operator_id', params.operator_id);
+    if (params?.top !== undefined) qs.set('top', String(params.top));
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    return request<AffinitySignal[]>(`/v1/learning/affinities${suffix}`);
+  },
+};
+
 export const preferenceRulesApi = {
   list: (params?: {
     status?: PreferenceRuleStatus;

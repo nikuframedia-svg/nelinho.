@@ -448,3 +448,30 @@ export const moldsApi = {
     ),
 };
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// QUALITY RISK PREVIEW (Q.115.E — defensivo, endpoint pode não existir)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface QualityRiskPreview {
+  operator_id: string;
+  boat_id: string;
+  phase_id: string;
+  p_defect: number;
+}
+
+export const qualityRiskApi = {
+  /** GET /v1/quality/risk-preview — defensivo: retorna null se 404. */
+  riskPreview: (params: {
+    operator_id: string;
+    boat_id: string;
+    phase_id: string;
+  }) => {
+    const qs = new URLSearchParams({
+      operator_id: params.operator_id,
+      boat_id: params.boat_id,
+      phase_id: params.phase_id,
+    });
+    return request<QualityRiskPreview>(`/v1/quality/risk-preview?${qs.toString()}`);
+  },
+};
+
