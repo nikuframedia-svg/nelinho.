@@ -83,6 +83,7 @@ ACTION_WIRING: dict[str, dict[str, Any]] = {
     "set_config":          {"wired": True,  "destination": "ConfigStore.set() — write-through to tenant_configuration"},
     "create_decision":     {"wired": True,  "destination": "create_decision callback → governance.decision_run"},
     "pause_writes":        {"wired": True,  "destination": "pause_registry + PauseWritesMiddleware — 423 Locked on writes to the prefix"},
+    "execute_runbook":     {"wired": True,  "destination": "create_decision callback → governance.decision_run com runbook_steps no payload"},
 }
 
 
@@ -322,6 +323,98 @@ async def _dispatch_create_decision(rule: Rule, params: dict[str, Any], ctx: Dis
     )
 
 
+async def _dispatch_execute_runbook(rule: Rule, params: dict[str, Any], ctx: DispatchContext) -> DispatchResult:
+    """Emite um Decision pendente com os passos do runbook no payload.
+
+    Requer aprovação humana (invariante Q.17): o dispatcher abre um
+    ``execute_runbook`` decision_run — nunca executa os passos directamente.
+
+    Validação runtime:
+    - runbook existe em quality.runbook
+    - approved_by não é NULL
+    - confidence >= 0.8
+    Se qualquer condição falhar, devolve ``failed`` com detalhe.
+    """
+    from uuid import UUID as _UUID
+
+    runbook_id_raw = params.get("runbook_id")
+    on_event = params.get("on_event", ctx.event_type)
+
+    if ctx.session is not None:
+        from sqlalchemy import select as _select
+        from src.quality.models.runbook import Runbook
+
+        try:
+            runbook_id = _UUID(str(runbook_id_raw))
+        except (ValueError, AttributeError):
+            return DispatchResult(
+                action="execute_runbook",
+                status="failed",
+                detail=f"runbook_id inválido: {runbook_id_raw!r}",
+            )
+
+        result = await ctx.session.execute(
+            _select(Runbook).where(Runbook.id == runbook_id)
+        )
+        runbook = result.scalar_one_or_none()
+
+        if runbook is None:
+            return DispatchResult(
+                action="execute_runbook",
+                status="failed",
+                detail=f"runbook {runbook_id} não encontrado",
+            )
+        if runbook.approved_by is None:
+            return DispatchResult(
+                action="execute_runbook",
+                status="failed",
+                detail=f"runbook {runbook_id} não aprovado (approved_by=NULL)",
+            )
+        if runbook.confidence < 0.8:
+            return DispatchResult(
+                action="execute_runbook",
+                status="failed",
+                detail=(
+                    f"runbook {runbook_id} confidence={runbook.confidence:.3f} < 0.8; "
+                    "aprovar apenas runbooks com confiança suficiente"
+                ),
+            )
+        steps_md = runbook.steps_md
+        error_code = runbook.error_code
+    else:
+        # Sem sessão (testes de unidade ou contexto engine-only) — passa adiante
+        steps_md = params.get("_steps_md_override", "")
+        error_code = params.get("_error_code_override", "")
+
+    payload = {
+        "runbook_id": str(runbook_id_raw),
+        "on_event": on_event,
+        "error_code": error_code,
+        "runbook_steps": steps_md,
+    }
+
+    if ctx.create_decision is not None:
+        decision_id = await ctx.create_decision({
+            "decision_type": "execute_runbook",
+            "title": f"Runbook para {error_code} (evento: {on_event})",
+            "risk_level": "medium",
+            "action_data": payload,
+            "source_rule": rule.id,
+        })
+        payload["decision_id"] = decision_id
+
+    _log.info(
+        "yaml_policy.execute_runbook tenant=%s rule=%s runbook=%s on_event=%s",
+        ctx.tenant_id, rule.id, runbook_id_raw, on_event,
+    )
+    return DispatchResult(
+        action="execute_runbook",
+        status=_stubbed_or_ok("execute_runbook", has_callback=ctx.create_decision is not None),
+        payload=payload,
+        detail=None if ctx.create_decision is not None else "no create_decision callback in context",
+    )
+
+
 async def _dispatch_pause_writes(rule: Rule, params: dict[str, Any], ctx: DispatchContext) -> DispatchResult:
     """Fail-closed writes to a route prefix for a bounded window.
 
@@ -369,6 +462,7 @@ _DISPATCHERS: dict[ActionType, Callable[[Rule, dict[str, Any], DispatchContext],
     ActionType.SET_CONFIG: _dispatch_set_config,
     ActionType.CREATE_DECISION: _dispatch_create_decision,
     ActionType.PAUSE_WRITES: _dispatch_pause_writes,
+    ActionType.EXECUTE_RUNBOOK: _dispatch_execute_runbook,
 }
 
 

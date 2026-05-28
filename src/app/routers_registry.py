@@ -136,3 +136,18 @@ def register_routers(app: FastAPI) -> None:
     from src.app.routers.q115_config import router as q115_config_router
 
     app.include_router(q115_config_router)
+
+    # Q.115.C — drag-drop manual reorder com safety_net + Kafka
+    from src.plan.api.reorder import router as reorder_router
+
+    app.include_router(reorder_router)
+
+    # Q.115.G — afinidades operador/fase (GET /v1/learning/affinities)
+    from src.learning.api_affinities import router as affinities_router
+
+    app.include_router(affinities_router)
+
+    # Q.115.V — plan-vs-actual (GET /v1/learning/plan-vs-actual)
+    from src.learning.api_plan_vs_actual import router as plan_vs_actual_router
+
+    app.include_router(plan_vs_actual_router)

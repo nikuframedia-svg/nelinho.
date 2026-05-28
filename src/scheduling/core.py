@@ -48,6 +48,7 @@ from src.scheduling.jobs.preference_learning import (
     _preference_weights_retrain_job,
 )
 from src.scheduling.jobs.phase_operator_affinity import _phase_operator_affinity_job
+from src.scheduling.jobs.plan_vs_actual import _plan_vs_actual_global_job
 from src.scheduling.jobs.runbook_learning import _runbook_learning_job
 from src.scheduling.jobs.supply import _shortage_scan_job
 
@@ -182,6 +183,19 @@ def start_scheduler(
         trigger=IntervalTrigger(minutes=15),
         id="nelo_erp_phase_history_incremental",
         name="nelo_erp_phase_history_incremental",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Q.115.V — plan-vs-actual diário: compara planos CPO com execução real.
+    # 06:30 UTC (depois do drift detection 06:00). Itera todos os tenants
+    # registados. Best-effort: falha de um tenant não bloqueia os restantes.
+    _scheduler.add_job(
+        _plan_vs_actual_global_job,
+        trigger=CronTrigger(hour=6, minute=30, timezone="UTC"),
+        args=[tenants or []],
+        id="plan_vs_actual",
+        name="plan_vs_actual",
         replace_existing=True,
         coalesce=True,
         max_instances=1,

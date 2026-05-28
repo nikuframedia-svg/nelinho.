@@ -97,6 +97,7 @@ class ActionType(str, Enum):
     SET_CONFIG = "set_config"
     CREATE_DECISION = "create_decision"
     PAUSE_WRITES = "pause_writes"
+    EXECUTE_RUNBOOK = "execute_runbook"
 
 
 class ConditionOp(str, Enum):
@@ -210,6 +211,10 @@ ACTION_PARAMS: dict[ActionType, frozenset[str]] = {
     ActionType.PAUSE_WRITES: frozenset({
         "route_prefix", "duration_minutes", "reason_pt",
     }),
+    ActionType.EXECUTE_RUNBOOK: frozenset({
+        "runbook_id",   # UUID — deve existir + ter approved_by não-null + confidence >= 0.8
+        "on_event",     # str  — evento que despoletou o runbook
+    }),
 }
 
 
@@ -287,6 +292,15 @@ class ActionStep(BaseModel):
                 raise ValueError(
                     f"notify.channel={channel!r}; must be one of {sorted(allowed_channels)}"
                 )
+        if self.action == ActionType.EXECUTE_RUNBOOK:
+            runbook_id = self.params.get("runbook_id")
+            if not runbook_id:
+                raise ValueError("execute_runbook requires 'runbook_id'")
+            on_event = self.params.get("on_event")
+            if not on_event:
+                raise ValueError("execute_runbook requires 'on_event'")
+            # Validação de existência/aprovação/confidence é feita pelo dispatcher
+            # em runtime (precisa de sessão DB). Aqui só validamos presença dos campos.
         return self
 
 

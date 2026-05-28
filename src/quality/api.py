@@ -30,10 +30,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.quality.models import ProductionError  # Q.61.32d
+from src.quality.models.runbook import ErrorTypeRunbookLink, Runbook
 from src.quality.services.dashboard_service import QualityDashboardService
 from src.quality.services.impact_service import (
     ImpactService,
@@ -388,6 +389,42 @@ async def quality_by_lot(
 
 # ─── Q.53.A — ML defect risk + hull zones + ROI (Qualidade page tabs) ─────
 
+@router.get("/risk-preview")
+async def risk_preview(
+    operator_id: Optional[str] = Query(None, description="ID do operador"),
+    phase_id: Optional[str] = Query(None, description="ID da fase"),
+    boat_id: Optional[str] = Query(None, description="ID do barco (boat_id deferred Q.115.A.07)"),
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Q.115.E — P(defeito) para combinação (operator, phase, boat).
+
+    Usado pelo card de decisão e pelas vistas Overall Q.115.J/L.
+    boat_id é aceite mas ignorado até migration 018 chegar a main (Q.115.A.07).
+    """
+    from src.quality.services.defect_risk_service import DefectRiskService
+
+    svc = DefectRiskService(session, tenant_id)
+    preview = await svc.preview_for_combination(
+        operator_id=operator_id,
+        phase_id=phase_id,
+        boat_id=boat_id,
+    )
+    # 404 se nenhuma combinação válida: todos os params None e sem histórico
+    if (
+        operator_id is None
+        and phase_id is None
+        and boat_id is None
+        and preview.historical_count == 0
+        and preview.p_defect == 0.0
+    ):
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail="Nenhuma combinação válida — sem histórico de retrabalho.",
+        )
+    return preview
+
+
 @router.get("/defect-risk")
 async def defect_risk(
     top_n: int = Query(50, ge=1, le=200),
@@ -654,3 +691,90 @@ async def list_errors_paginated(
                 "hasPreviousPage": False,
             }
         raise
+
+
+# ─── Q.115.H — Runbooks aprendidos ────────────────────────────────────────
+
+
+class RunbookApproveRequest(BaseModel):
+    approved_by: str
+    notes: Optional[str] = None
+
+
+def _runbook_to_dict(rb: Runbook) -> dict[str, Any]:
+    return {
+        "id": str(rb.id),
+        "error_code": rb.error_code,
+        "steps_md": rb.steps_md,
+        "source": rb.source,
+        "confidence": rb.confidence,
+        "approved_by": rb.approved_by,
+        "approved_at": rb.approved_at.isoformat() if rb.approved_at else None,
+        "created_at": rb.created_at.isoformat() if rb.created_at else None,
+    }
+
+
+@router.get("/runbook")
+async def list_runbooks(
+    error_code: Optional[str] = Query(None, description="Filtrar por error_code"),
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+) -> list[dict[str, Any]]:
+    """Lista runbooks ligados a um error_code, ordenados por prioridade + confidence DESC.
+
+    Devolve lista vazia quando não existe runbook para o error_code.
+    """
+    if not error_code:
+        # Sem filtro: devolve todos os runbooks do tenant
+        result = await session.execute(
+            select(Runbook)
+            .where(Runbook.tenant_id == tenant_id)
+            .order_by(desc(Runbook.confidence))
+            .limit(100)
+        )
+        return [_runbook_to_dict(r) for r in result.scalars().all()]
+
+    # Com error_code: join via link para respeitar prioridade
+    result = await session.execute(
+        select(Runbook, ErrorTypeRunbookLink.priority)
+        .join(
+            ErrorTypeRunbookLink,
+            and_(
+                ErrorTypeRunbookLink.runbook_id == Runbook.id,
+                ErrorTypeRunbookLink.tenant_id == tenant_id,
+                ErrorTypeRunbookLink.error_code == error_code,
+            ),
+        )
+        .where(Runbook.tenant_id == tenant_id)
+        .order_by(ErrorTypeRunbookLink.priority, desc(Runbook.confidence))
+    )
+    rows = result.all()
+    return [_runbook_to_dict(rb) for rb, _priority in rows]
+
+
+@router.post("/runbook/{runbook_id}/approve")
+async def approve_runbook(
+    runbook_id: UUID,
+    req: RunbookApproveRequest,
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Aprova um runbook. Requer aprovação humana (Q.17 invariante).
+
+    Escreve `approved_by` + `approved_at` + audit_trace_id na mesma tx.
+    """
+    from src.quality.services.runbook_service import approve_runbook as _approve
+
+    try:
+        runbook = await _approve(
+            session=session,
+            tenant_id=tenant_id,
+            runbook_id=runbook_id,
+            approved_by=req.approved_by,
+            notes=req.notes,
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+    await session.commit()
+    return _runbook_to_dict(runbook)
