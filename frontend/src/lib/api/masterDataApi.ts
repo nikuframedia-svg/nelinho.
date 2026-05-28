@@ -168,7 +168,9 @@ export interface CancelActionResponse {
 export interface WorkOrderItem {
   of_id: string;
   modelo: string;
+  modelo_id: string | null;
   cliente: string;
+  cliente_id: string | null;
   fase_actual: string;
   status: string;
 }
@@ -176,6 +178,9 @@ export interface WorkOrderItem {
 export interface EncomendasItem {
   encomenda_id: string;
   cliente: string;
+  cliente_id: string | null;
+  modelo?: string;
+  modelo_id?: string | null;
   data: string;
   total_eur: number;
 }
@@ -183,13 +188,16 @@ export interface EncomendasItem {
 export interface BoatItem {
   boat_id: string;
   modelo_nome: string;
+  modelo_id: string | null;
+  cliente: string | null;
+  cliente_id: string | null;
   retired_at: string | null;
 }
 
 export interface EmployeeItem {
   employee_id: string;
   nome: string;
-  role: string;
+  role: string | null;
   active: boolean;
 }
 

@@ -13,6 +13,7 @@ import { pt } from 'date-fns/locale';
 import { Truck, Package } from 'lucide-react';
 import { EmptyState, DarkCard } from '../../dark';
 import { request } from '../../../lib/api/client';
+import { Clickable } from '../../entitySheets';
 
 // ─── Tipos ──────────────────────────────────────────────────────────────────
 
@@ -118,6 +119,18 @@ export function PorExpedicaoView({
                         <Package size={8} />
                         <span>{b.order_ids.length} OFs</span>
                       </div>
+                      {b.customer_ids && b.customer_ids.length === 1 && (
+                        <div className="text-slate-500 mt-0.5 truncate">
+                          <Clickable kind="cliente" id={b.customer_ids[0]}>
+                            Cliente {b.customer_ids[0].slice(0, 8)}…
+                          </Clickable>
+                        </div>
+                      )}
+                      {b.customer_ids && b.customer_ids.length > 1 && (
+                        <div className="text-slate-500 mt-0.5">
+                          {b.customer_ids.length} clientes
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}

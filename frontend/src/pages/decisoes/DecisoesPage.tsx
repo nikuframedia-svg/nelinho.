@@ -14,6 +14,7 @@ import { Check, X, Inbox, RefreshCw } from 'lucide-react';
 import { decisionKeys } from '../../lib/api/keys';
 import { decisionsApi, type DecisionRun } from '../../lib/api';
 import { PageHeader } from '../../components/dark';
+import { Clickable } from '../../components/entitySheets';
 
 // â”€â”€â”€ helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -294,6 +295,16 @@ export default function DecisoesPage() {
               {why ? (
                 <p className="text-text-dark-secondary mt-2" style={{ fontSize: 13, lineHeight: 1.5 }}>
                   {why}
+                </p>
+              ) : null}
+
+              {/* Encomenda associada (derivada de action_data) */}
+              {current.action_data?.work_order_id != null ? (
+                <p className="mt-2" style={{ fontSize: 12, color: 'var(--fg-3)' }}>
+                  Encomenda:{' '}
+                  <Clickable kind="encomenda" id={String(current.action_data.work_order_id)}>
+                    #{current.action_data.work_order_id}
+                  </Clickable>
                 </p>
               ) : null}
             </div>

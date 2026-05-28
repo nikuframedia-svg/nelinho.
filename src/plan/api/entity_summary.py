@@ -1,14 +1,15 @@
-"""Q.116.A — 4 endpoints agregadores para os sheets contextuais.
+"""Q.116.A/E — endpoints agregadores para os sheets contextuais.
 
 READ-ONLY. Cada endpoint serve um sheet (Modelo / Fase / Cliente /
-Encomenda) do frontend nelinho. Reutiliza serviços e modelos existentes
-— zero lógica nova de negócio, só agregação.
+Encomenda / Operador) do frontend nelinho. Reutiliza serviços e
+modelos existentes — zero lógica nova de negócio, só agregação.
 
 Endpoints:
-  GET /v1/entity/modelo/{model_id}       → ModeloSummary
-  GET /v1/entity/fase/{phase_id}         → FaseSummary
-  GET /v1/entity/cliente/{customer_id}   → ClienteSummary
-  GET /v1/entity/encomenda/{legacy_id}   → EncomendaSummary
+  GET /v1/entity/modelo/{model_id}         → ModeloSummary       (Q.116.A)
+  GET /v1/entity/fase/{phase_id}           → FaseSummary         (Q.116.A)
+  GET /v1/entity/cliente/{customer_id}     → ClienteSummary      (Q.116.A)
+  GET /v1/entity/encomenda/{legacy_id}     → EncomendaSummary    (Q.116.A/C)
+  GET /v1/entity/operador/{employee_id}    → OperadorSummary     (Q.116.E)
 
 Padrões:
   - `tenant_id` injectado via `require_tenant_header`.
@@ -149,6 +150,25 @@ class EncomendaSummary(BaseModel):
     boost_reason: Optional[str] = None
     transport_date_override: Optional[str] = None
     transport_date_effective: Optional[str] = None
+
+
+# Q.116.E — Operador sheet ────────────────────────────────────────────────────
+
+
+class TopPhaseForOperator(BaseModel):
+    phase_id: str
+    phase_name: str
+    score: float
+    sample_count: int
+
+
+class OperadorSummary(BaseModel):
+    operator_id: str
+    operator_name: str
+    role: Optional[str]
+    active: bool
+    top_phases: List[TopPhaseForOperator]
+    total_phases_with_data: int
 
 
 # ─── Router ──────────────────────────────────────────────────────────────────
@@ -529,7 +549,7 @@ async def get_encomenda_summary(
     transport_date_override: Optional[str] = None
     legacy_id_int = int(order.legacy_id)
     try:
-        from src.plan.models.order_boost import OrderBoost  # noqa: WPS433
+        from src.plan.models.order_boost import OrderBoost
 
         boost_stmt = select(OrderBoost).where(
             and_(
@@ -545,7 +565,7 @@ async def get_encomenda_summary(
         logger.debug("OrderBoost lookup skipped (%s)", exc)
 
     try:
-        from src.plan.models.work_order_override import (  # noqa: WPS433
+        from src.plan.models.work_order_override import (
             WorkOrderOverride,
         )
 
@@ -586,4 +606,111 @@ async def get_encomenda_summary(
         boost_reason=boost_reason,
         transport_date_override=transport_date_override,
         transport_date_effective=transport_date_effective,
+    )
+
+
+# ─── Endpoint: Operador (Q.116.E) ────────────────────────────────────────────
+
+
+@router.get("/operador/{employee_id}", response_model=OperadorSummary)
+async def get_operador_summary(
+    employee_id: UUID,
+    tenant_id: UUID = Depends(require_tenant_header),
+    session: AsyncSession = Depends(get_session),
+) -> OperadorSummary:
+    """Sheet "Operador" — resumo de um operador NELO.
+
+    Devolve metadados HR básicos + top-5 fases por afinidade aprendida
+    (PhaseOperatorAffinity, score DESC) + contagem total de fases para
+    as quais já existe sinal de aprendizagem.
+
+    404 quando o operador não existe em core.employees.
+
+    Lista vazia de `top_phases` quando o operador existe mas ainda não
+    há sinal aprendido — honesto, sem mock.
+    """
+    # 1. Operador — 404 se não existir no tenant.
+    emp_stmt = select(Employee).where(
+        and_(
+            Employee.tenant_id == tenant_id,
+            Employee.id == employee_id,
+        )
+    )
+    emp_result = await session.execute(emp_stmt)
+    employee = emp_result.scalar_one_or_none()
+    if employee is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Operador {employee_id} não existe",
+        )
+
+    role = employee.job_title or employee.department
+    active_flag = bool(getattr(employee, "active", True))
+
+    # 2. Top 5 afinidades — score DESC.
+    aff_stmt = (
+        select(PhaseOperatorAffinity)
+        .where(
+            and_(
+                PhaseOperatorAffinity.tenant_id == tenant_id,
+                PhaseOperatorAffinity.operator_id == employee_id,
+            )
+        )
+        .order_by(PhaseOperatorAffinity.score.desc())
+        .limit(5)
+    )
+    aff_result = await session.execute(aff_stmt)
+    affinities = list(aff_result.scalars().all())
+
+    # 3. Nomes humanos das fases — lookup batch contra routing_template_phase.
+    phase_ids = list({a.phase_id for a in affinities})
+    phase_name_map: dict = {}
+    if phase_ids:
+        names_stmt = (
+            select(RoutingTemplatePhase.phase_id, RoutingTemplatePhase.phase_name)
+            .where(
+                and_(
+                    RoutingTemplatePhase.tenant_id == tenant_id,
+                    RoutingTemplatePhase.phase_id.in_(phase_ids),
+                )
+            )
+        )
+        names_result = await session.execute(names_stmt)
+        # `.all()` devolve tuplos (phase_id, phase_name) — primeiro hit ganha.
+        for row in names_result.all():
+            pid, pname = row[0], row[1]
+            if pid not in phase_name_map and pname is not None:
+                phase_name_map[pid] = pname
+
+    top_phases = [
+        TopPhaseForOperator(
+            phase_id=a.phase_id,
+            phase_name=phase_name_map.get(a.phase_id, a.phase_id),
+            score=float(a.score),
+            sample_count=int(a.sample_count),
+        )
+        for a in affinities
+    ]
+
+    # 4. Contagem total de fases com dado de aprendizagem para este operador.
+    count_stmt = (
+        select(func.count())
+        .select_from(PhaseOperatorAffinity)
+        .where(
+            and_(
+                PhaseOperatorAffinity.tenant_id == tenant_id,
+                PhaseOperatorAffinity.operator_id == employee_id,
+            )
+        )
+    )
+    count_result = await session.execute(count_stmt)
+    total_phases_with_data = int(count_result.scalar() or 0)
+
+    return OperadorSummary(
+        operator_id=str(employee.id),
+        operator_name=employee.employee_name,
+        role=role,
+        active=active_flag,
+        top_phases=top_phases,
+        total_phases_with_data=total_phases_with_data,
     )

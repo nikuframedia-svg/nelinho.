@@ -13,6 +13,7 @@ const KIND_COLOR: Record<EntityKind, string> = {
   fase:      'var(--teal-400, #2dd4bf)',
   cliente:   'var(--primary, #6366f1)',
   encomenda: 'var(--warning, #f59e0b)',
+  operador:  'var(--info, #38bdf8)',
 };
 
 interface ClickableProps {

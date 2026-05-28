@@ -171,3 +171,8 @@ def register_routers(app: FastAPI) -> None:
     from src.plan.api.order_writes import router as order_writes_router
 
     app.include_router(order_writes_router)
+
+    # Q.116.E — master-data LIST endpoints
+    from src.master_data.api.lists import router as master_data_lists_router
+
+    app.include_router(master_data_lists_router)

@@ -11,6 +11,7 @@ const ModeloSheet    = lazy(() => import('./sheets/ModeloSheet'));
 const FaseSheet      = lazy(() => import('./sheets/FaseSheet'));
 const ClienteSheet   = lazy(() => import('./sheets/ClienteSheet'));
 const EncomendaSheet = lazy(() => import('./sheets/EncomendaSheet'));
+const OperadorSheet  = lazy(() => import('./sheets/OperadorSheet'));
 
 export function ActiveEntitySheet() {
   const { current, closeSheet } = useEntitySheet();
@@ -30,6 +31,9 @@ export function ActiveEntitySheet() {
       )}
       {current.kind === 'encomenda' && (
         <EncomendaSheet workOrderId={current.id} onClose={closeSheet} />
+      )}
+      {current.kind === 'operador' && (
+        <OperadorSheet operatorId={current.id} onClose={closeSheet} />
       )}
     </Suspense>
   );

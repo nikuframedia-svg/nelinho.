@@ -620,3 +620,139 @@ def test_encomenda_no_dates_no_customer():
     assert body["boost_reason"] is None
     assert body["transport_date_override"] is None
     assert body["transport_date_effective"] is None
+
+
+# ─── OPERADOR (Q.116.E) ──────────────────────────────────────────────────────
+
+
+def _employee_full(
+    *,
+    id_: UUID,
+    name: str = "Operador Teste",
+    job_title: Optional[str] = "Laminador",
+    department: Optional[str] = "Producao",
+    active: bool = True,
+) -> SimpleNamespace:
+    """Versão com job_title/department/active para o endpoint Operador."""
+    return SimpleNamespace(
+        id=id_,
+        tenant_id=TEST_TENANT_ID,
+        employee_code="OP-99",
+        employee_name=name,
+        job_title=job_title,
+        department=department,
+        active=active,
+    )
+
+
+def test_operador_happy_path_with_affinities():
+    """Operador existe, com 2 fases aprendidas + nomes de fase resolvidos."""
+    session = FakeSession()
+    op_id = uuid4()
+    employee = _employee_full(
+        id_=op_id,
+        name="João Silva",
+        job_title="Laminador Sénior",
+        active=True,
+    )
+    aff1 = _affinity(
+        phase_id="laminagem", operator_id=op_id, score=0.92, sample_count=20
+    )
+    aff2 = _affinity(
+        phase_id="cura", operator_id=op_id, score=0.78, sample_count=12
+    )
+
+    # Ordem das execute() no endpoint:
+    # 1. Employee scalar_one_or_none
+    # 2. PhaseOperatorAffinity scalars().all()
+    # 3. RoutingTemplatePhase name lookup .all() (tuplos)
+    # 4. count() scalar()
+    session.queue_scalar(employee)
+    session.queue_scalars([])  # par para call 1
+    session.queue_scalar(None)  # par para call 2 (scalar não consumido)
+    session.queue_scalars([aff1, aff2])  # call 2 → .scalars().all()
+    # Call 3 — names: .all() devolve a partir de _scalars (queue_scalars).
+    # Os tuplos passam por _FakeResult.all().
+    session.queue_scalar(None)
+    session.queue_scalars([("laminagem", "Laminagem"), ("cura", "Cura")])
+    # Call 4 — count().scalar() lê de _scalar_queue.
+    session.queue_scalar(2)
+    session.queue_scalars([])
+
+    client = _minimal_app(session)
+    resp = client.get(f"/v1/entity/operador/{op_id}", headers=_HEADERS)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["operator_id"] == str(op_id)
+    assert body["operator_name"] == "João Silva"
+    assert body["role"] == "Laminador Sénior"
+    assert body["active"] is True
+    assert len(body["top_phases"]) == 2
+    # Order preservada — score DESC já vem do SQL.
+    assert body["top_phases"][0]["phase_id"] == "laminagem"
+    assert body["top_phases"][0]["phase_name"] == "Laminagem"
+    assert body["top_phases"][0]["score"] == 0.92
+    assert body["top_phases"][0]["sample_count"] == 20
+    assert body["top_phases"][1]["phase_id"] == "cura"
+    assert body["top_phases"][1]["phase_name"] == "Cura"
+    assert body["total_phases_with_data"] == 2
+
+
+def test_operador_404_when_employee_missing():
+    """Employee_id desconhecido → 404."""
+    session = FakeSession()
+    session.queue_scalar(None)  # Employee não existe.
+
+    client = _minimal_app(session)
+    resp = client.get(f"/v1/entity/operador/{uuid4()}", headers=_HEADERS)
+    assert resp.status_code == 404
+
+
+def test_operador_role_fallback_to_department():
+    """job_title vazio → role cai para department."""
+    session = FakeSession()
+    op_id = uuid4()
+    employee = _employee_full(
+        id_=op_id, name="Ana Sousa", job_title=None, department="Pintura", active=True
+    )
+
+    # Sem afinidades — lista vazia + total=0.
+    session.queue_scalar(employee)
+    session.queue_scalars([])
+    session.queue_scalar(None)
+    session.queue_scalars([])
+    session.queue_scalar(0)
+    session.queue_scalars([])
+
+    client = _minimal_app(session)
+    resp = client.get(f"/v1/entity/operador/{op_id}", headers=_HEADERS)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["role"] == "Pintura"
+    assert body["top_phases"] == []
+    assert body["total_phases_with_data"] == 0
+
+
+def test_operador_no_affinities_yet():
+    """Operador existe mas sem PhaseOperatorAffinity — lista vazia, não 404."""
+    session = FakeSession()
+    op_id = uuid4()
+    employee = _employee_full(
+        id_=op_id, name="Pedro Novo", job_title="Aprendiz", active=True
+    )
+
+    session.queue_scalar(employee)
+    session.queue_scalars([])
+    session.queue_scalar(None)
+    session.queue_scalars([])  # zero affinities
+    session.queue_scalar(0)
+    session.queue_scalars([])
+
+    client = _minimal_app(session)
+    resp = client.get(f"/v1/entity/operador/{op_id}", headers=_HEADERS)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["operator_name"] == "Pedro Novo"
+    assert body["active"] is True
+    assert body["top_phases"] == []
+    assert body["total_phases_with_data"] == 0

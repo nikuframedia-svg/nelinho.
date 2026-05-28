@@ -279,6 +279,7 @@ export const entityKeys = {
   fase: (id: string) => [...entityKeys.all, 'fase', id] as const,
   cliente: (id: string) => [...entityKeys.all, 'cliente', id] as const,
   encomenda: (id: string | number) => [...entityKeys.all, 'encomenda', String(id)] as const,
+  operador: (id: string) => [...entityKeys.all, 'operador', id] as const,
 } as const;
 
 // ─── master data cancel/retire/deactivate (Q.115.X5) ─────────────────────

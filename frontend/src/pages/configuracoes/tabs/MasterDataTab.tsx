@@ -152,8 +152,16 @@ function SeccaoOrdensFabrico() {
                   <td className="py-2 font-mono text-text-dark-primary">
                     <Clickable kind="encomenda" id={o.of_id}>{o.of_id}</Clickable>
                   </td>
-                  <td className="py-2 text-text-dark-secondary">{o.modelo}</td>
-                  <td className="py-2 text-text-dark-tertiary">{o.cliente}</td>
+                  <td className="py-2 text-text-dark-secondary">
+                    {o.modelo_id
+                      ? <Clickable kind="modelo" id={o.modelo_id}>{o.modelo}</Clickable>
+                      : o.modelo}
+                  </td>
+                  <td className="py-2 text-text-dark-tertiary">
+                    {o.cliente_id
+                      ? <Clickable kind="cliente" id={o.cliente_id}>{o.cliente}</Clickable>
+                      : o.cliente}
+                  </td>
                   <td className="py-2 text-text-dark-tertiary">{o.fase_actual}</td>
                   <td className="py-2 text-center">
                     <DarkBadge variant={STATUS_OF_VARIANT[o.status] ?? 'neutral'}>
@@ -285,7 +293,11 @@ function SeccaoEncomendas() {
                   <td className="py-2 font-mono text-text-dark-primary">
                     <Clickable kind="encomenda" id={e.encomenda_id}>{e.encomenda_id}</Clickable>
                   </td>
-                  <td className="py-2 text-text-dark-secondary">{e.cliente}</td>
+                  <td className="py-2 text-text-dark-secondary">
+                    {e.cliente_id
+                      ? <Clickable kind="cliente" id={e.cliente_id}>{e.cliente}</Clickable>
+                      : e.cliente}
+                  </td>
                   <td className="py-2 text-text-dark-tertiary">
                     {new Date(e.data).toLocaleDateString('pt-PT')}
                   </td>
@@ -434,7 +446,11 @@ function SeccaoBarcos() {
                     <td className="py-2 font-mono text-text-dark-primary">
                       <Clickable kind="encomenda" id={b.boat_id}>{b.boat_id}</Clickable>
                     </td>
-                    <td className="py-2 text-text-dark-secondary">{b.modelo_nome}</td>
+                    <td className="py-2 text-text-dark-secondary">
+                      {b.modelo_id
+                        ? <Clickable kind="modelo" id={b.modelo_id}>{b.modelo_nome}</Clickable>
+                        : b.modelo_nome}
+                    </td>
                     <td className="py-2">
                       {isRetired ? (
                         <DarkBadge variant="neutral">
@@ -497,7 +513,7 @@ function SeccaoOperadores() {
         (e) =>
           e.employee_id.toLowerCase().includes(search.toLowerCase()) ||
           e.nome.toLowerCase().includes(search.toLowerCase()) ||
-          e.role.toLowerCase().includes(search.toLowerCase()),
+          (e.role ?? '').toLowerCase().includes(search.toLowerCase()),
       )
     : items;
 
@@ -607,9 +623,13 @@ function SeccaoOperadores() {
                   key={e.employee_id}
                   className={`border-b border-white/5 hover:bg-white/5 ${!e.active ? 'opacity-50' : ''}`}
                 >
-                  <td className="py-2 font-mono text-text-dark-primary">{e.employee_id}</td>
-                  <td className="py-2 text-text-dark-secondary">{e.nome}</td>
-                  <td className="py-2 text-text-dark-tertiary">{e.role}</td>
+                  <td className="py-2 font-mono text-text-dark-primary">
+                    <Clickable kind="operador" id={e.employee_id}>{e.employee_id}</Clickable>
+                  </td>
+                  <td className="py-2 text-text-dark-secondary">
+                    <Clickable kind="operador" id={e.employee_id}>{e.nome}</Clickable>
+                  </td>
+                  <td className="py-2 text-text-dark-tertiary">{e.role ?? '—'}</td>
                   <td className="py-2 text-center">
                     <DarkBadge variant={e.active ? 'success' : 'neutral'}>
                       {e.active ? 'Activo' : 'Inactivo'}

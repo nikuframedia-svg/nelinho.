@@ -6,7 +6,23 @@
  */
 import { apiFetch } from './client';
 
-export type EntityKind = 'modelo' | 'fase' | 'cliente' | 'encomenda';
+export type EntityKind = 'modelo' | 'fase' | 'cliente' | 'encomenda' | 'operador';
+
+export interface TopPhaseForOperator {
+  phase_id: string;
+  phase_name: string;
+  score: number;
+  sample_count: number;
+}
+
+export interface OperadorSummary {
+  operator_id: string;
+  operator_name: string;
+  role: string | null;
+  active: boolean;
+  top_phases: TopPhaseForOperator[];
+  total_phases_with_data: number;
+}
 
 export interface PhaseInTemplate {
   seq: number;
@@ -138,6 +154,8 @@ export const entityApi = {
     apiFetch<ClienteSummary>(`/v1/entity/cliente/${encodeURIComponent(id)}`),
   encomenda: (id: string | number) =>
     apiFetch<EncomendaSummary>(`/v1/entity/encomenda/${id}`),
+  operador: (id: string) =>
+    apiFetch<OperadorSummary>(`/v1/entity/operador/${encodeURIComponent(id)}`),
   upsertOrderBoost: (workOrderId: number, body: OrderBoostUpsert) =>
     apiFetch<OrderBoostOut>(`/v1/plan/order-boost/${workOrderId}`, {
       method: 'PATCH',

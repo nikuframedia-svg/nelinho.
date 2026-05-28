@@ -180,7 +180,11 @@ function PorFaseView({
     return Array.from(seen.entries()).sort(([a], [b]) => a.localeCompare(b));
   }, [operations]);
 
-  const lanes: TimelineLane[] = phases.map(([id, label]) => ({ id, label }));
+  const lanes: TimelineLane[] = phases.map(([id, label]) => ({
+    id,
+    label,
+    labelNode: <Clickable kind="fase" id={id}>{label}</Clickable>,
+  }));
 
   const opsByPhaseSlot = useMemo(() => {
     const map = new Map<string, ScheduledOp[]>();

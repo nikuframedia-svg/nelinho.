@@ -57,6 +57,43 @@ class DecisionResponse(BaseModel):
     audit_hash: str
     executed_at: Optional[str] = None
     executed_by: Optional[str] = None
+    work_order_id: Optional[int] = Field(
+        default=None,
+        description="Q.116.E — work_order_id derivado de action_data quando aplicável",
+    )
+
+
+def _extract_wo_id(action_data: Optional[Dict[str, Any]]) -> Optional[int]:
+    """Q.116.E — pull ``work_order_id`` out of ``action_data`` if present.
+
+    ``action_data`` is a JSONB blob with no strict schema, so the value may
+    be missing, ``None``, an int, or a stringified int. Anything that isn't
+    cleanly coercible to ``int`` is returned as ``None`` — the frontend uses
+    this to wrap rows in ``<Clickable kind="encomenda">`` and a bogus id
+    would just produce a broken link.
+    """
+    if not action_data:
+        return None
+    raw = action_data.get("work_order_id")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _decision_to_response(decision: Dict[str, Any]) -> DecisionResponse:
+    """Build a ``DecisionResponse`` from a service-layer decision dict.
+
+    Q.116.E — centralises the ``work_order_id`` derivation so every endpoint
+    that returns ``DecisionResponse`` (propose / list / get / pending-me)
+    surfaces the same shape.
+    """
+    return DecisionResponse(
+        **decision,
+        work_order_id=_extract_wo_id(decision.get("action_data")),
+    )
 
 
 class BulkItemIn(BaseModel):
@@ -100,7 +137,7 @@ async def propose_decision(
         scenario_id=proposal.scenario_id,
         evidence_refs=proposal.evidence_refs,
     )
-    return DecisionResponse(**decision)
+    return _decision_to_response(decision)
 
 
 @router.get("/decisions", response_model=List[DecisionResponse])
@@ -121,7 +158,7 @@ async def list_decisions(
         limit=limit,
         offset=offset,
     )
-    return [DecisionResponse(**d) for d in decisions]
+    return [_decision_to_response(d) for d in decisions]
 
 
 @router.get("/decisions/pending/me")
@@ -138,7 +175,7 @@ async def get_my_pending_approvals(
     pending = await service.get_pending_approvals(user)
     return {
         "user": user,
-        "pending": [DecisionResponse(**d) for d in pending],
+        "pending": [_decision_to_response(d) for d in pending],
         "count": len(pending),
     }
 
@@ -155,7 +192,7 @@ async def get_decision(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Decision {decision_id} not found",
         )
-    return DecisionResponse(**decision)
+    return _decision_to_response(decision)
 
 
 @router.get("/decisions/{decision_id}/audit-pack")

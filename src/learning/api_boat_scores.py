@@ -56,10 +56,19 @@ async def get_boat_phase_scores(
     boat_id: Optional[str] = Query(None, description="Filtra por barco"),
     phase_id: Optional[str] = Query(None, description="Filtra por fase"),
     top: Optional[int] = Query(10, ge=1, le=200, description="Top-N por score"),
+    order: str = Query(
+        "desc",
+        pattern="^(asc|desc)$",
+        description="asc=mais difíceis primeiro (pior score); desc=melhores primeiro",
+    ),
     tenant_id: UUID = Depends(_tenant_id),
     session: AsyncSession = Depends(get_session),
 ) -> List[BoatPhaseScoreOut]:
-    """Devolve afinidades barco/fase ordenadas por score descendente.
+    """Devolve afinidades barco/fase ordenadas por score.
+
+    Por omissão devolve descendente (melhores barcos primeiro). Com ``order=asc``
+    devolve ascendente, útil para identificar os barcos mais exigentes por fase
+    (consumido pelo FaseSheet do Q.116.A).
 
     Retorna lista vazia se o job ainda nunca correu.
     """
@@ -71,7 +80,10 @@ async def get_boat_phase_scores(
     if phase_id:
         stmt = stmt.where(BoatPhaseScore.phase_id == phase_id)
 
-    stmt = stmt.order_by(BoatPhaseScore.score.desc())
+    if order == "asc":
+        stmt = stmt.order_by(BoatPhaseScore.score.asc())
+    else:
+        stmt = stmt.order_by(BoatPhaseScore.score.desc())
     if top is not None:
         stmt = stmt.limit(top)
 
