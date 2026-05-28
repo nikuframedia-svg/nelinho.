@@ -66,6 +66,12 @@ const RBACPage = lazy(() =>
 // ── Q.115.N — Página LLM consolidada (Chat + KPIs + Regras LLM) ──────
 const LLMPage = lazy(() => import('./pages/llm/LLMPage'));
 
+// ── Q.115.O — Página Configurações consolidada (6 tabs) ───────────────
+const ConfiguracoesPage = lazy(() => import('./pages/configuracoes/ConfiguracoesPage'));
+
+// ── Q.115.K — Página Overall (Planeamento com timeline + drag-drop) ───
+const OverallPage = lazy(() => import('./pages/overall/OverallPage'));
+
 // ── Pesquisa global (Q.52.S) ─────────────────────────────────────────
 const SearchResultsPage = lazy(() => import('./pages/search/SearchResultsPage'));
 
@@ -113,7 +119,11 @@ function App() {
                   <Route path="copilot" element={<Lazy count={3}><CopilotPage /></Lazy>} />
                   {/* Q.115.N — página LLM consolidada (Chat + KPIs + Regras LLM) */}
                   <Route path="llm" element={<Lazy count={3}><LLMPage /></Lazy>} />
+                  {/* Q.115.K — Planeamento Overall (timeline + drag-drop por fase) */}
+                  <Route path="overall" element={<Lazy count={4}><OverallPage /></Lazy>} />
                   <Route path="configuracao" element={<Lazy><ConfiguracaoPage /></Lazy>} />
+                  {/* Q.115.O — página Configurações consolidada (6 tabs) */}
+                  <Route path="configuracoes" element={<Lazy><ConfiguracoesPage /></Lazy>} />
 
                   {/* ── Vista especial: Direção ── */}
                   <Route path="direcao" element={<Lazy><DirecaoPage /></Lazy>} />

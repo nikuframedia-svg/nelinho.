@@ -191,6 +191,14 @@ export const supplyKeys = {
     [...supplyKeys.all, 'copilot-alerts', 'shortage'] as const,
 } as const;
 
+// ─── plan / CPO commits (Q.115.K) ──────────────────────────────────────
+
+export const planKeys = {
+  all: ['plan'] as const,
+  schedule: () => [...planKeys.all, 'schedule'] as const,
+  scheduleCurrent: () => [...planKeys.schedule(), 'current'] as const,
+} as const;
+
 // ─── Reports admin (Q.67.2.B) ──────────────────────────────────────────
 //
 // ReportsAdminPanel (Onda 18/R): 3 mutations (schedule, email, retention).
@@ -201,4 +209,26 @@ export const reportsKeys = {
   schedules: () => [...reportsKeys.all, 'schedules'] as const,
   emails: () => [...reportsKeys.all, 'emails'] as const,
   retentions: () => [...reportsKeys.all, 'retentions'] as const,
+} as const;
+
+// ─── revenue-target (Q.115.B) ───────────────────────────────────────────
+
+export const revenueTargetKeys = {
+  all: ['revenue-target'] as const,
+  lists: () => [...revenueTargetKeys.all, 'list'] as const,
+} as const;
+
+// ─── client-priority (Q.115.B) ──────────────────────────────────────────
+
+export const clientPriorityKeys = {
+  all: ['client-priority'] as const,
+  lists: () => [...clientPriorityKeys.all, 'list'] as const,
+} as const;
+
+// ─── user-input (Q.115.B) ───────────────────────────────────────────────
+
+export const userInputKeys = {
+  all: ['user-input'] as const,
+  lists: () => [...userInputKeys.all, 'list'] as const,
+  list: (status?: string) => [...userInputKeys.lists(), status ?? 'all'] as const,
 } as const;
