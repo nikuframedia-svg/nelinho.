@@ -240,10 +240,27 @@ export const userInputKeys = {
 
 export const learningKeys = {
   all: ['learning'] as const,
-  affinities: (params?: { operator_id?: string; phase_id?: string }) =>
+  affinities: (params?: { operator_id?: string; phase_id?: string; top?: number }) =>
     [...learningKeys.all, 'affinities', params ?? {}] as const,
   planVsActual: (params?: { days?: number }) =>
     [...learningKeys.all, 'plan-vs-actual', params ?? {}] as const,
+} as const;
+
+// ─── runbooks (Q.115.H) ─────────────────────────────────────────────────
+
+export const runbookKeys = {
+  all: ['runbooks'] as const,
+  lists: () => [...runbookKeys.all, 'list'] as const,
+  list: (params?: { error_code?: string }) =>
+    [...runbookKeys.lists(), params ?? {}] as const,
+} as const;
+
+// ─── governance (preference-rules) ──────────────────────────────────────
+
+export const governanceKeys = {
+  all: ['governance'] as const,
+  preferenceRules: (params?: { status?: string; type?: string }) =>
+    [...governanceKeys.all, 'preference-rules', params ?? {}] as const,
 } as const;
 
 // ─── quality risk preview (Q.115.E) ─────────────────────────────────────
@@ -252,4 +269,14 @@ export const qualityRiskKeys = {
   all: ['quality-risk'] as const,
   preview: (operatorId: string, boatId: string, phaseId: string) =>
     [...qualityRiskKeys.all, 'preview', operatorId, boatId, phaseId] as const,
+} as const;
+
+// ─── master data cancel/retire/deactivate (Q.115.X5) ─────────────────────
+
+export const masterDataKeys = {
+  all: ['master-data'] as const,
+  workOrders: () => [...masterDataKeys.all, 'work-orders'] as const,
+  encomendas: () => [...masterDataKeys.all, 'encomendas'] as const,
+  boats: (showRetired: boolean) => [...masterDataKeys.all, 'boats', { showRetired }] as const,
+  employees: (showInactive: boolean) => [...masterDataKeys.all, 'employees', { showInactive }] as const,
 } as const;

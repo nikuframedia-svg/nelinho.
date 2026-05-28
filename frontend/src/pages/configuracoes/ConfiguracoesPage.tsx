@@ -13,8 +13,9 @@
  */
 
 import { lazy, Suspense, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { MasterDataTab } from './tabs/MasterDataTab';
 import {
   Settings,
   BookOpen,
@@ -24,6 +25,8 @@ import {
   ExternalLink,
   ChevronRight,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { PageHeader, Tabs, DarkCard, DarkButton, DarkBadge, EmptyState, Modal } from '../../components/dark';
 import { DarkPageLayout } from '../../layouts';
@@ -32,21 +35,27 @@ import {
   revenueTargetApi,
   clientPriorityApi,
   userInputApi,
+  runbookApi,
+  learningPlanApi,
   type RevenueTarget,
   type ClientPriority,
   type UserInputStatus,
+  type Runbook,
+  type PlanVsActualReport,
 } from '../../lib/api';
+import { learningAffinitiesApi, preferenceRulesApi, type PreferenceRule } from '../../lib/api/planApi';
 import {
   revenueTargetKeys,
   clientPriorityKeys,
   userInputKeys,
+  learningKeys,
+  runbookKeys,
+  governanceKeys,
 } from '../../lib/api/keys';
 import { useToastContext } from '../../components/ToastProvider';
 
-// Páginas herdadas — lazy para não bloquear o bundle inicial
-const ConfiguracaoPage = lazy(() => import('../configuracao/ConfiguracaoPage'));
+// RegrasPage carregada em lazy — bundle split
 const RegrasPage = lazy(() => import('../admin/RegrasPage'));
-const AprendiPage = lazy(() => import('../aprendi/AprendiPage'));
 
 // ─── tipos locais ──────────────────────────────────────────────────────────────
 
@@ -694,25 +703,385 @@ function TabLogicaLLM() {
   );
 }
 
-// ─── Tab: Aprendizagem (wrapper) ──────────────────────────────────────────────
+// ─── Tab: Aprendizagem — 4 secções reais (Q.115.X4) ─────────────────────────
+
+// ── helpers de badge ────────────────────────────────────────────────────
+
+function accuracyVariant(pct: number): 'success' | 'warning' | 'danger' {
+  if (pct >= 80) return 'success';
+  if (pct >= 60) return 'warning';
+  return 'danger';
+}
+
+function scoreVariant(score: number): 'success' | 'warning' | 'danger' {
+  if (score >= 0.7) return 'success';
+  if (score >= 0.4) return 'warning';
+  return 'danger';
+}
+
+const PREF_TYPE_LABEL: Record<string, string> = {
+  temporal_block: 'Bloqueio temporal',
+  tradeoff_preference: 'Tradeoff',
+  operator_affinity: 'Afinidade operador',
+  phase_threshold: 'Limiar de fase',
+};
+
+const PREF_STATUS_VARIANT: Record<string, 'success' | 'warning' | 'neutral'> = {
+  confirmed: 'success',
+  detected: 'warning',
+  rejected: 'neutral',
+};
 
 function TabAprendizagem() {
+  const toast = useToastContext();
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+
+  // ── Secção 1: Acerto do plano (Q.115.V) ─────────────────────────────
+  const planQuery = useQuery({
+    queryKey: learningKeys.planVsActual({ days: 7 }),
+    queryFn: () => learningPlanApi.planVsActual({ days: 7 }),
+    refetchInterval: 30_000,
+  });
+
+  const [planExpanded, setPlanExpanded] = useState(false);
+
+  // ── Secção 2: Afinidades operador-fase (Q.115.G) ─────────────────────
+  const [phaseFilter, setPhaseFilter] = useState('');
+  const [operatorFilter, setOperatorFilter] = useState('');
+
+  const affinityQuery = useQuery({
+    queryKey: learningKeys.affinities({ top: 20 }),
+    queryFn: () => learningAffinitiesApi.list({ top: 20 }),
+    refetchInterval: 30_000,
+  });
+
+  const affinities = affinityQuery.data ?? [];
+
+  const allPhases = [...new Set(affinities.map((a) => a.phase_id + '|' + a.phase_name))];
+  const allOperators = [...new Set(affinities.map((a) => a.operator_id + '|' + a.operator_name))];
+
+  const filteredAffinities = affinities.filter((a) => {
+    const matchPhase = !phaseFilter || a.phase_id === phaseFilter;
+    const matchOp = !operatorFilter || a.operator_id === operatorFilter;
+    return matchPhase && matchOp;
+  });
+
+  // ── Secção 3: Preference rules (existente) ────────────────────────────
+  const prefRulesQuery = useQuery({
+    queryKey: governanceKeys.preferenceRules(),
+    queryFn: () => preferenceRulesApi.list({ limit: 100 }),
+    refetchInterval: 5 * 60_000,
+  });
+
+  // ── Secção 4: Runbooks aprendidos (Q.115.H) ───────────────────────────
+  const runbooksQuery = useQuery({
+    queryKey: runbookKeys.list(),
+    queryFn: () => runbookApi.list(),
+    refetchInterval: 5 * 60_000,
+  });
+
+  const learnedRunbooks = (runbooksQuery.data ?? []).filter((r) => r.source === 'learned');
+
+  const [expandedRunbook, setExpandedRunbook] = useState<string | null>(null);
+
+  const approveRunbookMutation = useMutation({
+    mutationFn: (runbookId: string) =>
+      runbookApi.approve(runbookId, { approved_by: 'admin' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: runbookKeys.all });
+      toast.success('Runbook aprovado');
+    },
+    onError: () => {
+      toast.error('Erro ao aprovar runbook');
+    },
+  });
+
+  const planData: PlanVsActualReport | undefined = planQuery.data;
+
   return (
-    <div>
-      <Suspense fallback={<div className="p-6"><SkeletonLoader count={5} /></div>}>
-        <AprendiPage />
-      </Suspense>
-      {/* placeholder Q.115.G */}
-      <div className="mt-6 px-6">
-        <DarkCard>
-          <h3 className="text-sm font-semibold text-text-dark-primary mb-1">
-            Afinidades fase-operador
-          </h3>
-          <p className="text-xs text-text-dark-tertiary">
-            A preencher quando Q.115.G estiver implementado.
-          </p>
-        </DarkCard>
-      </div>
+    <div className="space-y-8">
+
+      {/* ── Secção 1: Acerto do plano ── */}
+      <DarkCard>
+        <h3 className="text-sm font-semibold text-text-dark-primary mb-1">Acerto do plano</h3>
+        <p className="text-xs text-text-dark-tertiary mb-4">Desvio plan vs. actual — últimos 7 dias.</p>
+
+        {planQuery.isLoading && <SkeletonLoader count={2} />}
+        {planQuery.isError && (
+          <EmptyState
+            title="Erro ao carregar acerto do plano"
+            hint="Verifica a ligação ao backend."
+            action={<DarkButton size="sm" onClick={() => planQuery.refetch()}>Tentar novamente</DarkButton>}
+          />
+        )}
+        {planQuery.isSuccess && planData && planData.sample_size === 0 && (
+          <EmptyState
+            title="Sem histórico suficiente"
+            hint="ETL FasesOf precisa de SQLSERVER_ENABLED=true."
+          />
+        )}
+        {planQuery.isSuccess && planData && planData.sample_size > 0 && (
+          <div>
+            <div className="flex items-end gap-4 mb-3">
+              <div className="text-5xl font-bold font-mono text-text-dark-primary">
+                {planData.plan_accuracy_pct.toFixed(1)}%
+              </div>
+              <div className="pb-1">
+                <DarkBadge variant={accuracyVariant(planData.plan_accuracy_pct)}>
+                  {accuracyVariant(planData.plan_accuracy_pct) === 'success' ? 'Bom' :
+                   accuracyVariant(planData.plan_accuracy_pct) === 'warning' ? 'Aceitável' : 'A melhorar'}
+                </DarkBadge>
+              </div>
+              <p className="text-xs text-text-dark-tertiary pb-1">
+                últimos 7 dias · {planData.sample_size} ops
+              </p>
+            </div>
+            <DarkButton
+              size="sm"
+              variant="ghost"
+              onClick={() => setPlanExpanded((v) => !v)}
+            >
+              {planExpanded ? <><ChevronUp size={12} className="mr-1" />Fechar</> : <><ChevronDown size={12} className="mr-1" />Detalhes por fase</>}
+            </DarkButton>
+            {planExpanded && planData.deltas_by_phase.length > 0 && (
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-white/10 text-text-dark-tertiary">
+                      <th className="pb-2 text-left font-medium">Fase</th>
+                      <th className="pb-2 text-right font-medium">Delta (min)</th>
+                      <th className="pb-2 text-right font-medium">Amostras</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {planData.deltas_by_phase.map((d) => (
+                      <tr key={d.phase_id} className="border-b border-white/5 hover:bg-white/5">
+                        <td className="py-1.5 text-text-dark-secondary">{d.phase_name}</td>
+                        <td className="py-1.5 text-right font-mono text-text-dark-primary">
+                          {d.avg_delta_duration_min > 0 ? '+' : ''}{d.avg_delta_duration_min.toFixed(1)}
+                        </td>
+                        <td className="py-1.5 text-right text-text-dark-tertiary">{d.sample_n}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+      </DarkCard>
+
+      {/* ── Secção 2: Afinidades operador-fase ── */}
+      <DarkCard>
+        <h3 className="text-sm font-semibold text-text-dark-primary mb-1">Afinidades operador-fase</h3>
+        <p className="text-xs text-text-dark-tertiary mb-4">Top-20 por score. Job diário às 03:30 UTC.</p>
+
+        {/* filtros */}
+        <div className="flex gap-3 mb-4 flex-wrap">
+          <select
+            className="bg-white text-slate-900 placeholder:text-slate-400 border border-slate-300 rounded px-3 py-1.5 text-xs"
+            value={phaseFilter}
+            onChange={(e) => setPhaseFilter(e.target.value)}
+          >
+            <option value="">Todas as fases</option>
+            {allPhases.map((p) => {
+              const [id, name] = p.split('|');
+              return <option key={id} value={id}>{name}</option>;
+            })}
+          </select>
+          <select
+            className="bg-white text-slate-900 placeholder:text-slate-400 border border-slate-300 rounded px-3 py-1.5 text-xs"
+            value={operatorFilter}
+            onChange={(e) => setOperatorFilter(e.target.value)}
+          >
+            <option value="">Todos os operadores</option>
+            {allOperators.map((o) => {
+              const [id, name] = o.split('|');
+              return <option key={id} value={id}>{name}</option>;
+            })}
+          </select>
+        </div>
+
+        {affinityQuery.isLoading && <SkeletonLoader count={4} />}
+        {affinityQuery.isError && (
+          <EmptyState
+            title="Erro ao carregar afinidades"
+            hint="Verifica a ligação ao backend."
+            action={<DarkButton size="sm" onClick={() => affinityQuery.refetch()}>Tentar novamente</DarkButton>}
+          />
+        )}
+        {affinityQuery.isSuccess && filteredAffinities.length === 0 && (
+          <EmptyState
+            title="Job de afinidades ainda não correu"
+            hint="Agendado 03:30 UTC diário."
+          />
+        )}
+        {affinityQuery.isSuccess && filteredAffinities.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-white/10 text-text-dark-tertiary">
+                  <th className="pb-2 text-left font-medium">Operador</th>
+                  <th className="pb-2 text-left font-medium">Fase</th>
+                  <th className="pb-2 text-center font-medium">Score</th>
+                  <th className="pb-2 text-right font-medium">Amostra</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredAffinities.map((a) => (
+                  <tr key={`${a.operator_id}-${a.phase_id}`} className="border-b border-white/5 hover:bg-white/5">
+                    <td className="py-1.5 text-text-dark-secondary">{a.operator_name}</td>
+                    <td className="py-1.5 text-text-dark-tertiary">{a.phase_name}</td>
+                    <td className="py-1.5 text-center">
+                      <DarkBadge variant={scoreVariant(a.score)}>
+                        {a.score.toFixed(2)}
+                      </DarkBadge>
+                    </td>
+                    <td className="py-1.5 text-right text-text-dark-tertiary">{a.sample_count}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </DarkCard>
+
+      {/* ── Secção 3: Preference rules detectadas ── */}
+      <DarkCard>
+        <h3 className="text-sm font-semibold text-text-dark-primary mb-1">Preference rules detectadas</h3>
+        <p className="text-xs text-text-dark-tertiary mb-4">Regras inferidas a partir de padrões de decisão.</p>
+
+        {prefRulesQuery.isLoading && <SkeletonLoader count={3} />}
+        {prefRulesQuery.isError && (
+          <EmptyState
+            title="Erro ao carregar preference rules"
+            hint="Verifica a ligação ao backend."
+            action={<DarkButton size="sm" onClick={() => prefRulesQuery.refetch()}>Tentar novamente</DarkButton>}
+          />
+        )}
+        {prefRulesQuery.isSuccess && (prefRulesQuery.data ?? []).length === 0 && (
+          <EmptyState
+            title="Nenhuma preferência detectada ainda"
+            hint="O detector corre diariamente sobre o histórico de aprovações."
+          />
+        )}
+        {prefRulesQuery.isSuccess && (prefRulesQuery.data ?? []).length > 0 && (
+          <div className="space-y-2">
+            {(prefRulesQuery.data ?? []).map((r: PreferenceRule) => (
+              <div
+                key={r.id}
+                className="flex items-start gap-3 p-3 rounded-lg bg-white/5 border border-white/10"
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap mb-1">
+                    <DarkBadge variant="info">
+                      {PREF_TYPE_LABEL[r.type] ?? r.type}
+                    </DarkBadge>
+                    <DarkBadge variant={PREF_STATUS_VARIANT[r.status] ?? 'neutral'}>
+                      {r.status === 'confirmed' ? 'Confirmada' : r.status === 'detected' ? 'Detectada' : 'Rejeitada'}
+                    </DarkBadge>
+                  </div>
+                  <p className="text-xs text-text-dark-secondary">{r.description}</p>
+                  {r.confirmed_by && (
+                    <p className="text-xs text-text-dark-tertiary mt-0.5">
+                      Confirmada por {r.confirmed_by}
+                    </p>
+                  )}
+                </div>
+                <DarkButton
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => navigate(`/regras?rule_id=${r.id}`)}
+                >
+                  Ver detalhe
+                </DarkButton>
+              </div>
+            ))}
+          </div>
+        )}
+      </DarkCard>
+
+      {/* ── Secção 4: Runbooks aprendidos ── */}
+      <DarkCard>
+        <h3 className="text-sm font-semibold text-text-dark-primary mb-1">Runbooks aprendidos</h3>
+        <p className="text-xs text-text-dark-tertiary mb-4">
+          Procedimentos inferidos pelo sistema. Confidence ≥0.8 prontos para aprovar.
+        </p>
+
+        {runbooksQuery.isLoading && <SkeletonLoader count={3} />}
+        {runbooksQuery.isError && (
+          <EmptyState
+            title="Erro ao carregar runbooks"
+            hint="Verifica a ligação ao backend."
+            action={<DarkButton size="sm" onClick={() => runbooksQuery.refetch()}>Tentar novamente</DarkButton>}
+          />
+        )}
+        {runbooksQuery.isSuccess && learnedRunbooks.length === 0 && (
+          <EmptyState
+            title="Sem runbooks aprendidos"
+            hint="O job de aprendizagem corre após 10+ entradas de retrabalho com root_cause definido."
+          />
+        )}
+        {runbooksQuery.isSuccess && learnedRunbooks.length > 0 && (
+          <div className="space-y-3">
+            {learnedRunbooks.map((rb: Runbook) => {
+              const isPending = !rb.approved_by;
+              const isReadyToApprove = isPending && rb.confidence >= 0.8;
+              const isExpanded = expandedRunbook === rb.id;
+              return (
+                <div
+                  key={rb.id}
+                  className="p-3 rounded-lg bg-white/5 border border-white/10"
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap mb-1">
+                        <span className="text-xs font-mono font-semibold text-text-dark-primary">
+                          {rb.error_code}
+                        </span>
+                        <DarkBadge variant={rb.confidence >= 0.8 ? 'success' : 'warning'}>
+                          {(rb.confidence * 100).toFixed(0)}% confiança
+                        </DarkBadge>
+                        <DarkBadge variant={isPending ? 'warning' : 'success'}>
+                          {isPending ? 'Pendente' : 'Aprovado'}
+                        </DarkBadge>
+                      </div>
+                      <p className="text-xs text-text-dark-tertiary truncate">
+                        {rb.steps_md.slice(0, 80)}{rb.steps_md.length > 80 ? '…' : ''}
+                      </p>
+                    </div>
+                    <div className="flex gap-2 shrink-0">
+                      <DarkButton
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setExpandedRunbook(isExpanded ? null : rb.id)}
+                      >
+                        {isExpanded ? 'Fechar' : 'Ver completo'}
+                      </DarkButton>
+                      {isReadyToApprove && (
+                        <DarkButton
+                          size="sm"
+                          disabled={approveRunbookMutation.isPending}
+                          onClick={() => approveRunbookMutation.mutate(rb.id)}
+                        >
+                          {approveRunbookMutation.isPending ? 'A aprovar…' : 'Aprovar runbook'}
+                        </DarkButton>
+                      )}
+                    </div>
+                  </div>
+                  {isExpanded && (
+                    <div className="mt-3 p-3 bg-black/20 rounded text-xs text-text-dark-secondary font-mono whitespace-pre-wrap">
+                      {rb.steps_md}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </DarkCard>
+
     </div>
   );
 }
@@ -750,11 +1119,7 @@ export default function ConfiguracoesPage() {
       </div>
 
       <div className="px-6 py-5 page-enter">
-        {activeTab === 'master' && (
-          <Suspense fallback={<div className="p-4"><SkeletonLoader count={5} /></div>}>
-            <ConfiguracaoPage />
-          </Suspense>
-        )}
+        {activeTab === 'master' && <MasterDataTab />}
         {activeTab === 'regras' && (
           <Suspense fallback={<div className="p-4"><SkeletonLoader count={5} /></div>}>
             <RegrasPage />

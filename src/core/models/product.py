@@ -11,7 +11,7 @@ from enum import Enum
 from typing import Optional, List
 from uuid import UUID
 
-from sqlalchemy import String, Numeric, Integer, Enum as SQLEnum, Text, ForeignKey, ARRAY
+from sqlalchemy import Boolean, DateTime, String, Numeric, Integer, Enum as SQLEnum, Text, ForeignKey, ARRAY
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -104,9 +104,14 @@ class Product(TenantBase):
     # Customer reference (for finished goods)
     customer_product_code: Mapped[Optional[str]] = mapped_column(String(100))
     
+    # ── Q.115.X5 — Soft-retire ───────────────────────────────────────────────
+    retired_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    retired_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    retirement_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
     def __repr__(self) -> str:
         return f"<Product {self.product_code}: {self.product_name}>"
-    
+
     @property
     def is_finished_good(self) -> bool:
         return self.product_type == ProductType.FINISHED_GOOD

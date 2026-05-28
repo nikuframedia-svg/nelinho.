@@ -475,3 +475,35 @@ export const qualityRiskApi = {
   },
 };
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// RUNBOOK API (Q.115.H)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface Runbook {
+  id: string;
+  error_code: string;
+  steps_md: string;
+  source: string;
+  confidence: number;
+  approved_by: string | null;
+  approved_at: string | null;
+  created_at: string | null;
+}
+
+export const runbookApi = {
+  /** GET /v1/quality/runbook?error_code=... — lista runbooks do tenant. */
+  list: (params?: { error_code?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.error_code) qs.set('error_code', params.error_code);
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    return request<Runbook[]>(`/v1/quality/runbook${suffix}`);
+  },
+
+  /** POST /v1/quality/runbook/{id}/approve */
+  approve: (runbookId: string, payload: { approved_by: string; notes?: string }) =>
+    request<Runbook>(`/v1/quality/runbook/${encodeURIComponent(runbookId)}/approve`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+};
+

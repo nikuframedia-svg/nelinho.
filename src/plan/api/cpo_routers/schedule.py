@@ -72,6 +72,9 @@ class CPOScheduleResponse(BaseModel):
     operations: List[Dict[str, Any]] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
     infeasible_op_ids: List[str] = Field(default_factory=list)
+    # Q.115.X7 — % alinhamento com target diário; null se sem target configurado.
+    # Frontend Q.115.J/K podem usar este campo futuramente.
+    revenue_alignment_pct: Optional[float] = None
     # Sprint K — commit trail
     commit_sha256: Optional[str] = None
     parent_sha256: Optional[str] = None

@@ -13,7 +13,7 @@ from enum import Enum
 from typing import Optional, List
 from uuid import UUID
 
-from sqlalchemy import String, Numeric, Integer, Enum as SQLEnum, Text, Boolean, Date
+from sqlalchemy import DateTime, String, Numeric, Integer, Enum as SQLEnum, Text, Boolean, Date
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB, ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -111,7 +111,13 @@ class Employee(TenantBase):
     
     # Notes
     notes: Mapped[Optional[str]] = mapped_column(Text)
-    
+
+    # ── Q.115.X5 — Soft-deactivate ────────────────────────────────────────
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    deactivated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    deactivated_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    deactivation_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
     def __repr__(self) -> str:
         return f"<Employee {self.employee_code}: {self.employee_name}>"
     
