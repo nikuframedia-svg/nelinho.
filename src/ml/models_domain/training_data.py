@@ -420,3 +420,160 @@ async def build_otd_risk_dataset(
         positives / len(rows) if rows else 0.0,
     )
     return rows
+
+
+# ---------------------------------------------------------------------------
+# SequenceMining — fases_of_history (Q.115.U)
+# ---------------------------------------------------------------------------
+
+async def load_phase_histories(
+    session: AsyncSession,
+    tenant_id: UUID,
+    *,
+    limit: int = 100_000,
+) -> "pd.DataFrame":
+    """
+    Retorna DataFrame [of_id, phase_code, phase_order] de plan.fases_of_history.
+    Fallback para factory_curated.order_phase se a tabela ainda não existir.
+    """
+    import pandas as pd
+
+    sql = text(
+        """
+        SELECT of_id, phase_code, phase_order
+        FROM plan.fases_of_history
+        WHERE tenant_id = :tenant_id
+        ORDER BY of_id, phase_order
+        LIMIT :limit
+        """
+    )
+    try:
+        rows = (
+            await session.execute(sql, {"tenant_id": str(tenant_id), "limit": limit})
+        ).mappings().all()
+        if rows:
+            return pd.DataFrame([dict(r) for r in rows])
+    except Exception as exc:
+        logger.warning("load_phase_histories: %s — fallback para order_phase", exc)
+
+    # Fallback: order_phase
+    fallback_sql = text(
+        """
+        SELECT of_id::text AS of_id,
+               fase_id::text AS phase_code,
+               ROW_NUMBER() OVER (PARTITION BY of_id ORDER BY data_inicio) AS phase_order
+        FROM factory_curated.order_phase
+        WHERE is_quarantined = false
+        LIMIT :limit
+        """
+    )
+    try:
+        rows = (await session.execute(fallback_sql, {"limit": limit})).mappings().all()
+        if rows:
+            return pd.DataFrame([dict(r) for r in rows])
+    except Exception as exc2:
+        logger.warning("load_phase_histories fallback falhou: %s", exc2)
+
+    return pd.DataFrame(columns=["of_id", "phase_code", "phase_order"])
+
+
+async def load_defects(
+    session: AsyncSession,
+    tenant_id: UUID,
+) -> "pd.DataFrame":
+    """
+    Retorna DataFrame [of_id] com OFs que tiveram rework confirmado.
+    """
+    import pandas as pd
+
+    sql = text(
+        """
+        SELECT DISTINCT of_id::text AS of_id
+        FROM quality.rework_entry
+        WHERE tenant_id = :tenant_id
+          AND of_id IS NOT NULL
+        """
+    )
+    try:
+        rows = (
+            await session.execute(sql, {"tenant_id": str(tenant_id)})
+        ).mappings().all()
+        return pd.DataFrame([dict(r) for r in rows]) if rows else pd.DataFrame(columns=["of_id"])
+    except Exception as exc:
+        logger.warning("load_defects: %s", exc)
+        return pd.DataFrame(columns=["of_id"])
+
+
+# ---------------------------------------------------------------------------
+# ThroughputForecast — série temporal (Q.115.U)
+# ---------------------------------------------------------------------------
+
+async def load_throughput_ts(
+    session: AsyncSession,
+    tenant_id: UUID,
+    *,
+    limit: int = 50_000,
+) -> "pd.DataFrame":
+    """
+    Retorna DataFrame [date, boat_id, ops_concluidas] de plan.fases_of_history.
+    Fallback para order_phase se a tabela não existir.
+    """
+    import pandas as pd
+
+    sql = text(
+        """
+        SELECT
+            DATE(completed_at) AS date,
+            boat_id::text AS boat_id,
+            COUNT(*) AS ops_concluidas
+        FROM plan.fases_of_history
+        WHERE tenant_id = :tenant_id
+          AND completed_at IS NOT NULL
+        GROUP BY DATE(completed_at), boat_id
+        ORDER BY date, boat_id
+        LIMIT :limit
+        """
+    )
+    try:
+        rows = (
+            await session.execute(sql, {"tenant_id": str(tenant_id), "limit": limit})
+        ).mappings().all()
+        if rows:
+            df = pd.DataFrame([dict(r) for r in rows])
+            df["date"] = pd.to_datetime(df["date"])
+            return df
+    except Exception as exc:
+        logger.warning("load_throughput_ts: %s — fallback para order_phase", exc)
+
+    # Fallback: order_phase agregado por dia + fase
+    fallback_sql = text(
+        """
+        SELECT
+            DATE(op.data_inicio) AS date,
+            COALESCE(po.product_type, 'desconhecido') AS boat_id,
+            COUNT(*) AS ops_concluidas
+        FROM factory_curated.order_phase op
+        LEFT JOIN plan.production_orders po
+               ON po.legacy_id::text = op.of_id
+              AND po.tenant_id = :tenant_id
+        WHERE op.is_quarantined = false
+          AND op.data_inicio IS NOT NULL
+        GROUP BY DATE(op.data_inicio), COALESCE(po.product_type, 'desconhecido')
+        ORDER BY date, boat_id
+        LIMIT :limit
+        """
+    )
+    try:
+        rows = (
+            await session.execute(
+                fallback_sql, {"tenant_id": str(tenant_id), "limit": limit}
+            )
+        ).mappings().all()
+        if rows:
+            df = pd.DataFrame([dict(r) for r in rows])
+            df["date"] = pd.to_datetime(df["date"])
+            return df
+    except Exception as exc2:
+        logger.warning("load_throughput_ts fallback falhou: %s", exc2)
+
+    return pd.DataFrame(columns=["date", "boat_id", "ops_concluidas"])

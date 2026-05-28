@@ -36,6 +36,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/ml", tags=["ML Learning"])
 
+# ---------------------------------------------------------------------------
+# Q.115.U — modelos em memória (singleton por processo)
+# ---------------------------------------------------------------------------
+
+_sequence_model: Optional[Any] = None
+_throughput_model: Optional[Any] = None
+
 
 # ---------------------------------------------------------------------------
 # Schemas
@@ -238,3 +245,145 @@ async def promote_version(
         "decision_status": decision.get("status"),
         "artifact": promoted_artifact or ModelRegistry.to_dict(artifact),
     }
+
+
+# ---------------------------------------------------------------------------
+# Q.115.U — SequenceMining endpoint
+# ---------------------------------------------------------------------------
+
+@router.get("/sequence-risk", response_model=Dict[str, Any])
+async def get_sequence_risk(
+    phase_sequence: str = Query(
+        ...,
+        description="Sequência de fases separadas por vírgula, ex: A,B,C",
+    ),
+    tenant_id: UUID = Depends(_tenant_id),
+):
+    """
+    GET /v1/ml/sequence-risk?phase_sequence=A,B,C
+
+    Devolve SequenceRisk para a sequência de fases dada.
+    404 se modelo não treinado; 200 com risk (lift pode ser 1.0 para seq desconhecida).
+    """
+    global _sequence_model
+    if _sequence_model is None or not _sequence_model.is_trained:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Modelo sequence_mining não treinado. Aguarda job de retreino (domingo 04:30 UTC).",
+        )
+    phases = [p.strip() for p in phase_sequence.split(",") if p.strip()]
+    if not phases:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="phase_sequence inválida",
+        )
+    risk = _sequence_model.predict_risk_for_sequence(phases)
+    return risk.model_dump()
+
+
+# ---------------------------------------------------------------------------
+# Q.115.U — ThroughputForecast endpoint
+# ---------------------------------------------------------------------------
+
+@router.get("/throughput-forecast", response_model=Dict[str, Any])
+async def get_throughput_forecast(
+    days: int = Query(default=14, ge=1, le=90),
+    boat_id: str = Query(..., description="ID do barco (product_type)"),
+    tenant_id: UUID = Depends(_tenant_id),
+):
+    """
+    GET /v1/ml/throughput-forecast?days=14&boat_id=X
+
+    Devolve ThroughputForecast para o barco dado.
+    404 se modelo não treinado para este barco.
+    """
+    global _throughput_model
+    if _throughput_model is None or boat_id not in (_throughput_model.trained_boats()):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Modelo throughput_forecast não treinado para barco '{boat_id}'. "
+                   "Aguarda job de retreino (terça/sexta 05:00 UTC).",
+        )
+    try:
+        forecast = _throughput_model.forecast(boat_id=boat_id, days=days)
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    return forecast.model_dump()
+
+
+# ---------------------------------------------------------------------------
+# Q.115.U — Drift endpoint
+# ---------------------------------------------------------------------------
+
+class DriftEventResponse(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    model_name: str
+    feature_name: Optional[str] = None
+    metric: str
+    value: float
+    threshold: float
+    severity: str
+    detected_at: Optional[str] = None
+
+
+@router.get("/drift", response_model=List[DriftEventResponse])
+async def get_drift_events(
+    model_name: str = Query(..., description="Nome do modelo ML"),
+    since: str = Query(default="7d", description="Período: ex '7d', '30d'"),
+    tenant_id: UUID = Depends(_tenant_id),
+    db: AsyncSession = Depends(get_session),
+):
+    """
+    GET /v1/ml/drift?model_name=X&since=7d
+
+    Lista eventos de drift registados para o modelo no período dado.
+    """
+    from datetime import timedelta
+    from sqlalchemy import select, and_
+
+    from src.ml.models.drift_event import DriftEvent
+
+    # Parse "7d" → timedelta
+    try:
+        days = int(since.rstrip("d"))
+        cutoff = __import__("datetime").datetime.now(
+            __import__("datetime").timezone.utc
+        ) - timedelta(days=days)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"since inválido: '{since}'. Use formato '7d' ou '30d'.",
+        )
+
+    stmt = (
+        select(DriftEvent)
+        .where(
+            and_(
+                DriftEvent.tenant_id == tenant_id,
+                DriftEvent.model_name == model_name,
+                DriftEvent.detected_at >= cutoff,
+            )
+        )
+        .order_by(DriftEvent.detected_at.desc())
+        .limit(200)
+    )
+    try:
+        result = await db.execute(stmt)
+        rows = result.scalars().all()
+    except Exception as exc:
+        logger.warning("drift endpoint: query falhou: %s", exc)
+        rows = []
+
+    return [
+        DriftEventResponse(
+            model_name=r.model_name,
+            feature_name=r.feature_name,
+            metric=r.metric,
+            value=r.value,
+            threshold=r.threshold,
+            severity=r.severity,
+            detected_at=r.detected_at.isoformat() if r.detected_at else None,
+        )
+        for r in rows
+    ]
