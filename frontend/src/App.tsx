@@ -53,6 +53,8 @@ const LigacoesPage = lazy(() => import('./pages/ligacoes/LigacoesPage'));
 
 // ── 5 páginas órfãs preservadas (Q.52.R) ─────────────────────────────
 const InboxDecisoesPage = lazy(() => import('./pages/inbox/InboxDecisoesPage'));
+// ── Q.115.J — Decisões estilo Tinder ────────────────────────────────
+const DecisoesPage = lazy(() => import('./pages/decisoes/DecisoesPage'));
 const RelatoriosPage = lazy(() => import('./pages/relatorios/RelatoriosPage'));
 const HealthDashboardPage = lazy(() =>
   import('./pages/admin/HealthDashboardPage').then((m) => ({ default: m.HealthDashboardPage })),
@@ -60,6 +62,9 @@ const HealthDashboardPage = lazy(() =>
 const RBACPage = lazy(() =>
   import('./pages/admin/RBACPage').then((m) => ({ default: m.RBACPage })),
 );
+
+// ── Q.115.N — Página LLM consolidada (Chat + KPIs + Regras LLM) ──────
+const LLMPage = lazy(() => import('./pages/llm/LLMPage'));
 
 // ── Pesquisa global (Q.52.S) ─────────────────────────────────────────
 const SearchResultsPage = lazy(() => import('./pages/search/SearchResultsPage'));
@@ -106,6 +111,8 @@ function App() {
                   <Route path="regras" element={<Lazy><RegrasPage /></Lazy>} />
                   <Route path="aprendi" element={<Lazy><AprendiPage /></Lazy>} />
                   <Route path="copilot" element={<Lazy count={3}><CopilotPage /></Lazy>} />
+                  {/* Q.115.N — página LLM consolidada (Chat + KPIs + Regras LLM) */}
+                  <Route path="llm" element={<Lazy count={3}><LLMPage /></Lazy>} />
                   <Route path="configuracao" element={<Lazy><ConfiguracaoPage /></Lazy>} />
 
                   {/* ── Vista especial: Direção ── */}
@@ -113,6 +120,8 @@ function App() {
 
                   {/* ── Grupo Sistema (Q.53: + Conexão ERP, Ligações) ── */}
                   <Route path="inbox" element={<Lazy><InboxDecisoesPage /></Lazy>} />
+                  {/* Q.115.J — página de decisões estilo Tinder */}
+                  <Route path="decisoes" element={<Lazy><DecisoesPage /></Lazy>} />
                   <Route path="relatorios" element={<Lazy><RelatoriosPage /></Lazy>} />
                   <Route
                     path="dados-mestre"

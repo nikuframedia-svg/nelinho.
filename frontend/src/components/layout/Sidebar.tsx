@@ -129,6 +129,12 @@ export function Sidebar() {
           icon: <Inbox size={16} />,
           badge: inboxBadge && inboxBadge > 0 ? inboxBadge : undefined,
         },
+        {
+          path: '/decisoes',
+          label: 'Decisões',
+          icon: <Inbox size={16} />,
+          badge: inboxBadge && inboxBadge > 0 ? inboxBadge : undefined,
+        },
         { path: '/relatorios', label: 'Relatórios', icon: <FileText size={16} /> },
         { path: '/dados-mestre', label: 'Dados-mestre', icon: <Database size={16} /> },
         { path: '/conexao-erp', label: 'Conexão ERP', icon: <Plug size={16} /> },

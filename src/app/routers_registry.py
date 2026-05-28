@@ -131,3 +131,8 @@ def register_routers(app: FastAPI) -> None:
     from src.observability import router as observability_router
 
     app.include_router(observability_router)
+
+    # Q.115.B — config revenue-target, client-priority, user-input
+    from src.app.routers.q115_config import router as q115_config_router
+
+    app.include_router(q115_config_router)
