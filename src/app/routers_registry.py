@@ -151,3 +151,13 @@ def register_routers(app: FastAPI) -> None:
     from src.learning.api_plan_vs_actual import router as plan_vs_actual_router
 
     app.include_router(plan_vs_actual_router)
+
+    # Q.115.X5 — cancel/retire/deactivate para obras/encomendas/barcos/pessoas
+    from src.master_data.api.cancel import router as cancel_router
+
+    app.include_router(cancel_router)
+
+    # Q.115.X6 — boat-phase-scores + boat-potential
+    from src.learning.api_boat_scores import router as boat_scores_router
+
+    app.include_router(boat_scores_router)

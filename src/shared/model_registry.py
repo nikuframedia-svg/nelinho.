@@ -37,6 +37,7 @@ from src.core.models import (
     client_priority,        # Q.115.A.03
     daily_revenue_target,   # Q.115.A.02
     employee,
+    encomenda_cancelled,    # Q.115.X5
     etl_run,
     machine,
     operation,
@@ -69,6 +70,9 @@ from src.governance import models as _governance_main
 from src.governance.yaml_policy import models as _governance_yaml_policy
 # Q.115.A.04 — afinidade operador/fase
 from src.governance.models import phase_operator_affinity as _governance_phase_affinity
+# Q.115.X6 — afinidade barco/fase + potencialidade por barco
+from src.governance.models import boat_phase_score as _governance_boat_phase_score
+from src.governance.models import boat_potential as _governance_boat_potential
 
 # ─── hr ─────────────────────────────────────────────────────────────────
 from src.hr.models import allocation as _hr_allocation

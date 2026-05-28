@@ -47,6 +47,8 @@ from src.scheduling.jobs.preference_learning import (
     _preference_rule_detector_job,
     _preference_weights_retrain_job,
 )
+from src.scheduling.jobs.boat_phase_score_job import _boat_phase_score_job
+from src.scheduling.jobs.boat_potential_job import _boat_potential_job
 from src.scheduling.jobs.phase_operator_affinity import _phase_operator_affinity_job
 from src.scheduling.jobs.plan_vs_actual import _plan_vs_actual_global_job
 from src.scheduling.jobs.runbook_learning import _runbook_learning_job
@@ -328,6 +330,30 @@ def register_tenant(
         args=[tenant_id],
         id=f"phase_operator_affinity:{tenant_id}",
         name=f"phase_operator_affinity[{tenant_id}]",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Q.115.X6.A — boat_phase_score: afinidade barco/fase.
+    # 03:45 UTC, após o phase_operator_affinity (03:30). Idempotente.
+    _scheduler.add_job(
+        _boat_phase_score_job,
+        trigger=CronTrigger(hour=3, minute=45, timezone="UTC"),
+        args=[tenant_id],
+        id=f"boat_phase_score:{tenant_id}",
+        name=f"boat_phase_score[{tenant_id}]",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Q.115.X6.B — boat_potential: potencialidade por barco.
+    # 04:20 UTC (improve_adoption_signal às 04:15, audit_purge às 04:30).
+    _scheduler.add_job(
+        _boat_potential_job,
+        trigger=CronTrigger(hour=4, minute=20, timezone="UTC"),
+        args=[tenant_id],
+        id=f"boat_potential:{tenant_id}",
+        name=f"boat_potential[{tenant_id}]",
         replace_existing=True,
         coalesce=True,
         max_instances=1,
