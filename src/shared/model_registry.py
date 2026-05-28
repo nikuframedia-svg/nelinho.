@@ -34,6 +34,8 @@ from src.core.models import (
     agent_action,  # Q.66.E.3 — observability do copiloto
     audit,
     bom,
+    client_priority,        # Q.115.A.03
+    daily_revenue_target,   # Q.115.A.02
     employee,
     etl_run,
     machine,
@@ -42,6 +44,7 @@ from src.core.models import (
     rates,
     tenant,
     tenant_configuration,
+    user_input,             # Q.115.A.01
 )
 
 # ─── copilot ────────────────────────────────────────────────────────────
@@ -64,11 +67,14 @@ from src.factory_data_product.models import raw as _fdp_raw
 from src.governance import models as _governance_main
 # Q.17.C: tenant_rule + revision tables (YAML rule authoring)
 from src.governance.yaml_policy import models as _governance_yaml_policy
+# Q.115.A.04 — afinidade operador/fase
+from src.governance.models import phase_operator_affinity as _governance_phase_affinity
 
 # ─── hr ─────────────────────────────────────────────────────────────────
 from src.hr.models import allocation as _hr_allocation
 from src.hr.models import legacy_allocation as _hr_legacy_allocation
 from src.hr.models import productivity as _hr_productivity
+from src.hr.models import worker_phase_assignment as _hr_worker_phase_assignment  # Q.115.A.09
 
 # ─── improve ───────────────────────────────────────────────────────────
 from src.improve import models as _improve_models
@@ -76,10 +82,12 @@ from src.improve import models as _improve_models
 # ─── (Q.61.32d) legacy/ removido; ProductionError migrou para quality/.
 
 # ─── ml ────────────────────────────────────────────────────────────────
+from src.ml.models import drift_event as _ml_drift_event  # Q.115.A.10
 from src.ml.models import orm as _ml_orm
 
 # ─── plan ──────────────────────────────────────────────────────────────
 from src.plan.cpo import commits as _plan_commits
+from src.plan.models import fases_of_history as _plan_fases_of_history  # Q.115.A.08
 from src.plan.models import mold as _plan_mold
 from src.plan.models import mrp as _plan_mrp
 from src.plan.models import order as _plan_order
@@ -96,6 +104,7 @@ from src.profit.models import pricing as _profit_pricing
 # ─── quality ───────────────────────────────────────────────────────────
 from src.quality.models import production_error as _quality_production_error  # Q.61.32d
 from src.quality.models import rework as _quality_rework
+from src.quality.models import runbook as _quality_runbook  # Q.115.A.05+A.06
 
 # ─── reports ───────────────────────────────────────────────────────────
 # Q.22.D: report_schedule + report_run

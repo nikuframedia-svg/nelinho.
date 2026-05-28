@@ -188,6 +188,10 @@ models/
 !src/core/models/
 !src/copilot/models/
 !src/ml/models/
+# Q.115.A — packages `models/` adicionais em domínios de negócio
+!src/plan/models/
+!src/hr/models/
+!src/quality/models/
 
 # Q.61.05 — mutmut state (regravavel via scripts/mutation_test.ps1)
 mutmut-cache/
