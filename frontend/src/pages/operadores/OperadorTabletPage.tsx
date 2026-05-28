@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { AlertTriangle, Check, Hammer, Play } from 'lucide-react';
 import { DarkButton, EmptyState, LiveBadge, NeloWorkerAvatar } from '../../components/dark';
+import { Clickable } from '../../components/entitySheets';
 import { authApi, employeesApi, qualityReworkApi, workerOperationsApi, type ReworkCreatePayload, type WorkerOperation } from '../../lib/api';
 import { WORKER_ID_KEY, PROBLEM_KINDS, fmtClock, fmtTimeOfDay, ContextCard, bigButton, problemButton } from './operadorTabletBits';
 
@@ -307,7 +308,9 @@ export function OperadorTabletPage(): ReactNode {
                   letterSpacing: '-0.04em',
                 }}
               >
-                {currentOp.order_id}
+                <Clickable kind="encomenda" id={currentOp.order_id}>
+                  {currentOp.order_id}
+                </Clickable>
               </span>
               <span
                 style={{
@@ -321,6 +324,22 @@ export function OperadorTabletPage(): ReactNode {
               >
                 Operação {currentOp.operation_sequence}
               </span>
+              {((currentOp as WorkerOperation & { effective_boost?: number }).effective_boost ?? 0) > 50 && (
+                <span
+                  style={{
+                    fontSize: 13,
+                    padding: '3px 10px',
+                    background: 'var(--amber-bg, #78350f22)',
+                    border: '1px solid #f59e0b66',
+                    borderRadius: 999,
+                    color: '#fbbf24',
+                    fontWeight: 600,
+                  }}
+                  title={`Acelerada (boost ${(currentOp as WorkerOperation & { effective_boost?: number }).effective_boost})`}
+                >
+                  ⚡ Acelerada
+                </span>
+              )}
             </div>
             <div
               style={{

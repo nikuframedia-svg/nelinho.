@@ -76,14 +76,16 @@ function OpCardDraggable({ op, editable }: { op: ScheduledOp; editable: boolean 
     disabled: !editable,
   });
 
+  const isAccelerated = (op.effective_boost ?? 0) > 50;
+
   return (
     <div
       ref={setNodeRef}
       style={{ opacity: isDragging ? 0.35 : 1 }}
       {...attributes}
       {...listeners}
-      className={`flex items-center gap-1 px-1.5 py-1 rounded border text-[10px] truncate ${statusColor(op.status)} ${editable ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'}`}
-      title={`${op.order_id ?? op.id} · ${op.phase_name}`}
+      className={`relative flex items-center gap-1 px-1.5 py-1 rounded border text-[10px] truncate ${statusColor(op.status)} ${editable ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'}`}
+      title={`${op.order_id ?? op.id} · ${op.phase_name}${isAccelerated ? ` · Acelerada (boost ${op.effective_boost})` : ''}`}
     >
       {editable && <GripVertical size={9} className="text-slate-500 flex-shrink-0" />}
       <span className="text-slate-200 truncate font-medium">
@@ -94,6 +96,14 @@ function OpCardDraggable({ op, editable }: { op: ScheduledOp; editable: boolean 
       {op.operator_name && (
         <span className="text-slate-500 truncate hidden sm:inline">
           · {op.operator_name}
+        </span>
+      )}
+      {isAccelerated && (
+        <span
+          className="absolute -top-1 -right-1 text-[8px] leading-none px-0.5 py-0 rounded bg-amber-400 text-amber-900 font-bold"
+          aria-label={`Acelerada (boost ${op.effective_boost})`}
+        >
+          ⚡
         </span>
       )}
     </div>
