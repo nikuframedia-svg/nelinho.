@@ -94,6 +94,39 @@ export interface EncomendaSummary {
   transport_date: string | null;
   completed_date: string | null;
   phase_history: PhaseHistoryEntry[];
+  // Q.116.C — boost + transport_date override (Agent A)
+  boost: number;
+  boost_reason: string | null;
+  transport_date_override: string | null;
+  transport_date_effective: string | null;
+}
+
+// Q.116.C — boost + transport_date override mutations
+
+export interface OrderBoostUpsert {
+  boost: number;        // 0-100
+  reason?: string | null;
+}
+
+export interface OrderBoostOut {
+  work_order_id: number;
+  boost: number;
+  reason: string | null;
+  updated_by: string;
+  updated_at: string;
+}
+
+export interface TransportDateUpsert {
+  transport_date: string | null;   // ISO datetime, null = clear override
+  reason?: string | null;
+}
+
+export interface WorkOrderOverrideOut {
+  work_order_id: number;
+  transport_date_override: string | null;
+  reason: string | null;
+  updated_by: string;
+  updated_at: string;
 }
 
 export const entityApi = {
@@ -105,4 +138,14 @@ export const entityApi = {
     apiFetch<ClienteSummary>(`/v1/entity/cliente/${encodeURIComponent(id)}`),
   encomenda: (id: string | number) =>
     apiFetch<EncomendaSummary>(`/v1/entity/encomenda/${id}`),
+  upsertOrderBoost: (workOrderId: number, body: OrderBoostUpsert) =>
+    apiFetch<OrderBoostOut>(`/v1/plan/order-boost/${workOrderId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+  upsertTransportDate: (workOrderId: number, body: TransportDateUpsert) =>
+    apiFetch<WorkOrderOverrideOut>(`/v1/plan/work-orders/${workOrderId}/transport-date`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
 };

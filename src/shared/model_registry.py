@@ -95,10 +95,12 @@ from src.plan.models import fases_of_history as _plan_fases_of_history  # Q.115.
 from src.plan.models import mold as _plan_mold
 from src.plan.models import mrp as _plan_mrp
 from src.plan.models import order as _plan_order
+from src.plan.models import order_boost as _plan_order_boost  # Q.116.C
 from src.plan.models import phase_gap as _plan_phase_gap
 from src.plan.models import routing_template as _plan_routing_template
 from src.plan.models import schedule as _plan_schedule
 from src.plan.models import transport as _plan_transport
+from src.plan.models import work_order_override as _plan_work_order_override  # Q.116.C
 
 # ─── profit ────────────────────────────────────────────────────────────
 from src.profit.models import cost as _profit_cost

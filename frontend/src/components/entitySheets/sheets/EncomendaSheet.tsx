@@ -1,17 +1,23 @@
 /**
- * EncomendaSheet — sheet contextual de encomenda/barco (Q.116.A, read-only).
+ * EncomendaSheet — sheet contextual de encomenda/barco (Q.116.A/C).
  *
  * Tabs: Barcos · Boost · Expedição
  */
 
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Sheet } from '../../dark/Sheet';
 import { Tabs } from '../../dark/Tabs';
 import { DarkBadge } from '../../dark/DarkBadge';
-import { EmptyState } from '../../dark/EmptyState';
+import { DarkButton } from '../../dark/DarkButton';
 import { entityKeys } from '../../../lib/api/keys';
-import { entityApi, type EncomendaSummary } from '../../../lib/api/entityApi';
+import {
+  entityApi,
+  type EncomendaSummary,
+  type OrderBoostUpsert,
+  type TransportDateUpsert,
+} from '../../../lib/api/entityApi';
+import { useToastContext } from '../../ToastProvider';
 
 export interface EncomendaSheetProps {
   workOrderId: string;
@@ -69,15 +75,9 @@ export default function EncomendaSheet({ workOrderId, onClose }: EncomendaSheetP
 
       {tab === 'barcos' && <TabBarcos data={data} />}
 
-      {tab === 'boost' && (
-        <EmptyState
-          title="Q.116.C vai adicionar boost"
-          hint="Slider de boost 0-100 vem no Q.116.C."
-          size="sm"
-        />
-      )}
+      {tab === 'boost' && <TabBoost data={data} />}
 
-      {tab === 'expedicao' && <TabExpedicao transportDate={data.transport_date} />}
+      {tab === 'expedicao' && <TabExpedicao data={data} />}
     </Sheet>
   );
 }
@@ -175,28 +175,232 @@ function TabBarcos({ data }: { data: EncomendaSummary }) {
   );
 }
 
-function TabExpedicao({ transportDate }: { transportDate?: string | null }) {
+function TabBoost({ data }: { data: EncomendaSummary }) {
+  const [boostValue, setBoostValue] = useState(data.boost ?? 0);
+  const [boostReason, setBoostReason] = useState(data.boost_reason ?? '');
+  const queryClient = useQueryClient();
+  const toast = useToastContext();
+
+  const boostMutation = useMutation({
+    mutationFn: (body: OrderBoostUpsert) =>
+      entityApi.upsertOrderBoost(data.legacy_id, body),
+    onSuccess: () => {
+      toast.success('Boost aplicado.');
+      queryClient.invalidateQueries({ queryKey: entityKeys.encomenda(data.legacy_id) });
+    },
+    onError: (err: unknown) => {
+      const msg = err instanceof Error ? err.message : 'Erro a aplicar boost.';
+      toast.error(msg);
+    },
+  });
+
+  const pending = boostMutation.isPending;
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ fontSize: 13, color: 'var(--fg-2)' }}>
+        Boost actual: <strong style={{ color: 'var(--fg-1)' }}>{data.boost}/100</strong>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={boostValue}
+            disabled={pending}
+            onChange={e => setBoostValue(Number(e.target.value))}
+            style={{ flex: 1 }}
+          />
+          <span
+            style={{
+              minWidth: 36,
+              textAlign: 'right',
+              fontVariantNumeric: 'tabular-nums',
+              fontSize: 15,
+              fontWeight: 600,
+            }}
+          >
+            {boostValue}
+          </span>
+        </div>
+
+        <textarea
+          className="bg-white text-slate-900 placeholder:text-slate-400"
+          placeholder="Motivo (opcional)"
+          value={boostReason}
+          disabled={pending}
+          maxLength={2000}
+          rows={3}
+          onChange={e => setBoostReason(e.target.value)}
+          style={{
+            width: '100%',
+            borderRadius: 6,
+            border: '1px solid var(--bd-1)',
+            padding: '8px 10px',
+            fontSize: 13,
+            resize: 'vertical',
+          }}
+        />
+      </div>
+
+      <DarkButton
+        variant="primary"
+        size="sm"
+        disabled={pending}
+        loading={pending}
+        onClick={() =>
+          boostMutation.mutate({ boost: boostValue, reason: boostReason || null })
+        }
+      >
+        Aplicar boost
+      </DarkButton>
+
+      {data.boost_reason && (
+        <div
+          style={{
+            fontSize: 12,
+            color: 'var(--fg-2)',
+            padding: '8px 10px',
+            background: 'var(--bg-2)',
+            borderRadius: 6,
+          }}
+        >
+          Motivo guardado: {data.boost_reason}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TabExpedicao({ data }: { data: EncomendaSummary }) {
+  const effectiveDateStr = data.transport_date_effective
+    ? data.transport_date_effective.slice(0, 10)
+    : '';
+  const [transportDate, setTransportDate] = useState(effectiveDateStr);
+  const [transportReason, setTransportReason] = useState('');
+  const queryClient = useQueryClient();
+  const toast = useToastContext();
+
+  const transportMutation = useMutation({
+    mutationFn: (body: TransportDateUpsert) =>
+      entityApi.upsertTransportDate(data.legacy_id, body),
+    onSuccess: () => {
+      toast.success('Data de transporte actualizada.');
+      queryClient.invalidateQueries({ queryKey: entityKeys.encomenda(data.legacy_id) });
+    },
+    onError: (err: unknown) => {
+      const msg = err instanceof Error ? err.message : 'Erro a actualizar transporte.';
+      toast.error(msg);
+    },
+  });
+
+  const pending = transportMutation.isPending;
+
+  const handleApply = () => {
+    if (!transportDate) {
+      toast.warning('Selecciona uma data antes de aplicar.');
+      return;
+    }
+    transportMutation.mutate({
+      transport_date: new Date(transportDate + 'T00:00:00Z').toISOString(),
+      reason: transportReason || null,
+    });
+  };
+
+  const handleClear = () => {
+    transportMutation.mutate({
+      transport_date: null,
+      reason: transportReason || null,
+    });
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div
         style={{
+          display: 'grid',
+          gridTemplateColumns: 'auto 1fr',
+          gap: '6px 12px',
+          fontSize: 13,
           padding: '10px 14px',
           background: 'var(--bg-2)',
           borderRadius: 8,
-          fontSize: 13,
-          display: 'flex',
-          gap: 10,
-          alignItems: 'center',
         }}
       >
-        <span style={{ color: 'var(--fg-2)' }}>Transporte previsto:</span>
-        <span>{transportDate ?? 'sem data'}</span>
+        <span style={{ color: 'var(--fg-2)' }}>Transporte ERP:</span>
+        <span>{data.transport_date ?? '—'}</span>
+        <span style={{ color: 'var(--fg-2)' }}>Transporte efectivo:</span>
+        <strong>{data.transport_date_effective ?? '—'}</strong>
+        {data.transport_date_override && (
+          <>
+            <span style={{ color: 'var(--fg-2)' }}>Override actual:</span>
+            <span>{data.transport_date_override}</span>
+          </>
+        )}
       </div>
-      <EmptyState
-        title="Q.116.C vai permitir alterar"
-        hint="Edição da data de transporte vem no Q.116.C."
-        size="sm"
-      />
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <label style={{ fontSize: 12, color: 'var(--fg-2)', fontWeight: 600 }}>
+          Nova data de transporte
+        </label>
+        <input
+          type="date"
+          className="bg-white text-slate-900 placeholder:text-slate-400"
+          value={transportDate}
+          disabled={pending}
+          onChange={e => setTransportDate(e.target.value)}
+          style={{
+            borderRadius: 6,
+            border: '1px solid var(--bd-1)',
+            padding: '7px 10px',
+            fontSize: 13,
+            width: '100%',
+          }}
+        />
+
+        <textarea
+          className="bg-white text-slate-900 placeholder:text-slate-400"
+          placeholder="Motivo da alteração (opcional)"
+          value={transportReason}
+          disabled={pending}
+          maxLength={2000}
+          rows={3}
+          onChange={e => setTransportReason(e.target.value)}
+          style={{
+            width: '100%',
+            borderRadius: 6,
+            border: '1px solid var(--bd-1)',
+            padding: '8px 10px',
+            fontSize: 13,
+            resize: 'vertical',
+          }}
+        />
+      </div>
+
+      <div style={{ display: 'flex', gap: 8 }}>
+        <DarkButton
+          variant="primary"
+          size="sm"
+          disabled={pending}
+          loading={pending}
+          onClick={handleApply}
+        >
+          Aplicar override
+        </DarkButton>
+
+        {data.transport_date_override && (
+          <DarkButton
+            variant="secondary"
+            size="sm"
+            disabled={pending}
+            onClick={handleClear}
+          >
+            Remover override
+          </DarkButton>
+        )}
+      </div>
     </div>
   );
 }

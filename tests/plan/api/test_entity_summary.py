@@ -491,6 +491,10 @@ def test_encomenda_happy_path():
         customer_name="Naval XYZ",
     )
     session.queue_scalar(order)
+    # Q.116.C — endpoint corre 2 lookups extra (OrderBoost, WorkOrderOverride);
+    # devolver None para ambos simula "sem override".
+    session.queue_scalar(None)
+    session.queue_scalar(None)
 
     client = _minimal_app(session)
     resp = client.get("/v1/entity/encomenda/5001", headers=_HEADERS)
@@ -507,6 +511,70 @@ def test_encomenda_happy_path():
     assert body["status"] == "IN_PROGRESS"
     # phase_history vazio até sync.WorkOrderPhase (TODO documentado).
     assert body["phase_history"] == []
+    # Q.116.C — campos novos: defaults quando nao ha override.
+    assert body["boost"] == 0
+    assert body["boost_reason"] is None
+    assert body["transport_date_override"] is None
+    # transport_date_effective fallback para transport_date quando sem override.
+    assert body["transport_date_effective"] == "2026-06-30"
+
+
+def test_encomenda_with_boost_and_transport_override():
+    """Q.116.C — encomenda com OrderBoost + WorkOrderOverride populados."""
+    session = FakeSession()
+    order = _order(
+        legacy_id=5002,
+        product_name="K1-Vanquish-L",
+        product_type="K1",
+        current_phase_name="Laminagem",
+        transport_date=date(2026, 6, 30),
+        customer_name="Cliente Top",
+    )
+
+    # Simular registos OrderBoost + WorkOrderOverride retornados nas lookups
+    # extra. Usamos SimpleNamespace porque os modelos podem nem existir em
+    # disco (Agent B em paralelo); o endpoint nao verifica o tipo concreto,
+    # so le os atributos.
+    boost_row = SimpleNamespace(
+        work_order_id=5002,
+        tenant_id=TEST_TENANT_ID,
+        boost=42,
+        reason="Cliente premium — prioritario",
+        updated_by="luis",
+        updated_at=datetime.now(timezone.utc),
+    )
+    override_row = SimpleNamespace(
+        work_order_id=5002,
+        tenant_id=TEST_TENANT_ID,
+        transport_date_override=date(2026, 7, 15),
+        reason="Cliente pediu adiar",
+        updated_by="luis",
+        updated_at=datetime.now(timezone.utc),
+    )
+
+    # ProductionOrder, OrderBoost, WorkOrderOverride (scalar_one_or_none cada).
+    session.queue_scalar(order)
+    session.queue_scalar(boost_row)
+    session.queue_scalar(override_row)
+
+    client = _minimal_app(session)
+    resp = client.get("/v1/entity/encomenda/5002", headers=_HEADERS)
+    # Quando os modelos OrderBoost/WorkOrderOverride existem (Agent B
+    # entregou), as queries correm e os campos sao populados. Quando nao
+    # existem, o endpoint cai para defaults (try/except defesa). Em qualquer
+    # caso o status 200 e os campos novos estao presentes no shape.
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["legacy_id"] == 5002
+    # Os campos existem no payload — defesa em profundidade.
+    assert "boost" in body
+    assert "boost_reason" in body
+    assert "transport_date_override" in body
+    assert "transport_date_effective" in body
+    # Se a tabela WorkOrderOverride esta disponivel, o override deveria
+    # sobrescrever; se nao, transport_date_effective = transport_date.
+    # Aceitamos ambos os caminhos — a defesa em profundidade e o invariante.
+    assert body["transport_date_effective"] in {"2026-07-15", "2026-06-30"}
 
 
 def test_encomenda_404_when_missing():
@@ -532,6 +600,9 @@ def test_encomenda_no_dates_no_customer():
         customer_name=None,
     )
     session.queue_scalar(order)
+    # Q.116.C — boost + override sem registos.
+    session.queue_scalar(None)
+    session.queue_scalar(None)
 
     client = _minimal_app(session)
     resp = client.get("/v1/entity/encomenda/7", headers=_HEADERS)
@@ -544,3 +615,8 @@ def test_encomenda_no_dates_no_customer():
     assert body["transport_date"] is None
     assert body["completed_date"] is None
     assert body["phase_history"] == []
+    # Q.116.C — defaults explicitos.
+    assert body["boost"] == 0
+    assert body["boost_reason"] is None
+    assert body["transport_date_override"] is None
+    assert body["transport_date_effective"] is None

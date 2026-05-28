@@ -49,6 +49,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.models.partner import Customer
 from src.plan.models.order import OrderStatus, ProductionOrder
 from src.plan.services.phase_classification import (
     is_completed_phase,
@@ -69,11 +70,19 @@ router = APIRouter(tags=["PLAN.Orders"])
 def _order_to_card(
     o: ProductionOrder,
     order_map: dict[str, int],
+    customer_id_by_name: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     # Q.53.I — cliente é exposto a partir do atributo `customer_name` se a
     # sincronização ERP já o tiver populado; caso contrário `null` honesto
     # (sem mock). O modelo legacy ainda não tem coluna dedicada.
     customer = getattr(o, "customer_name", None)
+    # Q.116.C — `customer_id` resolvido contra core.customers via
+    # `customer_name` (a unica chave que o ERP escreve). Cache passado
+    # como `customer_id_by_name` para evitar N lookups. `null` honesto
+    # quando o cliente nao esta sincronizado em core.customers.
+    customer_id: str | None = None
+    if customer and customer_id_by_name is not None:
+        customer_id = customer_id_by_name.get(customer)
     # Q.54.O — `phase_sequence` vem da ordem real do routing
     # (`routing_template_phase`) quando o routing está semeado; só cai no
     # dicionário estático `NELO_PHASE_ORDER` se `order_map` vier vazio.
@@ -88,6 +97,15 @@ def _order_to_card(
         "product_name": o.product_name,
         "product_type": o.product_type,
         "customer_name": customer,
+        # Q.116.C — `customer_id` (UUID de core.customers) para envolver o
+        # nome em `<Clickable kind="cliente">`. `null` quando o cliente
+        # nao existe ainda em master-data.
+        "customer_id": customer_id,
+        # Q.116.C — `model_id` e a business-key do modelo NELO. O frontend
+        # usa-o para envolver o nome do modelo em `<Clickable kind="modelo">`.
+        # Por agora coincide com `product_name` (mesma string usada em
+        # `entity_summary.modelo`); manter coerencia entre callsites.
+        "model_id": o.product_name,
         # Q.54.B — `phase` traz sempre o NOME da fase; `phase_sequence` dá
         # a posição canónica no routing NELO (None se a fase é desconhecida).
         "phase": o.current_phase_name,
@@ -96,6 +114,33 @@ def _order_to_card(
         "created_date": o.created_date.isoformat() if o.created_date else None,
         "transport_date": o.transport_date.isoformat() if o.transport_date else None,
     }
+
+
+async def _resolve_customer_ids_by_name(
+    session: AsyncSession,
+    tenant_id: UUID,
+    customer_names: set[str],
+) -> dict[str, str]:
+    """Lookup `customer_name -> customer_id (str UUID)` em uma SELECT.
+
+    Q.116.C — cache anti-N+1. Devolve dict vazio quando nao ha nomes ou
+    quando a sondagem falha (best-effort: melhor `customer_id=None`
+    honesto que derrubar o endpoint).
+    """
+    if not customer_names:
+        return {}
+    try:
+        stmt = select(Customer.id, Customer.customer_name).where(
+            and_(
+                Customer.tenant_id == tenant_id,
+                Customer.customer_name.in_(customer_names),
+            )
+        )
+        rows = (await session.execute(stmt)).all()
+        return {row[1]: str(row[0]) for row in rows if row[1]}
+    except Exception as exc:  # pragma: no cover — defesa: ERP desync.
+        logger.debug("customer_id lookup falhou: %s", exc)
+        return {}
 
 
 @router.get("/orders/active")
@@ -133,7 +178,19 @@ async def list_active_orders(
     order_map = await PhaseOrderingService(session, tenant_id).phase_order_map()
 
     active = [o for o in rows if not is_completed_phase(o.current_phase_name)]
-    return [_order_to_card(o, order_map) for o in active[:limit]]
+    limited = active[:limit]
+
+    # Q.116.C — cache `customer_name -> customer_id` numa unica SELECT
+    # contra core.customers. Anti-N+1 — `/orders/active` devolve ate 2000
+    # rows.
+    customer_names = {
+        cn for cn in (getattr(o, "customer_name", None) for o in limited) if cn
+    }
+    customer_id_by_name = await _resolve_customer_ids_by_name(
+        session, tenant_id, customer_names
+    )
+
+    return [_order_to_card(o, order_map, customer_id_by_name) for o in limited]
 
 
 @router.get("/orders/otd-risk")

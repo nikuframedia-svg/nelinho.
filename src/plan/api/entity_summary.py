@@ -141,6 +141,14 @@ class EncomendaSummary(BaseModel):
     transport_date: Optional[str]
     completed_date: Optional[str]
     phase_history: List[PhaseHistoryEntry]
+    # Q.116.C — boost manual + override de data de transporte. As tabelas
+    # plan.order_boost e plan.work_order_override estao a ser introduzidas
+    # pelo Agent B em paralelo; ate ai (ou em dev sem migrate), os
+    # endpoints devolvem defaults (0/None) em vez de falhar.
+    boost: int = 0
+    boost_reason: Optional[str] = None
+    transport_date_override: Optional[str] = None
+    transport_date_effective: Optional[str] = None
 
 
 # ─── Router ──────────────────────────────────────────────────────────────────
@@ -511,19 +519,71 @@ async def get_encomenda_summary(
     # ProductionOrder — devolver lista vazia é honesto, sem mock.
     phase_history: List[PhaseHistoryEntry] = []
 
+    # Q.116.C — boost manual + override de data de transporte. Defesa em
+    # profundidade: o Agent B esta a criar plan.order_boost +
+    # plan.work_order_override em paralelo; tanto o import como a query
+    # podem falhar (modelo nao existe, ou tabela nao migrada). Em qualquer
+    # caso, devolvemos defaults — nao queremos derrubar o endpoint Encomenda.
+    boost_value: int = 0
+    boost_reason: Optional[str] = None
+    transport_date_override: Optional[str] = None
+    legacy_id_int = int(order.legacy_id)
+    try:
+        from src.plan.models.order_boost import OrderBoost  # noqa: WPS433
+
+        boost_stmt = select(OrderBoost).where(
+            and_(
+                OrderBoost.tenant_id == tenant_id,
+                OrderBoost.work_order_id == legacy_id_int,
+            )
+        )
+        boost_row = (await session.execute(boost_stmt)).scalar_one_or_none()
+        if boost_row is not None:
+            boost_value = int(boost_row.boost)
+            boost_reason = boost_row.reason
+    except Exception as exc:  # pragma: no cover — defesa: import ou DB ausente.
+        logger.debug("OrderBoost lookup skipped (%s)", exc)
+
+    try:
+        from src.plan.models.work_order_override import (  # noqa: WPS433
+            WorkOrderOverride,
+        )
+
+        ovr_stmt = select(WorkOrderOverride).where(
+            and_(
+                WorkOrderOverride.tenant_id == tenant_id,
+                WorkOrderOverride.work_order_id == legacy_id_int,
+            )
+        )
+        ovr_row = (await session.execute(ovr_stmt)).scalar_one_or_none()
+        if ovr_row is not None and getattr(ovr_row, "transport_date_override", None):
+            ovr_date = ovr_row.transport_date_override
+            transport_date_override = (
+                ovr_date.isoformat() if hasattr(ovr_date, "isoformat") else str(ovr_date)
+            )
+    except Exception as exc:  # pragma: no cover — defesa: import ou DB ausente.
+        logger.debug("WorkOrderOverride lookup skipped (%s)", exc)
+
+    transport_date_iso = (
+        order.transport_date.isoformat() if order.transport_date else None
+    )
+    transport_date_effective = transport_date_override or transport_date_iso
+
     return EncomendaSummary(
-        legacy_id=int(order.legacy_id),
+        legacy_id=legacy_id_int,
         product_name=order.product_name,
         product_type=order.product_type,
         customer_name=getattr(order, "customer_name", None),
         status=_status_value(order),
         current_phase_name=order.current_phase_name,
         created_date=order.created_date.isoformat() if order.created_date else None,
-        transport_date=(
-            order.transport_date.isoformat() if order.transport_date else None
-        ),
+        transport_date=transport_date_iso,
         completed_date=(
             order.completed_date.isoformat() if order.completed_date else None
         ),
         phase_history=phase_history,
+        boost=boost_value,
+        boost_reason=boost_reason,
+        transport_date_override=transport_date_override,
+        transport_date_effective=transport_date_effective,
     )

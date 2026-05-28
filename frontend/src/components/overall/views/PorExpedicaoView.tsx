@@ -22,6 +22,10 @@ interface TransportBatch {
   destino?: string;
   data_partida: string;
   order_ids: string[];
+  /** Q.116.C — UUIDs dos clientes nas orders desta batch (pode ser vazio).
+   *  Exposto pelo backend mas não usado em Clickable enquanto customer_name
+   *  não for incluído no payload (Q.116.E). */
+  customer_ids?: string[];
 }
 
 interface PorExpedicaoViewProps {

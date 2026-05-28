@@ -166,3 +166,8 @@ def register_routers(app: FastAPI) -> None:
     from src.plan.api.entity_summary import router as entity_summary_router
 
     app.include_router(entity_summary_router)
+
+    # Q.116.C — order_boost + transport-date overrides
+    from src.plan.api.order_writes import router as order_writes_router
+
+    app.include_router(order_writes_router)
