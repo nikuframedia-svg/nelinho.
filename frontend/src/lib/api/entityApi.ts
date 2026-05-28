@@ -25,11 +25,16 @@ export interface OperadorSummary {
 }
 
 export interface PhaseInTemplate {
+  // id: row UUID para endpoint sequence (Q.116.B); ausente até Q.116.A.fix
+  id?: string;
   seq: number;
   phase_id: string;
   phase_name: string | null;
   duration_p50_h: number | null;
   can_skip: boolean;
+  // Q.116.B — posição alternativa
+  is_flexible?: boolean;
+  allowed_predecessors?: string[];
 }
 
 export interface RoutingTemplateOut {
@@ -166,4 +171,49 @@ export const entityApi = {
       method: 'PATCH',
       body: JSON.stringify(body),
     }),
+
+  // Q.116.B — routing template admin
+  updateTemplateSequence: (templateId: string, body: UpdateSequenceBody) =>
+    apiFetch<unknown>(`/v1/plan/routing-templates/${templateId}/sequence`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+  setPhaseFlexible: (templateId: string, phaseRowId: string, body: SetFlexibleBody) =>
+    apiFetch<unknown>(`/v1/plan/routing-templates/${templateId}/phases/${phaseRowId}/flexible`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
+  // Q.116.D — boat boost
+  upsertBoatBoost: (boatId: string, body: BoatBoostUpsert) =>
+    apiFetch<BoatBoostOut>(`/v1/plan/boat-boost/${encodeURIComponent(boatId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
 };
+
+// Q.116.B — routing template admin
+
+export interface UpdateSequenceBody {
+  phase_order: string[];   // UUIDs das phase rows na nova ordem
+}
+
+export interface SetFlexibleBody {
+  is_flexible: boolean;
+  allowed_predecessors: string[];   // phase_ids alternativos
+}
+
+// Q.116.D — boat boost
+
+export interface BoatBoostUpsert {
+  boost: number;       // 0-100
+  reason?: string | null;
+}
+
+export interface BoatBoostOut {
+  boat_id: string;
+  boost: number;
+  reason: string | null;
+  updated_by: string;
+  updated_at: string;
+}

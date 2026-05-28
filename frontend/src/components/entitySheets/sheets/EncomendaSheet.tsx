@@ -61,6 +61,13 @@ export default function EncomendaSheet({ workOrderId, onClose }: EncomendaSheetP
 
   const subtitle = `${data.product_name} · ${data.customer_name ?? 'sem cliente'} · ${data.status}`;
 
+  // Q.116.D — boost stack (client_boost + boat_boost virão em Q.116.G)
+  const orderBoost = data.boost ?? 0;
+  const clientBoost = (data as any).client_boost as number ?? 0;
+  const boatBoost = (data as any).boat_boost as number ?? 0;
+  const effectiveBoost = Math.min(orderBoost + clientBoost + boatBoost, 200);
+  const isAccelerated = effectiveBoost > 50;
+
   return (
     <Sheet
       open={true}
@@ -69,6 +76,30 @@ export default function EncomendaSheet({ workOrderId, onClose }: EncomendaSheetP
       subtitle={subtitle}
       width={720}
     >
+      {/* Boost breakdown — sempre visível no topo */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          marginBottom: 12,
+          padding: '8px 10px',
+          background: 'var(--bg-2)',
+          borderRadius: 6,
+        }}
+        title={`Cliente: ${clientBoost} + Encomenda: ${orderBoost} + Barco: ${boatBoost} = ${effectiveBoost}`}
+      >
+        {isAccelerated && (
+          <span style={{ fontSize: 16 }}>&#9889;</span>
+        )}
+        <DarkBadge variant="accent">
+          Boost efectivo: {effectiveBoost}/200
+        </DarkBadge>
+        {isAccelerated && (
+          <span style={{ fontSize: 12, color: 'var(--fg-2)' }}>acelerada</span>
+        )}
+      </div>
+
       <div style={{ borderBottom: '1px solid var(--bd-1)', marginBottom: 16 }}>
         <Tabs tabs={TABS} value={tab} onChange={setTab} />
       </div>

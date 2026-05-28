@@ -199,3 +199,367 @@ def test_mutation_unknown_op_is_noop(bogus_id):
     # Schedule must be unchanged when target id is unknown.
     if bogus_id != "real-op":
         assert schedule == before
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Q.116.B+D — Spelke property tests for flexible predecessors + boost
+# ─────────────────────────────────────────────────────────────────────────
+
+from uuid import UUID  # noqa: E402
+
+from src.plan.cpo.chromosome import Chromosome  # noqa: E402
+from src.plan.cpo.decoder import decode as cpo_decode  # noqa: E402
+from src.plan.cpo.state import FactoryState  # noqa: E402
+from src.plan.engines.scheduling_adapter import (  # noqa: E402
+    SchedulingMachine,
+    SchedulingOperation,
+)
+
+_Q116_HORIZON_START = datetime(2026, 4, 20, 8, 0, 0)
+_Q116_HORIZON_END = _Q116_HORIZON_START + timedelta(days=30)
+
+
+def _q116_state() -> FactoryState:
+    """Bare FactoryState with the seed curing gaps so axiom 6 has teeth."""
+    from src.plan.cpo.state import NELO_CURING_GAPS_SEED, normalize_phase_code
+
+    s = FactoryState(tenant_id=UUID("11111111-1111-1111-1111-111111111111"))
+    s.skill_matrix = {}
+    s.phase_transition_gaps = {
+        (normalize_phase_code(frm), normalize_phase_code(to)): hours
+        for frm, to, hours, _reason, _n in NELO_CURING_GAPS_SEED
+    }
+    return s
+
+
+def _q116_machines(n: int = 2) -> List[SchedulingMachine]:
+    return [
+        SchedulingMachine(machine_id=f"M{i+1}", name=f"Machine {i+1}")
+        for i in range(n)
+    ]
+
+
+def _q116_op(
+    op_id: str,
+    order_id: str,
+    sequence: int,
+    phase: str,
+    *,
+    duration_min: float = 60.0,
+    machine: str = "M1",
+    is_flexible: bool = False,
+    allowed_predecessors: Optional[List[str]] = None,
+) -> SchedulingOperation:
+    return SchedulingOperation(
+        operation_id=op_id,
+        order_id=order_id,
+        product_id="P1",
+        sequence=sequence,
+        operation_code=phase,
+        duration_minutes=duration_min,
+        machine_id=machine,
+        phase_id=phase,
+        is_flexible=is_flexible,
+        allowed_predecessors=list(allowed_predecessors or []),
+    )
+
+
+def _build_q116_schedule_inputs(
+    n_orders: int,
+    flexible_idxs: List[int],
+) -> Tuple[List[SchedulingOperation], List[SchedulingMachine], FactoryState]:
+    """Build a 4-phase pipeline per order: LAMINAGEM → CURA → PINTURA → MONTAGEM.
+
+    `flexible_idxs` lists the orders whose PINTURA op becomes flexible —
+    it may start from EITHER CURA or directly from LAMINAGEM (skip cure
+    by routing variant). We force CURA into allowed_predecessors so the
+    op is still gated. This exercises both the gating logic and the gap
+    chemistry (LAMINAGEM→CURA = 15h cure).
+    """
+    from typing import Optional as _Opt  # noqa: F401
+
+    ops: List[SchedulingOperation] = []
+    for i in range(n_orders):
+        order_id = f"O{i+1}"
+        ops.append(_q116_op(
+            f"{order_id}-lam", order_id, 1, "LAMINAGEM",
+            duration_min=30,
+        ))
+        ops.append(_q116_op(
+            f"{order_id}-cura", order_id, 2, "CURA",
+            duration_min=30,
+        ))
+        is_flex = i in flexible_idxs
+        ops.append(_q116_op(
+            f"{order_id}-pint", order_id, 3, "PINTURA_ACABAMENTO",
+            duration_min=30,
+            is_flexible=is_flex,
+            allowed_predecessors=["CURA", "LAMINAGEM"] if is_flex else [],
+        ))
+        ops.append(_q116_op(
+            f"{order_id}-mont", order_id, 4, "MONTAGEM",
+            duration_min=30,
+        ))
+    return ops, _q116_machines(2), _q116_state()
+
+
+@settings(
+    deadline=None, max_examples=60,
+    suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
+)
+@given(
+    n_orders=st.integers(min_value=2, max_value=4),
+    flex_count=st.integers(min_value=0, max_value=3),
+)
+def test_axiom_precedence_holds_with_flexible_phases(n_orders, flex_count):
+    """Q.116.B — para cada op com is_flexible=True, op.start_time >=
+    end_time de pelo menos UM allowed_predecessor (sibling cujo phase_id
+    está em allowed_predecessors) já agendado. A precedência mantém-se,
+    apenas que o predecessor real é seleccionado entre vários candidatos.
+    """
+    flex_count = min(flex_count, n_orders)
+    flexible_idxs = list(range(flex_count))
+    ops, machines, state = _build_q116_schedule_inputs(n_orders, flexible_idxs)
+    chromo = Chromosome.identity(len(ops))
+    result = cpo_decode(
+        chromo, ops, machines, state, _Q116_HORIZON_START, _Q116_HORIZON_END,
+    )
+    out_by_id = {o["operation_id"]: o for o in result["operations"]}
+
+    for op in ops:
+        if not op.is_flexible:
+            continue
+        if op.operation_id not in out_by_id:
+            continue  # infeasible — covered by other invariants
+        op_start = datetime.fromisoformat(out_by_id[op.operation_id]["start_time"])
+        # At least one allowed predecessor must be scheduled AND ended
+        # before this op's start.
+        allowed = set(op.allowed_predecessors)
+        ok = False
+        for sib in ops:
+            if sib.order_id != op.order_id:
+                continue
+            if sib.phase_id not in allowed:
+                continue
+            if sib.operation_id not in out_by_id:
+                continue
+            sib_end = datetime.fromisoformat(out_by_id[sib.operation_id]["end_time"])
+            if sib_end <= op_start:
+                ok = True
+                break
+        assert ok, (
+            f"Flexible op {op.operation_id} starts at {op_start} without any "
+            f"completed allowed_predecessor in {allowed}"
+        )
+
+
+@settings(
+    deadline=None, max_examples=60,
+    suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
+)
+@given(
+    n_orders=st.integers(min_value=1, max_value=3),
+    use_flex=st.booleans(),
+)
+def test_axiom_curing_gap_holds_with_flexible_phases(n_orders, use_flex):
+    """Q.116.B — gap chemistry (NELO_CURING_GAPS_SEED) aplica-se ao
+    predecessor SELECCIONADO. Se PINTURA flexible escolheu CURA como
+    predecessor, ainda assim verificamos que o intervalo entre o
+    predecessor mais próximo (que está em allowed_predecessors) e a
+    PINTURA respeita o min_gap_hours dessa transição.
+    """
+    flexible_idxs = list(range(n_orders)) if use_flex else []
+    ops, machines, state = _build_q116_schedule_inputs(n_orders, flexible_idxs)
+    chromo = Chromosome.identity(len(ops))
+    result = cpo_decode(
+        chromo, ops, machines, state, _Q116_HORIZON_START, _Q116_HORIZON_END,
+    )
+    out_by_id = {o["operation_id"]: o for o in result["operations"]}
+
+    for op in ops:
+        if op.phase_id != "PINTURA_ACABAMENTO":
+            continue
+        if op.operation_id not in out_by_id:
+            continue
+        op_start = datetime.fromisoformat(out_by_id[op.operation_id]["start_time"])
+        # Find the chosen predecessor: the sibling whose end is the
+        # latest among (allowed_predecessors if flexible else siblings
+        # with lower sequence) that is <= op_start.
+        candidate_phases = (
+            set(op.allowed_predecessors) if op.is_flexible else None
+        )
+        chosen_end = None
+        chosen_phase = None
+        for sib in ops:
+            if sib.order_id != op.order_id:
+                continue
+            if sib.operation_id == op.operation_id:
+                continue
+            if candidate_phases is not None:
+                if sib.phase_id not in candidate_phases:
+                    continue
+            else:
+                if sib.sequence >= op.sequence:
+                    continue
+            if sib.operation_id not in out_by_id:
+                continue
+            sib_end = datetime.fromisoformat(out_by_id[sib.operation_id]["end_time"])
+            if sib_end > op_start:
+                continue
+            if chosen_end is None or sib_end > chosen_end:
+                chosen_end = sib_end
+                chosen_phase = sib.phase_id
+        if chosen_end is None:
+            continue  # no completed predecessor — different invariant
+        required_gap_h = state.min_gap_hours(chosen_phase, op.phase_id)
+        actual_gap_h = (op_start - chosen_end).total_seconds() / 3600.0
+        # Allow 0.001h fuzz for fp.
+        assert actual_gap_h + 1e-3 >= required_gap_h, (
+            f"Op {op.operation_id} started {actual_gap_h:.3f}h after "
+            f"{chosen_phase}; min curing gap is {required_gap_h:.3f}h"
+        )
+
+
+@settings(
+    deadline=None, max_examples=60,
+    suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
+)
+@given(
+    n_orders=st.integers(min_value=2, max_value=4),
+    boosts=st.lists(
+        st.integers(min_value=0, max_value=10),
+        min_size=2, max_size=4,
+    ),
+)
+def test_boost_does_not_violate_precedence(n_orders, boosts):
+    """Q.116.D — boosts aleatórios não permitem que um op arranque antes
+    do seu predecessor legítimo. Boost só reordena TENTATIVAS no loop,
+    nunca quebra precedências enforçadas pelo `_earliest_start`.
+    """
+    boosts = boosts[:n_orders] + [0] * max(0, n_orders - len(boosts))
+    ops, machines, state = _build_q116_schedule_inputs(n_orders, [])
+    chromo = Chromosome.identity(len(ops))
+    boost_inputs = {
+        f"O{i+1}": b for i, b in enumerate(boosts[:n_orders]) if b > 0
+    }
+    result = cpo_decode(
+        chromo, ops, machines, state, _Q116_HORIZON_START, _Q116_HORIZON_END,
+        boost_inputs=boost_inputs,
+    )
+    out_by_id = {o["operation_id"]: o for o in result["operations"]}
+
+    # For every scheduled op, every sibling with lower sequence must
+    # have ended by the time this op starts.
+    for op in ops:
+        if op.operation_id not in out_by_id:
+            continue
+        op_start = datetime.fromisoformat(out_by_id[op.operation_id]["start_time"])
+        for sib in ops:
+            if sib.order_id != op.order_id:
+                continue
+            if sib.sequence >= op.sequence:
+                continue
+            if sib.operation_id not in out_by_id:
+                continue
+            sib_end = datetime.fromisoformat(out_by_id[sib.operation_id]["end_time"])
+            assert sib_end <= op_start, (
+                f"Boost violated precedence: op {op.operation_id} "
+                f"(seq={op.sequence}) started {op_start} before sibling "
+                f"{sib.operation_id} (seq={sib.sequence}) ended {sib_end}"
+            )
+
+
+@settings(
+    deadline=None, max_examples=60,
+    suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
+)
+@given(
+    n_orders=st.integers(min_value=2, max_value=3),
+    boosts=st.lists(
+        st.integers(min_value=0, max_value=10),
+        min_size=2, max_size=3,
+    ),
+)
+def test_boost_does_not_violate_curing_gaps(n_orders, boosts):
+    """Q.116.D — curing chemistry (axiom 6) holds independent of boost.
+    Para cada transição química conhecida (e.g. LAMINAGEM→CURA = 15h),
+    o gap real entre fim do predecessor e início do sucessor respeita o
+    min_gap_hours seed.
+    """
+    boosts = boosts[:n_orders] + [0] * max(0, n_orders - len(boosts))
+    ops, machines, state = _build_q116_schedule_inputs(n_orders, [])
+    chromo = Chromosome.identity(len(ops))
+    boost_inputs = {
+        f"O{i+1}": b for i, b in enumerate(boosts[:n_orders]) if b > 0
+    }
+    result = cpo_decode(
+        chromo, ops, machines, state, _Q116_HORIZON_START, _Q116_HORIZON_END,
+        boost_inputs=boost_inputs,
+    )
+    out_by_id = {o["operation_id"]: o for o in result["operations"]}
+
+    # Walk every adjacent sibling pair within the same order and verify
+    # curing gap chemistry is honoured.
+    by_order: Dict[str, List[SchedulingOperation]] = {}
+    for op in ops:
+        by_order.setdefault(op.order_id, []).append(op)
+
+    for order_id, order_ops in by_order.items():
+        order_ops.sort(key=lambda o: o.sequence)
+        for i in range(1, len(order_ops)):
+            prev = order_ops[i - 1]
+            curr = order_ops[i]
+            if (
+                prev.operation_id not in out_by_id
+                or curr.operation_id not in out_by_id
+            ):
+                continue
+            prev_end = datetime.fromisoformat(out_by_id[prev.operation_id]["end_time"])
+            curr_start = datetime.fromisoformat(out_by_id[curr.operation_id]["start_time"])
+            required = state.min_gap_hours(prev.phase_id, curr.phase_id)
+            actual = (curr_start - prev_end).total_seconds() / 3600.0
+            assert actual + 1e-3 >= required, (
+                f"Curing gap violated for {order_id}: "
+                f"{prev.phase_id}→{curr.phase_id} required {required}h, "
+                f"got {actual:.3f}h"
+            )
+
+
+def test_higher_boost_starts_no_later_than_lower_when_resources_allow():
+    """Q.116.D sanity (example test, NOT property). Two orders compete
+    for the same machine. With boost on order B (higher than A), B must
+    start no later than A. Schedules without boost serve as control.
+    """
+    state = _q116_state()
+    state.skill_matrix = {}
+
+    # Two single-op orders, same phase, same machine, identical duration.
+    ops = [
+        _q116_op("A-lam", "A", 1, "LAMINAGEM", duration_min=60, machine="M1"),
+        _q116_op("B-lam", "B", 1, "LAMINAGEM", duration_min=60, machine="M1"),
+    ]
+    machines = _q116_machines(1)
+    # Identity permutation: A appears before B.
+    chromo = Chromosome.identity(len(ops))
+
+    # Control: no boost. A should win the machine first.
+    control = cpo_decode(
+        chromo, ops, machines, state, _Q116_HORIZON_START, _Q116_HORIZON_END,
+    )
+    ctrl_by_id = {o["operation_id"]: o for o in control["operations"]}
+    a_start_ctrl = datetime.fromisoformat(ctrl_by_id["A-lam"]["start_time"])
+    b_start_ctrl = datetime.fromisoformat(ctrl_by_id["B-lam"]["start_time"])
+    assert a_start_ctrl <= b_start_ctrl, "Control: A should run first by chromosome order"
+
+    # Boost: B has higher boost; B should run no later than A.
+    boosted = cpo_decode(
+        chromo, ops, machines, state, _Q116_HORIZON_START, _Q116_HORIZON_END,
+        boost_inputs={"B": 5, "A": 0},
+    )
+    bst_by_id = {o["operation_id"]: o for o in boosted["operations"]}
+    a_start_boost = datetime.fromisoformat(bst_by_id["A-lam"]["start_time"])
+    b_start_boost = datetime.fromisoformat(bst_by_id["B-lam"]["start_time"])
+    assert b_start_boost <= a_start_boost, (
+        f"Boosted order B started {b_start_boost} but unboosted A "
+        f"started {a_start_boost} — boost did not promote B"
+    )

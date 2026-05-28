@@ -1,17 +1,20 @@
 /**
- * ClienteSheet — sheet contextual de cliente (Q.116.A, read-only).
+ * ClienteSheet — sheet contextual de cliente (Q.116.A/D).
  *
  * Tabs: Prioridade · Encomendas · Histórico
  */
 
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Sheet } from '../../dark/Sheet';
 import { Tabs } from '../../dark/Tabs';
 import { DarkBadge } from '../../dark/DarkBadge';
+import { DarkButton } from '../../dark/DarkButton';
 import { EmptyState } from '../../dark/EmptyState';
-import { entityKeys } from '../../../lib/api/keys';
+import { entityKeys, clientPriorityKeys } from '../../../lib/api/keys';
 import { entityApi, type OrderInList } from '../../../lib/api/entityApi';
+import { clientPriorityApi } from '../../../lib/api/platformApi';
+import { useToastContext } from '../../ToastProvider';
 
 export interface ClienteSheetProps {
   customerId: string;
@@ -75,7 +78,11 @@ export default function ClienteSheet({ customerId, onClose }: ClienteSheetProps)
       </div>
 
       {tab === 'prioridade' && (
-        <TabPrioridade priority={data.priority} />
+        <TabPrioridade
+          customerId={customerId}
+          priority={data.priority}
+          priorityReason={(data as any).priority_reason as string | null ?? null}
+        />
       )}
 
       {tab === 'encomendas' && (
@@ -93,29 +100,110 @@ export default function ClienteSheet({ customerId, onClose }: ClienteSheetProps)
   );
 }
 
-function TabPrioridade({ priority }: { priority: number | null }) {
-  if (priority === null) {
-    return (
-      <EmptyState
-        title="Sem prioridade definida"
-        hint="Define a prioridade no sub-sprint Q.116.D (slider 1-5)."
-        size="sm"
-      />
-    );
-  }
+function TabPrioridade({
+  customerId,
+  priority,
+  priorityReason,
+}: {
+  customerId: string;
+  priority: number | null;
+  priorityReason: string | null;
+}) {
+  const [sliderValue, setSliderValue] = useState(priority ?? 3);
+  const [reason, setReason] = useState('');
+  const queryClient = useQueryClient();
+  const toast = useToastContext();
+
+  const clientBoost = (6 - sliderValue) * 20;
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      clientPriorityApi.update(customerId, {
+        prioridade: sliderValue,
+        razao: reason || undefined,
+      }),
+    onSuccess: () => {
+      toast.success('Prioridade aplicada.');
+      queryClient.invalidateQueries({ queryKey: entityKeys.cliente(customerId) });
+      queryClient.invalidateQueries({ queryKey: clientPriorityKeys.all });
+    },
+    onError: (err: unknown) => {
+      const msg = err instanceof Error ? err.message : 'Erro a aplicar prioridade.';
+      toast.error(msg);
+    },
+  });
+
+  const pending = mutation.isPending;
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 12,
-        padding: '16px 0',
-      }}
-    >
-      <DarkBadge variant={priorityVariant(priority)} size="md">
-        Prioridade: {priority} / 5
-      </DarkBadge>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {priority !== null && (
+        <div
+          style={{
+            fontSize: 12,
+            color: 'var(--fg-2)',
+            padding: '8px 10px',
+            background: 'var(--bg-2)',
+            borderRadius: 6,
+          }}
+        >
+          Prioridade actual: <strong style={{ color: 'var(--fg-1)' }}>{priority}</strong>
+          {priorityReason && <span> · motivo: &lsquo;{priorityReason}&rsquo;</span>}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          <input
+            type="range"
+            min={1}
+            max={5}
+            step={1}
+            value={sliderValue}
+            disabled={pending}
+            onChange={e => setSliderValue(Number(e.target.value))}
+            style={{ flex: 1 }}
+          />
+          <DarkBadge variant={priorityVariant(sliderValue)} size="md">
+            Prioridade {sliderValue} / 5
+          </DarkBadge>
+        </div>
+
+        <div style={{ fontSize: 12, color: 'var(--fg-2)' }}>
+          Cliente boost:{' '}
+          <strong style={{ color: 'var(--fg-1)', fontVariantNumeric: 'tabular-nums' }}>
+            {clientBoost}
+          </strong>
+        </div>
+
+        <textarea
+          className="bg-white text-slate-900 placeholder:text-slate-400"
+          placeholder="Motivo (opcional)"
+          value={reason}
+          disabled={pending}
+          maxLength={2000}
+          rows={3}
+          onChange={e => setReason(e.target.value)}
+          style={{
+            width: '100%',
+            borderRadius: 6,
+            border: '1px solid var(--bd-1)',
+            padding: '8px 10px',
+            fontSize: 13,
+            resize: 'vertical',
+          }}
+        />
+      </div>
+
+      <DarkButton
+        variant="primary"
+        size="sm"
+        disabled={pending}
+        loading={pending}
+        onClick={() => mutation.mutate()}
+      >
+        Aplicar prioridade
+      </DarkButton>
     </div>
   );
 }

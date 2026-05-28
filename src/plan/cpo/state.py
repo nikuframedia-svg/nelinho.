@@ -50,6 +50,20 @@ NELO_CURING_GAPS_SEED: Tuple[Tuple[str, str, float, str, int], ...] = (
 )
 
 
+def curing_gap_pairs() -> Set[Tuple[str, str]]:
+    """Q.116.B — todos os pares (from_phase, to_phase) com gap declarado.
+
+    Usado por `scripts/verify_invariants.py` para validar que cada par
+    (predecessor_alternativo, fase_flexivel) declarado em
+    `plan.routing_template_phase.allowed_predecessors` tem um gap de
+    cura conhecido em `NELO_CURING_GAPS_SEED`.
+
+    Sem gap = ordem alternativa sem suporte fisico — o decoder nao
+    pode garantir que a quimica respeita a transicao.
+    """
+    return {(from_p, to_p) for from_p, to_p, *_ in NELO_CURING_GAPS_SEED}
+
+
 def normalize_phase_code(name: Optional[str]) -> str:
     """Canonical phase code: strip accents, UPPERCASE, spaces/hyphens/
     dots → underscores. Used for curing gap lookups and

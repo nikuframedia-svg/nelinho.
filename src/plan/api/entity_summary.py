@@ -53,11 +53,20 @@ logger = logging.getLogger(__name__)
 
 
 class PhaseInTemplate(BaseModel):
+    # Q.116.BD fix: row id (UUID) exposto para que o frontend ModeloSheet
+    # possa usar nos endpoints PATCH /routing-templates/{id}/sequence e
+    # /phases/{phase_row_id}/flexible. Sem isto os botoes "Guardar
+    # ordem" e modal "Posicao alternativa" ficam desactivados.
+    id: UUID
     seq: int
     phase_id: str
     phase_name: Optional[str]
     duration_p50_h: Optional[float]
     can_skip: bool
+    # Q.116.B fix: estado is_flexible + allowed_predecessors para o
+    # frontend mostrar badge e modal pre-populado.
+    is_flexible: bool = False
+    allowed_predecessors: Optional[List[str]] = None
 
 
 class RoutingTemplateOut(BaseModel):
@@ -251,6 +260,7 @@ async def get_modelo_summary(
         if template is not None:
             phase_outs = [
                 PhaseInTemplate(
+                    id=p.id,
                     seq=p.seq,
                     phase_id=p.phase_id,
                     phase_name=p.phase_name,
@@ -258,6 +268,8 @@ async def get_modelo_summary(
                         float(p.duration_p50_h) if p.duration_p50_h is not None else None
                     ),
                     can_skip=bool(p.can_skip),
+                    is_flexible=bool(getattr(p, "is_flexible", False)),
+                    allowed_predecessors=getattr(p, "allowed_predecessors", None),
                 )
                 for p in phases
             ]

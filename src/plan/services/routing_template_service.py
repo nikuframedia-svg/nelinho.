@@ -13,7 +13,7 @@ import hashlib
 import logging
 from collections import Counter, defaultdict
 from decimal import Decimal
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, List, Optional
 from uuid import UUID, uuid4
 
 from sqlalchemy import and_, select
@@ -222,6 +222,150 @@ class RoutingTemplateService:
             )
         )
         return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    # ─── Q.116.B — phase editor ──────────────────────────────────────────
+
+    async def update_phase_sequence(
+        self,
+        *,
+        template_id: UUID,
+        new_order: List[UUID],
+        actor: Optional[UUID] = None,
+    ) -> List[RoutingTemplatePhase]:
+        """Reordena fases de um template — reindexa `seq` 1..N atomicamente.
+
+        `new_order` e a lista de phase row IDs na nova sequencia. Tem de
+        cobrir EXACTAMENTE as fases actuais do template (mesmas IDs, sem
+        extras nem faltas). Escreve uma audit row `UPDATE` com a ordem
+        antiga e a nova como listas de phase IDs.
+
+        Levanta:
+            RoutingTemplateNotFoundError: template inexistente.
+            ValueError: `new_order` nao bate certo com o set de fases
+                actuais — protege contra reorders de templates parciais.
+        """
+        # 1. Garante que o template existe e pertence ao tenant.
+        await self.get_template(template_id)
+
+        # 2. Carrega fases actuais ordenadas pelo seq actual.
+        current = await self.template_phases(template_id)
+        current_ids = {p.id for p in current}
+        requested_ids = set(new_order)
+        if requested_ids != current_ids or len(new_order) != len(current):
+            raise ValueError(
+                "new_order tem de cobrir exactamente as fases do template "
+                f"(esperadas={len(current)} ids, recebidas={len(new_order)} ids)"
+            )
+
+        # 3. Indexa fases por id para reordenar in-place.
+        by_id = {p.id: p for p in current}
+        old_order = [str(p.id) for p in current]
+
+        # 4. Reescreve seq 1..N segundo a nova ordem.
+        reordered: List[RoutingTemplatePhase] = []
+        for idx, pid in enumerate(new_order, start=1):
+            phase = by_id[pid]
+            phase.seq = idx
+            reordered.append(phase)
+
+        await self.session.flush()
+
+        # 5. Audit na mesma tx.
+        await audit_change(
+            self.session,
+            tenant_id=self.tenant_id,
+            entity_type="routing_template",
+            entity_id=template_id,
+            action="UPDATE",
+            old_values={"phase_order": old_order},
+            new_values={"phase_order": [str(pid) for pid in new_order]},
+            actor_id=actor,
+            reason="reorder_phases",
+        )
+
+        return reordered
+
+    async def set_flexible(
+        self,
+        *,
+        phase_row_id: UUID,
+        is_flexible: bool,
+        allowed_predecessors: List[str],
+        actor: Optional[UUID] = None,
+    ) -> RoutingTemplatePhase:
+        """Marca uma fase como posicao alternativa.
+
+        Regras:
+          * `is_flexible=True` exige `allowed_predecessors` com pelo
+            menos 1 phase_id e sem duplicados.
+          * `is_flexible=False` exige `allowed_predecessors` vazia e
+            limpa o campo para `NULL` no DB (a fase volta a posicao fixa).
+
+        Levanta:
+            ValueError: combinacao invalida (vazia + flexivel, duplicados,
+                nao-vazia + nao-flexivel).
+            RoutingTemplateNotFoundError: phase row inexistente para este
+                tenant.
+        """
+        # 1. Validacao de combinacao antes de tocar na DB.
+        if is_flexible:
+            if not allowed_predecessors:
+                raise ValueError(
+                    "is_flexible=True exige pelo menos 1 phase_id em "
+                    "allowed_predecessors"
+                )
+            if len(set(allowed_predecessors)) != len(allowed_predecessors):
+                raise ValueError(
+                    "allowed_predecessors tem duplicados"
+                )
+        else:
+            if allowed_predecessors:
+                raise ValueError(
+                    "is_flexible=False exige allowed_predecessors vazia "
+                    "(a fase volta a posicao fixa)"
+                )
+
+        # 2. SELECT phase por (tenant_id, id).
+        stmt = select(RoutingTemplatePhase).where(
+            and_(
+                RoutingTemplatePhase.tenant_id == self.tenant_id,
+                RoutingTemplatePhase.id == phase_row_id,
+            )
+        )
+        phase = (await self.session.execute(stmt)).scalar_one_or_none()
+        if phase is None:
+            raise RoutingTemplateNotFoundError(str(phase_row_id))
+
+        old_vals = {
+            "is_flexible": phase.is_flexible,
+            "allowed_predecessors": list(phase.allowed_predecessors)
+            if phase.allowed_predecessors is not None
+            else None,
+        }
+
+        phase.is_flexible = is_flexible
+        phase.allowed_predecessors = (
+            list(allowed_predecessors) if is_flexible else None
+        )
+
+        await self.session.flush()
+
+        await audit_change(
+            self.session,
+            tenant_id=self.tenant_id,
+            entity_type="routing_template_phase",
+            entity_id=phase.id,
+            action="UPDATE",
+            old_values=old_vals,
+            new_values={
+                "is_flexible": phase.is_flexible,
+                "allowed_predecessors": phase.allowed_predecessors,
+            },
+            actor_id=actor,
+            reason="set_flexible_phase",
+        )
+
+        return phase
 
 
 # ---------------------------------------------------------------------------

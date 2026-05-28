@@ -172,7 +172,17 @@ def register_routers(app: FastAPI) -> None:
 
     app.include_router(order_writes_router)
 
+    # Q.116.D — boat_boost upsert
+    from src.plan.api.boat_boost_writes import router as boat_boost_router
+
+    app.include_router(boat_boost_router)
+
     # Q.116.E — master-data LIST endpoints
     from src.master_data.api.lists import router as master_data_lists_router
 
     app.include_router(master_data_lists_router)
+
+    # Q.116.B — editor de fases (allowed_predecessors + is_flexible)
+    from src.plan.api.routing_template_admin import router as routing_admin_router
+
+    app.include_router(routing_admin_router)
