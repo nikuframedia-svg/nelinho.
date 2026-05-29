@@ -186,8 +186,10 @@ class TestV2NormalisedWeights:
     """Pin Blueprint v2.0 normalisation reference magnitudes + sign of throughput."""
 
     def test_v2_weight_set_sums_to_one(self):
-        # Pin the design constraint that the 6 normalised weights
+        # Pin the design constraint that the 7 normalised weights
         # sum to 1.0 — a mutmut tweak that drifts the sum surfaces.
+        # Q.115.X7 re-balanceou: setup 0.15->0.10, throughput 0.15->0.10,
+        # + novo revenue_target_alignment 0.10 (delta net 0 -> soma=1.0).
         cfg = FitnessConfig()
         total = (
             cfg.w_v2_makespan
@@ -196,19 +198,21 @@ class TestV2NormalisedWeights:
             + cfg.w_v2_setup_time
             + cfg.w_v2_quality_risk
             + cfg.w_v2_throughput_eur_day
+            + cfg.w_v2_revenue_target_alignment
         )
         assert total == pytest.approx(1.0)
 
     def test_v2_throughput_subtracted_not_added(self):
-        # Throughput is the only term with a NEGATIVE sign in v2.
-        # A baseline schedule with throughput=0 vs the same with
-        # throughput=35000 (= _NORM_THROUGHPUT_EUR_DAY) must produce
-        # a *lower* fitness in the second case.
+        # Throughput is subtracted in v2 (so more throughput -> lower/better
+        # fitness). The revenue-alignment offset is identical in both calls
+        # (constant -0.10 sem target), so it cancels in this delta and only
+        # the throughput term remains.
         cfg = FitnessConfig(use_v2_weights=True)
         base = compute_fitness(_schedule(), cfg)
         better = compute_fitness(_schedule(throughput_eur_day=35000), cfg)
-        # _NORM_THROUGHPUT_EUR_DAY=35000 → norm=1.0 → subtracted 0.15.
-        assert better == pytest.approx(base - 0.15)
+        # _NORM_THROUGHPUT_EUR_DAY=35000 → norm=1.0; w_v2_throughput_eur_day
+        # = 0.10 (Q.115.X7, era 0.15) → subtracted 0.10.
+        assert better == pytest.approx(base - 0.10)
 
     def test_v2_makespan_normalisation_caps_at_one(self):
         # The ``_norm`` clamp at 1.0 — values above _NORM_MAKESPAN_H=1000
@@ -227,15 +231,17 @@ class TestV2NormalisedWeights:
         assert zero == negative_input
 
     def test_v2_makespan_half_norm_pinned(self):
-        # makespan=500, _NORM=1000 → norm=0.5; w_v2_makespan=0.20 → contribution 0.10.
+        # makespan=500, _NORM=1000 → norm=0.5; w_v2_makespan=0.20 → +0.10.
+        # menos o offset revenue-neutral (-0.10*1.0, sem target) → 0.0.
         cfg = FitnessConfig(use_v2_weights=True)
-        assert compute_fitness(_schedule(makespan_hours=500), cfg) == pytest.approx(0.10)
+        assert compute_fitness(_schedule(makespan_hours=500), cfg) == pytest.approx(0.0)
 
     def test_v2_uses_transport_tardiness_when_present(self):
         # When ``total_tardiness_transport_hours`` is set, v2 prefers it
         # over the legacy ``total_tardiness_hours`` field.
         cfg = FitnessConfig(use_v2_weights=True)
-        # transport=250, _NORM=500 → norm=0.5; weight=0.25 → 0.125
+        # transport=250, _NORM=500 → norm=0.5; weight=0.25 → +0.125;
+        # menos o offset revenue-neutral (-0.10) → 0.025.
         f = compute_fitness(
             _schedule(
                 total_tardiness_transport_hours=250,
@@ -243,7 +249,7 @@ class TestV2NormalisedWeights:
             ),
             cfg,
         )
-        assert f == pytest.approx(0.125)
+        assert f == pytest.approx(0.025)
 
     def test_v2_safety_violated_adds_full_million(self):
         # Even in v2 mode, the safety penalty is unscaled (1e6).
@@ -426,22 +432,32 @@ class TestDispatchBranch:
         assert compute_fitness(_schedule(makespan_hours=1), cfg) == 1.0
 
     def test_use_v2_true_calls_v2(self):
-        # V2 mode at makespan=1 → 1/1000 * 0.20 = 0.0002 — drastically
-        # different from legacy. If the dispatch is mutated (flipped or
-        # constant-True/False), this catches it.
+        # V2 mode at makespan=1 → 1/1000 * 0.20 = 0.0002, menos o offset
+        # revenue-neutral (-0.10*1.0, sem target) → -0.0998 — drasticamente
+        # diferente de legacy (1.0). Se o dispatch for mutado (flipped ou
+        # constant-True/False), isto apanha.
         cfg = FitnessConfig(use_v2_weights=True)
         assert compute_fitness(_schedule(makespan_hours=1), cfg) == pytest.approx(
-            0.0002,
+            -0.0998,
         )
 
     def test_safety_penalty_applied_in_both_modes(self):
-        # ``safety_violated`` adds penalty AFTER the dispatch; pin that
-        # the addition happens regardless of mode.
+        # ``safety_violated`` adds penalty AFTER the dispatch; pin that the
+        # 1e6 choke is added regardless of mode. Usa o DELTA vs a mesma
+        # config sem violacao para isolar a penalty do offset revenue-neutral
+        # do v2 (-0.10), pinando a magnitude exacta em ambos os modos.
         cfg_legacy = FitnessConfig(use_v2_weights=False)
         cfg_v2 = FitnessConfig(use_v2_weights=True)
-        s = _schedule(safety_violated=True)
-        assert compute_fitness(s, cfg_legacy) >= 1_000_000.0
-        assert compute_fitness(s, cfg_v2) >= 1_000_000.0
+        legacy_delta = (
+            compute_fitness(_schedule(safety_violated=True), cfg_legacy)
+            - compute_fitness(_schedule(), cfg_legacy)
+        )
+        v2_delta = (
+            compute_fitness(_schedule(safety_violated=True), cfg_v2)
+            - compute_fitness(_schedule(), cfg_v2)
+        )
+        assert legacy_delta == pytest.approx(1_000_000.0)
+        assert v2_delta == pytest.approx(1_000_000.0)
 
 
 # ---------------------------------------------------------------------------
@@ -451,28 +467,36 @@ class TestDispatchBranch:
 class TestV2FitnessQualityRisk:
     """Pin ``_v2_fitness`` quality-risk hard-hit accounting."""
 
+    # NOTA: estes testes chamam `_v2_fitness` directamente, logo incluem
+    # sempre o termo revenue_target_alignment. Sem `daily_revenue_target_eur`
+    # o score é 1.0 (neutro) e contribui -0.10 (= -w_v2_revenue_target_alignment
+    # * 1.0) — um offset constante que se soma a cada expected abaixo.
+
     def test_v2_mean_risk_uses_quality_risk_mean(self):
         # Without a predictor, ``_v2_fitness`` reads ``quality_risk_mean``
         # before falling back to ``quality_risk``.
         cfg = FitnessConfig()
         s = _schedule(quality_risk_mean=0.5)
-        # weight=0.10 → 0.05
-        assert _v2_fitness(s, cfg) == pytest.approx(0.05)
+        # weight=0.10 → +0.05; menos o offset revenue-neutral (-0.10) → -0.05.
+        assert _v2_fitness(s, cfg) == pytest.approx(-0.05)
 
     def test_v2_quality_risk_fallback_to_legacy_field(self):
         # When ``quality_risk_mean`` absent, falls back to ``quality_risk``.
         cfg = FitnessConfig()
         s = _schedule(quality_risk=0.5)
-        assert _v2_fitness(s, cfg) == pytest.approx(0.05)
+        # +0.05 (0.10*0.5) menos offset revenue-neutral (-0.10) → -0.05.
+        assert _v2_fitness(s, cfg) == pytest.approx(-0.05)
 
     def test_v2_idle_norm_uses_400h_reference(self):
-        # _NORM_IDLE_H=400. idle=200 → norm=0.5; weight=0.15 → 0.075.
+        # _NORM_IDLE_H=400. idle=200 → norm=0.5; weight=0.15 → +0.075;
+        # menos offset revenue-neutral (-0.10) → -0.025.
         cfg = FitnessConfig()
         s = _schedule(total_idle_hours=200)
-        assert _v2_fitness(s, cfg) == pytest.approx(0.075)
+        assert _v2_fitness(s, cfg) == pytest.approx(-0.025)
 
     def test_v2_setups_norm_uses_50_reference(self):
-        # _NORM_SETUPS=50. setups=25 → norm=0.5; weight=0.15 → 0.075.
+        # _NORM_SETUPS=50. setups=25 → norm=0.5; w_v2_setup_time=0.10
+        # (Q.115.X7, era 0.15) → +0.05; menos offset revenue-neutral → -0.05.
         cfg = FitnessConfig()
         s = _schedule(setups=25)
-        assert _v2_fitness(s, cfg) == pytest.approx(0.075)
+        assert _v2_fitness(s, cfg) == pytest.approx(-0.05)
