@@ -189,12 +189,14 @@ export const copilotApi = {
   },
   
   listConversations: (params?: { limit?: number; offset?: number; archived?: boolean }) => {
-    // Se não houver token, retornar imediatamente array vazio (sem fazer chamada)
+    // Histórico de conversas exige JWT real. Sem token — ou com um token que não
+    // tem forma de JWT (ex. dev-fallback sem login) — devolve [] sem chamar, para
+    // não gerar 401 de rede/consola. O empty-state continua honesto (ZERO MOCKS).
     const token = typeof window !== 'undefined' ? (localStorage.getItem('auth_token') || localStorage.getItem('token')) : null;
-    if (!token) {
+    if (!token || token.split('.').length !== 3) {
       return Promise.resolve([]);
     }
-    
+
     const queryParams = new URLSearchParams();
     if (params?.limit) queryParams.set('limit', String(params.limit));
     if (params?.offset) queryParams.set('offset', String(params.offset));
@@ -215,6 +217,10 @@ export const copilotApi = {
   },
   
   getConversationMessages: (conversationId: string, params?: { limit?: number; offset?: number }) => {
+    const token = typeof window !== 'undefined' ? (localStorage.getItem('auth_token') || localStorage.getItem('token')) : null;
+    if (!token || token.split('.').length !== 3) {
+      return Promise.resolve([]);
+    }
     const queryParams = new URLSearchParams();
     if (params?.limit) queryParams.set('limit', String(params.limit));
     if (params?.offset) queryParams.set('offset', String(params.offset));

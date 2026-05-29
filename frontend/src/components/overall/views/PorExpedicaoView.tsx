@@ -19,13 +19,15 @@ import { Clickable } from '../../entitySheets';
 
 interface TransportBatch {
   id: string;
-  camiao_id: string;
-  destino?: string;
-  data_partida: string;
-  order_ids: string[];
-  /** Q.116.C — UUIDs dos clientes nas orders desta batch (pode ser vazio).
-   *  Exposto pelo backend mas não usado em Clickable enquanto customer_name
-   *  não for incluído no payload (Q.116.E). */
+  // Q.121.D1 — nomes alinhados ao backend TransportBatchOut (src/plan/api/transport.py).
+  // Antes a interface usava camiao_id/destino/data_partida/order_ids — nomes que o
+  // backend NUNCA envia → data_partida=undefined → format(new Date(undefined)) lançava
+  // RangeError: Invalid time value e crashava a vista para o ErrorBoundary.
+  code: string;
+  destination?: string;
+  transport_date: string;
+  assigned_orders_count?: number;
+  /** Q.116.C — UUIDs dos clientes nas orders desta batch (pode ser vazio). */
   customer_ids?: string[];
 }
 
@@ -81,7 +83,10 @@ export function PorExpedicaoView({
   // Agrupar batches por dia
   const batchesByDay = new Map<string, TransportBatch[]>();
   for (const b of batches) {
-    const day = format(new Date(b.data_partida), 'yyyy-MM-dd');
+    // Q.121.D1 — guard: nunca passar uma data inválida a format() (RangeError).
+    const d = b.transport_date ? new Date(b.transport_date) : null;
+    if (!d || Number.isNaN(d.getTime())) continue;
+    const day = format(d, 'yyyy-MM-dd');
     if (!batchesByDay.has(day)) batchesByDay.set(day, []);
     batchesByDay.get(day)!.push(b);
   }
@@ -110,14 +115,14 @@ export function PorExpedicaoView({
                     <Truck size={10} className="text-teal-400 flex-shrink-0 mt-0.5" />
                     <div className="min-w-0">
                       <div className="text-slate-200 font-medium truncate">
-                        {b.camiao_id}
+                        {b.code}
                       </div>
-                      {b.destino && (
-                        <div className="text-slate-500 truncate">{b.destino}</div>
+                      {b.destination && (
+                        <div className="text-slate-500 truncate">{b.destination}</div>
                       )}
                       <div className="flex items-center gap-0.5 text-slate-500 mt-0.5">
                         <Package size={8} />
-                        <span>{b.order_ids.length} OFs</span>
+                        <span>{b.assigned_orders_count ?? 0} OFs</span>
                       </div>
                       {b.customer_ids && b.customer_ids.length === 1 && (
                         <div className="text-slate-500 mt-0.5 truncate">
