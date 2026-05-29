@@ -33,4 +33,15 @@ describe('DecisoesPage — 3 sub-abas', () => {
     // O cabeçalho do HistoricoTab aparece.
     expect(screen.getByText('Histórico de decisões')).toBeInTheDocument();
   });
+
+  it('aba Simulações abre via ?tab=simulacoes com os 3 segmentos', () => {
+    renderWithProviders(<DecisoesPage />, {
+      route: '/decisoes?tab=simulacoes',
+      withToast: true,
+      withEntitySheets: true,
+    });
+    expect(screen.getByText('Esta decisão')).toBeInTheDocument();
+    expect(screen.getByText('Cenários')).toBeInTheDocument();
+    expect(screen.getByText('Crise · agora')).toBeInTheDocument();
+  });
 });
