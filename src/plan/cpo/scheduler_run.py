@@ -253,6 +253,21 @@ async def run_cpo_schedule(
     except Exception as e:
         logger.warning(f"Schedule-as-Code commit failed: {e}", exc_info=True)
 
+    # Q.116.G — após o commit ser gravado (hash determinístico), enriquece
+    # cada op no payload com `effective_boost` para o frontend. Mutação
+    # acontece DEPOIS do commit para o snapshot não mudar.
+    operations_out: list[dict[str, Any]] = [
+        dict(op) for op in result.get("operations", [])
+    ]
+    try:
+        from src.plan.api._cpo_common import _attach_effective_boost
+
+        await _attach_effective_boost(session, tenant_id, operations_out)
+    except Exception as boost_exc:  # pragma: no cover — defensive
+        logger.warning(
+            f"effective_boost attach failed: {boost_exc}", exc_info=True
+        )
+
     return {
         "tenant_id": str(tenant_id),
         "engine_used": result.get("engine_used", "cpo_v4"),
@@ -267,7 +282,7 @@ async def run_cpo_schedule(
         "degraded": bool(result.get("degraded", False)),
         "fallback_reason": result.get("fallback_reason"),
         "cpo_meta": result.get("cpo_meta", {}),
-        "operations": result.get("operations", []),
+        "operations": operations_out,
         "warnings": list(result.get("warnings", [])),
         "infeasible_op_ids": list(result.get("infeasible_op_ids", [])),
         "commit_sha256": commit_sha,

@@ -45,6 +45,15 @@ export interface RoutingTemplateOut {
   phases: PhaseInTemplate[];
 }
 
+// Q.116.G — barco em produção (para lista no ModeloSheet)
+export interface BoatInProduction {
+  legacy_id: number;
+  current_phase_name: string;
+  customer_name: string | null;
+  transport_date: string | null;
+  effective_boost: number;
+}
+
 export interface ModeloSummary {
   model_id: string;
   model_name: string;
@@ -52,6 +61,7 @@ export interface ModeloSummary {
   routing_template: RoutingTemplateOut | null;
   active_orders_count: number;
   in_production_count: number;
+  in_production_boats: BoatInProduction[];   // Q.116.G
 }
 
 export interface OperatorScore {
@@ -120,6 +130,10 @@ export interface EncomendaSummary {
   boost_reason: string | null;
   transport_date_override: string | null;
   transport_date_effective: string | null;
+  // Q.116.G — boost breakdown (do backend)
+  client_boost: number;
+  boat_boost: number;
+  effective_boost: number;
 }
 
 // Q.116.C — boost + transport_date override mutations

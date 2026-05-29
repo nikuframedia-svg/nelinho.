@@ -216,6 +216,154 @@ def _build_narrative(vs_primary: Dict[str, Optional[str]]) -> str:
     return "Trade-offs principais — " + "; ".join(p[1] for p in parts[:3]) + "."
 
 
+async def _attach_effective_boost(
+    db: AsyncSession,
+    tenant_id: UUID,
+    operations: List[Dict[str, Any]],
+) -> None:
+    """Q.116.G — enriquece cada op com `effective_boost` (in-place).
+
+    Cada op no payload do schedule tem `order_id` (string do `of_id` =
+    `ProductionOrder.legacy_id`). Calculamos batch:
+      * OrderBoost por legacy_id
+      * BoatBoost por product_name (lookup ProductionOrder)
+      * ClientPriority por customer_name → Customer → priority
+
+    Defesa em profundidade: cada lookup tem try/except — se uma tabela
+    ainda não existe (DB sem migrar) o campo cai para 0 sem derrubar
+    o schedule. Performance: TODO Q.117 caso schedules >500 ops causem
+    latência preocupante (3 batch queries + N para production_order).
+    """
+    if not operations:
+        return
+
+    from sqlalchemy import and_, select
+
+    from src.core.models.client_priority import ClientPriority
+    from src.core.models.partner import Customer
+    from src.plan.models.order import ProductionOrder
+    from src.plan.services.boost_service import compute_effective_boost
+
+    # 1. Recolhe legacy_ids únicos (strings → ints onde possível).
+    legacy_ids: List[int] = []
+    for op in operations:
+        raw = op.get("order_id")
+        if raw is None:
+            continue
+        try:
+            legacy_ids.append(int(raw))
+        except (TypeError, ValueError):
+            continue
+    legacy_ids = list(set(legacy_ids))
+    if not legacy_ids:
+        return
+
+    # 2. Carrega ProductionOrders (legacy_id → row) para obter
+    # product_name + customer_name.
+    order_by_lid: Dict[int, Any] = {}
+    try:
+        po_stmt = select(ProductionOrder).where(
+            and_(
+                ProductionOrder.tenant_id == tenant_id,
+                ProductionOrder.legacy_id.in_(legacy_ids),
+            )
+        )
+        for row in (await db.execute(po_stmt)).scalars().all():
+            order_by_lid[int(row.legacy_id)] = row
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.debug("ProductionOrder batch skipped (%s)", exc)
+
+    # 3. OrderBoost batch.
+    order_boost_map: Dict[int, int] = {}
+    try:
+        from src.plan.models.order_boost import OrderBoost
+
+        ob_stmt = select(OrderBoost).where(
+            and_(
+                OrderBoost.tenant_id == tenant_id,
+                OrderBoost.work_order_id.in_(legacy_ids),
+            )
+        )
+        for row in (await db.execute(ob_stmt)).scalars().all():
+            order_boost_map[int(row.work_order_id)] = int(row.boost)
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.debug("OrderBoost batch skipped (%s)", exc)
+
+    # 4. BoatBoost batch — chaveado por product_name.
+    product_names = list({
+        o.product_name for o in order_by_lid.values() if getattr(o, "product_name", None)
+    })
+    boat_boost_map: Dict[str, int] = {}
+    if product_names:
+        try:
+            from src.plan.models.boat_boost import BoatBoost
+
+            bb_stmt = select(BoatBoost).where(
+                and_(
+                    BoatBoost.tenant_id == tenant_id,
+                    BoatBoost.boat_id.in_(product_names),
+                )
+            )
+            for row in (await db.execute(bb_stmt)).scalars().all():
+                boat_boost_map[str(row.boat_id)] = int(row.boost)
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.debug("BoatBoost batch skipped (%s)", exc)
+
+    # 5. ClientPriority via Customer.customer_name → id → priority.
+    customer_names = list({
+        getattr(o, "customer_name", None)
+        for o in order_by_lid.values()
+        if getattr(o, "customer_name", None)
+    })
+    priority_by_customer: Dict[str, int] = {}
+    if customer_names:
+        try:
+            cust_stmt = select(Customer).where(
+                and_(
+                    Customer.tenant_id == tenant_id,
+                    Customer.customer_name.in_(customer_names),
+                )
+            )
+            customers = list((await db.execute(cust_stmt)).scalars().all())
+            cust_id_to_name = {c.id: c.customer_name for c in customers}
+            if cust_id_to_name:
+                cp_stmt = select(ClientPriority).where(
+                    and_(
+                        ClientPriority.tenant_id == tenant_id,
+                        ClientPriority.client_id.in_(list(cust_id_to_name.keys())),
+                    )
+                )
+                for cp_row in (await db.execute(cp_stmt)).scalars().all():
+                    name = cust_id_to_name.get(cp_row.client_id)
+                    if name is not None:
+                        priority_by_customer[name] = int(cp_row.priority)
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.debug("ClientPriority batch skipped (%s)", exc)
+
+    # 6. Constrói boost por legacy_id e injecta em cada op.
+    boost_by_lid: Dict[int, int] = {}
+    for lid, order in order_by_lid.items():
+        ob = order_boost_map.get(lid, 0)
+        bb = boat_boost_map.get(getattr(order, "product_name", ""), 0)
+        customer = getattr(order, "customer_name", None)
+        priority = priority_by_customer.get(customer) if customer else None
+        boost_by_lid[lid] = int(
+            compute_effective_boost(
+                client_priority=priority,
+                order_boost=ob,
+                boat_boost=bb,
+            )
+        )
+
+    for op in operations:
+        raw = op.get("order_id")
+        try:
+            lid = int(raw) if raw is not None else None
+        except (TypeError, ValueError):
+            lid = None
+        op["effective_boost"] = boost_by_lid.get(lid, 0) if lid is not None else 0
+
+
 __all__ = [
     "_tenant_id",
     "_resolve_commit_or_404",
@@ -225,4 +373,5 @@ __all__ = [
     "_relative_delta",
     "_format_delta_pct",
     "_build_narrative",
+    "_attach_effective_boost",
 ]

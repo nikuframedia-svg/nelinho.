@@ -29,12 +29,24 @@ import { Tabs } from '../../dark/Tabs';
 import { DarkBadge } from '../../dark/DarkBadge';
 import { DarkButton } from '../../dark/DarkButton';
 import { EmptyState } from '../../dark/EmptyState';
+import {
+  DarkTable,
+  DarkTableHead,
+  DarkTableBody,
+  DarkTableRow,
+  DarkTableHeader,
+  DarkTableCell,
+} from '../../dark/DarkTable';
 import { entityKeys } from '../../../lib/api/keys';
 import {
   entityApi,
+  type ModeloSummary,
   type RoutingTemplateOut,
   type PhaseInTemplate,
+  type BoatInProduction,
+  type BoatBoostUpsert,
 } from '../../../lib/api/entityApi';
+import { Clickable } from '../Clickable';
 import { useToastContext } from '../../ToastProvider';
 
 export interface ModeloSheetProps {
@@ -119,10 +131,7 @@ export default function ModeloSheet({ modelId, onClose }: ModeloSheetProps) {
       )}
 
       {tab === 'em-producao' && (
-        <TabEmProducao
-          inProductionCount={data.in_production_count}
-          modelName={data.model_name}
-        />
+        <TabEmProducao data={data} />
       )}
 
       {tab === 'drill-down' && (
@@ -547,68 +556,176 @@ function FlexModal({ phase, allPhases, templateId, modelId, onClose }: FlexModal
   );
 }
 
-// ─── Tab Em produção (Q.116.D) ────────────────────────────────────────────────
+// ─── Tab Em produção (Q.116.G) ───────────────────────────────────────────────
 
 interface TabEmProducaoProps {
-  inProductionCount: number;
-  modelName: string;
+  data: ModeloSummary;
 }
 
-function TabEmProducao({ inProductionCount, modelName }: TabEmProducaoProps) {
-  if (inProductionCount === 0) {
+function TabEmProducao({ data }: TabEmProducaoProps) {
+  const boats = data.in_production_boats;
+
+  if (boats.length === 0) {
     return (
       <EmptyState
-        title="Nenhum barco em produção"
-        hint={`Não há barcos do modelo ${modelName} actualmente em produção.`}
+        title="Sem barcos em produção"
+        hint={`Não há barcos do modelo ${data.model_name} actualmente em produção.`}
         size="sm"
       />
     );
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 12,
-          padding: '12px 16px',
-          background: 'var(--bg-2)',
-          borderRadius: 8,
-        }}
-      >
-        <DarkBadge variant="info">{inProductionCount}</DarkBadge>
-        <span style={{ fontSize: 13 }}>
-          barco{inProductionCount !== 1 ? 's' : ''} em produção
-        </span>
-      </div>
+    <DarkTable>
+      <DarkTableHead>
+        <DarkTableRow>
+          <DarkTableHeader>#</DarkTableHeader>
+          <DarkTableHeader>Fase actual</DarkTableHeader>
+          <DarkTableHeader>Cliente</DarkTableHeader>
+          <DarkTableHeader>Transporte</DarkTableHeader>
+          <DarkTableHeader>Boost</DarkTableHeader>
+          <DarkTableHeader></DarkTableHeader>
+        </DarkTableRow>
+      </DarkTableHead>
+      <DarkTableBody>
+        {boats.map((b) => (
+          <BoatRow key={b.legacy_id} boat={b} modelId={data.model_id} />
+        ))}
+      </DarkTableBody>
+    </DarkTable>
+  );
+}
 
+interface BoatRowProps {
+  boat: BoatInProduction;
+  modelId: string;
+}
+
+function BoatRow({ boat, modelId }: BoatRowProps) {
+  const [showBoostModal, setShowBoostModal] = useState(false);
+
+  return (
+    <DarkTableRow>
+      <DarkTableCell>
+        <Clickable kind="encomenda" id={boat.legacy_id}>
+          #{boat.legacy_id}
+        </Clickable>
+      </DarkTableCell>
+      <DarkTableCell>
+        <Clickable kind="fase" id={boat.current_phase_name}>
+          {boat.current_phase_name}
+        </Clickable>
+      </DarkTableCell>
+      <DarkTableCell>{boat.customer_name ?? '—'}</DarkTableCell>
+      <DarkTableCell mono>{boat.transport_date ?? '—'}</DarkTableCell>
+      <DarkTableCell>
+        <DarkBadge variant={boat.effective_boost > 50 ? 'accent' : 'neutral'}>
+          {boat.effective_boost}/200
+        </DarkBadge>
+      </DarkTableCell>
+      <DarkTableCell>
+        <DarkButton
+          variant="ghost"
+          size="sm"
+          onClick={() => setShowBoostModal(true)}
+        >
+          Acelerar
+        </DarkButton>
+        {showBoostModal && (
+          <BoostModal
+            boat={boat}
+            modelId={modelId}
+            onClose={() => setShowBoostModal(false)}
+          />
+        )}
+      </DarkTableCell>
+    </DarkTableRow>
+  );
+}
+
+interface BoostModalProps {
+  boat: BoatInProduction;
+  modelId: string;
+  onClose: () => void;
+}
+
+function BoostModal({ boat, modelId, onClose }: BoostModalProps) {
+  const toast = useToastContext();
+  const queryClient = useQueryClient();
+  const [boostValue, setBoostValue] = useState(boat.effective_boost > 100 ? 100 : boat.effective_boost);
+
+  const boostMutation = useMutation({
+    mutationFn: (body: BoatBoostUpsert) =>
+      entityApi.upsertBoatBoost(String(boat.legacy_id), body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: entityKeys.modelo(modelId) });
+      toast.success('Boost de barco aplicado.');
+      onClose();
+    },
+    onError: (err: unknown) => {
+      const msg = err instanceof Error ? err.message : 'Erro a aplicar boost.';
+      toast.error(msg);
+    },
+  });
+
+  const pending = boostMutation.isPending;
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.5)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 9999,
+      }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
       <div
         style={{
-          padding: '14px 16px',
-          background: 'var(--bg-2)',
+          background: 'var(--bg-1)',
           border: '1px solid var(--bd-1)',
-          borderRadius: 8,
-          fontSize: 13,
-          color: 'var(--fg-2)',
-          lineHeight: 1.6,
+          borderRadius: 12,
+          padding: 24,
+          width: 360,
+          maxWidth: '90vw',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 16,
         }}
       >
-        <div style={{ fontWeight: 600, color: 'var(--fg-1)', marginBottom: 8 }}>
-          Como acelerar um barco deste modelo
+        <div style={{ fontSize: 15, fontWeight: 600 }}>
+          Acelerar barco #{boat.legacy_id}
         </div>
-        <ol style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <li>
-            Abre a vista <strong>Por barco</strong> em{' '}
-            <a href="/overall?view=barco" style={{ color: 'var(--accent)' }}>
-              /overall
-            </a>
-          </li>
-          <li>Clica na encomenda do barco que queres acelerar</li>
-          <li>No tab <strong>Boost</strong> da EncomendaSheet, usa o slider 0–100</li>
-        </ol>
-        <div style={{ marginTop: 12, fontSize: 12, color: 'var(--fg-3)' }}>
-          Q.116.G: lista detalhada de barcos em produção por modelo (pendente).
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={boostValue}
+            disabled={pending}
+            onChange={(e) => setBoostValue(Number(e.target.value))}
+            style={{ flex: 1 }}
+          />
+          <span style={{ minWidth: 36, textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontSize: 15, fontWeight: 600 }}>
+            {boostValue}
+          </span>
+        </div>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <DarkButton variant="ghost" size="sm" onClick={onClose} disabled={pending}>
+            Cancelar
+          </DarkButton>
+          <DarkButton
+            variant="primary"
+            size="sm"
+            disabled={pending}
+            loading={pending}
+            onClick={() => boostMutation.mutate({ boost: boostValue })}
+          >
+            Aplicar boost
+          </DarkButton>
         </div>
       </div>
     </div>

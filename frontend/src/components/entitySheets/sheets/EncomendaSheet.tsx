@@ -61,11 +61,11 @@ export default function EncomendaSheet({ workOrderId, onClose }: EncomendaSheetP
 
   const subtitle = `${data.product_name} · ${data.customer_name ?? 'sem cliente'} · ${data.status}`;
 
-  // Q.116.D — boost stack (client_boost + boat_boost virão em Q.116.G)
+  // Q.116.G — boost breakdown (backend calcula effective com cap 200 + client_priority)
+  const effectiveBoost = data.effective_boost;
+  const clientBoost = data.client_boost;
   const orderBoost = data.boost ?? 0;
-  const clientBoost = (data as any).client_boost as number ?? 0;
-  const boatBoost = (data as any).boat_boost as number ?? 0;
-  const effectiveBoost = Math.min(orderBoost + clientBoost + boatBoost, 200);
+  const boatBoost = data.boat_boost;
   const isAccelerated = effectiveBoost > 50;
 
   return (

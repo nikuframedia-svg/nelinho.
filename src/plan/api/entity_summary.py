@@ -26,7 +26,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import and_, distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -77,6 +77,16 @@ class RoutingTemplateOut(BaseModel):
     phases: List[PhaseInTemplate]
 
 
+class BoatInProduction(BaseModel):
+    """Q.116.G — linha resumo de um barco actualmente em produção do modelo."""
+
+    legacy_id: int
+    current_phase_name: str
+    customer_name: Optional[str] = None
+    transport_date: Optional[str] = None
+    effective_boost: int = 0
+
+
 class ModeloSummary(BaseModel):
     # `model_` é um namespace protegido em Pydantic v2; silenciamos o
     # warning porque o domínio NELO usa "modelo" para barco (não LLM).
@@ -88,6 +98,12 @@ class ModeloSummary(BaseModel):
     routing_template: Optional[RoutingTemplateOut]
     active_orders_count: int
     in_production_count: int
+    # Q.116.G — lista (até 20) de barcos do modelo actualmente em
+    # produção, ordenados por `created_date DESC`. effective_boost vem
+    # do mesmo stack do EncomendaSummary (cliente + encomenda + barco).
+    # TODO Q.117.X: paginar quando ultrapassar 20 — modelos populares
+    # como K1-Vanquish-L podem ter muito mais.
+    in_production_boats: List[BoatInProduction] = Field(default_factory=list)
 
 
 class OperatorScore(BaseModel):
@@ -159,6 +175,16 @@ class EncomendaSummary(BaseModel):
     boost_reason: Optional[str] = None
     transport_date_override: Optional[str] = None
     transport_date_effective: Optional[str] = None
+    # Q.116.G — breakdown completo do stack do boost. `client_boost` vem
+    # de `ClientPriority` do cliente associado mapeado via
+    # `client_boost_from_priority` (5 escalões 100/80/60/40/20).
+    # `boat_boost` é o BoatBoost (PK = product_name string).
+    # `effective_boost` é a soma capped a 200 via
+    # `boost_service.compute_effective_boost`. Defaults 0 quando alguma
+    # query falha (defesa em profundidade — endpoint robusto).
+    client_boost: int = 0
+    boat_boost: int = 0
+    effective_boost: int = 0
 
 
 # Q.116.E — Operador sheet ────────────────────────────────────────────────────
@@ -192,6 +218,125 @@ router = APIRouter(prefix="/v1/entity", tags=["Q.116.A Entity Summary"])
 def _status_value(order: ProductionOrder) -> str:
     s = order.status
     return s.value if hasattr(s, "value") else str(s)
+
+
+async def _build_boats_in_production(
+    session: AsyncSession,
+    tenant_id: UUID,
+    orders: List[ProductionOrder],
+    model_id: str,
+) -> List[BoatInProduction]:
+    """Q.116.G — calcula `BoatInProduction` para cada encomenda em curso.
+
+    Faz batch lookups dos 3 níveis de boost (OrderBoost via work_order_id,
+    BoatBoost via product_name, ClientPriority via customer_name) para
+    evitar N+1.
+
+    Defesa em profundidade: cada lookup tem try/except — se a tabela
+    ainda não está migrada ou o modelo não importa, devolvemos a lista
+    com `effective_boost=0` em vez de derrubar o endpoint.
+    """
+    if not orders:
+        return []
+
+    legacy_ids = [int(o.legacy_id) for o in orders]
+    customer_names = list({
+        getattr(o, "customer_name", None) for o in orders if getattr(o, "customer_name", None)
+    })
+
+    # 1. OrderBoost batch (PK = work_order_id INT).
+    order_boost_map: dict[int, int] = {}
+    try:
+        from src.plan.models.order_boost import OrderBoost
+
+        ob_stmt = select(OrderBoost).where(
+            and_(
+                OrderBoost.tenant_id == tenant_id,
+                OrderBoost.work_order_id.in_(legacy_ids),
+            )
+        )
+        for row in (await session.execute(ob_stmt)).scalars().all():
+            order_boost_map[int(row.work_order_id)] = int(row.boost)
+    except Exception as exc:  # pragma: no cover — defesa.
+        logger.debug("OrderBoost batch skipped (%s)", exc)
+
+    # 2. BoatBoost — uma só lookup para o modelo (todos os barcos do
+    # modelo partilham o mesmo product_name).
+    boat_boost_value: int = 0
+    try:
+        from src.plan.models.boat_boost import BoatBoost
+
+        bb_stmt = select(BoatBoost).where(
+            and_(
+                BoatBoost.tenant_id == tenant_id,
+                BoatBoost.boat_id == model_id,
+            )
+        )
+        bb_row = (await session.execute(bb_stmt)).scalar_one_or_none()
+        if bb_row is not None:
+            boat_boost_value = int(bb_row.boost)
+    except Exception as exc:  # pragma: no cover — defesa.
+        logger.debug("BoatBoost lookup skipped (%s)", exc)
+
+    # 3. ClientPriority batch via Customer.customer_name.
+    priority_by_customer: dict[str, int] = {}
+    if customer_names:
+        try:
+            cust_stmt = select(Customer).where(
+                and_(
+                    Customer.tenant_id == tenant_id,
+                    Customer.customer_name.in_(customer_names),
+                )
+            )
+            customers = list((await session.execute(cust_stmt)).scalars().all())
+            cust_id_to_name = {c.id: c.customer_name for c in customers}
+            if cust_id_to_name:
+                cp_stmt = select(ClientPriority).where(
+                    and_(
+                        ClientPriority.tenant_id == tenant_id,
+                        ClientPriority.client_id.in_(list(cust_id_to_name.keys())),
+                    )
+                )
+                for cp_row in (await session.execute(cp_stmt)).scalars().all():
+                    name = cust_id_to_name.get(cp_row.client_id)
+                    if name is not None:
+                        priority_by_customer[name] = int(cp_row.priority)
+        except Exception as exc:  # pragma: no cover — defesa.
+            logger.debug("ClientPriority batch skipped (%s)", exc)
+
+    # 4. Combina via compute_effective_boost.
+    try:
+        from src.plan.services.boost_service import compute_effective_boost
+    except Exception as exc:  # pragma: no cover — defesa.
+        logger.debug("boost_service import skipped (%s)", exc)
+        compute_effective_boost = None  # type: ignore[assignment]
+
+    out: List[BoatInProduction] = []
+    for o in orders:
+        legacy_id = int(o.legacy_id)
+        ob = order_boost_map.get(legacy_id, 0)
+        customer = getattr(o, "customer_name", None)
+        priority = priority_by_customer.get(customer) if customer else None
+        if compute_effective_boost is not None:
+            eff = compute_effective_boost(
+                client_priority=priority,
+                order_boost=ob,
+                boat_boost=boat_boost_value,
+            )
+        else:
+            eff = 0
+        out.append(
+            BoatInProduction(
+                legacy_id=legacy_id,
+                current_phase_name=o.current_phase_name,
+                customer_name=customer,
+                transport_date=(
+                    o.transport_date.isoformat() if o.transport_date else None
+                ),
+                effective_boost=int(eff),
+            )
+        )
+    return out
 
 
 # ─── Endpoint: Modelo ────────────────────────────────────────────────────────
@@ -281,6 +426,27 @@ async def get_modelo_summary(
                 phases=phase_outs,
             )
 
+    # Q.116.G — barcos do modelo actualmente em produção (ordem
+    # `created_date DESC`, limit 20). Aproveita a query inicial de
+    # ProductionOrder (já carregada) para evitar segunda viagem ao DB.
+    # TODO Q.117.X: paginar — modelos populares podem ter > 20.
+    in_production: List[ProductionOrder] = [
+        o
+        for o in orders
+        if o.status != OrderStatus.CANCELLED
+        and not is_completed_phase(o.current_phase_name)
+    ]
+    # Sort created_date DESC, com None no fim.
+    in_production.sort(
+        key=lambda o: (o.created_date is None, o.created_date),
+        reverse=True,
+    )
+    in_production = in_production[:20]
+
+    in_production_boats = await _build_boats_in_production(
+        session, tenant_id, in_production, model_id
+    )
+
     return ModeloSummary(
         model_id=model_id,
         model_name=model_id,  # business-key é também o nome humano no NELO
@@ -288,6 +454,7 @@ async def get_modelo_summary(
         routing_template=routing_template_out,
         active_orders_count=active_orders_count,
         in_production_count=in_production_count,
+        in_production_boats=in_production_boats,
     )
 
 
@@ -601,6 +768,64 @@ async def get_encomenda_summary(
     )
     transport_date_effective = transport_date_override or transport_date_iso
 
+    # Q.116.G — boat_boost + client_boost + effective_boost. Lazy import
+    # como o OrderBoost: o modelo existe (Q.116.D) mas em DB sem migrar
+    # a query falha. Defaults 0 mantêm o endpoint robusto.
+    boat_boost_value: int = 0
+    try:
+        from src.plan.models.boat_boost import BoatBoost
+
+        bb_stmt = select(BoatBoost).where(
+            and_(
+                BoatBoost.tenant_id == tenant_id,
+                BoatBoost.boat_id == order.product_name,
+            )
+        )
+        bb_row = (await session.execute(bb_stmt)).scalar_one_or_none()
+        if bb_row is not None:
+            boat_boost_value = int(bb_row.boost)
+    except Exception as exc:  # pragma: no cover — defesa: import ou DB ausente.
+        logger.debug("BoatBoost lookup skipped (%s)", exc)
+
+    client_boost_value: int = 0
+    effective_boost_value: int = 0
+    try:
+        from src.plan.services.boost_service import (
+            client_boost_from_priority,
+            compute_effective_boost,
+        )
+
+        priority: Optional[int] = None
+        customer_name_val = getattr(order, "customer_name", None)
+        if customer_name_val:
+            # Encadeamento: Customer.customer_name → Customer.id → ClientPriority.priority.
+            cust_q = select(Customer).where(
+                and_(
+                    Customer.tenant_id == tenant_id,
+                    Customer.customer_name == customer_name_val,
+                )
+            )
+            cust_row = (await session.execute(cust_q)).scalar_one_or_none()
+            if cust_row is not None:
+                cp_q = select(ClientPriority).where(
+                    and_(
+                        ClientPriority.tenant_id == tenant_id,
+                        ClientPriority.client_id == cust_row.id,
+                    )
+                )
+                cp_row = (await session.execute(cp_q)).scalar_one_or_none()
+                if cp_row is not None:
+                    priority = int(cp_row.priority)
+
+        client_boost_value = client_boost_from_priority(priority)
+        effective_boost_value = compute_effective_boost(
+            client_priority=priority,
+            order_boost=boost_value,
+            boat_boost=boat_boost_value,
+        )
+    except Exception as exc:  # pragma: no cover — defesa: import ou DB ausente.
+        logger.debug("client/effective boost lookup skipped (%s)", exc)
+
     return EncomendaSummary(
         legacy_id=legacy_id_int,
         product_name=order.product_name,
@@ -618,6 +843,9 @@ async def get_encomenda_summary(
         boost_reason=boost_reason,
         transport_date_override=transport_date_override,
         transport_date_effective=transport_date_effective,
+        client_boost=client_boost_value,
+        boat_boost=boat_boost_value,
+        effective_boost=effective_boost_value,
     )
 
 
