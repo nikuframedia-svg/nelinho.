@@ -67,7 +67,16 @@ def _load_revisions():
 
 def test_alembic_chain_has_single_head():
     revs = _load_revisions()
-    parents = {d for d in revs.values() if d}
+    # down_revision pode ser str OU tuplo (migração de merge) — achatar para
+    # que ambos os pais de um merge contem como referenciados.
+    parents: set = set()
+    for d in revs.values():
+        if not d:
+            continue
+        if isinstance(d, (tuple, list)):
+            parents.update(d)
+        else:
+            parents.add(d)
     heads = set(revs.keys()) - parents
     # The chain head moves as new migrations land; what matters is that there
     # is exactly *one* head. Multiple heads mean two parallel branches that
