@@ -1,7 +1,9 @@
 """Q.115.F — MarginPreview: margem prevista para um ScheduleCommit.
 
 Calcula `predicted_margin_eur` somando, por operação do commit:
-    op_margin = coeficiente_x_eur (PhaseBonusPayout) - (duration_h × cost_rate)
+    op_margin = bonus_eur − custo_op
+onde `bonus_eur` é o CoeficienteX (bónus € do PhaseBonusPayout — dinheiro)
+e `custo_op = duration_h × cost_rate` (€). Margem = € − €; nunca tempo.
 
 Baseline = daily_revenue_target mais recente × (commit_hours / 8h).
 
