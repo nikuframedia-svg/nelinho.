@@ -10,11 +10,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Check, X, Inbox, RefreshCw } from 'lucide-react';
+import { Check, X, Inbox, RefreshCw, FlaskConical, History } from 'lucide-react';
 import { decisionKeys } from '../../lib/api/keys';
 import { decisionsApi, type DecisionRun } from '../../lib/api';
-import { PageHeader } from '../../components/dark';
+import { PageHeader, Tabs } from '../../components/dark';
 import { Clickable } from '../../components/entitySheets';
+import { useTabRouting } from '../../hooks/useTabRouting';
+import SimulacoesTab from './SimulacoesTab';
+import HistoricoTab from './HistoricoTab';
 
 // â”€â”€â”€ helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -31,7 +34,7 @@ function sourceLabel(source: string | undefined): string {
 
 // â”€â”€â”€ componente principal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-export default function DecisoesPage() {
+function DecidirTab() {
   const queryClient = useQueryClient();
   const [currentIndex, setCurrentIndex] = useState(0);
   // direcÃ§Ã£o da animaÃ§Ã£o: 1 = saÃ­da esquerda (NÃ£o), -1 = saÃ­da direita (Sim)
@@ -484,6 +487,43 @@ function CenteredFrame({ children }: { children: React.ReactNode }) {
       }}
     >
       <div style={{ width: '100%', maxWidth: 600 }}>{children}</div>
+    </div>
+  );
+}
+
+// ─── shell de 3 sub-abas (Q.118.B) ─────────────────────────────────────────
+// Decidir (o hub Tinder) · Simulações (what-if + twin) · Histórico (decisões
+// tomadas). Rota via ?tab=decidir|simulacoes|historico (useTabRouting).
+
+const DECISOES_TAB_IDS = ['decidir', 'simulacoes', 'historico'] as const;
+type DecisoesTabId = (typeof DECISOES_TAB_IDS)[number];
+
+const DECISOES_TABS = [
+  { id: 'decidir', label: 'Decidir', icon: <Inbox size={14} /> },
+  { id: 'simulacoes', label: 'Simulações', icon: <FlaskConical size={14} /> },
+  { id: 'historico', label: 'Histórico', icon: <History size={14} /> },
+];
+
+export default function DecisoesPage() {
+  const { activeTab, setTab } = useTabRouting<DecisoesTabId>(
+    DECISOES_TAB_IDS,
+    'decidir',
+  );
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="px-4 pt-3">
+        <Tabs
+          tabs={DECISOES_TABS}
+          value={activeTab}
+          onChange={(id) => setTab(id as DecisoesTabId)}
+        />
+      </div>
+      <div className="flex-1 min-h-0">
+        {activeTab === 'decidir' && <DecidirTab />}
+        {activeTab === 'simulacoes' && <SimulacoesTab />}
+        {activeTab === 'historico' && <HistoricoTab />}
+      </div>
     </div>
   );
 }
