@@ -797,6 +797,25 @@ function TabAprendizagem() {
     },
   });
 
+  // Q.118.L — fechar a Camada 1: confirmar/rejeitar preferências detectadas.
+  const confirmRuleMutation = useMutation({
+    mutationFn: (id: string) => preferenceRulesApi.confirm(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: governanceKeys.preferenceRules() });
+      toast.success('Preferência confirmada — passa a influenciar o planeamento');
+    },
+    onError: () => toast.error('Erro ao confirmar preferência'),
+  });
+  const rejectRuleMutation = useMutation({
+    mutationFn: (id: string) =>
+      preferenceRulesApi.reject(id, { reason: 'Rejeitada pelo gestor' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: governanceKeys.preferenceRules() });
+      toast.success('Preferência rejeitada');
+    },
+    onError: () => toast.error('Erro ao rejeitar preferência'),
+  });
+
   const planData: PlanVsActualReport | undefined = planQuery.data;
 
   return (
@@ -989,13 +1008,34 @@ function TabAprendizagem() {
                     </p>
                   )}
                 </div>
-                <DarkButton
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => navigate(`/regras?rule_id=${r.id}`)}
-                >
-                  Ver detalhe
-                </DarkButton>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {r.status === 'detected' ? (
+                    <>
+                      <DarkButton
+                        size="sm"
+                        onClick={() => confirmRuleMutation.mutate(r.id)}
+                        disabled={confirmRuleMutation.isPending}
+                      >
+                        Confirmar
+                      </DarkButton>
+                      <DarkButton
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => rejectRuleMutation.mutate(r.id)}
+                        disabled={rejectRuleMutation.isPending}
+                      >
+                        Rejeitar
+                      </DarkButton>
+                    </>
+                  ) : null}
+                  <DarkButton
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => navigate(`/regras?rule_id=${r.id}`)}
+                  >
+                    Ver detalhe
+                  </DarkButton>
+                </div>
               </div>
             ))}
           </div>
