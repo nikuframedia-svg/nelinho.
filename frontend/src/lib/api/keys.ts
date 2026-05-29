@@ -126,6 +126,9 @@ export const profitKeys = {
   // Q.115.M — preview defensivo por commit SHA (esconde se 404)
   preview: (commitSha: string) =>
     [...profitKeys.all, 'preview', commitSha] as const,
+  // Q.117.D — série histórica de um KPI (gráfico de tendência da tab KPIs)
+  kpiHistory: (name: string, days: number) =>
+    [...profitKeys.all, 'kpi-history', name, days] as const,
 } as const;
 
 // ─── twin (Q.67.2.A) ────────────────────────────────────────────────────
@@ -280,6 +283,17 @@ export const entityKeys = {
   cliente: (id: string) => [...entityKeys.all, 'cliente', id] as const,
   encomenda: (id: string | number) => [...entityKeys.all, 'encomenda', String(id)] as const,
   operador: (id: string) => [...entityKeys.all, 'operador', id] as const,
+} as const;
+
+// ─── diagnostics / ERP connection (Q.117.A) ─────────────────────────────
+//
+// Estado da integração ERP NELO (GET /v1/diagnostics/erp-connection):
+// frescor por mirror lido de core.etl_run. Alimenta o SyncStatusBadge no
+// TopBar global — "ERP há Xm" + dot de estado.
+
+export const diagnosticsKeys = {
+  all: ['diagnostics'] as const,
+  erpConnection: () => [...diagnosticsKeys.all, 'erp-connection'] as const,
 } as const;
 
 // ─── master data cancel/retire/deactivate (Q.115.X5) ─────────────────────
