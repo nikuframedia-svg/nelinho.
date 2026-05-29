@@ -13,7 +13,7 @@
 
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { BarChart3, RefreshCw, AlertTriangle, TrendingUp } from 'lucide-react';
+import { BarChart3, RefreshCw, AlertTriangle, TrendingUp, Sparkles } from 'lucide-react';
 import { DarkPageLayout } from '../../layouts';
 import { DarkCard, DarkButton, DarkBadge } from '../../components/dark';
 import { LineChart } from '../../components/charts';
@@ -271,6 +271,28 @@ function KPIDetail({ kpi }: { kpi: KPIItem }) {
         <DarkBadge variant={STATUS_VARIANT[kpi.status]}>
           {STATUS_LABEL[kpi.status]}
         </DarkBadge>
+      </div>
+
+      {/* Q.118.O — investigar a causa via copiloto (caminho diagnostic/causal) */}
+      <div className="mb-4">
+        <DarkButton
+          variant="ghost"
+          icon={<Sparkles size={13} />}
+          onClick={() =>
+            window.dispatchEvent(
+              new CustomEvent('copilot:open', {
+                detail: {
+                  query:
+                    kpi.value !== null
+                      ? `Porque está a ${kpi.label} em ${kpi.value.toFixed(kpi.unit === '%' ? 1 : 0)}${kpi.unit}? Investiga a causa.`
+                      : `Porque é que a ${kpi.label} não tem dados? Investiga.`,
+                },
+              }),
+            )
+          }
+        >
+          Investigar (porquê?)
+        </DarkButton>
       </div>
 
       {/* Gráfico de tendência (últimos 30 dias) */}
