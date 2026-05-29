@@ -95,6 +95,9 @@ from src.plan.models import fases_of_history as _plan_fases_of_history  # Q.115.
 from src.plan.models import mold as _plan_mold
 from src.plan.models import mrp as _plan_mrp
 from src.plan.models import order as _plan_order
+# Q.121.D2 — plan_execution_observed + phase_duration_calibration (plan-vs-actual);
+# faltava aqui → create_all não criava a tabela → /v1/learning/plan-vs-actual 500.
+from src.plan.models import execution_learning as _plan_execution_learning
 from src.plan.models import boat_boost as _plan_boat_boost  # Q.116.D
 from src.plan.models import order_boost as _plan_order_boost  # Q.116.C
 from src.plan.models import phase_gap as _plan_phase_gap

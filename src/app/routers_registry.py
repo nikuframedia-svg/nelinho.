@@ -45,6 +45,12 @@ def register_routers(app: FastAPI) -> None:
     """Mount every API router. Order matches the legacy src/main.py."""
     # Include routers
     app.include_router(core_router)
+    # Q.121.D4 — q115_config ANTES de tenant_config: as rotas literais
+    # /v1/config/revenue-target e /v1/config/client-priority têm de ganhar
+    # precedência sobre o catch-all /v1/config/{category} do tenant_config
+    # (FastAPI casa por ordem de registo, senão dá 400 "Unknown category").
+    from src.app.routers.q115_config import router as q115_config_router
+    app.include_router(q115_config_router)
     app.include_router(tenant_config_router)  # Sprint L.3 — /v1/config/*
 
     # Sprint AA.4 — Trust Index v2.0 endpoint
@@ -132,10 +138,8 @@ def register_routers(app: FastAPI) -> None:
 
     app.include_router(observability_router)
 
-    # Q.115.B — config revenue-target, client-priority, user-input
-    from src.app.routers.q115_config import router as q115_config_router
-
-    app.include_router(q115_config_router)
+    # Q.115.B — config revenue-target/client-priority/user-input: registado
+    # mais acima (Q.121.D4), antes do tenant_config_router.
 
     # Q.115.C — drag-drop manual reorder com safety_net + Kafka
     from src.plan.api.reorder import router as reorder_router

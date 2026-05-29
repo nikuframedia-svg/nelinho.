@@ -12,6 +12,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.plan.models.execution_learning import PlanExecutionObserved
@@ -43,15 +44,26 @@ async def get_plan_vs_actual(
     """
     from datetime import datetime, timedelta, timezone
 
-    since = datetime.now(timezone.utc) - timedelta(days=days)
+    # Q.121.D2 — captured_at é TIMESTAMP WITHOUT TIME ZONE (naive); um `since`
+    # tz-aware dava asyncpg DataError ("can't subtract offset-naive and
+    # offset-aware datetimes"). Comparar naive-com-naive (UTC).
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).replace(tzinfo=None)
 
     stmt = select(PlanExecutionObserved).where(
         PlanExecutionObserved.tenant_id == tenant_id,
         PlanExecutionObserved.captured_at >= since,
         PlanExecutionObserved.observed_duration_min.isnot(None),
     )
-    result = await session.execute(stmt)
-    obs_rows = result.scalars().all()
+    try:
+        result = await session.execute(stmt)
+        obs_rows = result.scalars().all()
+    except (ProgrammingError, OperationalError) as exc:
+        # Q.121.D2 — resiliência: se a tabela ainda não existir (dev sem a
+        # migration / sync ERP off), degrada para report vazio (200) em vez de
+        # 500, igual ao job gémeo (scheduling/jobs/plan_vs_actual.py).
+        logger.warning("plan-vs-actual: query falhou (%s) — report vazio", exc)
+        await session.rollback()
+        return _compute_report(tenant_id, days, [])
 
     rows: List[Dict[str, Any]] = [
         {
