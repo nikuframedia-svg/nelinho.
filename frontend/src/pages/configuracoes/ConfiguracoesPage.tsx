@@ -44,6 +44,7 @@ import {
   type PlanVsActualReport,
 } from '../../lib/api';
 import { learningAffinitiesApi, preferenceRulesApi, type PreferenceRule } from '../../lib/api/planApi';
+import { CentroAprendizagem } from '../../components/configuracoes/CentroAprendizagem';
 import {
   revenueTargetKeys,
   clientPriorityKeys,
@@ -820,6 +821,9 @@ function TabAprendizagem() {
 
   return (
     <div className="space-y-8">
+
+      {/* ── Secção 0: Centro de aprendizagem (camadas 2/3 + pares) Q.118.M ── */}
+      <CentroAprendizagem />
 
       {/* ── Secção 1: Acerto do plano ── */}
       <DarkCard>
