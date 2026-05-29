@@ -19,7 +19,9 @@ describe('MasterDataTab', () => {
     expect(screen.getByText('Ordens de fabrico')).toBeInTheDocument();
     expect(screen.getByText('Encomendas')).toBeInTheDocument();
     expect(screen.getByText('Barcos / Modelos')).toBeInTheDocument();
-    expect(screen.getByText('Operadores')).toBeInTheDocument();
+    // "Operadores" aparece 2x: secção de cancelamento + segmento do
+    // MasterDataBrowser (Q.118.P) — basta existir.
+    expect(screen.getAllByText('Operadores').length).toBeGreaterThan(0);
   });
 
   it('tem 4 campos de pesquisa', () => {

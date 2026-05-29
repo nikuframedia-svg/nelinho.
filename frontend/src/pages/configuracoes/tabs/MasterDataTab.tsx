@@ -22,6 +22,7 @@ import { DarkCard, DarkButton, DarkBadge, EmptyState } from '../../../components
 import { Clickable } from '../../../components/entitySheets';
 import { SkeletonLoader } from '../../../components/ui/Skeleton';
 import { ConfirmDestructiveModal } from '../../../components/configuracoes/ConfirmDestructiveModal';
+import { MasterDataBrowser } from '../../../components/configuracoes/MasterDataBrowser';
 import { cancelActionsApi } from '../../../lib/api/masterDataApi';
 import {
   masterDataKeys,
@@ -671,6 +672,7 @@ function SeccaoOperadores() {
 export function MasterDataTab() {
   return (
     <div className="space-y-8">
+      <MasterDataBrowser />
       <SeccaoOrdensFabrico />
       <SeccaoEncomendas />
       <SeccaoBarcos />
