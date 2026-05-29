@@ -108,7 +108,10 @@ def _make_order(
     *,
     tenant_id: UUID = TENANT_ID,
 ) -> ProductionOrder:
-    order = ProductionOrder.__new__(ProductionOrder)
+    # Q.122.B — ProductionOrder() (não __new__): o construtor declarativo default
+    # configura o _sa_instance_state, necessário para setar atributos mapeados.
+    # __new__ bypassa-o → AttributeError em order.id = ... (SQLAlchemy 2.0).
+    order = ProductionOrder()
     order.id = uuid4()
     order.tenant_id = tenant_id
     order.legacy_id = 42
@@ -126,7 +129,7 @@ def _make_product(
     *,
     tenant_id: UUID = TENANT_ID,
 ) -> Product:
-    p = Product.__new__(Product)
+    p = Product()
     p.id = uuid4()
     p.tenant_id = tenant_id
     p.product_code = "K1-VQ"
@@ -144,7 +147,7 @@ def _make_employee(
     active: bool = True,
     tenant_id: UUID = TENANT_ID,
 ) -> Employee:
-    emp = Employee.__new__(Employee)
+    emp = Employee()
     emp.id = uuid4()
     emp.tenant_id = tenant_id
     emp.employee_code = "OP-001"
@@ -324,11 +327,11 @@ async def test_deactivate_employee_with_future_ops():
     # 1ª execute: busca employee; 2ª execute: lista de ops futuras (3 ops)
     session.push_result(emp)
 
-    wpa1 = WorkerPhaseAssignment.__new__(WorkerPhaseAssignment)
+    wpa1 = WorkerPhaseAssignment()
     wpa1.worker_id = emp.id
-    wpa2 = WorkerPhaseAssignment.__new__(WorkerPhaseAssignment)
+    wpa2 = WorkerPhaseAssignment()
     wpa2.worker_id = emp.id
-    wpa3 = WorkerPhaseAssignment.__new__(WorkerPhaseAssignment)
+    wpa3 = WorkerPhaseAssignment()
     wpa3.worker_id = emp.id
 
     session.push_result([wpa1, wpa2, wpa3])
