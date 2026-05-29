@@ -11,7 +11,11 @@ import { MasterDataTab } from './MasterDataTab';
 
 describe('MasterDataTab', () => {
   it('renderiza as 4 sub-secções', () => {
-    renderWithProviders(<MasterDataTab />, { route: '/configuracoes?tab=master' });
+    renderWithProviders(<MasterDataTab />, {
+      route: '/configuracoes?tab=master',
+      withToast: true,
+      withEntitySheets: true,
+    });
     expect(screen.getByText('Ordens de fabrico')).toBeInTheDocument();
     expect(screen.getByText('Encomendas')).toBeInTheDocument();
     expect(screen.getByText('Barcos / Modelos')).toBeInTheDocument();
@@ -19,7 +23,11 @@ describe('MasterDataTab', () => {
   });
 
   it('tem 4 campos de pesquisa', () => {
-    renderWithProviders(<MasterDataTab />, { route: '/configuracoes?tab=master' });
+    renderWithProviders(<MasterDataTab />, {
+      route: '/configuracoes?tab=master',
+      withToast: true,
+      withEntitySheets: true,
+    });
     const inputs = screen.getAllByPlaceholderText(/pesquisar/i);
     expect(inputs.length).toBe(4);
   });

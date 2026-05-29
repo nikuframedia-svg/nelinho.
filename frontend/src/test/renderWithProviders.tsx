@@ -14,6 +14,8 @@ import {
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { UmweltProvider } from '../lib/umwelt';
+import { ToastProvider } from '../components/ToastProvider';
+import { EntitySheetProvider } from '../components/entitySheets';
 
 // QueryClient novo por teste, sem retries — uma falha de rede resolve já,
 // sem timers de retry pendentes a vazar para o teste seguinte.
@@ -31,22 +33,42 @@ interface ProvidersOptions extends Omit<RenderOptions, 'wrapper'> {
   route?: string;
   // Permite partilhar um QueryClient entre render e asserts do teste.
   queryClient?: QueryClient;
+  // Q.118.A1 — embrulha ToastProvider para componentes que usam useToast()
+  // (ex: páginas que disparam toasts em mutations). Sem isto, esses
+  // componentes rebentam com "useToast must be used within ToastProvider".
+  withToast?: boolean;
+  // Q.118.A1 — embrulha EntitySheetProvider para componentes que usam
+  // <Clickable>/useEntitySheet() (entity sheets contextuais). Tem de estar
+  // DENTRO do MemoryRouter (usa useSearchParams).
+  withEntitySheets?: boolean;
 }
 
 export function renderWithProviders(
   ui: ReactElement,
-  { route = '/', queryClient, ...options }: ProvidersOptions = {},
+  {
+    route = '/',
+    queryClient,
+    withToast = false,
+    withEntitySheets = false,
+    ...options
+  }: ProvidersOptions = {},
 ): RenderResult & { queryClient: QueryClient } {
   const client = queryClient ?? makeTestQueryClient();
 
   function Wrapper({ children }: { children: ReactNode }) {
-    return (
-      <QueryClientProvider client={client}>
-        <MemoryRouter initialEntries={[route]}>
-          <UmweltProvider>{children}</UmweltProvider>
-        </MemoryRouter>
-      </QueryClientProvider>
+    // EntitySheetProvider precisa de useSearchParams → dentro do router.
+    const inner = withEntitySheets ? (
+      <EntitySheetProvider>{children}</EntitySheetProvider>
+    ) : (
+      children
     );
+    const routed = (
+      <MemoryRouter initialEntries={[route]}>
+        <UmweltProvider>{inner}</UmweltProvider>
+      </MemoryRouter>
+    );
+    const toasted = withToast ? <ToastProvider>{routed}</ToastProvider> : routed;
+    return <QueryClientProvider client={client}>{toasted}</QueryClientProvider>;
   }
 
   return {
