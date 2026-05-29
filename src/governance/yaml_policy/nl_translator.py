@@ -192,16 +192,33 @@ async def translate_nl_to_rule(
         except Exception as exc:
             raise RuleTranslationError(f"Ollama call failed: {exc}") from exc
 
-        last_text = response.get("message", {}).get("content") if isinstance(response, dict) else None
-        if not last_text:
-            last_text = response.get("response") if isinstance(response, dict) else str(response)
+        # Q.117.F — OllamaClient.chat(format="json") devolve o JSON JÁ
+        # parseado (dict). Versões antigas / mocks de teste devolvem o
+        # envelope raw {"message":{"content":"<json str>"}} ou
+        # {"response":"<json str>"}. O código anterior só lia o envelope,
+        # por isso dava SEMPRE "empty response" com o client real — o
+        # rule-author nunca funcionava live. Suporta ambas as formas.
+        pre_parsed: dict[str, Any] | None = None
+        if isinstance(response, dict):
+            inner = (
+                (response.get("message") or {}).get("content")
+                or response.get("response")
+                or response.get("content")
+            )
+            if isinstance(inner, str) and inner.strip():
+                last_text = inner
+            else:
+                pre_parsed = response
+                last_text = json.dumps(response, ensure_ascii=False)
+        else:
+            last_text = str(response) if response else None
 
         if not last_text:
             raise RuleTranslationError("Ollama returned an empty response")
 
         # Parse JSON
         try:
-            parsed = _extract_json_object(last_text)
+            parsed = pre_parsed if pre_parsed is not None else _extract_json_object(last_text)
         except (json.JSONDecodeError, ValueError) as exc:
             last_error = f"JSON parse error: {exc}"
             _log.warning("parse failure on attempt %d: %s", attempt + 1, exc)
