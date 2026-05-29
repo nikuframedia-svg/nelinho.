@@ -8,7 +8,10 @@ import { createContext, useContext, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { EntityKind } from '../../lib/api/entityApi';
 
-const VALID_KINDS: EntityKind[] = ['modelo', 'fase', 'cliente', 'encomenda'];
+// Q.118.C — 'operador' estava em falta: o ActiveEntitySheet já carrega a
+// OperadorSheet e o Clickable já aceita kind="operador", mas sem 'operador'
+// aqui o openSheet('operador') escrevia o URL e o sheet nunca abria.
+const VALID_KINDS: EntityKind[] = ['modelo', 'fase', 'cliente', 'encomenda', 'operador'];
 
 function isEntityKind(v: string | null): v is EntityKind {
   return v !== null && (VALID_KINDS as string[]).includes(v);

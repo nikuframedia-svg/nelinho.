@@ -14,10 +14,10 @@ import { Check, X, Inbox, RefreshCw, FlaskConical, History } from 'lucide-react'
 import { decisionKeys } from '../../lib/api/keys';
 import { decisionsApi, type DecisionRun } from '../../lib/api';
 import { PageHeader, Tabs } from '../../components/dark';
-import { Clickable } from '../../components/entitySheets';
 import { useTabRouting } from '../../hooks/useTabRouting';
 import SimulacoesTab from './SimulacoesTab';
 import HistoricoTab from './HistoricoTab';
+import { DecisionEntities } from './decisionEntities';
 
 // â”€â”€â”€ helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -301,15 +301,8 @@ function DecidirTab() {
                 </p>
               ) : null}
 
-              {/* Encomenda associada (derivada de action_data) */}
-              {current.action_data?.work_order_id != null ? (
-                <p className="mt-2" style={{ fontSize: 12, color: 'var(--fg-3)' }}>
-                  Encomenda:{' '}
-                  <Clickable kind="encomenda" id={String(current.action_data.work_order_id)}>
-                    #{current.action_data.work_order_id}
-                  </Clickable>
-                </p>
-              ) : null}
+              {/* Entidades clicaveis da decisao (encomenda/fase/operador) Q.118.C */}
+              <DecisionEntities decision={current} />
             </div>
 
             {/* â”€â”€ ConsequenceBox inline (Se aceitar / Se rejeitar) â”€â”€ */}
