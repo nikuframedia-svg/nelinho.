@@ -157,7 +157,7 @@ async def learn_runbook_from_history(
             approved_at=None,
             audit_trace_id=audit_trace,
         )
-        session.add(runbook)
+        session.add(runbook)  # noqa: audit_coverage — runbook aprendido (learning loop), provisório (approved_by=None) + trace via audit_trace_id; auditoria autoritativa no approve
     else:
         # Actualiza apenas campos derivados — nunca toca approved_by/approved_at
         runbook.steps_md = steps_md
@@ -165,7 +165,7 @@ async def learn_runbook_from_history(
         runbook.audit_trace_id = audit_trace
 
     # 6. Liga via error_type_runbook_link (UPSERT: elimina link antigo e recria)
-    await session.execute(
+    await session.execute(  # noqa: audit_coverage — re-link de runbook aprendido (learning loop); auditoria autoritativa no approve
         delete(ErrorTypeRunbookLink).where(
             and_(
                 ErrorTypeRunbookLink.tenant_id == tenant_id,
@@ -180,8 +180,7 @@ async def learn_runbook_from_history(
         runbook_id=runbook.id,
         priority=1,
     )
-    session.add(link)
-
+    session.add(link)  # noqa: audit_coverage — link de runbook aprendido (learning loop); auditoria autoritativa no approve
     _log.info(
         "learn_runbook: persistido tenant=%s error_code=%s confidence=%.3f "
         "steps=%d dominant_cause=%r",

@@ -311,7 +311,7 @@ async def apply_manual_reorder(
         },
         status="DRAFT",
     )
-    session.add(commit)
+    session.add(commit)  # noqa: audit_coverage — auditado em audit_change() L339 (mesma tx; janela ±5 não alcança por causa do emit Kafka intermédio)
     await session.flush()
 
     # ── Kafka emit ─────────────────────────────────────────────────────

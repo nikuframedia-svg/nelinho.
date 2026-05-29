@@ -72,7 +72,7 @@ async def capture_kpi_snapshot(
             existing.value = value
             existing.unit = unit
         else:
-            session.add(
+            session.add(  # noqa: audit_coverage — snapshot derivado de KPIs (analytics), não mutação de domínio autoritativa
                 KpiSnapshot(
                     tenant_id=tenant_id,
                     kpi_name=name,
