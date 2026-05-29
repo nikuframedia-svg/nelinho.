@@ -53,7 +53,10 @@ export function DecisionCard({
     cost_delta?: number | null;
   };
   const confidence = sb.confidence;
-  const source = sb.source ?? decision.proposed_by;
+  // Q.121.5 — só mostrar a fonte quando há um rótulo real (auto/cpo/manual/…);
+  // a lista slim não traz sandbox_result, e cair para proposed_by mostrava um
+  // UUID cru no badge. Sem source → sem badge (o action_type já dá o contexto).
+  const source = sb.source;
   const ifAccept = sb.if_accept;
   const ifReject = sb.if_reject;
   const why = sb.why;
