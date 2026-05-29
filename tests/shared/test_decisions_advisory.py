@@ -144,3 +144,73 @@ def test_rollback_rejects_when_not_executed():
         },
     )
     assert resp.status_code == 400
+
+
+# ── Q.118.S — approve vs reject (o status pedido tem de ser honrado) ────────
+
+def _proposable(status_value: str = "PROPOSED"):
+    from src.shared.models.governance import DecisionStatus as _DS
+    return SimpleNamespace(
+        id=uuid4(),
+        tenant_id=TENANT,
+        status=_DS.PROPOSED.value if status_value == "PROPOSED" else status_value,
+        action_type="AUTO_PROPOSE_SCHEDULE",
+        proposed_by=uuid4(),
+        executed_at=None,
+        rolled_back_at=None,
+        before_state={},
+    )
+
+
+def _build_app_for_approve(decision, monkeypatch):
+    from unittest.mock import MagicMock
+
+    monkeypatch.setattr(
+        "src.shared.auth.rbac.check_sod", lambda **kw: (True, None), raising=True,
+    )
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=decision)
+    session.commit = AsyncMock()
+    session.flush = AsyncMock()
+    session.add = MagicMock()
+    result = MagicMock()
+    result.scalar_one_or_none = MagicMock(return_value=None)
+    session.execute = AsyncMock(return_value=result)
+
+    async def _fake_session():
+        yield session
+
+    app = FastAPI()
+    app.include_router(decisions_router, prefix="/v1/shared")
+    app.dependency_overrides[get_session] = _fake_session
+    return app
+
+
+_HDRS = {"X-Tenant-Id": str(TENANT), "X-User-Id": str(uuid4())}
+
+
+def test_approve_marks_approved(monkeypatch):
+    d = _proposable()
+    client = TestClient(_build_app_for_approve(d, monkeypatch))
+    resp = client.post(
+        f"/v1/shared/decisions/{d.id}/approve",
+        json={"status": "APPROVED"},
+        headers=_HDRS,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "approved"
+    assert d.status == DecisionStatus.APPROVED.value
+
+
+def test_reject_marks_rejected_not_approved(monkeypatch):
+    """Q.118.S — o bug: 'Nao' (reject) aprovava. Agora rejeita mesmo."""
+    d = _proposable()
+    client = TestClient(_build_app_for_approve(d, monkeypatch))
+    resp = client.post(
+        f"/v1/shared/decisions/{d.id}/approve",
+        json={"status": "REJECTED"},
+        headers=_HDRS,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "rejected"
+    assert d.status == DecisionStatus.REJECTED.value

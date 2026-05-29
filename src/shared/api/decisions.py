@@ -71,8 +71,14 @@ class DecisionDetailResponse(BaseModel):
 
 
 class DecisionApprovalRequest(BaseModel):
-    """Request to approve/reject a decision."""
-    
+    """Request to approve/reject a decision.
+
+    Q.118.S — `status` decide aprovar vs rejeitar. Antes era ignorado e o
+    endpoint aprovava SEMPRE, por isso o botão "Não" (reject) aprovava a
+    decisão. Default "APPROVED" mantém compatibilidade.
+    """
+
+    status: Optional[str] = "APPROVED"  # "APPROVED" | "REJECTED"
     comment: Optional[str] = None
 
 
@@ -308,6 +314,16 @@ async def approve_decision(
             detail=error_message or "SoD check failed",
         )
 
+    # Q.118.S — honrar o status pedido. "REJECTED" rejeita; qualquer outro
+    # (default) aprova. Antes ignorava-se o campo e aprovava-se sempre.
+    is_reject = (request.status or "APPROVED").upper() == "REJECTED"
+    approval_status = (
+        ApprovalStatus.REJECTED.value if is_reject else ApprovalStatus.APPROVED.value
+    )
+    decision_status = (
+        DecisionStatus.REJECTED.value if is_reject else DecisionStatus.APPROVED.value
+    )
+
     # Q.61.09 — find_or_create. Antes do Q.61.09 o propose criava sempre
     # um placeholder com approver_id=proposer; quando este endpoint
     # corria, criava-se um SEGUNDO row, deixando o primeiro orfao. Agora
@@ -318,31 +334,40 @@ async def approve_decision(
     )
     existing = (await session.execute(existing_q)).scalar_one_or_none()
     if existing is not None:
-        existing.status = ApprovalStatus.APPROVED.value
+        existing.status = approval_status
         existing.comment = request.comment
         existing.approved_at = datetime.utcnow()
     else:
         approval = DecisionApproval(
             decision_id=decision_id,
             approver_id=user_id,
-            status=ApprovalStatus.APPROVED.value,
+            status=approval_status,
             comment=request.comment,
             approved_at=datetime.utcnow(),
         )
         session.add(approval)
 
-    # Update decision status
-    decision.status = DecisionStatus.APPROVED.value
+    # Update decision status (aprovada OU rejeitada)
+    decision.status = decision_status
     await session.flush()
 
     await session.commit()
-    
-    logger.info(f"Decision approved: id={decision_id}, approver={user_id}")
-    
+
+    logger.info(
+        "Decision %s: id=%s, approver=%s",
+        "rejected" if is_reject else "approved",
+        decision_id,
+        user_id,
+    )
+
     return {
         "id": str(decision_id),
-        "status": "approved",
-        "message": "Decision approved successfully",
+        "status": "rejected" if is_reject else "approved",
+        "message": (
+            "Decision rejected successfully"
+            if is_reject
+            else "Decision approved successfully"
+        ),
     }
 
 
