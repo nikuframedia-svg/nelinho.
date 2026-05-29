@@ -34,6 +34,11 @@ from src.shared.database import async_session_factory
 from src.shared.models.governance import DecisionStatus, SharedDecisionRun
 
 DEV_TENANT_ID = UUID("00000000-0000-0000-0000-000000000001")
+# Q.119.5 — proponente != aprovador. As decisões demo são "propostas pelo CPO";
+# o utilizador dev (000…001) aprova/rejeita no painel. Se proposed_by fosse o
+# próprio dev user, o write-gate de Segregação de Deveres (Q.61.09) bloquearia
+# qualquer aprovação no painel com 403 "Cannot approve own decision".
+CPO_SYSTEM_USER = UUID("00000000-0000-0000-0000-0000000000c0")
 
 # ─── Fases canónicas (matching data.jsx PHASES) ─────────────────────────────
 PHASE_BY_ID = {
@@ -386,7 +391,7 @@ async def upsert_shipments(session: AsyncSession) -> None:
 
 async def upsert_suggestions(session: AsyncSession) -> None:
     """3 SharedDecisionRuns com payload estilo zip SUGGESTIONS."""
-    seed_user = DEV_TENANT_ID  # reutiliza tenant uuid como proxy de user
+    seed_user = CPO_SYSTEM_USER  # proponente do sistema (≠ aprovador dev → SoD passa)
     for sug in SUGGESTIONS:
         # idempotência — busca por título
         stmt = select(SharedDecisionRun).where(
@@ -401,6 +406,7 @@ async def upsert_suggestions(session: AsyncSession) -> None:
             existing.after_state = sug["after_state"]
             existing.sandbox_result = sug["sandbox_result"]
             existing.status = DecisionStatus.PROPOSED.value
+            existing.proposed_by = seed_user  # re-seed: corrige proponente p/ SoD
         else:
             session.add(SharedDecisionRun(
                 tenant_id=DEV_TENANT_ID,
