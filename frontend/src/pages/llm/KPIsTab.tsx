@@ -19,6 +19,7 @@ import { DarkCard, DarkButton, DarkBadge } from '../../components/dark';
 import { LineChart } from '../../components/charts';
 import { kpisApi } from '../../lib/api';
 import { profitKeys } from '../../lib/api/keys';
+import { OtdHeatmap } from './OtdHeatmap';
 
 // ── Tipos locais (espelham snapshot-explained) ───────────────────────────
 
@@ -223,6 +224,9 @@ export function KPIsTab() {
           )}
         </div>
       </div>
+
+      {/* Q.118.K — mapa de calor OTD (produto × semana) */}
+      <OtdHeatmap />
     </DarkPageLayout>
   );
 }
