@@ -203,10 +203,16 @@ async def run_startup(app: FastAPI) -> None:
         # Graceful: se Kafka não estiver disponível, apenas loga e continua.
         try:
             from src.plan.services.auto_propose import AutoProposeService, HANDLED_TOPICS
+            from src.plan.services.auto_propose_cpo_runner import real_cpo_propose_runner
             from src.shared.database import async_session_factory
 
+            # Q.117.B — runner CPO real (propose-only) em vez do noop. Cria um
+            # commit real + enriquece sandbox_result com cost_delta (€ vs
+            # baseline) e quality_risk (defect-ML). Degrada para proposta sem
+            # schedule se o CPO não puder correr — nunca quebra o listener.
             _auto_propose_svc = AutoProposeService(
                 session_factory=async_session_factory,
+                cpo_engine_runner=real_cpo_propose_runner,
             )
 
             async def _auto_propose_consumer_task() -> None:
