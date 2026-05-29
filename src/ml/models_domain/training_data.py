@@ -38,11 +38,14 @@ explicit `EmptyDatasetError` rather than training on nothing.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+if TYPE_CHECKING:  # pandas é import lazy dentro das funções; isto resolve os
+    import pandas as pd  # type hints "pd.DataFrame" sem o import eager (Q.120.A).
 
 logger = logging.getLogger(__name__)
 

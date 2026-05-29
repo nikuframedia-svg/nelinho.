@@ -685,7 +685,7 @@ async def list_phase_history(
     """
     top_clause = f"TOP {int(limit)}" if limit else ""
     since_clause = (
-        f"WHERE fo.FaseOf_DataInicio >= :since_dt"
+        "WHERE fo.FaseOf_DataInicio >= :since_dt"
         if since is not None
         else ""
     )

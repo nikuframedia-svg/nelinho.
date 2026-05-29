@@ -34,6 +34,10 @@ from src.shared.scheduler import start_scheduler
 
 logger = logging.getLogger(__name__)
 
+# Q.120.A — refs fortes às tasks de background. Sem isto o GC pode coletar a
+# task a meio (RUF006); o done-callback liberta a ref quando ela termina.
+_BACKGROUND_TASKS: set = set()
+
 
 async def run_startup(app: FastAPI) -> None:
     """Execute the startup sequence. Mirrors the old inline body verbatim."""
@@ -244,12 +248,14 @@ async def run_startup(app: FastAPI) -> None:
                 finally:
                     try:
                         await consumer.stop()
-                    except Exception:
-                        pass
+                    except Exception as stop_err:
+                        logger.debug("auto_propose consumer.stop falhou: %s", stop_err)
 
             # Lança a task em background; falha silenciosa (degraded_subsystems)
             if not settings.is_development:
-                asyncio.create_task(_auto_propose_consumer_task())
+                _t = asyncio.create_task(_auto_propose_consumer_task())
+                _BACKGROUND_TASKS.add(_t)
+                _t.add_done_callback(_BACKGROUND_TASKS.discard)
                 logger.info("Q.115.D auto_propose consumer task iniciada")
             else:
                 logger.info("Q.115.D auto_propose consumer desactivado em desenvolvimento (Kafka opcional)")

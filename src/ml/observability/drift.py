@@ -233,7 +233,9 @@ class DriftDetectionJob:
 
         total_events = 0
         for model_name in model_names:
-            detector = DriftDetector(
+            # Q.120.A — scaffold: instanciado para o caminho futuro (feature
+            # snapshots persistidos), ainda não usado neste job. `_` evita F841.
+            _detector = DriftDetector(
                 model_name=model_name, db=session, tenant_id=tenant_id
             )
             # Sem features históricas disponíveis via registry nesta fase —
