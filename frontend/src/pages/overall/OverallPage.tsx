@@ -43,6 +43,7 @@ import { AutoProposeOverlay } from '../../components/overall/AutoProposeOverlay'
 import { OtdRiskPanel } from '../../components/overall/OtdRiskPanel';
 import { MoldHealthPanel } from '../../components/overall/MoldHealthPanel';
 import { ShortageRiskPanel } from '../../components/overall/ShortageRiskPanel';
+import { SpofRiskPanel } from '../../components/overall/SpofRiskPanel';
 import { usePendingDecisions } from '../../hooks/usePendingDecisions';
 
 // ─── Constantes ──────────────────────────────────────────────────────────────
@@ -472,10 +473,11 @@ export default function OverallPage(): ReactNode {
         {/* Overlay auto-propose — fantasmas PROPOSED com aprovar/rejeitar inline (Q.115.M) */}
         <AutoProposeOverlay />
 
-        {/* Q.118.H/I/N — riscos operacionais ligados ao plano */}
+        {/* Q.118.H/I/N/Q — riscos operacionais ligados ao plano */}
         <OtdRiskPanel />
         <MoldHealthPanel />
         <ShortageRiskPanel />
+        <SpofRiskPanel />
 
         {/* Toggle de vistas — URL-driven */}
         <div className="flex items-center gap-0.5 rounded-lg border border-slate-700 p-0.5 bg-slate-800 w-fit">
