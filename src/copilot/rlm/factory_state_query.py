@@ -340,7 +340,7 @@ class FactoryStateQuery:
         try:
             from difflib import get_close_matches
             from src.copilot.causal.nelo_dag import NODES_BY_ID
-        except Exception:
+        except ImportError:
             return []
         return get_close_matches(
             str(bad), list(NODES_BY_ID.keys()),
@@ -371,7 +371,7 @@ class FactoryStateQuery:
         """
         try:
             from src.copilot.causal.nelo_dag import causal_query as _kernel
-        except Exception as exc:  # pragma: no cover — defensive
+        except ImportError as exc:  # pragma: no cover — defensive
             return {"error": f"causal kernel unavailable: {exc}"}
 
         do_dict: Dict[str, float] = {}
@@ -474,14 +474,14 @@ class FactoryStateQuery:
         """
         try:
             from src.copilot.causal.world_model import forecast as _fc
-        except Exception as exc:  # pragma: no cover — defensive
+        except ImportError as exc:  # pragma: no cover — defensive
             return {"error": f"world_model unavailable: {exc}"}
 
         # Validate target before calling — turns "unknown node" into
         # the same did_you_mean diagnostic causal_query produces.
         try:
             from src.copilot.causal.nelo_dag import NODES_BY_ID as _NODES
-        except Exception as exc:  # pragma: no cover — defensive
+        except ImportError as exc:  # pragma: no cover — defensive
             return {"error": f"NELO_DAG unavailable: {exc}"}
         if target not in _NODES:
             return {

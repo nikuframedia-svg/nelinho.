@@ -307,7 +307,7 @@ async def _build_boats_in_production(
     # 4. Combina via compute_effective_boost.
     try:
         from src.plan.services.boost_service import compute_effective_boost
-    except Exception as exc:  # pragma: no cover — defesa.
+    except ImportError as exc:  # pragma: no cover — defesa.
         logger.debug("boost_service import skipped (%s)", exc)
         compute_effective_boost = None  # type: ignore[assignment]
 
