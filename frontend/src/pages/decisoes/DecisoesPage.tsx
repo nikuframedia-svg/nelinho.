@@ -18,6 +18,7 @@ import { useTabRouting } from '../../hooks/useTabRouting';
 import SimulacoesTab from './SimulacoesTab';
 import HistoricoTab from './HistoricoTab';
 import { DecisionEntities } from './decisionEntities';
+import { DecisionHubActions } from './DecisionHubActions';
 
 // â”€â”€â”€ helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -303,6 +304,9 @@ function DecidirTab() {
 
               {/* Entidades clicaveis da decisao (encomenda/fase/operador) Q.118.C */}
               <DecisionEntities decision={current} />
+
+              {/* Cartao-hub: ligacoes a plano/€/explicar (Q.118.D) */}
+              <DecisionHubActions decision={current} />
             </div>
 
             {/* â”€â”€ ConsequenceBox inline (Se aceitar / Se rejeitar) â”€â”€ */}

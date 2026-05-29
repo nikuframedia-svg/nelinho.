@@ -345,3 +345,23 @@ export const profitOeeApi = {
     ),
 };
 
+// Q.118.D — margin preview por commit (delta € vs baseline). Usado pelo
+// cartão-hub das Decisões para mostrar o € fresco da decisão.
+export interface MarginPreviewResponse {
+  schedule_commit_id: string;
+  predicted_margin_eur: number | null;
+  baseline_margin_eur: number | null;
+  delta_eur: number | null;
+  confidence: 'high' | 'medium' | 'low';
+  sample_size: number;
+  computed_at: string;
+}
+
+export const marginPreviewApi = {
+  /** GET /v1/profit/preview — 404 se o commit não existe (esconder defensivamente). */
+  get: (scheduleCommitId: string) =>
+    request<MarginPreviewResponse>(
+      `/v1/profit/preview?schedule_commit_id=${encodeURIComponent(scheduleCommitId)}`,
+    ),
+};
+
