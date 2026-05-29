@@ -84,6 +84,23 @@ def test_alembic_chain_has_single_head():
     assert len(heads) == 1, f"expected single head, got {heads}"
 
 
+def test_alembic_revision_ids_fit_pg_version_num_column():
+    """Q.119.1 — every revision id must be <= 32 chars.
+
+    `alembic_version.version_num` is VARCHAR(32) by default, so a revision
+    id longer than 32 chars crashes `alembic upgrade head` mid-run when it
+    tries to stamp that revision (production runs `upgrade head` before the
+    uvicorn boot, Q.61.16). `q116c_order_boost_transport_override` (36) hit
+    exactly this and blocked deploy. Pin the limit so it can't regress.
+    """
+    revs = _load_revisions()
+    too_long = {r: len(r) for r in revs if len(r) > 32}
+    assert not too_long, (
+        f"revision ids must be <=32 chars (alembic_version.version_num "
+        f"VARCHAR(32)); offenders: {too_long}"
+    )
+
+
 def test_migration_007_creates_shared_schema():
     """Φ3: ensure migration 007 explicitly creates the `shared` schema."""
     text = (VERSIONS_DIR / "007_create_decision_ledger.py").read_text(encoding="utf-8")

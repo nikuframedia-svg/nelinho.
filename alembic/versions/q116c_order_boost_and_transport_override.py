@@ -14,7 +14,7 @@ de configuração Q.115.A.* (client_priority é o exemplar).
 Sem RLS nesta sub-sprint — o tenant_id é indexado para query, mas o
 endpoint filtra explicitamente por tenant via require_tenant_header.
 
-Revision ID: q116c_order_boost_transport_override
+Revision ID: q116c_order_boost_transport
 Revises: q115_x6b_boat_potential
 Create Date: 2026-05-28
 """
@@ -22,7 +22,7 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-revision = "q116c_order_boost_transport_override"
+revision = "q116c_order_boost_transport"
 down_revision = "q115_x6b_boat_potential"
 branch_labels = None
 depends_on = None

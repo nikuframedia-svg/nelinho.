@@ -18,14 +18,14 @@ migration; sao os endpoints PATCH novos que mudam o estado quando o
 admin reordena ou marca uma fase como alternativa.
 
 Revision ID: q116b_routing_alt_predecessors
-Revises: q116c_order_boost_transport_override
+Revises: q116c_order_boost_transport
 Create Date: 2026-05-28
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = "q116b_routing_alt_predecessors"
-down_revision = "q116c_order_boost_transport_override"
+down_revision = "q116c_order_boost_transport"
 branch_labels = None
 depends_on = None
 
