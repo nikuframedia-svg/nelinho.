@@ -19,6 +19,7 @@ import SimulacoesTab from './SimulacoesTab';
 import HistoricoTab from './HistoricoTab';
 import { DecisionEntities } from './decisionEntities';
 import { DecisionHubActions } from './DecisionHubActions';
+import { useRealtimeType } from '../../providers/RealtimeProvider';
 
 // â”€â”€â”€ helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -69,6 +70,16 @@ function DecidirTab() {
   const invalidate = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: decisionKeys.lists() });
   }, [queryClient]);
+
+  // Q.118.G — Realtime SSE: push em vez de esperar pelo polling de 5s. O
+  // RealtimeProvider global (canal governance) dispara DECISION_* quando uma
+  // decisao e proposta/aprovada/executada/revertida — invalidamos a lista para
+  // o cartao actualizar de imediato. Null-safe fora do provider (testes).
+  useRealtimeType('DECISION_PROPOSED', invalidate);
+  useRealtimeType('DECISION_APPROVED', invalidate);
+  useRealtimeType('DECISION_EXECUTED', invalidate);
+  useRealtimeType('DECISION_REJECTED', invalidate);
+  useRealtimeType('DECISION_ROLLED_BACK', invalidate);
 
   const approveMutation = useMutation({
     mutationFn: (id: string) =>
