@@ -11,7 +11,7 @@
 
 import type { ReactNode } from 'react';
 import { format, eachDayOfInterval, startOfDay, isToday } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
+import { pt } from 'date-fns/locale';
 import { TimelineLanes } from '../dark';
 import type { TimelineSlot, TimelineLane, TimelineItem } from '../dark';
 
@@ -37,7 +37,7 @@ export function buildDaySlots(startDate: Date, endDate: Date): TimelineSlot[] {
   const days = eachDayOfInterval({ start: startDate, end: endDate });
   return days.map((d) => ({
     id: format(d, 'yyyy-MM-dd'),
-    label: format(d, 'd MMM', { locale: ptBR }),
+    label: format(d, 'd MMM', { locale: pt }),
     highlight: isToday(d),
   }));
 }

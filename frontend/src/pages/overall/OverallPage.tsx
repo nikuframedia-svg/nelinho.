@@ -25,7 +25,7 @@ import {
   startOfDay,
   format,
 } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
+import { pt } from 'date-fns/locale';
 import { Calendar, GripVertical, AlertTriangle } from 'lucide-react';
 import { Clickable } from '../../components/entitySheets';
 import { planKeys } from '../../lib/api/keys';
@@ -406,7 +406,7 @@ export default function OverallPage(): ReactNode {
   }, []);
 
   // ── Janela no título ───────────────────────────────────────────────────────
-  const windowLabel = `${format(windowStart, 'd MMM', { locale: ptBR })} – ${format(windowEnd, 'd MMM', { locale: ptBR })}`;
+  const windowLabel = `${format(windowStart, 'd MMM', { locale: pt })} – ${format(windowEnd, 'd MMM', { locale: pt })}`;
 
   // ─── Render loading/error/empty ─────────────────────────────────────────────
   const loadingAny = isLoading || detailLoading;
