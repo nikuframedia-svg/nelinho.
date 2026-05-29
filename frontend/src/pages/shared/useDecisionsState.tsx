@@ -112,7 +112,7 @@ export function useDecisionsState() {
     onError: (err: any) => toast.error(err.message || 'Modify failed'),
   });
 
-  const decisions = decisionsData?.items || [];
+  const decisions = decisionsData?.decisions || [];
   const totalPages = decisionsData ? Math.ceil(decisionsData.total / itemsPerPage) : 0;
 
   // Filter decisions by search

@@ -36,7 +36,7 @@ export function usePendingDecisions(
     refetchOnWindowFocus: false,
   });
 
-  const allDecisions: DecisionRun[] = query.data?.items ?? [];
+  const allDecisions: DecisionRun[] = query.data?.decisions ?? [];
   const decisions = filter ? allDecisions.filter(filter) : allDecisions;
 
   const invalidate = () => {

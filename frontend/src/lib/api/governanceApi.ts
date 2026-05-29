@@ -38,7 +38,11 @@ export interface DecisionListResponse {
   total: number;
   page: number;
   page_size: number;
-  items: DecisionRun[];
+  // Q.119.5 — o backend (DecisionListResponse Pydantic + orval gerado) devolve
+  // `decisions`, NÃO `items`. O tipo à mão dizia `items` → as páginas liam
+  // undefined e mostravam sempre "Sem decisões pendentes" apesar de haver
+  // decisões PROPOSED. Alinhado ao contrato real.
+  decisions: DecisionRun[];
 }
 
 export interface DecisionProposalRequest {

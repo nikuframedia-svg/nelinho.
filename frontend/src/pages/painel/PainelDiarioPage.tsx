@@ -140,7 +140,7 @@ export function PainelDiarioPage(): ReactNode {
   const criticalCount = alerts.filter(
     (a) => a.severity.toUpperCase() === 'CRITICAL',
   ).length;
-  const decisions = decisionsQuery.data?.items ?? [];
+  const decisions = decisionsQuery.data?.decisions ?? [];
   const activity = activityQuery.data?.items ?? [];
 
   // Aderência ao plano — % do plano do CPO que já se realizou.

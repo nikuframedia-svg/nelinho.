@@ -48,7 +48,7 @@ function DecidirTab() {
     refetchInterval: 5_000,
   });
 
-  const items: DecisionRun[] = query.data?.items ?? [];
+  const items: DecisionRun[] = query.data?.decisions ?? [];
   const total = items.length;
   const current: DecisionRun | undefined = items[currentIndex];
 

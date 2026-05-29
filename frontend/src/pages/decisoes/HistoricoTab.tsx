@@ -142,7 +142,7 @@ export default function HistoricoTab() {
     refetchOnWindowFocus: false,
   });
 
-  const items: DecisionRun[] = (query.data?.items ?? []).filter((d) =>
+  const items: DecisionRun[] = (query.data?.decisions ?? []).filter((d) =>
     filter === 'all' ? d.status !== 'PROPOSED' : true,
   );
 

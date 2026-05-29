@@ -145,7 +145,7 @@ function EstaDecisaoSeg() {
     queryFn: () => decisionsApi.list({ status: 'PROPOSED', page_size: 50 }),
     refetchOnWindowFocus: false,
   });
-  const items = query.data?.items ?? [];
+  const items = query.data?.decisions ?? [];
   const selected = items.find((d) => d.id === selectedId) ?? items[0] ?? null;
 
   if (query.isLoading) {
