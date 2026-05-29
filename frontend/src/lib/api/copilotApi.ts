@@ -381,3 +381,40 @@ export const twinApi = {
     request<void>(`/v1/twin/scenarios/${scenarioId}`, { method: 'DELETE' }),
 };
 
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Q.118.J — Alertas proativos do copiloto (GET /v1/copilot/alerts + ack/resolve)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface CopilotAlertItem {
+  id: string;
+  severity: string; // INFO | WARN | CRITICAL
+  code: string;
+  title: string;
+  message_pt: string;
+  context: Record<string, unknown>;
+  entity_refs: string[];
+  status: string; // open | acknowledged | resolved
+  created_at: string | null;
+  acknowledged_at: string | null;
+  acknowledged_by: string | null;
+  resolved_at: string | null;
+}
+
+export const copilotAlertsApi = {
+  list: (params?: { status?: string; severity?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set('status', params.status);
+    if (params?.severity) qs.set('severity', params.severity);
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    return request<CopilotAlertItem[]>(`/v1/copilot/alerts${suffix}`);
+  },
+  acknowledge: (alertId: string) =>
+    request<CopilotAlertItem>(`/v1/copilot/alerts/${encodeURIComponent(alertId)}/acknowledge`, {
+      method: 'POST',
+    }),
+  resolve: (alertId: string) =>
+    request<CopilotAlertItem>(`/v1/copilot/alerts/${encodeURIComponent(alertId)}/resolve`, {
+      method: 'POST',
+    }),
+};

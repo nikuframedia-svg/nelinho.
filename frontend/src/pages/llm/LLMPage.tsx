@@ -14,23 +14,26 @@
  */
 
 import { useSearchParams } from 'react-router-dom';
-import { BarChart3, MessageSquare, BookOpen } from 'lucide-react';
+import { BarChart3, MessageSquare, BookOpen, BellRing } from 'lucide-react';
 import CopilotPage from '../copilot/CopilotPage';
 import RegrasPage from '../admin/RegrasPage';
 import { KPIsTab } from './KPIsTab';
+import { AlertasTab } from './AlertasTab';
 
-type LLMTab = 'chat' | 'kpis' | 'regras';
+type LLMTab = 'chat' | 'kpis' | 'regras' | 'alertas';
 
 const TABS: { id: LLMTab; label: string; icon: React.ReactNode }[] = [
   { id: 'chat', label: 'Chat', icon: <MessageSquare size={14} /> },
   { id: 'kpis', label: 'KPIs', icon: <BarChart3 size={14} /> },
+  { id: 'alertas', label: 'Alertas', icon: <BellRing size={14} /> },
   { id: 'regras', label: 'Regras LLM', icon: <BookOpen size={14} /> },
 ];
 
 export default function LLMPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const rawTab = searchParams.get('tab') as LLMTab | null;
-  const tab: LLMTab = rawTab === 'kpis' || rawTab === 'regras' ? rawTab : 'chat';
+  const tab: LLMTab =
+    rawTab === 'kpis' || rawTab === 'regras' || rawTab === 'alertas' ? rawTab : 'chat';
 
   const setTab = (t: LLMTab) => {
     setSearchParams({ tab: t }, { replace: true });
@@ -56,6 +59,17 @@ export default function LLMPage() {
         <TabBar tab={tab} setTab={setTab} />
         <div className="flex-1 min-h-0 overflow-auto">
           <RegrasPage />
+        </div>
+      </div>
+    );
+  }
+
+  if (tab === 'alertas') {
+    return (
+      <div className="flex flex-col h-full">
+        <TabBar tab={tab} setTab={setTab} />
+        <div className="flex-1 min-h-0 overflow-auto">
+          <AlertasTab />
         </div>
       </div>
     );
