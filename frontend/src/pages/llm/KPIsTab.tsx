@@ -4,8 +4,9 @@
  *
  * Layout 2 colunas: lista à esquerda (1/3) + detalhe à direita (2/3).
  * Dados de GET /v1/profit/kpis/snapshot-explained, polling 30s.
- * Gráfico de série histórica: endpoint /v1/profit/kpis/{name}/history
- * ainda não existe no backend → empty state explícito.
+ * Gráfico de tendência: GET /v1/profit/kpis/{name}/history (Q.117.D),
+ * alimentado pelo snapshot diário (profit.kpi_snapshot). Enquanto não
+ * houver ≥2 dias, mostra empty state honesto — nunca pontos inventados.
  *
  * ZERO MOCKS.
  */
@@ -15,7 +16,9 @@ import { useQuery } from '@tanstack/react-query';
 import { BarChart3, RefreshCw, AlertTriangle, TrendingUp } from 'lucide-react';
 import { DarkPageLayout } from '../../layouts';
 import { DarkCard, DarkButton, DarkBadge } from '../../components/dark';
+import { LineChart } from '../../components/charts';
 import { kpisApi } from '../../lib/api';
+import { profitKeys } from '../../lib/api/keys';
 
 // ── Tipos locais (espelham snapshot-explained) ───────────────────────────
 
@@ -227,8 +230,22 @@ export function KPIsTab() {
 // ── Componente de detalhe ────────────────────────────────────────────────
 
 function KPIDetail({ kpi }: { kpi: KPIItem }) {
-  // Endpoint de série histórica ainda não existe no backend.
-  // Mostra empty state explícito com sugestão.
+  // Q.117.D — série histórica real de GET /v1/profit/kpis/{name}/history.
+  const historyQuery = useQuery({
+    queryKey: profitKeys.kpiHistory(kpi.name, 30),
+    queryFn: () => kpisApi.getHistory(kpi.name, 30),
+    refetchOnWindowFocus: false,
+    staleTime: 60_000,
+  });
+
+  // Pontos com valor (saltamos dias sem dados — nunca inventamos um zero).
+  const chartData = (historyQuery.data?.points ?? [])
+    .filter((p): p is { date: string; value: number } => p.value !== null)
+    .map((p) => ({
+      name: new Date(p.date).toLocaleDateString('pt-PT', { day: '2-digit', month: '2-digit' }),
+      value: p.value,
+    }));
+
   return (
     <DarkCard>
       <div className="flex items-start justify-between gap-3 mb-4">
@@ -252,21 +269,43 @@ function KPIDetail({ kpi }: { kpi: KPIItem }) {
         </DarkBadge>
       </div>
 
-      {/* Gráfico de histórico — endpoint pendente */}
-      <div
-        className="rounded-lg border border-dashed border-bd-2 bg-bg-1 flex flex-col items-center justify-center gap-2 py-10 px-6 text-center"
-        style={{ minHeight: 200 }}
-      >
-        <TrendingUp className="h-8 w-8 text-fg-3" />
-        <p className="text-sm font-medium text-fg-2">Gráfico histórico</p>
-        <p className="text-xs text-fg-3 max-w-xs leading-relaxed">
-          O endpoint{' '}
-          <code className="bg-bg-3 rounded px-1 text-fg-2">
-            GET /v1/profit/kpis/{kpi.name}/history
-          </code>{' '}
-          ainda não está disponível no backend. Será activado quando Q.115.B for implementado.
+      {/* Gráfico de tendência (últimos 30 dias) */}
+      <div className="mb-1">
+        <p className="text-[10.5px] uppercase tracking-wide font-semibold text-fg-3 mb-2">
+          Tendência (30 dias)
         </p>
       </div>
+
+      {historyQuery.isLoading ? (
+        <div
+          className="rounded-lg border border-bd-1 bg-bg-1 flex items-center justify-center"
+          style={{ minHeight: 200 }}
+        >
+          <p className="text-sm text-fg-3">A carregar histórico…</p>
+        </div>
+      ) : chartData.length >= 2 ? (
+        <div className="rounded-lg border border-bd-1 bg-bg-1 p-2">
+          <LineChart
+            data={chartData}
+            height={200}
+            color={kpi.status === 'alerta' ? '#ef4444' : kpi.status === 'aviso' ? '#f59e0b' : '#14b8a6'}
+            showGrid
+            showArea
+          />
+        </div>
+      ) : (
+        <div
+          className="rounded-lg border border-dashed border-bd-2 bg-bg-1 flex flex-col items-center justify-center gap-2 py-10 px-6 text-center"
+          style={{ minHeight: 200 }}
+        >
+          <TrendingUp className="h-8 w-8 text-fg-3" />
+          <p className="text-sm font-medium text-fg-2">Histórico a acumular</p>
+          <p className="text-xs text-fg-3 max-w-xs leading-relaxed">
+            A tendência aparece quando houver pelo menos 2 dias de dados. O
+            snapshot diário corre às 00:45 (UTC) — volta amanhã para ver a curva.
+          </p>
+        </div>
+      )}
     </DarkCard>
   );
 }

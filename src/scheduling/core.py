@@ -26,6 +26,7 @@ from src.scheduling.jobs.audit import _audit_retention_purge_job
 from src.scheduling.jobs.causal import _causal_discovery_job
 from src.scheduling.jobs.copilot import _copilot_schema_reindex_job
 from src.scheduling.jobs.feedback import _daily_feedback_job
+from src.scheduling.jobs.kpi_snapshot import _kpi_snapshot_job
 from src.scheduling.jobs.improve import (
     _abl_feedback_job,
     _improve_adoption_signal_job,
@@ -213,6 +214,20 @@ def start_scheduler(
         coalesce=True,
         max_instances=1,
     )
+    # Q.117.D — snapshot diário de KPIs para o gráfico de tendência da
+    # página LLM › KPIs. 00:45 UTC (depois do daily_feedback 00:30). Itera
+    # tenants; em dev a lista vem vazia e o job descobre-os na BD.
+    _scheduler.add_job(
+        _kpi_snapshot_job,
+        trigger=CronTrigger(hour=0, minute=45, timezone="UTC"),
+        args=[tenants or []],
+        id="kpi_snapshot",
+        name="kpi_snapshot",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+
     # Q.67.4.E — reindex nocturno dos schema docs no RAG do copilot.
     # 04:00 UTC (low traffic). No-op se copilot_enabled=False.
     _scheduler.add_job(

@@ -503,3 +503,41 @@ async def get_otd_heatmap(
         "end_date": end_date.isoformat(),
     }
 
+
+class KPIHistoryPoint(BaseModel):
+    """Um ponto da série histórica de um KPI."""
+    date: str
+    value: Optional[float] = None
+
+
+class KPIHistoryResponse(BaseModel):
+    """Série histórica de um KPI (Q.117.D)."""
+    name: str
+    unit: str
+    days: int
+    points: List[KPIHistoryPoint]
+
+
+@router.get("/{name}/history", response_model=KPIHistoryResponse)
+async def get_kpi_history_endpoint(
+    name: str,
+    days: int = 30,
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Série histórica de um KPI para o gráfico de tendência (Q.117.D).
+
+    Lê de ``profit.kpi_snapshot`` (escrito 1×/dia por ``_kpi_snapshot_job``).
+    404 quando ``name`` não está na whitelist de KPIs com histórico.
+    Pontos com ``value=null`` representam dias sem dados — nunca inventados.
+    """
+    from src.profit.services.kpi_history import get_kpi_history
+
+    result = await get_kpi_history(session, tenant_id, name, days=days)
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"KPI '{name}' não suporta histórico.",
+        )
+    return KPIHistoryResponse(**result)
+

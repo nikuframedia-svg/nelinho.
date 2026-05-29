@@ -105,6 +105,7 @@ from src.plan.models import work_order_override as _plan_work_order_override  # 
 
 # ─── profit ────────────────────────────────────────────────────────────
 from src.profit.models import cost as _profit_cost
+from src.profit.models import kpi_snapshot as _profit_kpi_snapshot  # Q.117.D
 from src.profit.models import phase_bonus as _profit_phase_bonus
 from src.profit.models import pricing as _profit_pricing
 

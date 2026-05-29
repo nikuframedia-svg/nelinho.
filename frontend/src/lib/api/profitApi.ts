@@ -11,11 +11,26 @@ import { request, filterParams } from './client';
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // KPIs
+export interface KpiHistoryPoint {
+  date: string;
+  value: number | null;
+}
+
+export interface KpiHistoryResponse {
+  name: string;
+  unit: string;
+  days: number;
+  points: KpiHistoryPoint[];
+}
+
 export const kpisApi = {
   getSnapshot: () => request<any>('/v1/profit/kpis/snapshot'),
   getSnapshotDev: () => request<any>('/v1/profit/kpis/snapshot-dev'),
   getSnapshotExplained: () => request<any>('/v1/profit/kpis/snapshot-explained'),
   getOtdHeatmap: (weeks: number = 12) => request<any>(`/v1/profit/kpis/otd-heatmap?weeks=${weeks}`),
+  // Q.117.D — série histórica para o gráfico de tendência da tab KPIs.
+  getHistory: (name: string, days: number = 30) =>
+    request<KpiHistoryResponse>(`/v1/profit/kpis/${encodeURIComponent(name)}/history?days=${days}`),
 };
 
 // COGS
