@@ -186,6 +186,11 @@ class _StubOp:
     team_size: int = 1
     mold_id: str = None
     due_date: Any = None
+    # Q.116.BD — protocolo SchedulingOperation ganhou posição alternativa.
+    # Defaults inertes (False/vazio) curto-circuitam o branch is_flexible em
+    # decoder_resources.py:61 → preserva o caminho legacy deste stub.
+    is_flexible: bool = False
+    allowed_predecessors: tuple = ()
 
 
 @dataclass
