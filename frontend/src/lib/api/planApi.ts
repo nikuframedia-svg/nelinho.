@@ -508,6 +508,33 @@ export const preferenceRulesApi = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Q.118.H — OTD risk (ordens em risco de atraso) — GET /v1/plan/orders/otd-risk
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface OtdRiskOrder {
+  of_id: string;
+  product_name: string | null;
+  product_type: string | null;
+  current_phase_name: string | null;
+  transport_date: string | null;
+  late_probability: number;
+  risk_band: string;
+}
+
+export interface OtdRiskResponse {
+  model_available: boolean;
+  orders: OtdRiskOrder[];
+  total_orders?: number;
+  high_risk_count?: number;
+  reason?: string;
+}
+
+export const otdRiskApi = {
+  list: (topN = 50) =>
+    request<OtdRiskResponse>(`/v1/plan/orders/otd-risk?top_n=${topN}`),
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // SPRINT Q.4 — Schedule Preview-Delta (drag-and-drop side-effect calc)
 // ═══════════════════════════════════════════════════════════════════════════════
 

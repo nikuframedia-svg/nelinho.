@@ -40,6 +40,7 @@ import { PorPessoaView } from '../../components/overall/views/PorPessoaView';
 import { PorExpedicaoView } from '../../components/overall/views/PorExpedicaoView';
 import type { ScheduledOp } from '../../components/overall/types';
 import { AutoProposeOverlay } from '../../components/overall/AutoProposeOverlay';
+import { OtdRiskPanel } from '../../components/overall/OtdRiskPanel';
 import { usePendingDecisions } from '../../hooks/usePendingDecisions';
 
 // ─── Constantes ──────────────────────────────────────────────────────────────
@@ -468,6 +469,9 @@ export default function OverallPage(): ReactNode {
       <div className="flex-1 overflow-auto p-6 space-y-4 relative">
         {/* Overlay auto-propose — fantasmas PROPOSED com aprovar/rejeitar inline (Q.115.M) */}
         <AutoProposeOverlay />
+
+        {/* Q.118.H — ordens em risco de atraso (OTD), ligadas ao plano */}
+        <OtdRiskPanel />
 
         {/* Toggle de vistas — URL-driven */}
         <div className="flex items-center gap-0.5 rounded-lg border border-slate-700 p-0.5 bg-slate-800 w-fit">
