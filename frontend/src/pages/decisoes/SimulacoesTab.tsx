@@ -18,7 +18,7 @@ import { useQuery } from '@tanstack/react-query';
 import { FlaskConical, AlertTriangle, History, Inbox } from 'lucide-react';
 import { DarkPageLayout } from '../../layouts';
 import { DarkCard, DarkBadge, EmptyState, Segmented } from '../../components/dark';
-import { decisionsApi, marginPreviewApi, twinApi } from '../../lib/api';
+import { decisionsApi, marginPreviewApi, twinApi, coerceEur, MARGIN_CONFIDENCE_LABEL } from '../../lib/api';
 import { decisionKeys, profitKeys } from '../../lib/api/keys';
 import type { DecisionRun } from '../../lib/api';
 import { SimDetail } from '../../components/simulacoes/SimDetail';
@@ -52,7 +52,7 @@ function DecisaoWhatIf({ decision }: { decision: DecisionRun }) {
     retry: false,
     staleTime: 60_000,
   });
-  const delta = marginQuery.data?.delta_eur;
+  const delta = coerceEur(marginQuery.data?.delta_eur);
   const kpis = sb.kpis ?? {};
 
   return (
@@ -75,7 +75,7 @@ function DecisaoWhatIf({ decision }: { decision: DecisionRun }) {
           {commitSha && marginQuery.isSuccess && delta != null ? (
             <DarkBadge variant={delta >= 0 ? 'success' : 'danger'}>
               {delta >= 0 ? '+' : ''}
-              {delta.toFixed(0)} € · {marginQuery.data?.confidence}
+              {delta.toFixed(0)} € · {MARGIN_CONFIDENCE_LABEL[marginQuery.data?.confidence ?? ''] ?? marginQuery.data?.confidence}
             </DarkBadge>
           ) : null}
         </div>

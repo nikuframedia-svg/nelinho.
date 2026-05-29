@@ -16,7 +16,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Calendar, BookOpen, Inbox, Euro, Sparkles, ExternalLink } from 'lucide-react';
-import { marginPreviewApi } from '../../lib/api';
+import { marginPreviewApi, coerceEur, MARGIN_CONFIDENCE_LABEL } from '../../lib/api';
 import { profitKeys } from '../../lib/api/keys';
 import type { DecisionRun } from '../../lib/api';
 
@@ -56,7 +56,7 @@ export function DecisionHubActions({ decision }: { decision: DecisionRun }) {
     staleTime: 60_000,
   });
 
-  const delta = marginQuery.data?.delta_eur;
+  const delta = coerceEur(marginQuery.data?.delta_eur);
 
   return (
     <div className="mt-3 flex flex-wrap items-center gap-2" data-testid="decision-hub-actions">
@@ -95,7 +95,7 @@ export function DecisionHubActions({ decision }: { decision: DecisionRun }) {
         >
           <Euro size={13} />
           {delta >= 0 ? '+' : ''}
-          {delta.toFixed(0)} € · {marginQuery.data?.confidence}
+          {delta.toFixed(0)} € · {MARGIN_CONFIDENCE_LABEL[marginQuery.data?.confidence ?? ''] ?? marginQuery.data?.confidence}
         </span>
       ) : null}
 

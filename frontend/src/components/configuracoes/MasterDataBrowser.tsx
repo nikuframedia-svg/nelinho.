@@ -18,6 +18,12 @@ import { productsApi, customersApi, employeesApi, machinesApi } from '../../lib/
 
 type Entity = 'produtos' | 'clientes' | 'operadores' | 'maquinas';
 
+// Formas core (espelham src/core/api/schemas.py) — só os campos usados.
+interface CoreProduct { id: string; product_code: string; product_name: string; product_type?: string; category?: string | null; status?: string; }
+interface CoreCustomer { id: string; customer_code: string; customer_name: string; segment?: string; price_tier?: string; }
+interface CoreEmployee { id: string; employee_code: string; employee_name: string; department?: string | null; job_title?: string | null; status?: string; }
+interface CoreMachine { id: string; machine_code: string; machine_name: string; machine_type?: string; location?: string | null; status?: string; }
+
 interface Row {
   key: string;
   code: string;
@@ -48,40 +54,40 @@ export function MasterDataBrowser() {
     queryKey: ['core', 'master-data', entity],
     queryFn: async (): Promise<Row[]> => {
       if (entity === 'produtos') {
-        const items = (await productsApi.list({ limit: 200 })) as any[];
-        return (items ?? []).map((p) => ({
+        const items = ((await productsApi.list({ limit: 200 })) ?? []) as CoreProduct[];
+        return items.map((p) => ({
           key: String(p.id),
           code: p.product_code,
           name: p.product_name,
           meta: [p.product_type, p.category].filter(Boolean).join(' · '),
           status: String(p.status ?? ''),
-          clickable: { kind: 'modelo', id: String(p.product_name) },
+          clickable: { kind: 'modelo' as const, id: String(p.product_name) },
         }));
       }
       if (entity === 'clientes') {
-        const items = (await customersApi.list({ limit: 200 })) as any[];
-        return (items ?? []).map((c) => ({
+        const items = ((await customersApi.list({ limit: 200 })) ?? []) as CoreCustomer[];
+        return items.map((c) => ({
           key: String(c.id),
           code: c.customer_code,
           name: c.customer_name,
           meta: [c.segment, c.price_tier].filter(Boolean).join(' · '),
           status: '',
-          clickable: { kind: 'cliente', id: String(c.id) },
+          clickable: { kind: 'cliente' as const, id: String(c.id) },
         }));
       }
       if (entity === 'operadores') {
-        const items = (await employeesApi.list({ limit: 200 })) as any[];
-        return (items ?? []).map((e) => ({
+        const items = ((await employeesApi.list({ limit: 200 })) ?? []) as CoreEmployee[];
+        return items.map((e) => ({
           key: String(e.id),
           code: e.employee_code,
           name: e.employee_name,
           meta: [e.department, e.job_title].filter(Boolean).join(' · '),
           status: String(e.status ?? ''),
-          clickable: { kind: 'operador', id: String(e.id) },
+          clickable: { kind: 'operador' as const, id: String(e.id) },
         }));
       }
-      const items = (await machinesApi.list({ limit: 200 })) as any[];
-      return (items ?? []).map((m) => ({
+      const items = ((await machinesApi.list({ limit: 200 })) ?? []) as CoreMachine[];
+      return items.map((m) => ({
         key: String(m.id),
         code: m.machine_code,
         name: m.machine_name,

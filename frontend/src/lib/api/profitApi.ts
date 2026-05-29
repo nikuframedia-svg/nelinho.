@@ -349,9 +349,10 @@ export const profitOeeApi = {
 // cartão-hub das Decisões para mostrar o € fresco da decisão.
 export interface MarginPreviewResponse {
   schedule_commit_id: string;
-  predicted_margin_eur: number | null;
-  baseline_margin_eur: number | null;
-  delta_eur: number | null;
+  // Pydantic Decimal pode serializar como string em JSON — usar coerceEur().
+  predicted_margin_eur: number | string | null;
+  baseline_margin_eur: number | string | null;
+  delta_eur: number | string | null;
   confidence: 'high' | 'medium' | 'low';
   sample_size: number;
   computed_at: string;
@@ -364,4 +365,18 @@ export const marginPreviewApi = {
       `/v1/profit/preview?schedule_commit_id=${encodeURIComponent(scheduleCommitId)}`,
     ),
 };
+
+// Q.118.T — rótulo PT-PT do nível de confiança da margem (em vez de 'high'/'medium'/'low' cru).
+export const MARGIN_CONFIDENCE_LABEL: Record<string, string> = {
+  high: 'fiável',
+  medium: 'estimada',
+  low: 'incerta',
+};
+
+/** Coerce o delta_eur (Pydantic Decimal pode chegar como string JSON) para número. */
+export function coerceEur(v: number | string | null | undefined): number | null {
+  if (v == null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
 
