@@ -33,7 +33,9 @@ test('Decisões — 3 sub-abas navegam e renderizam', async ({ page }) => {
   await expect(page.getByRole('tab', { name: /Histórico/ })).toBeVisible();
 
   await page.goto('/decisoes?tab=simulacoes');
-  await expect(page.getByText('Esta decisão')).toBeVisible();
+  // exact: com dados reais o segmento "Esta decisão" coexiste com textos que
+  // contêm a frase ("Esta decisão ainda não tem plano…"); exact isola o botão.
+  await expect(page.getByText('Esta decisão', { exact: true })).toBeVisible();
 
   await page.goto('/decisoes?tab=historico');
   await expect(page.getByText('Histórico de decisões')).toBeVisible();
