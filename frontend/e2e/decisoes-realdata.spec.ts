@@ -69,9 +69,9 @@ test('Decisões — cartão renderiza com dados reais (não empty-state)', async
   expect(items.length, 'o seed deve ter decisões PROPOSED').toBeGreaterThan(0);
 
   // O hub e os chips de entidade renderizam (conteúdo real, não vazio).
-  await expect(page.getByTestId('decision-hub-actions')).toBeVisible();
-  await expect(page.getByRole('button', { name: /Rejeitar decis/ })).toBeVisible();
-  await expect(page.getByRole('button', { name: /Aprovar decis/ })).toBeVisible();
+  await expect(page.getByTestId('decision-hub-actions').first()).toBeVisible();
+  await expect(page.getByRole('button', { name: /Rejeitar decis/ }).first()).toBeVisible();
+  await expect(page.getByRole('button', { name: /Aprovar decis/ }).first()).toBeVisible();
   // NÃO deve estar no empty-state.
   await expect(page.getByText(/Sem decis.*pendentes/)).toHaveCount(0);
 
@@ -83,12 +83,12 @@ test('REJECT-LOCK — rejeitar marca REJECTED, nunca APPROVED (Q.118.S)', async 
   expect(items.length, 'precisa de ≥1 decisão PROPOSED').toBeGreaterThan(0);
   const targetId = items[0].id; // a página mostra items[0] como cartão actual
 
-  await expect(page.getByRole('button', { name: /Rejeitar decis/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Rejeitar decis/ }).first()).toBeVisible();
   const approveResp = page.waitForResponse(
     (r) => r.url().includes(`/v1/decisions/${targetId}/approve`) && r.request().method() === 'POST',
     { timeout: 15_000 },
   );
-  await page.getByRole('button', { name: /Rejeitar decis/ }).click();
+  await page.getByRole('button', { name: /Rejeitar decis/ }).first().click();
   expect((await approveResp).ok()).toBeTruthy();
 
   // ASSERÇÃO CRÍTICA: o status resultante prova rejeitar ≠ aprovar.
@@ -104,12 +104,12 @@ test('APPROVE — aprovar marca APPROVED', async ({ page }) => {
   expect(items.length, 'precisa de ≥1 decisão PROPOSED restante').toBeGreaterThan(0);
   const targetId = items[0].id;
 
-  await expect(page.getByRole('button', { name: /Aprovar decis/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Aprovar decis/ }).first()).toBeVisible();
   const approveResp = page.waitForResponse(
     (r) => r.url().includes(`/v1/decisions/${targetId}/approve`) && r.request().method() === 'POST',
     { timeout: 15_000 },
   );
-  await page.getByRole('button', { name: /Aprovar decis/ }).click();
+  await page.getByRole('button', { name: /Aprovar decis/ }).first().click();
   expect((await approveResp).ok()).toBeTruthy();
 
   const check = await page.request.get(`${API}/v1/decisions/${targetId}`, { headers: HEADERS });
