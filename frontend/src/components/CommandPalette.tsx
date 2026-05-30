@@ -46,12 +46,12 @@ interface CommandItem {
   runbook?: Runbook;
 }
 
-// Q.31.F — para onde navegar quando se escolhe um resultado de pesquisa.
+// Q.130.M — destinos de pesquisa mapeados para rotas vivas.
 const ENTITY_ROUTE: Record<string, string> = {
-  barco: '/plano-producao',
-  operador: '/operadores',
-  molde: '/qualidade?tab=moldes',
-  erro: '/qualidade?tab=erros',
+  barco: '/overall',
+  operador: '/overall',
+  molde: '/overall',
+  erro: '/overall',
 };
 const ENTITY_LABEL: Record<string, string> = {
   barco: 'Barco',
@@ -118,49 +118,67 @@ export function CommandPalette() {
       });
     });
 
-    // Add navigation commands
+    // Navegação — só rotas vivas (Q.130.M)
     items.push({
-      id: 'nav-dashboard',
+      id: 'nav-decisoes',
       type: 'navigation',
-      title: 'Dashboard',
-      description: 'Go to main dashboard',
-      icon: <BarChart3 className="w-4 h-4" />,
-      onSelect: () => { window.location.href = '/'; },
-    });
-
-    items.push({
-      id: 'nav-sandbox',
-      type: 'navigation',
-      title: 'Sandbox',
-      description: 'Open scenario sandbox',
+      title: 'Decisões',
+      description: 'Painel de decisões e aprovações',
       icon: <Play className="w-4 h-4" />,
-      onSelect: () => { window.location.href = '/sandbox'; },
+      onSelect: () => { window.location.href = '/decisoes'; },
     });
 
     items.push({
-      id: 'nav-explain',
+      id: 'nav-overall',
       type: 'navigation',
-      title: 'Metric Catalog',
-      description: 'View metric definitions and explanations',
+      title: 'Planeamento',
+      description: 'Vista overall de produção',
+      icon: <BarChart3 className="w-4 h-4" />,
+      onSelect: () => { window.location.href = '/overall'; },
+    });
+
+    items.push({
+      id: 'nav-llm',
+      type: 'navigation',
+      title: 'Copiloto',
+      description: 'Chat, KPIs e regras LLM',
       icon: <FileText className="w-4 h-4" />,
-      onSelect: () => { window.location.href = '/explain'; },
+      onSelect: () => { window.location.href = '/llm'; },
     });
 
     items.push({
-      id: 'nav-settings',
+      id: 'nav-configuracoes',
       type: 'navigation',
-      title: 'Settings',
-      description: 'System settings',
+      title: 'Configurações',
+      description: 'Master data, regras, custos e aprendizagem',
       icon: <Settings className="w-4 h-4" />,
-      onSelect: () => { window.location.href = '/admin/settings'; },
+      onSelect: () => { window.location.href = '/configuracoes'; },
     });
 
-    // Add quick actions
+    items.push({
+      id: 'nav-operador',
+      type: 'navigation',
+      title: 'Operador',
+      description: 'Vista tablet do operador',
+      icon: <BookOpen className="w-4 h-4" />,
+      onSelect: () => { window.location.href = '/operador'; },
+    });
+
+    items.push({
+      id: 'nav-pesquisa',
+      type: 'navigation',
+      title: 'Pesquisa',
+      description: 'Pesquisa global de barcos, operadores, moldes e erros',
+      icon: <Search className="w-4 h-4" />,
+      onSelect: () => { window.location.href = '/pesquisa'; },
+    });
+
+    // Acções rápidas
     items.push({
       id: 'action-refresh',
       type: 'action',
-      title: 'Refresh Data',
-      description: 'Refresh all cached data',
+      title: 'Actualizar dados',
+      description: 'Recarregar todos os dados em cache',
       icon: <Zap className="w-4 h-4" />,
       onSelect: () => { window.location.reload(); },
     });

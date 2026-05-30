@@ -11,7 +11,7 @@
  * Sprint Q.52.S.
  */
 
-import { useMemo, type ReactNode } from 'react';
+import { useMemo, useCallback, type ReactNode } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Search, Ship, User, Box, AlertTriangle } from 'lucide-react';
@@ -19,30 +19,27 @@ import { PageHeader } from '../../components/dark/PageHeader';
 import { EmptyState } from '../../components/dark/EmptyState';
 import { SkeletonLoader } from '../../components/ui/Skeleton';
 import { searchApi, type SearchHit } from '../../lib/api';
+import { useEntitySheet } from '../../components/entitySheets';
 
 const TYPE_META: Record<
   SearchHit['type'],
-  { label: string; icon: ReactNode; route: (id: string) => string }
+  { label: string; icon: ReactNode }
 > = {
   barco: {
     label: 'Barcos',
     icon: <Ship size={15} />,
-    route: () => '/fabrica',
   },
   operador: {
     label: 'Operadores',
     icon: <User size={15} />,
-    route: () => '/equipa',
   },
   molde: {
     label: 'Moldes',
     icon: <Box size={15} />,
-    route: () => '/qualidade?tab=moldes',
   },
   erro: {
     label: 'Erros',
     icon: <AlertTriangle size={15} />,
-    route: () => '/qualidade?tab=erros',
   },
 };
 
@@ -51,11 +48,26 @@ const TYPE_ORDER: SearchHit['type'][] = ['barco', 'operador', 'molde', 'erro'];
 export function SearchResultsPage(): ReactNode {
   const [params] = useSearchParams();
   const navigate = useNavigate();
+  const { openSheet } = useEntitySheet();
   const q = (params.get('q') ?? '').trim();
+
+  // Navegar para o destino correcto consoante o tipo de resultado.
+  // operador → ficha de entidade (?sheet=operador&id=…)
+  // barco / molde / erro → /overall (única rota viva com contexto de produção)
+  const handleHitClick = useCallback(
+    (hit: SearchHit) => {
+      if (hit.type === 'operador') {
+        openSheet('operador', hit.id);
+      } else {
+        navigate('/overall');
+      }
+    },
+    [navigate, openSheet],
+  );
 
   const searchQuery = useQuery({
     queryKey: ['search', 'global', q],
-    queryFn: () => searchApi.query(q, 30),
+    queryFn: () => searchApi.query(q, 20),
     enabled: q.length > 0,
     staleTime: 30_000,
   });
@@ -136,7 +148,7 @@ export function SearchResultsPage(): ReactNode {
                       <li key={`${hit.type}-${hit.id}`}>
                         <button
                           type="button"
-                          onClick={() => navigate(meta.route(hit.id))}
+                          onClick={() => handleHitClick(hit)}
                           className="flex items-center w-full text-left transition-colors"
                           style={{
                             gap: 12,

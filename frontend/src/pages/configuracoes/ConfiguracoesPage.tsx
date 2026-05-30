@@ -701,10 +701,10 @@ function TabLogicaLLM() {
             Os prompts são versionados em base de dados e auditados.
           </p>
           <a
-            href="/regras?tab=prompts"
+            href="/llm?tab=regras"
             className="inline-flex items-center gap-1.5 text-sm text-blue-400 hover:underline"
           >
-            Ver Prompts em /regras <ExternalLink size={13} />
+            Ver Regras LLM <ExternalLink size={13} />
           </a>
         </div>
       </div>
