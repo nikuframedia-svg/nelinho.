@@ -395,6 +395,14 @@ class MaterialIndex:
         `apply_aliases()` separado — o caller `interpret.py` chama-o para
         ler `ambiguous_hits` e adicionar ao prompt.
         """
+        # Q.R — garantir o índice carregado ANTES de inspeccionar self._bm25.
+        # Sem isto, a 1ª chamada do processo via self._bm25=None (ainda não
+        # carregado) e caía no degrade FAISS-only (scores cosine ~0.7); as
+        # chamadas seguintes (já carregado) seguiam o ramo RRF. Resultado:
+        # scores inconsistentes entre a 1ª pergunta e as restantes.
+        if not self._loaded:
+            self.load()
+
         # Q.93.E.A.4 — query expandida (substituições inequívocas só).
         # Ambiguous hits são lidos pelo caller (interpret.py) via
         # apply_aliases() directo.
@@ -414,4 +422,14 @@ class MaterialIndex:
 
         faiss_results = await self.top_k(query_text, ollama=ollama, k=k_each)
         bm25_results = self._bm25_top_k(effective_query, k=k_each)
-        return rrf_fuse(faiss_results, bm25_results, k_const=RRF_K)[:k]
+        fused = rrf_fuse(faiss_results, bm25_results, k_const=RRF_K)[:k]
+
+        # Q.R — o RRF ordena bem, mas o seu score (~1/RRF_K ≈ 0.03) é
+        # INCOMPARÁVEL ao cosine para que `_MATERIAL_MENTION_SCORE_THRESHOLD`
+        # (0.3) foi calibrado — devolver RRF cru fazia `extract_mentioned_material`
+        # abster-se SEMPRE (excepto na 1ª chamada, que via o degrade cosine).
+        # Reportar o score COSINE do FAISS por nome (consistente entre chamadas
+        # e comparável ao threshold). Hits só-BM25 (match lexical exacto que o
+        # FAISS não trouxe no top-k_each) são sinal forte → sentinela 1.0.
+        faiss_score = {name: score for name, score in faiss_results}
+        return [(name, faiss_score.get(name, 1.0)) for name, _rrf in fused]
