@@ -38,6 +38,7 @@ from src.scheduling.jobs.ml import (
 )
 from src.scheduling.jobs.nelo_erp import (
     _nelo_erp_comercial_job,
+    _nelo_erp_customers_job,
     _nelo_erp_incremental_sync_job,
     _nelo_erp_logistica_job,
     _nelo_erp_phase_history_incremental_job,
@@ -222,6 +223,17 @@ def start_scheduler(
         trigger=IntervalTrigger(minutes=5),
         id="nelo_erp_logistica",
         name="nelo_erp_logistica",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Q.125 — core.customers a partir de factory_raw.entidade (tipo Cliente).
+    # O mirror `master` nunca espelhava clientes. 5/5 min, DROP-free (upsert).
+    _scheduler.add_job(
+        _nelo_erp_customers_job,
+        trigger=IntervalTrigger(minutes=5),
+        id="nelo_erp_customers",
+        name="nelo_erp_customers",
         replace_existing=True,
         coalesce=True,
         max_instances=1,

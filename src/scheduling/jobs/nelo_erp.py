@@ -259,6 +259,32 @@ async def _nelo_erp_logistica_job() -> None:
         logger.error("nelo_erp_logistica failed: %s", exc, exc_info=True)
 
 
+async def _nelo_erp_customers_job() -> None:
+    """Q.125 — popula/refresca `core.customers` a partir de `factory_raw.entidade`
+    (tipo Cliente, E_ENT_ID=2). O mirror `master` nunca espelhava clientes →
+    core.customers estava a 0. Refresca entidade do NELO + upsert. 5/5 min.
+    No-op quando ``sqlserver_enabled=False``.
+    """
+    from src.shared.config import settings
+
+    if not settings.sqlserver_enabled:
+        logger.debug("nelo_erp_customers skipped — sqlserver_enabled=False")
+        return
+
+    from scripts.setup_customers_from_entidade import setup as customers_setup
+
+    started = datetime.utcnow()
+    try:
+        report = await customers_setup()
+        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        logger.info(
+            "nelo_erp_customers total=%s new=%s elapsed_ms=%s",
+            report.get("customers_after"), report.get("customers_new"), elapsed_ms,
+        )
+    except Exception as exc:
+        logger.error("nelo_erp_customers failed: %s", exc, exc_info=True)
+
+
 async def _nelo_erp_time_mining_job() -> None:
     """Q.25.D — mineracao historica de tempos (o mirror pesado, semanal).
 
