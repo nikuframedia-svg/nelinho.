@@ -25,6 +25,8 @@ from uuid import UUID, uuid4
 
 from pydantic import ValidationError
 
+from datetime import date
+
 from src.core.models.employee import Employee, EmploymentStatus, EmploymentType
 from src.core.models.encomenda_cancelled import EncomendaCancelled
 from src.core.models.product import Product, ProductStatus, ProductType
@@ -142,6 +144,27 @@ def _make_product(
     return p
 
 
+def _make_boat_order(
+    *,
+    tenant_id: UUID = TENANT_ID,
+    legacy_id: int = 101,
+) -> ProductionOrder:
+    """ProductionOrder com completed_date — convenção Q.115.X5 para 'barco'."""
+    o = ProductionOrder()
+    o.id = uuid4()
+    o.tenant_id = tenant_id
+    o.legacy_id = legacy_id
+    o.product_name = "K1 Vanquish"
+    o.product_type = "K1"
+    o.current_phase_name = "ENTREGUE"
+    o.status = OrderStatus.COMPLETED
+    o.completed_date = date(2026, 5, 1)
+    o.cancelled_at = None
+    o.cancelled_by = None
+    o.cancellation_reason = None
+    return o
+
+
 def _make_employee(
     *,
     active: bool = True,
@@ -170,7 +193,7 @@ async def test_cancel_work_order_happy_path():
     """(T1) cancel_work_order: happy path → status=CANCELLED + audit + outbox emit."""
     session = _FakeSession()
     order = _make_order()
-    of_id = order.id
+    of_id = str(order.legacy_id)  # legacy_id como a lista devolve
 
     session.push_result(order)
 
@@ -184,7 +207,7 @@ async def test_cancel_work_order_happy_path():
         )
 
     assert result.success is True
-    assert result.entity_id == str(of_id)
+    assert result.entity_id == of_id
     assert result.action == "cancel_work_order"
     assert order.status == OrderStatus.CANCELLED
     assert order.cancelled_by == "user-test"
@@ -212,7 +235,7 @@ async def test_cancel_work_order_not_found():
     with pytest.raises(LookupError, match="não encontrada"):
         await cancel_work_order(
             session,
-            of_id=uuid4(),
+            of_id="9999",
             reason="Razão de cancelamento longa o suficiente",
             tenant_id=TENANT_ID,
             user_id="user-test",
@@ -229,7 +252,7 @@ async def test_cancel_work_order_already_cancelled():
     with pytest.raises(ValueError, match="já está cancelada"):
         await cancel_work_order(
             session,
-            of_id=order.id,
+            of_id=str(order.legacy_id),
             reason="Tentativa de cancelar novamente",
             tenant_id=TENANT_ID,
             user_id="user-test",
@@ -272,24 +295,25 @@ async def test_cancel_encomenda_happy_path():
 
 @pytest.mark.asyncio
 async def test_retire_boat_happy_path():
-    """(T5) retire_boat happy path → retired_at populado + audit + outbox emit."""
+    """(T5) retire_boat happy path → cancelled_at populado em ProductionOrder + audit + outbox emit."""
     session = _FakeSession()
-    product = _make_product()
-    session.push_result(product)
+    boat = _make_boat_order(legacy_id=101)
+    session.push_result(boat)
 
     result = await retire_boat(
         session,
-        boat_id=product.id,
+        boat_id="101",
         reason="Modelo descontinuado por decisão de produto",
         tenant_id=TENANT_ID,
         user_id="user-test",
     )
 
     assert result.success is True
-    assert result.entity_id == str(product.id)
-    assert product.status == ProductStatus.INACTIVE
-    assert product.retired_at is not None
-    assert product.retired_by == "user-test"
+    assert result.entity_id == "101"
+    assert boat.status == OrderStatus.CANCELLED
+    assert boat.cancelled_at is not None
+    assert boat.cancelled_by == "user-test"
+    assert boat.cancellation_reason == "Modelo descontinuado por decisão de produto"
 
     from src.core.models.audit import AuditLog
     from src.shared.outbox_models import EventOutbox
@@ -309,7 +333,7 @@ async def test_retire_boat_not_found():
     with pytest.raises(LookupError, match="não encontrado"):
         await retire_boat(
             session,
-            boat_id=uuid4(),
+            boat_id="9999",
             reason="Modelo que não existe no sistema de produção",
             tenant_id=TENANT_ID,
             user_id="user-test",
@@ -422,7 +446,7 @@ async def test_audit_log_written_per_action():
     session.push_result(order)
     await cancel_work_order(
         session,
-        of_id=order.id,
+        of_id=str(order.legacy_id),
         reason="Audit log test — cancelamento confirmado",
         tenant_id=TENANT_ID,
         user_id="audit-tester",
@@ -432,11 +456,11 @@ async def test_audit_log_written_per_action():
 
     # retire_boat
     session2 = _FakeSession()
-    product = _make_product()
-    session2.push_result(product)
+    boat = _make_boat_order(legacy_id=202)
+    session2.push_result(boat)
     await retire_boat(
         session2,
-        boat_id=product.id,
+        boat_id="202",
         reason="Audit log test — retirada confirmada",
         tenant_id=TENANT_ID,
         user_id="audit-tester",
@@ -456,3 +480,131 @@ async def test_audit_log_written_per_action():
     )
     audit_rows3 = session3.get_added_type(AuditLog)
     assert any(r.reason == "cancel_encomenda" for r in audit_rows3)
+
+
+# ─── Regressão Q.130.F — cancel OF por legacy_id ─────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_q130_f_cancel_work_order_by_legacy_id():
+    """Q.130.F: cancel_work_order aceita legacy_id (string inteiro) como a lista devolve.
+
+    Antes do fix a rota declarava UUID → FastAPI rejeitava com 422 porque a UI
+    envia o legacy_id (ex: "42") que não é UUID válido.
+    """
+    session = _FakeSession()
+    order = _make_order()
+    assert order.legacy_id == 42  # confirmamos que é inteiro
+
+    session.push_result(order)
+
+    result = await cancel_work_order(
+        session,
+        of_id="42",  # legacy_id como a lista devolve — string inteiro
+        reason="Q.130.F regressão — legacy_id aceite pelo serviço",
+        tenant_id=TENANT_ID,
+        user_id="user-q130f",
+    )
+
+    assert result.success is True
+    assert result.entity_id == "42"
+    assert order.status == OrderStatus.CANCELLED
+    assert order.cancelled_by == "user-q130f"
+
+    from src.core.models.audit import AuditLog
+    from src.shared.outbox_models import EventOutbox
+
+    assert len(session.get_added_type(AuditLog)) == 1
+    outbox = session.get_added_type(EventOutbox)
+    assert len(outbox) == 1
+    assert outbox[0].payload["of_id"] == "42"
+
+
+@pytest.mark.asyncio
+async def test_q130_f_cancel_work_order_invalid_id_returns_lookup_error():
+    """Q.130.F: of_id não inteiro → LookupError (mapeado para 404 no endpoint)."""
+    session = _FakeSession()
+
+    with pytest.raises(LookupError, match="não encontrada"):
+        await cancel_work_order(
+            session,
+            of_id="nao-e-um-numero",
+            reason="Q.130.F regressão — id inválido tratado",
+            tenant_id=TENANT_ID,
+            user_id="user-q130f",
+        )
+
+
+# ─── Regressão Q.130.G — retire boat por legacy_id de ProductionOrder ────────
+
+
+@pytest.mark.asyncio
+async def test_q130_g_retire_boat_by_legacy_id():
+    """Q.130.G: retire_boat aceita legacy_id de ProductionOrder como a lista devolve.
+
+    Antes do fix: rota declarava UUID + serviço consultava Product.id → duplo erro
+    (422 da rota + 404 da entidade errada).
+    """
+    session = _FakeSession()
+    boat = _make_boat_order(legacy_id=77)
+
+    session.push_result(boat)
+
+    result = await retire_boat(
+        session,
+        boat_id="77",  # legacy_id como a lista devolve
+        reason="Q.130.G regressão — legacy_id e entidade correctos",
+        tenant_id=TENANT_ID,
+        user_id="user-q130g",
+    )
+
+    assert result.success is True
+    assert result.entity_id == "77"
+    assert boat.status == OrderStatus.CANCELLED
+    assert boat.cancelled_at is not None
+    assert boat.cancelled_by == "user-q130g"
+    assert boat.cancellation_reason == "Q.130.G regressão — legacy_id e entidade correctos"
+
+    from src.core.models.audit import AuditLog
+    from src.shared.outbox_models import EventOutbox
+
+    audit = session.get_added_type(AuditLog)
+    assert len(audit) == 1
+    assert audit[0].reason == "retire_boat"
+    outbox = session.get_added_type(EventOutbox)
+    assert len(outbox) == 1
+    assert outbox[0].payload["boat_id"] == "77"
+
+
+@pytest.mark.asyncio
+async def test_q130_g_retire_boat_already_retired():
+    """Q.130.G: barco já retirado (cancelled_at != None) → ValueError (409)."""
+    session = _FakeSession()
+    boat = _make_boat_order(legacy_id=88)
+    boat.cancelled_at = _NOW  # já retirado
+
+    session.push_result(boat)
+
+    with pytest.raises(ValueError, match="já está retirado"):
+        await retire_boat(
+            session,
+            boat_id="88",
+            reason="Q.130.G regressão — dupla retirada bloqueada",
+            tenant_id=TENANT_ID,
+            user_id="user-q130g",
+        )
+
+
+@pytest.mark.asyncio
+async def test_q130_g_retire_boat_invalid_id_returns_lookup_error():
+    """Q.130.G: boat_id não inteiro → LookupError (mapeado para 404 no endpoint)."""
+    session = _FakeSession()
+
+    with pytest.raises(LookupError, match="não encontrado"):
+        await retire_boat(
+            session,
+            boat_id="nao-e-um-numero",
+            reason="Q.130.G regressão — id inválido tratado",
+            tenant_id=TENANT_ID,
+            user_id="user-q130g",
+        )

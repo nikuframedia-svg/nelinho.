@@ -74,7 +74,7 @@ def _to_out(r: CancelResult) -> CancelOut:
     summary="Cancela ordem de fabrico (soft-delete)",
 )
 async def cancel_work_order_endpoint(
-    of_id: UUID,
+    of_id: str,
     body: CancelBody,
     tenant_id: UUID = Depends(require_tenant_header),
     user_id: str = Depends(require_user_header),
@@ -138,7 +138,7 @@ async def cancel_encomenda_endpoint(
     summary="Retira barco/modelo de produção (soft-flag)",
 )
 async def retire_boat_endpoint(
-    boat_id: UUID,
+    boat_id: str,
     body: CancelBody,
     tenant_id: UUID = Depends(require_tenant_header),
     user_id: str = Depends(require_user_header),

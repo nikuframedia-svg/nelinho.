@@ -18,7 +18,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.models.employee import Employee, EmploymentStatus
 from src.core.models.encomenda_cancelled import EncomendaCancelled
-from src.core.models.product import Product, ProductStatus
 from src.governance.audit_service import audit_change
 from src.plan.models.order import ProductionOrder, OrderStatus
 from src.shared.observability import get_trace_id
@@ -75,7 +74,7 @@ async def _emit_outbox(
 async def cancel_work_order(
     session: AsyncSession,
     *,
-    of_id: UUID,
+    of_id: str,
     reason: str,
     tenant_id: UUID,
     user_id: str,
@@ -83,14 +82,20 @@ async def cancel_work_order(
     """Cancela uma ordem de fabrico (soft-delete).
 
     Validações:
-    - OF existe (404 semântico: levanta ValueError).
+    - of_id é legacy_id inteiro enviado pela lista (string → int).
+    - OF existe (404 semântico: levanta LookupError).
     - OF não está já cancelada (409 semântico: levanta ValueError).
     Acção:
     - status = 'CANCELLED', preenche cancelled_at/by/reason.
     - Audit + Kafka via outbox.
     """
+    try:
+        legacy_id_int = int(of_id)
+    except (ValueError, TypeError):
+        raise LookupError(f"Ordem de fabrico '{of_id}' não encontrada.")
+
     stmt = select(ProductionOrder).where(
-        ProductionOrder.id == of_id,
+        ProductionOrder.legacy_id == legacy_id_int,
         ProductionOrder.tenant_id == tenant_id,
     )
     result = await session.execute(stmt)
@@ -116,7 +121,7 @@ async def cancel_work_order(
         session,
         tenant_id=tenant_id,
         entity_type="production_order",
-        entity_id=of_id,
+        entity_id=order.id,
         action="UPDATE",
         old_values={"status": old_status},
         new_values={
@@ -130,11 +135,11 @@ async def cancel_work_order(
     await _emit_outbox(
         session,
         tenant_id=tenant_id,
-        aggregate_id=of_id,
+        aggregate_id=order.id,
         aggregate_type="production_order",
         event_type="production_order.cancelled",
         payload={
-            "of_id": str(of_id),
+            "of_id": of_id,
             "reason": reason,
             "cancelled_by": user_id,
             "cancelled_at": now.isoformat(),
@@ -143,7 +148,7 @@ async def cancel_work_order(
 
     return CancelResult(
         success=True,
-        entity_id=str(of_id),
+        entity_id=of_id,
         action="cancel_work_order",
         cancelled_at=now,
         audit_trace_id=audit_row.trace_id,
@@ -225,46 +230,57 @@ async def cancel_encomenda(
 async def retire_boat(
     session: AsyncSession,
     *,
-    boat_id: UUID,
+    boat_id: str,
     reason: str,
     tenant_id: UUID,
     user_id: str,
 ) -> CancelResult:
-    """Retira barco/modelo de produção (soft-flag).
+    """Retira barco de produção (soft-cancel).
 
+    Convenção Q.115.X5: "barco" = ProductionOrder com completed_date populada.
+    Identificado por legacy_id (inteiro como string) — igual ao devolvido pela lista.
     Não DROP — mantém histórico para ML.
     """
-    stmt = select(Product).where(
-        Product.id == boat_id,
-        Product.tenant_id == tenant_id,
+    try:
+        legacy_id_int = int(boat_id)
+    except (ValueError, TypeError):
+        raise LookupError(f"Barco '{boat_id}' não encontrado.")
+
+    stmt = select(ProductionOrder).where(
+        ProductionOrder.legacy_id == legacy_id_int,
+        ProductionOrder.tenant_id == tenant_id,
+        ProductionOrder.completed_date.is_not(None),
     )
     result = await session.execute(stmt)
-    product = result.scalar_one_or_none()
+    order = result.scalar_one_or_none()
 
-    if product is None:
-        raise LookupError(f"Barco/produto '{boat_id}' não encontrado.")
+    if order is None:
+        raise LookupError(f"Barco '{boat_id}' não encontrado.")
+
+    if order.cancelled_at is not None:
+        raise ValueError(f"Barco '{boat_id}' já está retirado.")
 
     now = _now()
-    old_status = product.status.value if hasattr(product.status, "value") else str(product.status)
+    old_status = order.status.value if hasattr(order.status, "value") else str(order.status)
 
-    product.status = ProductStatus.INACTIVE
-    product.retired_at = now
-    product.retired_by = user_id
-    product.retirement_reason = reason
+    order.status = OrderStatus.CANCELLED
+    order.cancelled_at = now
+    order.cancelled_by = user_id
+    order.cancellation_reason = reason
 
     await session.flush()
 
     audit_row = await audit_change(
         session,
         tenant_id=tenant_id,
-        entity_type="product",
-        entity_id=boat_id,
+        entity_type="production_order",
+        entity_id=order.id,
         action="UPDATE",
-        old_values={"status": old_status, "retired_at": None},
+        old_values={"status": old_status, "cancelled_at": None},
         new_values={
-            "status": "INACTIVE",
-            "retired_at": now.isoformat(),
-            "retirement_reason": reason[:200],
+            "status": "CANCELLED",
+            "cancelled_at": now.isoformat(),
+            "cancellation_reason": reason[:200],
         },
         actor_id=None,
         reason="retire_boat",
@@ -273,11 +289,11 @@ async def retire_boat(
     await _emit_outbox(
         session,
         tenant_id=tenant_id,
-        aggregate_id=boat_id,
-        aggregate_type="product",
+        aggregate_id=order.id,
+        aggregate_type="production_order",
         event_type="product.retired",
         payload={
-            "boat_id": str(boat_id),
+            "boat_id": boat_id,
             "reason": reason,
             "retired_by": user_id,
             "retired_at": now.isoformat(),
@@ -286,7 +302,7 @@ async def retire_boat(
 
     return CancelResult(
         success=True,
-        entity_id=str(boat_id),
+        entity_id=boat_id,
         action="retire_boat",
         cancelled_at=now,
         audit_trace_id=audit_row.trace_id,
