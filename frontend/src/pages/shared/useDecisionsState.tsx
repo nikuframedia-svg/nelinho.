@@ -77,13 +77,7 @@ export function useDecisionsState() {
   // because the UI flow is "select pending decisions, OK them all".
   const bulkApproveMutation = useMutation({
     mutationFn: (ids: string[]) =>
-      decisionsApi.bulkAct(
-        ids.map((id) => ({
-          decision_id: id,
-          action: 'approve',
-          reason: 'Bulk approve via Timeline',
-        })),
-      ),
+      decisionsApi.bulkAct(ids, 'approve', 'Bulk approve via Timeline'),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['decisions'] });
       setSelectedIds(new Set());

@@ -362,21 +362,24 @@ export function DecisionsPage() {
                   aprovar". Only available on PROPOSED decisions; APPROVED/
                   EXECUTED ones are immutable by design. Operator clicks
                   "Editar payload", JSON editor opens with the current
-                  action_data, edits, gives a reason ≥10 chars, saves.
+                  after_state, edits, gives a reason ≥10 chars, saves.
                   The decision stays PROPOSED — operator can then approve
-                  in the same flow with the modified payload. */}
+                  in the same flow with the modified payload. (Q.130.I:
+                  `shared.decision_runs` guarda o payload em `after_state`.) */}
               {selectedDecision.status === 'PROPOSED' ? (
                 <div className="border-t border-border-subtle pt-4">
                   <div className="flex items-center justify-between mb-2">
                     <h4 className="text-sm font-semibold text-text-secondary">
-                      Action Data
+                      Payload (after_state)
                     </h4>
                     <button
                       type="button"
                       onClick={() => {
                         if (!modifyOpen) {
+                          // Q.130.I — `shared.decision_runs` guarda o payload
+                          // editável em `after_state` (não há `action_data`).
                           setModifyDraft(
-                            JSON.stringify(selectedDecision.action_data ?? {}, null, 2),
+                            JSON.stringify(selectedDecision.after_state ?? {}, null, 2),
                           );
                           setModifyReason('');
                         }
@@ -450,7 +453,7 @@ export function DecisionsPage() {
                     </div>
                   ) : (
                     <pre className="text-xs font-mono bg-bg-elevated p-3 rounded text-text-tertiary max-h-40 overflow-auto">
-                      {JSON.stringify(selectedDecision.action_data ?? {}, null, 2)}
+                      {JSON.stringify(selectedDecision.after_state ?? {}, null, 2)}
                     </pre>
                   )}
                 </div>

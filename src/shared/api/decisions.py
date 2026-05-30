@@ -82,6 +82,34 @@ class DecisionApprovalRequest(BaseModel):
     comment: Optional[str] = None
 
 
+class BulkActRequest(BaseModel):
+    """Q.130.I — aprovar/rejeitar várias decisões `shared.decision_runs`
+    numa só chamada.
+
+    O hub (DecisionsPage) lista decisões de `GET /v1/decisions` (tabela
+    `shared.decision_runs`). O bulk antigo apontava para
+    `/v1/governance/decisions/bulk`, que opera na tabela DIFERENTE
+    `governance.decision_run` — os ids nunca cruzavam, devolvendo sempre
+    "0 ok, N falhou". Este endpoint opera na MESMA tabela que o list.
+
+    Per-item: uma falha numa decisão (não-PROPOSED, SoD, id inexistente)
+    NÃO aborta as restantes — cada uma traz `{decision_id, status, error}`.
+    """
+
+    decision_ids: List[str] = Field(..., min_length=1)
+    action: str = "approve"  # "approve" | "reject"
+    reason: Optional[str] = None
+
+
+class ModifyPayloadRequest(BaseModel):
+    """Q.130.I — editar o payload (`after_state`) de uma decisão PROPOSED
+    antes de aprovar (Plan v4 §8 WG05). `reason` ≥10 chars alimenta o
+    audit trail."""
+
+    patch: Dict[str, Any] = Field(default_factory=dict)
+    reason: str = Field(..., min_length=10)
+
+
 # ============================================================================
 # ENDPOINTS
 # ============================================================================
@@ -368,6 +396,179 @@ async def approve_decision(
             if is_reject
             else "Decision approved successfully"
         ),
+    }
+
+
+@router.post("/bulk", status_code=status.HTTP_200_OK)
+async def bulk_act_decisions(
+    request: BulkActRequest,
+    tenant_id: UUID = Depends(get_tenant_id),
+    user_id: UUID = Depends(get_user_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Q.130.I — bulk approve/reject de decisões `shared.decision_runs`.
+
+    Per-item: cada decisão é processada independentemente. Falhas (id
+    inexistente, status != PROPOSED, SoD) são reportadas no item, não
+    levantam 500. Cada transição escreve `audit_change` na MESMA tx
+    (invariante 7, Q.61.18).
+    """
+    from src.shared.auth.rbac import check_sod, Role
+
+    is_reject = (request.action or "approve").lower() == "reject"
+    approval_status = (
+        ApprovalStatus.REJECTED.value if is_reject else ApprovalStatus.APPROVED.value
+    )
+    target_status = (
+        DecisionStatus.REJECTED.value if is_reject else DecisionStatus.APPROVED.value
+    )
+
+    results: List[Dict[str, Any]] = []
+
+    for raw_id in request.decision_ids:
+        # id mal-formado → falha do item, não 500 da chamada inteira.
+        try:
+            decision_id = UUID(str(raw_id))
+        except (ValueError, AttributeError, TypeError):
+            results.append({"decision_id": str(raw_id), "status": "error", "error": "invalid id"})
+            continue
+
+        decision = await session.get(SharedDecisionRun, decision_id)
+        if not decision or decision.tenant_id != tenant_id:
+            results.append({"decision_id": str(raw_id), "status": "error", "error": "not found"})
+            continue
+
+        if decision.status != DecisionStatus.PROPOSED.value:
+            results.append({
+                "decision_id": str(raw_id),
+                "status": "error",
+                "error": f"cannot act on status {decision.status}",
+            })
+            continue
+
+        # SoD — mesma política simplificada que o approve single.
+        is_valid, error_message = check_sod(
+            action_type=decision.action_type,
+            proposer_id=decision.proposed_by,
+            proposer_role=Role.OPERATOR,
+            approver_id=user_id,
+            approver_role=Role.MANAGER_OPERATIONS,
+        )
+        if not is_valid:
+            results.append({
+                "decision_id": str(raw_id),
+                "status": "error",
+                "error": error_message or "SoD check failed",
+            })
+            continue
+
+        async with session.begin_nested():
+            existing_q = select(DecisionApproval).where(
+                DecisionApproval.decision_id == decision_id,
+                DecisionApproval.approver_id == user_id,
+            )
+            existing = (await session.execute(existing_q)).scalar_one_or_none()
+            if existing is not None:
+                existing.status = approval_status
+                existing.comment = request.reason
+                existing.approved_at = datetime.utcnow()
+            else:
+                session.add(DecisionApproval(
+                    decision_id=decision_id,
+                    approver_id=user_id,
+                    status=approval_status,
+                    comment=request.reason,
+                    approved_at=datetime.utcnow(),
+                ))
+
+            old_status = decision.status
+            decision.status = target_status
+
+            await audit_change(
+                session,
+                tenant_id=tenant_id,
+                entity_type="decision_run",
+                entity_id=decision.id,
+                action="UPDATE",
+                old_values={"status": old_status},
+                new_values={"status": target_status},
+                actor_id=user_id,
+                reason=request.reason or ("bulk reject" if is_reject else "bulk approve"),
+            )
+
+        results.append({"decision_id": str(decision_id), "status": "ok"})
+
+    await session.commit()
+
+    ok = sum(1 for r in results if r["status"] == "ok")
+    logger.info(
+        "Bulk %s: %d ok, %d failed (actor=%s)",
+        "reject" if is_reject else "approve", ok, len(results) - ok, user_id,
+    )
+    return {"ok": ok, "failed": len(results) - ok, "results": results}
+
+
+@router.patch("/{decision_id}/payload", status_code=status.HTTP_200_OK)
+async def modify_decision_payload(
+    decision_id: UUID,
+    request: ModifyPayloadRequest,
+    tenant_id: UUID = Depends(get_tenant_id),
+    user_id: UUID = Depends(get_user_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Q.130.I — editar o payload (`after_state`) de uma decisão PROPOSED
+    antes de aprovar (Plan v4 §8 WG05).
+
+    Opera em `shared.decision_runs` (a mesma tabela do list/approve do
+    hub) — o antigo `/v1/governance/decisions/{id}/payload` mexia em
+    `governance.decision_run` e dava 400 "not found" para ids do hub.
+    O patch é merge raso em `after_state`; a edição é auditada na MESMA
+    tx (invariante 7).
+    """
+    decision = await session.get(SharedDecisionRun, decision_id)
+
+    if not decision or decision.tenant_id != tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Decision not found",
+        )
+
+    if decision.status != DecisionStatus.PROPOSED.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Payload editável só em PROPOSED. Estado actual: {decision.status}",
+        )
+
+    async with session.begin_nested():
+        old_after = dict(decision.after_state or {})
+        new_after = {**old_after, **request.patch}
+        # Reatribuir (não mutar in-place) para o SQLAlchemy detetar o dirty JSONB.
+        decision.after_state = new_after
+
+        await audit_change(
+            session,
+            tenant_id=tenant_id,
+            entity_type="decision_run",
+            entity_id=decision.id,
+            action="UPDATE",
+            old_values={"after_state": old_after},
+            new_values={"after_state": new_after},
+            actor_id=user_id,
+            reason=request.reason,
+        )
+
+    await session.commit()
+
+    logger.info("Decision payload modified: id=%s, actor=%s", decision_id, user_id)
+
+    return {
+        "id": str(decision.id),
+        "title": decision.title,
+        "action_type": decision.action_type,
+        "target": decision.target,
+        "status": decision.status,
+        "before_state": decision.before_state,
+        "after_state": decision.after_state,
     }
 
 
