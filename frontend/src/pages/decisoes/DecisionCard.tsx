@@ -37,11 +37,14 @@ export function DecisionCard({
   onApprove,
   onReject,
   isPending,
+  canWrite = true,
 }: {
   decision: DecisionRun;
   onApprove: (id: string) => void;
   onReject: (id: string) => void;
   isPending: boolean;
+  /** false quando o utilizador está em modo read-only (ex: vista CEO). */
+  canWrite?: boolean;
 }) {
   const sb = (decision.sandbox_result ?? {}) as {
     confidence?: number;
@@ -165,16 +168,16 @@ export function DecisionCard({
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', borderTop: '1px solid var(--bd-1)', minHeight: 56, marginTop: 'auto' }}>
         <button
           type="button"
-          onClick={() => onReject(decision.id)}
-          disabled={isPending}
+          onClick={() => canWrite && onReject(decision.id)}
+          disabled={isPending || !canWrite}
           aria-label={`Rejeitar decisão: ${decision.title ?? ''}`}
           style={{
             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 56,
             background: 'var(--red-bg)', color: 'var(--red)', border: 'none', borderRight: '1px solid var(--bd-1)',
-            cursor: isPending ? 'not-allowed' : 'pointer', opacity: isPending ? 0.6 : 1,
+            cursor: (isPending || !canWrite) ? 'not-allowed' : 'pointer', opacity: (isPending || !canWrite) ? 0.4 : 1,
             fontSize: 15, fontWeight: 600, transition: 'background 0.12s',
           }}
-          onMouseEnter={(e) => { if (!isPending) e.currentTarget.style.background = 'var(--red)'; }}
+          onMouseEnter={(e) => { if (!isPending && canWrite) e.currentTarget.style.background = 'var(--red)'; }}
           onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--red-bg)'; }}
         >
           <X size={18} />
@@ -182,16 +185,16 @@ export function DecisionCard({
         </button>
         <button
           type="button"
-          onClick={() => onApprove(decision.id)}
-          disabled={isPending}
+          onClick={() => canWrite && onApprove(decision.id)}
+          disabled={isPending || !canWrite}
           aria-label={`Aprovar decisão: ${decision.title ?? ''}`}
           style={{
             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 56,
             background: 'var(--green-bg)', color: 'var(--green)', border: 'none',
-            cursor: isPending ? 'not-allowed' : 'pointer', opacity: isPending ? 0.6 : 1,
+            cursor: (isPending || !canWrite) ? 'not-allowed' : 'pointer', opacity: (isPending || !canWrite) ? 0.4 : 1,
             fontSize: 15, fontWeight: 600, transition: 'background 0.12s',
           }}
-          onMouseEnter={(e) => { if (!isPending) e.currentTarget.style.background = 'var(--green)'; }}
+          onMouseEnter={(e) => { if (!isPending && canWrite) e.currentTarget.style.background = 'var(--green)'; }}
           onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--green-bg)'; }}
         >
           <Check size={18} />

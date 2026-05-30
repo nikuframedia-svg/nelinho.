@@ -22,6 +22,7 @@ import { decisionKeys } from '../../lib/api/keys';
 import { decisionsApi, type DecisionRun } from '../../lib/api';
 import { PageHeader, Tabs, DarkButton, EmptyState } from '../../components/dark';
 import { useTabRouting } from '../../hooks/useTabRouting';
+import { useUmwelt } from '../../lib/umwelt';
 import SimulacoesTab from './SimulacoesTab';
 import HistoricoTab from './HistoricoTab';
 import { DecisionCard } from './DecisionCard';
@@ -48,6 +49,8 @@ function DecidirTab() {
   const queryClient = useQueryClient();
   const reducedMotion = usePrefersReducedMotion();
   const variants = reducedMotion ? reducedVariants : cardVariants;
+  const { isReadOnly } = useUmwelt();
+  const canWrite = !isReadOnly;
 
   const query = useQuery({
     queryKey: decisionKeys.list({ status: 'PROPOSED' }),
@@ -158,6 +161,7 @@ function DecidirTab() {
                     onApprove={(id) => approveMutation.mutate(id)}
                     onReject={(id) => rejectMutation.mutate(id)}
                     isPending={isPending}
+                    canWrite={canWrite}
                   />
                 </motion.div>
               ))}
