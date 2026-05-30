@@ -15,7 +15,11 @@ existentes; sem novo modelo. Routing congelado Q.84-92 fica intocado.
 """
 from __future__ import annotations
 
+import asyncio
+import calendar
 import logging
+from dataclasses import dataclass
+from datetime import date
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, status
@@ -199,3 +203,182 @@ async def ask_cube(
 async def ask_cube_dev(request: AskCubeRequest) -> AskCubeResponse:
     """Q.93.C — `/ask-dev-cube` (sem auth, dev-only). Mesmo pipeline."""
     return await _process(request.question)
+
+
+# ────────────────────────── Dashboard de KPIs (Q.R) ──────────────────────────
+# A página de KPIs (/llm) deixa de usar o caminho legacy `/v1/profit/kpis/*`
+# (quase vazio) e passa a mostrar as MEASURES REAIS do Cube. Este endpoint corre
+# um conjunto CURADO e DETERMINÍSTICO de CubeQueries (sem LLM) em paralelo e
+# devolve cards (valor actual) + séries para gráficos. Cada query degrada de
+# forma honesta: se o mart não estiver populado, o card/gráfico vem `no_data`.
+
+
+@dataclass(frozen=True)
+class _CardSpec:
+    key: str
+    label: str
+    unit: str          # "", "%", "€"
+    measure: str       # ex: "producao_ofs_em_curso.total"
+    period: str        # "none" (agregado) | "month" (mês corrente)
+
+
+@dataclass(frozen=True)
+class _ChartSpec:
+    key: str
+    label: str
+    kind: str          # "line" | "bar"
+    measure: str
+    group: str         # "month:<dim.data>" | "dim:<dim>"
+
+
+# Cards: indicadores reais de operações com dados do NELO (OFs em curso, taxa de
+# defeitos, faturação, consumo, backlog, lead time, expedições).
+_CARD_SPECS: tuple[_CardSpec, ...] = (
+    _CardSpec("ofs_em_curso", "OFs em curso", "", "producao_ofs_em_curso.total", "none"),
+    _CardSpec("taxa_defeitos", "Taxa de defeitos", "%", "qualidade.taxa_defeitos", "none"),
+    _CardSpec("facturacao_mes", "Faturação (mês)", "€", "comercial_facturacao.total", "month"),
+    _CardSpec("consumo_custo_mes", "Custo de consumo (mês)", "€", "consumo_material.custo", "month"),
+    _CardSpec("backlog", "Backlog", "", "planeamento_backlog.total", "none"),
+    _CardSpec("lead_time_p50", "Lead time mediano (P50)", "", "producao_lead_time_of.lead_time_p50", "none"),
+    _CardSpec("ofs_expedidas_mes", "OFs expedidas (mês)", "", "logistica_ofs_expedidas.total", "month"),
+)
+
+# Gráficos: séries temporais (mês) e por fase.
+_CHART_SPECS: tuple[_ChartSpec, ...] = (
+    _ChartSpec("facturacao_mensal", "Faturação por mês", "line",
+               "comercial_facturacao_mom.facturado_eur", "month:comercial_facturacao_mom.data"),
+    _ChartSpec("ofs_por_fase", "OFs por fase", "bar",
+               "producao_ofs_por_fase.total", "dim:producao_ofs_por_fase.fase"),
+    _ChartSpec("defeitos_por_fase", "Taxa de defeitos por fase", "bar",
+               "qualidade.taxa_defeitos", "dim:qualidade.fase"),
+    _ChartSpec("consumo_mensal", "Consumo de material por mês", "line",
+               "consumo_material.consumo", "month:consumo_material.data"),
+)
+
+
+class DashboardCard(BaseModel):
+    key: str
+    label: str
+    unit: str
+    value: float | None
+    status: Literal["ok", "no_data", "error"]
+
+
+class DashboardSeriesPoint(BaseModel):
+    x: str
+    y: float | None
+
+
+class DashboardChart(BaseModel):
+    key: str
+    label: str
+    kind: Literal["line", "bar"]
+    series: list[DashboardSeriesPoint] = Field(default_factory=list)
+    status: Literal["ok", "no_data", "error"]
+
+
+class DashboardResponse(BaseModel):
+    cards: list[DashboardCard] = Field(default_factory=list)
+    charts: list[DashboardChart] = Field(default_factory=list)
+
+
+def _safe_float(v: Any) -> float | None:
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _current_month_range(today: date) -> tuple[str, str]:
+    last = calendar.monthrange(today.year, today.month)[1]
+    return today.replace(day=1).isoformat(), today.replace(day=last).isoformat()
+
+
+def _last_12_months_range(today: date) -> tuple[str, str]:
+    y, m = today.year, today.month - 11
+    while m <= 0:
+        m += 12
+        y -= 1
+    return date(y, m, 1).isoformat(), today.isoformat()
+
+
+async def _run_card(cube: CubeClient, spec: _CardSpec, today: date) -> DashboardCard:
+    payload: dict[str, Any] = {"measures": [spec.measure]}
+    if spec.period == "month":
+        start, end = _current_month_range(today)
+        dim = f"{spec.measure.split('.', 1)[0]}.data"
+        payload["timeDimensions"] = [{"dimension": dim, "dateRange": [start, end]}]
+    try:
+        result = await cube.load(payload)
+        if not result.data:
+            return DashboardCard(key=spec.key, label=spec.label, unit=spec.unit,
+                                 value=None, status="no_data")
+        value = _safe_float(result.data[0].get(spec.measure))
+        return DashboardCard(key=spec.key, label=spec.label, unit=spec.unit,
+                             value=value, status="ok" if value is not None else "no_data")
+    except Exception:
+        logger.warning("dashboard card %s falhou", spec.key, exc_info=True)
+        return DashboardCard(key=spec.key, label=spec.label, unit=spec.unit,
+                             value=None, status="error")
+
+
+async def _run_chart(cube: CubeClient, spec: _ChartSpec, today: date) -> DashboardChart:
+    mode, ref = spec.group.split(":", 1)
+    payload: dict[str, Any] = {"measures": [spec.measure]}
+    if mode == "month":
+        start, end = _last_12_months_range(today)
+        payload["timeDimensions"] = [
+            {"dimension": ref, "dateRange": [start, end], "granularity": "month"}
+        ]
+        payload["order"] = [[ref, "asc"]]
+    else:  # dim
+        payload["dimensions"] = [ref]
+        payload["order"] = [[spec.measure, "desc"]]
+        payload["limit"] = 20
+    try:
+        result = await cube.load(payload)
+        series: list[DashboardSeriesPoint] = []
+        for row in result.data:
+            if mode == "month":
+                raw_x = row.get(f"{ref}.month") or row.get(ref)
+                x = str(raw_x)[:7] if raw_x else "—"
+            else:
+                x = str(row.get(ref) or "—")
+            series.append(DashboardSeriesPoint(x=x, y=_safe_float(row.get(spec.measure))))
+        return DashboardChart(key=spec.key, label=spec.label, kind=spec.kind,
+                              series=series, status="ok" if series else "no_data")
+    except Exception:
+        logger.warning("dashboard chart %s falhou", spec.key, exc_info=True)
+        return DashboardChart(key=spec.key, label=spec.label, kind=spec.kind,
+                              series=[], status="error")
+
+
+@router.get(
+    "/cube/dashboard-dev",
+    response_model=DashboardResponse,
+    include_in_schema=False,
+    dependencies=[Depends(dev_only)],
+)
+async def cube_dashboard_dev() -> DashboardResponse:
+    """Q.R — dashboard de KPIs reais do Cube (dev-only, sem LLM, sem auth).
+
+    Corre cards + gráficos curados em paralelo contra o Cube REST. Reusa
+    `CubeClient` (queries determinísticas). Degrada por item quando um mart
+    ainda não está populado.
+    """
+    today = date.today()
+    cube = CubeClient()
+    try:
+        results = await asyncio.gather(
+            *[_run_card(cube, s, today) for s in _CARD_SPECS],
+            *[_run_chart(cube, s, today) for s in _CHART_SPECS],
+        )
+    finally:
+        await cube.close()
+    n_cards = len(_CARD_SPECS)
+    return DashboardResponse(
+        cards=list(results[:n_cards]),
+        charts=list(results[n_cards:]),
+    )
