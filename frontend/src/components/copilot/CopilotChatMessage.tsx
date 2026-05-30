@@ -56,13 +56,16 @@ function ResponseBody({
   onAction: (action: CopilotResponse['actions'][number]) => void;
   actionPending: boolean;
 }): ReactNode {
-  const charts = response.charts ?? [];
+  const charts = response?.charts ?? [];
+  const facts = response?.facts ?? [];
+  const actions = response?.actions ?? [];
+  const warnings = response?.warnings ?? [];
   return (
     <div className="mt-2 flex flex-col gap-3">
       {/* Factos com citações */}
-      {response.facts.length > 0 && (
+      {facts.length > 0 && (
         <div className="flex flex-col gap-2">
-          {response.facts.map((fact, i) => (
+          {facts.map((fact, i) => (
             <div
               key={i}
               className="rounded-md border border-bd-1 bg-bg-2 px-3 py-2"
@@ -98,9 +101,9 @@ function ResponseBody({
       )}
 
       {/* Cartões de acção */}
-      {response.actions.length > 0 && (
+      {actions.length > 0 && (
         <div className="flex flex-col gap-2">
-          {response.actions.map((a, i) => (
+          {actions.map((a, i) => (
             <div
               key={i}
               className="rounded-md border border-bd-2 bg-bg-2 px-3 py-2.5 flex items-center justify-between gap-3"
@@ -128,9 +131,9 @@ function ResponseBody({
       )}
 
       {/* Avisos honestos */}
-      {response.warnings.length > 0 && (
+      {warnings.length > 0 && (
         <div className="flex flex-col gap-1.5">
-          {response.warnings.map((w, i) => (
+          {warnings.map((w, i) => (
             <div
               key={i}
               className="rounded-md border border-yellow-bd bg-yellow-bg px-3 py-2 flex items-start gap-2"
@@ -215,8 +218,8 @@ export function CopilotChatMessage({
           {r && (
             <>
               <span>·</span>
-              <span>{r.meta.model}</span>
-              {r.meta.latency_ms > 0 && (
+              <span>{r.meta?.model}</span>
+              {(r.meta?.latency_ms ?? 0) > 0 && (
                 <>
                   <span>·</span>
                   <span>{(r.meta.latency_ms / 1000).toFixed(1)}s</span>

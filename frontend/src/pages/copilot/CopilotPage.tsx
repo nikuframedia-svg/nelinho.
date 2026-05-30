@@ -254,7 +254,14 @@ export default function CopilotPage() {
         (m.content_structured as CopilotResponse | null)?.summary ||
         '',
       when: clockLabel(new Date(m.created_at).getTime()),
-      response: (m.content_structured as CopilotResponse | null) ?? undefined,
+      response: (
+        m.content_structured &&
+        typeof m.content_structured === 'object' &&
+        'summary' in (m.content_structured as object) &&
+        'meta' in (m.content_structured as object)
+          ? (m.content_structured as CopilotResponse)
+          : undefined
+      ),
     }));
     // Pergunta em curso lançada antes (outro mount): a transacção do
     // servidor só commita pergunta+resposta juntas no fim. Enquanto não

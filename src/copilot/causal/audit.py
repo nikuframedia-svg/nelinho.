@@ -79,12 +79,13 @@ async def persist_chain_audit(
     part of its normal lifecycle — this function only stages the row.
     """
     payload = {
+        "type": "causal_audit",
         CAUSAL_AUDIT_KEY: {
             "chain": chain.model_dump(),
             "verification": verification.model_dump(),
             "kernel_delta": kernel_delta,
             "captured_at": datetime.now(timezone.utc).isoformat(),
-        }
+        },
     }
     msg = CopilotMessage(
         id=uuid4(),
