@@ -46,6 +46,7 @@ from scripts.q75_setup_raw_mirror import (
     RawTable,
     _coerce_value,
     _reflect_columns,
+    _refresh_table_atomic,
 )
 from src.adapters.nelo.services import get_engine
 from src.shared.config import settings
@@ -66,62 +67,10 @@ async def _mirror_table_comercial(
     pg_conn: asyncpg.Connection,
     spec: RawTable,
 ) -> dict[str, Any]:
-    """Espelha 1 tabela NELO Comercial → factory_raw. Devolve stats."""
-    t0 = time.monotonic()
-    cols = await _reflect_columns(sql_engine, spec.nelo_name)
-    if not cols:
-        return {
-            "table": spec.nelo_name,
-            "status": "error",
-            "error": "0 colunas reflectidas — tabela existe em MAR-KAYAKS?",
-        }
-
-    col_names = [c[0] for c in cols]
-    pg_table = spec.pg_name
-
-    col_defs = ", ".join(f'"{name}" {pgtype}' for name, pgtype in cols)
-    await pg_conn.execute(f'DROP TABLE IF EXISTS factory_raw."{pg_table}"')
-    await pg_conn.execute(
-        f'CREATE TABLE factory_raw."{pg_table}" ({col_defs}, '
-        f"_synced_at timestamptz DEFAULT now())",
-    )
-
-    select_cols = ", ".join(f"[{c}]" for c in col_names)
-    select_sql = text(f"SELECT {select_cols} FROM [{spec.nelo_name}]")
-
-    total = 0
-    async with sql_engine.connect() as conn:
-        result = await conn.stream(select_sql)
-        batch: list[tuple] = []
-        async for row in result:
-            batch.append(tuple(_coerce_value(v) for v in row))
-            if len(batch) >= READ_CHUNK:
-                await pg_conn.copy_records_to_table(
-                    pg_table,
-                    schema_name="factory_raw",
-                    columns=col_names,
-                    records=batch,
-                )
-                total += len(batch)
-                batch = []
-        if batch:
-            await pg_conn.copy_records_to_table(
-                pg_table,
-                schema_name="factory_raw",
-                columns=col_names,
-                records=batch,
-            )
-            total += len(batch)
-
-    elapsed = time.monotonic() - t0
-    return {
-        "table": spec.nelo_name,
-        "pg_table": f"factory_raw.{pg_table}",
-        "status": "ok",
-        "cols": len(cols),
-        "rows": total,
-        "elapsed_s": round(elapsed, 1),
-    }
+    """Espelha 1 tabela NELO Comercial → factory_raw (Q.125: refresh atómico
+    DROP-free, partilhado com q75 — seguro com as marts que dependem destas
+    tabelas; corre de 5/5 min no scheduler sem janela de leitura vazia)."""
+    return await _refresh_table_atomic(sql_engine, pg_conn, spec)
 
 
 # ─── Sanity pós-espelhamento ────────────────────────────────────────────

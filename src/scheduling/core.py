@@ -37,8 +37,11 @@ from src.scheduling.jobs.ml import (
     _quality_risk_scoring_job,
 )
 from src.scheduling.jobs.nelo_erp import (
+    _nelo_erp_comercial_job,
     _nelo_erp_incremental_sync_job,
+    _nelo_erp_logistica_job,
     _nelo_erp_phase_history_incremental_job,
+    _nelo_erp_raw_incremental_job,
     _nelo_erp_sync_job,
     _nelo_erp_time_mining_job,
 )
@@ -186,6 +189,39 @@ def start_scheduler(
         trigger=IntervalTrigger(minutes=15),
         id="nelo_erp_phase_history_incremental",
         name="nelo_erp_phase_history_incremental",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Q.125 — sync de 5/5 min dos dados PESADOS do ERP que alimentam o
+    # dashboard/copiloto (factory_raw + faturação PHC + logística). O sync
+    # incremental Q.54.A só cobria os mirrors ORM operacionais; estes três
+    # estavam em scripts manuais e ficavam stale. Tudo DROP-free (upsert/
+    # TRUNCATE) → seguro com as marts (VIEWs live sobre factory_raw).
+    # coalesce + max_instances=1 evitam acumular. No-op se sqlserver_enabled=False.
+    _scheduler.add_job(
+        _nelo_erp_raw_incremental_job,
+        trigger=IntervalTrigger(minutes=5),
+        id="nelo_erp_raw_incremental",
+        name="nelo_erp_raw_incremental",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    _scheduler.add_job(
+        _nelo_erp_comercial_job,
+        trigger=IntervalTrigger(minutes=5),
+        id="nelo_erp_comercial",
+        name="nelo_erp_comercial",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    _scheduler.add_job(
+        _nelo_erp_logistica_job,
+        trigger=IntervalTrigger(minutes=5),
+        id="nelo_erp_logistica",
+        name="nelo_erp_logistica",
         replace_existing=True,
         coalesce=True,
         max_instances=1,

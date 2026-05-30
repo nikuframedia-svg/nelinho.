@@ -173,6 +173,92 @@ async def _nelo_erp_phase_history_incremental_job() -> None:
         )
 
 
+async def _nelo_erp_raw_incremental_job() -> None:
+    """Q.125 — refresh incremental de 5/5 min das tabelas `factory_raw` de alta
+    velocidade (ordemfabrico/of_fp/movimento/of_checklist/transporte) por upsert
+    da janela recente. Alimenta o dashboard/copiloto — as marts são VIEWs live
+    sobre `factory_raw`, logo ficam frescas sem re-correr `setup_marts_*`.
+
+    DROP-free (upsert por PK) → sem janela de leitura vazia para as views.
+    No-op quando ``sqlserver_enabled=False``.
+    """
+    from src.shared.config import settings
+
+    if not settings.sqlserver_enabled:
+        logger.debug("nelo_erp_raw_incremental skipped — sqlserver_enabled=False")
+        return
+
+    from scripts.q75_setup_raw_mirror import setup as raw_setup
+
+    started = datetime.utcnow()
+    try:
+        results = await raw_setup(incremental=True)
+        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        failed = [r["table"] for r in results if r.get("status") != "ok"]
+        new = sum(r.get("rows_inserted", 0) for r in results)
+        logger.info(
+            "nelo_erp_raw_incremental tables=%s new=%s failed=%s elapsed_ms=%s",
+            [r["table"] for r in results], new, failed or "none", elapsed_ms,
+        )
+    except Exception as exc:
+        logger.error("nelo_erp_raw_incremental failed: %s", exc, exc_info=True)
+
+
+async def _nelo_erp_comercial_job() -> None:
+    """Q.125 — refresh de 5/5 min do espelho Comercial (PHC: faturação,
+    entidades). Full refresh ATÓMICO (TRUNCATE+COPY, DROP-free) — seguro com as
+    marts de faturação dependentes. Tabelas ≤100k → ~1-2 s. No-op se
+    ``sqlserver_enabled=False``.
+    """
+    from src.shared.config import settings
+
+    if not settings.sqlserver_enabled:
+        logger.debug("nelo_erp_comercial skipped — sqlserver_enabled=False")
+        return
+
+    from scripts.q102_setup_comercial_mirror import setup as comercial_setup
+
+    started = datetime.utcnow()
+    try:
+        report = await comercial_setup()
+        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        mirror = report.get("mirror", [])
+        failed = [r["table"] for r in mirror if r.get("status") != "ok"]
+        logger.info(
+            "nelo_erp_comercial tables=%s failed=%s elapsed_ms=%s",
+            [r["table"] for r in mirror], failed or "none", elapsed_ms,
+        )
+    except Exception as exc:
+        logger.error("nelo_erp_comercial failed: %s", exc, exc_info=True)
+
+
+async def _nelo_erp_logistica_job() -> None:
+    """Q.125 — refresh de 5/5 min do espelho Logística (transportes, expedições).
+    Full refresh ATÓMICO (TRUNCATE+COPY, DROP-free). No-op se
+    ``sqlserver_enabled=False``.
+    """
+    from src.shared.config import settings
+
+    if not settings.sqlserver_enabled:
+        logger.debug("nelo_erp_logistica skipped — sqlserver_enabled=False")
+        return
+
+    from scripts.q104_setup_logistica_mirror import setup as logistica_setup
+
+    started = datetime.utcnow()
+    try:
+        report = await logistica_setup()
+        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        mirror = report.get("mirror", report) if isinstance(report, dict) else report
+        failed = [r["table"] for r in mirror if r.get("status") != "ok"]
+        logger.info(
+            "nelo_erp_logistica tables=%s failed=%s elapsed_ms=%s",
+            [r["table"] for r in mirror], failed or "none", elapsed_ms,
+        )
+    except Exception as exc:
+        logger.error("nelo_erp_logistica failed: %s", exc, exc_info=True)
+
+
 async def _nelo_erp_time_mining_job() -> None:
     """Q.25.D — mineracao historica de tempos (o mirror pesado, semanal).
 

@@ -39,6 +39,11 @@ from src.shared.config import settings
 WINDOW_YEARS = 2
 READ_CHUNK = 5000
 
+# Q.125: janela do refresh incremental de 5/5 min. Relê só os últimos N dias
+# de actividade (por `inc_col`) e faz upsert por `pk_col` — barato e fresco,
+# em vez de recopiar 2.5M de MOVIMENTO a cada ciclo.
+INCREMENTAL_WINDOW_DAYS = 45
+
 
 @dataclass
 class RawTable:
@@ -46,14 +51,24 @@ class RawTable:
     nelo_name: str           # nome SQL Server (case-sensitive)
     date_col: Optional[str]  # coluna de data p/ janela temporal; None = full copy
     window_years: int = WINDOW_YEARS
+    pk_col: Optional[str] = None   # Q.125: PK single-col p/ upsert incremental
+    inc_col: Optional[str] = None  # Q.125: coluna-watermark do incremental
+                                   # (update-ts de preferência; fallback date_col)
 
     @property
     def pg_name(self) -> str:
         """Nome lowercase no schema factory_raw."""
         return self.nelo_name.lower()
 
+    @property
+    def supports_incremental(self) -> bool:
+        """Tem PK single-col + coluna-watermark → pode fazer upsert incremental."""
+        return bool(self.pk_col and (self.inc_col or self.date_col))
+
 
 # Lista curada — tabelas-core de produção (não top-by-rowcount).
+# Q.125: pk_col + inc_col nas tabelas de alta velocidade → refresh incremental
+# de 5/5 min. As de PK composto / lookups mantêm full copy (nightly/atómico).
 RAW_TABLES: list[RawTable] = [
     RawTable("PRODUTO", None),
     RawTable("FASES_PRODUCAO", None),
@@ -61,11 +76,15 @@ RAW_TABLES: list[RawTable] = [
     RawTable("ENTIDADE", None),
     RawTable("PRODUTO_FASE", None),
     RawTable("PRODUTO_COMPONENTE", None),
-    RawTable("OFFP_EQ", None),                           # 1.4M mas só 3 cols
-    RawTable("ORDEMFABRICO", "OF_DATA", 2),
-    RawTable("OF_FP", "OFFP_DATAINICIO", 2),
-    RawTable("OF_CHECKLIST", "OFCH_DATA_VERIFICACAO", 1),
-    RawTable("MOVIMENTO", "MOV_DATA", 2),
+    RawTable("OFFP_EQ", None),                           # 1.4M, PK composto → nightly
+    RawTable("ORDEMFABRICO", "OF_DATA", 2,
+             pk_col="OF_ID", inc_col="OF_DATAACTUALIZACAO"),
+    RawTable("OF_FP", "OFFP_DATAINICIO", 2,
+             pk_col="OFFP_ID", inc_col="OFFP_DATAINICIO"),
+    RawTable("OF_CHECKLIST", "OFCH_DATA_VERIFICACAO", 1,
+             pk_col="OFCH_ID", inc_col="OFCH_DATA_ACTUALIZACAO"),
+    RawTable("MOVIMENTO", "MOV_DATA", 2,
+             pk_col="MOV_ID", inc_col="MOV_DATA"),
     # Q.108.M — apontamentos de horas trabalhadas (mão-de-obra real).
     # Watermark canónica: AT_DATA. O reflection q75 lê INFORMATION_SCHEMA
     # automaticamente; colunas reais são descobertas em runtime. Marts
@@ -210,14 +229,178 @@ async def _mirror_table(
     }
 
 
-async def setup(only: Optional[list[str]] = None) -> list[dict[str, Any]]:
-    """Espelha todas as RAW_TABLES (ou subset `only`)."""
+async def _mirror_table_incremental(
+    sql_engine,
+    pg_conn: asyncpg.Connection,
+    spec: RawTable,
+    window_days: int = INCREMENTAL_WINDOW_DAYS,
+) -> dict[str, Any]:
+    """Q.125 — refresh incremental: relê os últimos `window_days` por `inc_col`
+    e faz upsert por `pk_col`. Não faz DROP (a tabela vive) → sem janela de
+    leitura vazia para as views/marts que leem `factory_raw`. Idempotente.
+
+    Se a tabela ainda não existir, cai para o full mirror (primeiro arranque).
+    """
+    t0 = time.monotonic()
+    pg_table = spec.pg_name
+    inc_col = spec.inc_col or spec.date_col
+    assert spec.pk_col and inc_col, "incremental exige pk_col + inc_col"
+
+    exists = await pg_conn.fetchval(
+        "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
+        "WHERE table_schema='factory_raw' AND table_name=$1)", pg_table,
+    )
+    if not exists:
+        # Primeira vez: full mirror cria a tabela com a janela de anos.
+        return await _mirror_table(sql_engine, pg_conn, spec)
+
+    cols = await _reflect_columns(sql_engine, spec.nelo_name)
+    if not cols:
+        return {"table": spec.nelo_name, "status": "error",
+                "error": "0 colunas reflectidas"}
+    col_names = [c[0] for c in cols]
+    if spec.pk_col not in col_names:
+        return {"table": spec.nelo_name, "status": "error",
+                "error": f"pk_col {spec.pk_col} ausente das colunas"}
+
+    # Índice único no PK (idempotente) — alvo do ON CONFLICT.
+    await pg_conn.execute(
+        f'CREATE UNIQUE INDEX IF NOT EXISTS "ux_{pg_table}_pk" '
+        f'ON factory_raw."{pg_table}" ("{spec.pk_col}")'
+    )
+
+    # Lê do SQL Server só a janela recente por inc_col.
+    select_cols = ", ".join(f"[{c}]" for c in col_names)
+    select_sql = text(
+        f"SELECT {select_cols} FROM [{spec.nelo_name}] "
+        f"WHERE [{inc_col}] >= DATEADD(day, -{window_days}, GETDATE())"
+    )
+
+    # Temp table com a mesma forma (sem _synced_at) para o upsert.
+    tmp = f"_inc_{pg_table}"
+    col_defs = ", ".join(f'"{name}" {pgtype}' for name, pgtype in cols)
+    # Sem ON COMMIT DROP: asyncpg faz autocommit por statement, o que dropava a
+    # temp table logo a seguir. Cai no fecho da sessão; DROP IF EXISTS limpa.
+    await pg_conn.execute(f'DROP TABLE IF EXISTS "{tmp}"')
+    await pg_conn.execute(f'CREATE TEMP TABLE "{tmp}" ({col_defs})')
+
+    read = 0
+    async with sql_engine.connect() as conn:
+        result = await conn.stream(select_sql)
+        batch: list[tuple] = []
+        async for row in result:
+            batch.append(tuple(_coerce_value(v) for v in row))
+            if len(batch) >= READ_CHUNK:
+                await pg_conn.copy_records_to_table(
+                    tmp, columns=col_names, records=batch,
+                )
+                read += len(batch)
+                batch = []
+        if batch:
+            await pg_conn.copy_records_to_table(
+                tmp, columns=col_names, records=batch,
+            )
+            read += len(batch)
+
+    # Upsert por PK: insere novos, actualiza alterados, carimba _synced_at.
+    non_pk = [c for c in col_names if c != spec.pk_col]
+    set_clause = ", ".join(f'"{c}" = EXCLUDED."{c}"' for c in non_pk)
+    set_clause = (set_clause + ", " if set_clause else "") + '_synced_at = now()'
+    insert_cols = ", ".join(f'"{c}"' for c in col_names)
+    upsert = (
+        f'INSERT INTO factory_raw."{pg_table}" ({insert_cols}) '
+        f'SELECT {insert_cols} FROM pg_temp."{tmp}" '
+        f'ON CONFLICT ("{spec.pk_col}") DO UPDATE SET {set_clause}'
+    )
+    status_before = await pg_conn.fetchval(
+        f'SELECT COUNT(*) FROM factory_raw."{pg_table}"'
+    )
+    await pg_conn.execute(upsert)
+    status_after = await pg_conn.fetchval(
+        f'SELECT COUNT(*) FROM factory_raw."{pg_table}"'
+    )
+
+    return {
+        "table": spec.nelo_name, "pg_table": f"factory_raw.{pg_table}",
+        "status": "ok", "mode": "incremental",
+        "window_days": window_days, "rows_read": read,
+        "rows_inserted": status_after - status_before,
+        "rows_total": status_after,
+        "elapsed_s": round(time.monotonic() - t0, 1),
+    }
+
+
+async def _refresh_table_atomic(
+    sql_engine,
+    pg_conn: asyncpg.Connection,
+    spec: RawTable,
+    where: str = "",
+) -> dict[str, Any]:
+    """Q.125 — full refresh DROP-FREE e atómico: lê tudo do SQL Server, depois
+    ``TRUNCATE + COPY`` numa transação. Seguro com views/marts dependentes
+    (TRUNCATE mantém o OID da tabela; ``DROP`` falharia por dependência). O lock
+    ACCESS EXCLUSIVE só dura o COPY (in-memory), não a leitura ao ERP.
+
+    Para tabelas de PK composto / lookups (≤100k). Tabelas enormes usam o
+    incremental por upsert.
+    """
+    t0 = time.monotonic()
+    cols = await _reflect_columns(sql_engine, spec.nelo_name)
+    if not cols:
+        return {"table": spec.nelo_name, "status": "error",
+                "error": "0 colunas reflectidas"}
+    col_names = [c[0] for c in cols]
+    pg_table = spec.pg_name
+
+    col_defs = ", ".join(f'"{name}" {pgtype}' for name, pgtype in cols)
+    await pg_conn.execute(
+        f'CREATE TABLE IF NOT EXISTS factory_raw."{pg_table}" ({col_defs}, '
+        f'_synced_at timestamptz DEFAULT now())'
+    )
+
+    select_cols = ", ".join(f"[{c}]" for c in col_names)
+    select_sql = text(f"SELECT {select_cols} FROM [{spec.nelo_name}]{where}")
+
+    rows: list[tuple] = []
+    async with sql_engine.connect() as conn:
+        result = await conn.stream(select_sql)
+        async for row in result:
+            rows.append(tuple(_coerce_value(v) for v in row))
+
+    async with pg_conn.transaction():
+        await pg_conn.execute(f'TRUNCATE factory_raw."{pg_table}"')
+        if rows:
+            await pg_conn.copy_records_to_table(
+                pg_table, schema_name="factory_raw",
+                columns=col_names, records=rows,
+            )
+
+    return {
+        "table": spec.nelo_name, "pg_table": f"factory_raw.{pg_table}",
+        "status": "ok", "mode": "atomic_full", "rows": len(rows),
+        "elapsed_s": round(time.monotonic() - t0, 1),
+    }
+
+
+async def setup(
+    only: Optional[list[str]] = None,
+    incremental: bool = False,
+    window_days: int = INCREMENTAL_WINDOW_DAYS,
+) -> list[dict[str, Any]]:
+    """Espelha todas as RAW_TABLES (ou subset `only`).
+
+    Q.125: ``incremental=True`` faz upsert da janela recente nas tabelas com
+    ``supports_incremental`` (PK + watermark); as restantes são saltadas
+    (mantêm o full mirror nocturno). ``incremental=False`` = full rebuild.
+    """
     if not settings.sqlserver_enabled:
         raise SystemExit("SQLSERVER_ENABLED=False — não posso espelhar.")
 
     selected = (
         [t for t in RAW_TABLES if t.nelo_name in only] if only else RAW_TABLES
     )
+    if incremental:
+        selected = [t for t in selected if t.supports_incremental]
     sql_engine = get_engine()
 
     # asyncpg connection directa (copy_records_to_table não existe no
@@ -229,9 +412,15 @@ async def setup(only: Optional[list[str]] = None) -> list[dict[str, Any]]:
     try:
         await pg_conn.execute("CREATE SCHEMA IF NOT EXISTS factory_raw")
         for spec in selected:
-            print(f"[{spec.nelo_name}] a espelhar...", flush=True)
+            verb = "incremental" if incremental else "full"
+            print(f"[{spec.nelo_name}] a espelhar ({verb})...", flush=True)
             try:
-                stats = await _mirror_table(sql_engine, pg_conn, spec)
+                if incremental:
+                    stats = await _mirror_table_incremental(
+                        sql_engine, pg_conn, spec, window_days,
+                    )
+                else:
+                    stats = await _mirror_table(sql_engine, pg_conn, spec)
             except Exception as exc:
                 stats = {"table": spec.nelo_name, "status": "error",
                          "error": f"{type(exc).__name__}: {exc}"}
@@ -247,16 +436,26 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("--only", nargs="+", default=None,
                         help="Espelhar só estas tabelas (nomes NELO).")
+    parser.add_argument("--incremental", action="store_true",
+                        help="Q.125: upsert da janela recente (5/5 min) em vez "
+                             "de full rebuild. Só tabelas com PK+watermark.")
+    parser.add_argument("--window-days", type=int, default=INCREMENTAL_WINDOW_DAYS,
+                        help="Janela do incremental em dias (default %(default)s).")
     args = parser.parse_args()
 
-    results = asyncio.run(setup(only=args.only))
+    results = asyncio.run(setup(
+        only=args.only, incremental=args.incremental, window_days=args.window_days,
+    ))
 
     ok = [r for r in results if r["status"] == "ok"]
     err = [r for r in results if r["status"] != "ok"]
-    total_rows = sum(r.get("rows", 0) for r in ok)
+    # Full mirror reporta `rows` (copiadas); incremental reporta `rows_read`.
+    total_rows = sum(r.get("rows", r.get("rows_read", 0)) for r in ok)
+    inserted = sum(r.get("rows_inserted", 0) for r in ok)
     print()
-    print(f"=== {len(ok)}/{len(results)} tabelas espelhadas, "
-          f"{total_rows:,} linhas em factory_raw ===")
+    print(f"=== {len(ok)}/{len(results)} tabelas, {total_rows:,} linhas lidas"
+          f"{f', {inserted:,} novas (upsert)' if any('mode' in r for r in ok) else ' copiadas'}"
+          f" ===")
     for r in err:
         print(f"  FALHA {r['table']}: {r.get('error')}")
     return 0 if not err else 1
