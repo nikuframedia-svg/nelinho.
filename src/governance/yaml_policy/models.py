@@ -98,6 +98,7 @@ class TenantRule(TenantBase):
             RuleLifecycleStatus,
             name="yaml_policy_rule_status",
             values_callable=lambda enum_cls: [m.value for m in enum_cls],
+            native_enum=False,
         ),
         nullable=False,
         default=RuleLifecycleStatus.PROPOSED,
@@ -152,6 +153,7 @@ class TenantRuleRevision(TenantBase):
             RuleRevisionAction,
             name="yaml_policy_rule_revision_action",
             values_callable=lambda enum_cls: [m.value for m in enum_cls],
+            native_enum=False,
         ),
         nullable=False,
     )
