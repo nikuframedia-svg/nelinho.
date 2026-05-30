@@ -1,29 +1,53 @@
 /**
- * DecisoesPage — grelha de decisões pendentes (Q.121.C).
+ * DecisoesPage — grelha de decisões pendentes (Q.121.C · redesign Q.123).
  *
  * Mostra TODAS as decisões PROPOSED ao mesmo tempo numa grelha de cartões
  * (<DecisionCard>), cada um com botões Sim/Não próprios. Antes era um hub
  * estilo Tinder (1 cartão de cada vez); o Luis quer ver várias em simultâneo.
  *
  * Shell de 3 sub-abas: Decidir · Simulações · Histórico (?tab=, useTabRouting).
+ *
+ * Q.123 — alinhado ao padrão sénior do OverallPage:
+ *   • PageHeader FORA do scroll (corrige a sobreposição cabeçalho↔cartão que
+ *     o `sticky top:52` causava dentro do contentor de scroll);
+ *   • estados (erro/loading/vazio) via <EmptyState>;
+ *   • entrada da grelha com motion staggered (respeita prefers-reduced-motion).
  */
 
 import { useCallback } from 'react';
+import { motion } from 'framer-motion';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Inbox, RefreshCw, FlaskConical, History } from 'lucide-react';
 import { decisionKeys } from '../../lib/api/keys';
 import { decisionsApi, type DecisionRun } from '../../lib/api';
-import { PageHeader, Tabs } from '../../components/dark';
+import { PageHeader, Tabs, DarkButton, EmptyState } from '../../components/dark';
 import { useTabRouting } from '../../hooks/useTabRouting';
 import SimulacoesTab from './SimulacoesTab';
 import HistoricoTab from './HistoricoTab';
 import { DecisionCard } from './DecisionCard';
 import { useRealtimeType } from '../../providers/RealtimeProvider';
 
+// ─── Motion: entrada staggered dos cartões (respeita reduced-motion) ─────────
+
+const cardVariants = {
+  hidden: { opacity: 0, y: 10 },
+  visible: (delay: number) => ({ opacity: 1, y: 0, transition: { duration: 0.2, delay } }),
+};
+const reducedVariants = {
+  hidden: { opacity: 1, y: 0 },
+  visible: () => ({ opacity: 1, y: 0 }),
+};
+function usePrefersReducedMotion(): boolean {
+  if (typeof window === 'undefined') return false;
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
 // ─── aba Decidir: grelha de cartões ─────────────────────────────────────────
 
 function DecidirTab() {
   const queryClient = useQueryClient();
+  const reducedMotion = usePrefersReducedMotion();
+  const variants = reducedMotion ? reducedVariants : cardVariants;
 
   const query = useQuery({
     queryKey: decisionKeys.list({ status: 'PROPOSED' }),
@@ -74,107 +98,73 @@ function DecidirTab() {
     />
   );
 
-  if (query.isError) {
-    return (
-      <div>
-        {header}
-        <CenteredFrame>
-          <div className="text-center space-y-4">
-            <p className="text-text-dark-secondary" style={{ fontSize: 14 }}>
-              Erro: {(query.error as Error)?.message ?? 'Não foi possível carregar as decisões.'}
-            </p>
-            <button
-              type="button"
-              onClick={() => query.refetch()}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-bg-2 border border-bd-1
-                         text-text-dark-primary text-sm hover:bg-bg-3 transition-colors"
-            >
-              <RefreshCw size={14} />
-              Tentar novamente
-            </button>
+  return (
+    <div className="flex flex-col h-full">
+      {header}
+      <div className="flex-1 min-h-0 overflow-auto">
+        {query.isError ? (
+          <div className="h-full grid place-items-center px-6">
+            <EmptyState
+              mascot={false}
+              icon={<RefreshCw size={30} />}
+              title="Não foi possível carregar as decisões"
+              hint={(query.error as Error)?.message ?? 'Erro ao contactar o servidor.'}
+              action={
+                <DarkButton size="sm" variant="secondary" onClick={() => query.refetch()}>
+                  Tentar novamente
+                </DarkButton>
+              }
+            />
           </div>
-        </CenteredFrame>
-      </div>
-    );
-  }
-
-  if (query.isLoading) {
-    return (
-      <div>
-        {header}
-        <CenteredFrame>
-          <div className="text-center text-text-dark-tertiary" style={{ fontSize: 14 }}>
+        ) : query.isLoading ? (
+          <div
+            className="h-full grid place-items-center px-6 text-text-dark-tertiary"
+            style={{ fontSize: 14 }}
+          >
             A carregar decisões…
           </div>
-        </CenteredFrame>
-      </div>
-    );
-  }
-
-  if (total === 0) {
-    return (
-      <div>
-        {header}
-        <CenteredFrame>
-          <div className="text-center space-y-3">
-            <Inbox size={40} className="mx-auto text-text-dark-tertiary opacity-40" />
-            <p className="text-text-dark-secondary font-medium" style={{ fontSize: 16 }}>
-              Sem decisões pendentes
-            </p>
-            <p className="text-text-dark-tertiary" style={{ fontSize: 13 }}>
-              Volta mais tarde — o sistema propõe decisões automaticamente.
-            </p>
+        ) : total === 0 ? (
+          <div className="h-full grid place-items-center px-6">
+            <EmptyState
+              title="Sem decisões pendentes"
+              hint="Volta mais tarde — o sistema propõe decisões automaticamente."
+            />
           </div>
-        </CenteredFrame>
+        ) : (
+          <>
+            {hasError ? (
+              <div
+                className="text-danger px-6 py-2 text-sm"
+                role="alert"
+                style={{ background: 'var(--red-bg)', borderBottom: '1px solid var(--red-bd)' }}
+              >
+                Não foi possível registar a decisão. Tenta outra vez.
+              </div>
+            ) : null}
+            <motion.div
+              className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start"
+              style={{ padding: '20px 24px' }}
+              initial="hidden"
+              animate="visible"
+            >
+              {items.map((d, i) => (
+                <motion.div
+                  key={d.id}
+                  custom={Math.min(i, 10) * 0.04}
+                  variants={variants}
+                >
+                  <DecisionCard
+                    decision={d}
+                    onApprove={(id) => approveMutation.mutate(id)}
+                    onReject={(id) => rejectMutation.mutate(id)}
+                    isPending={isPending}
+                  />
+                </motion.div>
+              ))}
+            </motion.div>
+          </>
+        )}
       </div>
-    );
-  }
-
-  return (
-    <div>
-      {header}
-      {hasError ? (
-        <div
-          className="text-danger px-6 py-2 text-sm"
-          role="alert"
-          style={{ background: 'var(--red-bg)', borderTop: '1px solid var(--red-bd)' }}
-        >
-          Não foi possível registar a decisão. Tenta outra vez.
-        </div>
-      ) : null}
-      <div
-        className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start"
-        style={{ padding: '20px 24px' }}
-      >
-        {items.map((d) => (
-          <DecisionCard
-            key={d.id}
-            decision={d}
-            onApprove={(id) => approveMutation.mutate(id)}
-            onReject={(id) => rejectMutation.mutate(id)}
-            isPending={isPending}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ─── layout helper (estados especiais centrados) ────────────────────────────
-
-function CenteredFrame({ children }: { children: React.ReactNode }) {
-  return (
-    <div
-      style={{
-        padding: '24px 28px',
-        minHeight: 'calc(100vh - 200px)',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}
-    >
-      <div style={{ width: '100%', maxWidth: 600 }}>{children}</div>
     </div>
   );
 }
@@ -198,17 +188,28 @@ export default function DecisoesPage() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="px-4 pt-3">
+      <div className="px-4 pt-3 shrink-0">
         <Tabs
           tabs={DECISOES_TABS}
           value={activeTab}
           onChange={(id) => setTab(id as DecisoesTabId)}
         />
       </div>
-      <div className="flex-1 min-h-0 overflow-auto">
+      {/* min-h-0 sem overflow no nível da página: o Decidir gere o seu próprio
+          scroll (header fixo); Simulações/Histórico usam DarkPageLayout e são
+          envolvidos num scroll próprio. */}
+      <div className="flex-1 min-h-0">
         {activeTab === 'decidir' && <DecidirTab />}
-        {activeTab === 'simulacoes' && <SimulacoesTab />}
-        {activeTab === 'historico' && <HistoricoTab />}
+        {activeTab === 'simulacoes' && (
+          <div className="h-full overflow-auto">
+            <SimulacoesTab />
+          </div>
+        )}
+        {activeTab === 'historico' && (
+          <div className="h-full overflow-auto">
+            <HistoricoTab />
+          </div>
+        )}
       </div>
     </div>
   );

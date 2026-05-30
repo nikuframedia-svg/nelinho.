@@ -84,7 +84,7 @@ export function ConfirmDestructiveModal({ title, description, entityId, isOpen, 
           </label>
           <textarea
             rows={3}
-            className="w-full bg-white text-slate-900 placeholder:text-slate-400 border border-slate-300 rounded px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-red-500"
+            className="w-full bg-bg-2 text-fg-0 placeholder:text-fg-3 border border-bd-2 rounded px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-red-500"
             placeholder="Explica a razão (≥10c)…"
             value={reason}
             onChange={(e) => setReason(e.target.value)}

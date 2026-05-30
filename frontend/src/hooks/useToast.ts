@@ -8,8 +8,13 @@ export function useToast() {
 
   const addToast = useCallback((type: ToastType, message: string, duration?: number) => {
     const id = `toast-${++toastIdCounter}`;
-    const newToast: Toast = { id, type, message, duration };
-    setToasts((prev) => [...prev, newToast]);
+    // Q.124 — dedup: não empilhar toasts idênticos (evita o "storm" quando vários
+    // pedidos falham ao mesmo tempo). Se já existe um igual, mantém a lista.
+    setToasts((prev) =>
+      prev.some((t) => t.type === type && t.message === message)
+        ? prev
+        : [...prev, { id, type, message, duration }],
+    );
     return id;
   }, []);
 

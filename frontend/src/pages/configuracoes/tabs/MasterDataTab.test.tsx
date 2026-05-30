@@ -10,28 +10,32 @@ import { renderWithProviders } from '../../../test/renderWithProviders';
 import { MasterDataTab } from './MasterDataTab';
 
 describe('MasterDataTab', () => {
-  it('renderiza as 4 sub-secções', () => {
+  it('disponibiliza as 4 secções de gestão no selector', () => {
     renderWithProviders(<MasterDataTab />, {
       route: '/configuracoes?tab=master',
       withToast: true,
       withEntitySheets: true,
     });
-    expect(screen.getByText('Ordens de fabrico')).toBeInTheDocument();
+    // Q.123 — as 4 secções estão no selector segmentado (só uma tabela visível
+    // de cada vez, para reduzir densidade). "Ordens de fabrico" e "Operadores"
+    // aparecem 2x (selector + título/segmento MasterDataBrowser) — basta existir.
+    expect(screen.getAllByText('Ordens de fabrico').length).toBeGreaterThan(0);
     expect(screen.getByText('Encomendas')).toBeInTheDocument();
     expect(screen.getByText('Barcos / Modelos')).toBeInTheDocument();
-    // "Operadores" aparece 2x: secção de cancelamento + segmento do
-    // MasterDataBrowser (Q.118.P) — basta existir.
     expect(screen.getAllByText('Operadores').length).toBeGreaterThan(0);
   });
 
-  it('tem 4 campos de pesquisa', () => {
+  it('troca a secção activa pelo selector (densidade reduzida)', () => {
     renderWithProviders(<MasterDataTab />, {
       route: '/configuracoes?tab=master',
       withToast: true,
       withEntitySheets: true,
     });
-    const inputs = screen.getAllByPlaceholderText(/pesquisar/i);
-    expect(inputs.length).toBe(4);
+    // Por defeito mostra a secção Ordens de fabrico (1 campo de pesquisa).
+    expect(screen.getByPlaceholderText(/Pesquisar OF/i)).toBeInTheDocument();
+    // Trocar para Encomendas via o selector → mostra a pesquisa de encomendas.
+    fireEvent.click(screen.getByRole('radio', { name: /Encomendas/i }));
+    expect(screen.getByPlaceholderText(/Pesquisar encomenda/i)).toBeInTheDocument();
   });
 });
 

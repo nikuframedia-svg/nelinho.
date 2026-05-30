@@ -6,26 +6,25 @@
  * Drag op para outro operador → chama onDrop com new_operator_id.
  */
 
-import { useMemo, useCallback, type ReactNode } from 'react';
+import { useMemo, useCallback, memo, type ReactNode } from 'react';
 import {
   DndContext,
   PointerSensor,
   useSensor,
   useSensors,
-  useDraggable,
   useDroppable,
 } from '@dnd-kit/core';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { useQuery } from '@tanstack/react-query';
-import { GripVertical } from 'lucide-react';
-import { Clickable } from '../../../components/entitySheets';
 import { EmptyState } from '../../dark';
 import { Timeline, buildDaySlots, dateToSlotIndex } from '../Timeline';
 import type { TimelineLane, TimelineItem } from '../../dark';
 import { learningAffinitiesApi } from '../../../lib/api/planApi';
 import { learningKeys } from '../../../lib/api/keys';
 import type { ScheduledOp } from '../types';
-import { QualityRiskBadge } from './QualityRiskBadge';
+import type { PlanSelection } from '../selection';
+import { opMatchesSelection } from '../selection';
+import { OpCard } from './OpCard';
 
 // ─── Tipos ──────────────────────────────────────────────────────────────────
 
@@ -35,53 +34,8 @@ interface PorPessoaViewProps {
   startDate: Date;
   endDate: Date;
   onDrop: (opId: string, newPhase: string, newStartTs: string, newOperatorId?: string) => void;
-}
-
-// ─── Cor por estado ─────────────────────────────────────────────────────────
-
-function statusBg(status?: string): string {
-  if (status === 'COMPLETED' || status === 'completed')
-    return 'bg-emerald-500/20 border-emerald-500/40';
-  if (status === 'IN_PROGRESS' || status === 'in_progress')
-    return 'bg-teal-500/20 border-teal-500/40';
-  return 'bg-slate-700/40 border-slate-600/40';
-}
-
-// ─── Op card (draggable) ────────────────────────────────────────────────────
-
-function OpCard({ op, editable }: { op: ScheduledOp; editable: boolean }) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
-    id: `pessoa__${op.id}`,
-    disabled: !editable,
-  });
-
-  return (
-    <div
-      ref={setNodeRef}
-      style={{ opacity: isDragging ? 0.35 : 1 }}
-      {...attributes}
-      {...listeners}
-      className={`flex items-center gap-1 px-1.5 py-1 rounded border text-[10px] truncate ${statusBg(op.status)} ${editable ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'}`}
-      title={`${op.order_id ?? op.id} · ${op.phase_name}`}
-    >
-      {editable && <GripVertical size={9} className="text-slate-500 flex-shrink-0" />}
-      <span className="text-slate-200 truncate font-medium">
-        {op.order_id
-          ? <Clickable kind="encomenda" id={op.order_id}>{op.order_id}</Clickable>
-          : op.id.slice(0, 8)}
-      </span>
-      <span className="text-slate-400 truncate hidden sm:inline">
-        · {op.phase_name}
-      </span>
-      {op.order_id && op.phase_id && (
-        <QualityRiskBadge
-          operatorId={op.operator_id ?? ''}
-          boatId={op.order_id}
-          phaseId={op.phase_id}
-        />
-      )}
-    </div>
-  );
+  selection?: PlanSelection | null;
+  onSelect?: (sel: PlanSelection) => void;
 }
 
 // ─── Droppable slot por pessoa ───────────────────────────────────────────────
@@ -91,11 +45,15 @@ function PessoaDropSlot({
   slotId,
   ops,
   editable,
+  selection,
+  onSelect,
 }: {
   operadorId: string;
   slotId: string;
   ops: ScheduledOp[];
   editable: boolean;
+  selection?: PlanSelection | null;
+  onSelect?: (sel: PlanSelection) => void;
 }) {
   const dropId = `pessoa__${operadorId}__slot__${slotId}`;
   const { setNodeRef, isOver } = useDroppable({ id: dropId });
@@ -107,9 +65,23 @@ function PessoaDropSlot({
         isOver && editable ? 'bg-teal-500/10 ring-1 ring-teal-500/40' : ''
       }`}
     >
-      {ops.map((op) => (
-        <OpCard key={op.id} op={op} editable={editable} />
-      ))}
+      {ops.map((op) => {
+        const selected = opMatchesSelection(op, selection ?? null);
+        const dimmed = !!selection && !selected;
+        return (
+          <OpCard
+            key={op.id}
+            op={op}
+            editable={editable}
+            draggableId={`pessoa__${op.id}`}
+            selected={selected}
+            dimmed={dimmed}
+            onSelect={onSelect}
+            primaryLabel={op.order_id}
+            showQuality
+          />
+        );
+      })}
     </div>
   );
 }
@@ -120,6 +92,8 @@ function renderPessoaItem(
   item: TimelineItem,
   opsByPessoaSlot: Map<string, ScheduledOp[]>,
   editable: boolean,
+  selection: PlanSelection | null,
+  onSelect?: (sel: PlanSelection) => void,
 ): ReactNode {
   const ops = opsByPessoaSlot.get(item.id) ?? [];
   // key: pessoa__operadorId__slot__slotId
@@ -131,18 +105,22 @@ function renderPessoaItem(
       slotId={slotId ?? ''}
       ops={ops}
       editable={editable}
+      selection={selection}
+      onSelect={onSelect}
     />
   );
 }
 
 // ─── Componente principal ───────────────────────────────────────────────────
 
-export function PorPessoaView({
+export const PorPessoaView = memo(function PorPessoaView({
   operations,
   editable,
   startDate,
   endDate,
   onDrop,
+  selection,
+  onSelect,
 }: PorPessoaViewProps): ReactNode {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -187,12 +165,22 @@ export function PorPessoaView({
     () =>
       operadores.map(([id, name]) => {
         const aff = topAffinity.get(id);
-        const label = aff
-          ? `${name} · ★ ${aff.phase_name}`
-          : name;
-        return { id, label };
+        const label = aff ? `${name} · ★ ${aff.phase_name}` : name;
+        return {
+          id,
+          label,
+          labelNode: (
+            <button
+              className="text-left hover:text-[color:var(--accent)] transition-colors"
+              onClick={() => onSelect?.({ kind: 'operator', id })}
+              title={`Filtrar por operador: ${name}`}
+            >
+              {label}
+            </button>
+          ),
+        };
       }),
-    [operadores, topAffinity],
+    [operadores, topAffinity, onSelect],
   );
 
   // (operadorId, slotId) → lista de ops
@@ -267,8 +255,8 @@ export function PorPessoaView({
         items={items}
         slotWidth={72}
         laneHeight={56}
-        renderItem={(item) => renderPessoaItem(item, opsByPessoaSlot, editable)}
+        renderItem={(item) => renderPessoaItem(item, opsByPessoaSlot, editable, selection ?? null, onSelect)}
       />
     </DndContext>
   );
-}
+});

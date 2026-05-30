@@ -7,10 +7,11 @@ interface SkeletonProps {
 export function Skeleton({ className = '', width, height }: SkeletonProps) {
   return (
     <div
-      className={`animate-pulse bg-slate-200 rounded ${className}`}
+      className={`animate-pulse rounded ${className}`}
       style={{
         width: width || '100%',
         height: height || '1rem',
+        background: 'var(--bg-3)',
       }}
     />
   );
@@ -28,7 +29,7 @@ export function SkeletonLoader({ count = 3, className = '' }: { count?: number; 
 
 export function CardSkeleton({ className = '' }: { className?: string }) {
   return (
-    <div className={`bg-white rounded-2xl p-6 border border-slate-200 ${className}`}>
+    <div className={`rounded-2xl p-6 border ${className}`} style={{ background: 'var(--bg-1)', borderColor: 'var(--bd-1)' }}>
       <Skeleton height="1.5rem" width="60%" className="mb-4" />
       <Skeleton height="2rem" width="40%" className="mb-2" />
       <Skeleton height="1rem" width="80%" />
@@ -61,7 +62,7 @@ export function TableSkeleton({ rows = 5, cols = 4, className = '' }: { rows?: n
 
 export function ChartSkeleton({ height = 300, className = '' }: { height?: number; className?: string }) {
   return (
-    <div className={`bg-white rounded-2xl p-6 border border-slate-200 ${className}`}>
+    <div className={`rounded-2xl p-6 border ${className}`} style={{ background: 'var(--bg-1)', borderColor: 'var(--bd-1)' }}>
       <Skeleton height="1.5rem" width="40%" className="mb-4" />
       <div className="relative" style={{ height: `${height}px` }}>
         <div className="absolute inset-0 flex items-end justify-around gap-2">

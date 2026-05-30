@@ -181,7 +181,7 @@ export function AutoProposeOverlay(): ReactNode {
         aria-label={`${count} decisões propostas automaticamente`}
       >
         <Zap size={12} className="text-amber-400" />
-        <span>{count} decisão{count !== 1 ? 'ões' : ''} proposta{count !== 1 ? 's' : ''}</span>
+        <span>{count} {count === 1 ? 'decisão proposta' : 'decisões propostas'}</span>
         {expanded ? (
           <ChevronUp size={12} className="text-slate-400" />
         ) : (

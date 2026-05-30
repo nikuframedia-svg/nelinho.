@@ -113,9 +113,9 @@ export function LearningSettingsPanel() {
       <div className="space-y-3 mt-4">
 
         {/* Camada 1 */}
-        <div className="bg-slate-800/40 rounded-lg p-4">
+        <div className="bg-[var(--bg-2)] rounded-lg p-4">
           <div className="flex items-center justify-between mb-2">
-            <p className="text-sm text-slate-200 font-medium">Camada 1 — Regras explícitas</p>
+            <p className="text-sm text-[color:var(--fg-1)] font-medium">Camada 1 — Regras explícitas</p>
             {rulesQ.isLoading ? (
               <DarkBadge variant="neutral" size="sm">A carregar…</DarkBadge>
             ) : reEmit > 0 ? (
@@ -126,20 +126,20 @@ export function LearningSettingsPanel() {
           </div>
           <div className="grid grid-cols-3 gap-3 mt-2">
             <div>
-              <p className="text-2xl font-bold text-slate-100">{ruleConfirmed}</p>
-              <p className="text-xs text-slate-400">Confirmadas</p>
+              <p className="text-2xl font-bold text-[color:var(--fg-0)]">{ruleConfirmed}</p>
+              <p className="text-xs text-[color:var(--fg-2)]">Confirmadas</p>
             </div>
             <div>
-              <p className="text-2xl font-bold text-amber-400">{ruleDetected}</p>
-              <p className="text-xs text-slate-400">Em revisão</p>
+              <p className="text-2xl font-bold text-[color:var(--yellow)]">{ruleDetected}</p>
+              <p className="text-xs text-[color:var(--fg-2)]">Em revisão</p>
             </div>
             <div>
-              <p className="text-2xl font-bold text-slate-500">{ruleRejected}</p>
-              <p className="text-xs text-slate-400">Rejeitadas</p>
+              <p className="text-2xl font-bold text-[color:var(--fg-3)]">{ruleRejected}</p>
+              <p className="text-xs text-[color:var(--fg-2)]">Rejeitadas</p>
             </div>
           </div>
-          <p className="text-xs text-slate-500 mt-3">
-            Última passagem do detector: <span className="text-slate-300">{detectorAt}</span>
+          <p className="text-xs text-[color:var(--fg-3)] mt-3">
+            Última passagem do detector: <span className="text-[color:var(--fg-1)]">{detectorAt}</span>
           </p>
           <a
             href="/admin/learned-rules"
@@ -150,9 +150,9 @@ export function LearningSettingsPanel() {
         </div>
 
         {/* Camada 2 */}
-        <div className="bg-slate-800/40 rounded-lg p-4">
+        <div className="bg-[var(--bg-2)] rounded-lg p-4">
           <div className="flex items-center justify-between mb-2">
-            <p className="text-sm text-slate-200 font-medium">Camada 2 — Pesos adaptativos</p>
+            <p className="text-sm text-[color:var(--fg-1)] font-medium">Camada 2 — Pesos adaptativos</p>
             {weightsQ.isLoading ? (
               <DarkBadge variant="neutral" size="sm">A carregar…</DarkBadge>
             ) : (
@@ -164,24 +164,24 @@ export function LearningSettingsPanel() {
               const def = weights.default_weights[key] ?? 0;
               const mult = weights.multipliers[key] ?? 1;
               const arrow = mult > 1.05 ? '↑' : mult < 0.95 ? '↓' : '→';
-              const colour = mult > 1.05 ? 'text-emerald-400' : mult < 0.95 ? 'text-rose-400' : 'text-slate-300';
+              const colour = mult > 1.05 ? 'text-[color:var(--green)]' : mult < 0.95 ? 'text-[color:var(--red)]' : 'text-[color:var(--fg-1)]';
               return (
                 <div key={key}>
-                  <p className="text-slate-400">{key.replace('w_', '')}</p>
+                  <p className="text-[color:var(--fg-2)]">{key.replace('w_', '')}</p>
                   <p className={`font-mono ${colour}`}>
                     {value.toFixed(2)} {arrow} ({mult.toFixed(2)}×)
                   </p>
-                  <p className="text-slate-600">def {def.toFixed(2)}</p>
+                  <p className="text-[color:var(--fg-4)]">def {def.toFixed(2)}</p>
                 </div>
               );
             })}
           </div>
-          <p className="text-xs text-slate-500 mt-3">
-            Treinado com <span className="text-slate-300">{weights?.pairs_used ?? 0}</span> pares ·
+          <p className="text-xs text-[color:var(--fg-3)] mt-3">
+            Treinado com <span className="text-[color:var(--fg-1)]">{weights?.pairs_used ?? 0}</span> pares ·
             blend {((weights?.blend_learned_pct ?? 0.7) * 100).toFixed(0)}% aprendido /
             {(100 - (weights?.blend_learned_pct ?? 0.7) * 100).toFixed(0)}% default ·
             min pares: {weights?.min_pairs_threshold ?? 50} ·
-            último retrain: <span className="text-slate-300">{trainedAt}</span>
+            último retrain: <span className="text-[color:var(--fg-1)]">{trainedAt}</span>
           </p>
           <button
             type="button"
@@ -193,9 +193,9 @@ export function LearningSettingsPanel() {
         </div>
 
         {/* Camada 3 */}
-        <div className="bg-slate-800/40 rounded-lg p-4">
+        <div className="bg-[var(--bg-2)] rounded-lg p-4">
           <div className="flex items-center justify-between mb-2">
-            <p className="text-sm text-slate-200 font-medium">Camada 3 — DPO no LLM (fine-tune)</p>
+            <p className="text-sm text-[color:var(--fg-1)] font-medium">Camada 3 — DPO no LLM (fine-tune)</p>
             {pairsQ.isLoading ? (
               <DarkBadge variant="neutral" size="sm">A carregar…</DarkBadge>
             ) : (
@@ -204,41 +204,41 @@ export function LearningSettingsPanel() {
           </div>
           <div className="grid grid-cols-3 gap-3 mt-2">
             <div>
-              <p className="text-2xl font-bold text-slate-100">{eligible}</p>
-              <p className="text-xs text-slate-400">Pares elegíveis (≥{pairs?.min_reason_len ?? 10} chars)</p>
+              <p className="text-2xl font-bold text-[color:var(--fg-0)]">{eligible}</p>
+              <p className="text-xs text-[color:var(--fg-2)]">Pares elegíveis (≥{pairs?.min_reason_len ?? 10} chars)</p>
             </div>
             <div>
-              <p className="text-2xl font-bold text-slate-300">{pairs?.total_pairs ?? 0}</p>
-              <p className="text-xs text-slate-400">Total de pares</p>
+              <p className="text-2xl font-bold text-[color:var(--fg-1)]">{pairs?.total_pairs ?? 0}</p>
+              <p className="text-xs text-[color:var(--fg-2)]">Total de pares</p>
             </div>
             <div>
-              <p className="text-2xl font-bold text-slate-300">{pairs?.last_30d?.eligible ?? 0}</p>
-              <p className="text-xs text-slate-400">Elegíveis últimos 30d</p>
+              <p className="text-2xl font-bold text-[color:var(--fg-1)]">{pairs?.last_30d?.eligible ?? 0}</p>
+              <p className="text-xs text-[color:var(--fg-2)]">Elegíveis últimos 30d</p>
             </div>
           </div>
-          <p className="text-xs text-slate-500 mt-3">
+          <p className="text-xs text-[color:var(--fg-3)] mt-3">
             Bootstrap: precisa de ≥500 pares elegíveis para fine-tune QLoRA on-prem (Sprint R.5).
             Pares vêm de <code>rejected_alternatives</code> nos commits CPO + ABL (Sprint R.3).
           </p>
-          <div className="mt-3 pt-3 border-t border-slate-700 text-xs">
+          <div className="mt-3 pt-3 border-t border-[color:var(--bd-1)] text-xs">
             {adapter?.active_version ? (
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-slate-300">
+                  <p className="text-[color:var(--fg-1)]">
                     Adapter activo: <code className="text-accent">{adapter.active_version}</code>
                   </p>
-                  <p className="text-slate-500 mt-1">
-                    Promovido por <span className="text-slate-300">{adapter.promoted_by ?? '—'}</span>
+                  <p className="text-[color:var(--fg-3)] mt-1">
+                    Promovido por <span className="text-[color:var(--fg-1)]">{adapter.promoted_by ?? '—'}</span>
                     {' '}em{' '}
-                    <span className="text-slate-300">
+                    <span className="text-[color:var(--fg-1)]">
                       {adapter.promoted_at ? new Date(adapter.promoted_at).toLocaleString('pt-PT') : '—'}
                     </span>
                   </p>
                   {adapter.intent_match_rate !== null && (
-                    <p className="text-slate-500 mt-1">
-                      intent_match: <span className="text-slate-300">{((adapter.intent_match_rate ?? 0) * 100).toFixed(1)}%</span>
+                    <p className="text-[color:var(--fg-3)] mt-1">
+                      intent_match: <span className="text-[color:var(--fg-1)]">{((adapter.intent_match_rate ?? 0) * 100).toFixed(1)}%</span>
                       {' · safety: '}
-                      <span className="text-slate-300">{adapter.safety_violations_count ?? 0}</span>
+                      <span className="text-[color:var(--fg-1)]">{adapter.safety_violations_count ?? 0}</span>
                     </p>
                   )}
                 </div>
@@ -253,7 +253,7 @@ export function LearningSettingsPanel() {
                   {adapter.has_previous && (
                     <button
                       type="button"
-                      className="text-xs text-rose-400 underline"
+                      className="text-xs text-[color:var(--red)] underline"
                       onClick={() => setRollbackOpen(true)}
                     >
                       Rollback ↩
@@ -263,7 +263,7 @@ export function LearningSettingsPanel() {
               </div>
             ) : (
               <div className="flex items-center justify-between">
-                <p className="text-slate-500">Sem adapter activo — base model em uso.</p>
+                <p className="text-[color:var(--fg-3)]">Sem adapter activo — base model em uso.</p>
                 <button
                   type="button"
                   className="text-xs text-accent underline"
@@ -277,9 +277,9 @@ export function LearningSettingsPanel() {
         </div>
 
         {/* Camada 4 */}
-        <div className="bg-slate-800/40 rounded-lg p-4">
+        <div className="bg-[var(--bg-2)] rounded-lg p-4">
           <div className="flex items-center justify-between mb-2">
-            <p className="text-sm text-slate-200 font-medium">Camada 4 — ABLkit (loop contínuo)</p>
+            <p className="text-sm text-[color:var(--fg-1)] font-medium">Camada 4 — ABLkit (loop contínuo)</p>
             {pairsQ.isLoading ? (
               <DarkBadge variant="neutral" size="sm">A carregar…</DarkBadge>
             ) : ablToday > 0 ? (
@@ -290,21 +290,21 @@ export function LearningSettingsPanel() {
           </div>
           <div className="grid grid-cols-2 gap-3 mt-2">
             <div>
-              <p className="text-2xl font-bold text-slate-100">{ablToday}</p>
-              <p className="text-xs text-slate-400">Divergências hoje</p>
+              <p className="text-2xl font-bold text-[color:var(--fg-0)]">{ablToday}</p>
+              <p className="text-xs text-[color:var(--fg-2)]">Divergências hoje</p>
             </div>
             <div>
-              <p className="text-2xl font-bold text-slate-300">—</p>
-              <p className="text-xs text-slate-400">Acumuladas (Sprint R.3)</p>
+              <p className="text-2xl font-bold text-[color:var(--fg-1)]">—</p>
+              <p className="text-xs text-[color:var(--fg-2)]">Acumuladas (Sprint R.3)</p>
             </div>
           </div>
-          <p className="text-xs text-slate-500 mt-3">
+          <p className="text-xs text-[color:var(--fg-3)] mt-3">
             Cada divergência kernel-vs-LLM produz um triplet <code>{`{prompt, chosen, rejected}`}</code>
             alimentado à Camada 3. Activado pelo job <code>_abl_feedback_job</code> (Sprint R.3).
           </p>
         </div>
 
-        <p className="text-xs text-slate-500 mt-2">
+        <p className="text-xs text-[color:var(--fg-3)] mt-2">
           Override do gestor SEMPRE ganha (Plan v4 §11.3).
           Endpoints expostos: <code>/v1/governance/learning/{`{pairs,rules,weights}`}</code>.
         </p>
@@ -316,21 +316,21 @@ export function LearningSettingsPanel() {
           onClick={() => setShowHistory(false)}
         >
           <div
-            className="bg-slate-900 border border-slate-700 rounded-xl max-w-5xl w-full max-h-[85vh] overflow-y-auto p-6"
+            className="bg-[var(--bg-1)] border border-[color:var(--bd-2)] rounded-xl max-w-5xl w-full max-h-[85vh] overflow-y-auto p-6"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h2 className="text-lg font-semibold text-slate-100">
+                <h2 className="text-lg font-semibold text-[color:var(--fg-0)]">
                   Histórico de pesos adaptativos (Camada 2)
                 </h2>
-                <p className="text-xs text-slate-400 mt-1">
+                <p className="text-xs text-[color:var(--fg-2)] mt-1">
                   Últimos 12 retrains com explicação determinística por KPI (Sprint R.4).
                 </p>
               </div>
               <button
                 type="button"
-                className="text-slate-400 hover:text-slate-100"
+                className="text-[color:var(--fg-2)] hover:text-[color:var(--fg-0)]"
                 onClick={() => setShowHistory(false)}
               >
                 Fechar ✕
@@ -338,15 +338,15 @@ export function LearningSettingsPanel() {
             </div>
 
             {historyQ.isLoading && (
-              <p className="text-sm text-slate-400">A carregar histórico…</p>
+              <p className="text-sm text-[color:var(--fg-2)]">A carregar histórico…</p>
             )}
             {historyQ.isError && (
-              <p className="text-sm text-rose-400">
+              <p className="text-sm text-[color:var(--red)]">
                 Erro a carregar histórico. Tente outra vez.
               </p>
             )}
             {historyQ.data && historyQ.data.entries.length === 0 && (
-              <p className="text-sm text-slate-400">
+              <p className="text-sm text-[color:var(--fg-2)]">
                 Sem retrains gravados ainda. O job corre domingos 02:00 UTC.
               </p>
             )}
@@ -361,10 +361,10 @@ export function LearningSettingsPanel() {
                   return (
                     <div
                       key={`${entry.trained_at}-${idx}`}
-                      className="bg-slate-800/40 rounded-lg p-3"
+                      className="bg-[var(--bg-2)] rounded-lg p-3"
                     >
                       <div className="flex items-center justify-between mb-2">
-                        <p className="text-sm font-medium text-slate-200">
+                        <p className="text-sm font-medium text-[color:var(--fg-1)]">
                           {dt}
                         </p>
                         <DarkBadge
@@ -378,7 +378,7 @@ export function LearningSettingsPanel() {
                       {entry.explanations && entry.explanations.length > 0 ? (
                         <ul className="space-y-1">
                           {entry.explanations.map((ex) => (
-                            <li key={ex.kpi} className="text-xs text-slate-300">
+                            <li key={ex.kpi} className="text-xs text-[color:var(--fg-1)]">
                               {/* ZERO XSS: render as plain text. The previous
                                   implementation used dangerouslySetInnerHTML
                                   with a regex that left ex.human_text exposed
@@ -388,14 +388,14 @@ export function LearningSettingsPanel() {
                           ))}
                         </ul>
                       ) : (
-                        <p className="text-xs text-slate-500 italic">
+                        <p className="text-xs text-[color:var(--fg-3)] italic">
                           Sem explicações neste retrain (anterior a R.4).
                         </p>
                       )}
                       {entry.warnings && entry.warnings.length > 0 && (
-                        <div className="mt-2 pt-2 border-t border-slate-700">
-                          <p className="text-xs text-amber-400 font-medium">
-                            ⚠ {entry.warnings.length} contradição{entry.warnings.length > 1 ? 'ões' : ''} com regras confirmadas
+                        <div className="mt-2 pt-2 border-t border-[color:var(--bd-1)]">
+                          <p className="text-xs text-[color:var(--yellow)] font-medium">
+                            ⚠ {entry.warnings.length} {entry.warnings.length === 1 ? 'contradição' : 'contradições'} com regras confirmadas
                           </p>
                         </div>
                       )}
@@ -414,18 +414,18 @@ export function LearningSettingsPanel() {
           onClick={() => setPromoteOpen(false)}
         >
           <div
-            className="bg-slate-900 border border-slate-700 rounded-xl max-w-md w-full p-6"
+            className="bg-[var(--bg-1)] border border-[color:var(--bd-2)] rounded-xl max-w-md w-full p-6"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 className="text-lg font-semibold text-slate-100 mb-1">
+            <h2 className="text-lg font-semibold text-[color:var(--fg-0)] mb-1">
               Promover candidato LoRA
             </h2>
-            <p className="text-xs text-slate-400 mb-4">
+            <p className="text-xs text-[color:var(--fg-2)] mb-4">
               Sprint R.5.3 — promove um adapter como activo. Razão obrigatória ≥20 chars (audit).
             </p>
             <div className="space-y-3">
               <div>
-                <label className="text-xs text-slate-300">Versão do candidato</label>
+                <label className="text-xs text-[color:var(--fg-1)]">Versão do candidato</label>
                 <DarkInput
                   value={promoteVersion}
                   onChange={(e) => setPromoteVersion(e.target.value)}
@@ -433,7 +433,7 @@ export function LearningSettingsPanel() {
                 />
               </div>
               <div>
-                <label className="text-xs text-slate-300">Decidido por</label>
+                <label className="text-xs text-[color:var(--fg-1)]">Decidido por</label>
                 <DarkInput
                   value={promoteBy}
                   onChange={(e) => setPromoteBy(e.target.value)}
@@ -441,18 +441,18 @@ export function LearningSettingsPanel() {
                 />
               </div>
               <div>
-                <label className="text-xs text-slate-300">Razão (≥20 chars)</label>
+                <label className="text-xs text-[color:var(--fg-1)]">Razão (≥20 chars)</label>
                 <DarkInput
                   value={promoteReason}
                   onChange={(e) => setPromoteReason(e.target.value)}
                   placeholder="ex: candidato passou eval +5pp, sem violações"
                 />
-                <p className="text-xs text-slate-500 mt-1">
+                <p className="text-xs text-[color:var(--fg-3)] mt-1">
                   {promoteReason.trim().length}/20 chars mínimos
                 </p>
               </div>
               {promoteMut.isError && (
-                <p className="text-xs text-rose-400">
+                <p className="text-xs text-[color:var(--red)]">
                   {(promoteMut.error as Error)?.message ?? 'Erro a promover.'}
                 </p>
               )}
@@ -486,18 +486,18 @@ export function LearningSettingsPanel() {
           onClick={() => setRollbackOpen(false)}
         >
           <div
-            className="bg-slate-900 border border-slate-700 rounded-xl max-w-md w-full p-6"
+            className="bg-[var(--bg-1)] border border-[color:var(--bd-2)] rounded-xl max-w-md w-full p-6"
             onClick={(e) => e.stopPropagation()}
           >
-            <h2 className="text-lg font-semibold text-slate-100 mb-1">
+            <h2 className="text-lg font-semibold text-[color:var(--fg-0)] mb-1">
               Rollback do adapter activo
             </h2>
-            <p className="text-xs text-slate-400 mb-4">
+            <p className="text-xs text-[color:var(--fg-2)] mb-4">
               Restaura a versão anterior. Razão obrigatória ≥20 chars.
             </p>
             <div className="space-y-3">
               <div>
-                <label className="text-xs text-slate-300">Decidido por</label>
+                <label className="text-xs text-[color:var(--fg-1)]">Decidido por</label>
                 <DarkInput
                   value={rollbackBy}
                   onChange={(e) => setRollbackBy(e.target.value)}
@@ -505,18 +505,18 @@ export function LearningSettingsPanel() {
                 />
               </div>
               <div>
-                <label className="text-xs text-slate-300">Razão (≥20 chars)</label>
+                <label className="text-xs text-[color:var(--fg-1)]">Razão (≥20 chars)</label>
                 <DarkInput
                   value={rollbackReason}
                   onChange={(e) => setRollbackReason(e.target.value)}
                   placeholder="ex: regressão de OTD após promote"
                 />
-                <p className="text-xs text-slate-500 mt-1">
+                <p className="text-xs text-[color:var(--fg-3)] mt-1">
                   {rollbackReason.trim().length}/20 chars mínimos
                 </p>
               </div>
               {rollbackMut.isError && (
-                <p className="text-xs text-rose-400">
+                <p className="text-xs text-[color:var(--red)]">
                   {(rollbackMut.error as Error)?.message ?? 'Erro a fazer rollback.'}
                 </p>
               )}

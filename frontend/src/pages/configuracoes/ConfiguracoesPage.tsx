@@ -240,7 +240,7 @@ function TabCustos() {
             <label className="block text-xs text-text-dark-secondary mb-1">A partir de</label>
             <input
               type="date"
-              className="w-full bg-white text-slate-900 placeholder:text-slate-400 border border-slate-300 rounded px-3 py-2 text-sm"
+              className="w-full bg-bg-2 text-fg-0 placeholder:text-fg-3 border border-bd-2 rounded px-3 py-2 text-sm"
               value={newTarget.effective_from}
               onChange={(e) => setNewTarget((p) => ({ ...p, effective_from: e.target.value }))}
             />
@@ -251,7 +251,7 @@ function TabCustos() {
               type="number"
               min={1}
               step={100}
-              className="w-full bg-white text-slate-900 placeholder:text-slate-400 border border-slate-300 rounded px-3 py-2 text-sm"
+              className="w-full bg-bg-2 text-fg-0 placeholder:text-fg-3 border border-bd-2 rounded px-3 py-2 text-sm"
               placeholder="ex: 32000"
               value={newTarget.target_eur}
               onChange={(e) => setNewTarget((p) => ({ ...p, target_eur: e.target.value }))}
@@ -277,7 +277,7 @@ function TabCustos() {
           <input
             type="search"
             placeholder="Pesquisar cliente…"
-            className="bg-white text-slate-900 placeholder:text-slate-400 border border-slate-300 rounded px-3 py-1.5 text-xs w-48"
+            className="bg-bg-2 text-fg-0 placeholder:text-fg-3 border border-bd-2 rounded px-3 py-1.5 text-xs w-48"
             value={prioritySearch}
             onChange={(e) => setPrioritySearch(e.target.value)}
           />
@@ -331,7 +331,7 @@ function TabCustos() {
                     <td className="py-2 text-center">
                       {editingId === p.id ? (
                         <select
-                          className="bg-white text-slate-900 border border-slate-300 rounded px-1 py-0.5 text-xs"
+                          className="bg-bg-2 text-fg-0 border border-bd-2 rounded px-1 py-0.5 text-xs"
                           value={editForm.prioridade}
                           onChange={(e) => setEditForm((f) => ({ ...f, prioridade: Number(e.target.value) }))}
                         >
@@ -346,7 +346,7 @@ function TabCustos() {
                     <td className="py-2 pl-4 text-text-dark-tertiary">
                       {editingId === p.id ? (
                         <textarea
-                          className="bg-white text-slate-900 placeholder:text-slate-400 border border-slate-300 rounded px-2 py-1 text-xs w-full resize-none"
+                          className="bg-bg-2 text-fg-0 placeholder:text-fg-3 border border-bd-2 rounded px-2 py-1 text-xs w-full resize-none"
                           rows={2}
                           value={editForm.razao}
                           onChange={(e) => setEditForm((f) => ({ ...f, razao: e.target.value }))}
@@ -533,7 +533,7 @@ function TabInput() {
             </label>
             <textarea
               rows={8}
-              className="w-full bg-white text-slate-900 placeholder:text-slate-400 border border-slate-300 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full bg-bg-2 text-fg-0 placeholder:text-fg-3 border border-bd-2 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
               placeholder="ex: alterar o objectivo de faturação diária para 5500€"
               value={what}
               onChange={(e) => setWhat(e.target.value)}
@@ -592,7 +592,7 @@ function TabInput() {
             </label>
             <textarea
               rows={8}
-              className="w-full bg-white text-slate-900 placeholder:text-slate-400 border border-slate-300 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full bg-bg-2 text-fg-0 placeholder:text-fg-3 border border-bd-2 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
               placeholder="ex: a faturação subiu 15% no último mês e o objectivo está obsoleto, queremos alinhar com o novo patamar"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
@@ -903,7 +903,7 @@ function TabAprendizagem() {
         {/* filtros */}
         <div className="flex gap-3 mb-4 flex-wrap">
           <select
-            className="bg-white text-slate-900 placeholder:text-slate-400 border border-slate-300 rounded px-3 py-1.5 text-xs"
+            className="bg-bg-2 text-fg-0 placeholder:text-fg-3 border border-bd-2 rounded px-3 py-1.5 text-xs"
             value={phaseFilter}
             onChange={(e) => setPhaseFilter(e.target.value)}
           >
@@ -914,7 +914,7 @@ function TabAprendizagem() {
             })}
           </select>
           <select
-            className="bg-white text-slate-900 placeholder:text-slate-400 border border-slate-300 rounded px-3 py-1.5 text-xs"
+            className="bg-bg-2 text-fg-0 placeholder:text-fg-3 border border-bd-2 rounded px-3 py-1.5 text-xs"
             value={operatorFilter}
             onChange={(e) => setOperatorFilter(e.target.value)}
           >

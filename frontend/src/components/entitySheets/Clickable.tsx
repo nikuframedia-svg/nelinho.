@@ -41,6 +41,9 @@ export function Clickable({ kind, id, children, className }: ClickableProps) {
       type="button"
       className={className}
       onClick={handleClick}
+      data-clickable
+      data-kind={kind}
+      data-id={String(id)}
       style={{
         background: 'transparent',
         border: 'none',

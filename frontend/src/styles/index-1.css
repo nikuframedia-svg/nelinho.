@@ -66,6 +66,10 @@
      consistente (Q.18.UI.B.3). lg breakpoint sobe para 2rem em 1024+ */
   --page-padding-x: 1.5rem;
   --page-padding-y: 1.5rem;
+
+  /* Seleção no Planeamento (C4) — ring e fade das ops não seleccionadas */
+  --sel-ring: 0 0 0 1.5px var(--accent);
+  --sel-dim-opacity: 0.32;
 }
 
 @media (min-width: 1024px) {

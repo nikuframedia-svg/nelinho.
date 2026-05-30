@@ -9,7 +9,7 @@
  * Cada acção exige modal de confirmação com razão ≥10c.
  * ZERO MOCKS — endpoints faltantes → empty state explícito.
  */
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ClipboardList,
@@ -18,7 +18,7 @@ import {
   Users,
   AlertTriangle,
 } from 'lucide-react';
-import { DarkCard, DarkButton, DarkBadge, EmptyState } from '../../../components/dark';
+import { DarkCard, DarkButton, DarkBadge, EmptyState, Segmented } from '../../../components/dark';
 import { Clickable } from '../../../components/entitySheets';
 import { SkeletonLoader } from '../../../components/ui/Skeleton';
 import { ConfirmDestructiveModal } from '../../../components/configuracoes/ConfirmDestructiveModal';
@@ -115,7 +115,7 @@ function SeccaoOrdensFabrico() {
       <input
         type="search"
         placeholder="Pesquisar OF, modelo ou cliente…"
-        className="w-full max-w-xs bg-white text-slate-900 placeholder:text-slate-400 border border-slate-300 rounded px-3 py-1.5 text-xs mb-4"
+        className="w-full max-w-xs bg-bg-2 text-fg-0 placeholder:text-fg-3 border border-bd-2 rounded px-3 py-1.5 text-xs mb-4 focus:outline-none focus:border-accent"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
       />
@@ -257,7 +257,7 @@ function SeccaoEncomendas() {
       <input
         type="search"
         placeholder="Pesquisar encomenda ou cliente…"
-        className="w-full max-w-xs bg-white text-slate-900 placeholder:text-slate-400 border border-slate-300 rounded px-3 py-1.5 text-xs mb-4"
+        className="w-full max-w-xs bg-bg-2 text-fg-0 placeholder:text-fg-3 border border-bd-2 rounded px-3 py-1.5 text-xs mb-4 focus:outline-none focus:border-accent"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
       />
@@ -396,7 +396,7 @@ function SeccaoBarcos() {
         <input
           type="search"
           placeholder="Pesquisar barco ou modelo…"
-          className="bg-white text-slate-900 placeholder:text-slate-400 border border-slate-300 rounded px-3 py-1.5 text-xs w-56"
+          className="bg-bg-2 text-fg-0 placeholder:text-fg-3 border border-bd-2 rounded px-3 py-1.5 text-xs w-56 focus:outline-none focus:border-accent"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
@@ -577,7 +577,7 @@ function SeccaoOperadores() {
         <input
           type="search"
           placeholder="Pesquisar operador…"
-          className="bg-white text-slate-900 placeholder:text-slate-400 border border-slate-300 rounded px-3 py-1.5 text-xs w-56"
+          className="bg-bg-2 text-fg-0 placeholder:text-fg-3 border border-bd-2 rounded px-3 py-1.5 text-xs w-56 focus:outline-none focus:border-accent"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
@@ -669,14 +669,40 @@ function SeccaoOperadores() {
 
 // ─── Componente principal ─────────────────────────────────────────────────────
 
+type MasterSection = 'ordens' | 'encomendas' | 'barcos' | 'operadores';
+
+const MASTER_SECTIONS: { value: MasterSection; label: string; icon: ReactNode }[] = [
+  { value: 'ordens', label: 'Ordens de fabrico', icon: <ClipboardList size={13} /> },
+  { value: 'encomendas', label: 'Encomendas', icon: <ShoppingCart size={13} /> },
+  { value: 'barcos', label: 'Barcos / Modelos', icon: <Anchor size={13} /> },
+  { value: 'operadores', label: 'Operadores', icon: <Users size={13} /> },
+];
+
 export function MasterDataTab() {
+  // Q.123 — uma só secção destrutiva visível de cada vez (antes eram 4 tabelas
+  // empilhadas sempre abertas → página densíssima). Reduz altura e carga cognitiva.
+  const [section, setSection] = useState<MasterSection>('ordens');
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <MasterDataBrowser />
-      <SeccaoOrdensFabrico />
-      <SeccaoEncomendas />
-      <SeccaoBarcos />
-      <SeccaoOperadores />
+
+      <div className="flex items-center gap-3 flex-wrap">
+        <span className="text-[10.5px] uppercase tracking-wide font-semibold text-text-dark-tertiary">
+          Acções de gestão
+        </span>
+        <Segmented<MasterSection>
+          options={MASTER_SECTIONS}
+          value={section}
+          onChange={setSection}
+          ariaLabel="Secção de gestão de dados"
+        />
+      </div>
+
+      {section === 'ordens' && <SeccaoOrdensFabrico />}
+      {section === 'encomendas' && <SeccaoEncomendas />}
+      {section === 'barcos' && <SeccaoBarcos />}
+      {section === 'operadores' && <SeccaoOperadores />}
     </div>
   );
 }

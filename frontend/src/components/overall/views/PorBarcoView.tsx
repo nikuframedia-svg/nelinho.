@@ -6,22 +6,22 @@
  * Drag só dentro do mesmo barco (muda start_ts/operator/phase — não troca OF).
  */
 
-import { useMemo, useCallback, type ReactNode } from 'react';
+import { useMemo, useCallback, memo, type ReactNode } from 'react';
 import {
   DndContext,
   PointerSensor,
   useSensor,
   useSensors,
-  useDraggable,
   useDroppable,
 } from '@dnd-kit/core';
 import type { DragEndEvent } from '@dnd-kit/core';
-import { GripVertical } from 'lucide-react';
 import { EmptyState } from '../../dark';
 import { Timeline, buildDaySlots, dateToSlotIndex } from '../Timeline';
 import type { TimelineLane, TimelineItem } from '../../dark';
 import type { ScheduledOp } from '../types';
-import { QualityRiskBadge } from './QualityRiskBadge';
+import type { PlanSelection } from '../selection';
+import { opMatchesSelection } from '../selection';
+import { OpCard } from './OpCard';
 
 // ─── Tipos internos ────────────────────────────────────────────────────────
 
@@ -30,6 +30,8 @@ interface BoatDropSlotProps {
   slotId: string;
   ops: ScheduledOp[];
   editable: boolean;
+  selection?: PlanSelection | null;
+  onSelect?: (sel: PlanSelection) => void;
 }
 
 interface PorBarcoViewProps {
@@ -38,58 +40,13 @@ interface PorBarcoViewProps {
   startDate: Date;
   endDate: Date;
   onDrop: (opId: string, newPhase: string, newStartTs: string, newOperatorId?: string) => void;
-}
-
-// ─── Cor por progresso ─────────────────────────────────────────────────────
-
-function progressBg(status?: string): string {
-  if (status === 'COMPLETED' || status === 'completed')
-    return 'bg-emerald-500/20 border-emerald-500/40';
-  if (status === 'IN_PROGRESS' || status === 'in_progress')
-    return 'bg-teal-500/20 border-teal-500/40';
-  return 'bg-slate-700/40 border-slate-600/40';
-}
-
-// ─── Op card (draggable) ────────────────────────────────────────────────────
-
-function OpCard({ op, editable }: { op: ScheduledOp; editable: boolean }) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
-    id: op.id,
-    disabled: !editable,
-  });
-
-  return (
-    <div
-      ref={setNodeRef}
-      style={{ opacity: isDragging ? 0.35 : 1 }}
-      {...attributes}
-      {...listeners}
-      className={`flex items-center gap-1 px-1.5 py-1 rounded border text-[10px] truncate ${progressBg(op.status)} ${editable ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'}`}
-      title={`${op.order_id ?? op.id} · ${op.phase_name}${op.operator_name ? ` · ${op.operator_name}` : ''}${op.duration_min ? ` · ${op.duration_min}min` : ''}`}
-    >
-      {editable && <GripVertical size={9} className="text-slate-500 flex-shrink-0" />}
-      <span className="text-slate-200 truncate font-medium">
-        {op.phase_name}
-      </span>
-      {op.operator_name && (
-        <span className="text-slate-500 truncate hidden sm:inline">
-          · {op.operator_name}
-        </span>
-      )}
-      {op.order_id && op.phase_id && (
-        <QualityRiskBadge
-          operatorId={op.operator_id ?? ''}
-          boatId={op.order_id}
-          phaseId={op.phase_id}
-        />
-      )}
-    </div>
-  );
+  selection?: PlanSelection | null;
+  onSelect?: (sel: PlanSelection) => void;
 }
 
 // ─── Droppable slot por barco ───────────────────────────────────────────────
 
-function BoatDropSlot({ boatId, slotId, ops, editable }: BoatDropSlotProps) {
+function BoatDropSlot({ boatId, slotId, ops, editable, selection, onSelect }: BoatDropSlotProps) {
   const dropId = `boat__${boatId}__${slotId}`;
   const { setNodeRef, isOver } = useDroppable({ id: dropId });
 
@@ -100,9 +57,23 @@ function BoatDropSlot({ boatId, slotId, ops, editable }: BoatDropSlotProps) {
         isOver && editable ? 'bg-teal-500/10 ring-1 ring-teal-500/40' : ''
       }`}
     >
-      {ops.map((op) => (
-        <OpCard key={op.id} op={op} editable={editable} />
-      ))}
+      {ops.map((op) => {
+        const selected = opMatchesSelection(op, selection ?? null);
+        const dimmed = !!selection && !selected;
+        return (
+          <OpCard
+            key={op.id}
+            op={op}
+            editable={editable}
+            draggableId={op.id}
+            selected={selected}
+            dimmed={dimmed}
+            onSelect={onSelect}
+            primaryLabel={op.phase_name}
+            showQuality
+          />
+        );
+      })}
     </div>
   );
 }
@@ -113,6 +84,8 @@ function renderBoatItem(
   item: { id: string; laneId: string; startSlot: number; spanSlots: number },
   opsByBoatSlot: Map<string, ScheduledOp[]>,
   editable: boolean,
+  selection: PlanSelection | null,
+  onSelect?: (sel: PlanSelection) => void,
 ): ReactNode {
   const ops = opsByBoatSlot.get(item.id) ?? [];
   const [, boatId, , slotId] = item.id.split('__');
@@ -122,18 +95,22 @@ function renderBoatItem(
       slotId={slotId}
       ops={ops}
       editable={editable}
+      selection={selection}
+      onSelect={onSelect}
     />
   );
 }
 
 // ─── Componente principal ───────────────────────────────────────────────────
 
-export function PorBarcoView({
+export const PorBarcoView = memo(function PorBarcoView({
   operations,
   editable,
   startDate,
   endDate,
   onDrop,
+  selection,
+  onSelect,
 }: PorBarcoViewProps): ReactNode {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -160,7 +137,19 @@ export function PorBarcoView({
     return Array.from(seen.entries());
   }, [operations]);
 
-  const lanes: TimelineLane[] = boats.map(([id, label]) => ({ id, label }));
+  const lanes: TimelineLane[] = boats.map(([id, label]) => ({
+    id,
+    label,
+    labelNode: (
+      <button
+        className="text-left hover:text-[color:var(--accent)] transition-colors"
+        onClick={() => onSelect?.({ kind: 'boat', id })}
+        title={`Filtrar por barco: ${label}`}
+      >
+        <span className="font-mono tabular-nums">{label}</span>
+      </button>
+    ),
+  }));
 
   // (boatId, slotId) → lista de ops
   const opsByBoatSlot = useMemo(() => {
@@ -231,8 +220,8 @@ export function PorBarcoView({
         items={items}
         slotWidth={72}
         laneHeight={56}
-        renderItem={(item) => renderBoatItem(item, opsByBoatSlot, editable)}
+        renderItem={(item) => renderBoatItem(item, opsByBoatSlot, editable, selection ?? null, onSelect)}
       />
     </DndContext>
   );
-}
+});

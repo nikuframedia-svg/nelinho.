@@ -25,6 +25,8 @@ export interface DecisionEntity {
 interface OpLike {
   order_id?: string | number | null;
   phase_id?: string | null;
+  /** Nome legível da fase, quando o payload o traz (evita mostrar o UUID cru). */
+  phase_name?: string | null;
   workers?: Array<string | number> | null;
 }
 
@@ -51,7 +53,14 @@ export function decisionEntities(decision: DecisionRun): DecisionEntity[] {
   const ops = Array.isArray(sb.operations) ? sb.operations : [];
   for (const op of ops) {
     if (op.order_id != null) push('encomenda', op.order_id, `#${op.order_id}`);
-    if (op.phase_id) push('fase', op.phase_id, String(op.phase_id));
+    if (op.phase_id) {
+      // Label legível: prefere o nome da fase; nunca mostra o UUID cru (Q.123).
+      const phaseName = op.phase_name?.trim();
+      const label = phaseName && phaseName.length > 0
+        ? phaseName
+        : `Fase ${String(op.phase_id).slice(0, 8)}`;
+      push('fase', op.phase_id, label);
+    }
     const workers = Array.isArray(op.workers) ? op.workers : [];
     for (const w of workers) {
       const wid = String(w ?? '').trim();
