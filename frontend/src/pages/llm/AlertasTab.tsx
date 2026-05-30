@@ -30,7 +30,7 @@ export function AlertasTab() {
 
   const query = useQuery({
     queryKey: ['copilot', 'alerts', filter],
-    queryFn: () => copilotAlertsApi.list(filter === 'open' ? { status: 'open' } : {}),
+    queryFn: () => copilotAlertsApi.list(filter === 'open' ? { status: 'active' } : {}),
     refetchInterval: 30_000,
     refetchOnWindowFocus: false,
   });
@@ -104,7 +104,7 @@ export function AlertasTab() {
               </div>
               {a.status !== 'resolved' ? (
                 <div className="flex items-center gap-1.5 shrink-0">
-                  {a.status === 'open' ? (
+                  {a.status === 'active' ? (
                     <DarkButton
                       variant="ghost"
                       icon={<Eye size={13} />}

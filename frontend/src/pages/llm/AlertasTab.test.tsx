@@ -18,7 +18,7 @@ function alert(over: Partial<CopilotAlertItem>): CopilotAlertItem {
     message_pt: 'O molde X passou o limite de ciclos.',
     context: {},
     entity_refs: [],
-    status: 'open',
+    status: 'active',
     created_at: null,
     acknowledged_at: null,
     acknowledged_by: null,
