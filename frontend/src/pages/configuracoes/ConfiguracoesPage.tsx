@@ -418,6 +418,14 @@ const WHERE_OPTIONS: WherePage[] = [
   'Configurações',
 ];
 
+/** Mapeia a label visível para o slug que o backend aceita. */
+const WHERE_SLUG: Record<WherePage, 'decisoes' | 'overall' | 'llm' | 'configuracoes'> = {
+  'Decisões': 'decisoes',
+  'Planeamento (Overall)': 'overall',
+  'LLM (Chat / KPIs / Regras)': 'llm',
+  'Configurações': 'configuracoes',
+};
+
 const STATUS_VARIANT: Record<UserInputStatus, 'neutral' | 'info' | 'success' | 'danger'> = {
   pending: 'neutral',
   in_progress: 'info',
@@ -451,7 +459,7 @@ function TabInput() {
     mutationFn: () =>
       userInputApi.create({
         what: what.trim(),
-        where_page: wherePage!,
+        where_page: WHERE_SLUG[wherePage!],
         economic_reason: reason.trim(),
       }),
     onSuccess: () => {
