@@ -37,6 +37,7 @@ class CancelResult:
     decision_id: Optional[UUID] = None  # preenchido se Q.17 human_approval activo
     warning: Optional[str] = None
     warnings: list[str] = field(default_factory=list)
+    warning_ops_planeadas: int = 0
 
 
 # ─── Helpers internos ─────────────────────────────────────────────────────────
@@ -409,4 +410,5 @@ async def deactivate_employee(
         cancelled_at=now,
         audit_trace_id=audit_row.trace_id,
         warning=warning,
+        warning_ops_planeadas=n_future,
     )

@@ -49,6 +49,7 @@ class CancelOut(BaseModel):
     audit_trace_id: Optional[str] = None
     decision_id: Optional[UUID] = None
     warning: Optional[str] = None
+    warning_ops_planeadas: int = 0
 
     model_config = {"from_attributes": True}
 
@@ -61,6 +62,7 @@ def _to_out(r: CancelResult) -> CancelOut:
         audit_trace_id=r.audit_trace_id,
         decision_id=r.decision_id,
         warning=r.warning,
+        warning_ops_planeadas=r.warning_ops_planeadas,
     )
 
 

@@ -608,3 +608,68 @@ async def test_q130_g_retire_boat_invalid_id_returns_lookup_error():
             tenant_id=TENANT_ID,
             user_id="user-q130g",
         )
+
+
+# ─── Regressão FE-10/BE-6 — banner de replan ao desactivar operador ──────────
+
+
+@pytest.mark.asyncio
+async def test_fe10_be6_warning_ops_planeadas_com_ops():
+    """FE-10/BE-6: deactivate_employee com 2 ops futuras → warning_ops_planeadas=2.
+
+    Antes do fix: CancelResult/CancelOut não tinham o campo numérico →
+    FE lia data.warning_ops_planeadas=undefined → banner nunca disparava.
+    """
+    from src.hr.models.worker_phase_assignment import WorkerPhaseAssignment
+
+    session = _FakeSession()
+    emp = _make_employee()
+    session.push_result(emp)
+
+    wpa1 = WorkerPhaseAssignment()
+    wpa1.worker_id = emp.id
+    wpa2 = WorkerPhaseAssignment()
+    wpa2.worker_id = emp.id
+    session.push_result([wpa1, wpa2])
+
+    result = await deactivate_employee(
+        session,
+        employee_id=emp.id,
+        reason="FE-10/BE-6 regressão — banner de replan",
+        tenant_id=TENANT_ID,
+        user_id="user-fe10",
+    )
+
+    assert result.warning_ops_planeadas == 2
+
+    # Confirma que CancelOut propaga o campo
+    from src.master_data.api.cancel import CancelOut
+    out = CancelOut(
+        entity_id=result.entity_id,
+        action=result.action,
+        cancelled_at=result.cancelled_at,
+        audit_trace_id=result.audit_trace_id,
+        warning=result.warning,
+        warning_ops_planeadas=result.warning_ops_planeadas,
+    )
+    assert out.warning_ops_planeadas == 2
+
+
+@pytest.mark.asyncio
+async def test_fe10_be6_warning_ops_planeadas_sem_ops():
+    """FE-10/BE-6: deactivate_employee sem ops futuras → warning_ops_planeadas=0."""
+    session = _FakeSession()
+    emp = _make_employee()
+    session.push_result(emp)
+    session.push_result([])  # sem ops futuras
+
+    result = await deactivate_employee(
+        session,
+        employee_id=emp.id,
+        reason="FE-10/BE-6 regressão — sem replan necessário",
+        tenant_id=TENANT_ID,
+        user_id="user-fe10",
+    )
+
+    assert result.warning_ops_planeadas == 0
+    assert result.warning is None
