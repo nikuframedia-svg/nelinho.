@@ -11,14 +11,19 @@ ran with no ML.
 This module reads the training rows straight from the durable tables that
 the ERP sync already fills:
 
-  * ``factory_curated.order_phase`` — ~86k completed phase executions with
-    real durations (``horas_reais``), the fase id, the order id and the
-    mould id. This is the cleaned `OF_FP` history.
-  * ``quality.rework_entry``        — ~100k rework events, each tagged with
-    the phase that caused it (``phase_id_causer``) and the hull zone
-    (``location_zone``).
-  * ``plan.production_orders``      — the kayak model per order, used to
-    enrich ``modelo_id`` when the order id is known.
+  * ``factory_raw.of_fp`` — ~537k real phase executions (one row per
+    OFFP), with the start/finish timestamps (``OFFP_DATAINICIO`` /
+    ``OFFP_DATAFIM`` → real ``horas_reais``), the fase id (``OFFP_FP_ID``),
+    the order id (``OFFP_OF_ID``) and the mould id (``OFFP_OF_ID_MLD``).
+    This is the REAL ERP history mirrored from NELO — **not** the static
+    Excel snapshot (Q.124: o ML aprende da BD viva, nunca de um ficheiro).
+    The kayak product per order is enriched from ``factory_raw.ordemfabrico``
+    (``OF_P_ID``).
+  * ``quality.rework_entry``        — rework events, each tagged with the
+    phase that caused it (``phase_id_causer``, numeric fase id matching
+    ``OFFP_FP_ID``) and the hull zone (``location_zone``).
+  * ``plan.production_orders``      — completed orders with transport dates,
+    the label source for the OTD-risk model.
 
 The two history tables do not share an order-id space (the ERP keeps phase
 history and checklist rework on different id sequences), so the
@@ -67,24 +72,37 @@ async def build_duration_dataset(
     `factory_curated.order_phase` is tenant-agnostic (it is the shared
     curated layer), so `tenant_id` only scopes the production-orders join.
     """
+    # Q.124: fonte = factory_raw.of_fp (ERP real espelhado), nao a camada
+    # curated/Excel. horas_reais = (OFFP_DATAFIM - OFFP_DATAINICIO) em horas,
+    # mesmo padrao de limpeza de setup_marts_lead_time_of (exclui o mesmo
+    # segundo / fim < inicio como artefacto).
     sql = text(
         """
         SELECT
-            op.of_id              AS of_id,
-            op.fase_id            AS fase_id,
-            op.fase_nome          AS fase_nome,
-            op.molde_id           AS molde_id,
-            op.horas_reais        AS horas_reais,
-            op.data_inicio        AS data_inicio,
-            po.product_type       AS product_type
-        FROM factory_curated.order_phase op
-        LEFT JOIN plan.production_orders po
-               ON po.legacy_id::text = op.of_id
-              AND po.tenant_id = :tenant_id
-        WHERE op.horas_reais IS NOT NULL
-          AND op.horas_reais > 0
-          AND op.is_quarantined = false
-        ORDER BY op.data_inicio
+            op."OFFP_OF_ID"     AS of_id,
+            op."OFFP_FP_ID"     AS fase_id,
+            fp."FP_NOME"        AS fase_nome,
+            op."OFFP_OF_ID_MLD" AS molde_id,
+            EXTRACT(EPOCH FROM (
+                CAST(NULLIF(op."OFFP_DATAFIM", '')    AS timestamp)
+              - CAST(NULLIF(op."OFFP_DATAINICIO", '') AS timestamp)
+            )) / 3600.0         AS horas_reais,
+            CAST(NULLIF(op."OFFP_DATAINICIO", '') AS timestamp) AS data_inicio,
+            ofb."OF_P_ID"       AS product_type
+        FROM factory_raw.of_fp op
+        LEFT JOIN factory_raw.fases_producao fp ON fp."FP_ID" = op."OFFP_FP_ID"
+        LEFT JOIN factory_raw.ordemfabrico  ofb ON ofb."OF_ID" = op."OFFP_OF_ID"
+        WHERE NULLIF(op."OFFP_DATAINICIO", '') IS NOT NULL
+          AND NULLIF(op."OFFP_DATAFIM", '')    IS NOT NULL
+          AND CAST(NULLIF(op."OFFP_DATAFIM", '') AS timestamp)
+            > CAST(NULLIF(op."OFFP_DATAINICIO", '') AS timestamp)
+          -- Q.124 "limpos": teto de 168h (1 semana) exclui fases deixadas
+          -- abertas (artefacto de calendario) que envenenavam o WMAPE.
+          AND EXTRACT(EPOCH FROM (
+                CAST(NULLIF(op."OFFP_DATAFIM", '')    AS timestamp)
+              - CAST(NULLIF(op."OFFP_DATAINICIO", '') AS timestamp)
+              )) / 3600.0 <= 168.0
+        ORDER BY data_inicio
         LIMIT :limit
         """
     )
@@ -161,20 +179,20 @@ async def build_quality_risk_dataset(
     against the (modelo_id, fase_id, team_size, mold_pocket_count,
     phase_error_rate, queue_depth) features.
     """
+    # Q.124: fonte = factory_raw.of_fp (ERP real). Todas as execucoes de fase
+    # (sem filtro de duracao) para construir a taxa empirica de rework por fase.
     phase_sql = text(
         """
         SELECT
-            op.of_id        AS of_id,
-            op.fase_id      AS fase_id,
-            op.molde_id     AS molde_id,
-            op.data_inicio  AS data_inicio,
-            po.product_type AS product_type
-        FROM factory_curated.order_phase op
-        LEFT JOIN plan.production_orders po
-               ON po.legacy_id::text = op.of_id
-              AND po.tenant_id = :tenant_id
-        WHERE op.is_quarantined = false
-        ORDER BY op.fase_id, op.data_inicio
+            op."OFFP_OF_ID"     AS of_id,
+            op."OFFP_FP_ID"     AS fase_id,
+            op."OFFP_OF_ID_MLD" AS molde_id,
+            CAST(NULLIF(op."OFFP_DATAINICIO", '') AS timestamp) AS data_inicio,
+            ofb."OF_P_ID"       AS product_type
+        FROM factory_raw.of_fp op
+        LEFT JOIN factory_raw.ordemfabrico ofb ON ofb."OF_ID" = op."OFFP_OF_ID"
+        WHERE NULLIF(op."OFFP_DATAINICIO", '') IS NOT NULL
+        ORDER BY op."OFFP_FP_ID", data_inicio
         LIMIT :limit
         """
     )
@@ -312,14 +330,22 @@ async def build_otd_risk_dataset(
         LIMIT :limit
         """
     )
+    # Q.124: fonte = factory_raw.of_fp (ERP real). Limitado: o otd_risk so usa
+    # fases das ordens completas (plan.production_orders), hoje poucas — o modelo
+    # fica fino ate o plano ter ordens reais (Onda 4).
     phase_sql = text(
         """
         SELECT
-            op.of_id       AS of_id,
-            op.fase_id     AS fase_id,
-            op.horas_reais AS horas_reais
-        FROM factory_curated.order_phase op
-        WHERE op.is_quarantined = false
+            op."OFFP_OF_ID" AS of_id,
+            op."OFFP_FP_ID" AS fase_id,
+            EXTRACT(EPOCH FROM (
+                CAST(NULLIF(op."OFFP_DATAFIM", '')    AS timestamp)
+              - CAST(NULLIF(op."OFFP_DATAINICIO", '') AS timestamp)
+            )) / 3600.0     AS horas_reais
+        FROM factory_raw.of_fp op
+        WHERE NULLIF(op."OFFP_DATAINICIO", '') IS NOT NULL
+          AND NULLIF(op."OFFP_DATAFIM", '')    IS NOT NULL
+        LIMIT 200000
         """
     )
     rework_sql = text(
