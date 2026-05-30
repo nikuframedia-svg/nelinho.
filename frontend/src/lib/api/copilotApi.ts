@@ -16,8 +16,108 @@ import type { CopilotAskRequest, CopilotResponse, DailyFeedbackResponse } from '
 // Re-export types for external use
 export type { CopilotAskRequest, CopilotResponse, DailyFeedbackResponse };
 
+const DEV_TENANT = '00000000-0000-0000-0000-000000000001';
+
+// ── Q.R — Cube-first: adaptador AskCubeResponse → CopilotResponse ───────────
+// O chat passa a perguntar primeiro à camada semântica (Cube, dados reais).
+// Em `abstain` (perguntas causais / fora do catálogo) cai para o pipeline
+// SQL+RAG geral (/ask). A UI do chat já consome CopilotResponse — só wiring.
+
+interface AskCubeResponse {
+  status: 'ok' | 'abstain' | 'no_data' | 'guard_failed' | 'ambiguous';
+  narration?: string | null;
+  query?: Record<string, unknown> | null;
+  data?: Array<Record<string, unknown>>;
+  annotation?: Record<string, unknown> | null;
+  abstain_reason?: string | null;
+  warnings?: string[];
+}
+
+function cubeToCopilotResponse(r: AskCubeResponse): CopilotResponse {
+  const id = `cube-${Date.now()}`;
+  const cubeCitation = {
+    source_type: 'calculation' as const,
+    ref: 'cube',
+    label: 'Cube · camada semântica',
+    confidence: 1,
+    trust_index: 1,
+  };
+
+  const facts: CopilotResponse['facts'] = [];
+  if (r.narration) {
+    facts.push({ text: r.narration, citations: [cubeCitation] });
+  }
+  // Dados crus (amostra) como facto auditável quando o guard rejeitou a
+  // narração ou quando não há narração mas há linhas.
+  if (r.data && r.data.length > 0 && (r.status === 'guard_failed' || !r.narration)) {
+    const preview = r.data
+      .slice(0, 8)
+      .map((row) =>
+        Object.entries(row)
+          .map(([k, v]) => `${k.split('.').pop()}: ${v}`)
+          .join(' · '),
+      )
+      .join('\n');
+    facts.push({ text: preview, citations: [cubeCitation] });
+  }
+
+  const warnings: CopilotResponse['warnings'] = [];
+  if (r.status === 'no_data')
+    warnings.push({ code: 'INSUFFICIENT_EVIDENCE', message: 'Sem dados para os filtros indicados.' });
+  if (r.status === 'ambiguous')
+    warnings.push({ code: 'INSUFFICIENT_EVIDENCE', message: 'Pergunta vaga — especifica material e/ou período.' });
+  if (r.status === 'guard_failed')
+    warnings.push({ code: 'VALIDATION_FAILED', message: 'A narração não passou o guard de números; mostro os dados crus.' });
+  for (const w of r.warnings ?? []) warnings.push({ code: 'VALIDATION_FAILED', message: w });
+
+  const summary =
+    r.narration ??
+    (r.status === 'no_data'
+      ? 'Não há dados para esses filtros.'
+      : r.status === 'ambiguous'
+        ? 'Pergunta demasiado vaga — especifica material e/ou período.'
+        : 'Resposta do Cube.');
+
+  return {
+    suggestion_id: id,
+    correlation_id: id,
+    type: 'ANSWER',
+    intent: 'generic',
+    summary,
+    facts,
+    actions: [],
+    warnings,
+    meta: { model: 'cube+gemma4', tokens: 0, latency_ms: 0, validation_passed: r.status === 'ok' },
+  };
+}
+
+/** Tenta a camada Cube; devolve a resposta adaptada ou null para fazer fallback. */
+async function tryAskCube(userQuery: string): Promise<CopilotResponse | null> {
+  try {
+    const response = await fetch(`${API_BASE}/api/copilot/ask-dev-cube`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': DEV_TENANT },
+      body: JSON.stringify({ question: userQuery }),
+    });
+    if (!response.ok) return null;
+    const cube = (await response.json()) as AskCubeResponse;
+    // abstain = causal / fora-catálogo → deixar o pipeline geral responder.
+    if (cube.status === 'abstain') return null;
+    return cubeToCopilotResponse(cube);
+  } catch {
+    return null; // Cube indisponível → fallback silencioso
+  }
+}
+
 export const copilotApi = {
   ask: async (data: CopilotAskRequest) => {
+    // Q.R — Cube-first: a pergunta vai primeiro à camada semântica (dados
+    // reais via Cube). Se responder (ok/no_data/ambiguous/guard_failed),
+    // adaptamos e devolvemos. Em `abstain` (causal/fora-catálogo) ou erro,
+    // cai para o pipeline SQL+RAG geral abaixo (comportamento preservado).
+    const cubeAnswer = await tryAskCube(data.user_query);
+    if (cubeAnswer) return cubeAnswer;
+
     // Verificar se há token - se não houver, usar diretamente o endpoint dev
     const token = localStorage.getItem('auth_token') || localStorage.getItem('token');
     
