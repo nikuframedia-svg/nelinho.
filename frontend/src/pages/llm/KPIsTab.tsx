@@ -1,228 +1,115 @@
 /**
- * KPIsTab — tab KPIs da LLMPage (Q.115.N)
- * =========================================
+ * KPIsTab — tab KPIs da LLMPage (Q.R: ligada ao Cube)
+ * ===================================================
  *
- * Layout 2 colunas: lista à esquerda (1/3) + detalhe à direita (2/3).
- * Dados de GET /v1/profit/kpis/snapshot-explained, polling 30s.
- * Gráfico de tendência: GET /v1/profit/kpis/{name}/history (Q.117.D),
- * alimentado pelo snapshot diário (profit.kpi_snapshot). Enquanto não
- * houver ≥2 dias, mostra empty state honesto — nunca pontos inventados.
+ * Mostra as MEASURES REAIS do Cube (operações NELO via marts) em vez do
+ * caminho legacy /v1/profit/kpis/* (quase vazio). Fonte:
+ * GET /api/copilot/cube/dashboard-dev (determinístico, sem LLM).
+ *
+ * Cards (valor actual) + gráficos (séries). Degradação honesta: uma measure
+ * cujo mart ainda não está populado mostra "sem dados" — nunca valores inventados.
  *
  * ZERO MOCKS.
  */
 
-import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { BarChart3, RefreshCw, AlertTriangle, TrendingUp, Sparkles } from 'lucide-react';
+import { BarChart3, RefreshCw, AlertTriangle, Sparkles, Database } from 'lucide-react';
 import { DarkPageLayout } from '../../layouts';
 import { DarkCard, DarkButton, DarkBadge } from '../../components/dark';
-import { LineChart } from '../../components/charts';
-import { kpisApi } from '../../lib/api';
-import { profitKeys } from '../../lib/api/keys';
+import { LineChart, BarChart } from '../../components/charts';
+import { cubeApi } from '../../lib/api';
+import type { CubeDashboardCard, CubeDashboardChart } from '../../lib/api';
 import { OtdHeatmap } from './OtdHeatmap';
 
-// ── Tipos locais (espelham snapshot-explained) ───────────────────────────
+// ── Formatação ────────────────────────────────────────────────────────────
 
-interface KPIValue {
-  value: number | null;
-  reason?: string | null;
-  citations?: Array<{ label: string }>;
+function formatValue(card: CubeDashboardCard): string {
+  if (card.value === null) return '—';
+  const v = card.value;
+  if (card.unit === '%') return `${(v * 100).toFixed(2)}%`; // ratio measure → %
+  if (card.unit === '€') return `${v.toLocaleString('pt-PT', { maximumFractionDigits: 0 })} €`;
+  return Number.isInteger(v)
+    ? v.toLocaleString('pt-PT')
+    : v.toLocaleString('pt-PT', { maximumFractionDigits: 2 });
 }
 
-interface KPISnapshot {
-  updated_at?: string;
-  quality_fpy?: KPIValue;
-  rework_rate?: KPIValue;
-  orders_total?: KPIValue;
-  orders_in_progress?: KPIValue;
-  orders_completed?: KPIValue;
-  [key: string]: unknown;
-}
-
-interface KPIItem {
-  name: string;
-  label: string;
-  value: number | null;
-  unit: string;
-  status: 'ok' | 'aviso' | 'alerta' | 'sem-dados';
-}
-
-function resolveStatus(name: string, value: number | null): KPIItem['status'] {
-  if (value === null) return 'sem-dados';
-  if (name === 'rework_rate') return value > 5 ? 'alerta' : value > 2 ? 'aviso' : 'ok';
-  if (name === 'quality_fpy') return value < 90 ? 'alerta' : value < 95 ? 'aviso' : 'ok';
-  return 'ok';
-}
-
-const STATUS_VARIANT: Record<KPIItem['status'], 'success' | 'warning' | 'danger' | 'neutral'> = {
-  ok: 'success',
-  aviso: 'warning',
-  alerta: 'danger',
-  'sem-dados': 'neutral',
-};
-
-const STATUS_LABEL: Record<KPIItem['status'], string> = {
-  ok: 'Ok',
-  aviso: 'Aviso',
-  alerta: 'Fora de banda',
-  'sem-dados': 'Sem dados',
-};
-
-const KPI_META: Record<string, { label: string; unit: string }> = {
-  quality_fpy: { label: 'Qualidade (FPY)', unit: '%' },
-  rework_rate: { label: 'Taxa de retrabalho', unit: '%' },
-  orders_total: { label: 'Total de ordens', unit: '' },
-  orders_in_progress: { label: 'Ordens em curso', unit: '' },
-  orders_completed: { label: 'Ordens concluídas', unit: '' },
-};
-
-function snapshotToList(snapshot: KPISnapshot): KPIItem[] {
-  return Object.entries(KPI_META).map(([name, meta]) => {
-    const entry = snapshot[name] as KPIValue | undefined;
-    const value = entry?.value ?? null;
-    return {
-      name,
-      label: meta.label,
-      value,
-      unit: meta.unit,
-      status: resolveStatus(name, value),
-    };
-  });
-}
+const COLORS = ['#4ea7c1', '#7bb274', '#c9a72a', '#b97fc9', '#d6845a', '#5aa9d6'];
 
 // ── Componente principal ─────────────────────────────────────────────────
 
 export function KPIsTab() {
-  const [selected, setSelected] = useState<string | null>(null);
-
-  const snapshotQuery = useQuery({
-    queryKey: ['kpis', 'snapshot-explained', 'llm-tab'],
-    queryFn: () => kpisApi.getSnapshotExplained(),
-    refetchInterval: 30_000,
+  const dashQuery = useQuery({
+    queryKey: ['cube', 'dashboard-dev'],
+    queryFn: () => cubeApi.dashboard(),
+    refetchInterval: 60_000,
     refetchOnWindowFocus: false,
   });
 
-  const raw = snapshotQuery.data?.snapshot as KPISnapshot | undefined;
-  const items: KPIItem[] = raw ? snapshotToList(raw) : [];
-  const selectedItem = items.find((k) => k.name === selected) ?? null;
-
-  const lastUpdated = raw?.updated_at
-    ? new Date(raw.updated_at as string).toLocaleString('pt-PT')
-    : null;
+  const cards = dashQuery.data?.cards ?? [];
+  const charts = dashQuery.data?.charts ?? [];
 
   return (
     <DarkPageLayout
       breadcrumbs={[{ label: 'Sistema' }, { label: 'LLM' }, { label: 'KPIs' }]}
       title="KPIs"
-      subtitle="Indicadores calculados a partir da base de dados · actualização a cada 30s"
+      subtitle="Indicadores reais do Cube (operações NELO) · actualização a cada 60s"
       icon={<BarChart3 className="h-6 w-6" />}
+      actions={
+        <DarkButton
+          variant="ghost"
+          icon={<RefreshCw size={13} className={dashQuery.isFetching ? 'animate-spin' : ''} />}
+          onClick={() => dashQuery.refetch()}
+        >
+          Actualizar
+        </DarkButton>
+      }
     >
-      {/* Estado de erro */}
-      {snapshotQuery.isError && (
+      {/* Estado de erro global */}
+      {dashQuery.isError && (
         <DarkCard className="mb-5 border-danger/30 bg-danger/5">
           <div className="flex items-center gap-3">
             <AlertTriangle size={18} className="text-danger shrink-0" />
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-fg-1">Falha ao carregar KPIs</p>
+              <p className="text-sm font-medium text-fg-1">Falha ao carregar o dashboard do Cube</p>
               <p className="text-xs text-fg-3 mt-0.5">
-                {(snapshotQuery.error as Error)?.message ?? 'Erro desconhecido'}
+                {(dashQuery.error as Error)?.message ?? 'Erro desconhecido'}
               </p>
             </div>
-            <DarkButton variant="ghost" icon={<RefreshCw size={13} />} onClick={() => snapshotQuery.refetch()}>
+            <DarkButton variant="ghost" icon={<RefreshCw size={13} />} onClick={() => dashQuery.refetch()}>
               Tentar novamente
             </DarkButton>
           </div>
         </DarkCard>
       )}
 
-      {lastUpdated && (
-        <p className="text-xs text-fg-3 mb-4">
-          Última actualização: {lastUpdated}
-        </p>
+      {/* Cards */}
+      <p className="text-[10.5px] uppercase tracking-wide font-semibold text-fg-3 mb-2">
+        Indicadores
+      </p>
+      {dashQuery.isLoading ? (
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 mb-7">
+          {Array.from({ length: 7 }).map((_, i) => (
+            <DarkCard key={i} className="h-[92px] animate-pulse" />
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 mb-7">
+          {cards.map((card) => (
+            <KpiCard key={card.key} card={card} />
+          ))}
+        </div>
       )}
 
-      {/* Layout 2 colunas */}
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_2fr] gap-4">
-        {/* Esquerda — lista KPIs */}
-        <div>
-          <p className="text-[10.5px] uppercase tracking-wide font-semibold text-fg-3 mb-2">
-            KPIs disponíveis
-          </p>
-
-          {snapshotQuery.isLoading ? (
-            <DarkCard className="text-center py-10">
-              <p className="text-sm text-fg-3">A carregar KPIs…</p>
-            </DarkCard>
-          ) : items.length === 0 ? (
-            <DarkCard className="text-center py-10">
-              <BarChart3 className="h-8 w-8 text-fg-3 mx-auto mb-2" />
-              <p className="text-sm text-fg-2">Sem KPIs calculados.</p>
-              <p className="text-xs text-fg-3 mt-1">
-                Os KPIs são calculados a partir das ordens de fabrico. Verifica que há dados no ERP.
-              </p>
-            </DarkCard>
-          ) : (
-            <div className="flex flex-col gap-1.5">
-              {items.map((kpi) => {
-                const active = selected === kpi.name;
-                return (
-                  <button
-                    key={kpi.name}
-                    type="button"
-                    onClick={() => setSelected(active ? null : kpi.name)}
-                    className={[
-                      'w-full text-left rounded-lg border transition-colors px-3 py-2.5',
-                      active
-                        ? 'border-accent bg-bg-3'
-                        : 'border-bd-1 bg-bg-1 hover:border-bd-2',
-                    ].join(' ')}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-medium text-fg-1 truncate">{kpi.label}</span>
-                      <DarkBadge variant={STATUS_VARIANT[kpi.status]}>
-                        {STATUS_LABEL[kpi.status]}
-                      </DarkBadge>
-                    </div>
-                    <div className="mt-1 flex items-baseline gap-1">
-                      {kpi.value !== null ? (
-                        <>
-                          <span className="text-xl font-bold text-fg-0">
-                            {kpi.value.toFixed(kpi.unit === '%' ? 1 : 0)}
-                          </span>
-                          {kpi.unit && (
-                            <span className="text-xs text-fg-3">{kpi.unit}</span>
-                          )}
-                        </>
-                      ) : (
-                        <span className="text-sm text-fg-3">— sem dados</span>
-                      )}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* Direita — detalhe / gráfico */}
-        <div>
-          <p className="text-[10.5px] uppercase tracking-wide font-semibold text-fg-3 mb-2">
-            Detalhe
-          </p>
-          {selectedItem ? (
-            <KPIDetail kpi={selectedItem} />
-          ) : (
-            <DarkCard className="text-center py-16">
-              <BarChart3 className="h-10 w-10 text-fg-3 mx-auto mb-3" />
-              <h3 className="text-base font-medium text-fg-1 mb-1">
-                Selecciona um KPI
-              </h3>
-              <p className="text-sm text-fg-2">
-                Vês aqui o histórico e o contexto do indicador seleccionado.
-              </p>
-            </DarkCard>
-          )}
-        </div>
+      {/* Gráficos */}
+      <p className="text-[10.5px] uppercase tracking-wide font-semibold text-fg-3 mb-2">
+        Gráficos
+      </p>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-7">
+        {dashQuery.isLoading
+          ? Array.from({ length: 4 }).map((_, i) => (
+              <DarkCard key={i} className="h-[260px] animate-pulse" />
+            ))
+          : charts.map((chart, i) => <ChartCard key={chart.key} chart={chart} color={COLORS[i % COLORS.length]} />)}
       </div>
 
       {/* Q.118.K — mapa de calor OTD (produto × semana) */}
@@ -231,104 +118,77 @@ export function KPIsTab() {
   );
 }
 
-// ── Componente de detalhe ────────────────────────────────────────────────
+// ── Card de KPI ──────────────────────────────────────────────────────────
 
-function KPIDetail({ kpi }: { kpi: KPIItem }) {
-  // Q.117.D — série histórica real de GET /v1/profit/kpis/{name}/history.
-  const historyQuery = useQuery({
-    queryKey: profitKeys.kpiHistory(kpi.name, 30),
-    queryFn: () => kpisApi.getHistory(kpi.name, 30),
-    refetchOnWindowFocus: false,
-    staleTime: 60_000,
-  });
+function KpiCard({ card }: { card: CubeDashboardCard }) {
+  const hasData = card.status === 'ok' && card.value !== null;
 
-  // Pontos com valor (saltamos dias sem dados — nunca inventamos um zero).
-  const chartData = (historyQuery.data?.points ?? [])
-    .filter((p): p is { date: string; value: number } => p.value !== null)
-    .map((p) => ({
-      name: new Date(p.date).toLocaleDateString('pt-PT', { day: '2-digit', month: '2-digit' }),
-      value: p.value,
-    }));
+  return (
+    <DarkCard className="relative group">
+      <div className="flex items-start justify-between gap-2 mb-1">
+        <span className="text-xs font-medium text-fg-2 leading-tight">{card.label}</span>
+        {!hasData && <DarkBadge variant="neutral">sem dados</DarkBadge>}
+      </div>
+      <div className="flex items-baseline gap-1 mt-1.5">
+        {hasData ? (
+          <span className="text-2xl font-bold text-fg-0 tabular-nums">{formatValue(card)}</span>
+        ) : (
+          <span className="text-sm text-fg-3">—</span>
+        )}
+      </div>
+      <button
+        type="button"
+        title="Investigar a causa via copiloto"
+        className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-fg-3 hover:text-accent"
+        onClick={() =>
+          window.dispatchEvent(
+            new CustomEvent('copilot:open', {
+              detail: {
+                query: hasData
+                  ? `Porque está a ${card.label} em ${formatValue(card)}? Investiga a causa.`
+                  : `Porque é que a ${card.label} não tem dados? Investiga.`,
+              },
+            }),
+          )
+        }
+      >
+        <Sparkles size={14} />
+      </button>
+    </DarkCard>
+  );
+}
+
+// ── Card de gráfico ──────────────────────────────────────────────────────
+
+function ChartCard({ chart, color }: { chart: CubeDashboardChart; color: string }) {
+  const data = chart.series
+    .filter((p): p is { x: string; y: number } => p.y !== null)
+    .map((p) => ({ name: p.x, value: p.y }));
 
   return (
     <DarkCard>
-      <div className="flex items-start justify-between gap-3 mb-4">
-        <div>
-          <h3 className="text-base font-semibold text-fg-0">{kpi.label}</h3>
-          <div className="flex items-baseline gap-1.5 mt-1">
-            {kpi.value !== null ? (
-              <>
-                <span className="text-2xl font-bold text-fg-0">
-                  {kpi.value.toFixed(kpi.unit === '%' ? 1 : 0)}
-                </span>
-                {kpi.unit && <span className="text-sm text-fg-3">{kpi.unit}</span>}
-              </>
-            ) : (
-              <span className="text-lg text-fg-3">— sem dados</span>
-            )}
-          </div>
-        </div>
-        <DarkBadge variant={STATUS_VARIANT[kpi.status]}>
-          {STATUS_LABEL[kpi.status]}
-        </DarkBadge>
+      <div className="flex items-center justify-between gap-2 mb-3">
+        <h3 className="text-sm font-semibold text-fg-1">{chart.label}</h3>
+        {chart.status !== 'ok' && <DarkBadge variant="neutral">sem dados</DarkBadge>}
       </div>
-
-      {/* Q.118.O — investigar a causa via copiloto (caminho diagnostic/causal) */}
-      <div className="mb-4">
-        <DarkButton
-          variant="ghost"
-          icon={<Sparkles size={13} />}
-          onClick={() =>
-            window.dispatchEvent(
-              new CustomEvent('copilot:open', {
-                detail: {
-                  query:
-                    kpi.value !== null
-                      ? `Porque está a ${kpi.label} em ${kpi.value.toFixed(kpi.unit === '%' ? 1 : 0)}${kpi.unit}? Investiga a causa.`
-                      : `Porque é que a ${kpi.label} não tem dados? Investiga.`,
-                },
-              }),
-            )
-          }
-        >
-          Investigar (porquê?)
-        </DarkButton>
-      </div>
-
-      {/* Gráfico de tendência (últimos 30 dias) */}
-      <div className="mb-1">
-        <p className="text-[10.5px] uppercase tracking-wide font-semibold text-fg-3 mb-2">
-          Tendência (30 dias)
-        </p>
-      </div>
-
-      {historyQuery.isLoading ? (
-        <div
-          className="rounded-lg border border-bd-1 bg-bg-1 flex items-center justify-center"
-          style={{ minHeight: 200 }}
-        >
-          <p className="text-sm text-fg-3">A carregar histórico…</p>
-        </div>
-      ) : chartData.length >= 2 ? (
+      {data.length > 0 ? (
         <div className="rounded-lg border border-bd-1 bg-bg-1 p-2">
-          <LineChart
-            data={chartData}
-            height={200}
-            color={kpi.status === 'alerta' ? '#ef4444' : kpi.status === 'aviso' ? '#f59e0b' : '#14b8a6'}
-            showGrid
-            showArea
-          />
+          {chart.kind === 'line' ? (
+            <LineChart data={data} height={220} color={color} showGrid showArea />
+          ) : (
+            <BarChart data={data} height={220} color={color} showGrid />
+          )}
         </div>
       ) : (
         <div
-          className="rounded-lg border border-dashed border-bd-2 bg-bg-1 flex flex-col items-center justify-center gap-2 py-10 px-6 text-center"
-          style={{ minHeight: 200 }}
+          className="rounded-lg border border-dashed border-bd-2 bg-bg-1 flex flex-col items-center justify-center gap-2 text-center px-6"
+          style={{ minHeight: 220 }}
         >
-          <TrendingUp className="h-8 w-8 text-fg-3" />
-          <p className="text-sm font-medium text-fg-2">Histórico a acumular</p>
+          <Database className="h-7 w-7 text-fg-3" />
+          <p className="text-sm font-medium text-fg-2">Sem dados para este indicador</p>
           <p className="text-xs text-fg-3 max-w-xs leading-relaxed">
-            A tendência aparece quando houver pelo menos 2 dias de dados. O
-            snapshot diário corre às 00:45 (UTC) — volta amanhã para ver a curva.
+            O mart correspondente ainda não está populado. Corre o ETL (mirror NELO +
+            setup_marts) para ver a série.
           </p>
         </div>
       )}

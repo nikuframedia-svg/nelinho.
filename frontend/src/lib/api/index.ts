@@ -15,6 +15,7 @@ export * from './workforceApi';
 export * from './supplyApi';
 export * from './qualityApi';
 export * from './copilotApi';
+export * from './cubeApi';
 export * from './governanceApi';
 export * from './platformApi';
 export * from './dataProductApi';
