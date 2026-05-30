@@ -1,0 +1,37 @@
+cubes:
+  - name: ambiental_estufa_temp
+    description: >
+      Q.107 Onda 4 — temperatura das estufas de cura (sensors 12/14/17
+      IoT). MAX e AVG por mês × estufa. **NÃO É SUM** — agregação
+      cross-row é MAX (pico) ou AVG. Anchor Estufa 60 Abril 2026:
+      pico 79.4°C, avg 51.3°C.
+    sql_table: marts.v_estufa_temp_mes
+
+    measures:
+      - name: temp_max
+        description: >
+          Temperatura MÁXIMA registada (cross-row MAX, NÃO SUM).
+          Cube aplica MAX da coluna temp_max já agregada na view.
+          Anchor Estufa 60 Abril 2026 = 79.4°C.
+        sql: temp_max
+        type: max
+        format: number
+
+      - name: temp_avg
+        description: >
+          Temperatura MÉDIA (cross-row AVG, NÃO SUM). Cube aplica
+          AVG. Anchor Estufa 60 Abril 2026 = 51.3°C avg.
+        sql: temp_avg
+        type: avg
+        format: number
+
+    dimensions:
+      - name: data
+        sql: data
+        type: time
+      - name: estufa
+        sql: estufa
+        type: string
+      - name: sensor_id
+        sql: sensor_id
+        type: number

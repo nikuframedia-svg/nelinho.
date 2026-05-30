@@ -8,7 +8,7 @@ Cliente robusto para Ollama com timeout, retry, circuit breaker.
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union
 
 import httpx
 
@@ -129,7 +129,7 @@ class OllamaClient:
         self,
         prompt: str,
         model: str,
-        format: Optional[str] = "json",
+        format: Optional[Union[str, Dict[str, Any]]] = "json",
         history: Optional[List[Dict[str, str]]] = None,
         system_prompt: Optional[str] = None,
         num_ctx: Optional[int] = None,
@@ -141,7 +141,9 @@ class OllamaClient:
         Args:
             prompt: Prompt do utilizador
             model: Nome do modelo (ex: "gemma4:e4b")
-            format: "json" para resposta estruturada
+            format: "json" para resposta estruturada, OU um dict JSON Schema
+                completo (Ollama 0.5+) para constrained decoding ao nível do
+                token — o pipeline do Cube passa o schema do catálogo aqui.
             history: Previous conversation turns [{"role": "user"|"assistant", "content": "..."}]
             system_prompt: Optional system prompt prepended to messages
             num_ctx: Override context window for this call. ``None`` →
@@ -194,9 +196,15 @@ class OllamaClient:
             },
         }
 
-        if format == "json":
+        # Q.93.E.B — `format` pode ser a string "json" (JSON mode genérico)
+        # ou um dict JSON Schema completo (constrained decoding via llama.cpp).
+        # Em HEAD o chat só reconhecia "json"; um schema dict era ignorado em
+        # silêncio → o LLM ficava livre de inventar measures fora do catálogo.
+        if isinstance(format, dict):
+            payload["format"] = format
+        elif format == "json":
             payload["format"] = "json"
-        
+
         # Sprint Q.12 Onda 4.4 — exponential backoff WITH jitter to
         # avoid the thundering-herd pattern where every client retried
         # at exactly ``2^attempt`` seconds. With 100 simultaneous
@@ -222,7 +230,7 @@ class OllamaClient:
                     # lá antes de desistir (espelha scripts/dpo_eval.py).
                     if not content:
                         content = (msg.get("thinking") or "").strip()
-                    if format == "json":
+                    if isinstance(format, dict) or format == "json":
                         import json
                         if not content:
                             # Erro claro em vez do críptico

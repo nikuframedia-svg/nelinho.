@@ -1,0 +1,35 @@
+cubes:
+  - name: ambiental_iot_alarmes
+    description: >
+      Q.108 Onda A — regras de alarme IoT configuradas na fábrica.
+      Cada linha em factory_raw.iot_sensor_alarm é UMA regra
+      configurada (não um disparo). SA_NOME = nome da regra,
+      SA_SENSOR_ID = sensor a que se aplica, SA_FIELD = campo
+      monitorizado (temp, hum, power...), SA_MIN/SA_MAX = limites.
+      Q.82 reportou 14 regras vivas; espelho confirma.
+    sql_table: factory_raw.iot_sensor_alarm
+
+    measures:
+      - name: total
+        description: >
+          Contagem de regras de alarme IoT configuradas (regras vivas
+          no sistema, não disparos). Anchor = 14 regras em 14 sensores
+          distintos. CONTAGEM adimensional.
+        sql: '"SA_ID"'
+        type: count
+        format: number
+
+    dimensions:
+      - name: id
+        sql: '"SA_ID"'
+        type: number
+        primaryKey: true
+      - name: nome
+        sql: '"SA_NOME"'
+        type: string
+      - name: sensor_id
+        sql: '"SA_SENSOR_ID"'
+        type: number
+      - name: field
+        sql: '"SA_FIELD"'
+        type: string

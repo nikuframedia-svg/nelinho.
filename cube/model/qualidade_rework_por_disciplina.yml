@@ -1,0 +1,41 @@
+cubes:
+  - name: qualidade_rework_por_disciplina
+    description: >
+      Q.108.E.2 — Incidentes de retrabalho agregados por disciplina×mês.
+      Source: marts.v_rework_por_disciplina_mes sobre quality.rework_entry
+      com context.product_type_name (TP_NOME) populado pela ETL desde
+      Q.108.E.1. Disciplinas: Canoe Sprint, Canoe Marathon, Ocean, Fitness,
+      etc. Permite cross-join com comercial_facturacao_disciplina na mesma
+      dim. CONTAGEM adimensional.
+    sql_table: marts.v_rework_por_disciplina_mes
+
+    measures:
+      - name: total
+        description: >
+          Contagem de incidentes de retrabalho por (mês, disciplina).
+          Drill-down do total global de qualidade.defeitos.
+        sql: rework_count
+        type: sum
+        format: number
+
+      - name: graves
+        description: >
+          Sub-contagem com OFFP_RETORNO_GRAVE=true por disciplina.
+          Mede severidade de retrabalho por categoria comercial.
+        sql: rework_grave
+        type: sum
+        format: number
+
+    dimensions:
+      - name: data
+        description: Mês do incidente (primeiro dia, date_trunc('month')).
+        sql: data
+        type: time
+
+      - name: disciplina
+        description: >
+          TP_NOME canónico (Canoe Sprint, Canoe Marathon, Ocean, Fitness,
+          …). Mesma dim que `comercial_facturacao_disciplina.disciplina`,
+          o que permite correlação cruzada disciplinada na mesma chave.
+        sql: disciplina
+        type: string

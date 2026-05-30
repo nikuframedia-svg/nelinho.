@@ -1,0 +1,58 @@
+cubes:
+  - name: producao_pecas_laminadas
+    description: >
+      Q.99 Onda 1 / Agente B — contagem mensal de fases de laminagem
+      TERMINADAS (OFFP_DATAFIM preenchido, FP_NOME ILIKE '%lamin%').
+      Fonte: marts.v_pecas_laminadas_mes, agregado (ano_mes, fase).
+      Plano B porque a view ERP `vPecasLaminadas` NÃO está espelhada
+      em factory_raw — alternativa por OF_FP + filtro de FP_NOME.
+      Anchor factory_raw espelho: SUM(total) em Abril 2026 = 2 393
+      (Laminagem peças 1 122, Laminagem 611, Infusão 383, Não Laminado
+      191, Double Dutch 86). CONTAGEM adimensional — soma sempre OK.
+      Não é throughput contínuo; é contagem absoluta de fases concluídas
+      por mês. A medida vive como `producao_pecas_laminadas.total` no
+      registo do contrato.
+    sql_table: marts.v_pecas_laminadas_mes
+
+    measures:
+      - name: total
+        description: >
+          Contagem de fases de laminagem terminadas. SUM(n) da view, que
+          já agrupa por (ano_mes, fase). SUM cross-row de CONTAGEM é
+          trivial — não mistura unidades, nunca negativo, nunca
+          fraccionário. Anchor Q.99: SUM(total) Abril 2026 = 2 393.
+        sql: n
+        type: sum
+        format: number
+
+    dimensions:
+      - name: data
+        description: >
+          Mês de OFFP_DATAFIM como DATE (primeiro dia do mês). Q.99
+          ajuste pós-smoke: coluna passou de `ano_mes` (string) para
+          `data` (DATE primeiro do mês via DATE_TRUNC('month')) para o
+          LLM poder usar `timeDimensions` + `dateRange` normalmente
+          (ex.: dateRange=["2026-04-01","2026-04-30"]). Granularidade
+          mensal, mas o range cobre todos os dias do mês.
+        sql: data
+        type: time
+
+      - name: fase
+        description: >
+          Nome da fase de laminagem (FP_NOME). 5 valores possíveis:
+          'Laminagem peças' (top-1), 'Laminagem' (genérica), 'Laminagem
+          Infusão', 'Laminagem Double Dutch', 'Não Laminado'. Atenção:
+          'Não Laminado' é apanhado pelo ILIKE mas semanticamente é o
+          oposto de laminagem — pendente decisão de negócio Luís se
+          excluir (passaria anchor de 2 393 a 2 202 em Abril 2026).
+        sql: fase
+        type: string
+
+      - name: fase_id
+        description: >
+          ID numérico da fase (FP_ID). Valores: 1 (Laminagem), 11 (Não
+          Laminado), 36 (Laminagem peças), 54 (Laminagem Double Dutch),
+          67 (Laminagem Infusão). Útil para JOINs com outras medidas de
+          produção/qualidade que partilham `fase_id` como dim canónica.
+        sql: fase_id
+        type: number

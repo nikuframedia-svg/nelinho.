@@ -1,0 +1,61 @@
+route_id: qualidade_defeitos_periodo
+dominio: qualidade
+descricao: "Defeitos / não-conformidades registados num período, agrupados por mês e gravidade (OF_CHECKLIST mirror)"
+
+# Q.88 — primeira rota Tier 2 do domínio QUALIDADE (Q.81 fechou vocabulário).
+# Cobre Q.8 "quantos defeitos registámos este mês?" (antes ABSTAIN do classifier).
+# Janela do espelho: 1 ano (Q.75 WINDOW_YEARS=1). 97K rows em factory_raw.of_checklist.
+
+utterances:
+  - "quantos defeitos registámos este mês"
+  - "defeitos por gravidade no mês"
+  - "registos de não-conformidade em março"
+  - "qual a tendência de defeitos este ano"
+  - "checklist com falhas no último mês"
+  - "defeitos graves esta semana"
+  - "quantas não-conformidades em abril"
+  - "ranking de meses com mais defeitos"
+  - "evolução mensal de defeitos"
+  - "registos críticos de qualidade"
+  - "defeitos bloqueantes no último trimestre"
+  - "lista de não-conformidades recentes"
+
+params:
+  periodo:
+    type: periodo
+    obrigatorio: true
+  gravidade_min:
+    type: inteiro
+    obrigatorio: false
+    default: 3   # Q.81: 3=Grave; valor 0 inclui todos.
+    min: 0
+    max: 5
+
+defaults: {}
+
+post_processing: null
+max_rows: 100
+
+sql: |
+  SELECT
+    DATE_TRUNC('month', CAST("OFCH_DATA_VERIFICACAO" AS timestamp))::date AS mes,
+    COALESCE("OFCH_GRAVIDADE", 0) AS gravidade,
+    COUNT(*) AS n_defeitos,
+    COUNT(DISTINCT "OFCH_OF_ID") AS n_ofs_afectadas
+  FROM factory_raw.of_checklist
+  WHERE "OFCH_DATA_VERIFICACAO" IS NOT NULL
+    AND CAST("OFCH_DATA_VERIFICACAO" AS timestamp) >= :data_inicio
+    AND CAST("OFCH_DATA_VERIFICACAO" AS timestamp) <  :data_fim
+    AND COALESCE("OFCH_GRAVIDADE", 0) >= :gravidade_min
+  GROUP BY mes, gravidade
+  ORDER BY mes DESC, gravidade DESC
+  LIMIT 100
+
+hypothesis_flags:
+  - "Janela espelho factory_raw.of_checklist: 1 ano (WINDOW_YEARS=1 em scripts/q75_setup_raw_mirror.py). Tendências > 12m não disponíveis."
+  - "OFCH_GRAVIDADE escala Q.81: 0=N/A, 1=Normal, 2=Aviso, 3=Grave (default min), 4=Crítico, 5=Bloqueante."
+  - "DEFEITO neste contexto = registo em OF_CHECKLIST com OFCH_GRAVIDADE>=3 (default). Inclui visto/não-visto, resolvido/não-resolvido — agregação só por gravidade nesta rota."
+  - "OFCH_DATA_VERIFICACAO é text — CAST as timestamp para filtro temporal."
+
+golden:
+  params: {periodo: "2026-04", gravidade_min: 3}

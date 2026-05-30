@@ -1,0 +1,50 @@
+cubes:
+  - name: producao_lead_time_of
+    description: >
+      Q.108.F.1 — Lead time médio de OFs por mês de fechamento. Source:
+      marts.v_lead_time_of_mes (CTE sobre factory_raw.of_fp: MIN/MAX dos
+      timestamps de cada OF). Unidade canónica: TEMPO (dias). Aditiva
+      NÃO se aplica a médias — usar AVG quando agregar entre meses;
+      P50/P90 expostos para drill-down. n_ofs_fechadas é CONTAGEM aditiva.
+    sql_table: marts.v_lead_time_of_mes
+
+    measures:
+      - name: ofs_fechadas
+        description: >
+          Contagem absoluta de OFs fechadas no mês — denominador de
+          médias e KPI standalone de throughput. CONTAGEM, aditiva.
+        sql: n_ofs_fechadas
+        type: sum
+        format: number
+
+      - name: lead_time_avg
+        description: >
+          Lead time MÉDIO em dias (avg(MAX(fim)-MIN(inicio)) por OF
+          fechada no mês). Para agregar entre meses, ponderar pelo n_ofs
+          (não SUM simples). Cube faz AVG no nível seleccionado.
+        sql: lead_time_dias_avg
+        type: avg
+        format: number
+
+      - name: lead_time_p50
+        description: >
+          Lead time MEDIANO (P50). Mais robusto a outliers do que o avg.
+          P50/P90 entre meses NÃO é matematicamente correcto somar — só
+          comparar.
+        sql: lead_time_dias_p50
+        type: avg
+        format: number
+
+      - name: lead_time_p90
+        description: >
+          Lead time P90 — 90% das OFs fecharam em <= este nº de dias.
+          Útil para SLA / promessas de prazo.
+        sql: lead_time_dias_p90
+        type: avg
+        format: number
+
+    dimensions:
+      - name: data
+        description: Mês de fechamento (primeiro dia, date_trunc('month')).
+        sql: data
+        type: time

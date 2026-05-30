@@ -56,16 +56,25 @@ async def structured_call(
     model: str,
     system_prompt: Optional[str] = None,
     max_retries: int = 2,
+    format_override: Optional[Dict[str, Any]] = None,
 ) -> TModel:
     """Call the LLM and parse the JSON response into `response_model`.
 
     Retries up to `max_retries` times, each time appending the
     validation error to the conversation so the LLM corrects itself.
+
+    Q.93.E Etapa B: `format_override` opcional — JSON Schema completo
+    (com enums vindos do catálogo Cube) passado a Ollama 0.5+ via
+    `options.format=<schema>`. llama.cpp aplica constrained decoding
+    ao nível do token. Defesa em profundidade vs validação Pydantic
+    pós-LLM (esta continua a correr).
     """
     schema_hint = _build_schema_hint(response_model)
     composed_system = _compose_system_prompt(system_prompt, schema_hint)
     history = messages[:-1] if len(messages) >= 2 else []
     prompt = _last_user_prompt(messages)
+    # Q.93.E.B — schema dinâmico (catálogo Cube) ou JSON mode genérico.
+    effective_format: Any = format_override if format_override is not None else "json"
 
     last_error: Optional[Exception] = None
     for attempt in range(max_retries + 1):
@@ -73,7 +82,7 @@ async def structured_call(
             raw = await client.chat(
                 prompt=prompt,
                 model=model,
-                format="json",
+                format=effective_format,
                 history=history,
                 system_prompt=composed_system,
             )

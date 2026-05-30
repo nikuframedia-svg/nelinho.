@@ -1,0 +1,60 @@
+cubes:
+  - name: logistica_transportes
+    description: >
+      Q.107 Onda 1 — transportes (TRANSPORTE granularidade, NÃO OF;
+      1 row = 1 viagem). Anchor 2024 = 490 transportes. Cobertura
+      TR_DATA_ENTREGA: 15% histórico (Q.82) — entregues por ano
+      recente pode ser baixo.
+    sql_table: marts.v_transportes_mes
+
+    measures:
+      - name: total
+        description: >
+          Contagem de transportes (viagens) registados.
+          CONTAGEM. Anchor 2024 = 490.
+        sql: n
+        type: sum
+        format: number
+
+      - name: entregues
+        description: >
+          Contagem de transportes com TR_DATA_ENTREGA preenchida.
+          CONTAGEM. Cobertura histórica 15% (Q.82); anos recentes
+          podem ter cobertura baixa.
+        sql: n_entregues
+        type: sum
+        format: number
+
+      - name: co2_total
+        description: >
+          Q.108 Onda A — emissões CO2 estimadas em kg (SUM(TR_CO2)).
+          Sub-unidade fixa kg_co2 (NÃO confundir com kg de material).
+          Anchor histórico = 38 546 kg em 11 382 transportes com
+          TR_CO2 não-NULL. QUANTIDADE_FISICA mas sem dim unidade_id
+          (sub-unidade fixa).
+        sql: co2_kg
+        type: sum
+        format: number
+
+    dimensions:
+      - name: data
+        sql: data
+        type: time
+      - name: destino
+        sql: destino
+        type: string
+      - name: destino_id
+        sql: destino_id
+        type: number
+      - name: tipo_transporte
+        sql: tipo_transporte
+        type: string
+      - name: tipo_transporte_id
+        sql: tipo_transporte_id
+        type: number
+      - name: pais
+        sql: pais
+        type: string
+      - name: pais_id
+        sql: pais_id
+        type: number

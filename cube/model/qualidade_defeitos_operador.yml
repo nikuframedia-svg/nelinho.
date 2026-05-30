@@ -1,0 +1,35 @@
+cubes:
+  - name: qualidade_defeitos_operador
+    description: >
+      Q.108.M2 — Defeitos e operações por (mês × operador). Source:
+      marts.v_defeitos_operador_mes (JOIN factory_raw.offp_eq +
+      factory_raw.of_fp + quality.rework_entry). Foca em workers
+      (OFFPEQ_CHEFE=FALSE); chefes ficam para Q.108.M2.continuation.
+    sql_table: marts.v_defeitos_operador_mes
+
+    measures:
+      - name: n_defeitos
+        description: COUNT incidentes de rework atribuídos ao operador. CONTAGEM.
+        sql: n_defeitos
+        type: sum
+        format: number
+
+      - name: n_ops
+        description: COUNT operações de fase trabalhadas pelo operador.
+        sql: n_ops
+        type: sum
+        format: number
+
+      - name: n_ofs
+        description: COUNT OFs distintas em que o operador participou.
+        sql: n_ofs
+        type: sum
+        format: number
+
+    dimensions:
+      - name: data
+        sql: data
+        type: time
+      - name: operador_id
+        sql: operador_id
+        type: number

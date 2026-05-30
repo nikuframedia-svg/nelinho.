@@ -1,0 +1,69 @@
+cubes:
+  - name: comercial_top_clientes
+    description: >
+      Q.103 Agente A — drill-down comercial por cliente. Perfil
+      cliente-centric sobre a MESMA fonte que comercial_facturacao
+      (marts.v_facturacao_mes, Q.102.B). Mesma SUM agregada, mesma
+      base sem IVA (herdada Q.102, pendente CFO). Anchors herdados:
+      top-1 2024 = Gusser KanuSport €488 898; soma sem filtros =
+      €125 372 058 (= comercial_facturacao.total Q.102).
+      ATENÇÃO DUPLA CONTAGEM: NÃO somar com comercial_facturacao.total
+      nem comercial_facturacao_disciplina.total — são a mesma
+      faturação decomposta de 3 formas.
+    sql_table: marts.v_facturacao_mes
+
+    measures:
+      - name: total
+        description: >
+          Facturação líquida em € agrupada por cliente. SUM(facturado_eur)
+          da view (mesma soma que comercial_facturacao). Aditivo entre
+          clientes/períodos (DINHEIRO mesma base). NÃO somar com
+          comercial_facturacao.total — dupla contagem.
+        sql: facturado_eur
+        type: sum
+        format: number
+
+    dimensions:
+      - name: data
+        description: >
+          Primeiro dia do mês de facturação (DATE). Granularidade
+          mensal. Usa `timeDimensions` com `dateRange`.
+        sql: data
+        type: time
+
+      - name: ano
+        description: >
+          Ano calendário (int) — 2009-2026. Útil para drill-down
+          rápido por ano.
+        sql: ano
+        type: number
+
+      - name: cliente
+        description: >
+          Nome do cliente (E_NOME via JOIN canónico Q.102:
+          EPHCF_EPHC_ID = ENTIDADE_PHC.EPHC_ID, PK local). Top 2024:
+          Gusser KanuSport (€488 898), Olimpijczyk ×2 PHC IDs
+          (€455 196 cada), Adnan Aliev (€384 650), Nelo Rental
+          (€384 650). 32.6 % rows agregadas têm 'Sem cliente
+          registado'. Usar `equals` literal para clientes exactos OU
+          `contains` para sub-string ('olimpijczyk').
+        sql: cliente
+        type: string
+
+      - name: cliente_id
+        description: >
+          PK local PHC (EPHCF_EPHC_ID = ENTIDADE_PHC.EPHC_ID). 675 IDs
+          distintos. Útil para queries técnicas (top 737 = Gusser
+          KanuSport). NÃO confundir com EPHC_PHC_ID (referência externa
+          PHC — Q.82 errou neste ponto).
+        sql: cliente_id
+        type: number
+
+      - name: disciplina
+        description: >
+          Dim auxiliar para filtrar por disciplina dentro do drill-down
+          de cliente (ex.: "top clientes em Canoe Sprint"). NÃO usar
+          como dim principal — para isso usa comercial_facturacao_
+          disciplina.
+        sql: disciplina
+        type: string

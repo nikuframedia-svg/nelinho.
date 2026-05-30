@@ -1,0 +1,28 @@
+cubes:
+  - name: producao_pecas_pintadas
+    description: >
+      Q.107 Onda 1 — contagem mensal de fases de PINTURA terminadas
+      (OFFP_DATAFIM not null, FP_NOME ILIKE '%pintura%'). Padrão Q.99.
+      Anchor Abril 2026 = 770 (4 fases: Pintura 18, Pintura Acabamento
+      5, Acabamento-Pintura 65, Pintura-Verniz 73).
+    sql_table: marts.v_pecas_pintadas_mes
+
+    measures:
+      - name: total
+        description: >
+          Contagem de fases de pintura terminadas. SUM(n). CONTAGEM.
+          Anchor Abril 2026 = 770.
+        sql: n
+        type: sum
+        format: number
+
+    dimensions:
+      - name: data
+        sql: data
+        type: time
+      - name: fase
+        sql: fase
+        type: string
+      - name: fase_id
+        sql: fase_id
+        type: number

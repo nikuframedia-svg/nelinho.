@@ -1,0 +1,38 @@
+cubes:
+  - name: logistica_lead_time_entrega
+    description: >
+      Q.108.W2 — Lead time entrega (OF→cliente). Dias entre
+      MAX(OFFP_DATAFIM) e TR_DATA. Source:
+      marts.v_lead_time_entrega_mes (JOIN of_fp → transp_of → transporte).
+    sql_table: marts.v_lead_time_entrega_mes
+
+    measures:
+      - name: entregas
+        description: COUNT entregas no mês.
+        sql: n_entregas
+        type: sum
+        format: number
+
+      - name: lead_time_avg
+        description: AVG dias entre OF fechada e expedição. TEMPO; cross-row AVG.
+        sql: lead_time_dias_avg
+        type: avg
+        format: number
+
+      - name: lead_time_p50
+        description: Mediana lead time (P50).
+        sql: lead_time_dias_p50
+        type: avg
+        format: number
+
+      - name: lead_time_p90
+        description: P90 lead time — SLA candidato.
+        sql: lead_time_dias_p90
+        type: avg
+        format: number
+
+    dimensions:
+      - name: data
+        description: Mês de TR_DATA (expedição).
+        sql: data
+        type: time

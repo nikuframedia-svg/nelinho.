@@ -1,0 +1,80 @@
+route_id: stock_material_baixo
+dominio: materiais
+descricao: "Matérias-primas com stock abaixo do threshold (min_stock_qty * safety_multiplier) — alerta de stock crítico"
+
+# Q.88 — primeira rota Tier 2 da Q.83 (Q.17 "que material está quase a acabar?").
+# Q.86 v2 + Q.87 abdicavam por não haver rota; agora dados existem em supply.*
+# (espelhados em Q.52.K). Snapshot, sem histórico.
+
+utterances:
+  - "que matéria-prima está quase a acabar no armazém"
+  - "que materiais estão em falta"
+  - "stock baixo de resina"
+  - "alerta de stock crítico"
+  - "que materiais precisamos de encomendar urgente"
+  - "matérias-primas com pouco stock"
+  - "que materiais estão abaixo do mínimo"
+  - "stock de matéria-prima em risco"
+  - "que materiais vão acabar esta semana"
+  - "quais os materiais críticos no armazém"
+  - "lista de materiais a repor"
+  - "materiais com quantidade insuficiente"
+
+params:
+  top_n:
+    type: inteiro
+    obrigatorio: false
+    default: 20
+    min: 1
+    max: 50
+
+defaults:
+  # DECISÃO DE NEGÓCIO Q.88: 2 critérios alternativos para "stock baixo":
+  #   * Se material tem `min_stock_qty > 0` configurado: ALERTA quando
+  #     stock < min_stock_qty * `safety_multiplier` (default 1.2 = margem 20%).
+  #   * Caso contrário (min_stock_qty=0 — caso actual do espelho dev): devolve
+  #     top-N com menor stock absoluto > 0 (fallback informativo).
+  safety_multiplier: 1.2
+
+post_processing: null
+max_rows: 100
+
+# Q.88 — RLS: `supply.warehouse_stock` e `supply_material_master` têm policy
+# tenant_isolation. Executor injecta automaticamente `SET LOCAL app.tenant_id`
+# (Q.88 em executor.py). SQL pura sem necessidade de tenant manual.
+sql: |
+  SELECT
+    mm.sku_id,
+    mm.name AS material,
+    mm.unit_of_measure AS unidade,
+    ws.warehouse_name AS armazem,
+    ws.stock AS stock_actual,
+    mm.min_stock_qty AS stock_minimo,
+    mm.lead_time_days,
+    mm.critical_flag,
+    CASE
+      WHEN mm.min_stock_qty > 0 THEN 'abaixo_minimo'
+      ELSE 'top_menor_stock'
+    END AS razao
+  FROM supply.warehouse_stock ws
+  JOIN supply.supply_material_master mm ON mm.sku_id = ws.product_code AND mm.tenant_id = ws.tenant_id
+  WHERE mm.active = true
+    AND ws.stock > 0
+    AND (
+      (mm.min_stock_qty > 0 AND ws.stock < mm.min_stock_qty * :safety_multiplier)
+      OR mm.min_stock_qty = 0
+    )
+  ORDER BY
+    (CASE WHEN mm.min_stock_qty > 0 AND ws.stock < mm.min_stock_qty THEN 0 ELSE 1 END),
+    mm.critical_flag DESC,
+    ws.stock ASC
+  LIMIT :top_n
+
+hypothesis_flags:
+  - "Q.88 stock = snapshot (sem histórico). `synced_at` em supply.warehouse_stock indica última actualização."
+  - "Threshold via `min_stock_qty * 1.2` (DECISÃO DE NEGÓCIO Q.88) — refinável."
+  - "Cobertura ~8K stock rows × ~14K materiais master no tenant dev. Só materiais com `active=true` e `min_stock_qty>0`."
+  - "RLS `supply.*` requer `SET LOCAL app.tenant_id` — hard-coded para tenant dev '00...01'."
+
+golden:
+  params: {top_n: 10}

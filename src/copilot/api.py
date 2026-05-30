@@ -82,6 +82,7 @@ from src.copilot.routers.ask import (
     get_recommendations_dev,
 )
 from src.copilot.routers.ask import router as _ask_router
+from src.copilot.routers.ask_cube import router as _ask_cube_router
 from src.copilot.routers.conversations import (
     archive_conversation,
     create_conversation,
@@ -113,6 +114,7 @@ from src.copilot.routers.suggestions import router as _suggestions_router
 
 router = APIRouter(prefix="/api/copilot", tags=["COPILOT"])
 router.include_router(_ask_router)
+router.include_router(_ask_cube_router)
 router.include_router(_actions_router)
 router.include_router(_suggestions_router)
 router.include_router(_conversations_router)

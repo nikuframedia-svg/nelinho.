@@ -1,0 +1,44 @@
+cubes:
+  - name: comercial_hhi
+    description: >
+      Q.108.H — Herfindahl-Hirschman Index de concentração de clientes.
+      SUM((quota_cliente)^2) por (mês × disciplina). Range 0-1 (canónico
+      considera 0.15/0.25 thresholds de concentração). Source:
+      marts.v_hhi_clientes_mes. Exclui créditos (facturado<0).
+    sql_table: marts.v_hhi_clientes_mes
+
+    measures:
+      - name: indice
+        description: >
+          HHI = SUM(quota²). Range [0,1]. Apresenta como ratio (não %).
+          AVG cross-row (NÃO SUM — é índice próprio do período).
+        sql: hhi_indice
+        type: avg
+        format: number
+
+      - name: n_clientes
+        description: COUNT clientes activos no período. CONTAGEM.
+        sql: n_clientes_mes
+        type: sum
+        format: number
+
+      - name: quota_max
+        description: >
+          Quota do maior cliente (0-1). MAX cross-row. Sinaliza dependência.
+        sql: quota_max
+        type: max
+        format: percent
+
+      - name: receita_total
+        description: SUM facturado positivo no período. DINHEIRO.
+        sql: receita_total_mes
+        type: sum
+        format: number
+
+    dimensions:
+      - name: data
+        sql: data
+        type: time
+      - name: disciplina
+        sql: disciplina
+        type: string

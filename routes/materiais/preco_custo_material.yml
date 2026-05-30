@@ -1,0 +1,49 @@
+route_id: preco_custo_material
+dominio: materiais
+descricao: "Abdicação explícita: perguntas sobre preço/custo/€ de material ou fornecedor"
+
+# Q.86 — gaveta de abdicação honesta. O espelho factory_raw tem quantidades
+# (kg/m/litros via MOVIMENTO) mas NÃO tem ligação OF→fornecedor→preço (a tabela
+# ENTIDADE_PHC_FACT vive só no SQL Server, fora do espelho — ver Q.82). Sem esta
+# rota, perguntas tipo "quanto pagámos pela resina" caíam em consumo_materiais
+# (que devolve kg) e o utilizador via número de quantidade pensando que era €
+# — erro silencioso semântico (ROTA-ERRADA Q.84/Q.85 Q.16).
+#
+# Esta rota apanha as utterances de preço primeiro (score alto) e abdica com
+# razão clara, em vez de devolver número errado.
+
+utterances:
+  # Q.86 v2 A4 — utterances contrastivas: maximizar vocabulário FINANCEIRO
+  # (€, euros, preço, custo, pagámos, fatura, valor pago, fornecedor), evitar
+  # "consumimos/gastámos" sem €. Cada utterance carrega ≥2 sinais €/€.
+  - "qual o preço em euros da resina"
+  - "quanto custou em euros o epoxy"
+  - "valor pago em euros pelo material este mês"
+  - "preço unitário em euros do material"
+  - "qual o fornecedor mais caro de resina"
+  - "qual o fornecedor mais caro de matéria-prima"
+  - "fatura do fornecedor de epoxy"
+  - "custo de aquisição em euros das matérias-primas"
+  - "preço por kg pago ao fornecedor"
+  - "valor da fatura do fornecedor"
+  - "quanto pagámos em euros ao fornecedor pela resina este mês"
+  - "qual o preço pago em euros pela resina"
+  - "valor monetário gasto em compras de material"
+  - "custo financeiro do material consumido"
+
+abstain: true
+abstain_reason: |
+  Não tenho ligação OF→fornecedor→preço (€) no espelho de dados. Tenho
+  quantidades (kg/m/litros) de consumo via MOVIMENTO, mas custos unitários
+  por fornecedor estão fora do espelho (vivem na ENTIDADE_PHC_FACT do SQL
+  Server). Para esta pergunta, contacta o gestor ou consulta o ERP directamente.
+
+params: {}
+defaults: {}
+sql: ""
+
+hypothesis_flags:
+  - "Q.86: rota-abstain explícita — alternativa honesta a devolver kg quando perguntam €"
+  - "Q.82 confirmou que ENTIDADE_PHC_FACT (faturação PHC, 100K rows) NÃO está em factory_raw"
+
+golden: {}

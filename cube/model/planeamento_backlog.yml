@@ -1,0 +1,38 @@
+cubes:
+  - name: planeamento_backlog
+    description: >
+      Q.108.W1.2 — Backlog de OFs (snapshot diário). Source:
+      marts.v_backlog_dia sobre factory_raw.ordemfabrico. CONTAGEM aditiva
+      para `total`; AVG/P50/MAX em dias para o lag.
+    sql_table: marts.v_backlog_dia
+
+    measures:
+      - name: total
+        description: COUNT de OFs em atraso hoje (data prevista < now, ainda abertas).
+        sql: backlog_count
+        type: sum
+        format: number
+
+      - name: dias_atraso_avg
+        description: AVG dias de atraso entre as OFs em backlog.
+        sql: dias_atraso_avg
+        type: avg
+        format: number
+
+      - name: dias_atraso_p50
+        description: Mediana dos dias de atraso (P50).
+        sql: dias_atraso_p50
+        type: avg
+        format: number
+
+      - name: dias_atraso_max
+        description: Pior caso — OF com maior atraso.
+        sql: dias_atraso_max
+        type: max
+        format: number
+
+    dimensions:
+      - name: data
+        description: Dia do snapshot (CURRENT_DATE).
+        sql: data
+        type: time

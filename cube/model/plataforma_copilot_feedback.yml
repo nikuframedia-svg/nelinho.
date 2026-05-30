@@ -1,0 +1,32 @@
+cubes:
+  - name: plataforma_copilot_feedback
+    description: >
+      Q.108.L.2 — Feedback humano sobre o copilot. Source:
+      marts.v_copilot_feedback_mes.
+    sql_table: marts.v_copilot_feedback_mes
+
+    measures:
+      - name: taxa_positivo
+        description: >
+          % feedback positivo. Ratio SUM(n_positive)/NULLIF(SUM(n_feedback),0).
+          FRACAO; apresentar como %.
+        sql: "SUM(n_positive)::float / NULLIF(SUM(n_feedback), 0)"
+        type: number
+        format: percent
+
+      - name: total
+        description: COUNT total feedback recebido.
+        sql: n_feedback
+        type: sum
+        format: number
+
+      - name: rating_avg
+        description: AVG rating (escala 1-5). NULL se sem rating registado.
+        sql: rating_avg
+        type: avg
+        format: number
+
+    dimensions:
+      - name: data
+        sql: data
+        type: time

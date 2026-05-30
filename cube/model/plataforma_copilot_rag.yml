@@ -1,0 +1,41 @@
+cubes:
+  - name: plataforma_copilot_rag
+    description: >
+      Q.108.L.2 — RAG hit rate + citações por resposta. Source:
+      marts.v_copilot_rag_dia sobre copilot_request_log.
+    sql_table: marts.v_copilot_rag_dia
+
+    measures:
+      - name: hit_rate
+        description: >
+          % requests com rag_chunks_retrieved>0. Ratio SUM(n_rag_hit)/
+          NULLIF(SUM(n_requests),0). FRACAO; apresentar como %.
+        sql: "SUM(n_rag_hit)::float / NULLIF(SUM(n_requests), 0)"
+        type: number
+        format: percent
+
+      - name: chunks_avg
+        description: AVG chunks retrieved. CONTAGEM; AVG cross-row.
+        sql: chunks_avg
+        type: avg
+        format: number
+
+      - name: citations_avg
+        description: AVG citations_count por resposta.
+        sql: citations_avg
+        type: avg
+        format: number
+
+      - name: requests
+        description: COUNT total requests.
+        sql: n_requests
+        type: sum
+        format: number
+
+    dimensions:
+      - name: data
+        sql: data
+        type: time
+      - name: route
+        sql: route
+        type: string

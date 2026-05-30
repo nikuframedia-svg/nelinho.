@@ -1,0 +1,36 @@
+cubes:
+  - name: comercial_facturacao_mom
+    description: >
+      Q.108.H — MoM growth da facturação. LAG() window pré-computada por
+      disciplina. Source: marts.v_facturacao_mom. mom_pct é FRACAO
+      (-1.0=−100%, +1.0=+100%). NULL para o primeiro mês de cada disciplina.
+    sql_table: marts.v_facturacao_mom
+
+    measures:
+      - name: mom_pct
+        description: >
+          Variação MoM = (mes - mes-1) / mes-1. FRACAO; apresentar como %
+          na narração. AVG cross-row (NÃO SUM — é ratio).
+        sql: mom_pct
+        type: avg
+        format: percent
+
+      - name: facturado_eur
+        description: SUM(facturado_eur) DINHEIRO aditivo.
+        sql: facturado_eur
+        type: sum
+        format: number
+
+      - name: prev_eur
+        description: Mês anterior (referência); DINHEIRO.
+        sql: prev_eur
+        type: sum
+        format: number
+
+    dimensions:
+      - name: data
+        sql: data
+        type: time
+      - name: disciplina
+        sql: disciplina
+        type: string

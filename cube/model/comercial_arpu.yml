@@ -1,0 +1,40 @@
+cubes:
+  - name: comercial_arpu
+    description: >
+      Q.108.H — ARPU pré-computado por (mês × disciplina × país). Razão
+      pre-cooked aqui porque clientes_activos é COUNT DISTINCT
+      (não-aditivo entre meses). Source: marts.v_arpu_mes sobre
+      marts.v_facturacao_mes.
+    sql_table: marts.v_arpu_mes
+
+    measures:
+      - name: eur_por_cliente
+        description: >
+          ARPU = facturado_total / clientes_activos. DINHEIRO. AVG cross-row
+          (NÃO somar entre meses — é ratio).
+        sql: arpu_eur
+        type: avg
+        format: number
+
+      - name: facturado_total
+        description: SUM(facturado_eur) por (mês, disciplina, país). DINHEIRO aditiva.
+        sql: facturado_total
+        type: sum
+        format: number
+
+      - name: clientes_activos
+        description: COUNT DISTINCT cliente_id já pré-computada.
+        sql: clientes_activos
+        type: sum
+        format: number
+
+    dimensions:
+      - name: data
+        sql: data
+        type: time
+      - name: disciplina
+        sql: disciplina
+        type: string
+      - name: pais
+        sql: pais
+        type: string

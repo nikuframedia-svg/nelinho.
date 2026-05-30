@@ -1,0 +1,46 @@
+cubes:
+  - name: producao_schedule_aderencia
+    description: >
+      Q.108.W2 — Schedule adherence: % OFs fechadas no prazo. Ratio measure
+      SUM(on_time)/NULLIF(SUM(on_time+late),0). Source:
+      marts.v_schedule_aderencia_mes.
+    sql_table: marts.v_schedule_aderencia_mes
+
+    measures:
+      - name: taxa
+        description: >
+          % OFs entregues no prazo (FRACAO 0-1). Apresentar como % na
+          narração. Ignora OFs sem promessa registada.
+        sql: "SUM(n_on_time)::float / NULLIF(SUM(n_on_time) + SUM(n_late), 0)"
+        type: number
+        format: percent
+
+      - name: fechadas
+        description: COUNT total OFs fechadas no mês.
+        sql: n_ofs_fechadas
+        type: sum
+        format: number
+
+      - name: on_time
+        description: COUNT OFs fechadas dentro do prazo.
+        sql: n_on_time
+        type: sum
+        format: number
+
+      - name: late
+        description: COUNT OFs fechadas após o prazo.
+        sql: n_late
+        type: sum
+        format: number
+
+      - name: dias_atraso_avg
+        description: AVG dias de atraso entre as late.
+        sql: dias_atraso_avg
+        type: avg
+        format: number
+
+    dimensions:
+      - name: data
+        description: Mês de fechamento.
+        sql: data
+        type: time

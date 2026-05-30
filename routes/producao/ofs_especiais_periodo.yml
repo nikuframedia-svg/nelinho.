@@ -1,0 +1,59 @@
+route_id: ofs_especiais_periodo
+dominio: producao
+descricao: "OFs marcadas como 'especiais' (2ª escolha, Teste/Stock, Cedidos a atletas) num período"
+
+utterances:
+  # Q.86 v2 A4 — utterances contrastivas: maximizar vocabulário de TIPO DE USO
+  # ESPECIAL (2ª escolha, cedidos, atletas, teste/stock), evitar "OFs em
+  # produção" (ambíguo com ofs_estado_por_fase). Cada utterance refere
+  # explicitamente o tipo especial OU "cedidos/atletas/segunda escolha".
+  - "quantas OFs de 2ª escolha em abril"
+  - "kayaks cedidos a atletas este ano"
+  - "OFs marcadas como segunda escolha em 2026"
+  - "kayaks cedidos para atletas no último mês"
+  - "OFs marcadas como teste ou stock este ano"
+  - "kayaks cedidos para eventos desportivos"
+  - "OFs com tipo de uso 2ª escolha em março"
+  - "OFs de stock interno este ano"
+  - "kayaks de teste fabricados em 2026"
+  - "OFs especiais (não venda) por tipo este ano"
+
+params:
+  periodo:
+    type: periodo
+    obrigatorio: true
+  tipo_especial:
+    type: tipo_especial_of
+    obrigatorio: true
+
+defaults: {}
+# OF_OFTU_ID lookup (CONFIRMADO Q.78 via tabela OF_TIPOUSO):
+#   1 = 2ª Escolha
+#   2 = Teste/Stock
+#   59 = Cedidos a atletas/eventos
+# LIMITAÇÃO factory_raw: só 4 OFs com OF_OFTU_ID preenchido no espelho 24 meses
+# (99.996% NULL). Resultados serão escassos. NELO real tem mais (ver §3 glossário).
+
+post_processing: null
+max_rows: 5000
+
+sql: |
+  SELECT
+    o."OF_ID",
+    o."OF_NOME",
+    o."OF_DATAINICIO",
+    o."OF_DATAFIM",
+    o."OF_OFTU_ID"
+  FROM factory_raw.ordemfabrico o
+  WHERE o."OF_OFTU_ID" = :tipo_especial_id
+    AND CAST(o."OF_DATAINICIO" AS timestamp) >= :data_inicio
+    AND CAST(o."OF_DATAINICIO" AS timestamp) <  :data_fim
+  ORDER BY o."OF_DATAINICIO" DESC
+
+hypothesis_flags:
+  - "OF_OFTU_ID = 1 (2ª Escolha), 2 (Teste/Stock), 59 (Cedidos) — CONFIRMADO via tabela OF_TIPOUSO do ERP (Q.78)."
+  - "LIMITAÇÃO: factory_raw tem 99.996% NULL em OF_OFTU_ID. Para análise histórica completa, espelho precisa de refresh OU consulta directa SQL Server."
+  - "Filtro temporal por OF_DATAINICIO (data inicial da OF). Alternativa: filtrar por OF_DATAFIM se gestor preferir 'data de conclusão' — decisão de negócio."
+
+golden:
+  params: {periodo: "2026", tipo_especial: "cedidos"}
