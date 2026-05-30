@@ -15,6 +15,7 @@
 
 import { useSearchParams } from 'react-router-dom';
 import { BarChart3, MessageSquare, BookOpen, BellRing } from 'lucide-react';
+import { Tabs } from '../../components/dark';
 import CopilotPage from '../copilot/CopilotPage';
 import RegrasPage from '../admin/RegrasPage';
 import { KPIsTab } from './KPIsTab';
@@ -86,7 +87,9 @@ export default function LLMPage() {
   );
 }
 
-// ── TabBar partilhada ────────────────────────────────────────────────────
+// ── TabBar partilhada — usa o componente Tabs canónico (Q.123) ─────────────
+// Antes era uma reimplementação bespoke do underline; agora delega no <Tabs>
+// partilhado para consistência visual/acessibilidade com as outras páginas.
 
 function TabBar({
   tab,
@@ -96,34 +99,8 @@ function TabBar({
   setTab: (t: LLMTab) => void;
 }) {
   return (
-    <div
-      className="flex items-center gap-1 border-b border-bd-1 bg-bg-base px-4"
-      style={{ minHeight: 44 }}
-      role="tablist"
-      aria-label="Secções LLM"
-    >
-      {TABS.map((t) => {
-        const active = t.id === tab;
-        return (
-          <button
-            key={t.id}
-            type="button"
-            role="tab"
-            aria-selected={active}
-            onClick={() => setTab(t.id)}
-            className={[
-              'inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium',
-              'border-b-2 -mb-px transition-colors',
-              active
-                ? 'border-accent text-fg-0'
-                : 'border-transparent text-fg-3 hover:text-fg-1',
-            ].join(' ')}
-          >
-            {t.icon}
-            {t.label}
-          </button>
-        );
-      })}
+    <div className="border-b border-bd-1 bg-bg-base px-4 shrink-0">
+      <Tabs tabs={TABS} value={tab} onChange={(id) => setTab(id as LLMTab)} />
     </div>
   );
 }
