@@ -195,10 +195,20 @@ class FactoryState:
         sq = semantic_queries
         if sq is None:
             try:
+                # fix Q.124 — SemanticQueriesInMemory exige `engine`; antes era
+                # chamado sem argumento → TypeError silencioso → estado vazio.
+                # Resolver o IngestEngine global; sem engine ou sem ingestão ativa,
+                # a camada curada está vazia → cair em estado vazio HONESTO.
+                from src.factory_data_product.api.endpoints import get_engine
                 from src.factory_data_product.services.semantic_queries_inmemory import (
                     SemanticQueriesInMemory,
                 )
-                sq = SemanticQueriesInMemory()
+                engine = get_engine()
+                if engine is None or engine.get_active_run() is None:
+                    raise RuntimeError(
+                        "camada curada sem ingestão ativa (sem Excel/ETL ERP→curated)"
+                    )
+                sq = SemanticQueriesInMemory(engine)
             except Exception as e:
                 # Sprint Q.8 Fase 1 — booting empty means scheduler runs
                 # with skill_matrix={}, molds_by_model={}: any worker may

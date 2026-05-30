@@ -68,7 +68,7 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("'{}'::jsonb"),
         ),
-        schema="plan",
+        # plan_schedule_commits vive no schema default (public) — sem schema= (fix Q.124)
     )
 
 
@@ -76,7 +76,6 @@ def downgrade() -> None:
     op.drop_column(
         "plan_schedule_commits",
         "boost_inputs_snapshot",
-        schema="plan",
     )
     op.drop_index(
         "ix_boat_boost_tenant",

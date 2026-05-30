@@ -22,20 +22,22 @@ def upgrade() -> None:
     # A tabela já existe com coluna `status` (String(20)); acrescentamos
     # os campos de cancelamento. Não alteramos o enum existente — o status
     # 'CANCELLED' já está definido no model OrderStatus.
-    op.add_column(
-        "production_orders",
-        sa.Column("cancelled_at", sa.DateTime(timezone=True), nullable=True),
-        schema="plan",
+    # fix Q.124: estas 3 colunas já são criadas por 055a_q62_a3_orphans
+    # (Table.create do model ProductionOrder, que já define cancelled_at/by/
+    # cancellation_reason). add_column duplicava-as → DuplicateColumnError.
+    # ADD COLUMN IF NOT EXISTS torna a operação idempotente, mantendo o
+    # schema final idêntico em DBs onde a coluna ainda não existe.
+    op.execute(
+        "ALTER TABLE plan.production_orders "
+        "ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMP WITH TIME ZONE"
     )
-    op.add_column(
-        "production_orders",
-        sa.Column("cancelled_by", sa.String(255), nullable=True),
-        schema="plan",
+    op.execute(
+        "ALTER TABLE plan.production_orders "
+        "ADD COLUMN IF NOT EXISTS cancelled_by VARCHAR(255)"
     )
-    op.add_column(
-        "production_orders",
-        sa.Column("cancellation_reason", sa.Text(), nullable=True),
-        schema="plan",
+    op.execute(
+        "ALTER TABLE plan.production_orders "
+        "ADD COLUMN IF NOT EXISTS cancellation_reason TEXT"
     )
 
     # ── core.products ──────────────────────────────────────────────────────
