@@ -38,7 +38,12 @@ from src.copilot.cube.measure_contract import (
     is_unsupported_concept_request,
     resolve_question_period,
 )
-from src.copilot.cube.query import CubeFilter, CubeQuery, validate_against_catalog
+from src.copilot.cube.query import (
+    CubeFilter,
+    CubeQuery,
+    CubeTimeDimension,
+    validate_against_catalog,
+)
 from src.copilot.cube.schema_compiler import compile_interpret_result_schema
 from src.copilot.llm.base import LLMClient
 from src.copilot.llm.structured import (
@@ -118,6 +123,26 @@ def _last_day_of_month(year: int, month: int) -> _dt.date:
     else:
         next_first = _dt.date(year, month + 1, 1)
     return next_first - _dt.timedelta(days=1)
+
+
+def _filter_value_to_daterange(value: object) -> tuple[str, str] | None:
+    """Converte um valor de filtro "YYYY-MM" ou "YYYY-MM-DD" num dateRange
+    inclusivo. Fallback quando a pergunta não dá período determinístico.
+    Devolve None se não for parseável (não tenta adivinhar)."""
+    if not isinstance(value, str):
+        return None
+    s = value.strip()
+    try:
+        if len(s) == 7 and s[4] == "-":  # YYYY-MM
+            year, month = int(s[:4]), int(s[5:7])
+            start = _dt.date(year, month, 1)
+            return start.isoformat(), _last_day_of_month(year, month).isoformat()
+        if len(s) == 10 and s[4] == "-" and s[7] == "-":  # YYYY-MM-DD
+            d = _dt.date.fromisoformat(s)
+            return d.isoformat(), d.isoformat()
+    except ValueError:
+        return None
+    return None
 
 
 def _quarter_range(year: int, quarter: int) -> tuple[_dt.date, _dt.date]:
@@ -565,17 +590,53 @@ async def interpret(
     # determinístico, sobrepõe o dateRange ANTES do override do
     # period_label (Q.93.D.bis), que fica como fallback para casos não
     # cobertos pelo helper.
-    det_range = resolve_question_period(question, today) if result.query.time_dimensions else None
+    # Q.R FIX datas — uma dimensão de tempo (DATE no Postgres) NUNCA deve
+    # aparecer como filtro `contains`/`equals`: o Cube gera `date ~~* text`
+    # (400) ou um `IN list` de 2 datas (subset errado, qd01). As datas
+    # pertencem a timeDimensions/dateRange. Modelos pequenos (gemma4:e4b)
+    # erram isto de forma não-determinística (o anchor consumo chegou a
+    # produzir `consumo_material.data contains ["2024-04"]`). Saneamento:
+    #   1. detectar filtros cujo member é dimensão do tipo `time` (via catálogo);
+    #   2. sintetizar uma timeDimension para cada um sem correspondência
+    #      (dateRange determinístico da pergunta; fallback ao valor do filtro);
+    #   3. remover TODOS os filtros sobre dimensões de tempo (já cobertos).
+    det_range = resolve_question_period(question, today)
+    time_filter_members = {
+        f.member for f in result.query.filters
+        if (ds := catalog.dimension(f.member)) is not None and ds.type == "time"
+    }
+    if time_filter_members:
+        existing_td = {td.dimension for td in result.query.time_dimensions}
+        for member in sorted(time_filter_members):
+            if member in existing_td:
+                continue
+            rng = det_range
+            if rng is None:
+                for f in result.query.filters:
+                    if f.member != member:
+                        continue
+                    for v in f.values:
+                        rng = _filter_value_to_daterange(v)
+                        if rng is not None:
+                            break
+                    if rng is not None:
+                        break
+            if rng is not None:
+                result.query.time_dimensions.append(
+                    CubeTimeDimension(dimension=member, dateRange=list(rng))
+                )
+        result.query.filters = [
+            f for f in result.query.filters
+            if f.member not in time_filter_members
+        ]
+
+    # Q.97b FIX A / Q.93.D.bis — datas determinísticas SEMPRE quando a pergunta
+    # permite: tira ao LLM o poder de errar "Maio"→"Abril" ou "2026"→"2024".
     if det_range is not None and result.query.time_dimensions:
         result.query.time_dimensions[0].date_range = list(det_range)
 
-    # Q.108.F — saneamento: remover filter redundante em coluna .data quando
-    # a mesma coluna já está em timeDimensions com dateRange. Caso qd01: o
-    # LLM injectava `filter qualidade.data equals [start, end]` em PARALELO
-    # com timeDimensions, e o Cube interpretava-o como `IN list 2 datas`,
-    # devolvendo um subset errado (13,64% em vez de 6,20%). O dateRange das
-    # timeDimensions já cobre o filtro temporal — manter ambos é redundante
-    # e tóxico.
+    # Q.108.F — remover filter redundante em coluna .data quando a mesma coluna
+    # já está em timeDimensions (caso `equals [start,end]` → `IN list`, qd01).
     if result.query.time_dimensions and result.query.filters:
         td_data_members = {
             td.dimension for td in result.query.time_dimensions
@@ -584,7 +645,7 @@ async def interpret(
         result.query.filters = [
             f for f in result.query.filters
             if not (f.member in td_data_members
-                    and f.operator in {"equals", "inDateRange"})
+                    and f.operator in {"equals", "inDateRange", "contains", "notContains"})
         ]
 
     # Q.108.F FIX A fase — injecção determinística do filter fase quando a
