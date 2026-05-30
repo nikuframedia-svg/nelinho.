@@ -50,6 +50,42 @@ const STATUS_LABEL: Record<string, string> = {
 
 // ── Detalhe expansível: audit trail + aprovações ──────────────────────────
 
+type AuditEvent = { timestamp: string | null; event: string; by?: string };
+
+function buildTimeline(
+  data: Awaited<ReturnType<typeof decisionsApi.getAuditTrail>>,
+): AuditEvent[] {
+  const events: AuditEvent[] = [];
+
+  const d = data?.decision;
+  if (d?.proposed_at) {
+    events.push({ timestamp: d.proposed_at, event: 'Proposta', by: d.proposed_by });
+  }
+  if (d?.executed_at) {
+    events.push({ timestamp: d.executed_at, event: 'Execução' });
+  }
+  if (d?.rolled_back_at) {
+    events.push({ timestamp: d.rolled_back_at, event: 'Revertida' });
+  }
+
+  const approvals = Array.isArray(data?.approvals) ? data.approvals : [];
+  for (const a of approvals) {
+    events.push({
+      timestamp: a.approved_at ?? null,
+      event: a.status === 'APPROVED' ? 'Aprovação' : a.status === 'REJECTED' ? 'Rejeição' : a.status,
+      by: a.approver_id,
+    });
+  }
+
+  events.sort((a, b) => {
+    if (!a.timestamp) return 1;
+    if (!b.timestamp) return -1;
+    return a.timestamp < b.timestamp ? -1 : 1;
+  });
+
+  return events;
+}
+
 function DecisionDetail({ id }: { id: string }) {
   const auditQuery = useQuery({
     queryKey: [...decisionKeys.detail(id), 'audit'],
@@ -67,22 +103,42 @@ function DecisionDetail({ id }: { id: string }) {
       </p>
     );
   }
-  const trail = auditQuery.data ?? [];
-  if (trail.length === 0) {
+
+  const trail = buildTimeline(auditQuery.data!);
+  const sc = auditQuery.data?.state_changes;
+
+  if (trail.length === 0 && !sc) {
     return <p className="text-xs text-fg-3 px-3 py-2">Sem eventos de auditoria.</p>;
   }
+
   return (
-    <ol className="px-3 py-2 flex flex-col gap-1.5 border-t border-bd-1 mt-2">
-      {trail.map((ev, i) => (
-        <li key={i} className="text-xs text-fg-2 flex items-baseline gap-2">
-          <span className="text-fg-3 tabular-nums shrink-0">
-            {ev.timestamp ? new Date(ev.timestamp).toLocaleString('pt-PT') : '—'}
+    <div className="border-t border-bd-1 mt-2">
+      {trail.length > 0 && (
+        <ol className="px-3 py-2 flex flex-col gap-1.5">
+          {trail.map((ev, i) => (
+            <li key={i} className="text-xs text-fg-2 flex items-baseline gap-2">
+              <span className="text-fg-3 tabular-nums shrink-0">
+                {ev.timestamp ? new Date(ev.timestamp).toLocaleString('pt-PT') : '—'}
+              </span>
+              <span className="font-medium">{ev.event}</span>
+              {ev.by ? <span className="text-fg-3">· {ev.by}</span> : null}
+            </li>
+          ))}
+        </ol>
+      )}
+      {sc?.before_state || sc?.after_state ? (
+        <p className="px-3 pb-2 text-xs text-fg-3">
+          Estado:{' '}
+          <span className="font-medium text-fg-2">
+            {JSON.stringify(sc.before_state ?? {})}
           </span>
-          <span className="font-medium">{ev.event}</span>
-          {ev.by ? <span className="text-fg-3">· {ev.by}</span> : null}
-        </li>
-      ))}
-    </ol>
+          {' → '}
+          <span className="font-medium text-fg-2">
+            {JSON.stringify(sc.after_state ?? {})}
+          </span>
+        </p>
+      ) : null}
+    </div>
   );
 }
 

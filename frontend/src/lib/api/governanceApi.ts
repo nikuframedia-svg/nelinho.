@@ -96,12 +96,19 @@ export const decisionsApi = {
     }),
   
   getAuditTrail: (id: string) =>
-    request<Array<{
-      timestamp: string;
-      event: string;
-      by: string;
-      details: Record<string, any>;
-    }>>(`/v1/decisions/${id}/audit`),
+    request<{
+      decision: DecisionRun;
+      approvals: Array<{
+        approver_id: string;
+        status: string;
+        comment?: string;
+        approved_at?: string;
+      }>;
+      state_changes: {
+        before_state?: Record<string, any>;
+        after_state?: Record<string, any>;
+      } | null;
+    }>(`/v1/decisions/${id}/audit`),
 
   /**
    * Sprint Q.9 Onda 3.4 — bulk approve / reject in one round trip.
