@@ -82,7 +82,7 @@ export function CopilotFab() {
         onClick={handleClick}
         onMouseEnter={() => !isOpen && setShowTooltip(true)}
         onMouseLeave={() => setShowTooltip(false)}
-        className="fixed bottom-6 right-6 bg-transparent border-0 p-0 cursor-pointer group z-[150] pointer-events-auto"
+        className="fixed bottom-6 right-6 bg-transparent border-0 p-0 cursor-pointer group z-[100] pointer-events-auto"
           style={{
             width: buttonSize.width,
             height: buttonSize.height,

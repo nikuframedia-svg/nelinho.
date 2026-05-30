@@ -453,9 +453,9 @@ export const moldsApi = {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export interface QualityRiskPreview {
-  operator_id: string;
-  boat_id: string;
-  phase_id: string;
+  operator_id: string | null;
+  boat_id: string | null;
+  phase_id: string | null;
   p_defect: number;
 }
 

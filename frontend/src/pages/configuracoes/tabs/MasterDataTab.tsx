@@ -60,6 +60,7 @@ function SeccaoOrdensFabrico() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [modalOfId, setModalOfId] = useState<string | null>(null);
+  const [modalOfLabel, setModalOfLabel] = useState<string | null>(null);
 
   const query = useQuery({
     queryKey: masterDataKeys.workOrders(),
@@ -76,24 +77,25 @@ function SeccaoOrdensFabrico() {
       )
     : items;
 
-  const selectedOf = items.find((o) => o.of_id === modalOfId);
-
   async function handleConfirm(reason: string) {
     if (!modalOfId) return;
     await cancelActionsApi.cancelWorkOrder(modalOfId, reason).then((data) => {
       queryClient.invalidateQueries({ queryKey: masterDataKeys.workOrders() });
       toast.success(`OF ${modalOfId} cancelada · trace_id=${shortTraceId(data.audit_trace_id)}`);
       setModalOfId(null);
+      setModalOfLabel(null);
     }).catch((err: unknown) => {
       const { is409, is404 } = parseApiError(err);
       if (is409) {
         toast.error(`OF ${modalOfId} já cancelada`);
         setModalOfId(null);
+        setModalOfLabel(null);
         return;
       }
       if (is404) {
         toast.error(`OF ${modalOfId} não encontrada`);
         setModalOfId(null);
+        setModalOfLabel(null);
         return;
       }
       throw err; // deixa o modal mostrar o erro
@@ -113,6 +115,8 @@ function SeccaoOrdensFabrico() {
       </div>
 
       <input
+        id="md-search-ofs"
+        name="md-search-ofs"
         type="search"
         placeholder="Pesquisar OF, modelo ou cliente…"
         className="w-full max-w-xs bg-bg-2 text-fg-0 placeholder:text-fg-3 border border-bd-2 rounded px-3 py-1.5 text-xs mb-4 focus:outline-none focus:border-accent"
@@ -171,7 +175,7 @@ function SeccaoOrdensFabrico() {
                   </td>
                   <td className="py-2 text-right">
                     <button
-                      onClick={() => setModalOfId(o.of_id)}
+                      onClick={() => { setModalOfId(o.of_id); setModalOfLabel(`${o.modelo} · ${o.cliente}`); }}
                       className="px-2 py-1 rounded text-xs font-medium bg-red-900/40 text-red-400 hover:bg-red-900/60 border border-red-800/40 transition-colors"
                     >
                       Cancelar OF
@@ -188,9 +192,9 @@ function SeccaoOrdensFabrico() {
         <ConfirmDestructiveModal
           isOpen
           title="Cancelar Ordem de Fabrico"
-          description={`Confirmar cancelamento de OF ${modalOfId}?${selectedOf ? ` (${selectedOf.modelo} · ${selectedOf.cliente})` : ''}`}
+          description={`Confirmar cancelamento${modalOfLabel ? ` de ${modalOfLabel}` : ` de OF ${modalOfId}`}?`}
           entityId={modalOfId}
-          onClose={() => setModalOfId(null)}
+          onClose={() => { setModalOfId(null); setModalOfLabel(null); }}
           onConfirm={handleConfirm}
         />
       )}
@@ -255,6 +259,8 @@ function SeccaoEncomendas() {
       </div>
 
       <input
+        id="md-search-encomendas"
+        name="md-search-encomendas"
         type="search"
         placeholder="Pesquisar encomenda ou cliente…"
         className="w-full max-w-xs bg-bg-2 text-fg-0 placeholder:text-fg-3 border border-bd-2 rounded px-3 py-1.5 text-xs mb-4 focus:outline-none focus:border-accent"
@@ -394,6 +400,8 @@ function SeccaoBarcos() {
 
       <div className="flex gap-3 mb-4 flex-wrap items-center">
         <input
+          id="md-search-barcos"
+          name="md-search-barcos"
           type="search"
           placeholder="Pesquisar barco ou modelo…"
           className="bg-bg-2 text-fg-0 placeholder:text-fg-3 border border-bd-2 rounded px-3 py-1.5 text-xs w-56 focus:outline-none focus:border-accent"
@@ -402,6 +410,8 @@ function SeccaoBarcos() {
         />
         <label className="flex items-center gap-2 text-xs text-text-dark-secondary cursor-pointer select-none">
           <input
+            id="md-show-retired"
+            name="md-show-retired"
             type="checkbox"
             className="rounded"
             checked={showRetired}
@@ -575,6 +585,8 @@ function SeccaoOperadores() {
 
       <div className="flex gap-3 mb-4 flex-wrap items-center">
         <input
+          id="md-search-operadores"
+          name="md-search-operadores"
           type="search"
           placeholder="Pesquisar operador…"
           className="bg-bg-2 text-fg-0 placeholder:text-fg-3 border border-bd-2 rounded px-3 py-1.5 text-xs w-56 focus:outline-none focus:border-accent"
@@ -583,6 +595,8 @@ function SeccaoOperadores() {
         />
         <label className="flex items-center gap-2 text-xs text-text-dark-secondary cursor-pointer select-none">
           <input
+            id="md-show-inactive"
+            name="md-show-inactive"
             type="checkbox"
             className="rounded"
             checked={showInactive}

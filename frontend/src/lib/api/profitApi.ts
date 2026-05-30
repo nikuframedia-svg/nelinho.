@@ -329,8 +329,10 @@ export interface OEEResponse {
   date_from: string;
   date_to: string;
   group_by: 'none' | 'phase' | 'shift' | 'product_type' | 'mold';
-  overall: OEEComponent;
+  overall: OEEComponent | null;
   breakdown: OEEComponent[];
+  erp_available?: boolean;
+  unavailable_reason?: string | null;
 }
 
 export const profitOeeApi = {

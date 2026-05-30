@@ -136,13 +136,16 @@ export const PorFaseView = memo(function PorFaseView({
     id,
     label,
     labelNode: (
-      <button
-        className="text-left hover:text-[color:var(--accent)] transition-colors"
+      <span
+        role="button"
+        tabIndex={0}
+        className="text-left hover:text-[color:var(--accent)] transition-colors cursor-pointer"
         onClick={() => onSelect?.({ kind: 'phase', id })}
+        onKeyDown={(e) => e.key === 'Enter' && onSelect?.({ kind: 'phase', id })}
         title={`Filtrar por fase: ${label}`}
       >
         <Clickable kind="fase" id={id}>{label}</Clickable>
-      </button>
+      </span>
     ),
   }));
 
