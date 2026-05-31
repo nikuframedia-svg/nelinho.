@@ -12,6 +12,17 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 export type Umwelt = 'gestor' | 'operador' | 'ceo';
 const STORAGE_KEY = 'umwelt';
 
+// Q.133.B.2 — o switcher de Umwelt tem de mudar o role EFECTIVO. O client.ts
+// envia `X-User-Role` a partir de localStorage('user_role'); sem isto, trocar
+// para CEO/Operador não mudava nada (header ficava sempre 'admin' no dev) e o
+// RBAC era "teatro". Mapeia o papel da UI para o enum `Role` do backend.
+// (Só dev — em produção vale o JWT; os headers legacy são ignorados.)
+const UMWELT_TO_ROLE: Record<Umwelt, string> = {
+  gestor: 'manager_operations',
+  operador: 'operator',
+  ceo: 'ceo',
+};
+
 interface UmweltCtxValue {
   umwelt: Umwelt;
   setUmwelt: (u: Umwelt) => void;
@@ -34,6 +45,8 @@ export function UmweltProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, umwelt);
+      // Q.133.B.2 — propaga o role efectivo para o header X-User-Role (client.ts).
+      localStorage.setItem('user_role', UMWELT_TO_ROLE[umwelt]);
     } catch { /* ignore */ }
   }, [umwelt]);
 
