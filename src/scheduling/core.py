@@ -56,6 +56,7 @@ from src.scheduling.jobs.preference_learning import (
 from src.scheduling.jobs.boat_phase_score_job import _boat_phase_score_job
 from src.scheduling.jobs.boat_potential_job import _boat_potential_job
 from src.scheduling.jobs.phase_operator_affinity import _phase_operator_affinity_job
+from src.scheduling.jobs.phase_calibration_job import _phase_calibration_global_job
 from src.scheduling.jobs.plan_vs_actual import _plan_vs_actual_global_job
 from src.scheduling.jobs.runbook_learning import _runbook_learning_job
 from src.scheduling.jobs.supply import _shortage_scan_job
@@ -261,6 +262,19 @@ def start_scheduler(
         args=[tenants or []],
         id="plan_vs_actual",
         name="plan_vs_actual",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Q.133.A1 — calibração de durações p50/p95 por (modelo, fase) de of_fp →
+    # plan.phase_duration_calibration. 06:40 UTC (depois do plan_vs_actual).
+    # O FactoryState (Q.133.A2) lê esta tabela e prefere o p50 calibrado.
+    _scheduler.add_job(
+        _phase_calibration_global_job,
+        trigger=CronTrigger(hour=6, minute=40, timezone="UTC"),
+        args=[tenants or []],
+        id="phase_calibration",
+        name="phase_calibration",
         replace_existing=True,
         coalesce=True,
         max_instances=1,
