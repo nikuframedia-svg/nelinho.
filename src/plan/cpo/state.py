@@ -325,7 +325,22 @@ class FactoryState:
             state.skill_matrix = await _load_skills_db(session, tenant_id)
 
         if not state.open_orders:
-            state.open_orders = await _load_open_orders_db(session, tenant_id)
+            # Q.136.A — `planning.scope` decide boats_only (default) vs all.
+            from sqlalchemy.exc import SQLAlchemyError
+            scope = "boats_only"
+            try:
+                from src.core.services.tenant_config_service import (
+                    TenantConfigService,
+                )
+                _planning = await TenantConfigService(
+                    session, tenant_id
+                ).get_category("planning")
+                scope = str(_planning.get("scope") or "boats_only")
+            except (SQLAlchemyError, ImportError, ValueError, AttributeError) as exc:
+                logger.debug("planning.scope indisponível (%s); boats_only", exc)
+            state.open_orders = await _load_open_orders_db(
+                session, tenant_id, scope=scope
+            )
 
         # Curing/drying gaps (Sprint A D2): DB first, seed fallback
         state.phase_transition_gaps = await _load_phase_transition_gaps(
@@ -892,27 +907,47 @@ async def _load_skills_db(
 async def _load_open_orders_db(
     session: Any,
     tenant_id: UUID,
+    scope: str = "boats_only",
 ) -> List[Dict[str, Any]]:
     """Q.126.B — real WIP from `factory_raw.ordemfabrico`: open orders
     (`OF_DATAFIM` NULL) whose current phase (`OF_FP_ID`) is a production phase
     (`FP_PRODUCAO=true`, which already excludes Entregue/Armazem/Embalado/...).
     ``modelo_id=OF_P_ID``, deadline = COALESCE of the three date columns.
-    Best-effort, capped. Only used when no curated open_orders are present."""
+    Best-effort, capped. Only used when no curated open_orders are present.
+
+    Q.136.A — `scope` (config `planning.scope`): `boats_only` (default) planeia
+    SÓ barcos (`PRODUTO.P_QTDDECK>0 AND P_QTDCASCO>0`); sem isto ~56% do WIP são
+    acessórios/componentes (Banco/Leme/Strap…). `all` = comportamento legacy
+    (LEFT JOIN não dropa nada → back-compat exacto).
+
+    Q.136.B — devolve `current_fase_id` (= `OF_FP_ID`) para o RoutingResolver
+    truncar a rota à fase atual (não re-planear fases já feitas)."""
     if session is None:
         return []
     from sqlalchemy import text
     from sqlalchemy.exc import SQLAlchemyError
+
+    # Filtro boats-only: P_QTDDECK/P_QTDCASCO>0 = barco (deck+casco). Acessórios/
+    # componentes = 0/NULL → excluídos. LEFT JOIN para `all` não dropar órfãos.
+    boats_filter = (
+        'AND p."P_QTDDECK" > 0 AND p."P_QTDCASCO" > 0'
+        if scope == "boats_only"
+        else ""
+    )
     sql = text(
-        """
+        f"""
         SELECT ofb."OF_ID"::text   AS of_id,
                ofb."OF_P_ID"::text AS modelo_id,
+               ofb."OF_FP_ID"::text AS current_fase_id,
                COALESCE(ofb."OF_DATAENTREGA", ofb."OF_TR_DATA_PREVISTA",
                         ofb."OF_PLANO_DATA_PREVISTA") AS data_entrega_prevista
         FROM factory_raw.ordemfabrico ofb
         JOIN factory_raw.fases_producao f ON f."FP_ID" = ofb."OF_FP_ID"
+        LEFT JOIN factory_raw.produto p ON p."P_ID" = ofb."OF_P_ID"
         WHERE ofb."OF_DATAFIM" IS NULL
           AND ofb."OF_P_ID" IS NOT NULL
           AND f."FP_PRODUCAO" = true
+          {boats_filter}
         ORDER BY data_entrega_prevista NULLS LAST
         LIMIT :plan_cap
         """
@@ -929,6 +964,9 @@ async def _load_open_orders_db(
             "of_id": str(r["of_id"]),
             "order_id": str(r["of_id"]),
             "modelo_id": str(r["modelo_id"]),
+            "current_fase_id": (
+                str(r["current_fase_id"]) if r["current_fase_id"] is not None else None
+            ),
             "data_entrega_prevista": r["data_entrega_prevista"],
         }
         for r in rows
