@@ -110,11 +110,53 @@ da GA), não "dados reais" — campanha futura. Os dados de ENTRADA são 100% re
   idempotente com guard de WIP-vazio; PT-PT; zero mocks. 3 ressalvas não-bloqueantes (título do
   commit A com 73 chars; `print()` num script CLI; teste CX1 best-effort com docstrings).
 
+## Q.131.G — Fallback de routing-template do ERP (cobertura 73%→~99%)
+
+Resposta à 2ª pergunta do Luis ("a BD real Mar-Kayaks não tem essa info?"): **TEM.** O ERP tem a
+tabela `PRODUTO_FASE`, espelhada em `plan.model_routing_assignment` + `routing_template_phase`
+(keyed por `OF_P_ID`, `duration_p50_h` minerada de `of_fp` por `time_mining` — tempo REAL, nunca
+CoeficienteX). `model_routing_assignment` cobre 5261/5315; das 1419 ordens sem rota-histórica,
+1374 (97%) têm template. Ao portar o Q.126 (Q.131.A) eu tinha REMOVIDO esse fallback.
+
+Re-adicionado como fallback REAL: loader `_load_route_templates_db` (filtrado por tenant) +
+campo `template_routes_by_model` + camada `_template_for_model_db` no resolver (entre history_db e
+standard), `source="db_template"` (NÃO conta como fallback sintético — rota+duração reais). Fase
+sem p50 nem mediana-por-fase → ordem inteira por planear, NUNCA duração inventada.
+
+Verificação live: WIP 200 urgentes → **100% cobertura** (194 histórico + 6 template),
+`source={history_db:2838, db_template:36}`, `fallback_fraction=0.0`. WIP completo 5315 → ~99,2%.
+
+## Q.131.H — Honestidade: nunca saltar uma ordem em silêncio
+
+Resposta à 1ª: *"o software tem de ser honesto, não pode só saltá-las"*. Antes, ordem sem rota
+devolvia `[]` e **desaparecia do plano sem aviso**. Agora toda a ordem ou é planeada ou é
+registada em `resolver.unplanned` (`order_id, modelo_id, reason`); o scheduler expõe
+`unplanned_orders` + `orders_coverage` na resposta + `warnings` + `cpo_meta` + emite
+`CopilotAlert(ORDERS_WITHOUT_ROUTING)`. Frontend: banner laranja na PlaneamentoPage que distingue
+"sem rota" (ordem inteira) de "sem operador" (op). **Property test (hypothesis):** planeadas +
+não-planeadas == total.
+
+Verificação live (`POST /v1/plan/cpo/schedule`): mix 1 real (42366) + 1 sem rota → 19 ops,
+`unplanned_orders=['FAKE-SEM-ROTA']`, `orders_coverage=0.5`, warning explícito. WIP real (200)
+→ `orders_coverage=0.98`, 4 órfãs surfaçadas, `degraded=False`. NOTA: o endpoint **sync**
+`/cpo/schedule` é um preview legacy que NÃO faz commit (por isso `plan_schedule_commits` e
+`copilot_alerts` ficam vazios em testes sync); o alerta + `cpo_meta` persistem pela via **async**
+(Arq worker) que o frontend usa — mesmo padrão do `DURATION_FALLBACK_HIGH`. O canal PRIMÁRIO de
+honestidade (resposta + banner) está verificado a funcionar.
+
+## Q.131.E2 — Gate + revisão
+
+`verify.ps1 -QuickPython` **ALL GREEN**; tests/plan 832 + frontend 8 (incl. banner). **nelo-reviewer
+APROVADO** (CX1 limpo, tenant filtrado, keyspace OK, db_template não degrada, invariante de
+honestidade provado, 400 intacto, Spelke não tocados).
+
 ## Resumo
 
-A pergunta do Luis ("o planeamento usa dados reais? a BD é real?") está respondida:
-**a BD é real e o planeamento usa-a a sério.** O CPO planeia WIP real com rotas/durações/moldes
-100% reais (0 fallback sintético), a lista de ordens tem 0 demo (5315 OFs reais), e o horizonte
-interactivo é tratável (200 mais urgentes, GA optimiza). Limitações honestas e deferidas:
-cobertura de rota (58%) e de skills (parcial) dependem de histórico/dados, não de código;
-filtro boats-only e qualidade do `makespan` são decisões/campanhas futuras.
+As duas perguntas do Luis estão respondidas: **(1) a BD é real e o planeamento usa-a a sério** —
+CPO planeia WIP real com rotas/durações/moldes reais (0 fallback sintético), cobertura ~99-100%
+combinando histórico + routing master do ERP; lista de ordens 0 demo (5315 reais); horizonte
+interactivo tratável (200 mais urgentes). **(2) Quando não há rota, o software é HONESTO** — mostra
+exactamente que ordens ficaram de fora e porquê (resposta + banner + alerta), nunca as salta em
+silêncio. Limitações honestas/deferidas: ~1% (45) das ordens sem rota nem template (modelos nunca
+produzidos); skill_matrix parcial afecta a qualidade do `makespan`; filtro boats-only e Stream 2
+(NELO DAG copiloto) são decisões/campanhas futuras.
