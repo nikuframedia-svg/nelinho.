@@ -78,6 +78,70 @@ def _extract_mapelites_representatives(
     return impl(engine, top_n)
 
 
+# Q.132.A — defaults do schema CPOScheduleRequest. Quando o request traz
+# exactamente o default, tratamo-lo como "não especificado" e deixamos a
+# Configuração (tenant_configuration categoria 'planning') controlar o motor —
+# é assim que os controlos da página de Configurações passam a mandar de facto.
+# Um caller que peça explicitamente um valor diferente continua a ganhar.
+_REQ_DEFAULT_POP_SIZE = 100
+_REQ_DEFAULT_GENERATIONS = 50
+_REQ_DEFAULT_TIME_LIMIT_S = 30.0
+
+
+async def _build_cpo_config(
+    session: AsyncSession, tenant_id: UUID, request: Any,
+) -> CPOConfig:
+    """Constrói o CPOConfig a partir da Configuração do tenant (categoria
+    'planning': cpo.gen_count / cpo.total_budget_s / cpo.pop_size + sub-budgets),
+    com os campos do request a sobrepor só quando diferem do default do schema.
+    Best-effort: sem config / sem session → defaults canónicos do CPOConfig
+    (Blueprint v2.0). NÃO mexe nos flags use_* (ficam nos defaults do engine —
+    evita divergências de seeds)."""
+    planning: dict[str, Any] = {}
+    try:
+        from src.core.services.tenant_config_service import TenantConfigService
+        planning = await TenantConfigService(session, tenant_id).get_category(
+            "planning",
+        )
+    except Exception as exc:  # pragma: no cover — sem config = defaults canónicos
+        logger.debug("CPOConfig: planning config indisponível (%s); defaults", exc)
+
+    base = CPOConfig()  # defaults canónicos Blueprint v2.0
+
+    def _num(key: str, fallback: float) -> float:
+        try:
+            return float(planning[key]) if key in planning else float(fallback)
+        except (TypeError, ValueError):
+            return float(fallback)
+
+    pop = (
+        request.population_size
+        if request.population_size != _REQ_DEFAULT_POP_SIZE
+        else int(_num("cpo.pop_size", base.population_size))
+    )
+    gens = (
+        request.generations
+        if request.generations != _REQ_DEFAULT_GENERATIONS
+        else int(_num("cpo.gen_count", base.generations))
+    )
+    tlim = (
+        request.time_limit_sec
+        if request.time_limit_sec != _REQ_DEFAULT_TIME_LIMIT_S
+        else _num("cpo.ga_budget_s", base.time_limit_sec)
+    )
+    return CPOConfig(
+        population_size=pop,
+        generations=gens,
+        time_limit_sec=tlim,
+        total_budget_s=_num("cpo.total_budget_s", base.total_budget_s),
+        greedy_budget_s=_num("cpo.greedy_budget_s", base.greedy_budget_s),
+        ga_budget_s=_num("cpo.ga_budget_s", base.ga_budget_s),
+        mapelites_budget_s=_num("cpo.mapelites_budget_s", base.mapelites_budget_s),
+        cpsat_budget_s=_num("cpo.cpsat_budget_s", base.cpsat_budget_s),
+        workforce_budget_s=_num("cpo.workforce_budget_s", base.workforce_budget_s),
+    )
+
+
 async def run_cpo_schedule(
     session: AsyncSession,
     tenant_id: UUID,
@@ -260,11 +324,7 @@ async def run_cpo_schedule(
 
     engine = CPOv4Engine(
         state=state,
-        config=CPOConfig(
-            population_size=request.population_size,
-            generations=request.generations,
-            time_limit_sec=request.time_limit_sec,
-        ),
+        config=await _build_cpo_config(session, tenant_id, request),
         fitness_config=fitness_config,
     )
 
