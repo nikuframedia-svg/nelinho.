@@ -132,6 +132,14 @@ class FactoryState:
     # no DB history loaded (keeps the legacy 2x behaviour).
     historical_durations_by_fase: Dict[str, float] = field(default_factory=dict)
 
+    # Q.133.A2 — p50 CALIBRADO por (fase_id, modelo) em HORAS + n_obs, do job
+    # phase_calibration (plan.phase_duration_calibration). `median_duration_h`
+    # prefere-o sobre a mediana crua de of_fp quando n_obs >= _CALIBRATION_MIN_OBS.
+    # Vazio = sem calibração → comportamento legado (back-compat).
+    calibrated_durations: Dict[Tuple[str, str], Tuple[float, int]] = field(
+        default_factory=dict
+    )
+
     # Q.126.B — real production route per model (OF_P_ID) reconstructed from
     # factory_raw.of_fp: ordered production phases + median real duration.
     # Each step: {fase_id, fase_nome, sequence, duration_hours}. Lets the
@@ -289,6 +297,12 @@ class FactoryState:
         if templates_db:
             state.template_routes_by_model = templates_db
 
+        # Q.133.A2 — p50 calibrado (loop de aprendizagem). median_duration_h
+        # prefere-o quando n_obs suficiente. Best-effort; vazio = legado.
+        calibration_db = await _load_phase_calibration_db(session, tenant_id)
+        if calibration_db:
+            state.calibrated_durations = calibration_db
+
         molds_by_model_db, molds_db = await _load_molds_db(session, tenant_id)
         if molds_db:
             state.molds_by_model, state.molds = molds_by_model_db, molds_db
@@ -394,6 +408,13 @@ class FactoryState:
         fallback_hours: float,
     ) -> float:
         key = (str(fase_id), str(modelo_id))
+        # Q.133.A2 — preferir o p50 CALIBRADO (job phase_calibration) quando há
+        # amostra suficiente. É histórico real agregado + (Q.133.A3) o desvio
+        # plano-vs-real. Degrau, não blend → determinístico; dict vazio =
+        # comportamento anterior (back-compat total).
+        cal = self.calibrated_durations.get(key)
+        if cal and cal[1] >= _CALIBRATION_MIN_OBS and cal[0] > 0:
+            return cal[0]
         if key in self.historical_durations:
             return self.historical_durations[key]
         # Q.126.B — second tier: real median for the fase across all models
@@ -580,6 +601,10 @@ _OFFP_DUR_OK = (
 _DUR_FLOOR_H = 0.05
 _DUR_CEIL_H = 24.0 * 7
 
+# Q.133.A2 — amostra mínima por (modelo, fase) para preferir o p50 calibrado
+# sobre a mediana crua de of_fp (alinhado com o HAVING count>=5 do job).
+_CALIBRATION_MIN_OBS = 5
+
 # Q.131.F — horizonte de planeamento interactivo. O WIP real tem ~5300 OFs
 # abertas; planear todas (~11k operações) esgota o orçamento da GA logo na
 # geração 1 (sem optimização real) e demora demasiado para um "Replanear"
@@ -735,6 +760,42 @@ async def _load_route_templates_db(
     for steps in templates.values():
         steps.sort(key=lambda s: s["sequence"])
     return templates
+
+
+async def _load_phase_calibration_db(
+    session: Any,
+    tenant_id: UUID,
+) -> Dict[Tuple[str, str], Tuple[float, int]]:
+    """Q.133.A2 — p50 CALIBRADO por (fase_id, modelo) do job phase_calibration
+    (`plan.phase_duration_calibration`). Devolve `{(fase,modelo): (p50_horas,
+    n_obs)}`. Best-effort: session None / tabela ausente → `{}`. Tenant-scoped
+    (PK composto inclui tenant_id). p50 vem em minutos → converte para horas."""
+    if session is None:
+        return {}
+    from sqlalchemy import text
+    from sqlalchemy.exc import SQLAlchemyError
+
+    sql = text(
+        """
+        SELECT phase_id::text AS fase_id, modelo::text AS modelo, p50_min, n_obs
+        FROM plan.phase_duration_calibration
+        WHERE tenant_id = :tenant AND p50_min > 0
+        """
+    )
+    try:
+        rows = (await session.execute(
+            sql, {"tenant": str(tenant_id)}
+        )).mappings().all()
+    except SQLAlchemyError as exc:  # pragma: no cover — DB outage / missing table
+        logger.debug("Q.133.A2 phase_calibration DB load skipped: %s", exc)
+        return {}
+    out: Dict[Tuple[str, str], Tuple[float, int]] = {}
+    for r in rows:
+        out[(str(r["fase_id"]), str(r["modelo"]))] = (
+            float(r["p50_min"]) / 60.0,
+            int(r["n_obs"]),
+        )
+    return out
 
 
 async def _load_molds_db(
