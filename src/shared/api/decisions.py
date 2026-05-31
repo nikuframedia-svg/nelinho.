@@ -707,8 +707,29 @@ async def rollback_decision(
         decision.before_state if hasattr(decision, "before_state") else None
     )
 
+    # Q.130.V — invariante 7: a transição EXECUTED→ROLLED_BACK escreve
+    # `audit_change` na MESMA tx que a mudança de estado (o `commit` abaixo
+    # fecha ambos juntos), seguindo o padrão Q.61.18 de propose/execute.
+    # `rolled_back_at` é tz-aware (consistente com o fix Q.130.U) para
+    # comparar com `executed_at` (DateTime(timezone=True)) sem TypeError.
+    old_status = decision.status
     decision.status = DecisionStatus.ROLLED_BACK.value
-    decision.rolled_back_at = datetime.utcnow()
+    decision.rolled_back_at = datetime.now(timezone.utc)
+
+    await audit_change(
+        session,
+        tenant_id=tenant_id,
+        entity_type="decision_run",
+        entity_id=decision.id,
+        action="UPDATE",
+        old_values={"status": old_status},
+        new_values={
+            "status": DecisionStatus.ROLLED_BACK.value,
+            "rolled_back_at": decision.rolled_back_at.isoformat(),
+        },
+        actor_id=user_id,
+        reason="decision rolled back (advisory)",
+    )
 
     await session.commit()
 

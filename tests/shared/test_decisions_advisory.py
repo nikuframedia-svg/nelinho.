@@ -187,6 +187,73 @@ def test_rollback_rejects_when_not_executed():
     assert resp.status_code == 400
 
 
+# ── Q.130.V — invariante 7: rollback escreve audit_change na MESMA tx ───────
+# Antes do fix a transição EXECUTED→ROLLED_BACK só fazia `decision.status =`
+# + commit, sem audit row — buraco no audit trail. Este teste prova que uma
+# AuditLog (action=UPDATE, entity_type=decision_run) é adicionada à session
+# antes do commit, e que rolled_back_at é tz-aware.
+
+
+def _build_app_capturing_adds(decision):
+    """Como `_build_app` mas captura `session.add(...)` num MagicMock para
+    podermos inspeccionar a AuditLog escrita no rollback."""
+    from unittest.mock import MagicMock
+
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=decision)
+    session.commit = AsyncMock()
+    session.add = MagicMock()
+
+    async def _fake_session():
+        yield session
+
+    app = FastAPI()
+    app.include_router(decisions_router, prefix="/v1/shared")
+    app.dependency_overrides[get_session] = _fake_session
+    return app, session
+
+
+def test_rollback_writes_audit_row_in_same_tx():
+    from src.core.models.audit import AuditLog
+
+    decision = _decision(
+        DecisionStatus.EXECUTED.value,
+        executed_at=datetime.now(timezone.utc) - timedelta(hours=1),
+    )
+    app, session = _build_app_capturing_adds(decision)
+    client = TestClient(app)
+    resp = client.post(
+        f"/v1/shared/decisions/{decision.id}/rollback",
+        headers={
+            "x-tenant-id": str(TENANT),
+            "x-user-id": "11111111-1111-1111-1111-111111111111",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert decision.status == DecisionStatus.ROLLED_BACK.value
+
+    # Audit row foi adicionada à session...
+    audit_rows = [
+        c.args[0]
+        for c in session.add.call_args_list
+        if c.args and isinstance(c.args[0], AuditLog)
+    ]
+    assert len(audit_rows) == 1, "rollback tem de escrever exactamente 1 AuditLog"
+    audit = audit_rows[0]
+    assert audit.entity_type == "decision_run"
+    assert audit.entity_id == decision.id
+    assert audit.action == "UPDATE"
+    assert audit.old_values == {"status": DecisionStatus.EXECUTED.value}
+    assert audit.new_values["status"] == DecisionStatus.ROLLED_BACK.value
+
+    # ...e foi adicionada ANTES do commit (mesma tx — invariante 7).
+    assert session.add.called
+    assert session.commit.await_count == 1
+
+    # rolled_back_at é tz-aware (consistente com Q.130.U).
+    assert decision.rolled_back_at.tzinfo is not None
+
+
 # ── Q.118.S — approve vs reject (o status pedido tem de ser honrado) ────────
 
 def _proposable(status_value: str = "PROPOSED"):
