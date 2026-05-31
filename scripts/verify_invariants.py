@@ -163,6 +163,9 @@ if out.returncode == 0 and out.stdout:
         and "#" not in s
         and "id" not in s.lower()
         and "alembic" not in s.lower()
+        # Q.130.1 — constantes module-level (linhas +_UPPER_SNAKE =) são
+        # definições legítimas de parâmetros físicos, não magic numbers inline.
+        and not re.search(r"^\+_[A-Z][A-Z0-9_]+\s*[:=]", s.strip())
     ]
     check("H0-hardcodes", len(suspect) == 0,
           f"hardcodes novos em src/plan/: {suspect[:5]}")

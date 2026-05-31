@@ -192,3 +192,83 @@ def test_preview_delta_service_owns_preview_issue():
         "transport_suggestions must not expose PreviewIssue — that "
         "would create a circular conceptual dependency."
     )
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# Q.130.1 — FactoryState.route_templates fallback (BE-4)
+# ───────────────────────────────────────────────────────────────────────────
+
+def test_factory_state_has_route_templates_field():
+    """Q.130.1 — FactoryState deve ter o campo route_templates para o
+    fallback BD-real quando a camada curada está unavailable."""
+    from src.plan.cpo.state import FactoryState
+
+    state = FactoryState(tenant_id=uuid4())
+    assert hasattr(state, "route_templates"), (
+        "FactoryState.route_templates ausente — fallback Q.130.1 não funciona"
+    )
+    assert state.route_templates == {}
+
+
+def test_routing_resolver_uses_route_templates_when_engine_unavailable():
+    """Q.130.1 — quando a camada curada está unavailable, o RoutingResolver
+    deve usar state.route_templates (populado da BD real) para resolver o
+    standard_template. Sem este fallback o scheduler dá sempre 400 mesmo
+    quando há orders abertas."""
+    from src.plan.cpo.state import FactoryState
+    from src.plan.services.routing_resolver import RoutingResolver
+
+    state = FactoryState(tenant_id=uuid4())
+    # Simula o que _load_from_real_db() popula: templates de BD para model_id "K1"
+    state.route_templates = {
+        "K1": [
+            {"fase_id": "3", "fase_nome": "Laminagem", "seq": 1,
+             "horas_standard": 4.0, "requires_mold": True, "team_size_default": 2},
+            {"fase_id": "5", "fase_nome": "Desmolde", "seq": 2,
+             "horas_standard": 1.0, "requires_mold": False, "team_size_default": 1},
+        ]
+    }
+    state.loaded_ok = True
+
+    resolver = RoutingResolver(state)
+    order = {"of_id": "TEST-001", "modelo_id": "K1", "data_entrega_prevista": None}
+    ops = resolver.resolve(order)
+
+    # Deve resolver pelo menos 2 operações usando route_templates
+    assert len(ops) >= 2, (
+        f"Esperava >=2 ops de route_templates, got {len(ops)}. "
+        "RoutingResolver não usou state.route_templates como fallback."
+    )
+    # As fontes devem indicar db_template (ou duration_model_p50 se predictor wired)
+    sources = {op.operation_code for op in ops}
+    assert "Laminagem" in sources or "3" in sources, (
+        "Fase Laminagem não encontrada nas operações resolvidas"
+    )
+
+
+def test_route_templates_coeficiente_x_not_in_sql(tmp_path):
+    """Q.130.1 Spelke CX1 — CoeficienteX (€) não deve aparecer em SELECT
+    SQL dentro de _load_from_real_db. Pode aparecer em comentários/docstrings
+    como aviso, mas não pode ser seleccionado como coluna de dados.
+
+    OFFP_COEFICIENTE_X é dinheiro (€), não tempo — Spelke CX1."""
+    import pathlib
+    import re
+
+    state_path = pathlib.Path("C:/Users/User/nelinho/src/plan/cpo/state.py")
+    source = state_path.read_text(encoding="utf-8")
+    fn_start = source.find("async def _load_from_real_db(")
+    fn_end = source.find("\ndef _extract_error_rates(", fn_start)
+    fn_body = source[fn_start:fn_end] if fn_end > fn_start else source[fn_start:]
+
+    # Procura COEFICIENTE_X em linhas SQL não-comentadas (sem # no início)
+    for line in fn_body.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("--") or stripped.startswith("#"):
+            continue  # comentários SQL e Python são OK
+        if "COEFICIENTE_X" in line.upper() and "COEFICIENTE_X" not in (stripped[:2]):
+            # Linha de código activo com CoeficienteX — violação
+            assert False, (
+                f"COEFICIENTE_X (campo de €) em código activo de _load_from_real_db: "
+                f"{line!r} — viola Spelke CX1"
+            )

@@ -227,9 +227,48 @@ class RoutingResolver:
         per-phase duration comes from `DurationModel.predict(...).p50_hours`.
         Otherwise the legacy `horas_standard * 2.0` buffer is used (NELO
         rule: standard times diverge from real by up to 25×).
+
+        Q.130.1 — quando a camada curada está unavailable mas o state foi
+        carregado da BD real, usa `state.route_templates` como fallback.
+        Os `model_id` no routing_assignment são strings ERP (ex: "K1", "20155").
         """
         standards = self._curated_standards()
         rows: List[RoutingRow] = []
+
+        # Fallback Q.130.1: routing templates carregados directamente da BD
+        # quando a camada curada (IngestEngine) não está disponível.
+        if not standards and modelo_id:
+            rt_phases = getattr(self.state, "route_templates", {}).get(modelo_id)
+            if not rt_phases:
+                # Tenta prefixo do product_type (ex: modelo_id "K1 Vanquish L" → "K1")
+                prefix = modelo_id.split()[0] if " " in modelo_id else None
+                if prefix:
+                    rt_phases = getattr(self.state, "route_templates", {}).get(prefix)
+            if rt_phases:
+                for phase in rt_phases:
+                    fase_id = str(phase.get("fase_id", ""))
+                    fase_nome = str(phase.get("fase_nome", "") or fase_id)
+                    sequence = int(phase.get("seq", 0))
+                    std_h = float(phase.get("horas_standard", 1.0) or 1.0)
+
+                    duration_h, source = self._predicted_or_fallback_duration(
+                        fase_id=fase_id,
+                        fase_nome=fase_nome,
+                        modelo_id=modelo_id,
+                        fallback_h=std_h * 2.0,
+                        fallback_source="db_template",
+                    )
+                    rows.append(RoutingRow(
+                        fase_id=fase_id,
+                        fase_nome=fase_nome,
+                        sequence=sequence,
+                        duration_hours=duration_h,
+                        source=source,
+                        mold_required=bool(phase.get("requires_mold", False)),
+                    ))
+                rows.sort(key=lambda r: r.sequence)
+                return rows
+
         for s in standards:
             if modelo_id and str(getattr(s, "modelo_id", "")) != modelo_id:
                 continue
