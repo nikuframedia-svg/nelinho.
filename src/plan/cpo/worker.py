@@ -73,6 +73,11 @@ async def cpo_schedule_job(
     tenant_id = UUID(tenant_id_str)
     request = CPOScheduleRequest(**request_dict)
 
+    # Q.132.G — regista o proponente no commit (author) para o write-gate poder
+    # aplicar SoD (proposer ≠ approver). Só quando o caller não fixou um autor.
+    if user_id_str and getattr(request, "author", "system") == "system":
+        request.author = user_id_str
+
     logger.info(
         "cpo_schedule_job started: job_id=%s tenant=%s user=%s "
         "horizon_days=%d time_limit=%.1fs",
