@@ -162,7 +162,62 @@ class FitnessConfig:
 
         adaptive = await load_adaptive_weights(session, tenant_id)
         merged = dict(adaptive)
-        merged.update(overrides)
+
+        # Q.132.B/B2 — ligar a página de Configurações ao motor (modo Blueprint
+        # v2.0). Os sliders `planning.fitness.weight.*` e o revenue target só
+        # fazem efeito em v2; o scheduler corria em legacy → os controlos da UI
+        # eram código morto. Precedência: override-explícito > slider-UI >
+        # adaptive(legacy) > default v2.
+        planning: Dict[str, Any] = {}
+        try:
+            from src.core.services.tenant_config_service import TenantConfigService
+            planning = await TenantConfigService(session, tenant_id).get_category(
+                "planning",
+            )
+        except Exception:  # pragma: no cover — sem config = comportamento default
+            planning = {}
+
+        # Modo v2 controlado por config; default True (= intenção Blueprint v2.0).
+        if "use_v2_weights" not in overrides:
+            merged["use_v2_weights"] = bool(
+                planning.get("fitness.use_v2_weights", True)
+            )
+
+        # Sliders da UI → pesos v2 normalizados (override do default v2).
+        _slider_map = {
+            "fitness.weight.makespan": "w_v2_makespan",
+            "fitness.weight.tardiness_transport": "w_v2_tardiness_transport",
+            "fitness.weight.idle_operators": "w_v2_idle_operators",
+            "fitness.weight.setup_time": "w_v2_setup_time",
+            "fitness.weight.quality_risk": "w_v2_quality_risk",
+            "fitness.weight.throughput_eur_day": "w_v2_throughput_eur_day",
+        }
+        for cfg_key, field_name in _slider_map.items():
+            if cfg_key in planning:
+                try:
+                    merged[field_name] = float(planning[cfg_key])
+                except (TypeError, ValueError):
+                    pass
+
+        # Revenue target diário (Q.132.B) → activa o revenue_alignment soft
+        # objective (Q.115.X7). Mais recente por `effective_from`.
+        try:
+            from sqlalchemy import desc, select
+            from src.core.models.daily_revenue_target import DailyRevenueTarget
+            target = (
+                await session.execute(
+                    select(DailyRevenueTarget.target_eur)
+                    .where(DailyRevenueTarget.tenant_id == tenant_id)
+                    .order_by(desc(DailyRevenueTarget.effective_from))
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if target is not None:
+                merged["daily_revenue_target_eur"] = float(target)
+        except Exception:  # pragma: no cover — sem target = alignment neutro (1.0)
+            pass
+
+        merged.update(overrides)  # caller explícito ganha sempre
         return cls(**merged)
 
 
