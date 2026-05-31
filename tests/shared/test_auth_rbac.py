@@ -35,6 +35,28 @@ def test_unknown_role_has_no_permission():
     assert not has_permission("unknown_role", Permission.SCHEDULE_READ)
 
 
+def test_routing_edit_open_to_all_roles_q133():
+    """Q.133.B.1 — editar fases de routing (reordenar + flexível) está aberto a
+    QUALQUER role (decisão do owner), incluindo CEO e Operador. MAS é uma
+    permissão DEDICADA: CEO/Operador continuam SEM SCHEDULE_WRITE, logo NÃO
+    acedem a /v1/plan/cpo, /v1/governance nem /v1/decisions — o SoD do
+    write-gate fica intacto."""
+    for role in (
+        Role.MANAGER_OPERATIONS,
+        Role.PLANNER_SUPPLY,
+        Role.FINANCE_CONTROLLER,
+        Role.HR_MANAGER,
+        Role.OPERATOR,
+        Role.CEO,
+        Role.VIEWER,
+        Role.ADMIN_PLATFORM,
+    ):
+        assert has_permission(role.value, Permission.ROUTING_EDIT), role
+    # Invariante preservado: routing aberto NÃO destranca o plano/CPO.
+    assert not has_permission(Role.CEO.value, Permission.SCHEDULE_WRITE)
+    assert not has_permission(Role.OPERATOR.value, Permission.SCHEDULE_WRITE)
+
+
 def test_has_any_permission():
     assert has_any_permission(
         Role.OPERATOR.value,

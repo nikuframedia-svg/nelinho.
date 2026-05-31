@@ -9,8 +9,13 @@ Endpoints:
     Body: { is_flexible: bool, allowed_predecessors: [phase_id, ...] }
     Marca uma fase como posicao alternativa.
 
-RBAC: Permission.CONFIG_WRITE (segue padrao `/v1/core/config` — editar
-um routing template e configuracao de processo, nao um plano).
+RBAC: Permission.ROUTING_EDIT (Q.133.B.1 — permissao DEDICADA, concedida a
+TODOS os roles por decisao do owner ("qualquer user pode editar fases").
+Esta rota NAO esta na matriz de prefixos (`requirements_for_route` devolve
+None), por isso o unico gate e este `PermissionDependency`. Usar ROUTING_EDIT
+em vez de SCHEDULE_WRITE abre EXACTAMENTE este editor sem vazar acesso a
+/v1/plan/cpo, /v1/governance ou /v1/decisions — o SoD do write-gate fica
+intacto (CEO/Operador continuam sem SCHEDULE_WRITE).
 
 Padrao de erros segue Q.115/Q.116.C:
   * ValueError da service layer → 400 (input invalido).
@@ -41,7 +46,7 @@ router = APIRouter(
     tags=["Q.116.B Routing Admin"],
 )
 
-_require_config_write = PermissionDependency([Permission.CONFIG_WRITE])
+_require_routing_edit = PermissionDependency([Permission.ROUTING_EDIT])
 
 
 def _actor_uuid(user_id: str) -> Optional[UUID]:
@@ -108,7 +113,7 @@ class SequenceOut(BaseModel):
     "/{template_id}/sequence",
     response_model=SequenceOut,
     status_code=status.HTTP_200_OK,
-    dependencies=[Depends(_require_config_write)],
+    dependencies=[Depends(_require_routing_edit)],
 )
 async def update_template_sequence(
     template_id: UUID,
@@ -149,7 +154,7 @@ async def update_template_sequence(
     "/{template_id}/phases/{phase_row_id}/flexible",
     response_model=PhaseOut,
     status_code=status.HTTP_200_OK,
-    dependencies=[Depends(_require_config_write)],
+    dependencies=[Depends(_require_routing_edit)],
 )
 async def set_phase_flexible(
     template_id: UUID,
