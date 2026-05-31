@@ -172,20 +172,33 @@ class FitnessConfig:
         # fazem efeito em v2; o scheduler corria em legacy → os controlos da UI
         # eram código morto. Precedência: override-explícito > slider-UI >
         # adaptive(legacy) > default v2.
+        # Sem session (testes de unidade / callers sem DB) → defaults canónicos:
+        # `planning` fica vazio e nenhuma query corre (honra o contrato
+        # "sem session → FitnessConfig()" que cpo.py/poetiq.py assumem).
         planning: Dict[str, Any] = {}
-        try:
-            from src.core.services.tenant_config_service import TenantConfigService
-            planning = await TenantConfigService(session, tenant_id).get_category(
-                "planning",
-            )
-        except (SQLAlchemyError, ImportError, ValueError):  # sem config = default
-            planning = {}
+        if session is not None:
+            try:
+                from src.core.services.tenant_config_service import TenantConfigService
+                planning = await TenantConfigService(
+                    session, tenant_id,
+                ).get_category("planning")
+            except (SQLAlchemyError, ImportError, ValueError):  # sem config = default
+                planning = {}
 
         # Modo v2 controlado por config; default True (= intenção Blueprint v2.0).
         if "use_v2_weights" not in overrides:
+            explicit_v2 = "fitness.use_v2_weights" in planning
             merged["use_v2_weights"] = bool(
                 planning.get("fitness.use_v2_weights", True)
             )
+            # Transparência (Q.132.B2): o scheduler corria em legacy; activar v2
+            # por default muda a função-objectivo. Logamos quando é por default
+            # (não por config explícita) para o flip não ser silencioso.
+            if merged["use_v2_weights"] and not explicit_v2 and session is not None:
+                logging.getLogger(__name__).info(
+                    "FitnessConfig: modo v2 (Blueprint) activo por default; "
+                    "define planning.fitness.use_v2_weights=false para legacy.",
+                )
 
         # Sliders da UI → pesos v2 normalizados (override do default v2).
         _slider_map = {
@@ -204,24 +217,26 @@ class FitnessConfig:
                     pass
 
         # Revenue target diário (Q.132.B) → activa o revenue_alignment soft
-        # objective (Q.115.X7). Mais recente por `effective_from`.
-        try:
-            from sqlalchemy import desc, select
-            from src.core.models.daily_revenue_target import DailyRevenueTarget
-            target = (
-                await session.execute(
-                    select(DailyRevenueTarget.target_eur)
-                    .where(DailyRevenueTarget.tenant_id == tenant_id)
-                    .order_by(desc(DailyRevenueTarget.effective_from))
-                    .limit(1)
+        # objective (Q.115.X7). Mais recente por `effective_from`. Só com session.
+        if session is not None:
+            try:
+                from sqlalchemy import desc, select
+                from src.core.models.daily_revenue_target import DailyRevenueTarget
+                target = (
+                    await session.execute(
+                        select(DailyRevenueTarget.target_eur)
+                        .where(DailyRevenueTarget.tenant_id == tenant_id)
+                        .order_by(desc(DailyRevenueTarget.effective_from))
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+                if target is not None:
+                    merged["daily_revenue_target_eur"] = float(target)
+            except (SQLAlchemyError, ImportError):  # sem target = alignment neutro
+                logging.getLogger(__name__).debug(
+                    "from_tenant_config: revenue target indisponível",
+                    exc_info=True,
                 )
-            ).scalar_one_or_none()
-            if target is not None:
-                merged["daily_revenue_target_eur"] = float(target)
-        except (SQLAlchemyError, ImportError):  # sem target = alignment neutro
-            logging.getLogger(__name__).debug(
-                "from_tenant_config: revenue target indisponível", exc_info=True,
-            )
 
         merged.update(overrides)  # caller explícito ganha sempre
         return cls(**merged)

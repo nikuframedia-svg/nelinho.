@@ -338,8 +338,8 @@ async def approve_schedule_job(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
-                "Segregação de funções: não pode aprovar o plano que você "
-                "próprio propôs. Outro utilizador autorizado tem de o rever."
+                "Segregação de funções: não pode aprovar o plano que propôs. "
+                "Outro utilizador autorizado tem de o rever."
             ),
         )
 
