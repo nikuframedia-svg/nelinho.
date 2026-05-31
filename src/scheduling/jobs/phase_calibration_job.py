@@ -35,6 +35,13 @@ _DUR_CEIL_MIN = 24.0 * 7 * 60.0
 # Amostra mínima por (modelo, fase) para confiar no p50 calibrado (Q.133 D2).
 _MIN_OBS = 5
 
+# Q.134.A3b — ajuste pelo desvio sistemático PLANEADO vs REALIZADO.
+# Teto do clamp: o desvio nunca move o p50 mais de ±50% (com poucos dados o AVG
+# é ruidoso; com cap, factor ∈ [0.5, 1.5] → sempre > 0).
+_DEV_CAP = 50.0
+# Amostra mínima de pares plan-vs-real por (modelo, fase) para aplicar o desvio.
+_DEV_MIN_OBS = 3
+
 _AGG_SQL = text(
     """
     WITH d AS (
@@ -63,20 +70,39 @@ _AGG_SQL = text(
     """
 )
 
+# Desvio sistemático por (modelo, fase): AVG do plan-vs-real escrito pelo
+# capture_plan_execution (Q.134.A3a). Só pares com realizado (deviation_pct
+# NOT NULL) e amostra suficiente. dev>0 = realidade demora MAIS que o planeado.
+_DEV_SQL = text(
+    """
+    SELECT modelo, phase_id, AVG(deviation_pct) AS avg_dev, count(*) AS n
+    FROM plan.plan_execution_observed
+    WHERE tenant_id = :tid
+      AND modelo IS NOT NULL
+      AND deviation_pct IS NOT NULL
+    GROUP BY modelo, phase_id
+    HAVING count(*) >= :dev_min_n
+    """
+)
+
 # prior_p50_min/delta_pct lêem o valor PRÉ-update (o DO UPDATE SET avalia o RHS
 # contra a linha antiga). No 1º INSERT ficam NULL/0 — honesto (sem prior).
+# Q.134.A3b: :p50/:p95 já vêm ajustados pelo desvio sistemático (Python), e
+# :sys_dev grava o desvio aplicado (NULL = só mediana, como antes). Como o
+# _AGG_SQL recalcula sempre o p50 RAW de of_fp, o ajuste não compõe entre corridas.
 _UPSERT_SQL = text(
     """
     INSERT INTO plan.phase_duration_calibration
         (tenant_id, modelo, phase_id, p50_min, p95_min, n_obs, calibrated_at,
-         prior_p50_min, delta_pct)
-    VALUES (:tid, :modelo, :phase, :p50, :p95, :n, :ts, NULL, NULL)
+         prior_p50_min, delta_pct, systematic_deviation_pct)
+    VALUES (:tid, :modelo, :phase, :p50, :p95, :n, :ts, NULL, NULL, :sys_dev)
     ON CONFLICT (tenant_id, modelo, phase_id) DO UPDATE SET
         prior_p50_min = plan.phase_duration_calibration.p50_min,
         p50_min       = EXCLUDED.p50_min,
         p95_min       = EXCLUDED.p95_min,
         n_obs         = EXCLUDED.n_obs,
         calibrated_at = EXCLUDED.calibrated_at,
+        systematic_deviation_pct = EXCLUDED.systematic_deviation_pct,
         delta_pct     = CASE
             WHEN plan.phase_duration_calibration.p50_min > 0
             THEN (EXCLUDED.p50_min - plan.phase_duration_calibration.p50_min)
@@ -84,6 +110,38 @@ _UPSERT_SQL = text(
             ELSE NULL END
     """
 )
+
+
+def _adjust_for_deviation(
+    p50_raw: float, p95_raw: float, dev_pct: float | None
+) -> tuple[float, float, float | None]:
+    """Aplica o desvio sistemático (clamp ±_DEV_CAP) ao p50/p95 RAW.
+
+    `dev_pct=None` → inalterado (factor 1.0, desvio aplicado NULL). Caso
+    contrário ambos escalam pelo MESMO factor `1 + clamp(dev)/100` (a
+    distribuição inteira desloca-se; não só a mediana). Spelke: dev vem de
+    dados reais (plan_execution_observed), nunca inventado."""
+    if dev_pct is None:
+        return p50_raw, p95_raw, None
+    applied = max(-_DEV_CAP, min(_DEV_CAP, float(dev_pct)))
+    factor = 1.0 + applied / 100.0
+    return p50_raw * factor, p95_raw * factor, applied
+
+
+async def _load_systematic_deviations(session, tenant_id: UUID) -> dict:
+    """`{(modelo, phase_id): avg_deviation_pct}` de plan_execution_observed.
+
+    Best-effort: tabela ausente / sem pares → `{}` (back-compat = só mediana)."""
+    try:
+        rows = (
+            await session.execute(
+                _DEV_SQL, {"tid": tenant_id, "dev_min_n": _DEV_MIN_OBS}
+            )
+        ).all()
+    except SQLAlchemyError as exc:  # pragma: no cover — tabela ausente / outage
+        logger.debug("phase_calibration deviations skipped: %s", exc)
+        return {}
+    return {(str(r.modelo), str(r.phase_id)): float(r.avg_dev) for r in rows}
 
 
 async def _phase_calibration_job(tenant_id: UUID) -> int:
@@ -103,26 +161,35 @@ async def _phase_calibration_job(tenant_id: UUID) -> int:
             if not rows:
                 logger.info("phase_calibration_job: sem dados tenant=%s", tenant_id)
                 return 0
+            # Q.134.A3b — desvio sistemático plan-vs-real por (modelo, fase).
+            deviations = await _load_systematic_deviations(session, tenant_id)
             # `calibrated_at` é `timestamp without time zone` → naive.
             cal_ts = started.replace(tzinfo=None)
-            params = [
-                {
+            params = []
+            adjusted = 0
+            for r in rows:
+                p50_adj, p95_adj, sys_dev = _adjust_for_deviation(
+                    float(r.p50), float(r.p95),
+                    deviations.get((str(r.modelo), str(r.phase_id))),
+                )
+                if sys_dev is not None:
+                    adjusted += 1
+                params.append({
                     "tid": tenant_id,
                     "modelo": str(r.modelo),
                     "phase": str(r.phase_id),
-                    "p50": float(r.p50),
-                    "p95": float(r.p95),
+                    "p50": p50_adj,
+                    "p95": p95_adj,
                     "n": int(r.n),
                     "ts": cal_ts,
-                }
-                for r in rows
-            ]
+                    "sys_dev": sys_dev,
+                })
             await session.execute(_UPSERT_SQL, params)  # executemany
             await session.commit()
         elapsed_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
         logger.info(
-            "phase_calibration_job: tenant=%s pares=%s elapsed_ms=%s",
-            tenant_id, len(params), elapsed_ms,
+            "phase_calibration_job: tenant=%s pares=%s ajustados=%s elapsed_ms=%s",
+            tenant_id, len(params), adjusted, elapsed_ms,
         )
         return len(params)
     except SQLAlchemyError as exc:

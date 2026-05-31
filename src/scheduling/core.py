@@ -56,6 +56,9 @@ from src.scheduling.jobs.preference_learning import (
 from src.scheduling.jobs.boat_phase_score_job import _boat_phase_score_job
 from src.scheduling.jobs.boat_potential_job import _boat_potential_job
 from src.scheduling.jobs.phase_operator_affinity import _phase_operator_affinity_job
+from src.scheduling.jobs.capture_plan_execution import (
+    _capture_plan_execution_global_job,
+)
 from src.scheduling.jobs.phase_calibration_job import _phase_calibration_global_job
 from src.scheduling.jobs.plan_vs_actual import _plan_vs_actual_global_job
 from src.scheduling.jobs.runbook_learning import _runbook_learning_job
@@ -262,6 +265,20 @@ def start_scheduler(
         args=[tenants or []],
         id="plan_vs_actual",
         name="plan_vs_actual",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Q.134.A3a — captura PLANEADO vs REALIZADO por (of, fase) dos commits LIVE
+    # → plan.plan_execution_observed (deviation_pct). 06:35 UTC: depois do
+    # plan_vs_actual (06:30), ANTES da calibração (06:40) — para que a
+    # calibração (Q.134.A3b) leia o desvio fresco.
+    _scheduler.add_job(
+        _capture_plan_execution_global_job,
+        trigger=CronTrigger(hour=6, minute=35, timezone="UTC"),
+        args=[tenants or []],
+        id="capture_plan_execution",
+        name="capture_plan_execution",
         replace_existing=True,
         coalesce=True,
         max_instances=1,

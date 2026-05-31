@@ -28,8 +28,17 @@ class PlanExecutionObserved(TenantBase):
 
     __tablename__ = "plan_execution_observed"
     __table_args__ = (
-        # Idempotência — re-run não duplica linhas.
-        # UNIQUE parcial (schedule_commit_id NOT NULL) definida na migration.
+        # Idempotência do writer (Q.134.A3a): UPSERT por (tenant, commit, of,
+        # fase). UNIQUE parcial — só linhas com schedule_commit_id NOT NULL.
+        Index(
+            "uq_plan_exec_commit_of_phase",
+            "tenant_id",
+            "schedule_commit_id",
+            "of_id",
+            "phase_id",
+            unique=True,
+            postgresql_where="schedule_commit_id IS NOT NULL",
+        ),
         Index("ix_plan_exec_tenant_captured", "tenant_id", "captured_at"),
         Index(
             "ix_plan_exec_modelo_phase_obs",
@@ -92,6 +101,12 @@ class PhaseDurationCalibration(Base):
     )
     prior_p50_min: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     delta_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    # Q.134.A3b — desvio sistemático aplicado (AVG plan-vs-real), clamp ±_DEV_CAP.
+    # NULL = sem dados de execução suficientes → p50/p95 = só a mediana (como antes).
+    systematic_deviation_pct: Mapped[Optional[float]] = mapped_column(
+        Float, nullable=True
+    )
 
     def __repr__(self) -> str:
         return (
