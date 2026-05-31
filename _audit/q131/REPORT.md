@@ -45,3 +45,30 @@ são kayaks raros/novos. As suas ordens resolvem 0 operações (ignoradas), NUNC
 falsos (Spelke/zero-mock). Subir a cobertura exigiria histórico, não código. Decisão de
 produto deferida (baixar o piso para 1 obs reduz a confiança; criar rotas-template para
 modelos sem histórico seria fabricar dados).
+
+## Q.131.C — "0 demo" na lista de ordens (mirror ERP → production_orders)
+
+Auditoria do caminho de leitura: `/v1/plan/orders`, `/stats`, `/active`, `/v1/work-orders`
+**todos** liam `plan.production_orders` (12 demo, seed SQLite `product_id` 4271-6004); **nenhum
+sync ERP** a alimentava. Blast-radius de mudar `product_id`→`OF_P_ID`: 13/16 consumidores usam
+`legacy_id`/`product_name` (seguros); os 2 que usam `product_id` (MRP, pricing) já estavam
+partidos/vazios com as 12 demo — `OF_P_ID` só melhora (`core.products.product_code` = `OF_P_ID`).
+Nenhum código assume `product_id==legacy_id`.
+
+**Solução:** `scripts/q131_setup_production_orders_mirror.py` — upsert idempotente SQL puro de
+`factory_raw.ordemfabrico` (WIP: `OF_DATAFIM` NULL + `FP_PRODUCAO=true`) → `production_orders`,
+keyed por `OF_P_ID`. Lê o `factory_raw` já espelhado (sem dependência SQL Server). Job
+`_nelo_erp_production_orders_job` (5/5 min, Postgres-interno) em `src/scheduling/core.py`.
+Guard: no-op se WIP vazio (protege dev/test). Sem audit por-linha (precedente dos mirrors ERP
+`customers`/`raw` — ingestão de dados, não decisão governada).
+
+Resultado (corrida live): `production_orders` **12 → 5315** (prune das 12 demo, 0 restantes);
+**overlap com routing real 5261/5315 ≈ 99%** (era 0/12); `product_id` em 20205-54141 (OF_P_ID);
+idempotente (2ª corrida 5315→5315). Comentário obsoleto "27 380 orders" corrigido em
+`frontend/src/lib/api/planApi.ts`.
+
+**Nota honesta (88,7% `product_type='Other'`):** o WIP real (5315) é dominado por
+**acessórios/componentes** (assentos, tábuas, "p/ montar"), não barcos — os barcos K1/K2/K4/
+C1/C2/C4 são 601 (11,3%). É o filtro `FP_PRODUCAO=true` (o mesmo que o CPO usa), portanto dados
+reais e honestos. Se o Luis quiser a lista/planeamento só de barcos, é um filtro de uma linha
+(por `product_type` ou `produto.P_TP_ID`) — decisão de produto, não fabricar dados.

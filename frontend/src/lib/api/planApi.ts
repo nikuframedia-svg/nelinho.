@@ -214,7 +214,8 @@ export const ordersApi = {
 
   /**
    * Get aggregate statistics for all orders (uses full database).
-   * This is NOT paginated - returns totals from all 27,380 orders.
+   * NOT paginated — totals over plan.production_orders, que o mirror Q.131.C
+   * mantém como WIP REAL do ERP (factory_raw.ordemfabrico), não dados demo.
    */
   stats: (): Promise<OrdersStats> =>
     // Q.61.32a — migrado de /api/orders/stats para /v1/plan/orders/stats.

@@ -42,6 +42,7 @@ from src.scheduling.jobs.nelo_erp import (
     _nelo_erp_incremental_sync_job,
     _nelo_erp_logistica_job,
     _nelo_erp_phase_history_incremental_job,
+    _nelo_erp_production_orders_job,
     _nelo_erp_raw_incremental_job,
     _nelo_erp_sync_job,
     _nelo_erp_time_mining_job,
@@ -234,6 +235,19 @@ def start_scheduler(
         trigger=IntervalTrigger(minutes=5),
         id="nelo_erp_customers",
         name="nelo_erp_customers",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Q.131.C — plan.production_orders a partir de factory_raw.ordemfabrico
+    # (WIP real, keyed por OF_P_ID). A lista de ordens deixa de ser 12 demo.
+    # Postgres-interno (lê o factory_raw já espelhado), corre sempre; no-op
+    # se o WIP estiver vazio. 5/5 min, upsert idempotente.
+    _scheduler.add_job(
+        _nelo_erp_production_orders_job,
+        trigger=IntervalTrigger(minutes=5),
+        id="nelo_erp_production_orders",
+        name="nelo_erp_production_orders",
         replace_existing=True,
         coalesce=True,
         max_instances=1,

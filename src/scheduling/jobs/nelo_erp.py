@@ -285,6 +285,28 @@ async def _nelo_erp_customers_job() -> None:
         logger.error("nelo_erp_customers failed: %s", exc, exc_info=True)
 
 
+async def _nelo_erp_production_orders_job() -> None:
+    """Q.131.C — espelha `plan.production_orders` de `factory_raw.ordemfabrico`
+    (WIP real: OF não-terminada em fase de produção). A lista de ordens lia 12
+    ordens DEMO; este mirror torna-a 0 demo, keyed por `OF_P_ID` (casa com o
+    routing real). Postgres-interno (lê o factory_raw já espelhado) → corre
+    sempre; a própria função faz no-op se o WIP estiver vazio (dev/test).
+    """
+    from scripts.q131_setup_production_orders_mirror import setup as po_setup
+
+    started = datetime.utcnow()
+    try:
+        report = await po_setup()
+        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        logger.info(
+            "nelo_erp_production_orders wip=%s orders=%s->%s pruned=%s elapsed_ms=%s",
+            report.get("wip_real"), report.get("orders_before"),
+            report.get("orders_after"), report.get("pruned"), elapsed_ms,
+        )
+    except Exception as exc:
+        logger.error("nelo_erp_production_orders failed: %s", exc, exc_info=True)
+
+
 async def _nelo_erp_time_mining_job() -> None:
     """Q.25.D — mineracao historica de tempos (o mirror pesado, semanal).
 
