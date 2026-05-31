@@ -14,6 +14,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import {
   CheckSquare,
   LayoutGrid,
+  Truck,
   Bot,
   Settings,
 } from 'lucide-react';
@@ -51,6 +52,7 @@ interface NavItem {
 const NAV_ITEMS: Omit<NavItem, 'badge'>[] = [
   { path: '/decisoes',      label: 'Decisões',      icon: <CheckSquare size={20} /> },
   { path: '/overall',       label: 'Planeamento',   icon: <LayoutGrid size={20} /> },
+  { path: '/expedicao',     label: 'Expedição',     icon: <Truck size={20} /> },
   { path: '/llm',           label: 'Copiloto',      icon: <Bot size={20} /> },
   { path: '/configuracoes', label: 'Configurações', icon: <Settings size={20} /> },
 ];

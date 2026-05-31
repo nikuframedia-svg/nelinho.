@@ -35,6 +35,8 @@ const OperadorTabletPage = lazy(() => import('./pages/operadores/OperadorTabletP
 const DecisoesPage = lazy(() => import('./pages/decisoes/DecisoesPage'));
 // Q.115.K — Planeamento Overall (timeline + drag-drop por fase)
 const OverallPage = lazy(() => import('./pages/overall/OverallPage'));
+// Q.135.F1 — Expedição (camiões + drag-drop + CTP). Estava construída mas órfã.
+const ExpedicaoPage = lazy(() => import('./pages/expedicao/ExpedicaoPage'));
 // Q.115.N — Página LLM consolidada (Chat + KPIs + Regras LLM)
 const LLMPage = lazy(() => import('./pages/llm/LLMPage'));
 // Q.115.O — Página Configurações consolidada (6 tabs)
@@ -97,6 +99,7 @@ function App() {
                     {/* ── 4 páginas activas Q.115 ── */}
                     <Route path="decisoes" element={<Lazy><DecisoesPage /></Lazy>} />
                     <Route path="overall"  element={<Lazy count={4}><OverallPage /></Lazy>} />
+                    <Route path="expedicao" element={<Lazy count={4}><ExpedicaoPage /></Lazy>} />
                     <Route path="llm"      element={<Lazy count={3}><LLMPage /></Lazy>} />
                     <Route path="configuracoes" element={<Lazy><ConfiguracoesPage /></Lazy>} />
 
