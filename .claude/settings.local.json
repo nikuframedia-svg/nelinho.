@@ -73,7 +73,11 @@
       "Bash(curl -s -o /dev/null -w \"postgres :5432           \" http://localhost:5432/)",
       "Bash(pg_isready -h localhost -p 5432)",
       "Bash(curl -s -o /dev/null -w \"ollama   :11434          %{http_code}\\\\n\" http://localhost:11434/api/tags)",
-      "Bash(git commit -m 'chore\\(claude\\): allow common dev/ops commands in settings.local *)"
+      "Bash(git commit -m 'chore\\(claude\\): allow common dev/ops commands in settings.local *)",
+      "Bash(xargs grep -L \"down_revision\")",
+      "PowerShell($env:PYTHONPATH=\".\"; $env:PYTHONUTF8=\"1\"; & .\\\\.venv\\\\Scripts\\\\python.exe _audit/probe_pks.py 2>&1)",
+      "Bash(.\\\\.venv\\\\Scripts\\\\python.exe -m alembic heads)",
+      "Bash(npx vitest *)"
     ]
   }
 }

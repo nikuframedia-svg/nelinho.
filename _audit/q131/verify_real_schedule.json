@@ -1,7 +1,7 @@
 {
   "loaded_ok": true,
   "load_error": null,
-  "n_open_orders": 2000,
+  "n_open_orders": 200,
   "n_models_with_route": 605,
   "n_models_with_mold": 971,
   "n_phases_with_skills": 40,
@@ -12,10 +12,13 @@
     "18_pintura": 3.183333333333333,
     "5_pintura_acab": 7.666666666666667
   },
-  "orders_with_real_route": 1168,
-  "orders_with_real_route_pct": 58.4,
-  "orders_with_mold": 1862,
-  "orders_with_mold_pct": 93.1,
+  "n_models_with_template": 4729,
+  "orders_with_history_route": 194,
+  "orders_with_history_route_pct": 97.0,
+  "orders_with_real_route": 200,
+  "orders_with_real_route_pct": 100.0,
+  "orders_with_mold": 199,
+  "orders_with_mold_pct": 99.5,
   "sample_open_orders": [
     {
       "of_id": "43463",
@@ -42,17 +45,18 @@
       "data_entrega_prevista": "2024-08-09T00:00:00"
     },
     {
-      "of_id": "991003",
-      "order_id": "991003",
-      "modelo_id": "45610",
+      "of_id": "880193",
+      "order_id": "880193",
+      "modelo_id": "42513",
       "data_entrega_prevista": "2024-11-22T00:00:00"
     }
   ],
-  "n_operations_resolved": 10620,
+  "n_operations_resolved": 2874,
   "fallback_fraction": 0.0,
   "engine_unavailable": false,
   "source_distribution": {
-    "history_db": 10620
+    "history_db": 2838,
+    "db_template": 36
   },
   "sample_model": "20205",
   "sample_route": [

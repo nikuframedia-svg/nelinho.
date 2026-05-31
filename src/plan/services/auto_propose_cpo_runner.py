@@ -64,16 +64,76 @@ async def _cost_delta_for_commit(
         return None
 
 
-async def _quality_risk_for_target(
-    session, tenant_id: UUID, payload: Dict[str, Any],
-) -> Optional[str]:
-    """Risk band (alto/medio/baixo) da ordem-alvo do evento. None se n/d."""
-    target = str(
+def _target_from_payload(payload: Dict[str, Any]) -> str:
+    """Identificador da ordem-alvo do evento (of_id/order_id/boat_id)."""
+    return str(
         payload.get("of_id")
         or payload.get("order_id")
         or payload.get("boat_id")
         or ""
     ).strip()
+
+
+def _build_consequences(
+    kpis: Dict[str, Any],
+    cost_delta: Optional[float],
+    quality_risk: Optional[str],
+    target: str,
+) -> Dict[str, Any]:
+    """Deriva why/if_accept/if_reject SÓ de valores reais já computados.
+
+    Q.131+ — a card "Consequências" da tab Simulações lê estas chaves; antes
+    nenhum produtor de sandbox_result as escrevia e a card ficava sempre vazia.
+    Aqui não se inventa nada: cada linha só entra se a sua fonte existir
+    (KPIs do commit, cost_delta de src/profit, quality_risk de src/quality).
+    Devolve só as chaves preenchidas — listas vazias são omitidas para a UI
+    cair no empty-state honesto.
+    """
+    makespan = kpis.get("makespan_hours")
+    late = kpis.get("num_late_orders")
+
+    if_accept: list[str] = []
+    if makespan is not None:
+        line = f"Novo plano: makespan {float(makespan):.1f} h"
+        if late is not None:
+            line += f" · {int(late)} ordens atrasadas"
+        if_accept.append(line)
+    if cost_delta is not None:
+        if_accept.append(f"Margem {cost_delta:+.0f} € vs plano atual")
+    if quality_risk:
+        if_accept.append(f"Risco de qualidade da ordem-alvo: {quality_risk}")
+
+    # Só faz sentido falar do status quo quando há de facto um plano alternativo.
+    if_reject: list[str] = []
+    if if_accept:
+        if_reject.append("Mantém o plano atual — sem replaneamento")
+        if target:
+            if_reject.append(f"A ordem {target} fica sem o replaneamento proposto")
+
+    out: Dict[str, Any] = {}
+    if if_accept:
+        out["if_accept"] = if_accept
+    if if_reject:
+        out["if_reject"] = if_reject
+        bits: list[str] = []
+        if makespan is not None:
+            bits.append(f"makespan {float(makespan):.1f} h")
+        if late is not None:
+            bits.append(f"{int(late)} atrasadas")
+        if cost_delta is not None:
+            bits.append(f"margem {cost_delta:+.0f} €")
+        if quality_risk:
+            bits.append(f"risco {quality_risk}")
+        if bits:
+            out["why"] = "Replaneamento proposto pelo CPO: " + ", ".join(bits) + "."
+    return out
+
+
+async def _quality_risk_for_target(
+    session, tenant_id: UUID, payload: Dict[str, Any],
+) -> Optional[str]:
+    """Risk band (alto/medio/baixo) da ordem-alvo do evento. None se n/d."""
+    target = _target_from_payload(payload)
     if not target:
         return None
     try:
@@ -150,6 +210,15 @@ async def real_cpo_propose_runner(
             quality_risk = await _quality_risk_for_target(session, tenant_id, payload)
             if quality_risk is not None:
                 out["quality_risk"] = quality_risk
+
+            # Consequências (if_accept/if_reject/why) — derivadas dos valores
+            # reais acima; alimenta a card "Consequências" da tab Simulações.
+            out.update(
+                _build_consequences(
+                    out["kpis"], cost_delta, quality_risk,
+                    _target_from_payload(payload),
+                )
+            )
 
             return out
     except Exception as exc:  # pragma: no cover - defensive

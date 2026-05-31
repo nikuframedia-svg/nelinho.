@@ -80,6 +80,67 @@ export function buildComparisonRows(
   return rows;
 }
 
+/** Tabela baseline↔simulação reutilizável (SimDetail + CrisisSimulator). */
+export function ComparisonTable({ rows }: { rows: ComparisonRow[] }): ReactNode {
+  return (
+    <div
+      style={{
+        background: 'var(--bg-1)',
+        border: '1px solid var(--bd-1)',
+        borderRadius: 'var(--r-sm)',
+        overflow: 'hidden',
+      }}
+    >
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '1.5fr 1fr 1fr',
+          padding: '8px 14px',
+          background: 'var(--bg-2)',
+          borderBottom: '1px solid var(--bd-1)',
+          fontSize: 10,
+          color: 'var(--fg-3)',
+          textTransform: 'uppercase',
+          letterSpacing: 0.4,
+          fontWeight: 600,
+        }}
+      >
+        <span>Métrica</span>
+        <span style={{ textAlign: 'right' }}>Baseline</span>
+        <span style={{ textAlign: 'right' }}>Simulação</span>
+      </div>
+      {rows.map((r, i) => (
+        <div
+          key={r.label}
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1.5fr 1fr 1fr',
+            padding: '10px 14px',
+            borderBottom:
+              i < rows.length - 1 ? '1px solid var(--bd-1)' : 'none',
+            alignItems: 'center',
+            fontSize: 12,
+          }}
+        >
+          <span style={{ color: 'var(--fg-1)' }}>{r.label}</span>
+          <span
+            className="tabular"
+            style={{ color: 'var(--fg-2)', textAlign: 'right' }}
+          >
+            {r.baseline}
+          </span>
+          <span
+            className="tabular"
+            style={{ color: 'var(--fg-0)', fontWeight: 500, textAlign: 'right' }}
+          >
+            {r.simulated}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function SimDetail({
   scenario,
 }: {
@@ -271,72 +332,7 @@ export function SimDetail({
                   para ver o impacto.
                 </div>
               ) : (
-                <div
-                  style={{
-                    background: 'var(--bg-1)',
-                    border: '1px solid var(--bd-1)',
-                    borderRadius: 'var(--r-sm)',
-                    overflow: 'hidden',
-                  }}
-                >
-                  <div
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: '1.5fr 1fr 1fr',
-                      padding: '8px 14px',
-                      background: 'var(--bg-2)',
-                      borderBottom: '1px solid var(--bd-1)',
-                      fontSize: 10,
-                      color: 'var(--fg-3)',
-                      textTransform: 'uppercase',
-                      letterSpacing: 0.4,
-                      fontWeight: 600,
-                    }}
-                  >
-                    <span>Métrica</span>
-                    <span style={{ textAlign: 'right' }}>Baseline</span>
-                    <span style={{ textAlign: 'right' }}>Simulação</span>
-                  </div>
-                  {rows.map((r, i) => (
-                    <div
-                      key={r.label}
-                      style={{
-                        display: 'grid',
-                        gridTemplateColumns: '1.5fr 1fr 1fr',
-                        padding: '10px 14px',
-                        borderBottom:
-                          i < rows.length - 1
-                            ? '1px solid var(--bd-1)'
-                            : 'none',
-                        alignItems: 'center',
-                        fontSize: 12,
-                      }}
-                    >
-                      <span style={{ color: 'var(--fg-1)' }}>
-                        {r.label}
-                      </span>
-                      <span
-                        className="tabular"
-                        style={{
-                          color: 'var(--fg-2)',
-                          textAlign: 'right',
-                        }}
-                      >
-                        {r.baseline}
-                      </span>
-                      <span
-                        className="tabular"
-                        style={{
-                          color: 'var(--fg-0)',
-                          fontWeight: 500,
-                          textAlign: 'right',
-                        }}
-                      >
-                        {r.simulated}
-                      </span>
-                    </div>
-                  ))}
-                </div>
+                <ComparisonTable rows={rows} />
               )}
             </div>
 

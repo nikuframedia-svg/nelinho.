@@ -45,6 +45,12 @@ export interface TwinRunResult {
   scenarioId: string;
   scenarioHash: string | null;
   simulationStatus: string;
+  /** `simulation_result` real persistido pelo twin (before/after/delta_summary/mode). */
+  simulationResult: Record<string, unknown> | null;
+  /** Modo de simulação reportado pelo twin (ex.: `projecao_linear`). */
+  mode: string | null;
+  /** Explicação honesta do modo (porque não correu o solver). */
+  modeReason: string | null;
 }
 
 export function CrisisCard({
