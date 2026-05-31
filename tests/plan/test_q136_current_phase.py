@@ -10,6 +10,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from uuid import UUID
 
+import pytest
+
 from src.plan.cpo.state import FactoryState
 from src.plan.services.routing_resolver import (
     RoutingResolver,
@@ -105,3 +107,49 @@ def test_resolve_current_phase_not_in_route_keeps_full(monkeypatch):
     # "NAO_LAMINADO" não está na rota → rota completa (o barco não começou)
     ops = r.resolve({"of_id": "O-3", "modelo_id": "K1", "current_fase_id": "NAO_LAMINADO"})
     assert [o.phase_id for o in ops] == ["CORTE", "LAM"]
+
+
+# ---------------------------------------------------------- Q.136.A boats-only
+
+class _CaptureResult:
+    def mappings(self):
+        return self
+
+    def all(self):
+        return []
+
+
+class _CaptureSession:
+    """Captura o SQL gerado por _load_open_orders_db (sem BD)."""
+
+    def __init__(self):
+        self.sql_text = ""
+
+    async def execute(self, stmt, params=None):
+        self.sql_text = str(stmt)
+        return _CaptureResult()
+
+
+async def _captured_sql(scope: str) -> str:
+    from src.plan.cpo.state import _load_open_orders_db
+    sess = _CaptureSession()
+    await _load_open_orders_db(sess, TENANT, scope=scope)
+    return sess.sql_text
+
+
+@pytest.mark.asyncio
+async def test_scope_all_has_no_boats_filter_backcompat():
+    """`scope=all` reproduz o legacy: SEM filtro deck/casco (LEFT JOIN não dropa
+    linhas → mesmo conjunto que antes do Q.136)."""
+    sql_all = await _captured_sql("all")
+    assert "P_QTDDECK" not in sql_all
+    assert "P_QTDCASCO" not in sql_all
+
+
+@pytest.mark.asyncio
+async def test_scope_boats_only_applies_deck_casco_filter():
+    sql_boats = await _captured_sql("boats_only")
+    assert 'P_QTDDECK" > 0' in sql_boats
+    assert 'P_QTDCASCO" > 0' in sql_boats
+    # ambos os scopes devolvem current_fase_id (planear-da-fase-atual)
+    assert "current_fase_id" in sql_boats

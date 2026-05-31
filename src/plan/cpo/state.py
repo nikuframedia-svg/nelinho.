@@ -959,6 +959,12 @@ async def _load_open_orders_db(
     except SQLAlchemyError as exc:  # pragma: no cover — DB outage / missing table
         logger.debug("Q.126.B open_orders DB load skipped: %s", exc)
         return []
+    # Q.136.A — visibilidade: scope=boats_only exclui acessórios/componentes (e
+    # barcos sem match em `produto`, ex. catálogo incompleto) — não é silencioso.
+    logger.info(
+        "open_orders DB: scope=%s → %d ordens (cap %d)",
+        scope, len(rows), _OPEN_ORDERS_PLAN_CAP,
+    )
     return [
         {
             "of_id": str(r["of_id"]),
