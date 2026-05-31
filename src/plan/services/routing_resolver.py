@@ -43,7 +43,7 @@ class RoutingRow:
     fase_nome: str
     sequence: int
     duration_hours: float
-    source: str  # "history" | "history_db" | "standard" | "duration_model_p50"
+    source: str  # "history" | "history_db" | "db_template" | "standard" | "duration_model_p50"
     mold_required: bool = False
 
 
@@ -119,6 +119,11 @@ class RoutingResolver:
             # (ERP vivo), pre-loaded into FactoryState. This is the path that
             # fires in production, where the in-memory curated layer is empty.
             rows = self._history_for_model_db(modelo_id)
+        if not rows:
+            # 2.7 Q.131.G — routing master do ERP (PRODUTO_FASE) com duração
+            # p50 minerada de of_fp. Recupera modelos sem ≥2 obs por fase no
+            # histórico per-order, ainda com dados REAIS (não o buffer 2×).
+            rows = self._template_for_model_db(modelo_id)
         if not rows:
             # 3. Fall back to standard template
             rows = self._standard_template(modelo_id)
@@ -267,6 +272,48 @@ class RoutingResolver:
                 sequence=int(st.get("sequence", 0) or 0),
                 duration_hours=max(float(st.get("duration_hours", 1.0) or 1.0), 0.1),
                 source="history_db",
+                mold_required=_phase_uses_mold(fase_nome),
+            ))
+        rows.sort(key=lambda r: r.sequence)
+        return rows
+
+    def _template_for_model_db(self, modelo_id: str) -> List[RoutingRow]:
+        """Q.131.G — real route from the ERP routing master (PRODUTO_FASE),
+        pre-loaded into `FactoryState.template_routes_by_model` keyed by OF_P_ID.
+        Per-phase duration = the mined `duration_p50_h` when present, else the
+        cross-model median (`historical_durations_by_fase`). If ANY phase has
+        NEITHER, the whole order is abandoned here (returns []) so it falls
+        through to the (empty) standard template and is reported as unplanned —
+        we never invent a duration (Spelke/zero-mock). source="db_template"
+        (real route + real duration → NOT counted as synthetic fallback)."""
+        if not modelo_id:
+            return []
+        steps = (getattr(self.state, "template_routes_by_model", {}) or {}).get(
+            modelo_id
+        ) or []
+        if not steps:
+            return []
+        by_fase = getattr(self.state, "historical_durations_by_fase", {}) or {}
+        rows: List[RoutingRow] = []
+        for st in steps:
+            fase_id = str(st.get("fase_id", ""))
+            fase_nome = str(st.get("fase_nome") or fase_id)
+            p50 = st.get("duration_p50_h")
+            if p50 is not None and float(p50) > 0:
+                duration = float(p50)
+            else:
+                fase_median = by_fase.get(fase_id)
+                if not fase_median or float(fase_median) <= 0:
+                    # Fase sem duração real (nem p50 nem mediana-por-fase): não
+                    # inventamos — a ordem inteira fica por planear (Q.131.H).
+                    return []
+                duration = float(fase_median)
+            rows.append(RoutingRow(
+                fase_id=fase_id,
+                fase_nome=fase_nome,
+                sequence=int(st.get("sequence", 0) or 0),
+                duration_hours=max(duration, 0.1),
+                source="db_template",
                 mold_required=_phase_uses_mold(fase_nome),
             ))
         rows.sort(key=lambda r: r.sequence)

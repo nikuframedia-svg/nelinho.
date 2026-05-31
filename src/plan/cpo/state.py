@@ -139,6 +139,15 @@ class FactoryState:
     # empty — the production reality. Empty = no DB history loaded.
     historical_routes_by_model: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
 
+    # Q.131.G — routing master do ERP (tabela PRODUTO_FASE), espelhado em
+    # plan.model_routing_assignment + routing_template_phase, keyed por OF_P_ID.
+    # Fallback REAL (rota do ERP + duration_p50_h minerado de of_fp por
+    # time_mining) para modelos sem >=2 observações por fase em of_fp — cobre
+    # ~99% das ordens (vs 73% só com histórico per-order). Cada step:
+    # {fase_id, fase_nome, sequence, duration_p50_h (float|None), requires_mold,
+    # team_size_default}. Empty = sem templates carregados.
+    template_routes_by_model: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
+
     # historical error rate per fase_id (0.0-1.0)
     historical_error_rates: Dict[str, float] = field(default_factory=dict)
 
@@ -272,6 +281,13 @@ class FactoryState:
             state.historical_durations_by_fase = dur_fase_db
         if routes_db:
             state.historical_routes_by_model = routes_db
+
+        # Q.131.G — routing master do ERP (PRODUTO_FASE). Fallback-de-fallback:
+        # carregado sempre (modelos diferentes caem em camadas diferentes do
+        # resolver). Best-effort; tenant-scoped (≠ factory_raw.*).
+        templates_db = await _load_route_templates_db(session, tenant_id)
+        if templates_db:
+            state.template_routes_by_model = templates_db
 
         molds_by_model_db, molds_db = await _load_molds_db(session, tenant_id)
         if molds_db:
@@ -657,6 +673,68 @@ async def _load_historical_durations_routes_db(
         if r["median_h"] and float(r["median_h"]) > 0
     }
     return routes, by_pair, by_fase
+
+
+async def _load_route_templates_db(
+    session: Any,
+    tenant_id: UUID,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Q.131.G — routing master do ERP: rota por modelo (OF_P_ID) a partir de
+    `plan.model_routing_assignment` JOIN `plan.routing_template_phase`. Espelha a
+    tabela ERP PRODUTO_FASE (sequência de fases) e a `duration_p50_h` minerada
+    de `of_fp` pelo job `time_mining` (Spelke: tempo real, NUNCA CoeficienteX).
+
+    Fallback REAL para modelos sem ≥2 observações por fase em of_fp (cobre os
+    ~27% que o histórico per-order não cobre). Keyed por `str(model_id)`=OF_P_ID,
+    igual a `historical_routes_by_model`. p50 pode vir NULL (fases sem amostra) —
+    o resolver decide a duração (p50 → mediana-por-fase → ordem em unplanned).
+
+    Best-effort: session None / tabela ausente / outra BD → `{}`. NOTA: estas
+    são tabelas `TenantBase` (tenant-scoped), ao contrário de factory_raw.* —
+    daí o filtro explícito de tenant."""
+    if session is None:
+        return {}
+    from sqlalchemy import text
+    from sqlalchemy.exc import SQLAlchemyError
+
+    sql = text(
+        """
+        SELECT mra.model_id::text          AS model_id,
+               rtp.seq                      AS seq,
+               rtp.phase_id::text           AS phase_id,
+               rtp.phase_name               AS phase_name,
+               rtp.duration_p50_h           AS duration_p50_h,
+               rtp.requires_mold            AS requires_mold,
+               rtp.team_size_default        AS team_size_default
+        FROM plan.model_routing_assignment mra
+        JOIN plan.routing_template_phase rtp
+          ON rtp.template_id = mra.primary_template_id
+        WHERE mra.tenant_id = :tenant AND rtp.tenant_id = :tenant
+        ORDER BY mra.model_id, rtp.seq
+        """
+    )
+    try:
+        rows = (await session.execute(
+            sql, {"tenant": str(tenant_id)}
+        )).mappings().all()
+    except SQLAlchemyError as exc:  # pragma: no cover — DB outage / missing table
+        logger.debug("Q.131.G route_templates DB load skipped: %s", exc)
+        return {}
+
+    templates: Dict[str, List[Dict[str, Any]]] = {}
+    for r in rows:
+        p50 = r["duration_p50_h"]
+        templates.setdefault(str(r["model_id"]), []).append({
+            "fase_id": str(r["phase_id"]),
+            "fase_nome": str(r["phase_name"] or r["phase_id"]),
+            "sequence": int(r["seq"] or 0),
+            "duration_p50_h": float(p50) if p50 is not None else None,
+            "requires_mold": bool(r["requires_mold"]),
+            "team_size_default": int(r["team_size_default"] or 1),
+        })
+    for steps in templates.values():
+        steps.sort(key=lambda s: s["sequence"])
+    return templates
 
 
 async def _load_molds_db(

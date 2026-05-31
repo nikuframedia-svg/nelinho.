@@ -56,12 +56,20 @@ async def main() -> None:
         # --- overlap de keyspace: as ordens reais casam com routing/molds? ---
         order_models = [str(o.get("modelo_id") or "") for o in state.open_orders]
         route_keys = set(state.historical_routes_by_model.keys())
+        template_keys = set(state.template_routes_by_model.keys())  # Q.131.G
         mold_keys = set(state.molds_by_model.keys())
         n = len(order_models) or 1
         in_route = sum(1 for m in order_models if m in route_keys)
+        in_route_or_template = sum(
+            1 for m in order_models if m in route_keys or m in template_keys
+        )
         in_mold = sum(1 for m in order_models if m in mold_keys)
-        out["orders_with_real_route"] = in_route
-        out["orders_with_real_route_pct"] = round(100.0 * in_route / n, 1)
+        out["n_models_with_template"] = len(template_keys)  # Q.131.G
+        out["orders_with_history_route"] = in_route
+        out["orders_with_history_route_pct"] = round(100.0 * in_route / n, 1)
+        # Q.131.G — cobertura combinada (histórico OU template do ERP)
+        out["orders_with_real_route"] = in_route_or_template
+        out["orders_with_real_route_pct"] = round(100.0 * in_route_or_template / n, 1)
         out["orders_with_mold"] = in_mold
         out["orders_with_mold_pct"] = round(100.0 * in_mold / n, 1)
         out["sample_open_orders"] = state.open_orders[:5]
@@ -84,6 +92,7 @@ async def main() -> None:
                 resolver._history_for_order(oid)
                 or resolver._history_for_model(mid)
                 or resolver._history_for_model_db(mid)
+                or resolver._template_for_model_db(mid)   # Q.131.G
                 or resolver._standard_template(mid)
             )
             for r in rows:
@@ -114,9 +123,12 @@ async def main() -> None:
     print("=== Q.131.B verificacao AO VIVO ===")
     print(f"loaded_ok            : {out['loaded_ok']}")
     print(f"open_orders (WIP)    : {out['n_open_orders']}")
-    print(f"models with route    : {out['n_models_with_route']}")
-    print(f"orders w/ real route : {out['orders_with_real_route']} "
-          f"({out['orders_with_real_route_pct']}%)")
+    print(f"models with route    : {out['n_models_with_route']} (histórico) "
+          f"+ {out['n_models_with_template']} (template ERP)")
+    print(f"orders w/ hist route : {out['orders_with_history_route']} "
+          f"({out['orders_with_history_route_pct']}%)")
+    print(f"orders w/ REAL route : {out['orders_with_real_route']} "
+          f"({out['orders_with_real_route_pct']}%)  [histórico OU template]")
     print(f"orders w/ mold       : {out['orders_with_mold']} "
           f"({out['orders_with_mold_pct']}%)")
     print(f"operations resolved  : {out['n_operations_resolved']}")
