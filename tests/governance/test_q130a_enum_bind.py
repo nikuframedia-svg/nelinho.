@@ -12,9 +12,13 @@ Estes testes verificam que:
    `RuleRevisionAction.APPROVED` e produz o bind value "approved" (minúsculo).
 3. Todos os membros de ambos os enums têm .name != .value (confirma que o bug
    seria real sem o fix).
+4. RuleEngine.refresh() carrega ≥1 regra active sem InvalidTextRepresentationError
+   (prova funcional do fix end-to-end).
 """
 
 from __future__ import annotations
+
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -102,3 +106,73 @@ def test_action_bind_value_is_lowercase():
         assert member.name not in col_type.enums, (
             f"'{member.name}' (maiúsculo) não deve estar em col_type.enums"
         )
+
+
+# ---------------------------------------------------------------------------
+# Prova funcional: RuleEngine.refresh() carrega regra active sem crash
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_rule_engine_refresh_loads_active_rule():
+    """RuleEngine.refresh() com 1 regra active na sessão fake devolve count=1.
+
+    Reprodução directa do bug: antes do fix, a query enviava "ACTIVE" (maiúsculo)
+    ao Postgres, que rejeitava com InvalidTextRepresentationError. Com o fix
+    o bind value é "active" (minúsculo) e a FakeRuleSession filtra correctamente.
+
+    Usa FakeRuleSession (sem DB) para ser fast e isolado.
+    """
+    from tests.conftest import FakeRuleSession
+    from src.governance.yaml_policy.engine import RuleEngine
+
+    TENANT = UUID("00000000-0000-0000-0000-000000000001")
+
+    # Payload mínimo válido de uma regra kpi_threshold_crossed com acção alert.
+    # Campos obrigatórios: id, description, when, then. SafetySpec e ConstraintsSpec
+    # têm defaults; Rule.model_config forbids extras (sem name/version/axioms_required).
+    payload = {
+        "id": "regra-teste-q130a",
+        "description": "Regra de teste para regressao Q.130.A",
+        "status": "active",
+        "when": {
+            "event": "kpi_threshold_crossed",
+            "conditions": [],
+        },
+        "then": [
+            {
+                "action": "alert",
+                "params": {
+                    "severity": "INFO",
+                    "title": "Teste",
+                    "message_pt": "Mensagem de teste.",
+                    "entity_refs": [],
+                },
+            }
+        ],
+        "safety": {
+            "requires_human_approval": True,
+            "max_fires_per_day": 10,
+            "kill_switch": "admin_only",
+        },
+    }
+
+    row = TenantRule(
+        id=uuid4(),
+        tenant_id=TENANT,
+        rule_id="regra-teste-q130a",
+        description="Regra de teste",
+        status=RuleLifecycleStatus.ACTIVE,
+        event_type="kpi_threshold_crossed",
+        payload=payload,
+    )
+
+    session = FakeRuleSession()
+    session.rules.append(row)
+
+    engine = RuleEngine()
+    # Antes do fix, esta chamada lançava InvalidTextRepresentationError.
+    count = await engine.refresh(session, tenant_id=TENANT)
+
+    assert count == 1, f"refresh() devia carregar 1 regra active, carregou {count}"
+    assert engine.rule_count == 1
+    assert "kpi_threshold_crossed" in engine.event_types_with_rules
