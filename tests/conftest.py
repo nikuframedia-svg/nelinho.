@@ -21,6 +21,42 @@ import pytest_asyncio
 
 
 # ---------------------------------------------------------------------------
+# Q.136.D — skip de @pytest.mark.integration quando a BD não está acessível
+# ---------------------------------------------------------------------------
+
+def pytest_collection_modifyitems(config, items):
+    """Salta os testes `@pytest.mark.integration` quando o Postgres dev não está
+    de pé (ex.: job `test` do CI, que corre `pytest tests/` SEM serviço postgres).
+    Com BD (dev local, job `alembic` do CI) correm normalmente. Evita falsos
+    vermelhos de "connection refused" em testes que precisam de infra viva.
+
+    Check leve (socket à porta da BD, 1.5s) — não importa drivers nem abre tx."""
+    import socket
+    from urllib.parse import urlparse
+
+    try:
+        from src.shared.config import settings
+        parsed = urlparse(settings.database_url)
+    except (ImportError, AttributeError, ValueError):
+        return  # sem config → não interferir com a colecção
+
+    host = parsed.hostname or "localhost"
+    port = parsed.port or 5432
+    try:
+        with socket.create_connection((host, port), timeout=1.5):
+            return  # BD acessível → corre os integration normalmente
+    except OSError:
+        pass
+
+    skip = pytest.mark.skip(
+        reason="BD indisponível — @integration precisa de infra viva (Q.136.D)"
+    )
+    for item in items:
+        if "integration" in item.keywords:
+            item.add_marker(skip)
+
+
+# ---------------------------------------------------------------------------
 # Deterministic IDs
 # ---------------------------------------------------------------------------
 

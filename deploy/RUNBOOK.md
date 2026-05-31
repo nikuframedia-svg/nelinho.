@@ -44,18 +44,26 @@ arranque recusa um `SECRET_KEY` de dev.
 
 ## 3. Base de dados
 
-A cadeia Alembic está sã (1 head, `050_reports`; a migração 026 já foi
-corrigida). O systemd corre `alembic upgrade head` antes de arrancar — é
-idempotente.
+A cadeia Alembic está sã (1 head). O systemd corre `alembic upgrade head` antes
+de arrancar (`ExecStartPre`) — é idempotente.
+
+**CRÍTICO (Q.135):** numa BD FRESCA, correr `scripts/init-db.sql` ANTES do
+`alembic upgrade head`. As migrações usam `uuid_generate_v4()` mas nenhuma cria
+a extensão; `init-db.sql` cria as extensões (`uuid-ossp`, `pgcrypto`) + os
+schemas base. Sem este passo o `upgrade head` rebenta em "uuid_generate_v4()
+does not exist".
 
 ```bash
-# primeira vez, criar a BD e correr as migrations:
+# primeira vez, criar a BD + extensões/schemas + correr as migrations:
 sudo -u postgres createdb prodplan_one
+sudo -u postgres psql -d prodplan_one -f /opt/prodplan/scripts/init-db.sql
 cd /opt/prodplan && ./.venv/bin/alembic upgrade head
 ```
 
-O `init_db()` do arranque faz ainda um `create_all` idempotente — cobre as
-tabelas que vivem fora do Alembic (governance.*). É de propósito; não mexer.
+`alembic upgrade head` cria as 124 tabelas ORM TODAS (incl. governance.*),
+verificado pelo guard `tests/integration/test_alembic_table_parity.py` (Q.135).
+O `init_db()` do arranque (Q.61.16) **só verifica a revisão** — NÃO faz
+`create_all` (esse é só o caminho dev/tests `init_db_create_all`).
 
 ## 4. Build do frontend
 
