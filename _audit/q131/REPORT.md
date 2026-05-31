@@ -72,3 +72,49 @@ idempotente (2ª corrida 5315→5315). Comentário obsoleto "27 380 orders" corr
 C1/C2/C4 são 601 (11,3%). É o filtro `FP_PRODUCAO=true` (o mesmo que o CPO usa), portanto dados
 reais e honestos. Se o Luis quiser a lista/planeamento só de barcos, é um filtro de uma linha
 (por `product_type` ou `produto.P_TP_ID`) — decisão de produto, não fabricar dados.
+
+Verificação via API live (backend :8001): `/v1/plan/orders/stats` → `total=5315`
+(era 12), fases reais ("Laminagem peças" 1273, "Corte peças" 1168); `/v1/plan/orders` →
+OFs reais ("C1 28 XL FC Prepreg", "Ocean Ski 510 Pl"), UTF-8 correto. 0 demo confirmado.
+
+## Q.131.F — Cap do horizonte de planeamento (~200 ordens mais urgentes)
+
+A verificação live do `POST /v1/plan/cpo/schedule` destapou um problema de produto: com o WIP
+inteiro (`_load_open_orders_db` LIMIT 2000 → ~11k operações) a GA **esgotava o orçamento na
+geração 1** (sem optimização) e o pedido não voltava em <90s — inútil para um "Replanear"
+interactivo. O Luis tinha pedido ~200.
+
+Reduzido o LIMIT 2000 → `_OPEN_ORDERS_PLAN_CAP=200` (constante nomeada), mantendo
+`ORDER BY data_entrega_prevista NULLS LAST` (rolling horizon: as 200 mais urgentes).
+
+| Antes (2000) | Depois (200) |
+|---|---|
+| GA budget exhausted @ **geração 1** | GA optimiza até **geração 8** |
+| POST não volta em >90s | HTTP 200 em **31s**, `degraded=False`, commit real (ops=2838) |
+
+**Nota honesta (qualidade do schedule):** o `makespan` ainda é irrealista porque o
+`skill_matrix` real é parcial (483 pares de `offp_eq`) → muitas fases sem operador são agendadas
+como "manual" e serializadas. Isto é **qualidade de optimização** (cobertura de skills + budget
+da GA), não "dados reais" — campanha futura. Os dados de ENTRADA são 100% reais.
+
+## Q.131.E — Gate + revisão adversarial
+
+- `& .\scripts\verify.ps1 -QuickPython`: **ALL GREEN** (ruff, lint-imports, verify_invariants
+  estáticas+AST, **lint-audit-coverage invariante 7 OK**, drift gate, tsc, vitest 172, lint:mocks
+  0 erros). Invariantes WG/CO/ME/H0 + imports CPO todos OK.
+- Suite Python completa: **zero regressões novas** (6 falhas todas pré-existentes — 4 LLM/SQL-live
+  + 2 ambientais — provadas idênticas na base por `git stash`).
+- **Revisão independente (`nelo-reviewer`): APROVADO.** CX1 limpo (durações só de DATAINICIO→FIM,
+  zero campos €); axiomas Spelke não tocados (`generations=200`, `routing_choices`,
+  `rejected_alternatives`, idle-axis intactos); reconciliação sem referências mortas; mirror
+  idempotente com guard de WIP-vazio; PT-PT; zero mocks. 3 ressalvas não-bloqueantes (título do
+  commit A com 73 chars; `print()` num script CLI; teste CX1 best-effort com docstrings).
+
+## Resumo
+
+A pergunta do Luis ("o planeamento usa dados reais? a BD é real?") está respondida:
+**a BD é real e o planeamento usa-a a sério.** O CPO planeia WIP real com rotas/durações/moldes
+100% reais (0 fallback sintético), a lista de ordens tem 0 demo (5315 OFs reais), e o horizonte
+interactivo é tratável (200 mais urgentes, GA optimiza). Limitações honestas e deferidas:
+cobertura de rota (58%) e de skills (parcial) dependem de histórico/dados, não de código;
+filtro boats-only e qualidade do `makespan` são decisões/campanhas futuras.
