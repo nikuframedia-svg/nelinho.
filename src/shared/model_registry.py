@@ -101,6 +101,7 @@ from src.plan.models import execution_learning as _plan_execution_learning
 from src.plan.models import boat_boost as _plan_boat_boost  # Q.116.D
 from src.plan.models import order_boost as _plan_order_boost  # Q.116.C
 from src.plan.models import phase_gap as _plan_phase_gap
+from src.plan.models import phase_config as _plan_phase_config  # Q.135.F3.1
 from src.plan.models import routing_template as _plan_routing_template
 from src.plan.models import schedule as _plan_schedule
 from src.plan.models import transport as _plan_transport

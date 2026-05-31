@@ -164,6 +164,39 @@ export interface WorkOrderOverrideOut {
   updated_at: string;
 }
 
+// Q.135.3.4 — Configuração de fase (CPO overrides)
+
+export interface PhaseConfigOverrides {
+  team_size_override: number | null;
+  num_stations_override: number | null;
+  allowed_worker_ids: string[] | null;
+  note: string | null;
+}
+
+export interface PhaseConfigBaselines {
+  capable_worker_ids: string[];
+  affinity_worker_ids: string[];
+  suggested_stations: number;
+  team_size_default: number;
+  expected_duration_h: number | null;
+  canonical_rank: number | null;
+  typical_prev_phase: string | null;
+  typical_next_phase: string | null;
+}
+
+export interface PhaseConfigOut {
+  phase_id: string;
+  overrides: PhaseConfigOverrides;
+  baselines: PhaseConfigBaselines;
+}
+
+export interface PhaseConfigPut {
+  team_size_override?: number | null;
+  num_stations_override?: number | null;
+  allowed_worker_ids?: string[] | null;
+  note?: string | null;
+}
+
 export const entityApi = {
   modelo: (id: string) =>
     apiFetch<ModeloSummary>(`/v1/entity/modelo/${encodeURIComponent(id)}`),
@@ -204,6 +237,17 @@ export const entityApi = {
       method: 'PATCH',
       body: JSON.stringify(body),
     }),
+
+  // Q.135.3.4 — configuração de fase (CPO overrides)
+  phaseConfig: {
+    get: (phaseId: string) =>
+      apiFetch<PhaseConfigOut>(`/v1/plan/phases/${encodeURIComponent(phaseId)}/config`),
+    put: (phaseId: string, body: PhaseConfigPut) =>
+      apiFetch<PhaseConfigOut>(`/v1/plan/phases/${encodeURIComponent(phaseId)}/config`, {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      }),
+  },
 };
 
 // Q.116.B — routing template admin

@@ -190,3 +190,8 @@ def register_routers(app: FastAPI) -> None:
     from src.plan.api.routing_template_admin import router as routing_admin_router
 
     app.include_router(routing_admin_router)
+
+    # Q.135.F3.2 — config de fase cross-model (overrides CPO)
+    from src.plan.api.phase_config_admin import router as phase_config_router
+
+    app.include_router(phase_config_router)

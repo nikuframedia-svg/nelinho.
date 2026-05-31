@@ -280,6 +280,7 @@ export const entityKeys = {
   all: ['entity'] as const,
   modelo: (id: string) => [...entityKeys.all, 'modelo', id] as const,
   fase: (id: string) => [...entityKeys.all, 'fase', id] as const,
+  faseConfig: (id: string) => [...entityKeys.all, 'fase', id, 'config'] as const,
   cliente: (id: string) => [...entityKeys.all, 'cliente', id] as const,
   encomenda: (id: string | number) => [...entityKeys.all, 'encomenda', String(id)] as const,
   operador: (id: string) => [...entityKeys.all, 'operador', id] as const,

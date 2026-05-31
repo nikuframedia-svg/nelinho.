@@ -192,6 +192,13 @@ class FactoryState:
     # enforcement yet" — scheduler keeps its defaults.
     preference_rules: List[Dict[str, Any]] = field(default_factory=list)
 
+    # Q.135.F3 — overrides de configuração de fase (plan.phase_config).
+    # phase_config[fase_id] = {"team_size_override": int|None,
+    #                          "num_stations_override": int|None,
+    #                          "allowed_worker_ids": list[str]|None}
+    # Vazio = sem overrides (comportamento legado intacto).
+    phase_config: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+
     # ----- NELO domain rules ---------------------------------------
 
     #: Phase codes where the scheduler MUST place a 2-person crew (hard
@@ -354,6 +361,10 @@ class FactoryState:
             session, tenant_id,
         )
 
+        # Q.135.F3 — overrides de configuração de fase (plan.phase_config).
+        # Best-effort: tabela ausente / session None → {} (back-compat).
+        state.phase_config = await _load_phase_config_db(session, tenant_id)
+
         # Q.53.B — factory working calendar. Best-effort: a missing /
         # empty table leaves `calendar` falling back to Mon-Fri; only an
         # unexpected error leaves it None (legacy 24/7 decoder behaviour).
@@ -411,10 +422,26 @@ class FactoryState:
         return float(self.phase_transition_gaps.get((a, b), 0.0))
 
     def can_perform(self, fase_id: str, funcionario_id: str) -> bool:
-        return funcionario_id in self.skill_matrix.get(fase_id, set())
+        # Q.135.F3 — respeita whitelist se existir; NUNCA alarga além do skill_matrix
+        if funcionario_id not in self.skill_matrix.get(fase_id, set()):
+            return False
+        cfg = self.phase_config.get(fase_id)
+        if cfg and cfg.get("allowed_worker_ids") is not None:
+            return funcionario_id in cfg["allowed_worker_ids"]
+        return True
 
     def workers_for(self, fase_id: str) -> Set[str]:
-        return self.skill_matrix.get(fase_id, set())
+        """Operadores elegíveis para a fase.
+
+        Q.135.F3: se allowed_worker_ids definido, devolve a intersecção com
+        skill_matrix (axioma 5 — NUNCA alarga além das competências reais).
+        """
+        base = self.skill_matrix.get(fase_id, set())
+        cfg = self.phase_config.get(fase_id)
+        if cfg and cfg.get("allowed_worker_ids") is not None:
+            whitelist = set(cfg["allowed_worker_ids"])
+            return base & whitelist  # intersecção — axioma 5 intacto
+        return base
 
     def skill_count(self, funcionario_id: str) -> int:
         """How many phases this worker is approved to perform.
@@ -469,16 +496,39 @@ class FactoryState:
         return fallback_hours * buffer_factor
 
     def team_size_for(self, fase_id: str, phase_name: str = "") -> int:
+        """Team size para a fase.
+
+        Q.135.F3: usa team_size_override se definido, respeitando o mínimo
+        da fase (Laminagem ≥ 2 quando PAIR_PREFERRED).
+        """
         normalized = phase_name.upper().replace(" ", "_")
+        pair_phases = tuple(self.PAIR_REQUIRED_PHASES) + tuple(self.PAIR_PREFERRED_PHASES)
+        pair_required = any(p in normalized for p in pair_phases)
+        # mínimo obrigatório da fase
+        min_size = 2 if pair_required else 1
+
+        cfg = self.phase_config.get(fase_id)
+        if cfg and cfg.get("team_size_override") is not None:
+            # override respeitado mas nunca abaixo do mínimo da fase
+            return max(min_size, int(cfg["team_size_override"]))
+
         # Both REQUIRED and PREFERRED return 2 here so the routing/decoder
         # plans for a pair by default. The decoder downgrades to a solo
         # assignment only when the pair pool is exhausted (PREFERRED) or
         # raises infeasibility (REQUIRED). See `pair_assignment.requires_pair`
         # vs `prefers_pair`.
-        pair_phases = tuple(self.PAIR_REQUIRED_PHASES) + tuple(self.PAIR_PREFERRED_PHASES)
-        if any(p in normalized for p in pair_phases):
-            return 2
-        return 1
+        return min_size
+
+    def num_stations_for(self, fase_id: str) -> int:
+        """N estações paralelas para a fase.
+
+        Q.135.F3: usa num_stations_override se definido (≥ 1).
+        Fallback: phase_stations[fase_id] (p95 ERP) ou 1.
+        """
+        cfg = self.phase_config.get(fase_id)
+        if cfg and cfg.get("num_stations_override") is not None:
+            return max(1, int(cfg["num_stations_override"]))
+        return self.phase_stations.get(fase_id, 1)
 
     def mold_for(self, modelo_id: str) -> Optional[MoldInfo]:
         candidates = self.molds_by_model.get(modelo_id, [])
@@ -1110,3 +1160,52 @@ def _extract_error_rates(engine: Any) -> Dict[str, float]:
     except Exception as e:
         logger.debug(f"error rate extraction failed: {e}")
         return {}
+
+
+# ---------------------------------------------------------------------------
+# Q.135.F3 — phase config overrides loader
+# ---------------------------------------------------------------------------
+
+
+async def _load_phase_config_db(
+    session: Any,
+    tenant_id: UUID,
+) -> Dict[str, Dict[str, Any]]:
+    """Q.135.F3 — overrides de configuração de fase de `plan.phase_config`.
+
+    Devolve ``{fase_id: {"team_size_override": int|None,
+                          "num_stations_override": int|None,
+                          "allowed_worker_ids": list[str]|None}}``.
+    Best-effort: session None / tabela ausente → ``{}`` (back-compat).
+    Espelha o padrão de `_load_phase_calibration_db`.
+    """
+    if session is None:
+        return {}
+    from sqlalchemy import text
+    from sqlalchemy.exc import SQLAlchemyError
+
+    sql = text(
+        """
+        SELECT phase_id::text            AS phase_id,
+               team_size_override        AS team_size_override,
+               num_stations_override     AS num_stations_override,
+               allowed_worker_ids        AS allowed_worker_ids
+        FROM plan.phase_config
+        WHERE tenant_id = :tenant
+        """
+    )
+    try:
+        rows = (await session.execute(
+            sql, {"tenant": str(tenant_id)}
+        )).mappings().all()
+    except SQLAlchemyError as exc:
+        logger.debug("Q.135.F3 phase_config DB load skipped: %s", exc)
+        return {}
+    out: Dict[str, Dict[str, Any]] = {}
+    for r in rows:
+        out[str(r["phase_id"])] = {
+            "team_size_override": r["team_size_override"],
+            "num_stations_override": r["num_stations_override"],
+            "allowed_worker_ids": list(r["allowed_worker_ids"]) if r["allowed_worker_ids"] else None,
+        }
+    return out

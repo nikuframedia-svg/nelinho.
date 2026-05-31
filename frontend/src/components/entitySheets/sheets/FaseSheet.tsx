@@ -1,16 +1,23 @@
 /**
  * FaseSheet — sheet contextual de fase de produção (Q.116.A, read-only).
  *
- * Tabs: Operadores · Barcos exigentes · Cura
+ * Tabs: Operadores · Barcos exigentes · Cura · Configuração
  */
 
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Sheet } from '../../dark/Sheet';
 import { Tabs } from '../../dark/Tabs';
 import { EmptyState } from '../../dark/EmptyState';
+import { DarkBadge } from '../../dark/DarkBadge';
 import { entityKeys } from '../../../lib/api/keys';
-import { entityApi, type OperatorScore, type BoatScore, type CuringGap } from '../../../lib/api/entityApi';
+import {
+  entityApi,
+  type OperatorScore,
+  type BoatScore,
+  type CuringGap,
+} from '../../../lib/api/entityApi';
+import { useToastContext } from '../../ToastProvider';
 
 export interface FaseSheetProps {
   phaseId: string;
@@ -21,6 +28,7 @@ const TABS = [
   { id: 'operadores', label: 'Operadores' },
   { id: 'barcos', label: 'Barcos exigentes' },
   { id: 'cura', label: 'Cura' },
+  { id: 'configuracao', label: 'Configuração' },
 ];
 
 export default function FaseSheet({ phaseId, onClose }: FaseSheetProps) {
@@ -77,6 +85,10 @@ export default function FaseSheet({ phaseId, onClose }: FaseSheetProps) {
           gapsIn={data.curing_gaps_in}
           gapsOut={data.curing_gaps_out}
         />
+      )}
+
+      {tab === 'configuracao' && (
+        <TabConfiguracao phaseId={phaseId} />
       )}
     </Sheet>
   );
@@ -282,6 +294,341 @@ function TabCura({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ─── Tab Configuração (Q.135.3.4) ───────────────────────────────────────────
+
+function TabConfiguracao({ phaseId }: { phaseId: string }) {
+  const toast = useToastContext();
+  const queryClient = useQueryClient();
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: entityKeys.faseConfig(phaseId),
+    queryFn: () => entityApi.phaseConfig.get(phaseId),
+  });
+
+  // Estado local do formulário — sincronizado com data quando carrega
+  const [selectedWorkers, setSelectedWorkers] = useState<string[] | null>(null);
+  const [teamSize, setTeamSize] = useState<string>('');
+  const [numStations, setNumStations] = useState<string>('');
+  const [note, setNote] = useState<string>('');
+  const [initialised, setInitialised] = useState(false);
+
+  // Sincroniza estado local quando os dados chegam (uma só vez)
+  if (data && !initialised) {
+    setSelectedWorkers(data.overrides.allowed_worker_ids ?? null);
+    setTeamSize(data.overrides.team_size_override != null ? String(data.overrides.team_size_override) : '');
+    setNumStations(data.overrides.num_stations_override != null ? String(data.overrides.num_stations_override) : '');
+    setNote(data.overrides.note ?? '');
+    setInitialised(true);
+  }
+
+  const mutation = useMutation({
+    mutationFn: (body: Parameters<typeof entityApi.phaseConfig.put>[1]) =>
+      entityApi.phaseConfig.put(phaseId, body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: entityKeys.faseConfig(phaseId) });
+      toast.success('Configuração guardada.');
+    },
+    onError: (err: unknown) => {
+      const msg = err instanceof Error ? err.message : 'Erro desconhecido';
+      toast.error(msg);
+    },
+  });
+
+  if (isLoading) {
+    return (
+      <div style={{ color: 'var(--fg-2)', fontSize: 14, padding: '16px 0' }}>
+        A carregar configuração...
+      </div>
+    );
+  }
+
+  if (error || !data) {
+    return (
+      <EmptyState
+        title="Erro ao carregar configuração"
+        hint={error instanceof Error ? error.message : 'Tenta novamente.'}
+        size="sm"
+      />
+    );
+  }
+
+  const { baselines, overrides } = data;
+  const hasOverride =
+    overrides.team_size_override != null ||
+    overrides.num_stations_override != null ||
+    (overrides.allowed_worker_ids != null && overrides.allowed_worker_ids.length > 0) ||
+    !!overrides.note;
+
+  function toggleWorker(id: string) {
+    setSelectedWorkers((prev) => {
+      const current = prev ?? [];
+      if (current.includes(id)) {
+        const next = current.filter((w) => w !== id);
+        return next.length === 0 ? null : next;
+      }
+      return [...current, id];
+    });
+  }
+
+  function handleGuardar() {
+    const body: Parameters<typeof entityApi.phaseConfig.put>[1] = {
+      team_size_override: teamSize !== '' ? parseInt(teamSize, 10) : null,
+      num_stations_override: numStations !== '' ? parseInt(numStations, 10) : null,
+      allowed_worker_ids: selectedWorkers && selectedWorkers.length > 0 ? selectedWorkers : null,
+      note: note.trim() !== '' ? note.trim() : null,
+    };
+    mutation.mutate(body);
+  }
+
+  const effectiveAllowed = selectedWorkers ?? [];
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+      {/* Badge override ativo */}
+      {hasOverride && (
+        <div>
+          <DarkBadge variant="warning">Override ativo</DarkBadge>
+        </div>
+      )}
+
+      {/* ── Secção: Operadores ── */}
+      <section>
+        <SectionTitle>Operadores qualificados</SectionTitle>
+        <div style={{ fontSize: 12, color: 'var(--fg-2)', marginBottom: 8 }}>
+          Seleciona os operadores permitidos para esta fase. Sem seleção = todos os qualificados.
+        </div>
+        {baselines.capable_worker_ids.length === 0 ? (
+          <EmptyState
+            title="Sem operadores qualificados registados"
+            hint="Os dados de competências ainda não foram calculados para esta fase."
+            size="sm"
+            mascot={false}
+          />
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {baselines.capable_worker_ids.map((wid) => {
+              const isAffinity = baselines.affinity_worker_ids.includes(wid);
+              const isChecked = effectiveAllowed.length === 0 || effectiveAllowed.includes(wid);
+              const isExplicitlySet = (selectedWorkers ?? []).length > 0;
+              const isCheckedExplicit = isExplicitlySet ? (selectedWorkers ?? []).includes(wid) : false;
+              return (
+                <label
+                  key={wid}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    padding: '6px 10px',
+                    background: 'var(--bg-2)',
+                    borderRadius: 6,
+                    cursor: 'pointer',
+                    fontSize: 13,
+                    opacity: isChecked ? 1 : 0.5,
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={isExplicitlySet ? isCheckedExplicit : true}
+                    onChange={() => toggleWorker(wid)}
+                    style={{ accentColor: 'var(--accent)', width: 15, height: 15 }}
+                  />
+                  <span style={{ flex: 1, fontVariantNumeric: 'tabular-nums' }}>{wid}</span>
+                  {isAffinity && (
+                    <span style={{ color: '#f59e0b', fontSize: 12 }}>★ afinidade</span>
+                  )}
+                </label>
+              );
+            })}
+          </div>
+        )}
+        {(selectedWorkers ?? []).length > 0 && (
+          <button
+            onClick={() => setSelectedWorkers(null)}
+            style={{
+              marginTop: 8,
+              fontSize: 12,
+              color: 'var(--fg-2)',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              padding: 0,
+              textDecoration: 'underline',
+            }}
+          >
+            Limpar seleção (usar todos os qualificados)
+          </button>
+        )}
+      </section>
+
+      {/* ── Secção: Nº colaboradores / estações ── */}
+      <section>
+        <SectionTitle>Dimensionamento</SectionTitle>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div>
+            <label style={{ display: 'block', fontSize: 12, color: 'var(--fg-2)', marginBottom: 4 }}>
+              Nº de colaboradores
+            </label>
+            <input
+              type="number"
+              min={1}
+              value={teamSize}
+              onChange={(e) => setTeamSize(e.target.value)}
+              placeholder={`default: ${baselines.team_size_default}`}
+              className="bg-white text-slate-900 placeholder:text-slate-400"
+              style={{
+                width: '100%',
+                padding: '6px 10px',
+                borderRadius: 6,
+                border: '1px solid var(--bd-1)',
+                fontSize: 13,
+                boxSizing: 'border-box',
+              }}
+            />
+          </div>
+          <div>
+            <label style={{ display: 'block', fontSize: 12, color: 'var(--fg-2)', marginBottom: 4 }}>
+              Nº de estações
+            </label>
+            <input
+              type="number"
+              min={1}
+              value={numStations}
+              onChange={(e) => setNumStations(e.target.value)}
+              placeholder={`sugerido: ${baselines.suggested_stations}`}
+              className="bg-white text-slate-900 placeholder:text-slate-400"
+              style={{
+                width: '100%',
+                padding: '6px 10px',
+                borderRadius: 6,
+                border: '1px solid var(--bd-1)',
+                fontSize: 13,
+                boxSizing: 'border-box',
+              }}
+            />
+          </div>
+        </div>
+      </section>
+
+      {/* ── Secção: Nota ── */}
+      <section>
+        <SectionTitle>Nota</SectionTitle>
+        <textarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder="Nota opcional sobre esta configuração..."
+          rows={2}
+          className="bg-white text-slate-900 placeholder:text-slate-400"
+          style={{
+            width: '100%',
+            padding: '6px 10px',
+            borderRadius: 6,
+            border: '1px solid var(--bd-1)',
+            fontSize: 13,
+            resize: 'vertical',
+            boxSizing: 'border-box',
+          }}
+        />
+      </section>
+
+      {/* ── Secção: Ordem normal (read-only) ── */}
+      <section>
+        <SectionTitle>Ordem normal</SectionTitle>
+        <div
+          style={{
+            fontSize: 13,
+            padding: '8px 12px',
+            background: 'var(--bg-2)',
+            borderRadius: 6,
+            display: 'flex',
+            gap: 8,
+            alignItems: 'center',
+            flexWrap: 'wrap',
+          }}
+        >
+          <span style={{ color: 'var(--fg-2)' }}>
+            {baselines.typical_prev_phase ?? '—'}
+          </span>
+          <span style={{ color: 'var(--fg-3)' }}>→</span>
+          <span style={{ fontWeight: 600 }}>esta fase</span>
+          {baselines.canonical_rank != null && (
+            <DarkBadge variant="neutral">#{baselines.canonical_rank}</DarkBadge>
+          )}
+          <span style={{ color: 'var(--fg-3)' }}>→</span>
+          <span style={{ color: 'var(--fg-2)' }}>
+            {baselines.typical_next_phase ?? '—'}
+          </span>
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--fg-3)', marginTop: 6 }}>
+          Para alterar a sequência, edita o modelo de routing no detalhe do modelo.
+        </div>
+      </section>
+
+      {/* ── Secção: Duração esperada (read-only) ── */}
+      <section>
+        <SectionTitle>Duração esperada</SectionTitle>
+        <div
+          style={{
+            fontSize: 13,
+            padding: '8px 12px',
+            background: 'var(--bg-2)',
+            borderRadius: 6,
+          }}
+        >
+          {baselines.expected_duration_h != null ? (
+            <span>
+              O sistema diz:{' '}
+              <strong style={{ fontVariantNumeric: 'tabular-nums' }}>
+                ~{baselines.expected_duration_h.toFixed(1)}h
+              </strong>{' '}
+              <span style={{ color: 'var(--fg-2)' }}>(do histórico)</span>
+            </span>
+          ) : (
+            <span style={{ color: 'var(--fg-2)' }}>— sem dados históricos suficientes</span>
+          )}
+        </div>
+      </section>
+
+      {/* ── Botão Guardar ── */}
+      <div style={{ paddingTop: 4 }}>
+        <button
+          onClick={handleGuardar}
+          disabled={mutation.isPending}
+          style={{
+            padding: '8px 20px',
+            borderRadius: 6,
+            background: mutation.isPending ? 'var(--bg-3)' : 'var(--accent)',
+            color: '#fff',
+            border: 'none',
+            cursor: mutation.isPending ? 'not-allowed' : 'pointer',
+            fontSize: 13,
+            fontWeight: 600,
+          }}
+        >
+          {mutation.isPending ? 'A guardar...' : 'Guardar'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        fontSize: 12,
+        fontWeight: 600,
+        color: 'var(--fg-2)',
+        marginBottom: 8,
+        textTransform: 'uppercase',
+        letterSpacing: '0.05em',
+      }}
+    >
+      {children}
     </div>
   );
 }
