@@ -56,6 +56,7 @@ from src.scheduling.jobs.preference_learning import (
 from src.scheduling.jobs.boat_phase_score_job import _boat_phase_score_job
 from src.scheduling.jobs.boat_potential_job import _boat_potential_job
 from src.scheduling.jobs.phase_operator_affinity import _phase_operator_affinity_job
+from src.scheduling.jobs.auto_cpo_replan_job import _auto_cpo_replan_global_job
 from src.scheduling.jobs.capture_plan_execution import (
     _capture_plan_execution_global_job,
 )
@@ -303,6 +304,21 @@ def start_scheduler(
         trigger=IntervalTrigger(minutes=15),
         id="order_status_reconcile",
         name="order_status_reconcile",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Q.137 — replan CPO automático: a cada 15 min, se o WIP de barcos mudou
+    # (reativo ao sync ERP de 5 min), enfileira o cpo_schedule_job no Arq → o
+    # worker corre o CPO e persiste um DRAFT → o grid /overall mostra-o sozinho.
+    # Rate-limit (60 min) + deteção de mudança evitam planos repetidos. DRAFT-only
+    # (Q.17). Best-effort: Redis/worker em baixo → log + skip.
+    _scheduler.add_job(
+        _auto_cpo_replan_global_job,
+        trigger=IntervalTrigger(minutes=15),
+        args=[tenants or []],
+        id="auto_cpo_replan",
+        name="auto_cpo_replan",
         replace_existing=True,
         coalesce=True,
         max_instances=1,
