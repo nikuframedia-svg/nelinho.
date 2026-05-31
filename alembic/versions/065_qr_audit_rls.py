@@ -48,23 +48,31 @@ TABLES_WITH_TENANT_ID = [
 
 
 def upgrade() -> None:
+    # Q.134.M1 — guarda de existência. Duas destas tabelas
+    # (plan.phase_duration_calibration, plan.plan_execution_observed) eram
+    # create_all-only (sem create_table em migração) → numa BD FRESCA não
+    # existiam ainda quando o 065 corria e o `ALTER TABLE ... ENABLE RLS`
+    # rebentava (UndefinedTable). O DO-block salta a tabela inexistente; a
+    # 066 cria-as logo a seguir e aplica-lhes a RLS. Em DBs já migradas (dev/
+    # prod, onde o create_all as criou) o to_regclass devolve não-NULL → RLS
+    # aplicado na mesma (backward-compatible, resultado idêntico).
     for schema, table in TABLES_WITH_TENANT_ID:
         op.execute(
-            f"ALTER TABLE {schema}.{table} ENABLE ROW LEVEL SECURITY"
-        )
-        # DROP primeiro para idempotency (re-run não falha).
-        op.execute(
-            f"DROP POLICY IF EXISTS tenant_isolation ON {schema}.{table}"
-        )
-        op.execute(
             f"""
-            CREATE POLICY tenant_isolation ON {schema}.{table}
-                USING (
-                    tenant_id = current_setting('app.tenant_id', true)::uuid
-                )
-                WITH CHECK (
-                    tenant_id = current_setting('app.tenant_id', true)::uuid
-                )
+            DO $$
+            BEGIN
+                IF to_regclass('{schema}.{table}') IS NOT NULL THEN
+                    EXECUTE 'ALTER TABLE {schema}.{table} '
+                          || 'ENABLE ROW LEVEL SECURITY';
+                    EXECUTE 'DROP POLICY IF EXISTS tenant_isolation '
+                          || 'ON {schema}.{table}';
+                    EXECUTE 'CREATE POLICY tenant_isolation ON {schema}.{table} '
+                          || 'USING (tenant_id = '
+                          || 'current_setting(''app.tenant_id'', true)::uuid) '
+                          || 'WITH CHECK (tenant_id = '
+                          || 'current_setting(''app.tenant_id'', true)::uuid)';
+                END IF;
+            END $$
             """
         )
 
@@ -72,8 +80,15 @@ def upgrade() -> None:
 def downgrade() -> None:
     for schema, table in reversed(TABLES_WITH_TENANT_ID):
         op.execute(
-            f"DROP POLICY IF EXISTS tenant_isolation ON {schema}.{table}"
-        )
-        op.execute(
-            f"ALTER TABLE {schema}.{table} DISABLE ROW LEVEL SECURITY"
+            f"""
+            DO $$
+            BEGIN
+                IF to_regclass('{schema}.{table}') IS NOT NULL THEN
+                    EXECUTE 'DROP POLICY IF EXISTS tenant_isolation '
+                          || 'ON {schema}.{table}';
+                    EXECUTE 'ALTER TABLE {schema}.{table} '
+                          || 'DISABLE ROW LEVEL SECURITY';
+                END IF;
+            END $$
+            """
         )

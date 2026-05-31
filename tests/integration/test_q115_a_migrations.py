@@ -211,7 +211,9 @@ async def test_rls_policies_active_on_new_tables() -> None:
             # verifica rowsecurity habilitado
             result = await conn.execute(
                 text(
-                    "SELECT rowsecurity FROM pg_class c "
+                    # pg_class expõe `relrowsecurity` (não `rowsecurity` — essa
+                    # é da view pg_tables). Q.134.M1 corrigiu o nome da coluna.
+                    "SELECT relrowsecurity FROM pg_class c "
                     "JOIN pg_namespace n ON n.oid = c.relnamespace "
                     "WHERE n.nspname = :schema AND c.relname = :table"
                 ),
