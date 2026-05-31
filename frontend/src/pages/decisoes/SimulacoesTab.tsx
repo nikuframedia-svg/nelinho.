@@ -40,10 +40,13 @@ function DecisaoWhatIf({ decision }: { decision: DecisionRun }) {
     commit_sha?: string;
     kpis?: Record<string, number | null>;
     quality_risk?: string | null;
+    why?: string | null;
     if_accept?: string[];
     if_reject?: string[];
   };
   const commitSha = (sb.commit_sha ?? '').trim();
+  const hasConsequences =
+    (sb.if_accept?.length ?? 0) > 0 || (sb.if_reject?.length ?? 0) > 0;
 
   const marginQuery = useQuery({
     queryKey: profitKeys.preview(commitSha),
@@ -92,9 +95,8 @@ function DecisaoWhatIf({ decision }: { decision: DecisionRun }) {
         <p className="text-[10.5px] uppercase tracking-wide font-semibold text-fg-3 mb-2">
           Consequências
         </p>
-        {(sb.if_accept?.length ?? 0) === 0 && (sb.if_reject?.length ?? 0) === 0 ? (
-          <p className="text-xs text-fg-3">Sem consequências detalhadas para esta decisão.</p>
-        ) : (
+        {sb.why ? <p className="text-xs text-fg-2 mb-3">{sb.why}</p> : null}
+        {hasConsequences ? (
           <div className="grid grid-cols-2 gap-3">
             <div>
               <p className="text-[10px] uppercase font-semibold text-green-400 mb-1">Se aceitar</p>
@@ -113,7 +115,9 @@ function DecisaoWhatIf({ decision }: { decision: DecisionRun }) {
               </ul>
             </div>
           </div>
-        )}
+        ) : !sb.why ? (
+          <p className="text-xs text-fg-3">Sem consequências detalhadas para esta decisão.</p>
+        ) : null}
       </DarkCard>
     </div>
   );

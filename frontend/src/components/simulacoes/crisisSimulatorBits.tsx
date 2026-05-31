@@ -14,16 +14,6 @@ export const ICONS: Record<CrisisScenario['icon'], ReactNode> = {
   Truck: <Truck size={16} />,
 };
 
-export const SPELKE_AXIOMS = [
-  'Capacidade ≥ 0',
-  'Precedência das fases',
-  'Molde exclusivo',
-  'Dual-resource Laminagem',
-  'Compatibilidade de skill',
-  'Cura · 16 transições',
-  'Safety net ≥ baseline',
-];
-
 export const SEVERITY_TONE: Record<CrisisScenario['severity'], Tone> = {
   critical: 'red',
   high: 'orange',
@@ -45,6 +35,12 @@ export interface TwinRunResult {
   scenarioId: string;
   scenarioHash: string | null;
   simulationStatus: string;
+  /** `simulation_result` real persistido pelo twin (before/after/delta_summary/mode). */
+  simulationResult: Record<string, unknown> | null;
+  /** Modo de simulação reportado pelo twin (ex.: `projecao_linear`). */
+  mode: string | null;
+  /** Explicação honesta do modo (porque não correu o solver). */
+  modeReason: string | null;
 }
 
 export function CrisisCard({

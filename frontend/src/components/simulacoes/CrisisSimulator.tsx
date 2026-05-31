@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
-import { AlertTriangle, Check, ChevronLeft, Clock, Hash, Loader2, PlayCircle, Sparkles } from 'lucide-react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { Activity, AlertTriangle, Check, ChevronLeft, Clock, Hash, Loader2, PlayCircle, ShieldCheck, Sparkles } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { twinApi } from '../../lib/api';
 import { useToastContext } from '../ToastProvider';
@@ -8,10 +8,12 @@ import { Card, SectionHeader, Tag, fmtEuro, toneBd, toneBg, toneVar } from './at
 import type { Tone } from './atoms';
 import { CRISIS_SCENARIOS } from './crisisScenarios';
 import type { CrisisScenario } from './crisisScenarios';
-import { ICONS, SPELKE_AXIOMS, SEVERITY_TONE, CASCADE_LABEL, CrisisCard, type TwinRunResult } from './crisisSimulatorBits';
+import { ICONS, SEVERITY_TONE, CASCADE_LABEL, CrisisCard, type TwinRunResult } from './crisisSimulatorBits';
+import { buildComparisonRows, ComparisonTable } from './SimDetail';
 
 export function CrisisSimulator(): ReactNode {
   const toast = useToastContext();
+  const queryClient = useQueryClient();
   const [picked, setPicked] = useState<CrisisScenario | null>(null);
   const [result, setResult] = useState<TwinRunResult | null>(null);
   const [chosenOption, setChosenOption] = useState<string | null>(null);
@@ -28,17 +30,33 @@ export function CrisisSimulator(): ReactNode {
       for (const delta of scenario.deltas) {
         await twinApi.applyDelta(scenarioId, delta);
       }
-      // 3. Simula a cascata na sandbox isolada.
-      const sim = await twinApi.simulate(scenarioId);
+      // 3. Simula a cascata na sandbox isolada. O /simulate só devolve o
+      //    estado `after`; o `simulation_result` completo (before+after+
+      //    delta_summary+mode) só vem do getScenario — é a fonte do resultado.
+      await twinApi.simulate(scenarioId);
       const fresh = await twinApi.getScenario(scenarioId);
+      const simResult = (fresh?.simulation_result ?? null) as
+        | Record<string, unknown>
+        | null;
       return {
         scenarioId,
         scenarioHash: fresh?.scenario_hash ?? null,
-        simulationStatus: String(sim?.status ?? 'simulado'),
+        simulationStatus: String(fresh?.status ?? 'SIMULATED'),
+        simulationResult: simResult,
+        mode:
+          simResult && typeof simResult.mode === 'string'
+            ? simResult.mode
+            : null,
+        modeReason:
+          simResult && typeof simResult.mode_reason === 'string'
+            ? simResult.mode_reason
+            : null,
       };
     },
     onSuccess: (r) => {
       setResult(r);
+      // O cenário recém-criado passa a aparecer no segmento "Cenários".
+      queryClient.invalidateQueries({ queryKey: ['twin', 'scenarios'] });
       toast.success('Simulação de crise concluída na sandbox');
     },
     onError: (err: unknown) =>
@@ -354,56 +372,104 @@ export function CrisisSimulator(): ReactNode {
           <div
             style={{
               display: 'flex',
-              gap: 16,
-              alignItems: 'baseline',
+              flexDirection: 'column',
+              alignItems: 'flex-end',
+              gap: 4,
             }}
           >
-            <div style={{ textAlign: 'right' }}>
-              <div
-                className="display tabular"
-                style={{
-                  fontSize: 24,
-                  color: 'var(--red)',
-                  fontWeight: 600,
-                }}
-              >
-                −{fmtEuro(picked.deltaEur)}
+            <span
+              style={{
+                fontSize: 9,
+                color: 'var(--fg-3)',
+                textTransform: 'uppercase',
+                letterSpacing: 0.4,
+              }}
+            >
+              cenário de referência · estimativa operacional
+            </span>
+            <div style={{ display: 'flex', gap: 16, alignItems: 'baseline' }}>
+              <div style={{ textAlign: 'right' }}>
+                <div
+                  className="display tabular"
+                  style={{
+                    fontSize: 24,
+                    color: 'var(--red)',
+                    fontWeight: 600,
+                  }}
+                >
+                  −{fmtEuro(picked.deltaEur)}
+                </div>
+                <div
+                  style={{
+                    fontSize: 10,
+                    color: 'var(--fg-3)',
+                    textTransform: 'uppercase',
+                    letterSpacing: 0.4,
+                  }}
+                >
+                  se nada fizer
+                </div>
               </div>
-              <div
-                style={{
-                  fontSize: 10,
-                  color: 'var(--fg-3)',
-                  textTransform: 'uppercase',
-                  letterSpacing: 0.4,
-                }}
-              >
-                se nada fizer
-              </div>
-            </div>
-            <div style={{ textAlign: 'right' }}>
-              <div
-                className="display tabular"
-                style={{
-                  fontSize: 24,
-                  color: 'var(--red)',
-                  fontWeight: 600,
-                }}
-              >
-                +{picked.deltaDays}d
-              </div>
-              <div
-                style={{
-                  fontSize: 10,
-                  color: 'var(--fg-3)',
-                  textTransform: 'uppercase',
-                  letterSpacing: 0.4,
-                }}
-              >
-                atraso
+              <div style={{ textAlign: 'right' }}>
+                <div
+                  className="display tabular"
+                  style={{
+                    fontSize: 24,
+                    color: 'var(--red)',
+                    fontWeight: 600,
+                  }}
+                >
+                  +{picked.deltaDays}d
+                </div>
+                <div
+                  style={{
+                    fontSize: 10,
+                    color: 'var(--fg-3)',
+                    textTransform: 'uppercase',
+                    letterSpacing: 0.4,
+                  }}
+                >
+                  atraso
+                </div>
               </div>
             </div>
           </div>
         </div>
+      </Card>
+
+      {/* Resultado REAL computado pelo twin — distinto dos números de
+          referência acima. Lê o simulation_result.before/after persistido. */}
+      <Card padding={18} style={{ marginBottom: 14 }}>
+        <SectionHeader
+          icon={<Activity size={14} />}
+          title="Resultado real da simulação"
+          subtitle="KPIs que o digital twin moveu · computado, não estimado"
+        />
+        {(() => {
+          const rows = buildComparisonRows(result.simulationResult);
+          if (rows.length === 0) {
+            return (
+              <div style={{ fontSize: 12, color: 'var(--fg-2)' }}>
+                A simulação não produziu deltas de KPI mensuráveis para este
+                cenário.
+              </div>
+            );
+          }
+          return <ComparisonTable rows={rows} />;
+        })()}
+        {result.modeReason ? (
+          <div
+            style={{
+              marginTop: 10,
+              fontSize: 11,
+              color: 'var(--fg-3)',
+              lineHeight: 1.5,
+            }}
+          >
+            {result.mode === 'projecao_linear' ? 'Projeção linear · ' : ''}
+            {result.modeReason}
+          </div>
+        ) : null}
       </Card>
 
       <div
@@ -418,7 +484,7 @@ export function CrisisSimulator(): ReactNode {
           <SectionHeader
             icon={<Clock size={14} />}
             title="Cascata · o que acontece"
-            subtitle="Se não houver mitigação"
+            subtitle="Guião de referência · se não houver mitigação"
           />
           <div style={{ position: 'relative', paddingLeft: 18 }}>
             <div
@@ -476,20 +542,26 @@ export function CrisisSimulator(): ReactNode {
 
         <Card padding={18}>
           <SectionHeader
-            icon={<Check size={14} />}
-            title="Validação Spelke · sandbox"
-            subtitle="Cópia isolada da BD · 7 axiomas verificados"
+            icon={<ShieldCheck size={14} />}
+            title="Garantias da sandbox"
+            subtitle="O que o twin assegura nesta simulação"
           />
           <div
             style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(2, 1fr)',
+              display: 'flex',
+              flexDirection: 'column',
               gap: 8,
             }}
           >
-            {SPELKE_AXIOMS.map((axiom) => (
+            {[
+              'Cópia isolada da BD — não toca a produção',
+              'Deltas validados contra a whitelist fechada de tipos',
+              result.scenarioHash
+                ? 'Reprodutível — hash determinístico do cenário'
+                : 'Cenário persistido para auditoria',
+            ].map((g) => (
               <div
-                key={axiom}
+                key={g}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -501,7 +573,7 @@ export function CrisisSimulator(): ReactNode {
               >
                 <Check size={12} color="var(--green)" />
                 <span style={{ fontSize: 11.5, color: 'var(--fg-1)' }}>
-                  {axiom}
+                  {g}
                 </span>
               </div>
             ))}
@@ -513,7 +585,7 @@ export function CrisisSimulator(): ReactNode {
         <SectionHeader
           icon={<Sparkles size={14} />}
           title="Opções de mitigação"
-          subtitle="Escolhe uma opção para preparar o plano de execução"
+          subtitle="Custo estimado de referência · escolhe uma para preparar o plano"
         />
         <div
           style={{ display: 'flex', flexDirection: 'column', gap: 10 }}

@@ -6,8 +6,17 @@
  * problema de produção e o(s) delta(s) a aplicar no digital twin.
  * Quando o utilizador corre um cenário, o frontend cria um
  * `twin/scenario` real (`POST /v1/twin/scenarios`), aplica os deltas
- * (`POST .../apply-delta`) e simula (`POST .../simulate`). O resultado
- * (€, dias, cascata, axiomas) vem do backend — nada é inventado.
+ * (`POST .../apply-delta`) e simula (`POST .../simulate`).
+ *
+ * Duas naturezas de número, NÃO confundir:
+ *   • COMPUTADO pelo twin (real): o delta de KPIs agregados
+ *     (`backlog_horas_theoretical`, `quality_errors_total`) em
+ *     `simulation_result.before/after` + o `scenario_hash` reprodutível.
+ *     É isto que a card "Resultado real da simulação" mostra.
+ *   • REFERÊNCIA (config, aqui em baixo): `deltaEur`, `deltaDays`, `cascade`
+ *     e `options` são uma estimativa operacional hand-authored para dar
+ *     contexto — a UI rotula-os explicitamente como "cenário de referência".
+ *     O twin modela KPIs, não €, por isso o € NÃO vem do backend.
  *
  * Os `deltas` seguem o contrato `DeltaApplyRequest` do twin:
  *   { entity_type, entity_key, patch, description }

@@ -95,6 +95,18 @@ async def test_runner_enriquece_commit_cost_delta_quality_risk(monkeypatch):
     assert out["cost_delta"] == 200.5
     assert out["quality_risk"] == "alto"
 
+    # Consequências derivadas SÓ de valores reais (Q.131+) — alimenta a card
+    # "Consequências" da tab Simulações, que antes ficava sempre vazia.
+    assert out["if_accept"], "if_accept devia vir preenchido quando há commit"
+    joined_accept = " | ".join(out["if_accept"])
+    assert "makespan 120.0 h" in joined_accept
+    assert "2 ordens atrasadas" in joined_accept
+    assert "+200" in joined_accept and "€" in joined_accept  # margem
+    assert "alto" in joined_accept  # risco de qualidade
+    assert any("Mantém o plano atual" in line for line in out["if_reject"])
+    assert any("OF-9" in line for line in out["if_reject"])
+    assert "Replaneamento proposto pelo CPO" in out["why"]
+
 
 @pytest.mark.asyncio
 async def test_runner_omite_enriquecimento_quando_indisponivel(monkeypatch):
@@ -132,6 +144,14 @@ async def test_runner_omite_enriquecimento_quando_indisponivel(monkeypatch):
     assert "cost_delta" not in out
     assert "quality_risk" not in out
 
+    # if_accept ainda vem (há plano), mas SEM linhas de margem/risco.
+    assert out["if_accept"]
+    joined = " | ".join(out["if_accept"])
+    assert "makespan 100.0 h" in joined
+    assert "€" not in joined  # sem margem (delta None)
+    assert "risco" not in joined.lower()  # sem risco de qualidade (sem modelo)
+    assert "why" in out
+
 
 @pytest.mark.asyncio
 async def test_runner_fallback_quando_cpo_falha(monkeypatch):
@@ -147,3 +167,7 @@ async def test_runner_fallback_quando_cpo_falha(monkeypatch):
     assert out["propose_only"] is True
     assert out["operations"] == []
     assert "fallback_reason" in out
+    # Sem schedule → sem consequências falsas.
+    assert "if_accept" not in out
+    assert "if_reject" not in out
+    assert "why" not in out
