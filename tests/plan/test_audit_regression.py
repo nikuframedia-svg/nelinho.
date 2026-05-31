@@ -279,15 +279,16 @@ class TestFactoryStateLoadedOk:
         """CRIT-15 — quando a camada curada está unavailable E não há session
         para tentar a BD real (session=None), loaded_ok deve ser False.
 
-        Q.130.1: com session=None, _load_from_real_db retorna None imediatamente
-        (sem DB), então o fallback honesto mantém loaded_ok=False.
+        Q.131.A (Q.126.B): com session=None, os loaders de BD real
+        (_load_historical_durations_routes_db/_load_*_db) não trazem nada e,
+        sem camada curada (sq=None), o fallback honesto mantém loaded_ok=False.
         O teste original verificava a string "simulated" no load_error, mas
         get_engine() pode lançar o seu próprio RuntimeError antes do monkeypatch
         ser alcançado — o invariante é loaded_ok=False, não a string exacta.
         """
         from src.plan.cpo.state import FactoryState
 
-        # session=None → _load_from_real_db retorna None → loaded_ok=False
+        # session=None → loaders DB vazios + sq None → loaded_ok=False
         state = await FactoryState.load(session=None, tenant_id=uuid4())
         assert state.loaded_ok is False
         assert state.load_error is not None

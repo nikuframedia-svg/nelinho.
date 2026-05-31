@@ -41,6 +41,12 @@ CODE_MATERIAL_STOCKOUT_IMMINENT = "MATERIAL_STOCKOUT_IMMINENT"   # CRITICAL — 
 # durations off by up to 25x reality, so the operator should know.
 CODE_ROUTING_ENGINE_UNAVAILABLE = "ROUTING_ENGINE_UNAVAILABLE"   # WARN
 
+# Q.126.E — emitted when more than a threshold fraction of the resolved
+# operations fell back to the 2x synthetic buffer (no real history covered
+# the (fase, modelo) pair). The plan is still returned (degraded=True) so the
+# operator can decide, but the durations may diverge materially from reality.
+CODE_DURATION_FALLBACK_HIGH = "DURATION_FALLBACK_HIGH"            # WARN
+
 
 class CopilotAlert(TenantBase):
     """A proactive alert surfaced by the Copilot AlertsEngine."""

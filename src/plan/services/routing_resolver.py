@@ -43,7 +43,7 @@ class RoutingRow:
     fase_nome: str
     sequence: int
     duration_hours: float
-    source: str  # "history" | "standard" | "duration_model_p50"
+    source: str  # "history" | "history_db" | "standard" | "duration_model_p50"
     mold_required: bool = False
 
 
@@ -74,6 +74,14 @@ class RoutingResolver:
         # code=ROUTING_ENGINE_UNAVAILABLE) so the operator knows the
         # schedule was built on standard 2× templates instead of history.
         self.engine_unavailable: bool = False
+        # Q.126.E — per-resolver tally of how many resolved ops fell back to
+        # the 2x synthetic buffer (RoutingRow.source == "standard") vs total.
+        # The scheduler reads `fallback_fraction` after `resolve_many` and, if
+        # it crosses the threshold, emits a CopilotAlert + marks the plan
+        # `degraded` (soft-warn: the plan is still returned). "history",
+        # "history_db" and "duration_model_p50" are all REAL-ish sources.
+        self.resolved_ops: int = 0
+        self.fallback_ops: int = 0
 
     def resolve(
         self,
@@ -107,6 +115,11 @@ class RoutingResolver:
             # 2. Fall back to any historical order of the same model
             rows = self._history_for_model(modelo_id)
         if not rows:
+            # 2.5 Q.126.B — real route reconstructed from factory_raw.of_fp
+            # (ERP vivo), pre-loaded into FactoryState. This is the path that
+            # fires in production, where the in-memory curated layer is empty.
+            rows = self._history_for_model_db(modelo_id)
+        if not rows:
             # 3. Fall back to standard template
             rows = self._standard_template(modelo_id)
 
@@ -119,6 +132,10 @@ class RoutingResolver:
         due_date = _parse_datetime(order.get("data_entrega_prevista"))
         skills_by_phase = self.state.skill_matrix
         ops: List[SchedulingOperation] = []
+
+        # Q.126.E — tally real vs 2x-buffer ops for the noisy-fallback signal.
+        self.resolved_ops += len(rows)
+        self.fallback_ops += sum(1 for r in rows if r.source == "standard")
 
         for row in rows:
             phase_name = row.fase_nome or row.fase_id
@@ -159,6 +176,15 @@ class RoutingResolver:
         for order in orders:
             all_ops.extend(self.resolve(order, horizon_start))
         return all_ops
+
+    @property
+    def fallback_fraction(self) -> float:
+        """Q.126.E — share of resolved ops that fell back to the 2x synthetic
+        buffer (`source == "standard"`). 0.0 when nothing resolved. Read by
+        the scheduler to decide whether to mark the plan `degraded`."""
+        if self.resolved_ops <= 0:
+            return 0.0
+        return self.fallback_ops / self.resolved_ops
 
     # ------------------------------------------------------------------ #
     # Sources of routing data                                            #
@@ -220,6 +246,32 @@ class RoutingResolver:
         template_rows.sort(key=lambda r: r.sequence)
         return template_rows
 
+    def _history_for_model_db(self, modelo_id: str) -> List[RoutingRow]:
+        """Q.126.B — real route from `factory_raw.of_fp`, pre-loaded into
+        `FactoryState.historical_routes_by_model` (ordered production phases +
+        median real `horas_reais`). Used when the in-memory curated layer is
+        empty (the production reality) so the CPO plans on REAL history
+        instead of the 2x synthetic buffer. Returns `[]` when no DB route was
+        loaded for this model, so the caller falls to the standard template."""
+        if not modelo_id:
+            return []
+        steps = (getattr(self.state, "historical_routes_by_model", {}) or {}).get(
+            modelo_id
+        ) or []
+        rows: List[RoutingRow] = []
+        for st in steps:
+            fase_nome = str(st.get("fase_nome") or st.get("fase_id") or "")
+            rows.append(RoutingRow(
+                fase_id=str(st.get("fase_id", "")),
+                fase_nome=fase_nome,
+                sequence=int(st.get("sequence", 0) or 0),
+                duration_hours=max(float(st.get("duration_hours", 1.0) or 1.0), 0.1),
+                source="history_db",
+                mold_required=_phase_uses_mold(fase_nome),
+            ))
+        rows.sort(key=lambda r: r.sequence)
+        return rows
+
     def _standard_template(self, modelo_id: str) -> List[RoutingRow]:
         """Use FasesStandardModelos (standard template).
 
@@ -227,48 +279,9 @@ class RoutingResolver:
         per-phase duration comes from `DurationModel.predict(...).p50_hours`.
         Otherwise the legacy `horas_standard * 2.0` buffer is used (NELO
         rule: standard times diverge from real by up to 25×).
-
-        Q.130.1 — quando a camada curada está unavailable mas o state foi
-        carregado da BD real, usa `state.route_templates` como fallback.
-        Os `model_id` no routing_assignment são strings ERP (ex: "K1", "20155").
         """
         standards = self._curated_standards()
         rows: List[RoutingRow] = []
-
-        # Fallback Q.130.1: routing templates carregados directamente da BD
-        # quando a camada curada (IngestEngine) não está disponível.
-        if not standards and modelo_id:
-            rt_phases = getattr(self.state, "route_templates", {}).get(modelo_id)
-            if not rt_phases:
-                # Tenta prefixo do product_type (ex: modelo_id "K1 Vanquish L" → "K1")
-                prefix = modelo_id.split()[0] if " " in modelo_id else None
-                if prefix:
-                    rt_phases = getattr(self.state, "route_templates", {}).get(prefix)
-            if rt_phases:
-                for phase in rt_phases:
-                    fase_id = str(phase.get("fase_id", ""))
-                    fase_nome = str(phase.get("fase_nome", "") or fase_id)
-                    sequence = int(phase.get("seq", 0))
-                    std_h = float(phase.get("horas_standard", 1.0) or 1.0)
-
-                    duration_h, source = self._predicted_or_fallback_duration(
-                        fase_id=fase_id,
-                        fase_nome=fase_nome,
-                        modelo_id=modelo_id,
-                        fallback_h=std_h * 2.0,
-                        fallback_source="db_template",
-                    )
-                    rows.append(RoutingRow(
-                        fase_id=fase_id,
-                        fase_nome=fase_nome,
-                        sequence=sequence,
-                        duration_hours=duration_h,
-                        source=source,
-                        mold_required=bool(phase.get("requires_mold", False)),
-                    ))
-                rows.sort(key=lambda r: r.sequence)
-                return rows
-
         for s in standards:
             if modelo_id and str(getattr(s, "modelo_id", "")) != modelo_id:
                 continue

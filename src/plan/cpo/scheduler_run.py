@@ -24,6 +24,7 @@ from typing import Any, Optional
 from uuid import UUID
 
 from fastapi import HTTPException, status
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.plan.cpo.commits import CommitsService, ScheduleCommit
@@ -34,6 +35,11 @@ from src.plan.engines.scheduling_adapter import SchedulingMachine
 from src.plan.services.routing_resolver import RoutingResolver
 
 logger = logging.getLogger(__name__)
+
+# Q.126.E — above this share of ops on the 2x synthetic buffer the plan is
+# marked `degraded` and a WARN CopilotAlert is emitted (soft-warn: the plan is
+# still returned). Conservative default; the operator decides.
+_DURATION_FALLBACK_ALERT_THRESHOLD = 0.20
 
 
 async def _parent_sha(service: CommitsService, commit: ScheduleCommit) -> Optional[str]:
@@ -145,6 +151,49 @@ async def run_cpo_schedule(
         except Exception as alert_exc:
             logger.warning("CPO schedule: failed to emit routing alert: %s", alert_exc)
 
+    # Q.126.E — noisy fallback: when too many ops fell back to the 2x synthetic
+    # buffer (no real factory_raw history for the (fase, modelo) pair), warn
+    # loudly and mark the plan degraded — but still RETURN it (soft-warn).
+    duration_fallback_high = (
+        resolver.fallback_fraction > _DURATION_FALLBACK_ALERT_THRESHOLD
+    )
+    if duration_fallback_high:
+        try:
+            from src.shared.metrics import bump_silent_fallback
+            bump_silent_fallback("routing_resolver", "duration_2x_buffer_high")
+        except ImportError:  # metrics best-effort (prometheus/metrics ausente)
+            pass
+        try:
+            from src.copilot.alerts.models import (
+                CODE_DURATION_FALLBACK_HIGH,
+                CopilotAlert,
+            )
+            pct = round(resolver.fallback_fraction * 100.0)
+            alert = CopilotAlert(
+                tenant_id=tenant_id,
+                severity="WARN",
+                code=CODE_DURATION_FALLBACK_HIGH,
+                title=f"Plano degradado — {pct}% das operações sem histórico real",
+                message_pt=(
+                    f"{pct}% das operações do plano caíram no buffer 2x sintético "
+                    "porque não há histórico real (factory_raw.of_fp) para o par "
+                    "(fase, modelo). As durações podem divergir muito da realidade "
+                    "— sincroniza o ERP ou planeia modelos com histórico."
+                ),
+                context={
+                    "fallback_ops": resolver.fallback_ops,
+                    "resolved_ops": resolver.resolved_ops,
+                    "fallback_fraction": round(resolver.fallback_fraction, 4),
+                },
+                entity_refs=[],
+            )
+            session.add(alert)
+            await session.flush()
+        except (SQLAlchemyError, ImportError, TypeError, ValueError) as alert_exc:
+            logger.warning(
+                "CPO schedule: failed to emit duration-fallback alert: %s", alert_exc
+            )
+
     if not operations:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -186,6 +235,13 @@ async def run_cpo_schedule(
     )
 
     result.setdefault("cpo_meta", {}).update(ml_report.as_meta())
+
+    # Q.126.E — surface the degraded state in the response. The response
+    # schema already carries `degraded`/`fallback_reason` (read at the return
+    # below); we OR our signal so we never clear an engine-set degraded flag.
+    if duration_fallback_high:
+        result["degraded"] = True
+        result.setdefault("fallback_reason", "duration_2x_buffer_high")
 
     # Yaml policy hook (best-effort; 409 if block fired).
     try:

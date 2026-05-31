@@ -195,80 +195,83 @@ def test_preview_delta_service_owns_preview_issue():
 
 
 # ───────────────────────────────────────────────────────────────────────────
-# Q.130.1 — FactoryState.route_templates fallback (BE-4)
+# Q.131.A (Q.126.B) — FactoryState rotas/durações reais de factory_raw.of_fp
 # ───────────────────────────────────────────────────────────────────────────
 
-def test_factory_state_has_route_templates_field():
-    """Q.130.1 — FactoryState deve ter o campo route_templates para o
-    fallback BD-real quando a camada curada está unavailable."""
+def test_factory_state_has_historical_routes_field():
+    """Q.131.A (Q.126.B) — FactoryState deve ter o campo
+    historical_routes_by_model (rotas reais reconstruídas de
+    factory_raw.of_fp) que o RoutingResolver consome quando a camada
+    curada está unavailable (a realidade de produção)."""
     from src.plan.cpo.state import FactoryState
 
     state = FactoryState(tenant_id=uuid4())
-    assert hasattr(state, "route_templates"), (
-        "FactoryState.route_templates ausente — fallback Q.130.1 não funciona"
+    assert hasattr(state, "historical_routes_by_model"), (
+        "FactoryState.historical_routes_by_model ausente — caminho real Q.126.B partido"
     )
-    assert state.route_templates == {}
+    assert state.historical_routes_by_model == {}
 
 
-def test_routing_resolver_uses_route_templates_when_engine_unavailable():
-    """Q.130.1 — quando a camada curada está unavailable, o RoutingResolver
-    deve usar state.route_templates (populado da BD real) para resolver o
-    standard_template. Sem este fallback o scheduler dá sempre 400 mesmo
-    quando há orders abertas."""
+def test_routing_resolver_uses_real_history_routes_when_engine_unavailable():
+    """Q.131.A (Q.126.B) — quando a camada curada está unavailable, o
+    RoutingResolver deve usar state.historical_routes_by_model (rotas reais
+    reconstruídas de factory_raw.of_fp, keyed por OF_P_ID) para resolver a
+    rota. Sem este caminho o scheduler dá sempre 400 mesmo havendo orders."""
     from src.plan.cpo.state import FactoryState
     from src.plan.services.routing_resolver import RoutingResolver
 
     state = FactoryState(tenant_id=uuid4())
-    # Simula o que _load_from_real_db() popula: templates de BD para model_id "K1"
-    state.route_templates = {
-        "K1": [
-            {"fase_id": "3", "fase_nome": "Laminagem", "seq": 1,
-             "horas_standard": 4.0, "requires_mold": True, "team_size_default": 2},
-            {"fase_id": "5", "fase_nome": "Desmolde", "seq": 2,
-             "horas_standard": 1.0, "requires_mold": False, "team_size_default": 1},
+    # Simula o que _load_historical_durations_routes_db() popula: a rota real
+    # do modelo OF_P_ID "20155" reconstruída do histórico (ordem por sequência).
+    state.historical_routes_by_model = {
+        "20155": [
+            {"fase_id": "3", "fase_nome": "Laminagem", "sequence": 1,
+             "duration_hours": 4.32},
+            {"fase_id": "5", "fase_nome": "Desmolde", "sequence": 2,
+             "duration_hours": 0.8},
         ]
     }
     state.loaded_ok = True
 
     resolver = RoutingResolver(state)
-    order = {"of_id": "TEST-001", "modelo_id": "K1", "data_entrega_prevista": None}
+    order = {"of_id": "TEST-001", "modelo_id": "20155", "data_entrega_prevista": None}
     ops = resolver.resolve(order)
 
-    # Deve resolver pelo menos 2 operações usando route_templates
+    # Deve resolver as 2 operações reais (não cair no template 2x sintético)
     assert len(ops) >= 2, (
-        f"Esperava >=2 ops de route_templates, got {len(ops)}. "
-        "RoutingResolver não usou state.route_templates como fallback."
+        f"Esperava >=2 ops da rota real, got {len(ops)}. "
+        "RoutingResolver não usou state.historical_routes_by_model."
     )
-    # As fontes devem indicar db_template (ou duration_model_p50 se predictor wired)
     sources = {op.operation_code for op in ops}
     assert "Laminagem" in sources or "3" in sources, (
         "Fase Laminagem não encontrada nas operações resolvidas"
     )
 
 
-def test_route_templates_coeficiente_x_not_in_sql(tmp_path):
-    """Q.130.1 Spelke CX1 — CoeficienteX (€) não deve aparecer em SELECT
-    SQL dentro de _load_from_real_db. Pode aparecer em comentários/docstrings
-    como aviso, mas não pode ser seleccionado como coluna de dados.
+def test_real_db_loaders_have_no_coeficiente_x_in_sql():
+    """Q.131.A Spelke CX1 — CoeficienteX (€) não pode ser SELECTado em
+    nenhuma query dos loaders de dados reais (Q.126.B/C/D em state.py:
+    _load_historical_durations_routes_db / _load_molds_db / _load_skills_db /
+    _load_open_orders_db). Pode aparecer em comentário/docstring como aviso,
+    nunca como coluna de dados.
 
-    OFFP_COEFICIENTE_X é dinheiro (€), não tempo — Spelke CX1."""
+    OFFP_COEFICIENTE_X / OF_COEFICIENTE são dinheiro (€), não tempo — CX1."""
     import pathlib
-    import re
 
-    state_path = pathlib.Path("C:/Users/User/nelinho/src/plan/cpo/state.py")
+    state_path = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "src" / "plan" / "cpo" / "state.py"
+    )
     source = state_path.read_text(encoding="utf-8")
-    fn_start = source.find("async def _load_from_real_db(")
-    fn_end = source.find("\ndef _extract_error_rates(", fn_start)
-    fn_body = source[fn_start:fn_end] if fn_end > fn_start else source[fn_start:]
 
-    # Procura COEFICIENTE_X em linhas SQL não-comentadas (sem # no início)
-    for line in fn_body.splitlines():
+    for line in source.splitlines():
         stripped = line.strip()
-        if stripped.startswith("--") or stripped.startswith("#"):
-            continue  # comentários SQL e Python são OK
-        if "COEFICIENTE_X" in line.upper() and "COEFICIENTE_X" not in (stripped[:2]):
-            # Linha de código activo com CoeficienteX — violação
+        # comentários SQL/Python (-- / #) e linhas de docstring (") são OK
+        if stripped.startswith("--") or stripped.startswith("#") or stripped.startswith('"'):
+            continue
+        upper = line.upper()
+        if "COEFICIENTE_X" in upper or "OF_COEFICIENTE" in upper:
             assert False, (
-                f"COEFICIENTE_X (campo de €) em código activo de _load_from_real_db: "
+                f"Campo de € (CoeficienteX) em código activo de state.py: "
                 f"{line!r} — viola Spelke CX1"
             )
