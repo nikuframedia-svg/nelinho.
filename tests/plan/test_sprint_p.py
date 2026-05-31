@@ -17,8 +17,11 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 from src.plan.cpo.chromosome import Chromosome
+from src.plan.cpo.decoder import decode
 from src.plan.cpo.engine import CPOConfig
 from src.plan.cpo.fitness import FitnessConfig, compute_fitness
 from src.plan.cpo.greedy_pipeline import GreedyPipeline, PHASE_BUDGETS_S
@@ -242,8 +245,6 @@ def test_greedy_pipeline_keeps_decoder_worker_based_idle():
     to overwrite total_idle_hours with an avg_utilization approximation,
     making baseline and candidates incomparable → the safety net reverted
     every work-center plan on a phantom idle regression."""
-    from src.plan.cpo.decoder import decode
-
     state = _StubState()
     ops = [_StubOp(operation_id=f"op-{i}", order_id=f"of-{i}") for i in range(3)]
     machines = [_StubMachine(), _StubMachine(machine_id="M2")]
@@ -259,6 +260,32 @@ def test_greedy_pipeline_keeps_decoder_worker_based_idle():
     assert pipe_sched["idle_ratio"] == direct["idle_ratio"]
     # Capacity exposed (Q.134.I observability).
     assert pipe_sched["num_machines"] == 2
+
+
+@settings(deadline=None, max_examples=80, suppress_health_check=[HealthCheck.too_slow])
+@given(
+    n_ops=st.integers(min_value=1, max_value=8),
+    n_machines=st.integers(min_value=1, max_value=5),
+    horizon_days=st.integers(min_value=1, max_value=10),
+)
+def test_greedy_idle_equals_decode_idle_property(n_ops, n_machines, horizon_days):
+    """Q.134.I property — invariant do safety_net (axioma 7): o idle do baseline
+    greedy e o dos candidatos GA (decode) têm de vir SEMPRE da mesma fórmula,
+    para quaisquer nº de ops/máquinas/horizonte. Se divergirem, o safety_net
+    compara maçãs com laranjas e reverte planos válidos (o bug que isto fecha)."""
+    state = _StubState()
+    ops = [_StubOp(operation_id=f"op-{i}", order_id=f"of-{i}") for i in range(n_ops)]
+    machines = [_StubMachine(machine_id=f"M{j}") for j in range(n_machines)]
+    h0 = datetime(2026, 6, 1, 7, 0, 0)
+    h1 = h0 + timedelta(days=horizon_days)
+    chromo = Chromosome.identity(n_ops)
+
+    pipe_sched = GreedyPipeline(state).run(chromo, ops, machines, h0, h1).schedule
+    direct = decode(chromo, ops, machines, state, h0, h1)
+
+    assert pipe_sched["total_idle_hours"] == direct["total_idle_hours"]
+    assert pipe_sched["idle_ratio"] == direct["idle_ratio"]
+    assert pipe_sched["num_machines"] == n_machines
 
 
 # ---------------------------------------------------------------------------
