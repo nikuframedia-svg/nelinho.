@@ -296,7 +296,61 @@ export const transportApi = {
     request<{ batch_id: string; orders: string[] }>(
       `/v1/plan/transport/batches/${encodeURIComponent(batchId)}/orders`,
     ),
+
+  /** Q.135.F2.1 — barcos previstos sair numa data + a fase atual de cada um. */
+  byDate: (date: string) =>
+    request<ByDateResponse>(
+      `/v1/plan/transport/by-date?date=${encodeURIComponent(date)}`,
+    ),
+
+  /** Q.135.F2.2 — barcos prontos a sair (Embalado) + backlog (Armazém) honesto. */
+  ready: (limit = 200) =>
+    request<ReadyResponse>(`/v1/plan/transport/ready?limit=${limit}`),
+
+  /** Q.135.F2.2 — ritmo real de expedição por mês×destino×tipo (mart). */
+  throughput: (months = 6) =>
+    request<ThroughputRow[]>(`/v1/plan/transport/throughput?months=${months}`),
 };
+
+export interface BoatOnDate {
+  order_id: string;
+  hull: number | null;
+  product_name: string | null;
+  current_phase_name: string | null;
+  phase_sequence: number | null;
+  bucket: 'CONCLUIDO' | 'A_DECORRER' | 'POR_COMECAR' | string;
+  ready: boolean;
+  transport_date: string | null;
+}
+
+export interface ByDateResponse {
+  date: string;
+  total: number;
+  ready: number;
+  at_risk: number;
+  boats: BoatOnDate[];
+}
+
+export interface ReadyBoat {
+  of_id: number;
+  model: string | null;
+  ready_since: string | null;
+  days_ready: number | null;
+}
+
+export interface ReadyResponse {
+  boats: ReadyBoat[];
+  embalado_count: number;
+  armazem_count: number;
+  avg_days_ready: number | null;
+}
+
+export interface ThroughputRow {
+  month: string;
+  destino: string | null;
+  tipo_transporte: string | null;
+  n_ofs: number;
+}
 
 
 // ═══════════════════════════════════════════════════════════════════════════════

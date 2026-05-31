@@ -6,18 +6,24 @@
  * em ./expedicaoShared.
  */
 import { useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Truck, Target, Flag, RefreshCw } from 'lucide-react';
+import { Truck, Target, Flag, RefreshCw, CalendarDays, PackageCheck } from 'lucide-react';
 import { PageHeader, Tabs } from '../../components/dark';
 import { transportApi } from '../../lib/api';
 import { ListaTab } from './tabs/ListaTab';
 import { CTPTab } from './tabs/CTPTab';
 import { ActivasTab } from './tabs/ActivasTab';
+import { PorDataTab } from './tabs/PorDataTab';
+import { ProntosTab } from './tabs/ProntosTab';
 
-type TabId = 'lista' | 'ctp' | 'activas';
+type TabId = 'lista' | 'pordata' | 'prontos' | 'ctp' | 'activas';
 
 export default function ExpedicaoPage() {
-  const [tab, setTab] = useState<TabId>('lista');
+  // Q.135.F2.1 — /overall liga uma data via ?date=YYYY-MM-DD → abre a aba "Por data".
+  const [searchParams] = useSearchParams();
+  const dateParam = searchParams.get('date');
+  const [tab, setTab] = useState<TabId>(dateParam ? 'pordata' : 'lista');
 
   const batchesQuery = useQuery({
     queryKey: ['expedicao', 'batches'],
@@ -29,6 +35,8 @@ export default function ExpedicaoPage() {
 
   const tabs = [
     { id: 'lista', label: 'Expedições', icon: <Truck size={13} /> },
+    { id: 'pordata', label: 'Por data', icon: <CalendarDays size={13} /> },
+    { id: 'prontos', label: 'Prontos a sair', icon: <PackageCheck size={13} /> },
     { id: 'ctp', label: 'CTP · novo pedido', icon: <Target size={13} /> },
     {
       id: 'activas',
@@ -71,6 +79,10 @@ export default function ExpedicaoPage() {
             isError={batchesQuery.isError}
           />
         )}
+        {tab === 'pordata' && (
+          <PorDataTab initialDate={dateParam ?? undefined} />
+        )}
+        {tab === 'prontos' && <ProntosTab />}
         {tab === 'ctp' && (
           <CTPTab
             batches={batches}

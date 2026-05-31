@@ -7,6 +7,7 @@
  */
 
 import type { ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { format, eachDayOfInterval } from 'date-fns';
 import { pt } from 'date-fns/locale';
@@ -99,9 +100,15 @@ export function PorExpedicaoView({
 
         return (
           <DarkCard key={key} className="p-2 min-h-[80px]">
-            <div className="text-[10px] font-semibold text-slate-400 mb-1.5">
+            {/* Q.135.F2.1 — clicar na data abre a Expedição → aba "Por data"
+                (barcos previstos sair nesse dia + fase + risco). */}
+            <Link
+              to={`/expedicao?date=${key}`}
+              className="block text-[10px] font-semibold text-slate-400 mb-1.5 hover:text-[color:var(--accent)] transition-colors"
+              title="Ver barcos previstos sair nesta data e a fase de cada um"
+            >
               {format(day, 'EEEE d MMM', { locale: pt })}
-            </div>
+            </Link>
             {dayBatches.length === 0 ? (
               <div className="text-[10px] text-slate-600 italic">livre</div>
             ) : (

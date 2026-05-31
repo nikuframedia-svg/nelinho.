@@ -30,9 +30,9 @@ from uuid import UUID
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.models.partner import Customer
@@ -503,3 +503,242 @@ async def expeditions_next_n_days(
         "items": [r.to_dict() for r in rows],
         "count": len(rows),
     }
+
+
+# ---------------------------------------------------------------------------
+# Q.135.F2.1 — barcos previstos sair numa data + a fase de cada um
+# ---------------------------------------------------------------------------
+
+
+class BoatOnDate(BaseModel):
+    order_id: str
+    hull: Optional[int] = None
+    product_name: Optional[str] = None
+    current_phase_name: Optional[str] = None
+    phase_sequence: Optional[int] = None
+    bucket: str  # CONCLUIDO | A_DECORRER | POR_COMECAR
+    ready: bool
+    transport_date: Optional[str] = None
+
+
+class ByDateResponse(BaseModel):
+    date: str
+    total: int
+    ready: int
+    at_risk: int  # marcados p/ sair mas ainda não prontos
+    boats: List[BoatOnDate]
+
+
+@router.get("/by-date", response_model=ByDateResponse)
+async def boats_by_transport_date(
+    date_str: str = Query(..., alias="date", description="Data de expedição (YYYY-MM-DD)"),
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+) -> ByDateResponse:
+    """Q.135.F2.1 — barcos previstos sair numa data + a fase atual de cada um.
+
+    Lê de `production_orders` (WIP) as ordens com `transport_date == date`.
+    Classifica a fase (CONCLUIDO/A_DECORRER/POR_COMECAR) e marca `ready` (fase
+    terminal). Um barco marcado para sair que ainda NÃO está pronto = risco.
+    Ordena por sequência de fase. Zero mocks — só dados reais.
+    """
+    from datetime import date as _date
+
+    from src.plan.models.order import OrderStatus
+    from src.plan.services.phase_classification import (
+        classify_phase,
+        is_completed_phase,
+        phase_sequence,
+    )
+
+    try:
+        target = _date.fromisoformat(date_str)
+    except ValueError:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, detail="date deve ser YYYY-MM-DD"
+        )
+
+    rows = (
+        (
+            await session.execute(
+                select(ProductionOrder).where(
+                    (ProductionOrder.tenant_id == tenant_id)
+                    & (ProductionOrder.transport_date == target)
+                    & (ProductionOrder.status != OrderStatus.CANCELLED)
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    boats: List[BoatOnDate] = []
+    for o in rows:
+        phase = o.current_phase_name
+        ready = is_completed_phase(phase)
+        boats.append(
+            BoatOnDate(
+                order_id=str(o.id),
+                hull=o.legacy_id,
+                product_name=o.product_name,
+                current_phase_name=phase,
+                phase_sequence=phase_sequence(phase),
+                bucket=classify_phase(phase).value,
+                ready=ready,
+                transport_date=(
+                    o.transport_date.isoformat() if o.transport_date else None
+                ),
+            )
+        )
+    boats.sort(
+        key=lambda b: (b.phase_sequence is None, b.phase_sequence or 0, b.hull or 0)
+    )
+    ready_n = sum(1 for b in boats if b.ready)
+    return ByDateResponse(
+        date=date_str,
+        total=len(boats),
+        ready=ready_n,
+        at_risk=len(boats) - ready_n,
+        boats=boats,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Q.135.F2.2 — barcos PRONTOS a sair (Embalado) + backlog honesto + ritmo real
+# ---------------------------------------------------------------------------
+
+
+class ReadyBoat(BaseModel):
+    of_id: int
+    model: Optional[str] = None
+    ready_since: Optional[str] = None  # data de entrada na fase Embalado (ISO)
+    days_ready: Optional[int] = None
+
+
+class ReadyResponse(BaseModel):
+    boats: List[ReadyBoat]
+    embalado_count: int
+    armazem_count: int  # backlog acumulado (contexto honesto)
+    avg_days_ready: Optional[float] = None
+
+
+def _days_since(raw: Optional[str]) -> Optional[int]:
+    """Dias desde uma data-texto do ERP (`OFFP_DATAINICIO`, 'YYYY-MM-DD…')."""
+    if not raw or len(raw) < 10:
+        return None
+    from datetime import date as _date
+
+    try:
+        d = _date.fromisoformat(str(raw)[:10])
+    except ValueError:
+        return None
+    return max(0, (_date.today() - d).days)
+
+
+@router.get("/ready", response_model=ReadyResponse)
+async def ready_to_ship(
+    limit: int = Query(default=200, ge=1, le=1000),
+    tenant_id: UUID = Depends(get_tenant_id),  # noqa: ARG001 — mirror ERP partilhado
+    session: AsyncSession = Depends(get_session),
+) -> ReadyResponse:
+    """Q.135.F2.2 — barcos fisicamente PRONTOS a sair = fase 'Embalado' (ERP),
+    ainda não embarcados (não em `transp_of`). Mostra também o backlog em
+    'Armazem' como contexto honesto (acumulador, não fila). ZERO MOCKS — lê o
+    espelho `factory_raw` (não tenant-scoped)."""
+    rows = (
+        await session.execute(
+            text(
+                """
+                SELECT o."OF_ID" AS of_id, p."P_NOME" AS model, ph.ds AS ready_since
+                FROM factory_raw.ordemfabrico o
+                JOIN factory_raw.fases_producao f ON f."FP_ID" = o."OF_FP_ID"
+                LEFT JOIN factory_raw.produto p ON p."P_ID" = o."OF_P_ID"
+                LEFT JOIN LATERAL (
+                    SELECT x."OFFP_DATAINICIO" AS ds FROM factory_raw.of_fp x
+                    WHERE x."OFFP_OF_ID" = o."OF_ID" AND x."OFFP_FP_ID" = o."OF_FP_ID"
+                    ORDER BY x."OFFP_DATAINICIO" DESC LIMIT 1
+                ) ph ON TRUE
+                WHERE f."FP_NOME" = 'Embalado' AND o."OF_DATAFIM" IS NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM factory_raw.transp_of t WHERE t."TROF_OF_ID" = o."OF_ID"
+                  )
+                ORDER BY ph.ds ASC NULLS LAST
+                LIMIT :lim
+                """
+            ),
+            {"lim": limit},
+        )
+    ).mappings().all()
+
+    boats: List[ReadyBoat] = []
+    for r in rows:
+        d = _days_since(r["ready_since"])
+        boats.append(
+            ReadyBoat(
+                of_id=int(r["of_id"]),
+                model=r["model"],
+                ready_since=(str(r["ready_since"])[:10] if r["ready_since"] else None),
+                days_ready=d,
+            )
+        )
+
+    counts = (
+        await session.execute(
+            text(
+                """
+                SELECT f."FP_NOME" AS fase, count(*) AS n
+                FROM factory_raw.ordemfabrico o
+                JOIN factory_raw.fases_producao f ON f."FP_ID" = o."OF_FP_ID"
+                WHERE f."FP_NOME" IN ('Armazem', 'Embalado') AND o."OF_DATAFIM" IS NULL
+                GROUP BY 1
+                """
+            )
+        )
+    ).mappings().all()
+    by_phase = {c["fase"]: int(c["n"]) for c in counts}
+    days_vals = [b.days_ready for b in boats if b.days_ready is not None]
+    return ReadyResponse(
+        boats=boats,
+        embalado_count=by_phase.get("Embalado", 0),
+        armazem_count=by_phase.get("Armazem", 0),
+        avg_days_ready=(round(sum(days_vals) / len(days_vals), 1) if days_vals else None),
+    )
+
+
+class ThroughputRow(BaseModel):
+    month: str
+    destino: Optional[str] = None
+    tipo_transporte: Optional[str] = None
+    n_ofs: int
+
+
+@router.get("/throughput", response_model=List[ThroughputRow])
+async def expedition_throughput(
+    months: int = Query(default=6, ge=1, le=36),
+    tenant_id: UUID = Depends(get_tenant_id),  # noqa: ARG001
+    session: AsyncSession = Depends(get_session),
+) -> List[ThroughputRow]:
+    """Q.135.F2.2 — ritmo REAL de expedição por mês×destino×tipo, do mart
+    `marts.v_ofs_expedidas_mes` (já alimentado pelo mirror de logística)."""
+    rows = (
+        await session.execute(
+            text(
+                """
+                SELECT data, destino, tipo_transporte, n_ofs
+                FROM marts.v_ofs_expedidas_mes
+                ORDER BY data DESC
+                LIMIT :lim
+                """
+            ),
+            {"lim": months * 6},
+        )
+    ).mappings().all()
+    return [
+        ThroughputRow(
+            month=str(r["data"])[:7],
+            destino=r["destino"],
+            tipo_transporte=r["tipo_transporte"],
+            n_ofs=int(r["n_ofs"] or 0),
+        )
+        for r in rows
+    ]
