@@ -15,6 +15,7 @@ with the Sprint Q endpoints:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import date
 from decimal import Decimal
@@ -82,6 +83,7 @@ async def get_dashboard(
 from datetime import timedelta
 
 from src.profit.services.oee_service import OEEService
+from src.shared.config import settings
 
 
 def _oee_item_to_dict(item) -> dict:
@@ -124,18 +126,10 @@ async def get_oee(
     if gb not in {"none", "phase", "shift", "product_type", "mold"}:
         raise HTTPException(status_code=400, detail=f"Invalid group_by: {gb}")
 
-    svc = OEEService()
-    try:
-        result = await svc.calculate(df, dt, group_by=gb)  # type: ignore[arg-type]
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except (RuntimeError, OSError, SQLAlchemyError) as exc:
-        # OEE is computed from the live NELO ERP (SQL Server / OF_FP).
-        # When that adapter is not configured or unreachable (e.g. dev
-        # without SQL Server) the read raises — degrade honestly with a
-        # 200 + erp_available:false instead of a 500. The frontend
-        # `useHonestEmptyState` picks up the marker and shows the reason.
-        log.warning("OEE indisponível — adaptador NELO offline: %s", exc)
+    def _erp_unavailable(reason: str) -> dict:
+        """Resposta honesta de degradação (HTTP 200, empty-state). Mesma
+        shape do caminho de sucesso mas com `erp_available=False`; o
+        frontend `useHonestEmptyState` mostra o `unavailable_reason`."""
         return {
             "date_from": df.isoformat(),
             "date_to": dt.isoformat(),
@@ -143,11 +137,60 @@ async def get_oee(
             "overall": None,
             "breakdown": [],
             "erp_available": False,
-            "unavailable_reason": (
-                "Os dados de OEE vêm do ERP NELO (SQL Server / OF_FP), "
-                "que não está ligado neste ambiente."
-            ),
+            "unavailable_reason": reason,
         }
+
+    svc = OEEService()
+    try:
+        # Q.130.W — o `svc.calculate` lê o ERP NELO (SQL Server / OF_FP) via
+        # aioodbc. O `connect_args={"timeout": ...}` (Q.130.T) não cobre o
+        # caso de a query pesada (OF_FP, 2.6M linhas) demorar muito: o pedido
+        # pendurava >20s. Impomos um teto duro no ENDPOINT com `asyncio.wait_for`.
+        #
+        # CRÍTICO: a chamada vai dentro de `asyncio.shield`. Cancelar uma
+        # coroutine aioodbc a meio de uma operação ODBC bloqueante (que corre
+        # num thread do executor) corrompe o driver nativo e CRASHA o processo
+        # — verificado ao vivo. Com `shield`, o `wait_for` devolve TimeoutError
+        # ao caller SEM cancelar a task interna: a query continua em background
+        # e liberta a ligação ao terminar (o query-timeout do adapter fecha-a),
+        # enquanto o endpoint já degradou honestamente.
+        inner = asyncio.ensure_future(
+            svc.calculate(df, dt, group_by=gb)  # type: ignore[arg-type]
+        )
+        # Retira o resultado/excepção quando terminar (evita o warning
+        # "Task exception was never retrieved" se a task sobreviver ao pedido).
+        inner.add_done_callback(lambda t: t.cancelled() or t.exception())
+        result = await asyncio.wait_for(
+            asyncio.shield(inner),
+            timeout=float(settings.sqlserver_connect_timeout_s),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except asyncio.TimeoutError:
+        # ERP demasiado lento/inalcançável: a leitura não respondeu dentro do
+        # teto. NUNCA pendurar nem inventar números — degradar com
+        # erp_available:false. A task interna fica a correr (shielded) e
+        # liberta-se sozinha; não a cancelamos para não crashar o driver.
+        log.warning(
+            "OEE timeout — ERP NELO não respondeu em %ss",
+            settings.sqlserver_connect_timeout_s,
+        )
+        return _erp_unavailable(
+            "O ERP NELO (SQL Server / OF_FP) não respondeu a tempo "
+            f"({settings.sqlserver_connect_timeout_s}s) — dados de OEE "
+            "indisponíveis neste momento."
+        )
+    except (RuntimeError, OSError, SQLAlchemyError) as exc:
+        # OEE is computed from the live NELO ERP (SQL Server / OF_FP).
+        # When that adapter is not configured or unreachable (e.g. dev
+        # without SQL Server) the read raises — degrade honestly with a
+        # 200 + erp_available:false instead of a 500. The frontend
+        # `useHonestEmptyState` picks up the marker and shows the reason.
+        log.warning("OEE indisponível — adaptador NELO offline: %s", exc)
+        return _erp_unavailable(
+            "Os dados de OEE vêm do ERP NELO (SQL Server / OF_FP), "
+            "que não está ligado neste ambiente."
+        )
 
     return {
         "date_from": result.date_from.isoformat(),
