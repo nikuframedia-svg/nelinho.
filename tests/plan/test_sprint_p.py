@@ -236,6 +236,31 @@ def test_greedy_phase_budgets_registered():
     assert sum(PHASE_BUDGETS_S.values()) <= 2.0 + 1e-6
 
 
+def test_greedy_pipeline_keeps_decoder_worker_based_idle():
+    """Q.134.I — the greedy BASELINE must report the SAME worker-based idle
+    as a direct decode (which is what every GA candidate uses). Phase 8 used
+    to overwrite total_idle_hours with an avg_utilization approximation,
+    making baseline and candidates incomparable → the safety net reverted
+    every work-center plan on a phantom idle regression."""
+    from src.plan.cpo.decoder import decode
+
+    state = _StubState()
+    ops = [_StubOp(operation_id=f"op-{i}", order_id=f"of-{i}") for i in range(3)]
+    machines = [_StubMachine(), _StubMachine(machine_id="M2")]
+    h0 = datetime(2026, 6, 1, 7, 0, 0)
+    h1 = h0 + timedelta(days=2)
+    chromo = Chromosome.identity(len(ops))
+
+    pipe_sched = GreedyPipeline(state).run(chromo, ops, machines, h0, h1).schedule
+    direct = decode(chromo, ops, machines, state, h0, h1)
+
+    # Same formula on both sides → identical idle (not the avg_util proxy).
+    assert pipe_sched["total_idle_hours"] == direct["total_idle_hours"]
+    assert pipe_sched["idle_ratio"] == direct["idle_ratio"]
+    # Capacity exposed (Q.134.I observability).
+    assert pipe_sched["num_machines"] == 2
+
+
 # ---------------------------------------------------------------------------
 # P.7 — Pair assignment
 # ---------------------------------------------------------------------------

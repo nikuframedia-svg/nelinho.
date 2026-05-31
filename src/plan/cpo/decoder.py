@@ -189,6 +189,9 @@ def decode(
         "backwards_shifts": loop.backwards_shifts,
         "total_idle_hours": round(total_idle_hours, 2),
         "idle_ratio": round(idle_ratio, 4),
+        # Q.134.I — capacidade exposta p/ observabilidade do idle (o idle é
+        # worker-based; num_machines é o nº de estações/centros do plano).
+        "num_machines": len(machines),
         # Sprint A ME1 — Blueprint v2.0 MAP-Elites axes
         "lam_utilization": round(lam_utilization, 2),
         "idle_pct": round(idle_pct, 2),
