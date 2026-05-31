@@ -81,14 +81,24 @@ npm install && npm run build        # gera frontend/dist/
 
 ```bash
 sudo cp /opt/prodplan/deploy/systemd/prodplan-api.service /etc/systemd/system/
+sudo cp /opt/prodplan/deploy/systemd/nelinho-arq.service /etc/systemd/system/
 sudo cp /opt/prodplan/deploy/Caddyfile /etc/caddy/Caddyfile
 sudo systemctl daemon-reload
 sudo systemctl enable --now prodplan-api
+sudo systemctl enable --now nelinho-arq   # worker CPO (planos automáticos)
 sudo systemctl reload caddy
 ```
 
 O uvicorn fica em `127.0.0.1:8000`; o Caddy termina o TLS em `:443` e faz
 proxy. Em LAN (`.local`) o Caddy usa a CA interna (`tls internal`).
+
+**Worker Arq (`nelinho-arq`) — obrigatório para os planos automáticos (Q.137).**
+O scheduler in-process enfileira o CPO no Arq (Redis) quando o WIP de barcos
+muda; o worker corre-o e persiste um **DRAFT** que aparece sozinho no grid
+`/overall`. Sem o worker (ou sem Redis), o planeamento continua a funcionar mas
+**só a pedido** (botão "Simular"). Em dev: `& .\.venv\Scripts\python.exe -m arq
+src.plan.cpo.worker.WorkerSettings` num terminal separado (Redis em docker:
+`nelo-redis`).
 
 ## 6. Smoke test
 
