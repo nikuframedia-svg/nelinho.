@@ -141,8 +141,19 @@ export default function OverallPage(): ReactNode {
         phase_name: String(op.phase_name ?? op.phase_id ?? 'UNKNOWN'),
         order_id: op.order_id ? String(op.order_id) : undefined,
         product_id: op.product_id ? String(op.product_id) : undefined,
-        operator_id: op.operator_id ? String(op.operator_id) : undefined,
-        operator_name: op.operator_name ? String(op.operator_name) : undefined,
+        // Q.135.F4 — as operações do CPO trazem os operadores em `workers: [code,…]`,
+        // não em `operator_id`. Sem este fallback a vista "Por pessoa" mostrava
+        // sempre "sem-operador". Usa o 1.º worker como lane e junta os pares no nome.
+        operator_id: op.operator_id
+          ? String(op.operator_id)
+          : Array.isArray(op.workers) && op.workers.length > 0
+            ? String((op.workers as unknown[])[0])
+            : undefined,
+        operator_name: op.operator_name
+          ? String(op.operator_name)
+          : Array.isArray(op.workers) && op.workers.length > 0
+            ? (op.workers as unknown[]).map((w) => String(w)).join(' + ')
+            : undefined,
         cliente: op.client_name ? String(op.client_name) : undefined,
         start: override?.start ?? (op.start as string | undefined),
         end: op.end as string | undefined,
