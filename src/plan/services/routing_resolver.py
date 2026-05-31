@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional
 
 from src.plan.cpo.state import FactoryState
 from src.plan.engines.scheduling_adapter import SchedulingOperation
+from src.plan.services.phase_workcenters import station_ids_for
 
 logger = logging.getLogger(__name__)
 
@@ -163,10 +164,18 @@ class RoutingResolver:
         self.resolved_ops += len(rows)
         self.fallback_ops += sum(1 for r in rows if r.source == "standard")
 
+        # Q.133.B — work-center da fase: N estações paralelas (concorrência real).
+        # Vazio → machine_id=None (decoder usa o pool "MANUAL", back-compat).
+        phase_stations = getattr(self.state, "phase_stations", {}) or {}
+
         for row in rows:
             phase_name = row.fase_nome or row.fase_id
             team_size = self.state.team_size_for(row.fase_id, phase_name)
             required_skills = [row.fase_id] if row.fase_id in skills_by_phase else []
+            stations = (
+                station_ids_for(row.fase_id, phase_stations[row.fase_id])
+                if row.fase_id in phase_stations else []
+            )
 
             op = SchedulingOperation(
                 operation_id=f"{order_id}::{row.fase_id}",
@@ -175,13 +184,13 @@ class RoutingResolver:
                 sequence=row.sequence,
                 operation_code=phase_name,
                 duration_minutes=max(1.0, row.duration_hours * 60.0),
-                machine_id=None,  # left unset — decoder assigns from machine pool
+                machine_id=stations[0] if stations else None,  # estação da fase
                 setup_family=phase_name,
                 due_date=due_date,
                 priority=1.0,
                 predecessor_ops=[],
                 required_skills=required_skills,
-                alternative_machines=[],
+                alternative_machines=stations[1:],
                 mold_id=None,
                 mold_required=row.mold_required,
                 model_id=modelo_id,

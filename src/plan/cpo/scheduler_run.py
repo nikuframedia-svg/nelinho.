@@ -319,6 +319,22 @@ async def run_cpo_schedule(
             )
             for m in request.machines
         ]
+    elif state.phase_stations:
+        # Q.133.B — N estações paralelas por fase (concorrência real) em vez do
+        # pool "MANUAL" único → o decoder paraleliza ops da mesma fase. O molde
+        # continua a serializar (mold_free_at); o decoder não é tocado.
+        from src.plan.services.phase_workcenters import station_ids_for
+        machines = [
+            SchedulingMachine(
+                machine_id=sid,
+                name=f"Estação {sid}",
+                capacity=1,
+                speed_factor=1.0,
+                centro_custo=str(fase),
+            )
+            for fase, n in sorted(state.phase_stations.items())
+            for sid in station_ids_for(fase, n)
+        ]
     else:
         machines = [SchedulingMachine(machine_id="MANUAL", name="Manual pool")]
 

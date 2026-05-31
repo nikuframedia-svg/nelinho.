@@ -140,6 +140,12 @@ class FactoryState:
         default_factory=dict
     )
 
+    # Q.133.B — nº de estações paralelas por fase (fase_id → N), do p95 da
+    # concorrência histórica real. O scheduler cria N máquinas por fase e o
+    # resolver atribui a op ao work-center da fase → paralelismo real. Vazio =
+    # pool "MANUAL" único (back-compat).
+    phase_stations: Dict[str, int] = field(default_factory=dict)
+
     # Q.126.B — real production route per model (OF_P_ID) reconstructed from
     # factory_raw.of_fp: ordered production phases + median real duration.
     # Each step: {fase_id, fase_nome, sequence, duration_hours}. Lets the
@@ -302,6 +308,14 @@ class FactoryState:
         calibration_db = await _load_phase_calibration_db(session, tenant_id)
         if calibration_db:
             state.calibrated_durations = calibration_db
+
+        # Q.133.B — N estações paralelas por fase (concorrência histórica real).
+        # Best-effort; vazio → o scheduler usa o pool "MANUAL" (back-compat).
+        try:
+            from src.plan.services.phase_workcenters import derive_phase_stations
+            state.phase_stations = await derive_phase_stations(session, tenant_id)
+        except ImportError as exc:  # pragma: no cover — best-effort
+            logger.debug("Q.133.B phase_stations skipped: %s", exc)
 
         molds_by_model_db, molds_db = await _load_molds_db(session, tenant_id)
         if molds_db:
