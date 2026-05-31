@@ -638,7 +638,7 @@ def _days_since(raw: Optional[str]) -> Optional[int]:
 @router.get("/ready", response_model=ReadyResponse)
 async def ready_to_ship(
     limit: int = Query(default=200, ge=1, le=1000),
-    tenant_id: UUID = Depends(get_tenant_id),  # noqa: ARG001 — mirror ERP partilhado
+    tenant_id: UUID = Depends(get_tenant_id),  # mirror ERP partilhado (tenant-agnóstico)
     session: AsyncSession = Depends(get_session),
 ) -> ReadyResponse:
     """Q.135.F2.2 — barcos fisicamente PRONTOS a sair = fase 'Embalado' (ERP),
@@ -715,7 +715,7 @@ class ThroughputRow(BaseModel):
 @router.get("/throughput", response_model=List[ThroughputRow])
 async def expedition_throughput(
     months: int = Query(default=6, ge=1, le=36),
-    tenant_id: UUID = Depends(get_tenant_id),  # noqa: ARG001
+    tenant_id: UUID = Depends(get_tenant_id),  # mirror ERP partilhado (tenant-agnóstico)
     session: AsyncSession = Depends(get_session),
 ) -> List[ThroughputRow]:
     """Q.135.F2.2 — ritmo REAL de expedição por mês×destino×tipo, do mart
