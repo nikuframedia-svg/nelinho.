@@ -315,6 +315,10 @@ export interface CpoCommit {
   cpo_meta: Record<string, any>;
   trust_index: number;
   operations_count: number;
+  // Q.133.A.2 — estado do plano (DRAFT|LIVE) + sinal de plano degradado, para o
+  // grid rotular honestamente um plano não-aprovado/degradado.
+  status?: string;
+  safety_net_triggered?: boolean;
   created_at: string | null;
   operations?: Array<Record<string, any>> | null;
 }

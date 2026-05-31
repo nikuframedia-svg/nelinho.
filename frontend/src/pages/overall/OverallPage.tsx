@@ -321,6 +321,26 @@ export default function OverallPage(): ReactNode {
                     {latestCommit?.commit_sha256?.slice(0, 8) ?? latestCommit?.commit_sha256?.slice(0, 8) ?? '—'}
                   </code>
                 </span>
+                {/* Q.133.A.3 — rotular honestamente um plano não-aprovado/degradado:
+                    nunca deixar um DRAFT/safety-net parecer o plano oficial. */}
+                {latestCommit.status && latestCommit.status !== 'LIVE' && (
+                  <span
+                    className="text-[10px] font-semibold px-2 py-0.5 rounded-full uppercase tracking-wide"
+                    style={{ background: 'var(--yellow-bg)', border: '1px solid var(--yellow-bd)', color: 'var(--yellow)' }}
+                    title="Plano ainda não aprovado — precisa de aprovação humana (DRAFT→LIVE) para ser oficial."
+                  >
+                    Rascunho · não aprovado
+                  </span>
+                )}
+                {latestCommit.safety_net_triggered && (
+                  <span
+                    className="text-[10px] font-semibold px-2 py-0.5 rounded-full uppercase tracking-wide"
+                    style={{ background: 'var(--red-bg)', border: '1px solid var(--red-bd)', color: 'var(--red)' }}
+                    title="O solver não superou a baseline — plano de recurso (safety-net), degradado."
+                  >
+                    Plano degradado
+                  </span>
+                )}
                 {selection && (
                   <button
                     onClick={clearSelection}

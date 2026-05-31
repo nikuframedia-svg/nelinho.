@@ -151,6 +151,10 @@ class TestCommitsServiceCreate:
         assert commit.operations_count == 1
         assert commit in fake_session.added
         assert fake_session.flush_calls >= 1
+        # Q.133.A.1 — create_from_schedule TEM de fazer commit() (não só flush).
+        # Sem isto o get_session salta o commit (flush esvazia session.new) e o
+        # INSERT do ScheduleCommit perde-se silenciosamente (grid vazio).
+        assert fake_session.commit_calls >= 1
 
     async def test_chained_commits_link_parent(self, fake_session, tenant_id):
         parent = _commit(sha="p" * 64, kpis={"makespan_hours": 20})
@@ -200,6 +204,17 @@ class TestCommitsServiceRetrieve:
         with_ops = CommitsService.to_dict(commit, include_operations=True)
         assert with_ops["operations"] == [{"operation_id": "o1"}]
         assert with_ops["short_sha"] == "a" * 12
+
+    async def test_to_dict_exposes_status_and_safety_net_q133(self):
+        """Q.133.A.2 — to_dict expõe `status` (default DRAFT) e
+        `safety_net_triggered` (do cpo_meta) para o grid rotular."""
+        c = _commit(sha="c" * 64)
+        d = CommitsService.to_dict(c)
+        assert d["status"] == "DRAFT"  # status não-setado → DRAFT
+        assert d["safety_net_triggered"] is False
+        c2 = _commit(sha="d" * 64)
+        c2.cpo_meta = {"safety_net_triggered": True}
+        assert CommitsService.to_dict(c2)["safety_net_triggered"] is True
 
 
 class TestCommitsServiceDiff:

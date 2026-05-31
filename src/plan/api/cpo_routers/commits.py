@@ -49,6 +49,10 @@ class CommitResponse(BaseModel):
     cpo_meta: Dict[str, Any] = Field(default_factory=dict)
     trust_index: float = 0.0
     operations_count: int = 0
+    # Q.133.A.2 — estado do plano (DRAFT|LIVE) + sinal de degradação, para o
+    # grid rotular honestamente um plano não-aprovado/degradado.
+    status: str = "DRAFT"
+    safety_net_triggered: bool = False
     created_at: Optional[str] = None
     operations: Optional[List[Dict[str, Any]]] = None
 
