@@ -68,6 +68,13 @@ _SQL = text(
     """
 )
 
+# Todas as fases de produção — para garantir que CADA fase tem o seu próprio
+# work-center (uma op sem estação cairia na estação de outra fase no decoder).
+_ALL_PROD_PHASES_SQL = text(
+    'SELECT "FP_ID"::text AS fase_id FROM factory_raw.fases_producao '
+    'WHERE "FP_PRODUCAO" = true'
+)
+
 
 async def derive_phase_stations(session: Any, tenant_id: UUID) -> Dict[str, int]:
     """`{fase_id: N}` — N estações paralelas por fase do p95 da concorrência real.
@@ -82,6 +89,7 @@ async def derive_phase_stations(session: Any, tenant_id: UUID) -> Dict[str, int]
         rows = (await session.execute(
             _SQL, {"cutoff": cutoff.replace(tzinfo=None)}
         )).mappings().all()
+        all_phases = (await session.execute(_ALL_PROD_PHASES_SQL)).mappings().all()
     except SQLAlchemyError as exc:  # pragma: no cover — DB outage / missing table
         logger.debug("Q.133.B phase_stations load skipped: %s", exc)
         return {}
@@ -91,6 +99,11 @@ async def derive_phase_stations(session: Any, tenant_id: UUID) -> Dict[str, int]
         if p95 is None:
             continue
         out[str(r["fase_id"])] = max(1, min(_N_MAX, math.ceil(float(p95))))
+    # Fases de produção sem amostra de concorrência → N_DEFAULT estações, para
+    # toda a op ter o SEU work-center (nunca ser agendada na estação de outra
+    # fase). Sem este passo, ops dessas fases ficavam com machine_id=None.
+    for r in all_phases:
+        out.setdefault(str(r["fase_id"]), _N_DEFAULT)
     return out
 
 

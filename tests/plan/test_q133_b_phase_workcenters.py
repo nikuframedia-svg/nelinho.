@@ -39,19 +39,25 @@ class _Res:
 
 
 @pytest.mark.asyncio
-async def test_derive_ceils_and_clamps(monkeypatch):
-    rows = [
+async def test_derive_ceils_clamps_and_covers_all_phases(monkeypatch):
+    concorrencia = [
         {"fase_id": "1", "p95": 10.2},     # Laminagem → ceil = 11
         {"fase_id": "2", "p95": 999.0},    # Corte peças → clamp a N_MAX
-        {"fase_id": "3", "p95": None},     # sem amostra → ignorado
+    ]
+    todas_as_fases = [
+        {"fase_id": "1"}, {"fase_id": "2"}, {"fase_id": "9"},
     ]
     session = MagicMock()
-    session.execute = AsyncMock(return_value=_Res(rows))
+    # 1ª execute = concorrência; 2ª = todas as fases de produção.
+    session.execute = AsyncMock(
+        side_effect=[_Res(concorrencia), _Res(todas_as_fases)]
+    )
     out = await wc.derive_phase_stations(session, uuid4())
 
     assert out["1"] == 11
     assert out["2"] == wc._N_MAX
-    assert "3" not in out
+    # fase de produção SEM concorrência → N_DEFAULT (tem o seu work-center)
+    assert out["9"] == wc._N_DEFAULT
 
 
 @pytest.mark.asyncio
