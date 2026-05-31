@@ -158,11 +158,35 @@ jobs:
             sleep 1
           done
 
+      - name: Bootstrap extensions + schemas (espelha produção)
+        # Q.135 — as migrações usam uuid_generate_v4() (q115_a01) mas NENHUMA
+        # cria a extensão uuid-ossp/pgcrypto (só a 008 cria `vector`). Em
+        # produção o provisioning corre scripts/init-db.sql ANTES do
+        # `alembic upgrade head` (deploy/systemd). O CI tem de fazer o mesmo,
+        # senão o upgrade head rebenta em "uuid_generate_v4() does not exist".
+        env:
+          PGPASSWORD: prodplan
+        run: psql -h localhost -p 5432 -U prodplan -d prodplan_one -f scripts/init-db.sql
+
       - name: Apply migrations
         env:
           DATABASE_URL: postgresql+asyncpg://prodplan:prodplan@localhost:5432/prodplan_one
           PYTHONPATH: .
         run: alembic upgrade head
+
+      - name: Paridade tabelas + cobertura RLS (hard — Q.135)
+        # Guard anti-regressão numa BD PURA-ALEMBIC (sem create_all): toda a
+        # tabela ORM de Base.metadata existe + toda a tenant table tem policy
+        # tenant_isolation. Falha o CI se um modelo novo ficar create_all-only
+        # (a dívida que o Q.62.A.3/Q.134 fecharam). NÃO valida colunas — o
+        # drift cosmético de colunas continua tolerado pelo `alembic check`.
+        env:
+          DATABASE_URL: postgresql+asyncpg://prodplan:prodplan@localhost:5432/prodplan_one
+          PYTHONPATH: .
+        run: >-
+          pytest tests/integration/test_alembic_table_parity.py
+          tests/shared/test_rls_coverage_qr_audit.py
+          -m integration -q
 
       - name: Alembic check (model_registry vs HEAD)
         # Q.67.0.1 — `alembic check` é informational, não hard-fail.

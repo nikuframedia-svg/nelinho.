@@ -51,7 +51,7 @@ def test_migration_065_creates_tenant_isolation_policy():
 @pytest.mark.asyncio
 async def test_rls_table_coverage_q62_b():
     """Toda a tabela tenant (ORM ∩ BD) tem policy `tenant_isolation`."""
-    import src.shared.model_registry  # noqa: F401 — popula Base.metadata
+    import src.shared.model_registry  # popula Base.metadata (side-effect)
     from sqlalchemy import text as sql
     from sqlalchemy.ext.asyncio import create_async_engine
 
