@@ -55,8 +55,10 @@ async def test_explicit_request_override_wins_over_config(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_falls_back_to_canonical_defaults_without_config(monkeypatch):
+    from sqlalchemy.exc import SQLAlchemyError
+
     async def boom(self, category):
-        raise RuntimeError("sem BD de config")
+        raise SQLAlchemyError("sem BD de config")
 
     monkeypatch.setattr(_CFG_PATH, boom)
     cfg = await scheduler_run._build_cpo_config(object(), uuid4(), _req())

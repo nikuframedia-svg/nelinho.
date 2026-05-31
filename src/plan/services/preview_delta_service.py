@@ -31,6 +31,7 @@ from typing import Any, Optional
 from uuid import UUID
 
 from sqlalchemy import or_, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.governance.audit_service import audit_change
@@ -199,7 +200,7 @@ class PreviewDeltaService:
             return await PhaseOrderingService(
                 self.session, self.tenant_id,
             ).phase_order_map()
-        except Exception:  # pragma: no cover — sem routing = sem precedência
+        except (SQLAlchemyError, ImportError):  # sem routing = sem precedência
             return {}
 
     async def apply(
@@ -646,7 +647,7 @@ def _detect_sequence_issues(
     preds = [(r, s, e, c) for (r, s, e, c) in siblings if r < new_rank]
     succs = [(r, s, e, c) for (r, s, e, c) in siblings if r > new_rank]
     if preds:
-        pr, ps, pe, pc = max(preds, key=lambda t: t[0])  # predecessora imediata
+        _pr, _ps, pe, pc = max(preds, key=lambda t: t[0])  # predecessora imediata
         req = curing_gaps.get((pc, new_code))
         if req is not None:
             gap_h = (start - pe).total_seconds() / 3600.0
@@ -660,7 +661,7 @@ def _detect_sequence_issues(
                     ),
                 ))
     if succs:
-        sr, ss, se, sc = min(succs, key=lambda t: t[0])  # sucessora imediata
+        _sr, ss, _se, sc = min(succs, key=lambda t: t[0])  # sucessora imediata
         req = curing_gaps.get((new_code, sc))
         if req is not None:
             gap_h = (ss - end).total_seconds() / 3600.0

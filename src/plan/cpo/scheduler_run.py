@@ -103,7 +103,7 @@ async def _build_cpo_config(
         planning = await TenantConfigService(session, tenant_id).get_category(
             "planning",
         )
-    except Exception as exc:  # pragma: no cover — sem config = defaults canónicos
+    except (SQLAlchemyError, ImportError, ValueError) as exc:  # sem config = defaults
         logger.debug("CPOConfig: planning config indisponível (%s); defaults", exc)
 
     base = CPOConfig()  # defaults canónicos Blueprint v2.0

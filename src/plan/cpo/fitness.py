@@ -158,6 +158,10 @@ class FitnessConfig:
         Silent fallback: if the tenant has no adaptive weights row yet,
         this returns a config identical to ``FitnessConfig()``.
         """
+        import logging
+
+        from sqlalchemy.exc import SQLAlchemyError
+
         from src.governance.preference_learning import load_adaptive_weights
 
         adaptive = await load_adaptive_weights(session, tenant_id)
@@ -174,7 +178,7 @@ class FitnessConfig:
             planning = await TenantConfigService(session, tenant_id).get_category(
                 "planning",
             )
-        except Exception:  # pragma: no cover — sem config = comportamento default
+        except (SQLAlchemyError, ImportError, ValueError):  # sem config = default
             planning = {}
 
         # Modo v2 controlado por config; default True (= intenção Blueprint v2.0).
@@ -214,8 +218,10 @@ class FitnessConfig:
             ).scalar_one_or_none()
             if target is not None:
                 merged["daily_revenue_target_eur"] = float(target)
-        except Exception:  # pragma: no cover — sem target = alignment neutro (1.0)
-            pass
+        except (SQLAlchemyError, ImportError):  # sem target = alignment neutro
+            logging.getLogger(__name__).debug(
+                "from_tenant_config: revenue target indisponível", exc_info=True,
+            )
 
         merged.update(overrides)  # caller explícito ganha sempre
         return cls(**merged)
