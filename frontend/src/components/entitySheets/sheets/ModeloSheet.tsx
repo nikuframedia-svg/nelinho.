@@ -223,21 +223,6 @@ function TabFases({ routing, modelId }: TabFasesProps) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {!hasRowIds && (
-        <div
-          style={{
-            padding: '8px 12px',
-            background: 'var(--warning-bg, rgba(234,179,8,0.1))',
-            border: '1px solid var(--warning, #ca8a04)',
-            borderRadius: 8,
-            fontSize: 12,
-            color: 'var(--warning, #ca8a04)',
-          }}
-        >
-          Reordenação desactivada: IDs de linha em falta (Q.116.A.fix pendente).
-        </div>
-      )}
-
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
@@ -463,22 +448,6 @@ function FlexModal({ phase, allPhases, templateId, modelId, onClose }: FlexModal
         <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 16 }}>
           Posição alternativa: {phase.phase_name ?? phase.phase_id}
         </div>
-
-        {!hasRowId && (
-          <div
-            style={{
-              padding: '8px 12px',
-              background: 'var(--warning-bg, rgba(234,179,8,0.1))',
-              border: '1px solid var(--warning, #ca8a04)',
-              borderRadius: 8,
-              fontSize: 12,
-              color: 'var(--warning, #ca8a04)',
-              marginBottom: 16,
-            }}
-          >
-            Edição desactivada: ID de linha em falta (Q.116.A.fix pendente).
-          </div>
-        )}
 
         <label
           style={{

@@ -23,7 +23,7 @@ from fastapi.testclient import TestClient
 
 from src.core.models.audit import AuditLog
 from src.plan.api.routing_template_admin import (
-    _require_config_write,
+    _require_routing_edit,
     router as routing_router,
 )
 from src.shared.auth.headers import require_tenant_header, require_user_header
@@ -48,7 +48,7 @@ def _minimal_app(session: FakeSession) -> TestClient:
     app.dependency_overrides[get_session] = _s
     app.dependency_overrides[require_tenant_header] = lambda: TEST_TENANT_ID
     app.dependency_overrides[require_user_header] = lambda: _USER
-    app.dependency_overrides[_require_config_write] = lambda: None
+    app.dependency_overrides[_require_routing_edit] = lambda: None
     return TestClient(app, raise_server_exceptions=True)
 
 

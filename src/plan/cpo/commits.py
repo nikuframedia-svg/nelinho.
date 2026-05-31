@@ -180,7 +180,14 @@ class CommitsService:
         """Persist a commit from the output of `CPOv4Engine.schedule()`."""
         operations = list(schedule_result.get("operations") or [])
         kpis = _extract_kpis(schedule_result)
-        cpo_meta = schedule_result.get("cpo_meta") or {}
+        cpo_meta = dict(schedule_result.get("cpo_meta") or {})
+        # Q.133.A.2 — preservar o sinal de plano degradado (safety_net) no commit
+        # para o grid o poder rotular. NAO entra no hash determinístico
+        # (compute_commit_hash usa só parent/kpis/operations/delta).
+        cpo_meta.setdefault(
+            "safety_net_triggered",
+            bool(schedule_result.get("safety_net_triggered", False)),
+        )
 
         parent = await self.get_latest()
         parent_sha = parent.commit_sha256 if parent else None
@@ -210,6 +217,13 @@ class CommitsService:
         )
         self.session.add(commit)
         await self.session.flush()
+        # Q.133.A.1 — persistir imediatamente. get_session() só faz commit() se
+        # houver session.dirty/new/deleted; após o flush essas flags ficam
+        # vazias, por isso o INSERT do ScheduleCommit era silenciosamente
+        # descartado (tanto no endpoint sync como no worker async). Este commit
+        # explícito torna a pós-condição clara: create_from_schedule entrega um
+        # commit PERSISTIDO. O write-gate DRAFT→LIVE fica intacto (nasce DRAFT).
+        await self.session.commit()
         logger.info(
             f"Created schedule commit {sha[:12]} parent={str(parent_sha or '-')[:12]} "
             f"ops={len(operations)} tenant={self.tenant_id}"
@@ -300,6 +314,10 @@ class CommitsService:
             "scenarios_tested": commit.scenarios_tested or 0,
             "trust_index": commit.trust_index,
             "operations_count": commit.operations_count,
+            # Q.133.A.2 — estado do plano (DRAFT|LIVE) + sinal de degradação, para
+            # o grid rotular honestamente um plano não-aprovado/degradado.
+            "status": getattr(commit, "status", "DRAFT") or "DRAFT",
+            "safety_net_triggered": bool((commit.cpo_meta or {}).get("safety_net_triggered", False)),
             "created_at": commit.created_at.isoformat() if commit.created_at else None,
         }
         if include_operations:

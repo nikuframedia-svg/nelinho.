@@ -47,7 +47,14 @@ class Permission(str, Enum):
     MRP_READ = "mrp:read"
     MRP_WRITE = "mrp:write"
     CAPACITY_READ = "capacity:read"
-    
+    # Q.133.B.1 — editar templates de routing (reordenar fases + marcar fase
+    # flexível/posição alternativa). Permissão DEDICADA, não SCHEDULE_WRITE:
+    # /v1/plan/routing-templates é gateado SÓ pelo PermissionDependency da rota
+    # (não está na matriz de prefixos), por isso esta permissão abre EXACTAMENTE
+    # esse editor sem vazar acesso a /v1/plan/cpo, /v1/governance, /v1/decisions.
+    # Concedida a todos os roles (decisão do owner: "qualquer user pode editar").
+    ROUTING_EDIT = "routing:edit"
+
     # PROFIT
     COGS_READ = "cogs:read"
     COGS_WRITE = "cogs:write"
@@ -70,6 +77,7 @@ ROLE_PERMISSIONS: dict[Role, Set[Permission]] = {
     Role.ADMIN_PLATFORM: set(Permission),  # All permissions
     
     Role.MANAGER_OPERATIONS: {
+        Permission.ROUTING_EDIT,  # Q.133.B.1
         Permission.MASTER_DATA_READ,
         Permission.MASTER_DATA_WRITE,
         Permission.CONFIG_READ,
@@ -89,6 +97,7 @@ ROLE_PERMISSIONS: dict[Role, Set[Permission]] = {
     },
     
     Role.PLANNER_SUPPLY: {
+        Permission.ROUTING_EDIT,  # Q.133.B.1
         Permission.MASTER_DATA_READ,
         Permission.SCHEDULE_READ,
         Permission.SCHEDULE_WRITE,
@@ -100,6 +109,7 @@ ROLE_PERMISSIONS: dict[Role, Set[Permission]] = {
     },
     
     Role.FINANCE_CONTROLLER: {
+        Permission.ROUTING_EDIT,  # Q.133.B.1
         Permission.MASTER_DATA_READ,
         Permission.CONFIG_READ,
         Permission.CONFIG_WRITE,
@@ -114,6 +124,7 @@ ROLE_PERMISSIONS: dict[Role, Set[Permission]] = {
     },
     
     Role.HR_MANAGER: {
+        Permission.ROUTING_EDIT,  # Q.133.B.1
         Permission.MASTER_DATA_READ,
         Permission.SCHEDULE_READ,
         Permission.ALLOCATION_READ,
@@ -125,13 +136,18 @@ ROLE_PERMISSIONS: dict[Role, Set[Permission]] = {
     },
     
     Role.OPERATOR: {
+        Permission.ROUTING_EDIT,  # Q.133.B.1 — operador pode editar fases/flex
         Permission.SCHEDULE_READ,
         Permission.ALLOCATION_READ,
         Permission.PRODUCTIVITY_READ,
     },
 
     Role.CEO: {
-        # Read-only across the dashboard surface. CEO never writes.
+        # Read-only across the dashboard surface (cogs/pricing/scenarios/cpo).
+        # Q.133.B.1 — excepção explícita (decisão do owner): o CEO PODE editar
+        # fases de routing (ROUTING_EDIT). Continua sem SCHEDULE_WRITE, logo não
+        # acede a /v1/plan/cpo, /v1/governance nem /v1/decisions; SoD intacto.
+        Permission.ROUTING_EDIT,
         Permission.SCHEDULE_READ,
         Permission.MASTER_DATA_READ,
         Permission.CAPACITY_READ,
@@ -143,6 +159,7 @@ ROLE_PERMISSIONS: dict[Role, Set[Permission]] = {
     },
 
     Role.VIEWER: {
+        Permission.ROUTING_EDIT,  # Q.133.B.1
         Permission.MASTER_DATA_READ,
         Permission.SCHEDULE_READ,
         Permission.CAPACITY_READ,

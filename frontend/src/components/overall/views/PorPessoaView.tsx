@@ -17,6 +17,7 @@ import {
 import type { DragEndEvent } from '@dnd-kit/core';
 import { useQuery } from '@tanstack/react-query';
 import { EmptyState } from '../../dark';
+import { Clickable } from '../../entitySheets';
 import { Timeline, buildDaySlots, dateToSlotIndex } from '../Timeline';
 import type { TimelineLane, TimelineItem } from '../../dark';
 import { learningAffinitiesApi } from '../../../lib/api/planApi';
@@ -169,18 +170,19 @@ export const PorPessoaView = memo(function PorPessoaView({
         return {
           id,
           label,
-          labelNode: (
-            <button
-              className="text-left hover:text-[color:var(--accent)] transition-colors"
-              onClick={() => onSelect?.({ kind: 'operator', id })}
-              title={`Filtrar por operador: ${name}`}
-            >
-              {label}
-            </button>
-          ),
+          // Q.133 — clicar no operador abre o detalhe (OperadorSheet). A lane
+          // "sem-operador" nao tem id real → fica texto simples.
+          labelNode:
+            id === 'sem-operador' ? (
+              <span className="text-left opacity-70">{label}</span>
+            ) : (
+              <Clickable kind="operador" id={id} className="text-left">
+                {label}
+              </Clickable>
+            ),
         };
       }),
-    [operadores, topAffinity, onSelect],
+    [operadores, topAffinity],
   );
 
   // (operadorId, slotId) → lista de ops

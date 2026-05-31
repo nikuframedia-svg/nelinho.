@@ -48,6 +48,22 @@ class RoutingRow:
     mold_required: bool = False
 
 
+def _truncate_route_to_current(
+    rows: List["RoutingRow"], current_fase_id: Optional[str]
+) -> List["RoutingRow"]:
+    """Q.136.B — corta a rota às fases AINDA por fazer, a partir da fase atual
+    (`OF_FP_ID`). A rota vem ordenada por `sequence`; a fase atual é INCLUÍDA
+    (re-fazê-la inteira = conservador e seguro). Fase atual ausente, ou fora da
+    rota (ex. estado pré-produção "Não Laminado") → rota completa (fallback)."""
+    if not current_fase_id:
+        return rows
+    cur_seqs = [r.sequence for r in rows if str(r.fase_id) == str(current_fase_id)]
+    if not cur_seqs:
+        return rows
+    cur_seq = min(cur_seqs)
+    return [r for r in rows if r.sequence >= cur_seq]
+
+
 class RoutingResolver:
     """
     Resolve production routings from the Factory Data Product curated layer.
@@ -153,6 +169,11 @@ class RoutingResolver:
                 "reason": "no_route",
             })
             return []
+
+        # Q.136.B — planear a partir da FASE ATUAL: o barco está a meio, descarta
+        # as fases já feitas (rota ordenada por sequence). Fase atual fora da rota
+        # (ex. "Não Laminado", estado pré-produção) ou ausente → rota completa.
+        rows = _truncate_route_to_current(rows, order.get("current_fase_id"))
 
         # Q.131.H — ordem efectivamente planeada (≥1 operação).
         self.planned_order_ids.add(order_id)

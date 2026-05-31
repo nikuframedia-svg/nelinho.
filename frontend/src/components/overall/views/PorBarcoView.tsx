@@ -16,6 +16,7 @@ import {
 } from '@dnd-kit/core';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { EmptyState } from '../../dark';
+import { Clickable } from '../../entitySheets';
 import { Timeline, buildDaySlots, dateToSlotIndex } from '../Timeline';
 import type { TimelineLane, TimelineItem } from '../../dark';
 import type { ScheduledOp } from '../types';
@@ -120,7 +121,7 @@ export const PorBarcoView = memo(function PorBarcoView({
 
   // Swimlane por barco
   const boats = useMemo(() => {
-    const seen = new Map<string, string>();
+    const seen = new Map<string, { label: string; productId?: string }>();
     for (const op of operations) {
       const boatId = op.order_id ?? op.id;
       if (!seen.has(boatId)) {
@@ -131,23 +132,25 @@ export const PorBarcoView = memo(function PorBarcoView({
         ]
           .filter(Boolean)
           .join(' · ');
-        seen.set(boatId, label);
+        seen.set(boatId, { label, productId: op.product_id });
       }
     }
     return Array.from(seen.entries());
   }, [operations]);
 
-  const lanes: TimelineLane[] = boats.map(([id, label]) => ({
+  // Q.133 — clicar no barco abre o detalhe: o MODELO (que tem o editor de
+  // fases + posicao alternativa) quando ha product_id; senao a encomenda.
+  const lanes: TimelineLane[] = boats.map(([id, { label, productId }]) => ({
     id,
     label,
     labelNode: (
-      <button
-        className="text-left hover:text-[color:var(--accent)] transition-colors"
-        onClick={() => onSelect?.({ kind: 'boat', id })}
-        title={`Filtrar por barco: ${label}`}
+      <Clickable
+        kind={productId ? 'modelo' : 'encomenda'}
+        id={productId ?? id}
+        className="text-left font-mono tabular-nums"
       >
-        <span className="font-mono tabular-nums">{label}</span>
-      </button>
+        {label}
+      </Clickable>
     ),
   }));
 
