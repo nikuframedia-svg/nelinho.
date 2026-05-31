@@ -194,6 +194,47 @@ async def run_cpo_schedule(
                 "CPO schedule: failed to emit duration-fallback alert: %s", alert_exc
             )
 
+    # Q.131.H — honestidade: ordens sem rota nenhuma (sem histórico, sem
+    # template do ERP) NÃO são saltadas em silêncio. Emite um alerta WARN com a
+    # lista, para o operador saber exactamente o que ficou de fora (e porquê). O
+    # plano com as restantes é devolvido na mesma — só "tudo falhou" dá 400.
+    unplanned_ids = sorted({str(u["order_id"]) for u in resolver.unplanned})
+    if unplanned_ids:
+        coverage_pct = round(resolver.orders_coverage * 100.0, 1)
+        try:
+            from src.copilot.alerts.models import (
+                CODE_ORDERS_WITHOUT_ROUTING,
+                CopilotAlert,
+            )
+            preview = ", ".join(unplanned_ids[:5])
+            more = f" (+{len(unplanned_ids) - 5})" if len(unplanned_ids) > 5 else ""
+            alert = CopilotAlert(
+                tenant_id=tenant_id,
+                severity="WARN",
+                code=CODE_ORDERS_WITHOUT_ROUTING,
+                title=f"{len(unplanned_ids)} ordens sem rota — não planeadas",
+                message_pt=(
+                    f"{len(unplanned_ids)} ordens não têm rota conhecida (sem "
+                    "histórico real nem template de routing no ERP) e ficaram "
+                    f"FORA do plano: {preview}{more}. Cobertura do plano: "
+                    f"{coverage_pct}%. Para as planear é preciso histórico de "
+                    "produção ou um template de routing para esses modelos."
+                ),
+                context={
+                    "unplanned_count": len(unplanned_ids),
+                    "unplanned_orders": unplanned_ids[:50],
+                    "orders_coverage": round(resolver.orders_coverage, 4),
+                    "reasons": sorted({u["reason"] for u in resolver.unplanned}),
+                },
+                entity_refs=[],
+            )
+            session.add(alert)
+            await session.flush()
+        except (SQLAlchemyError, ImportError, TypeError, ValueError) as alert_exc:
+            logger.warning(
+                "CPO schedule: failed to emit unplanned-orders alert: %s", alert_exc
+            )
+
     if not operations:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -242,6 +283,24 @@ async def run_cpo_schedule(
     if duration_fallback_high:
         result["degraded"] = True
         result.setdefault("fallback_reason", "duration_2x_buffer_high")
+
+    # Q.131.H — honestidade: expor as ordens deixadas FORA do plano (sem rota)
+    # e a cobertura. Vai à resposta, aos warnings e ao cpo_meta (auditoria do
+    # commit; cpo_meta não entra no hash). Ordenado p/ determinismo.
+    result["unplanned_orders"] = unplanned_ids
+    result["orders_coverage"] = round(resolver.orders_coverage, 4)
+    if unplanned_ids:
+        cov_pct = round(resolver.orders_coverage * 100.0, 1)
+        result.setdefault("warnings", []).append(
+            f"{len(unplanned_ids)} ordens sem rota não planeadas "
+            f"(cobertura {cov_pct}%): {', '.join(unplanned_ids[:5])}"
+            + (f" (+{len(unplanned_ids) - 5})" if len(unplanned_ids) > 5 else "")
+        )
+        result.setdefault("cpo_meta", {})["unplanned_orders"] = {
+            "count": len(unplanned_ids),
+            "orders": unplanned_ids[:50],
+            "coverage": round(resolver.orders_coverage, 4),
+        }
 
     # Yaml policy hook (best-effort; 409 if block fired).
     try:
@@ -341,6 +400,10 @@ async def run_cpo_schedule(
         "operations": operations_out,
         "warnings": list(result.get("warnings", [])),
         "infeasible_op_ids": list(result.get("infeasible_op_ids", [])),
+        # Q.131.H — ordens sem rota (não planeadas) + cobertura, para o
+        # frontend mostrar honestamente o que ficou de fora.
+        "unplanned_orders": list(result.get("unplanned_orders", [])),
+        "orders_coverage": float(result.get("orders_coverage", 1.0)),
         "commit_sha256": commit_sha,
         "parent_sha256": parent_sha,
     }

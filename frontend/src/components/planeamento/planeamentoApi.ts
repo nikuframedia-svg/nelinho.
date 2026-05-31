@@ -41,6 +41,11 @@ export interface CpoScheduleResult {
   fallback_reason: string | null;
   operations: CpoOperation[];
   warnings: string[];
+  // Q.131.H — ordens deixadas FORA do plano por não terem rota (sem histórico
+  // nem template do ERP), e a fração de ordens planeadas. O frontend mostra um
+  // aviso honesto em vez de as omitir silenciosamente.
+  unplanned_orders: string[];
+  orders_coverage: number;
   commit_sha256: string | null;
 }
 

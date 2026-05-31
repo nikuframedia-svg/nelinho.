@@ -82,6 +82,14 @@ class RoutingResolver:
         # "history_db" and "duration_model_p50" are all REAL-ish sources.
         self.resolved_ops: int = 0
         self.fallback_ops: int = 0
+        # Q.131.H — honestidade: ordens que NÃO conseguem rota (sem histórico,
+        # sem template do ERP, sem standard) são registadas aqui em vez de
+        # serem saltadas em silêncio. O scheduler lê isto, emite alerta, e
+        # devolve `unplanned_orders` + `orders_coverage` ao frontend. Cada
+        # entry: {order_id, modelo_id, reason}. Contadores por-instância.
+        self.unplanned: List[Dict[str, str]] = []
+        self.planned_order_ids: set[str] = set()
+        self.total_orders: int = 0
 
     def resolve(
         self,
@@ -107,6 +115,11 @@ class RoutingResolver:
 
         if not order_id:
             logger.warning("RoutingResolver: order without of_id — skipping")
+            self.unplanned.append({
+                "order_id": "(sem of_id)",
+                "modelo_id": modelo_id,
+                "reason": "missing_of_id",
+            })
             return []
 
         # 1. Try history for this specific order
@@ -132,8 +145,16 @@ class RoutingResolver:
             logger.info(
                 f"RoutingResolver: no route found for order={order_id} model={modelo_id}"
             )
+            # Q.131.H — não saltar em silêncio: registar a ordem sem rota.
+            self.unplanned.append({
+                "order_id": order_id,
+                "modelo_id": modelo_id,
+                "reason": "no_route",
+            })
             return []
 
+        # Q.131.H — ordem efectivamente planeada (≥1 operação).
+        self.planned_order_ids.add(order_id)
         due_date = _parse_datetime(order.get("data_entrega_prevista"))
         skills_by_phase = self.state.skill_matrix
         ops: List[SchedulingOperation] = []
@@ -177,6 +198,7 @@ class RoutingResolver:
         horizon_start: Optional[datetime] = None,
     ) -> List[SchedulingOperation]:
         """Convenience: concatenate routings for a list of orders."""
+        self.total_orders = len(orders)
         all_ops: List[SchedulingOperation] = []
         for order in orders:
             all_ops.extend(self.resolve(order, horizon_start))
@@ -190,6 +212,20 @@ class RoutingResolver:
         if self.resolved_ops <= 0:
             return 0.0
         return self.fallback_ops / self.resolved_ops
+
+    @property
+    def unplanned_count(self) -> int:
+        """Q.131.H — nº de ordens sem rota (não planeadas). Lido pelo scheduler
+        para emitir o alerta ORDERS_WITHOUT_ROUTING e preencher a resposta."""
+        return len(self.unplanned)
+
+    @property
+    def orders_coverage(self) -> float:
+        """Q.131.H — fração de ordens efectivamente planeadas (≥1 operação)
+        sobre o total submetido a `resolve_many`. 1.0 quando nada foi pedido."""
+        if self.total_orders <= 0:
+            return 1.0
+        return len(self.planned_order_ids) / self.total_orders
 
     # ------------------------------------------------------------------ #
     # Sources of routing data                                            #

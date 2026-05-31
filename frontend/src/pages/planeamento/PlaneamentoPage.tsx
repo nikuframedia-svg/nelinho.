@@ -255,6 +255,35 @@ export default function PlaneamentoPage(): ReactNode {
             : ''}
         </div>
       )}
+      {/* Q.131.H — honestidade: ordens que ficaram FORA do plano por não terem
+          rota (sem histórico nem template do ERP). NÃO são "sem operador" —
+          são ordens inteiras que o motor não soube planear. Mostradas, nunca
+          omitidas em silêncio. */}
+      {jobComplete &&
+        jobStatusQuery.data?.result &&
+        jobStatusQuery.data.result.unplanned_orders.length > 0 && (
+          <div
+            style={{
+              marginBottom: 14,
+              fontSize: 11.5,
+              color: 'var(--orange)',
+              background: 'var(--orange-bg)',
+              border: '1px solid var(--orange-bd)',
+              borderRadius: 'var(--r-sm)',
+              padding: '8px 12px',
+            }}
+          >
+            {jobStatusQuery.data.result.unplanned_orders.length} ordens sem rota
+            conhecida (sem histórico nem template no ERP) ficaram FORA do plano —
+            cobertura{' '}
+            {(jobStatusQuery.data.result.orders_coverage * 100).toFixed(1)}%. OFs:{' '}
+            {jobStatusQuery.data.result.unplanned_orders.slice(0, 8).join(', ')}
+            {jobStatusQuery.data.result.unplanned_orders.length > 8
+              ? ` (+${jobStatusQuery.data.result.unplanned_orders.length - 8})`
+              : ''}
+            . Precisam de histórico de produção ou template de routing.
+          </div>
+        )}
       {approveMutation.isSuccess && (
         <div
           style={{

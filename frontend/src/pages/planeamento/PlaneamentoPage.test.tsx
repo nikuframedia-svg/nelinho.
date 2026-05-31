@@ -109,6 +109,8 @@ function makeResult(opCount: number): CpoScheduleResult {
       setup_family: null,
     })),
     warnings: [],
+    unplanned_orders: [],
+    orders_coverage: 1,
     commit_sha256: 'commit-sha-aaaa1111',
   };
 }

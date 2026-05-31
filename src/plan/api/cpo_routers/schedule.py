@@ -72,6 +72,12 @@ class CPOScheduleResponse(BaseModel):
     operations: List[Dict[str, Any]] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
     infeasible_op_ids: List[str] = Field(default_factory=list)
+    # Q.131.H — honestidade: ordens deixadas FORA do plano por não terem rota
+    # (sem histórico nem template do ERP), e a fração de ordens planeadas. O
+    # frontend mostra um aviso em vez de as omitir silenciosamente. Default
+    # vazio/1.0 = back-compat (nada por planear).
+    unplanned_orders: List[str] = Field(default_factory=list)
+    orders_coverage: float = 1.0
     # Q.115.X7 — % alinhamento com target diário; null se sem target configurado.
     # Frontend Q.115.J/K podem usar este campo futuramente.
     revenue_alignment_pct: Optional[float] = None
