@@ -154,7 +154,11 @@ check("ME1-idle-axis", "idle_pct" in me_src,
 # H0 — best-effort
 out = subprocess.run(
     ["git", "diff", "HEAD~1", "--", "src/plan/"],
-    capture_output=True, text=True,
+    # encoding explícito: o output do git é UTF-8 (comentários PT com acentos,
+    # ex. "MÁXIMO"). Sem isto, em Windows/PowerShell o `text=True` decodifica
+    # com cp1252 e rebenta num byte 0x81 (continuação de "Á") — falso-negativo
+    # do gate, agravado quando HEAD~1 é um merge com diff grande.
+    capture_output=True, text=True, encoding="utf-8", errors="replace",
 )
 if out.returncode == 0 and out.stdout:
     suspect = [
@@ -320,7 +324,8 @@ if os.environ.get("VERIFY_INVARIANTS_SKIP_TESTS"):
 else:
     result = subprocess.run(
         [sys.executable, "-m", "pytest", "tests/", "-x", "--tb=no", "-q"],
-        capture_output=True, text=True,
+        # encoding explícito (ver nota no git diff acima): output UTF-8.
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     TEST_FLOOR = 1800
     m = re.search(r"(\d+) passed", result.stdout)
