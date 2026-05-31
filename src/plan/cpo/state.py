@@ -564,6 +564,13 @@ _OFFP_DUR_OK = (
 _DUR_FLOOR_H = 0.05
 _DUR_CEIL_H = 24.0 * 7
 
+# Q.131.F — horizonte de planeamento interactivo. O WIP real tem ~5300 OFs
+# abertas; planear todas (~11k operações) esgota o orçamento da GA logo na
+# geração 1 (sem optimização real) e demora demasiado para um "Replanear"
+# interactivo. Planeamos as N ordens MAIS URGENTES (menor data de entrega) —
+# rolling horizon. O Luis pediu ~200; é o nº onde a GA optimiza em segundos.
+_OPEN_ORDERS_PLAN_CAP = 200
+
 
 async def _load_historical_durations_routes_db(
     session: Any,
@@ -754,11 +761,13 @@ async def _load_open_orders_db(
           AND ofb."OF_P_ID" IS NOT NULL
           AND f."FP_PRODUCAO" = true
         ORDER BY data_entrega_prevista NULLS LAST
-        LIMIT 2000
+        LIMIT :plan_cap
         """
     )
     try:
-        rows = (await session.execute(sql)).mappings().all()
+        rows = (await session.execute(
+            sql, {"plan_cap": _OPEN_ORDERS_PLAN_CAP}
+        )).mappings().all()
     except SQLAlchemyError as exc:  # pragma: no cover — DB outage / missing table
         logger.debug("Q.126.B open_orders DB load skipped: %s", exc)
         return []
