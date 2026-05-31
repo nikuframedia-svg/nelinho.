@@ -186,6 +186,12 @@ async def propose_decision(
     }
 
 
+# BE-10 (Q.130.x): the canonical list path is "/" (-> /v1/decisions/), but the
+# frontend polls /v1/decisions (no slash) every 5s. With redirect_slashes=True
+# that meant a 307 -> 200 round-trip on EVERY poll. Register the same handler at
+# the bare prefix ("") too so both forms answer 200 directly, no redirect. The
+# bare alias is hidden from the schema to keep the OpenAPI doc clean.
+@router.get("", response_model=DecisionListResponse, include_in_schema=False)
 @router.get("/", response_model=DecisionListResponse)
 async def list_decisions(
     status_filter: Optional[str] = Query(None, alias="status_filter"),
