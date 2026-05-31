@@ -4,7 +4,7 @@
  * 6 tabs consolidadas:
  *   master       → herda ConfiguracaoPage (Master Data)
  *   regras       → herda RegrasPage (Q.17 logic-as-data)
- *   logica-llm   → link para /regras?tab=prompts
+ *   logica-llm   → link para /llm?tab=regras
  *   custos       → Revenue Target + Client Priority (Q.115.B)
  *   input        → Wizard 3 passos PT-natural (Q.115.B)
  *   aprendizagem → herda AprendiPage
@@ -13,7 +13,7 @@
  */
 
 import { lazy, Suspense, useState } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { MasterDataTab } from './tabs/MasterDataTab';
 import {
@@ -744,7 +744,6 @@ const PREF_STATUS_VARIANT: Record<string, 'success' | 'warning' | 'neutral'> = {
 function TabAprendizagem() {
   const toast = useToastContext();
   const queryClient = useQueryClient();
-  const navigate = useNavigate();
 
   // ── Secção 1: Acerto do plano (Q.115.V) ─────────────────────────────
   const planQuery = useQuery({
@@ -1040,13 +1039,6 @@ function TabAprendizagem() {
                       </DarkButton>
                     </>
                   ) : null}
-                  <DarkButton
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => navigate(`/regras?rule_id=${r.id}`)}
-                  >
-                    Ver detalhe
-                  </DarkButton>
                 </div>
               </div>
             ))}
