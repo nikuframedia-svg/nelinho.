@@ -28,14 +28,17 @@ Usage
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Sequence
 from functools import lru_cache
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from src.shared.config import settings
+
+logger = logging.getLogger(__name__)
 
 from datetime import date
 
@@ -71,12 +74,51 @@ def get_engine() -> AsyncEngine:
             "sqlserver_enabled=False or sqlserver_url=None. "
             "Configure SQLSERVER_URL in .env before calling NELO services."
         )
-    return create_async_engine(
+    engine = create_async_engine(
         settings.sqlserver_url,
         pool_size=settings.sqlserver_pool_size,
         pool_pre_ping=True,
         future=True,
+        # Login/connect timeout (seconds). aioodbc forwards `timeout` to
+        # pyodbc.connect() as the login timeout. Without it, an unreachable
+        # ERP host blocks on TCP connect for the OS default (~20s+) and
+        # hangs every NELO-backed request instead of failing fast so the
+        # caller can degrade (e.g. /v1/profit/oee -> erp_available:false).
+        connect_args={"timeout": settings.sqlserver_connect_timeout_s},
     )
+
+    # Query timeout: pyodbc's Connection.timeout cancels a statement that runs
+    # longer than N seconds (raises OperationalError). `sqlserver_query_timeout_s`
+    # existed but was never wired — a heavy OF_FP read (2.6 M rows) could block a
+    # request for >90s and tie up a pool slot indefinitely. Now every pooled
+    # connection enforces the timeout server-side, so slow reads surface as a
+    # SQLAlchemyError the callers already handle (degrade, not hang).
+    @event.listens_for(engine.sync_engine, "connect")
+    def _set_query_timeout(dbapi_connection, _record):
+        # The pyodbc Connection exposes a writable `.timeout` (maps to
+        # SQL_ATTR_QUERY_TIMEOUT — seconds). SQLAlchemy's async stack nests it:
+        #   AsyncAdapt_aioodbc_connection._connection  -> aioodbc Connection
+        #     (whose own `.timeout` is a read-only proxy)
+        #     ._conn                                   -> pyodbc Connection
+        # Try the deepest layer first, then walk outward.
+        candidates = []
+        aioodbc_conn = getattr(dbapi_connection, "_connection", None)
+        if aioodbc_conn is not None:
+            candidates.append(getattr(aioodbc_conn, "_conn", None))
+        candidates.append(dbapi_connection)
+        for target in candidates:
+            if target is None:
+                continue
+            try:
+                target.timeout = settings.sqlserver_query_timeout_s
+                break
+            except (AttributeError, TypeError):
+                # read-only proxy / wrong layer — try the next nesting level
+                continue
+        else:  # pragma: no cover - driver may not support it
+            logger.warning("NELO engine: could not set query timeout on any layer")
+
+    return engine
 
 
 async def close_engine() -> None:

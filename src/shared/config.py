@@ -68,6 +68,12 @@ class Settings(BaseSettings):
     )
     sqlserver_pool_size: int = Field(default=5, ge=1, le=20)
     sqlserver_query_timeout_s: int = Field(default=30, ge=1, le=300)
+    # Login/connect timeout (seconds). With sqlserver_enabled=True but the
+    # ERP host unreachable (e.g. dev off the Nelo LAN), the ODBC driver
+    # otherwise blocks on TCP connect for the OS default (~20s+), hanging
+    # every NELO-backed request (e.g. /v1/profit/oee). A short timeout lets
+    # the read fail fast so endpoints degrade to erp_available:false.
+    sqlserver_connect_timeout_s: int = Field(default=5, ge=1, le=60)
 
     # SMTP (Sprint Q.22.F — report email delivery)
     # `smtp_enabled=False` (the default) is the dev mode: report
