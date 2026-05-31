@@ -12,7 +12,7 @@ the ERP / schedule. Tests:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
@@ -131,6 +131,47 @@ def test_rollback_rejects_after_24h_window():
         },
     )
     assert resp.status_code == 400
+
+
+# Q.130.U — regressão: `executed_at` é DateTime(timezone=True), portanto o
+# Postgres devolve-o tz-AWARE. O código comparava com datetime.utcnow()
+# (tz-naive) → "can't compare offset-naive and offset-aware datetimes" (500)
+# em TODA a decisão executada. Os testes acima passavam porque o fake usava
+# datetime.utcnow() (naive). Estes usam tz-aware, como a BD real.
+
+
+def test_rollback_with_tzaware_executed_at_within_window_ok():
+    decision = _decision(
+        DecisionStatus.EXECUTED.value,
+        executed_at=datetime.now(timezone.utc) - timedelta(hours=1),
+    )
+    client = TestClient(_build_app(decision))
+    resp = client.post(
+        f"/v1/shared/decisions/{decision.id}/rollback",
+        headers={
+            "x-tenant-id": str(TENANT),
+            "x-user-id": "11111111-1111-1111-1111-111111111111",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert decision.status == DecisionStatus.ROLLED_BACK.value
+
+
+def test_rollback_with_tzaware_executed_at_after_window_400():
+    decision = _decision(
+        DecisionStatus.EXECUTED.value,
+        executed_at=datetime.now(timezone.utc) - timedelta(hours=25),
+    )
+    client = TestClient(_build_app(decision))
+    resp = client.post(
+        f"/v1/shared/decisions/{decision.id}/rollback",
+        headers={
+            "x-tenant-id": str(TENANT),
+            "x-user-id": "11111111-1111-1111-1111-111111111111",
+        },
+    )
+    # 400 (window expired) — NOT 500. Pre-fix this raised TypeError -> 500.
+    assert resp.status_code == 400, resp.text
 
 
 def test_rollback_rejects_when_not_executed():

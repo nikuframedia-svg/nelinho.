@@ -6,7 +6,7 @@ API for decision management, approval workflows, and audit trail.
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
@@ -681,10 +681,18 @@ async def rollback_decision(
             detail=f"Decision cannot be rolled back. Current status: {decision.status}",
         )
     
-    # Verify rollback window (24h from execution)
+    # Verify rollback window (24h from execution).
+    # `executed_at` is a DateTime(timezone=True) column -> Postgres returns it
+    # tz-aware. Comparing it against a tz-naive `datetime.utcnow()` raised
+    # "can't compare offset-naive and offset-aware datetimes" (500) on EVERY
+    # executed decision. Compare in UTC-aware; normalise executed_at defensively
+    # in case it was ever persisted naive.
     if decision.executed_at:
-        rollback_deadline = decision.executed_at + timedelta(hours=24)
-        if datetime.utcnow() > rollback_deadline:
+        executed_at = decision.executed_at
+        if executed_at.tzinfo is None:
+            executed_at = executed_at.replace(tzinfo=timezone.utc)
+        rollback_deadline = executed_at + timedelta(hours=24)
+        if datetime.now(timezone.utc) > rollback_deadline:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Rollback window expired. Deadline: {rollback_deadline.isoformat()}",
