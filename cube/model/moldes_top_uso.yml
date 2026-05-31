@@ -1,0 +1,48 @@
+cubes:
+  - name: moldes_top_uso
+    description: >
+      Q.108.J.2 — Top moldes mais usados. Source: marts.v_moldes_top_uso
+      (snapshot diário sobre plan.mold com usage_counter populado pela
+      ETL desde Q.108.J.2). 1 linha por molde activo.
+    sql_table: marts.v_moldes_top_uso
+
+    measures:
+      - name: utilizacoes
+        description: >
+          SUM(usage_counter) — contador acumulado de utilizações por
+          molde. CONTAGEM aditiva entre moldes (mas não comparar SUM com
+          n_moldes — escala muito diferente).
+        sql: n_utilizacoes
+        type: sum
+        format: number
+
+      - name: max_single
+        description: >
+          MAX(usage_counter) entre os moldes activos — molde mais usado
+          isoladamente. CONTAGEM; cross-row MAX.
+        sql: n_utilizacoes
+        type: max
+        format: number
+
+      - name: moldes_count
+        description: COUNT moldes activos com counter > 0.
+        sql: n_utilizacoes
+        type: count
+        format: number
+
+    dimensions:
+      - name: data
+        sql: data
+        type: time
+      - name: molde_id
+        sql: molde_id
+        type: number
+      - name: mold_code
+        sql: mold_code
+        type: string
+      - name: molde_nome
+        sql: molde_nome
+        type: string
+      - name: mold_type
+        sql: mold_type
+        type: string

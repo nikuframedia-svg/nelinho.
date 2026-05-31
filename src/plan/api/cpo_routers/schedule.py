@@ -17,8 +17,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.governance.audit_service import audit_change
 from src.plan.api._cpo_common import _resolve_commit_or_404, _tenant_id
 from src.plan.cpo.commits import CommitsService
+from src.shared.auth.headers import get_current_user_or_dev_header
+from src.shared.auth.jwt_handler import UserContext
 from src.shared.database import get_session
 
 router = APIRouter()
@@ -72,6 +75,15 @@ class CPOScheduleResponse(BaseModel):
     operations: List[Dict[str, Any]] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
     infeasible_op_ids: List[str] = Field(default_factory=list)
+    # Q.131.H — honestidade: ordens deixadas FORA do plano por não terem rota
+    # (sem histórico nem template do ERP), e a fração de ordens planeadas. O
+    # frontend mostra um aviso em vez de as omitir silenciosamente. Default
+    # vazio/1.0 = back-compat (nada por planear).
+    unplanned_orders: List[str] = Field(default_factory=list)
+    orders_coverage: float = 1.0
+    # Q.115.X7 — % alinhamento com target diário; null se sem target configurado.
+    # Frontend Q.115.J/K podem usar este campo futuramente.
+    revenue_alignment_pct: Optional[float] = None
     # Sprint K — commit trail
     commit_sha256: Optional[str] = None
     parent_sha256: Optional[str] = None
@@ -270,11 +282,18 @@ async def approve_schedule_job(
     job_id: str,
     tenant_id: UUID = Depends(_tenant_id),
     db: AsyncSession = Depends(get_session),
+    approver: UserContext = Depends(get_current_user_or_dev_header),
 ):
     """Q.62.D.4 — promove o commit do job de DRAFT para LIVE.
 
     O CPO scheduler cria commits com `status=DRAFT` por defeito. Approver
     revê e chama este endpoint para marcar LIVE. Decision-as-code.
+
+    Q.132.G — write-gate "Palantir level":
+      * SoD (invariante governança): o aprovador não pode ser o proponente do
+        plano (`commit.author`); auto-aprovação é 403.
+      * Audit (invariante 7): a transição DRAFT→LIVE escreve `audit_log` na
+        MESMA transacção que o `commit.status = LIVE`.
     """
     from arq.connections import RedisSettings, create_pool
     from arq.jobs import Job, JobStatus
@@ -311,7 +330,33 @@ async def approve_schedule_job(
     if prev_status == "LIVE":
         raise HTTPException(409, f"Commit {commit_sha[:8]} already LIVE")
 
+    # Q.132.G — SoD: o proponente (commit.author, gravado pelo worker) não pode
+    # aprovar o próprio plano. Commits "system" (auto/scheduled) não têm
+    # proponente humano → qualquer aprovador autorizado pode promover.
+    proposer = str(getattr(commit, "author", "") or "")
+    if proposer and proposer != "system" and proposer == str(approver.user_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Segregação de funções: não pode aprovar o plano que propôs. "
+                "Outro utilizador autorizado tem de o rever."
+            ),
+        )
+
+    # Q.132.G — audit_log na MESMA tx que a mudança de estado (invariante 7).
     commit.status = "LIVE"
+    await audit_change(
+        db,
+        tenant_id=tenant_id,
+        entity_type="schedule_commit",
+        entity_id=commit.id,
+        action="UPDATE",
+        old_values={"status": prev_status},
+        new_values={"status": "LIVE"},
+        actor_id=approver.user_id,
+        actor_role=str(getattr(approver, "role", "") or ""),
+        reason=f"approve CPO schedule {commit_sha[:8]} DRAFT->LIVE",
+    )
     await db.commit()
 
     return CPOJobApproveResponse(

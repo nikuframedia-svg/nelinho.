@@ -90,7 +90,16 @@ class TenantRule(TenantBase):
     rule_id: Mapped[str] = mapped_column(String(120), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[RuleLifecycleStatus] = mapped_column(
-        SQLEnum(RuleLifecycleStatus, name="yaml_policy_rule_status"),
+        # `values_callable` força o SQLAlchemy a persistir/comparar pelo
+        # `.value` (minúsculo) em vez do nome do membro ("ACTIVE"). Sem isto
+        # o bind seria "ACTIVE", que o enum Postgres `yaml_policy_rule_status`
+        # (criado minúsculo na 028a) rejeita → RuleEngine.refresh() rebenta.
+        SQLEnum(
+            RuleLifecycleStatus,
+            name="yaml_policy_rule_status",
+            values_callable=lambda enum_cls: [m.value for m in enum_cls],
+            native_enum=False,
+        ),
         nullable=False,
         default=RuleLifecycleStatus.PROPOSED,
     )
@@ -138,7 +147,14 @@ class TenantRuleRevision(TenantBase):
     """Denormalised business id — survives even if the parent row is deleted."""
 
     action: Mapped[RuleRevisionAction] = mapped_column(
-        SQLEnum(RuleRevisionAction, name="yaml_policy_rule_revision_action"),
+        # Mesmo motivo que TenantRule.status: alinhar com o enum Postgres
+        # minúsculo `yaml_policy_rule_revision_action`.
+        SQLEnum(
+            RuleRevisionAction,
+            name="yaml_policy_rule_revision_action",
+            values_callable=lambda enum_cls: [m.value for m in enum_cls],
+            native_enum=False,
+        ),
         nullable=False,
     )
     actor_user_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True))

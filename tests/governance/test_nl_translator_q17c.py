@@ -125,6 +125,23 @@ async def test_translate_happy_path():
 
 
 @pytest.mark.asyncio
+async def test_translate_accepts_pre_parsed_dict_q117f():
+    """Q.117.F regressão — OllamaClient.chat(format='json') devolve o JSON
+    JÁ parseado (dict), não o envelope {"message":{"content":...}}. O
+    translator tem de aceitar essa forma, senão dá sempre 'empty response'
+    (bug que só aparecia live, nunca nos testes que mockam o envelope)."""
+    client = AsyncMock()
+    # Devolve o dict parseado directamente — o contrato real do client.
+    client.chat = AsyncMock(return_value=_valid_rule_json())
+    rule = await translate_nl_to_rule(
+        "Quando molde atingir 850 usos, alertar.",
+        ollama=client, model="test-model", max_retries=0,
+    )
+    assert rule.id == "test-mold-cycle-rule"
+    assert rule.when.event.value == "mold_usage_threshold"
+
+
+@pytest.mark.asyncio
 async def test_translate_empty_input_raises():
     with pytest.raises(RuleTranslationError, match="empty"):
         await translate_nl_to_rule("   ")

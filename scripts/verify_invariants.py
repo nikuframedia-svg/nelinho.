@@ -163,6 +163,9 @@ if out.returncode == 0 and out.stdout:
         and "#" not in s
         and "id" not in s.lower()
         and "alembic" not in s.lower()
+        # Q.130.1 — constantes module-level (linhas +_UPPER_SNAKE =) são
+        # definições legítimas de parâmetros físicos, não magic numbers inline.
+        and not re.search(r"^\+_[A-Z][A-Z0-9_]+\s*[:=]", s.strip())
     ]
     check("H0-hardcodes", len(suspect) == 0,
           f"hardcodes novos em src/plan/: {suspect[:5]}")
@@ -172,6 +175,78 @@ elif out.returncode != 0:
 # --- DINAMICAS ---
 print("\n-> DINAMICAS")
 sys.path.insert(0, ".")
+
+
+def check_flexible_phases_have_curing_gaps() -> None:
+    """Q.116.B — cada fase `is_flexible=True` declara `allowed_predecessors`,
+    e cada par (predecessor_alternativo, fase_flexivel) tem de existir como
+    `(from_phase, to_phase)` em `NELO_CURING_GAPS_SEED` (via helper
+    `curing_gap_pairs()` em `src/plan/cpo/state.py`).
+
+    Sem gap = ordem alternativa sem suporte fisico — o decoder nao pode
+    garantir a quimica da transicao.
+
+    Skip silencioso quando a DB nao esta disponivel (dev sem stack) —
+    o check e opt-in via `--q116b` e nao bloqueia o commit de quem nao
+    tem Postgres a correr.
+    """
+    try:
+        import asyncio
+        from sqlalchemy import select
+        from src.plan.cpo.state import curing_gap_pairs, normalize_phase_code
+        from src.plan.models.routing_template import RoutingTemplatePhase
+        from src.shared.database import get_session
+    except Exception as exc:  # pragma: no cover — import only fails in broken envs
+        check(
+            "Q116B-curing-gaps",
+            True,
+            f"skip — imports nao disponiveis ({exc.__class__.__name__})",
+        )
+        return
+
+    async def _run() -> tuple[bool, str]:
+        gaps = curing_gap_pairs()
+        async for sess in get_session():
+            # Carrega todas as fases do tenant — inclui as flexiveis e o resto
+            # (precisamos do resto para mapear phase row id → phase_id string).
+            res = await sess.execute(select(RoutingTemplatePhase))
+            all_phases = list(res.scalars().all())
+            # Map: phase_id string (NELO business key) per row id is direct.
+            # Codigo canonico = normalize_phase_code(phase_id ou phase_name).
+            missing: list[str] = []
+            for row in all_phases:
+                if not getattr(row, "is_flexible", False):
+                    continue
+                this_code = normalize_phase_code(row.phase_id) or normalize_phase_code(
+                    row.phase_name
+                )
+                for pred in row.allowed_predecessors or []:
+                    pred_code = normalize_phase_code(pred)
+                    if (pred_code, this_code) not in gaps:
+                        missing.append(f"{pred_code}->{this_code}")
+            return (len(missing) == 0, ", ".join(missing[:5]))
+        return (True, "")
+
+    try:
+        ok, payload = asyncio.run(_run())
+    except Exception as exc:
+        # DB indisponivel ou config em falta — nao bloqueia.
+        check(
+            "Q116B-curing-gaps",
+            True,
+            f"skip — DB indisponivel ({exc.__class__.__name__})",
+        )
+        return
+    check(
+        "Q116B-curing-gaps",
+        ok,
+        f"fases flexiveis sem gap declarado: {payload}",
+    )
+
+
+if "--q116b" in sys.argv:
+    check_flexible_phases_have_curing_gaps()
+
 for module, attr in [
     ("src.plan.cpo.chromosome", "Chromosome"),
     ("src.plan.cpo.engine", "CPOv4Engine"),

@@ -62,8 +62,8 @@ async def train_quality_risk(
     rows = await build_quality_risk_dataset(session, tenant_id)
     if not rows:
         raise TrainingError(
-            "quality_risk: no training rows — factory_curated.order_phase or "
-            "quality.rework_entry is empty. Run the ERP sync first."
+            "quality_risk: no training rows — factory_raw.of_fp or "
+            "quality.rework_entry is empty. Run the ERP raw mirror first."
         )
 
     model = QualityRiskModel()
@@ -111,8 +111,8 @@ async def train_duration(
     rows = await build_duration_dataset(session, tenant_id)
     if not rows:
         raise TrainingError(
-            "duration: no training rows — factory_curated.order_phase is "
-            "empty. Run the ERP sync first."
+            "duration: no training rows — factory_raw.of_fp is "
+            "empty. Run the ERP raw mirror first."
         )
 
     model = DurationModel()

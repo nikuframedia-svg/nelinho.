@@ -11,14 +11,19 @@ ran with no ML.
 This module reads the training rows straight from the durable tables that
 the ERP sync already fills:
 
-  * ``factory_curated.order_phase`` — ~86k completed phase executions with
-    real durations (``horas_reais``), the fase id, the order id and the
-    mould id. This is the cleaned `OF_FP` history.
-  * ``quality.rework_entry``        — ~100k rework events, each tagged with
-    the phase that caused it (``phase_id_causer``) and the hull zone
-    (``location_zone``).
-  * ``plan.production_orders``      — the kayak model per order, used to
-    enrich ``modelo_id`` when the order id is known.
+  * ``factory_raw.of_fp`` — ~537k real phase executions (one row per
+    OFFP), with the start/finish timestamps (``OFFP_DATAINICIO`` /
+    ``OFFP_DATAFIM`` → real ``horas_reais``), the fase id (``OFFP_FP_ID``),
+    the order id (``OFFP_OF_ID``) and the mould id (``OFFP_OF_ID_MLD``).
+    This is the REAL ERP history mirrored from NELO — **not** the static
+    Excel snapshot (Q.124: o ML aprende da BD viva, nunca de um ficheiro).
+    The kayak product per order is enriched from ``factory_raw.ordemfabrico``
+    (``OF_P_ID``).
+  * ``quality.rework_entry``        — rework events, each tagged with the
+    phase that caused it (``phase_id_causer``, numeric fase id matching
+    ``OFFP_FP_ID``) and the hull zone (``location_zone``).
+  * ``plan.production_orders``      — completed orders with transport dates,
+    the label source for the OTD-risk model.
 
 The two history tables do not share an order-id space (the ERP keeps phase
 history and checklist rework on different id sequences), so the
@@ -38,11 +43,14 @@ explicit `EmptyDatasetError` rather than training on nothing.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+if TYPE_CHECKING:  # pandas é import lazy dentro das funções; isto resolve os
+    import pandas as pd  # type hints "pd.DataFrame" sem o import eager (Q.120.A).
 
 logger = logging.getLogger(__name__)
 
@@ -64,24 +72,37 @@ async def build_duration_dataset(
     `factory_curated.order_phase` is tenant-agnostic (it is the shared
     curated layer), so `tenant_id` only scopes the production-orders join.
     """
+    # Q.124: fonte = factory_raw.of_fp (ERP real espelhado), nao a camada
+    # curated/Excel. horas_reais = (OFFP_DATAFIM - OFFP_DATAINICIO) em horas,
+    # mesmo padrao de limpeza de setup_marts_lead_time_of (exclui o mesmo
+    # segundo / fim < inicio como artefacto).
     sql = text(
         """
         SELECT
-            op.of_id              AS of_id,
-            op.fase_id            AS fase_id,
-            op.fase_nome          AS fase_nome,
-            op.molde_id           AS molde_id,
-            op.horas_reais        AS horas_reais,
-            op.data_inicio        AS data_inicio,
-            po.product_type       AS product_type
-        FROM factory_curated.order_phase op
-        LEFT JOIN plan.production_orders po
-               ON po.legacy_id::text = op.of_id
-              AND po.tenant_id = :tenant_id
-        WHERE op.horas_reais IS NOT NULL
-          AND op.horas_reais > 0
-          AND op.is_quarantined = false
-        ORDER BY op.data_inicio
+            op."OFFP_OF_ID"     AS of_id,
+            op."OFFP_FP_ID"     AS fase_id,
+            fp."FP_NOME"        AS fase_nome,
+            op."OFFP_OF_ID_MLD" AS molde_id,
+            EXTRACT(EPOCH FROM (
+                CAST(NULLIF(op."OFFP_DATAFIM", '')    AS timestamp)
+              - CAST(NULLIF(op."OFFP_DATAINICIO", '') AS timestamp)
+            )) / 3600.0         AS horas_reais,
+            CAST(NULLIF(op."OFFP_DATAINICIO", '') AS timestamp) AS data_inicio,
+            ofb."OF_P_ID"       AS product_type
+        FROM factory_raw.of_fp op
+        LEFT JOIN factory_raw.fases_producao fp ON fp."FP_ID" = op."OFFP_FP_ID"
+        LEFT JOIN factory_raw.ordemfabrico  ofb ON ofb."OF_ID" = op."OFFP_OF_ID"
+        WHERE NULLIF(op."OFFP_DATAINICIO", '') IS NOT NULL
+          AND NULLIF(op."OFFP_DATAFIM", '')    IS NOT NULL
+          AND CAST(NULLIF(op."OFFP_DATAFIM", '') AS timestamp)
+            > CAST(NULLIF(op."OFFP_DATAINICIO", '') AS timestamp)
+          -- Q.124 "limpos": teto de 168h (1 semana) exclui fases deixadas
+          -- abertas (artefacto de calendario) que envenenavam o WMAPE.
+          AND EXTRACT(EPOCH FROM (
+                CAST(NULLIF(op."OFFP_DATAFIM", '')    AS timestamp)
+              - CAST(NULLIF(op."OFFP_DATAINICIO", '') AS timestamp)
+              )) / 3600.0 <= 168.0
+        ORDER BY data_inicio
         LIMIT :limit
         """
     )
@@ -158,20 +179,20 @@ async def build_quality_risk_dataset(
     against the (modelo_id, fase_id, team_size, mold_pocket_count,
     phase_error_rate, queue_depth) features.
     """
+    # Q.124: fonte = factory_raw.of_fp (ERP real). Todas as execucoes de fase
+    # (sem filtro de duracao) para construir a taxa empirica de rework por fase.
     phase_sql = text(
         """
         SELECT
-            op.of_id        AS of_id,
-            op.fase_id      AS fase_id,
-            op.molde_id     AS molde_id,
-            op.data_inicio  AS data_inicio,
-            po.product_type AS product_type
-        FROM factory_curated.order_phase op
-        LEFT JOIN plan.production_orders po
-               ON po.legacy_id::text = op.of_id
-              AND po.tenant_id = :tenant_id
-        WHERE op.is_quarantined = false
-        ORDER BY op.fase_id, op.data_inicio
+            op."OFFP_OF_ID"     AS of_id,
+            op."OFFP_FP_ID"     AS fase_id,
+            op."OFFP_OF_ID_MLD" AS molde_id,
+            CAST(NULLIF(op."OFFP_DATAINICIO", '') AS timestamp) AS data_inicio,
+            ofb."OF_P_ID"       AS product_type
+        FROM factory_raw.of_fp op
+        LEFT JOIN factory_raw.ordemfabrico ofb ON ofb."OF_ID" = op."OFFP_OF_ID"
+        WHERE NULLIF(op."OFFP_DATAINICIO", '') IS NOT NULL
+        ORDER BY op."OFFP_FP_ID", data_inicio
         LIMIT :limit
         """
     )
@@ -309,14 +330,22 @@ async def build_otd_risk_dataset(
         LIMIT :limit
         """
     )
+    # Q.124: fonte = factory_raw.of_fp (ERP real). Limitado: o otd_risk so usa
+    # fases das ordens completas (plan.production_orders), hoje poucas — o modelo
+    # fica fino ate o plano ter ordens reais (Onda 4).
     phase_sql = text(
         """
         SELECT
-            op.of_id       AS of_id,
-            op.fase_id     AS fase_id,
-            op.horas_reais AS horas_reais
-        FROM factory_curated.order_phase op
-        WHERE op.is_quarantined = false
+            op."OFFP_OF_ID" AS of_id,
+            op."OFFP_FP_ID" AS fase_id,
+            EXTRACT(EPOCH FROM (
+                CAST(NULLIF(op."OFFP_DATAFIM", '')    AS timestamp)
+              - CAST(NULLIF(op."OFFP_DATAINICIO", '') AS timestamp)
+            )) / 3600.0     AS horas_reais
+        FROM factory_raw.of_fp op
+        WHERE NULLIF(op."OFFP_DATAINICIO", '') IS NOT NULL
+          AND NULLIF(op."OFFP_DATAFIM", '')    IS NOT NULL
+        LIMIT 200000
         """
     )
     rework_sql = text(
@@ -420,3 +449,160 @@ async def build_otd_risk_dataset(
         positives / len(rows) if rows else 0.0,
     )
     return rows
+
+
+# ---------------------------------------------------------------------------
+# SequenceMining — fases_of_history (Q.115.U)
+# ---------------------------------------------------------------------------
+
+async def load_phase_histories(
+    session: AsyncSession,
+    tenant_id: UUID,
+    *,
+    limit: int = 100_000,
+) -> "pd.DataFrame":
+    """
+    Retorna DataFrame [of_id, phase_code, phase_order] de plan.fases_of_history.
+    Fallback para factory_curated.order_phase se a tabela ainda não existir.
+    """
+    import pandas as pd
+
+    sql = text(
+        """
+        SELECT of_id, phase_code, phase_order
+        FROM plan.fases_of_history
+        WHERE tenant_id = :tenant_id
+        ORDER BY of_id, phase_order
+        LIMIT :limit
+        """
+    )
+    try:
+        rows = (
+            await session.execute(sql, {"tenant_id": str(tenant_id), "limit": limit})
+        ).mappings().all()
+        if rows:
+            return pd.DataFrame([dict(r) for r in rows])
+    except Exception as exc:
+        logger.warning("load_phase_histories: %s — fallback para order_phase", exc)
+
+    # Fallback: order_phase
+    fallback_sql = text(
+        """
+        SELECT of_id::text AS of_id,
+               fase_id::text AS phase_code,
+               ROW_NUMBER() OVER (PARTITION BY of_id ORDER BY data_inicio) AS phase_order
+        FROM factory_curated.order_phase
+        WHERE is_quarantined = false
+        LIMIT :limit
+        """
+    )
+    try:
+        rows = (await session.execute(fallback_sql, {"limit": limit})).mappings().all()
+        if rows:
+            return pd.DataFrame([dict(r) for r in rows])
+    except Exception as exc2:
+        logger.warning("load_phase_histories fallback falhou: %s", exc2)
+
+    return pd.DataFrame(columns=["of_id", "phase_code", "phase_order"])
+
+
+async def load_defects(
+    session: AsyncSession,
+    tenant_id: UUID,
+) -> "pd.DataFrame":
+    """
+    Retorna DataFrame [of_id] com OFs que tiveram rework confirmado.
+    """
+    import pandas as pd
+
+    sql = text(
+        """
+        SELECT DISTINCT of_id::text AS of_id
+        FROM quality.rework_entry
+        WHERE tenant_id = :tenant_id
+          AND of_id IS NOT NULL
+        """
+    )
+    try:
+        rows = (
+            await session.execute(sql, {"tenant_id": str(tenant_id)})
+        ).mappings().all()
+        return pd.DataFrame([dict(r) for r in rows]) if rows else pd.DataFrame(columns=["of_id"])
+    except Exception as exc:
+        logger.warning("load_defects: %s", exc)
+        return pd.DataFrame(columns=["of_id"])
+
+
+# ---------------------------------------------------------------------------
+# ThroughputForecast — série temporal (Q.115.U)
+# ---------------------------------------------------------------------------
+
+async def load_throughput_ts(
+    session: AsyncSession,
+    tenant_id: UUID,
+    *,
+    limit: int = 50_000,
+) -> "pd.DataFrame":
+    """
+    Retorna DataFrame [date, boat_id, ops_concluidas] de plan.fases_of_history.
+    Fallback para order_phase se a tabela não existir.
+    """
+    import pandas as pd
+
+    sql = text(
+        """
+        SELECT
+            DATE(completed_at) AS date,
+            boat_id::text AS boat_id,
+            COUNT(*) AS ops_concluidas
+        FROM plan.fases_of_history
+        WHERE tenant_id = :tenant_id
+          AND completed_at IS NOT NULL
+        GROUP BY DATE(completed_at), boat_id
+        ORDER BY date, boat_id
+        LIMIT :limit
+        """
+    )
+    try:
+        rows = (
+            await session.execute(sql, {"tenant_id": str(tenant_id), "limit": limit})
+        ).mappings().all()
+        if rows:
+            df = pd.DataFrame([dict(r) for r in rows])
+            df["date"] = pd.to_datetime(df["date"])
+            return df
+    except Exception as exc:
+        logger.warning("load_throughput_ts: %s — fallback para order_phase", exc)
+
+    # Fallback: order_phase agregado por dia + fase
+    fallback_sql = text(
+        """
+        SELECT
+            DATE(op.data_inicio) AS date,
+            COALESCE(po.product_type, 'desconhecido') AS boat_id,
+            COUNT(*) AS ops_concluidas
+        FROM factory_curated.order_phase op
+        LEFT JOIN plan.production_orders po
+               ON po.legacy_id::text = op.of_id
+              AND po.tenant_id = :tenant_id
+        WHERE op.is_quarantined = false
+          AND op.data_inicio IS NOT NULL
+        GROUP BY DATE(op.data_inicio), COALESCE(po.product_type, 'desconhecido')
+        ORDER BY date, boat_id
+        LIMIT :limit
+        """
+    )
+    try:
+        rows = (
+            await session.execute(
+                fallback_sql, {"tenant_id": str(tenant_id), "limit": limit}
+            )
+        ).mappings().all()
+        if rows:
+            df = pd.DataFrame([dict(r) for r in rows])
+            df["date"] = pd.to_datetime(df["date"])
+            return df
+    except Exception as exc2:
+        logger.warning("load_throughput_ts fallback falhou: %s", exc2)
+
+    return pd.DataFrame(columns=["date", "boat_id", "ops_concluidas"])

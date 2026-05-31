@@ -26,6 +26,7 @@ from src.scheduling.jobs.audit import _audit_retention_purge_job
 from src.scheduling.jobs.causal import _causal_discovery_job
 from src.scheduling.jobs.copilot import _copilot_schema_reindex_job
 from src.scheduling.jobs.feedback import _daily_feedback_job
+from src.scheduling.jobs.kpi_snapshot import _kpi_snapshot_job
 from src.scheduling.jobs.improve import (
     _abl_feedback_job,
     _improve_adoption_signal_job,
@@ -36,7 +37,13 @@ from src.scheduling.jobs.ml import (
     _quality_risk_scoring_job,
 )
 from src.scheduling.jobs.nelo_erp import (
+    _nelo_erp_comercial_job,
+    _nelo_erp_customers_job,
     _nelo_erp_incremental_sync_job,
+    _nelo_erp_logistica_job,
+    _nelo_erp_phase_history_incremental_job,
+    _nelo_erp_production_orders_job,
+    _nelo_erp_raw_incremental_job,
     _nelo_erp_sync_job,
     _nelo_erp_time_mining_job,
 )
@@ -46,6 +53,15 @@ from src.scheduling.jobs.preference_learning import (
     _preference_rule_detector_job,
     _preference_weights_retrain_job,
 )
+from src.scheduling.jobs.boat_phase_score_job import _boat_phase_score_job
+from src.scheduling.jobs.boat_potential_job import _boat_potential_job
+from src.scheduling.jobs.phase_operator_affinity import _phase_operator_affinity_job
+from src.scheduling.jobs.capture_plan_execution import (
+    _capture_plan_execution_global_job,
+)
+from src.scheduling.jobs.phase_calibration_job import _phase_calibration_global_job
+from src.scheduling.jobs.plan_vs_actual import _plan_vs_actual_global_job
+from src.scheduling.jobs.runbook_learning import _runbook_learning_job
 from src.scheduling.jobs.supply import _shortage_scan_job
 
 logger = logging.getLogger(__name__)
@@ -171,6 +187,115 @@ def start_scheduler(
         coalesce=True,
         max_instances=1,
     )
+    # Q.115.T — sync incremental phase_history + worker_assignment (15 min).
+    # Alta cardinalidade — job separado para nao bloquear stock/calendar.
+    # No-op quando sqlserver_enabled=False.
+    _scheduler.add_job(
+        _nelo_erp_phase_history_incremental_job,
+        trigger=IntervalTrigger(minutes=15),
+        id="nelo_erp_phase_history_incremental",
+        name="nelo_erp_phase_history_incremental",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Q.125 — sync de 5/5 min dos dados PESADOS do ERP que alimentam o
+    # dashboard/copiloto (factory_raw + faturação PHC + logística). O sync
+    # incremental Q.54.A só cobria os mirrors ORM operacionais; estes três
+    # estavam em scripts manuais e ficavam stale. Tudo DROP-free (upsert/
+    # TRUNCATE) → seguro com as marts (VIEWs live sobre factory_raw).
+    # coalesce + max_instances=1 evitam acumular. No-op se sqlserver_enabled=False.
+    _scheduler.add_job(
+        _nelo_erp_raw_incremental_job,
+        trigger=IntervalTrigger(minutes=5),
+        id="nelo_erp_raw_incremental",
+        name="nelo_erp_raw_incremental",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    _scheduler.add_job(
+        _nelo_erp_comercial_job,
+        trigger=IntervalTrigger(minutes=5),
+        id="nelo_erp_comercial",
+        name="nelo_erp_comercial",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    _scheduler.add_job(
+        _nelo_erp_logistica_job,
+        trigger=IntervalTrigger(minutes=5),
+        id="nelo_erp_logistica",
+        name="nelo_erp_logistica",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Q.125 — core.customers a partir de factory_raw.entidade (tipo Cliente).
+    # O mirror `master` nunca espelhava clientes. 5/5 min, DROP-free (upsert).
+    _scheduler.add_job(
+        _nelo_erp_customers_job,
+        trigger=IntervalTrigger(minutes=5),
+        id="nelo_erp_customers",
+        name="nelo_erp_customers",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Q.131.C — plan.production_orders a partir de factory_raw.ordemfabrico
+    # (WIP real, keyed por OF_P_ID). A lista de ordens deixa de ser 12 demo.
+    # Postgres-interno (lê o factory_raw já espelhado), corre sempre; no-op
+    # se o WIP estiver vazio. 5/5 min, upsert idempotente.
+    _scheduler.add_job(
+        _nelo_erp_production_orders_job,
+        trigger=IntervalTrigger(minutes=5),
+        id="nelo_erp_production_orders",
+        name="nelo_erp_production_orders",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Q.115.V — plan-vs-actual diário: compara planos CPO com execução real.
+    # 06:30 UTC (depois do drift detection 06:00). Itera todos os tenants
+    # registados. Best-effort: falha de um tenant não bloqueia os restantes.
+    _scheduler.add_job(
+        _plan_vs_actual_global_job,
+        trigger=CronTrigger(hour=6, minute=30, timezone="UTC"),
+        args=[tenants or []],
+        id="plan_vs_actual",
+        name="plan_vs_actual",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Q.134.A3a — captura PLANEADO vs REALIZADO por (of, fase) dos commits LIVE
+    # → plan.plan_execution_observed (deviation_pct). 06:35 UTC: depois do
+    # plan_vs_actual (06:30), ANTES da calibração (06:40) — para que a
+    # calibração (Q.134.A3b) leia o desvio fresco.
+    _scheduler.add_job(
+        _capture_plan_execution_global_job,
+        trigger=CronTrigger(hour=6, minute=35, timezone="UTC"),
+        args=[tenants or []],
+        id="capture_plan_execution",
+        name="capture_plan_execution",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Q.133.A1 — calibração de durações p50/p95 por (modelo, fase) de of_fp →
+    # plan.phase_duration_calibration. 06:40 UTC (depois do plan_vs_actual).
+    # O FactoryState (Q.133.A2) lê esta tabela e prefere o p50 calibrado.
+    _scheduler.add_job(
+        _phase_calibration_global_job,
+        trigger=CronTrigger(hour=6, minute=40, timezone="UTC"),
+        args=[tenants or []],
+        id="phase_calibration",
+        name="phase_calibration",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
     # Q.54.B — reconciliação do estado das ordens com a fase actual.
     # Postgres-interna, corre sempre (independente de sqlserver_enabled).
     _scheduler.add_job(
@@ -182,6 +307,20 @@ def start_scheduler(
         coalesce=True,
         max_instances=1,
     )
+    # Q.117.D — snapshot diário de KPIs para o gráfico de tendência da
+    # página LLM › KPIs. 00:45 UTC (depois do daily_feedback 00:30). Itera
+    # tenants; em dev a lista vem vazia e o job descobre-os na BD.
+    _scheduler.add_job(
+        _kpi_snapshot_job,
+        trigger=CronTrigger(hour=0, minute=45, timezone="UTC"),
+        args=[tenants or []],
+        id="kpi_snapshot",
+        name="kpi_snapshot",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+
     # Q.67.4.E — reindex nocturno dos schema docs no RAG do copilot.
     # 04:00 UTC (low traffic). No-op se copilot_enabled=False.
     _scheduler.add_job(
@@ -290,6 +429,43 @@ def register_tenant(
         coalesce=True,
         max_instances=1,
     )
+    # Q.115.G — phase_operator_affinity: afinidade operador/fase.
+    # 03:30 UTC, após o preference_rule_detector (03:00). Recomputa
+    # scores a partir dos últimos 90d de fases_of_history. Idempotente.
+    _scheduler.add_job(
+        _phase_operator_affinity_job,
+        trigger=CronTrigger(hour=3, minute=30, timezone="UTC"),
+        args=[tenant_id],
+        id=f"phase_operator_affinity:{tenant_id}",
+        name=f"phase_operator_affinity[{tenant_id}]",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Q.115.X6.A — boat_phase_score: afinidade barco/fase.
+    # 03:45 UTC, após o phase_operator_affinity (03:30). Idempotente.
+    _scheduler.add_job(
+        _boat_phase_score_job,
+        trigger=CronTrigger(hour=3, minute=45, timezone="UTC"),
+        args=[tenant_id],
+        id=f"boat_phase_score:{tenant_id}",
+        name=f"boat_phase_score[{tenant_id}]",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Q.115.X6.B — boat_potential: potencialidade por barco.
+    # 04:20 UTC (improve_adoption_signal às 04:15, audit_purge às 04:30).
+    _scheduler.add_job(
+        _boat_potential_job,
+        trigger=CronTrigger(hour=4, minute=20, timezone="UTC"),
+        args=[tenant_id],
+        id=f"boat_potential:{tenant_id}",
+        name=f"boat_potential[{tenant_id}]",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
     # Sprint D.4 — AdaptiveFitnessWeights (Camada 2). Weekly retrain on
     # Sunday 02:00 UTC so the weights the GA reads on Monday morning are
     # fresh. Weekly cadence (not daily) matches the sample budget: <50
@@ -365,6 +541,20 @@ def register_tenant(
         args=[tenant_id],
         id=f"improve_adoption_signal:{tenant_id}",
         name=f"improve_adoption_signal[{tenant_id}]",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Q.115.H — aprendizagem diária de runbooks (04:00 UTC).
+    # Lê top-20 error_codes mais frequentes nos últimos 30d e tenta
+    # construir runbooks a partir de padrões observados. Runbooks ficam
+    # em approved_by=NULL até aprovação humana — nunca actuam sozinhos.
+    _scheduler.add_job(
+        _runbook_learning_job,
+        trigger=CronTrigger(hour=4, minute=0, timezone="UTC"),
+        args=[tenant_id],
+        id=f"runbook_learning:{tenant_id}",
+        name=f"runbook_learning[{tenant_id}]",
         replace_existing=True,
         coalesce=True,
         max_instances=1,

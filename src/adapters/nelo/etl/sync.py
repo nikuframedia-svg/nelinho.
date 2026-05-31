@@ -60,6 +60,8 @@ def _load_mirror_modules() -> None:
         "inventory_ledger",  # Q.64.A — desbloqueia shortage-risks
         "material_master",   # Q.64.B — alimenta ShortageDetector
         "purchase_orders",   # Q.64.D — desbloqueia tab Entregas
+        "phase_history",     # Q.115.T — historico fases OF (FasesOf)
+        "worker_assignment", # Q.115.T — atribuicoes operador/fase
     ):
         try:
             __import__(f"src.adapters.nelo.etl.{mod}")

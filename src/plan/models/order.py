@@ -10,7 +10,7 @@ from enum import Enum
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import String, Integer, Date, Text, Index
+from sqlalchemy import DateTime, String, Integer, Date, Text, Index
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -66,5 +66,10 @@ class ProductionOrder(TenantBase):
         nullable=False,
     )
     
+    # ── Q.115.X5 — Soft-cancel ───────────────────────────────────────────────
+    cancelled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    cancellation_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
     def __repr__(self) -> str:
         return f"<Order {self.legacy_id}: {self.product_name} ({self.status.value})>"

@@ -1,0 +1,85 @@
+route_id: consumo_materiais
+dominio: materiais
+descricao: "Consumo de matérias-primas num período, opcionalmente filtrado por nome de material — agrupado por unidade (kg/m/litros/etc)"
+
+# Q.86 — fusão de 3 rotas Q.78 primas (consumo_material_periodo + consumo_de_material_especifico
+# + top_materiais_consumidos). SQLs idênticas excepto pelo ILIKE de material. Diferiam só nos
+# parâmetros. Com `material` opcional, a mesma SQL serve "qual a matéria-prima mais gasta"
+# (ranking) e "quanto consumimos de X" (filtrado).
+
+utterances:
+  # Q.86 v2 A4 — utterances naturais com sinais de QUANTIDADE explícitos.
+  # Re-introduz "gastámos/consumimos" (vocabulário natural PT) MAS sempre
+  # acompanhado de material concreto ou "kg/quantidade/material" para
+  # afastar de pagámos+€ do preco_custo. Tier 2 L1 vai resolver edge cases.
+  # — Ranking / top (sem material específico) —
+  - "qual a matéria-prima mais gasta este mês"
+  - "qual a matéria-prima mais consumida este mês em kg"
+  - "que material consumimos mais na última semana"
+  - "matéria-prima com maior consumo em março"
+  - "o que gastámos mais em quantidade este ano"
+  - "top materiais consumidos no último mês"
+  - "top 10 materiais mais consumidos em quantidade este mês"
+  - "ranking dos 5 materiais mais utilizados em março"
+  - "quais as 20 maiores quantidades consumidas este ano"
+  - "lista dos 15 materiais com maior consumo"
+  - "tabela dos top materiais por volume saído para produção"
+  # — Material específico (quantidade) —
+  - "quanto consumimos de resina lavesan em abril"
+  - "qual foi o consumo de carbono este mês"
+  - "quanta resina gastámos na última semana"
+  - "consumo de fibra de carbono em 2026"
+  - "quanto gastámos de secante este ano"
+  - "consumo de epoxy no último mês"
+  - "quanto de resina foi consumida este mês"
+  - "qual o volume em kg de carbono saído para produção"
+  - "que quantidade de material consumimos esta semana"
+
+params:
+  periodo:
+    type: periodo
+    obrigatorio: true
+  material:
+    type: texto_nome_produto
+    obrigatorio: false   # Q.86 — quando vazio, SQL devolve ranking (todos os materiais).
+  top_n:
+    type: inteiro
+    obrigatorio: false
+    default: 20
+    min: 1
+    max: 100
+
+defaults:
+  # Filtros confirmados Q.78 SubB2.3 — INTOCÁVEIS.
+  tpmov_consumo: 11           # CONFIRMADO (TPMOV=4 Reservas é planeamento, não consumo)
+  pcont_materia_prima: 1      # CONFIRMADO via PRODUTO_CONTABILIDADE_TIPO ERP
+
+post_processing: group_by_unit
+max_rows: 5000
+
+sql: |
+  SELECT
+    p."P_UNI_ID_MOVIMENTOS" AS unidade_id,
+    p."P_NOME",
+    SUM(m."MOV_QUANTIDADE"::numeric * COALESCE(p."P_UNI_MOV_FACTOR", 1)) AS total,
+    COUNT(*) AS n_movimentos
+  FROM factory_raw.movimento m
+  JOIN factory_raw.produto p ON p."P_ID" = m."MOV_P_ID"
+  WHERE CAST(m."MOV_DATA" AS timestamp) >= :data_inicio
+    AND CAST(m."MOV_DATA" AS timestamp) <  :data_fim
+    AND m."MOV_TPMOV_ID" = :tpmov_consumo
+    AND p."P_PCONT_ID" = :pcont_materia_prima
+    AND p."P_NOME" ILIKE COALESCE(:material_pattern, '%')
+  GROUP BY p."P_UNI_ID_MOVIMENTOS", p."P_NOME"
+  ORDER BY p."P_UNI_ID_MOVIMENTOS" NULLS LAST, total DESC
+
+hypothesis_flags:
+  - "tpmov_consumo=11 é CONFIRMADO (Q.78 + análise Reservas SubB2.3)"
+  - "pcont_materia_prima=1 é CONFIRMADO via PRODUTO_CONTABILIDADE_TIPO ERP"
+  - "22 unidades nomeadas — fonte: tabela UNIDADE do ERP NELO"
+  - "ILIKE %nome% não confunde sinónimos ('fibra de vidro' não match 'carbono')"
+  - "Q.86 fusão: material opcional via SQL condicional `:material_pattern::text IS NULL`"
+
+golden:
+  params: {periodo: "2026-04", material: "resina"}
+  # Q.86: alternativo (sem material) — params {periodo: "2026-04"} devolve ranking top.

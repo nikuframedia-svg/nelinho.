@@ -1,0 +1,44 @@
+# Q.93.E.A.4 — dicionário curado de sinónimos para o copiloto Cube.
+#
+# Regras:
+# - Aliases SÓ INEQUÍVOCOS: termo → forma canónica do catálogo. Aplica-se
+#   à QUERY antes do retrieval (BM25 + FAISS embed).
+# - Termos AMBÍGUOS (categorias largas com variantes em unidades diferentes)
+#   NÃO são traduzidos — entram em `ambiguous` para o LLM abdicar com
+#   sugestões. Soma cega entre unidades = ERRO SILENCIOSO sagrado.
+# - Lookup é case-insensitive (a query é lowercase antes de procurar).
+# - Match longest-first: se a query contém "catalisador peróxido" e
+#   "catalisador" como aliases distintos, ganha o mais específico.
+# - NÃO aplicado ao corpus indexado (preserva nomes originais para display
+#   no top_materials enviado ao LLM).
+
+aliases:
+  # q01 — "catalisador peróxido" é redundante: TODOS os catalizadores do
+  # catálogo NELO (Curox M302, P200 Norox KP-9, Crestomer Advantage 60)
+  # são peróxidos para laminagem de poliéster. Remover o modificador
+  # "peróxido" para que o filter `contains:"catalizador"` bate todos.
+  "catalisador peroxido": "catalizador"
+  "catalisador peróxido": "catalizador"
+
+ambiguous:
+  # q03 — "fibra de vidro" é categoria larga com variantes em UNIDADES
+  # diferentes (m² para tecidos/placas, kg para fibra unidirecional).
+  # Soma cega seria erro silencioso. LLM deve abdicar com sugestões.
+  - termo: "fibra de vidro"
+    sugestoes:
+      - "Tecido Vidro (m²)"
+      - "Fibra unidirecional (kg)"
+      - "Quadriaxial Vidro (kg)"
+
+  # q05 — "resina" idem. Existem resinas em kg, tambor, etc. NUNCA somar.
+  - termo: "resina"
+    sugestoes:
+      - "Resina Lavesan (kg)"
+      - "Resina poliéster (tambor)"
+      - "Resina epóxida"
+
+  # Cobertura preventiva — "tinta" tem várias famílias e unidades.
+  - termo: "tinta"
+    sugestoes:
+      - "Tinta poliuretano (l)"
+      - "Tinta acrílica (l)"

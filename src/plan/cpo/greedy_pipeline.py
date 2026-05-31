@@ -265,21 +265,21 @@ class GreedyPipeline:
     ) -> Dict[str, Any]:
         """Append v2.0 KPIs that fitness_v2 needs.
 
-        * `total_idle_hours` — approximated as
-          `(num_machines * horizon_hours) − sum(duration_minutes/60)`.
         * `tardiness_transport_d` — max(0, late_hours / 24) across anchors.
         * `lam_utilization` — share of total op-hours in any op whose
           phase_name contains "Laminagem" (case-insensitive).
+
+        Q.134.I — `total_idle_hours`/`idle_ratio`/`idle_pct` are NOT recomputed
+        here. The decoder (phases 4-7, called in `run`) already set them with
+        the worker-based formula (`_compute_idle_metrics`). Overwriting them
+        with an avg_utilization approximation made the greedy BASELINE's idle
+        incomparable to the GA candidates' (decoder) idle, so the safety net
+        saw a phantom 100×+ regression and reverted every work-center plan.
+        Same formula on both sides → fair comparison (Spelke axiom 7).
         """
         ops = schedule.get("operations") or []
         total_op_minutes = sum(float(op.get("duration_minutes", 0)) for op in ops)
         makespan_h = float(schedule.get("makespan_hours", 0) or 0)
-
-        # Idle: assume 1 machine-equivalent since the decoder's avg_utilization
-        # is already a fraction. 100% utilisation → idle 0; 30% util over 100h
-        # makespan → idle_hours = 70.
-        avg_util_pct = float(schedule.get("avg_utilization", 0) or 0)
-        idle_hours = max(0.0, makespan_h * (1.0 - avg_util_pct / 100.0))
 
         # Transport-specific tardiness (in days) — anchors from Phase 2.
         tardiness_transport_d = 0.0
@@ -319,10 +319,8 @@ class GreedyPipeline:
         )
 
         schedule = dict(schedule)
-        schedule["total_idle_hours"] = round(idle_hours, 2)
-        schedule["idle_pct"] = round(
-            100.0 * (1.0 - avg_util_pct / 100.0), 2,
-        ) if avg_util_pct else 0.0
+        # total_idle_hours / idle_ratio / idle_pct — kept from the decoder
+        # (worker-based), NOT overwritten (see docstring; Q.134.I).
         schedule["tardiness_transport_d"] = round(tardiness_transport_d, 3)
         schedule["lam_utilization"] = round(lam_utilization, 2)
 

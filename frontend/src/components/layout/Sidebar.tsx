@@ -1,43 +1,21 @@
 /**
- * Sidebar — navegação NELO (Q.52.S).
+ * Sidebar — navegação NELO consolidada (Q.115.P).
  *
- * Estrutura do design `shell.jsx`:
- *   PRINCIPAL        → 12 itens: Painel · Planeamento · Fábrica · Expedição ·
- *                      Equipa · Qualidade · Materiais · Simulações · Regras ·
- *                      O que aprendi · Copilot · Configuração
- *   VISTAS ESPECIAIS → Direção (ceo) · Operador (tablet fullscreen)
- *   SISTEMA          → 5 páginas órfãs preservadas: Inbox de decisões ·
- *                      Relatórios · Dados-mestre · Saúde · RBAC
+ * 4 itens apenas:
+ *   Decisões      → /decisoes
+ *   Planeamento   → /overall
+ *   Copiloto      → /llm
+ *   Configurações → /configuracoes
  *
- * Badge dinâmico no Inbox = decisões PROPOSED por aprovar.
- *
- * Sprint Q.52.S (substitui o shell Q.18.ZIP de 10 itens).
+ * Sem agrupamentos. Altura de item 56px+. Badge dinâmico nas Decisões.
  */
 
 import { NavLink, useLocation } from 'react-router-dom';
 import {
-  Home,
-  Calendar,
-  Factory,
-  Truck,
-  Users,
-  Shield,
-  Boxes,
-  FlaskConical,
-  BookOpen,
-  Brain,
-  Sparkles,
+  CheckSquare,
+  LayoutGrid,
+  Bot,
   Settings,
-  Coins,
-  Building2 as Building,
-  Tablet,
-  Inbox,
-  FileText,
-  Database,
-  HeartPulse,
-  Lock,
-  Plug,
-  Radio,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -69,15 +47,18 @@ interface NavItem {
   icon: ReactNode;
   badge?: number;
 }
-interface NavGroup {
-  label: string;
-  items: NavItem[];
-}
+
+const NAV_ITEMS: Omit<NavItem, 'badge'>[] = [
+  { path: '/decisoes',      label: 'Decisões',      icon: <CheckSquare size={20} /> },
+  { path: '/overall',       label: 'Planeamento',   icon: <LayoutGrid size={20} /> },
+  { path: '/llm',           label: 'Copiloto',      icon: <Bot size={20} /> },
+  { path: '/configuracoes', label: 'Configurações', icon: <Settings size={20} /> },
+];
 
 export function Sidebar() {
   const location = useLocation();
 
-  // Badge dinâmico para o Inbox de decisões (decisões PROPOSED).
+  // Badge dinâmico para Decisões (decisões PROPOSED por aprovar).
   const inboxCountQuery = useQuery({
     queryKey: ['sidebar', 'inbox-pending'],
     queryFn: async () => {
@@ -94,51 +75,6 @@ export function Sidebar() {
 
   const inboxBadge = inboxCountQuery.data ?? undefined;
 
-  const NAV: NavGroup[] = [
-    {
-      label: 'Principal',
-      items: [
-        { path: '/painel', label: 'Painel', icon: <Home size={16} /> },
-        { path: '/planeamento', label: 'Planeamento', icon: <Calendar size={16} /> },
-        { path: '/fabrica', label: 'Fábrica', icon: <Factory size={16} /> },
-        { path: '/expedicao', label: 'Expedição', icon: <Truck size={16} /> },
-        { path: '/equipa', label: 'Equipa', icon: <Users size={16} /> },
-        { path: '/qualidade', label: 'Qualidade', icon: <Shield size={16} /> },
-        { path: '/materiais', label: 'Materiais', icon: <Boxes size={16} /> },
-        { path: '/simulacoes', label: 'Simulações', icon: <FlaskConical size={16} /> },
-        { path: '/custos', label: 'Custos', icon: <Coins size={16} /> },
-        { path: '/regras', label: 'Regras', icon: <BookOpen size={16} /> },
-        { path: '/aprendi', label: 'O que aprendi', icon: <Brain size={16} /> },
-        { path: '/copilot', label: 'Copilot', icon: <Sparkles size={16} /> },
-        { path: '/configuracao', label: 'Configuração', icon: <Settings size={16} /> },
-      ],
-    },
-    {
-      label: 'Vistas especiais',
-      items: [
-        { path: '/direcao', label: 'Direção', icon: <Building size={16} /> },
-        { path: '/operador', label: 'Operador', icon: <Tablet size={16} /> },
-      ],
-    },
-    {
-      label: 'Sistema',
-      items: [
-        {
-          path: '/inbox',
-          label: 'Inbox de decisões',
-          icon: <Inbox size={16} />,
-          badge: inboxBadge && inboxBadge > 0 ? inboxBadge : undefined,
-        },
-        { path: '/relatorios', label: 'Relatórios', icon: <FileText size={16} /> },
-        { path: '/dados-mestre', label: 'Dados-mestre', icon: <Database size={16} /> },
-        { path: '/conexao-erp', label: 'Conexão ERP', icon: <Plug size={16} /> },
-        { path: '/ligacoes', label: 'Ligações', icon: <Radio size={16} /> },
-        { path: '/saude', label: 'Saúde', icon: <HeartPulse size={16} /> },
-        { path: '/rbac', label: 'RBAC', icon: <Lock size={16} /> },
-      ],
-    },
-  ];
-
   const meQuery = useQuery<CurrentUser>({
     queryKey: ['auth', 'me'],
     queryFn: () => authApi.me(),
@@ -148,9 +84,6 @@ export function Sidebar() {
   const me = meQuery.data;
 
   const isActive = (path: string): boolean => {
-    if (path === '/painel') {
-      return location.pathname === '/painel' || location.pathname === '/';
-    }
     return location.pathname === path || location.pathname.startsWith(path + '/');
   };
 
@@ -197,88 +130,80 @@ export function Sidebar() {
         </div>
       </div>
 
-      {/* Nav */}
+      {/* Nav — 4 itens */}
       <nav
         className="flex-1 overflow-y-auto overflow-x-hidden"
         style={{ padding: '14px 10px' }}
         aria-label="Navegação principal"
       >
-        {NAV.map((group) => (
-          <div key={group.label} style={{ marginBottom: 14 }}>
-            <div
-              className="text-text-dark-muted uppercase font-semibold"
-              style={{
-                fontSize: 9.5,
-                letterSpacing: '0.8px',
-                padding: '8px 11px 6px 11px',
-              }}
-            >
-              {group.label}
-            </div>
-            <ul className="flex flex-col" style={{ gap: 2 }}>
-              {group.items.map((item) => {
-                const active = isActive(item.path);
-                return (
-                  <li key={item.path}>
-                    <NavLink
-                      to={item.path}
-                      className={cn(
-                        'group flex items-center w-full relative',
-                        active
-                          ? 'text-text-dark-primary font-medium'
-                          : 'text-text-dark-tertiary',
-                      )}
+        <ul className="flex flex-col" style={{ gap: 4 }}>
+          {NAV_ITEMS.map((item) => {
+            const active = isActive(item.path);
+            const badge = item.path === '/decisoes' && inboxBadge && inboxBadge > 0
+              ? inboxBadge
+              : undefined;
+
+            return (
+              <li key={item.path}>
+                <NavLink
+                  to={item.path}
+                  className={cn(
+                    'group flex items-center w-full relative',
+                    active
+                      ? 'text-text-dark-primary font-medium'
+                      : 'text-text-dark-tertiary',
+                  )}
+                  style={{
+                    padding: '16px 14px',
+                    fontSize: 13,
+                    gap: 12,
+                    borderRadius: 'var(--r-sm)',
+                    background: active ? 'var(--bg-3)' : 'transparent',
+                    borderLeft: active ? '3px solid var(--accent)' : '3px solid transparent',
+                    transition: 'background 0.16s, color 0.16s, border-color 0.16s',
+                    minHeight: 56,
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!active)
+                      e.currentTarget.style.background = 'var(--bg-2)';
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!active)
+                      e.currentTarget.style.background = 'transparent';
+                  }}
+                >
+                  <span
+                    className={
+                      active
+                        ? 'text-text-dark-primary flex'
+                        : 'text-text-dark-tertiary group-hover:text-text-dark-secondary flex'
+                    }
+                  >
+                    {item.icon}
+                  </span>
+                  <span className="flex-1 truncate">{item.label}</span>
+                  {badge !== undefined ? (
+                    <span
+                      className="text-white font-semibold tabular-nums"
                       style={{
-                        padding: '8px 11px',
-                        fontSize: 13,
-                        gap: 11,
-                        borderRadius: 'var(--r-sm)',
-                        background: active ? 'var(--bg-3)' : 'transparent',
-                        transition: 'background 0.16s, color 0.16s',
-                      }}
-                      onMouseEnter={(e) => {
-                        if (!active)
-                          e.currentTarget.style.background = 'var(--bg-2)';
-                      }}
-                      onMouseLeave={(e) => {
-                        if (!active)
-                          e.currentTarget.style.background = 'transparent';
+                        background: 'var(--accent)',
+                        fontSize: 9.5,
+                        padding: '0 5px',
+                        borderRadius: 999,
+                        minWidth: 16,
+                        height: 14,
+                        lineHeight: '14px',
+                        textAlign: 'center',
                       }}
                     >
-                      <span
-                        className={
-                          active
-                            ? 'text-text-dark-primary flex'
-                            : 'text-text-dark-tertiary group-hover:text-text-dark-secondary flex'
-                        }
-                      >
-                        {item.icon}
-                      </span>
-                      <span className="flex-1 truncate">{item.label}</span>
-                      {item.badge !== undefined && item.badge > 0 ? (
-                        <span
-                          className="text-white font-semibold tabular-nums"
-                          style={{
-                            background: 'var(--accent)',
-                            fontSize: 9.5,
-                            padding: '0 5px',
-                            borderRadius: 999,
-                            minWidth: 16,
-                            height: 14,
-                            lineHeight: '14px',
-                            textAlign: 'center',
-                          }}
-                        >
-                          {item.badge}
-                        </span>
-                      ) : null}
-                    </NavLink>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        ))}
+                      {badge}
+                    </span>
+                  ) : null}
+                </NavLink>
+              </li>
+            );
+          })}
+        </ul>
       </nav>
 
       {/* User footer */}

@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional
 
 from src.plan.cpo.state import FactoryState
 from src.plan.engines.scheduling_adapter import SchedulingOperation
+from src.plan.services.phase_workcenters import station_ids_for
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ class RoutingRow:
     fase_nome: str
     sequence: int
     duration_hours: float
-    source: str  # "history" | "standard" | "duration_model_p50"
+    source: str  # "history" | "history_db" | "db_template" | "standard" | "duration_model_p50"
     mold_required: bool = False
 
 
@@ -74,6 +75,22 @@ class RoutingResolver:
         # code=ROUTING_ENGINE_UNAVAILABLE) so the operator knows the
         # schedule was built on standard 2× templates instead of history.
         self.engine_unavailable: bool = False
+        # Q.126.E — per-resolver tally of how many resolved ops fell back to
+        # the 2x synthetic buffer (RoutingRow.source == "standard") vs total.
+        # The scheduler reads `fallback_fraction` after `resolve_many` and, if
+        # it crosses the threshold, emits a CopilotAlert + marks the plan
+        # `degraded` (soft-warn: the plan is still returned). "history",
+        # "history_db" and "duration_model_p50" are all REAL-ish sources.
+        self.resolved_ops: int = 0
+        self.fallback_ops: int = 0
+        # Q.131.H — honestidade: ordens que NÃO conseguem rota (sem histórico,
+        # sem template do ERP, sem standard) são registadas aqui em vez de
+        # serem saltadas em silêncio. O scheduler lê isto, emite alerta, e
+        # devolve `unplanned_orders` + `orders_coverage` ao frontend. Cada
+        # entry: {order_id, modelo_id, reason}. Contadores por-instância.
+        self.unplanned: List[Dict[str, str]] = []
+        self.planned_order_ids: set[str] = set()
+        self.total_orders: int = 0
 
     def resolve(
         self,
@@ -99,6 +116,11 @@ class RoutingResolver:
 
         if not order_id:
             logger.warning("RoutingResolver: order without of_id — skipping")
+            self.unplanned.append({
+                "order_id": "(sem of_id)",
+                "modelo_id": modelo_id,
+                "reason": "missing_of_id",
+            })
             return []
 
         # 1. Try history for this specific order
@@ -107,6 +129,16 @@ class RoutingResolver:
             # 2. Fall back to any historical order of the same model
             rows = self._history_for_model(modelo_id)
         if not rows:
+            # 2.5 Q.126.B — real route reconstructed from factory_raw.of_fp
+            # (ERP vivo), pre-loaded into FactoryState. This is the path that
+            # fires in production, where the in-memory curated layer is empty.
+            rows = self._history_for_model_db(modelo_id)
+        if not rows:
+            # 2.7 Q.131.G — routing master do ERP (PRODUTO_FASE) com duração
+            # p50 minerada de of_fp. Recupera modelos sem ≥2 obs por fase no
+            # histórico per-order, ainda com dados REAIS (não o buffer 2×).
+            rows = self._template_for_model_db(modelo_id)
+        if not rows:
             # 3. Fall back to standard template
             rows = self._standard_template(modelo_id)
 
@@ -114,16 +146,36 @@ class RoutingResolver:
             logger.info(
                 f"RoutingResolver: no route found for order={order_id} model={modelo_id}"
             )
+            # Q.131.H — não saltar em silêncio: registar a ordem sem rota.
+            self.unplanned.append({
+                "order_id": order_id,
+                "modelo_id": modelo_id,
+                "reason": "no_route",
+            })
             return []
 
+        # Q.131.H — ordem efectivamente planeada (≥1 operação).
+        self.planned_order_ids.add(order_id)
         due_date = _parse_datetime(order.get("data_entrega_prevista"))
         skills_by_phase = self.state.skill_matrix
         ops: List[SchedulingOperation] = []
+
+        # Q.126.E — tally real vs 2x-buffer ops for the noisy-fallback signal.
+        self.resolved_ops += len(rows)
+        self.fallback_ops += sum(1 for r in rows if r.source == "standard")
+
+        # Q.133.B — work-center da fase: N estações paralelas (concorrência real).
+        # Vazio → machine_id=None (decoder usa o pool "MANUAL", back-compat).
+        phase_stations = getattr(self.state, "phase_stations", {}) or {}
 
         for row in rows:
             phase_name = row.fase_nome or row.fase_id
             team_size = self.state.team_size_for(row.fase_id, phase_name)
             required_skills = [row.fase_id] if row.fase_id in skills_by_phase else []
+            stations = (
+                station_ids_for(row.fase_id, phase_stations[row.fase_id])
+                if row.fase_id in phase_stations else []
+            )
 
             op = SchedulingOperation(
                 operation_id=f"{order_id}::{row.fase_id}",
@@ -132,13 +184,13 @@ class RoutingResolver:
                 sequence=row.sequence,
                 operation_code=phase_name,
                 duration_minutes=max(1.0, row.duration_hours * 60.0),
-                machine_id=None,  # left unset — decoder assigns from machine pool
+                machine_id=stations[0] if stations else None,  # estação da fase
                 setup_family=phase_name,
                 due_date=due_date,
                 priority=1.0,
                 predecessor_ops=[],
                 required_skills=required_skills,
-                alternative_machines=[],
+                alternative_machines=stations[1:],
                 mold_id=None,
                 mold_required=row.mold_required,
                 model_id=modelo_id,
@@ -155,10 +207,34 @@ class RoutingResolver:
         horizon_start: Optional[datetime] = None,
     ) -> List[SchedulingOperation]:
         """Convenience: concatenate routings for a list of orders."""
+        self.total_orders = len(orders)
         all_ops: List[SchedulingOperation] = []
         for order in orders:
             all_ops.extend(self.resolve(order, horizon_start))
         return all_ops
+
+    @property
+    def fallback_fraction(self) -> float:
+        """Q.126.E — share of resolved ops that fell back to the 2x synthetic
+        buffer (`source == "standard"`). 0.0 when nothing resolved. Read by
+        the scheduler to decide whether to mark the plan `degraded`."""
+        if self.resolved_ops <= 0:
+            return 0.0
+        return self.fallback_ops / self.resolved_ops
+
+    @property
+    def unplanned_count(self) -> int:
+        """Q.131.H — nº de ordens sem rota (não planeadas). Lido pelo scheduler
+        para emitir o alerta ORDERS_WITHOUT_ROUTING e preencher a resposta."""
+        return len(self.unplanned)
+
+    @property
+    def orders_coverage(self) -> float:
+        """Q.131.H — fração de ordens efectivamente planeadas (≥1 operação)
+        sobre o total submetido a `resolve_many`. 1.0 quando nada foi pedido."""
+        if self.total_orders <= 0:
+            return 1.0
+        return len(self.planned_order_ids) / self.total_orders
 
     # ------------------------------------------------------------------ #
     # Sources of routing data                                            #
@@ -219,6 +295,74 @@ class RoutingResolver:
             ))
         template_rows.sort(key=lambda r: r.sequence)
         return template_rows
+
+    def _history_for_model_db(self, modelo_id: str) -> List[RoutingRow]:
+        """Q.126.B — real route from `factory_raw.of_fp`, pre-loaded into
+        `FactoryState.historical_routes_by_model` (ordered production phases +
+        median real `horas_reais`). Used when the in-memory curated layer is
+        empty (the production reality) so the CPO plans on REAL history
+        instead of the 2x synthetic buffer. Returns `[]` when no DB route was
+        loaded for this model, so the caller falls to the standard template."""
+        if not modelo_id:
+            return []
+        steps = (getattr(self.state, "historical_routes_by_model", {}) or {}).get(
+            modelo_id
+        ) or []
+        rows: List[RoutingRow] = []
+        for st in steps:
+            fase_nome = str(st.get("fase_nome") or st.get("fase_id") or "")
+            rows.append(RoutingRow(
+                fase_id=str(st.get("fase_id", "")),
+                fase_nome=fase_nome,
+                sequence=int(st.get("sequence", 0) or 0),
+                duration_hours=max(float(st.get("duration_hours", 1.0) or 1.0), 0.1),
+                source="history_db",
+                mold_required=_phase_uses_mold(fase_nome),
+            ))
+        rows.sort(key=lambda r: r.sequence)
+        return rows
+
+    def _template_for_model_db(self, modelo_id: str) -> List[RoutingRow]:
+        """Q.131.G — real route from the ERP routing master (PRODUTO_FASE),
+        pre-loaded into `FactoryState.template_routes_by_model` keyed by OF_P_ID.
+        Per-phase duration = the mined `duration_p50_h` when present, else the
+        cross-model median (`historical_durations_by_fase`). If ANY phase has
+        NEITHER, the whole order is abandoned here (returns []) so it falls
+        through to the (empty) standard template and is reported as unplanned —
+        we never invent a duration (Spelke/zero-mock). source="db_template"
+        (real route + real duration → NOT counted as synthetic fallback)."""
+        if not modelo_id:
+            return []
+        steps = (getattr(self.state, "template_routes_by_model", {}) or {}).get(
+            modelo_id
+        ) or []
+        if not steps:
+            return []
+        by_fase = getattr(self.state, "historical_durations_by_fase", {}) or {}
+        rows: List[RoutingRow] = []
+        for st in steps:
+            fase_id = str(st.get("fase_id", ""))
+            fase_nome = str(st.get("fase_nome") or fase_id)
+            p50 = st.get("duration_p50_h")
+            if p50 is not None and float(p50) > 0:
+                duration = float(p50)
+            else:
+                fase_median = by_fase.get(fase_id)
+                if not fase_median or float(fase_median) <= 0:
+                    # Fase sem duração real (nem p50 nem mediana-por-fase): não
+                    # inventamos — a ordem inteira fica por planear (Q.131.H).
+                    return []
+                duration = float(fase_median)
+            rows.append(RoutingRow(
+                fase_id=fase_id,
+                fase_nome=fase_nome,
+                sequence=int(st.get("sequence", 0) or 0),
+                duration_hours=max(duration, 0.1),
+                source="db_template",
+                mold_required=_phase_uses_mold(fase_nome),
+            ))
+        rows.sort(key=lambda r: r.sequence)
+        return rows
 
     def _standard_template(self, modelo_id: str) -> List[RoutingRow]:
         """Use FasesStandardModelos (standard template).

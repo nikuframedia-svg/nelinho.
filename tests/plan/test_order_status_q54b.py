@@ -346,3 +346,30 @@ def test_active_orders_phase_filter_still_works():
     assert resp.status_code == 200
     # Ambas as ordens são shop-floor → nenhuma excluída.
     assert len(resp.json()) == 2
+
+
+# ─── Q.116.C — customer_id + model_id exposure ───────────────────────────
+
+
+def test_active_orders_exposes_model_id_and_customer_id_q116c():
+    """Q.116.C — `model_id` (=product_name) e `customer_id` (None por defeito)
+    no payload de /orders/active para permitir clickable no frontend.
+
+    O `_EndpointSession` legacy nao tem clientes, mas a presenca dos
+    campos no shape e um invariante e o `model_id` cai naturalmente em
+    `product_name`. `customer_id` e None porque o modelo legacy
+    `_order(...)` nao define `customer_name`.
+    """
+    orders = [_order(4271, "Laminagem", OrderStatus.IN_PROGRESS)]
+    client = TestClient(_app(_EndpointSession(orders)))
+    resp = client.get("/v1/plan/orders/active")
+    assert resp.status_code == 200
+    row = resp.json()[0]
+    # `model_id` espelha `product_name` (mesma business-key usada no sheet
+    # Modelo do entity_summary).
+    assert row["model_id"] == row["product_name"]
+    assert row["model_id"] == "K1 Vanquish"
+    # `customer_id` esta no payload mesmo sem cliente sincronizado (None
+    # honesto, sem mock).
+    assert "customer_id" in row
+    assert row["customer_id"] is None

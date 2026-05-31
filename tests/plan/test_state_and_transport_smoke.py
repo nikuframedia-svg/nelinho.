@@ -192,3 +192,86 @@ def test_preview_delta_service_owns_preview_issue():
         "transport_suggestions must not expose PreviewIssue — that "
         "would create a circular conceptual dependency."
     )
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# Q.131.A (Q.126.B) — FactoryState rotas/durações reais de factory_raw.of_fp
+# ───────────────────────────────────────────────────────────────────────────
+
+def test_factory_state_has_historical_routes_field():
+    """Q.131.A (Q.126.B) — FactoryState deve ter o campo
+    historical_routes_by_model (rotas reais reconstruídas de
+    factory_raw.of_fp) que o RoutingResolver consome quando a camada
+    curada está unavailable (a realidade de produção)."""
+    from src.plan.cpo.state import FactoryState
+
+    state = FactoryState(tenant_id=uuid4())
+    assert hasattr(state, "historical_routes_by_model"), (
+        "FactoryState.historical_routes_by_model ausente — caminho real Q.126.B partido"
+    )
+    assert state.historical_routes_by_model == {}
+
+
+def test_routing_resolver_uses_real_history_routes_when_engine_unavailable():
+    """Q.131.A (Q.126.B) — quando a camada curada está unavailable, o
+    RoutingResolver deve usar state.historical_routes_by_model (rotas reais
+    reconstruídas de factory_raw.of_fp, keyed por OF_P_ID) para resolver a
+    rota. Sem este caminho o scheduler dá sempre 400 mesmo havendo orders."""
+    from src.plan.cpo.state import FactoryState
+    from src.plan.services.routing_resolver import RoutingResolver
+
+    state = FactoryState(tenant_id=uuid4())
+    # Simula o que _load_historical_durations_routes_db() popula: a rota real
+    # do modelo OF_P_ID "20155" reconstruída do histórico (ordem por sequência).
+    state.historical_routes_by_model = {
+        "20155": [
+            {"fase_id": "3", "fase_nome": "Laminagem", "sequence": 1,
+             "duration_hours": 4.32},
+            {"fase_id": "5", "fase_nome": "Desmolde", "sequence": 2,
+             "duration_hours": 0.8},
+        ]
+    }
+    state.loaded_ok = True
+
+    resolver = RoutingResolver(state)
+    order = {"of_id": "TEST-001", "modelo_id": "20155", "data_entrega_prevista": None}
+    ops = resolver.resolve(order)
+
+    # Deve resolver as 2 operações reais (não cair no template 2x sintético)
+    assert len(ops) >= 2, (
+        f"Esperava >=2 ops da rota real, got {len(ops)}. "
+        "RoutingResolver não usou state.historical_routes_by_model."
+    )
+    sources = {op.operation_code for op in ops}
+    assert "Laminagem" in sources or "3" in sources, (
+        "Fase Laminagem não encontrada nas operações resolvidas"
+    )
+
+
+def test_real_db_loaders_have_no_coeficiente_x_in_sql():
+    """Q.131.A Spelke CX1 — CoeficienteX (€) não pode ser SELECTado em
+    nenhuma query dos loaders de dados reais (Q.126.B/C/D em state.py:
+    _load_historical_durations_routes_db / _load_molds_db / _load_skills_db /
+    _load_open_orders_db). Pode aparecer em comentário/docstring como aviso,
+    nunca como coluna de dados.
+
+    OFFP_COEFICIENTE_X / OF_COEFICIENTE são dinheiro (€), não tempo — CX1."""
+    import pathlib
+
+    state_path = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "src" / "plan" / "cpo" / "state.py"
+    )
+    source = state_path.read_text(encoding="utf-8")
+
+    for line in source.splitlines():
+        stripped = line.strip()
+        # comentários SQL/Python (-- / #) e linhas de docstring (") são OK
+        if stripped.startswith("--") or stripped.startswith("#") or stripped.startswith('"'):
+            continue
+        upper = line.upper()
+        if "COEFICIENTE_X" in upper or "OF_COEFICIENTE" in upper:
+            assert False, (
+                f"Campo de € (CoeficienteX) em código activo de state.py: "
+                f"{line!r} — viola Spelke CX1"
+            )

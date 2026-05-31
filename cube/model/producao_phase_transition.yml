@@ -1,0 +1,48 @@
+cubes:
+  - name: producao_phase_transition
+    description: >
+      Q.108.W2 — Tempo de transição entre fases consecutivas. Source:
+      marts.v_phase_transition_time_mes (self-JOIN of_fp + LEAD sobre
+      FP_SEQUENCIA). Mede idle time entre estações (queue).
+    sql_table: marts.v_phase_transition_time_mes
+
+    measures:
+      - name: total
+        description: COUNT transitions por (mês, fase_origem, fase_destino).
+        sql: n_transitions
+        type: sum
+        format: number
+
+      - name: transition_avg
+        description: >
+          AVG horas entre fim de fase_origem e início de fase_destino.
+          TEMPO em horas; cross-row AVG (NÃO SUM).
+        sql: transition_h_avg
+        type: avg
+        format: number
+
+      - name: transition_p50
+        description: Mediana das horas de transição.
+        sql: transition_h_p50
+        type: avg
+        format: number
+
+      - name: transition_p90
+        description: P90 — 90% das transições em <= este número de horas.
+        sql: transition_h_p90
+        type: avg
+        format: number
+
+    dimensions:
+      - name: data
+        description: Mês de fim da fase_origem.
+        sql: data
+        type: time
+      - name: fase_origem
+        description: Fase a sair (FP_NOME).
+        sql: fase_origem
+        type: string
+      - name: fase_destino
+        description: Fase a entrar (LEAD por FP_SEQUENCIA).
+        sql: fase_destino
+        type: string

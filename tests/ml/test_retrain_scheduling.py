@@ -44,19 +44,23 @@ class TestRegisterMLRetrainJobs:
     def test_registers_three_jobs_per_tenant(self):
         sched = _FakeScheduler()
         count = register_ml_retrain_jobs(sched, tenants=[TENANT_A])
-        # Sprint Q.54.F — duration + quality_risk + otd_risk = 3
-        # (surrogate has empty cron → skipped).
-        assert count == 3
+        # Q.115.U: duration + quality_risk + otd_risk + sequence_mining +
+        #          throughput_forecast + drift_detection = 6
+        # (surrogate tem cron vazio → skipped).
+        assert count == 6
         ids = {j["id"] for j in sched.jobs}
         assert f"ml_retrain:duration:{TENANT_A}" in ids
         assert f"ml_retrain:quality_risk:{TENANT_A}" in ids
         assert f"ml_retrain:otd_risk:{TENANT_A}" in ids
+        assert f"ml_retrain:sequence_mining:{TENANT_A}" in ids
+        assert f"ml_retrain:throughput_forecast:{TENANT_A}" in ids
+        assert f"ml_retrain:drift_detection:{TENANT_A}" in ids
 
     def test_registers_across_multiple_tenants(self):
         sched = _FakeScheduler()
         count = register_ml_retrain_jobs(sched, tenants=[TENANT_A, TENANT_B])
-        # 3 jobs × 2 tenants = 6
-        assert count == 6
+        # 6 jobs × 2 tenants = 12
+        assert count == 12
         names = {j["name"] for j in sched.jobs}
         assert f"ml_retrain_duration[{TENANT_A}]" in names
         assert f"ml_retrain_duration[{TENANT_B}]" in names

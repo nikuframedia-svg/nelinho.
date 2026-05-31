@@ -1,0 +1,38 @@
+cubes:
+  - name: comercial_devolucoes
+    description: >
+      Q.108.N — Devoluções (notas de crédito) por (mês × cliente ×
+      disciplina × país). Source: marts.v_devolucoes_mes — linhas de
+      EPHCF com facturado<0. Sinal POSITIVO em valor_eur (ABS) para
+      leitura natural. Aditivo entre meses e clientes.
+    sql_table: marts.v_devolucoes_mes
+
+    measures:
+      - name: valor_eur
+        description: SUM(ABS(facturado)) em €. DINHEIRO aditivo.
+        sql: valor_eur
+        type: sum
+        format: number
+
+      - name: n_notas
+        description: COUNT notas de crédito emitidas.
+        sql: n_notas
+        type: sum
+        format: number
+
+    dimensions:
+      - name: data
+        sql: data
+        type: time
+      - name: cliente
+        sql: cliente
+        type: string
+      - name: cliente_id
+        sql: cliente_id
+        type: number
+      - name: disciplina
+        sql: disciplina
+        type: string
+      - name: pais
+        sql: pais
+        type: string

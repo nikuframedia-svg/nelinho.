@@ -23,7 +23,7 @@ Why a thin wrapper over SemanticQueries?
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 from uuid import UUID
 
@@ -32,6 +32,56 @@ logger = logging.getLogger(__name__)
 
 # Every query returns a small dict ready to inject into the prompt.
 QueryResult = Dict[str, Any]
+
+
+# ─── Typed result dataclasses (Q.115.I) ─────────────────────────────────────
+
+@dataclass
+class PhaseRisk:
+    phase: str
+    p_defect: Optional[float]
+    sample_n: int
+
+
+@dataclass
+class BoatRiskProfile:
+    boat_id: str
+    top_phases_at_risk: List[PhaseRisk] = field(default_factory=list)
+    avg_quality_score: Optional[float] = None
+    completed_ops_30d: Optional[int] = None
+    note: Optional[str] = None
+
+
+@dataclass
+class AffinitySignal:
+    operator_name: str
+    phase_name: str
+    score: float
+    sample_count: int
+
+
+@dataclass
+class RunbookEntry:
+    id: str
+    steps_md_truncated: str
+    confidence: float
+    approved: bool
+
+
+@dataclass
+class RunbookLookupResult:
+    error_code: str
+    runbooks: List[RunbookEntry] = field(default_factory=list)
+    total_history_count: int = 0
+    note: Optional[str] = None
+
+
+@dataclass
+class CostBaseline:
+    daily_target_eur: Optional[float] = None
+    current_baseline_margin_eur: Optional[float] = None
+    top_revenue_clients_30d: List[Dict[str, Any]] = field(default_factory=list)
+    note: Optional[str] = None
 
 
 @dataclass
@@ -88,6 +138,20 @@ class FactoryStateQuery:
                 "de incerteza. Para um delta exacto num único cenário, usa "
                 "causal_query. Params: target (DAG node id), do (dict), "
                 "observe (dict), horizon_steps (1-30), samples (50-500)."},
+            {"name": "boat_risk_profile", "description":
+                "Perfil de risco de um barco específico: fases com maior "
+                "probabilidade de defeito + score médio de qualidade. "
+                "Param: boat_id (str)."},
+            {"name": "affinity_signals", "description":
+                "Top-10 afinidades operador-fase (score aprendido). "
+                "Params opcionais: phase_id, operator_id. "
+                "Vazio até Q.115.G correr."},
+            {"name": "runbook_lookup", "description":
+                "Runbooks de remediação para um código de erro. "
+                "Param: error_code (str). Vazio até Q.115.H correr."},
+            {"name": "cost_baseline", "description":
+                "Baseline de custos: alvo diário €, margem baseline, "
+                "top clientes 30d. Param opcional: commit_id."},
         ]
 
     @classmethod
@@ -276,7 +340,7 @@ class FactoryStateQuery:
         try:
             from difflib import get_close_matches
             from src.copilot.causal.nelo_dag import NODES_BY_ID
-        except Exception:
+        except ImportError:
             return []
         return get_close_matches(
             str(bad), list(NODES_BY_ID.keys()),
@@ -307,7 +371,7 @@ class FactoryStateQuery:
         """
         try:
             from src.copilot.causal.nelo_dag import causal_query as _kernel
-        except Exception as exc:  # pragma: no cover — defensive
+        except ImportError as exc:  # pragma: no cover — defensive
             return {"error": f"causal kernel unavailable: {exc}"}
 
         do_dict: Dict[str, float] = {}
@@ -410,14 +474,14 @@ class FactoryStateQuery:
         """
         try:
             from src.copilot.causal.world_model import forecast as _fc
-        except Exception as exc:  # pragma: no cover — defensive
+        except ImportError as exc:  # pragma: no cover — defensive
             return {"error": f"world_model unavailable: {exc}"}
 
         # Validate target before calling — turns "unknown node" into
         # the same did_you_mean diagnostic causal_query produces.
         try:
             from src.copilot.causal.nelo_dag import NODES_BY_ID as _NODES
-        except Exception as exc:  # pragma: no cover — defensive
+        except ImportError as exc:  # pragma: no cover — defensive
             return {"error": f"NELO_DAG unavailable: {exc}"}
         if target not in _NODES:
             return {
@@ -473,6 +537,151 @@ class FactoryStateQuery:
             "intervention": report.intervention,
             "observation": report.observation,
         })
+
+    # ─── Q.115.I methods ─────────────────────────────────────────────
+
+    def boat_risk_profile(self, boat_id: str) -> QueryResult:
+        """Perfil de risco de um barco: fases com maior p_defect + score qualidade.
+
+        Lê de quality.rework_entry. Por agora usa aggregate pois Q.115.E
+        (exposição de boat_id em rework_entry) ainda não correu.
+        Budget ≤120 tokens.
+        """
+        try:
+            raw = self._call_semantic("get_boat_risk_profile", boat_id=boat_id)
+        except Exception:
+            raw = None
+        if raw is not None:
+            data = raw.get("data") or {}
+            phases = [
+                PhaseRisk(
+                    phase=r.get("phase", ""),
+                    p_defect=r.get("p_defect"),
+                    sample_n=r.get("sample_n", 0),
+                )
+                for r in (data.get("top_phases_at_risk") or [])[:3]
+            ]
+            result = BoatRiskProfile(
+                boat_id=boat_id,
+                top_phases_at_risk=phases,
+                avg_quality_score=data.get("avg_quality_score"),
+                completed_ops_30d=data.get("completed_ops_30d"),
+            )
+        else:
+            result = BoatRiskProfile(
+                boat_id=boat_id,
+                note="perfil de risco por barco disponível após Q.115.E",
+            )
+        from dataclasses import asdict
+        return _cap(asdict(result))
+
+    def affinity_signals(
+        self,
+        phase_id: Optional[str] = None,
+        operator_id: Optional[str] = None,
+    ) -> QueryResult:
+        """Top-10 afinidades operador-fase (score desc).
+
+        Lê de governance.phase_operator_affinity (Q.115.A.04).
+        Tabela vazia até Q.115.G correr — devolve [] + nota.
+        Budget ≤120 tokens.
+        """
+        try:
+            raw = self._call_semantic(
+                "get_affinity_signals",
+                phase_id=phase_id,
+                operator_id=operator_id,
+            )
+        except Exception:
+            raw = None
+        if raw is not None:
+            data = raw.get("data") or {}
+            rows = data.get("signals") or []
+            signals = [
+                AffinitySignal(
+                    operator_name=r.get("operator_name", ""),
+                    phase_name=r.get("phase_name", ""),
+                    score=float(r.get("score", 0.0)),
+                    sample_count=int(r.get("sample_count", 0)),
+                )
+                for r in rows[:10]
+            ]
+            return _cap({
+                "signals": [
+                    {
+                        "operator_name": s.operator_name,
+                        "phase_name": s.phase_name,
+                        "score": s.score,
+                        "sample_count": s.sample_count,
+                    }
+                    for s in signals
+                ],
+                "total": len(signals),
+            })
+        return _cap({
+            "signals": [],
+            "total": 0,
+            "note": "afinidades ainda não computadas — Q.115.G pendente",
+        })
+
+    def runbook_lookup(self, error_code: str) -> QueryResult:
+        """Runbooks associados a um código de erro.
+
+        Lê de quality.runbook + quality.error_type_runbook_link.
+        Vazio até Q.115.H correr — devolve [] + nota.
+        Budget ≤150 tokens.
+        """
+        try:
+            raw = self._call_semantic("get_runbook_lookup", error_code=error_code)
+        except Exception:
+            raw = None
+        if raw is not None:
+            data = raw.get("data") or {}
+            entries = [
+                RunbookEntry(
+                    id=r.get("id", ""),
+                    steps_md_truncated=(r.get("steps_md") or "")[:200],
+                    confidence=float(r.get("confidence", 0.0)),
+                    approved=bool(r.get("approved", False)),
+                )
+                for r in (data.get("runbooks") or [])[:5]
+            ]
+            result = RunbookLookupResult(
+                error_code=error_code,
+                runbooks=entries,
+                total_history_count=data.get("total_history_count", 0),
+            )
+        else:
+            result = RunbookLookupResult(
+                error_code=error_code,
+                note="runbooks ainda não carregados — Q.115.H pendente",
+            )
+        from dataclasses import asdict
+        return _cap(asdict(result))
+
+    def cost_baseline(self, commit_id: Optional[str] = None) -> QueryResult:
+        """Baseline de custos: alvo diário + margem + top clientes 30d.
+
+        Lê de core.daily_revenue_target + client_priority + core.entities.
+        Budget ≤100 tokens.
+        """
+        try:
+            raw = self._call_semantic("get_cost_baseline", commit_id=commit_id)
+        except Exception:
+            raw = None
+        if raw is not None:
+            data = raw.get("data") or {}
+            result = CostBaseline(
+                daily_target_eur=data.get("daily_target_eur"),
+                current_baseline_margin_eur=data.get("current_baseline_margin_eur"),
+                top_revenue_clients_30d=(data.get("top_revenue_clients_30d") or [])[:5],
+            )
+        else:
+            result = CostBaseline(
+                note="dados de custo não disponíveis — tabelas core.daily_revenue_target vazias",
+            )
+        from dataclasses import asdict
+        return _cap(asdict(result))
 
     # ─── Dispatcher ──────────────────────────────────────────────────
 

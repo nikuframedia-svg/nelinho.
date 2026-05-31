@@ -56,7 +56,7 @@ interface DragData {
   fromPhase: string;
 }
 
-export function BarcosTimeline(): ReactNode {
+export function BarcosTimeline({ overrideSha }: { overrideSha?: string } = {}): ReactNode {
   const queryClient = useQueryClient();
   const [preview, setPreview] = useState<{
     result: PreviewDeltaResult;
@@ -68,11 +68,14 @@ export function BarcosTimeline(): ReactNode {
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
 
   // Último commit do CPO + as suas operações.
+  // Se `overrideSha` existir (ex: DRAFT acabado de calcular), usa-o directamente
+  // sem precisar de chamar /commits (que só devolve o LIVE).
   const commitsQuery = useQuery({
     queryKey: ['planeamento', 'cpo-commits'],
     queryFn: () => cpoCommitsApi.list({ limit: 1 }),
+    enabled: overrideSha === undefined,
   });
-  const latestSha = commitsQuery.data?.[0]?.commit_sha256;
+  const latestSha = overrideSha ?? commitsQuery.data?.[0]?.commit_sha256;
 
   const commitQuery = useQuery({
     queryKey: ['planeamento', 'cpo-commit', latestSha],

@@ -1,0 +1,71 @@
+cubes:
+  - name: comercial_facturacao_agente
+    description: >
+      Q.108.C — facturação ATRIBUÍDA A AGENTES comerciais NELO
+      (declaração trimestral). Fonte: factory_raw.agente_faturacao
+      (Q.108-A espelhada) — INDEPENDENTE de EPHCF.
+      NÃO CONFUNDIR com `comercial_facturacao.total` (EPHCF, vendas
+      totais). São dois ÂNGULOS da mesma facturação:
+      - EPHCF: todas as vendas (€125.4M acumulado, €9.5M em 2024).
+      - AGENTE_FATURACAO: só vendas com agente (€65.8M acumulado,
+        €3.1M em 2024; resto = vendas directas).
+      NUNCA somar entre si (dupla contagem).
+      Granularidade: 1 row por trimestre × agente.
+    sql_table: marts.v_facturacao_agente_trim
+
+    measures:
+      - name: total
+        description: >
+          Q.108.C — facturação atribuída ao agente em €.
+          SUM(facturado_eur) sobre v_facturacao_agente_trim. DINHEIRO
+          aditivo entre trimestres/agentes (mesma base €). Anchor:
+          total acumulado €65 816 613 (59 agentes), 2024 = €3 102 232.
+          Top 2024: Gusser KanuSport €395 698. NUNCA somar com
+          comercial_facturacao.total (fonte EPHCF, dupla contagem).
+        sql: facturado_eur
+        type: sum
+        format: number
+
+      - name: n_declaracoes
+        description: >
+          Q.108.C — número de declarações trimestrais por agente
+          (COUNT). 1 row em AGENTE_FATURACAO = 1 declaração. Anchor
+          total = 2 234 declarações.
+        sql: n_declaracoes
+        type: sum
+        format: number
+
+    dimensions:
+      - name: data
+        description: >
+          Primeiro dia do trimestre (MAKE_DATE(ano, (trim-1)*3+1, 1)).
+          Granularidade trimestral — NÃO mensal.
+        sql: data
+        type: time
+
+      - name: ano
+        description: Ano calendário (int, range 2009-2026).
+        sql: ano
+        type: number
+
+      - name: trimestre
+        description: Trimestre 1-4 (int).
+        sql: trimestre
+        type: number
+
+      - name: agente
+        description: >
+          Q.108.C — nome do agente comercial (entidade.E_NOME via
+          AF_E_ID). 59 agentes NELO. Top 2024: Gusser KanuSport
+          (Nauticus GmbH), Anjana International, Flat Water,
+          Olimpijczyk, Scott Oldershaw (Nelo Canada). Filtro `equals`
+          literal OU `contains` para sub-string ('Gusser', 'Anjana').
+        sql: agente
+        type: string
+
+      - name: agente_id
+        description: >
+          ID do agente (AF_E_ID = ENTIDADE.E_ID). Útil para queries
+          técnicas exactas; nome legível vive em `agente`.
+        sql: agente_id
+        type: number

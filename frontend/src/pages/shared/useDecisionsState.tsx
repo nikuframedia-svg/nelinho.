@@ -77,13 +77,7 @@ export function useDecisionsState() {
   // because the UI flow is "select pending decisions, OK them all".
   const bulkApproveMutation = useMutation({
     mutationFn: (ids: string[]) =>
-      decisionsApi.bulkAct(
-        ids.map((id) => ({
-          decision_id: id,
-          action: 'approve',
-          reason: 'Bulk approve via Timeline',
-        })),
-      ),
+      decisionsApi.bulkAct(ids, 'approve', 'Bulk approve via Timeline'),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['decisions'] });
       setSelectedIds(new Set());
@@ -112,7 +106,7 @@ export function useDecisionsState() {
     onError: (err: any) => toast.error(err.message || 'Modify failed'),
   });
 
-  const decisions = decisionsData?.items || [];
+  const decisions = decisionsData?.decisions || [];
   const totalPages = decisionsData ? Math.ceil(decisionsData.total / itemsPerPage) : 0;
 
   // Filter decisions by search

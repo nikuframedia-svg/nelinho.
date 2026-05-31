@@ -11,11 +11,26 @@ import { request, filterParams } from './client';
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // KPIs
+export interface KpiHistoryPoint {
+  date: string;
+  value: number | null;
+}
+
+export interface KpiHistoryResponse {
+  name: string;
+  unit: string;
+  days: number;
+  points: KpiHistoryPoint[];
+}
+
 export const kpisApi = {
   getSnapshot: () => request<any>('/v1/profit/kpis/snapshot'),
   getSnapshotDev: () => request<any>('/v1/profit/kpis/snapshot-dev'),
   getSnapshotExplained: () => request<any>('/v1/profit/kpis/snapshot-explained'),
   getOtdHeatmap: (weeks: number = 12) => request<any>(`/v1/profit/kpis/otd-heatmap?weeks=${weeks}`),
+  // Q.117.D — série histórica para o gráfico de tendência da tab KPIs.
+  getHistory: (name: string, days: number = 30) =>
+    request<KpiHistoryResponse>(`/v1/profit/kpis/${encodeURIComponent(name)}/history?days=${days}`),
 };
 
 // COGS
@@ -314,8 +329,10 @@ export interface OEEResponse {
   date_from: string;
   date_to: string;
   group_by: 'none' | 'phase' | 'shift' | 'product_type' | 'mold';
-  overall: OEEComponent;
+  overall: OEEComponent | null;
   breakdown: OEEComponent[];
+  erp_available?: boolean;
+  unavailable_reason?: string | null;
 }
 
 export const profitOeeApi = {
@@ -329,4 +346,39 @@ export const profitOeeApi = {
       `/v1/profit/oee?${new URLSearchParams(filterParams(params))}`,
     ),
 };
+
+// Q.118.D — margin preview por commit (delta € vs baseline). Usado pelo
+// cartão-hub das Decisões para mostrar o € fresco da decisão.
+export interface MarginPreviewResponse {
+  schedule_commit_id: string;
+  // Pydantic Decimal pode serializar como string em JSON — usar coerceEur().
+  predicted_margin_eur: number | string | null;
+  baseline_margin_eur: number | string | null;
+  delta_eur: number | string | null;
+  confidence: 'high' | 'medium' | 'low';
+  sample_size: number;
+  computed_at: string;
+}
+
+export const marginPreviewApi = {
+  /** GET /v1/profit/preview — 404 se o commit não existe (esconder defensivamente). */
+  get: (scheduleCommitId: string) =>
+    request<MarginPreviewResponse>(
+      `/v1/profit/preview?schedule_commit_id=${encodeURIComponent(scheduleCommitId)}`,
+    ),
+};
+
+// Q.118.T — rótulo PT-PT do nível de confiança da margem (em vez de 'high'/'medium'/'low' cru).
+export const MARGIN_CONFIDENCE_LABEL: Record<string, string> = {
+  high: 'fiável',
+  medium: 'estimada',
+  low: 'incerta',
+};
+
+/** Coerce o delta_eur (Pydantic Decimal pode chegar como string JSON) para número. */
+export function coerceEur(v: number | string | null | undefined): number | null {
+  if (v == null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
 

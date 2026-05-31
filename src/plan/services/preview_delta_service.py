@@ -31,12 +31,13 @@ from typing import Any, Optional
 from uuid import UUID
 
 from sqlalchemy import or_, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.governance.audit_service import audit_change
 from src.plan.cpo.commits import CommitsService, ScheduleCommit, compute_commit_hash
 from src.plan.cpo.fitness import FitnessConfig, compute_fitness
-from src.plan.cpo.state import normalize_phase_code
+from src.plan.cpo.state import NELO_CURING_GAPS_SEED, normalize_phase_code
 from src.plan.models.order import ProductionOrder
 from src.plan.services.cpo_commit_orders import (
     _op_order_key,
@@ -53,6 +54,15 @@ logger = logging.getLogger(__name__)
 PAIR_PREFERRED_PHASES: tuple[str, ...] = ("LAMINAGEM",)
 # Backwards-compat alias so existing tests keep importing the old name.
 PAIR_REQUIRED_PHASES: tuple[str, ...] = PAIR_PREFERRED_PHASES
+
+# Q.132.C — gaps de cura/secagem por transição de fase (química, não fila),
+# keyed por (from_code, to_code) normalizados → horas mínimas. Fonte única:
+# NELO_CURING_GAPS_SEED (16 transições). Usado para validar que um drag não
+# viola a janela de cura entre fases consecutivas da mesma ordem.
+_CURING_GAPS: dict[tuple[str, str], float] = {
+    (from_p, to_p): float(gap_h)
+    for from_p, to_p, gap_h, *_ in NELO_CURING_GAPS_SEED
+}
 
 
 @dataclass
@@ -152,6 +162,17 @@ class PreviewDeltaService:
 
         conflicts = _detect_conflicts(schedule_after, mutation)
         warnings = _detect_warnings(schedule_after, mutation)
+
+        # Q.132.C — precedência (axioma 2) + cura/secagem (axioma 6) no preview.
+        # O drag só mudava phase_id; antes só molde+operador eram validados. Um
+        # movimento que ponha a fase fora de ordem ou viole a janela de cura
+        # passava em silêncio. Agora é surfaçado como conflito/aviso explícito.
+        phase_rank = await self._phase_rank_map()
+        for issue in _detect_sequence_issues(
+            schedule_after, mutation, phase_rank, _CURING_GAPS,
+        ):
+            (conflicts if issue.severity == "conflict" else warnings).append(issue)
+
         pair_violation = any(
             i.type == "pair_rule" for i in (conflicts + warnings)
         )
@@ -169,6 +190,18 @@ class PreviewDeltaService:
             warnings=warnings,
             pair_rule_violation=pair_violation,
         )
+
+    async def _phase_rank_map(self) -> dict[str, int]:
+        """Q.132.C — ordem canónica das fases (nome normalizado → rank) do
+        routing. Vazio se o routing não estiver semeado (sem precedência a
+        validar). Best-effort: nunca rebenta o preview."""
+        try:
+            from src.plan.services.phase_ordering import PhaseOrderingService
+            return await PhaseOrderingService(
+                self.session, self.tenant_id,
+            ).phase_order_map()
+        except (SQLAlchemyError, ImportError):  # sem routing = sem precedência
+            return {}
 
     async def apply(
         self,
@@ -535,6 +568,112 @@ def _detect_warnings(
                 ),
             )
         )
+
+    return out
+
+
+def _detect_sequence_issues(
+    schedule: dict[str, Any],
+    mutation: PreviewMutation,
+    phase_rank: dict[str, int],
+    curing_gaps: dict[tuple[str, str], float],
+) -> list[PreviewIssue]:
+    """Q.132.C — Spelke axioma 2 (precedência) + axioma 6 (cura/secagem) no
+    drag-drop. O preview só validava molde+operador; um movimento que pusesse
+    uma fase fora de ordem, ou colasse duas fases violando a janela de cura,
+    passava em silêncio. Aqui surfaçamos:
+
+    * **precedência** (conflito): a fase movida não pode ficar agendada antes de
+      uma fase de rank inferior (predecessora) nem depois de uma de rank superior
+      (sucessora), dentro da mesma ordem.
+    * **cura** (aviso): o gap até à predecessora / da sucessora imediata tem de
+      respeitar `NELO_CURING_GAPS_SEED` (química, não fila).
+
+    Sem `phase_rank` (routing não semeado) não há precedência a validar → [].
+    """
+    out: list[PreviewIssue] = []
+    op = _find_op(schedule, mutation.operation_id)
+    if op is None or not phase_rank:
+        return out
+    order_id = str(op.get("order_id") or "")
+    new_code = normalize_phase_code(op.get("phase_id") or op.get("phase_name") or "")
+    new_rank = phase_rank.get(new_code)
+    start = _ts(op.get("start"))
+    end = _ts(op.get("end"))
+    if not order_id or new_rank is None or start is None or end is None:
+        return out
+
+    op_key = str(op.get("id") or op.get("operation_id") or "")
+    siblings: list[tuple[int, datetime, datetime, str]] = []
+    for other in schedule.get("operations") or []:
+        if str(other.get("id") or other.get("operation_id") or "") == op_key:
+            continue
+        if str(other.get("order_id") or "") != order_id:
+            continue
+        oc = normalize_phase_code(
+            other.get("phase_id") or other.get("phase_name") or ""
+        )
+        orank = phase_rank.get(oc)
+        os_, oe = _ts(other.get("start")), _ts(other.get("end"))
+        if orank is None or os_ is None or oe is None:
+            continue
+        siblings.append((orank, os_, oe, oc))
+
+    # ── Precedência (axioma 2) ──────────────────────────────────────────────
+    inverted = next(
+        (
+            (orank, oc)
+            for (orank, os_, oe, oc) in siblings
+            if (orank < new_rank and os_ > start)
+            or (orank > new_rank and os_ < start)
+        ),
+        None,
+    )
+    if inverted is not None:
+        orank, oc = inverted
+        earlier, later = (
+            (oc, new_code) if orank < new_rank else (new_code, oc)
+        )
+        out.append(PreviewIssue(
+            type="precedence_violation",
+            severity="conflict",
+            message=(
+                f"Precedência violada: a fase {earlier} tem de vir antes de "
+                f"{later} na mesma ordem, mas o movimento inverte essa sequência."
+            ),
+        ))
+
+    # ── Cura/secagem (axioma 6) ─────────────────────────────────────────────
+    preds = [(r, s, e, c) for (r, s, e, c) in siblings if r < new_rank]
+    succs = [(r, s, e, c) for (r, s, e, c) in siblings if r > new_rank]
+    if preds:
+        _pr, _ps, pe, pc = max(preds, key=lambda t: t[0])  # predecessora imediata
+        req = curing_gaps.get((pc, new_code))
+        if req is not None:
+            gap_h = (start - pe).total_seconds() / 3600.0
+            if gap_h < req:
+                out.append(PreviewIssue(
+                    type="curing_gap_violation",
+                    severity="warning",
+                    message=(
+                        f"Cura insuficiente {pc}→{new_code}: exige {req:.1f}h, "
+                        f"o plano dá só {gap_h:.1f}h (química, não fila)."
+                    ),
+                ))
+    if succs:
+        _sr, ss, _se, sc = min(succs, key=lambda t: t[0])  # sucessora imediata
+        req = curing_gaps.get((new_code, sc))
+        if req is not None:
+            gap_h = (ss - end).total_seconds() / 3600.0
+            if gap_h < req:
+                out.append(PreviewIssue(
+                    type="curing_gap_violation",
+                    severity="warning",
+                    message=(
+                        f"Cura insuficiente {new_code}→{sc}: exige {req:.1f}h, "
+                        f"o plano dá só {gap_h:.1f}h (química, não fila)."
+                    ),
+                ))
 
     return out
 

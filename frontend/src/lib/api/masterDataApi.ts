@@ -157,6 +157,96 @@ export const ratesApi = {
   },
 };
 
+// ─── Q.115.X5 — cancel / retire / deactivate ─────────────────────────────────
+
+export interface CancelActionResponse {
+  audit_trace_id: string;
+  status: 'cancelled' | 'retired' | 'deactivated';
+  decision_id?: string;
+}
+
+export interface WorkOrderItem {
+  of_id: string;
+  modelo: string;
+  modelo_id: string | null;
+  cliente: string;
+  cliente_id: string | null;
+  fase_actual: string;
+  status: string;
+}
+
+export interface EncomendasItem {
+  encomenda_id: string;
+  cliente: string;
+  cliente_id: string | null;
+  modelo?: string;
+  modelo_id?: string | null;
+  data: string;
+  total_eur: number;
+}
+
+export interface BoatItem {
+  boat_id: string;
+  modelo_nome: string;
+  modelo_id: string | null;
+  cliente: string | null;
+  cliente_id: string | null;
+  retired_at: string | null;
+}
+
+export interface EmployeeItem {
+  employee_id: string;
+  nome: string;
+  role: string | null;
+  active: boolean;
+}
+
+export interface DeactivateResponse extends CancelActionResponse {
+  warning_ops_planeadas?: number;
+}
+
+export const cancelActionsApi = {
+  // Ordens de fabrico activas (top-20)
+  listWorkOrders: () =>
+    request<WorkOrderItem[]>('/v1/work-orders?status=active&limit=20'),
+
+  cancelWorkOrder: (ofId: string, reason: string) =>
+    request<CancelActionResponse>(`/v1/work-orders/${ofId}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
+
+  // Encomendas activas (top-20)
+  listEncomendas: () =>
+    request<EncomendasItem[]>('/v1/encomendas?status=active&limit=20'),
+
+  cancelEncomenda: (id: string, reason: string) =>
+    request<CancelActionResponse>(`/v1/encomendas/${id}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
+
+  // Barcos/modelos
+  listBoats: (showRetired: boolean) =>
+    request<BoatItem[]>(`/v1/master-data/boats?show_retired=${showRetired}&limit=20`),
+
+  retireBoat: (boatId: string, reason: string) =>
+    request<CancelActionResponse>(`/v1/master-data/boats/${boatId}/retire`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
+
+  // Operadores
+  listEmployees: (showInactive: boolean) =>
+    request<EmployeeItem[]>(`/v1/master-data/employees?show_inactive=${showInactive}&limit=20`),
+
+  deactivateEmployee: (employeeId: string, reason: string) =>
+    request<DeactivateResponse>(`/v1/master-data/employees/${employeeId}/deactivate`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
+};
+
 // Tenants
 export const tenantsApi = {
   list: () => request<any>('/v1/core/tenants'),

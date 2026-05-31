@@ -15,7 +15,18 @@ export * from './workforceApi';
 export * from './supplyApi';
 export * from './qualityApi';
 export * from './copilotApi';
+export * from './cubeApi';
 export * from './governanceApi';
 export * from './platformApi';
 export * from './dataProductApi';
 export * from './opsApi';
+// learningApi (plan-vs-actual Q.115.V) — re-exportado com nome distinto
+// para evitar conflito com learningApi de governanceApi (governance/learning)
+export {
+  type DeltaByPhase,
+  type DeltaByModel,
+  type PlanVsActualReport,
+  learningApi as learningPlanApi,
+} from './learningApi';
+// runbookApi (Q.115.H) — já re-exportado via export * from './qualityApi' acima
+export * from './entityApi';

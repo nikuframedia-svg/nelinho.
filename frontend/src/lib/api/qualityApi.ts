@@ -448,3 +448,62 @@ export const moldsApi = {
     ),
 };
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// QUALITY RISK PREVIEW (Q.115.E — defensivo, endpoint pode não existir)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface QualityRiskPreview {
+  operator_id: string | null;
+  boat_id: string | null;
+  phase_id: string | null;
+  p_defect: number;
+}
+
+export const qualityRiskApi = {
+  /** GET /v1/quality/risk-preview — defensivo: retorna null se 404. */
+  riskPreview: (params: {
+    operator_id: string;
+    boat_id: string;
+    phase_id: string;
+  }) => {
+    const qs = new URLSearchParams({
+      operator_id: params.operator_id,
+      boat_id: params.boat_id,
+      phase_id: params.phase_id,
+    });
+    return request<QualityRiskPreview>(`/v1/quality/risk-preview?${qs.toString()}`);
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// RUNBOOK API (Q.115.H)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface Runbook {
+  id: string;
+  error_code: string;
+  steps_md: string;
+  source: string;
+  confidence: number;
+  approved_by: string | null;
+  approved_at: string | null;
+  created_at: string | null;
+}
+
+export const runbookApi = {
+  /** GET /v1/quality/runbook?error_code=... — lista runbooks do tenant. */
+  list: (params?: { error_code?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.error_code) qs.set('error_code', params.error_code);
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    return request<Runbook[]>(`/v1/quality/runbook${suffix}`);
+  },
+
+  /** POST /v1/quality/runbook/{id}/approve */
+  approve: (runbookId: string, payload: { approved_by: string; notes?: string }) =>
+    request<Runbook>(`/v1/quality/runbook/${encodeURIComponent(runbookId)}/approve`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+};
+

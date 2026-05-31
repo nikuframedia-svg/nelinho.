@@ -1,0 +1,74 @@
+cubes:
+  - name: producao_ofs_por_fase
+    description: >
+      Q.99 Onda 1 / Agente C — distribuição (drill-down por fase) do
+      número de Ordens de Fabrico em curso. Critério canónico Q.79: "em
+      curso" = OF cujo OF_FP_ID aponta para uma fase com FP_SEQUENCIA <
+      30 (estados não-terminais). Fonte: marts.v_ofs_por_fase_snapshot.
+
+      Mesma fonte e mesmo critério de `producao_ofs_em_curso.total`
+      (Agente A) — as duas medidas são COMPATÍVEIS: SUM global das duas
+      bate o mesmo anchor 4 233. A diferença é ergonomia da consulta:
+      esta medida tem a dim `fase` como cidadã de primeira classe
+      (perguntas "por fase" / "em fase X" / "distribuição por fase"
+      caem aqui naturalmente). NÃO somar producao_ofs_em_curso.total +
+      producao_ofs_por_fase.total — é a mesma contagem em dois cubes
+      (dupla contagem).
+
+      Anchor factory_raw espelho: 4 233 OFs em curso distribuídas por
+      32 fases activas. Top: Laminagem peças (1 233), Corte peças
+      (1 100), Não Laminado (392), Corte (294), Laminagem Infusão
+      (222). CONTAGEM adimensional — soma sempre OK (trivialmente
+      aditiva). Snapshot do estado actual, não histórico. A medida
+      vive como `producao_ofs_por_fase.total` no registo do contrato.
+    sql_table: marts.v_ofs_por_fase_snapshot
+
+    measures:
+      - name: total
+        description: >
+          Contagem de OFs em curso, agrupável por fase. SUM(n_ofs) da
+          view, que já agrega por (fp_id, fp_nome, fp_sequencia). SUM
+          cross-row de CONTAGEM é trivial — não mistura unidades, nunca
+          negativo, nunca fraccionário. Anchor Q.99: SUM(total) sem
+          dims = 4 233.
+        sql: n_ofs
+        type: sum
+        format: number
+
+    dimensions:
+      - name: fase
+        description: >
+          Nome da fase de produção activa (FP_NOME). Dim canónica
+          obrigatória semanticamente para esta medida: o utilizador
+          chega aqui sempre para drill-down. 32 fases efectivamente
+          pobladas com FP_SEQUENCIA < 30. Top-5: Laminagem peças
+          (1 233), Corte peças (1 100), Não Laminado (392), Corte
+          (294), Laminagem Infusão (222). Quatro fases distintas
+          contêm 'laminagem' (peças, Infusão, Double Dutch, plain) —
+          usar `equals` com nome literal para evitar mistura.
+        sql: fp_nome
+        type: string
+
+      - name: fase_id
+        description: >
+          ID numérico da fase (FP_ID). Útil para JOIN com outras
+          medidas que partilham `fase_id` como dim canónica
+          (qualidade.fase_id da Q.96, producao_ofs_em_curso.fase_id do
+          Agente A da Onda 1). Valores: 1 (Laminagem), 3 (Corte), 5
+          (Pintura Acabamento), 11 (Não Laminado), 18 (Pintura), 28
+          (Corte peças), 36 (Laminagem peças), 54 (Laminagem Double
+          Dutch), 67 (Laminagem Infusão), e mais 23 ids activos.
+        sql: fp_id
+        type: number
+
+      - name: fase_sequencia
+        description: >
+          Sequência da fase no processo industrial (FP_SEQUENCIA, int
+          1..29 dentro do escopo desta medida — fases com seq >= 30
+          são estados terminais e estão fora). Permite ordenar/filtrar
+          por etapa: 1 = início (Não Laminado), 10 = laminagem, 13 =
+          corte, 14 = colagem, 16 = pintura acabamento, 20 =
+          acabamento 2, 29 = controlo de qualidade final. NÃO somar
+          fase_sequencia (é índice ordinal, não contagem).
+        sql: fp_sequencia
+        type: number

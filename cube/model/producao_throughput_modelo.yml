@@ -1,0 +1,32 @@
+cubes:
+  - name: producao_throughput_modelo
+    description: >
+      Q.108.F.3b — Throughput semanal por modelo × disciplina. Source:
+      marts.v_throughput_modelo_sem (JOIN ordemfabrico → produto →
+      produto_tipo). OF_DATAFIM canónico do fecho.
+    sql_table: marts.v_throughput_modelo_sem
+
+    measures:
+      - name: total
+        description: COUNT OFs concluídas por (semana, modelo, disciplina). CONTAGEM aditiva.
+        sql: n_ofs_concluidas
+        type: sum
+        format: number
+
+    dimensions:
+      - name: data
+        description: Semana de fechamento (date_trunc('week', OF_DATAFIM)).
+        sql: data
+        type: time
+      - name: modelo
+        description: P_NOME do produto (K1, K2, K4, …).
+        sql: modelo
+        type: string
+      - name: modelo_id
+        description: P_ID (chave estável do produto).
+        sql: modelo_id
+        type: number
+      - name: disciplina
+        description: TP_NOME (Canoe Sprint, Marathon, Ocean, Fitness, …).
+        sql: disciplina
+        type: string

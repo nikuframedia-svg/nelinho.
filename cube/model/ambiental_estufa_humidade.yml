@@ -1,0 +1,48 @@
+cubes:
+  - name: ambiental_estufa_humidade
+    description: >
+      Q.108 Onda A — humidade relativa das estufas de cura (sensors
+      12 Estufa 60, 14 Estufa 30, 17 Estufa Peças). View v_estufa_
+      humidade_mes faz AVG/MIN/MAX por mês × estufa, com SD_HUM
+      dividido por 100 (0-100 → 0-1) para honrar unit FRACAO. NÃO É
+      SUM — agregação cross-row é AVG. Sensor 15 "Temperatura
+      Exterior" excluído (não é estufa).
+    sql_table: marts.v_estufa_humidade_mes
+
+    measures:
+      - name: avg
+        description: >
+          Humidade relativa MÉDIA (cross-row AVG, NÃO SUM). Cube
+          aplica AVG da coluna hum_avg já agregada na view (escala
+          0-1, narração apresenta como %). Anchor histórico Estufa
+          60 = 0.383 (38.3%); Estufa 30 = 0.305; Estufa Peças = 0.414.
+        sql: hum_avg
+        type: avg
+        format: percent
+
+      - name: min
+        description: >
+          Humidade MÍNIMA registada na granularidade mês × estufa.
+          Cube aplica MIN da coluna hum_min. Apresentar como %.
+        sql: hum_min
+        type: min
+        format: percent
+
+      - name: max
+        description: >
+          Humidade MÁXIMA registada na granularidade mês × estufa.
+          Cube aplica MAX da coluna hum_max. Apresentar como %.
+        sql: hum_max
+        type: max
+        format: percent
+
+    dimensions:
+      - name: data
+        sql: data
+        type: time
+      - name: estufa
+        sql: estufa
+        type: string
+      - name: sensor_id
+        sql: sensor_id
+        type: number

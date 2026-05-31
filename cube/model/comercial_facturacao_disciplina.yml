@@ -1,0 +1,57 @@
+cubes:
+  - name: comercial_facturacao_disciplina
+    description: >
+      Q.103 Agente B — drill-down comercial por disciplina. Perfil
+      disciplina-centric sobre a MESMA fonte que comercial_facturacao
+      (marts.v_facturacao_mes, Q.102.B). Mesma SUM agregada, mesma
+      base sem IVA (herdada Q.102, pendente CFO). Anchors: Canoe
+      Sprint Ep. = €73 018 963 (58.24 % do total), Ocean €6.3M,
+      Canoe Marathon €4.4M, Fitness Ep. €4.1M, Fitness Pl. €3.4M.
+      Soma de TODAS as disciplinas = €125 372 058 (= comercial_
+      facturacao.total Q.102). ATENÇÃO DUPLA CONTAGEM: NÃO somar
+      com os outros cubes comerciais.
+    sql_table: marts.v_facturacao_mes
+
+    measures:
+      - name: total
+        description: >
+          Facturação líquida em € agrupada por disciplina.
+          SUM(facturado_eur). Aditivo entre disciplinas/períodos
+          (DINHEIRO mesma base). Canoe Sprint sozinha = 58 % do total.
+        sql: facturado_eur
+        type: sum
+        format: number
+
+    dimensions:
+      - name: data
+        description: >
+          Primeiro dia do mês (DATE). Granularidade mensal. Usa
+          `timeDimensions` com `dateRange` para filtros temporais.
+        sql: data
+        type: time
+
+      - name: ano
+        description: >
+          Ano calendário (int). Range 2009-2026.
+        sql: ano
+        type: number
+
+      - name: disciplina
+        description: >
+          Nome canónico da disciplina (TP_NOME via JOIN
+          EPHCF_TP_ID → PRODUTO_TIPO.TP_ID). Valores principais:
+          'Canoe Sprint Ep.' (€73M, 58 %), 'Não categorizado'
+          (€14.8M, 14.3 % rows sem TP_ID), 'Ocean' (€6.3M),
+          'Canoe Marathon' (€4.4M), 'Fitness Ep.' (€4.1M),
+          'Fitness Pl.' (€3.4M). 173 disciplinas distintas.
+          Filtro `equals` literal recomendado.
+        sql: disciplina
+        type: string
+
+      - name: disciplina_id
+        description: >
+          ID numérico (EPHCF_TP_ID = PRODUTO_TIPO.TP_ID). Valores
+          chave: 6 (Canoe Sprint Ep.), 243 (Ocean), 244 (Canoe
+          Marathon), 245 (Fitness Pl.), 246 (Fitness Ep.).
+        sql: disciplina_id
+        type: number

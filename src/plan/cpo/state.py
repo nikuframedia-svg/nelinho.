@@ -50,6 +50,20 @@ NELO_CURING_GAPS_SEED: Tuple[Tuple[str, str, float, str, int], ...] = (
 )
 
 
+def curing_gap_pairs() -> Set[Tuple[str, str]]:
+    """Q.116.B — todos os pares (from_phase, to_phase) com gap declarado.
+
+    Usado por `scripts/verify_invariants.py` para validar que cada par
+    (predecessor_alternativo, fase_flexivel) declarado em
+    `plan.routing_template_phase.allowed_predecessors` tem um gap de
+    cura conhecido em `NELO_CURING_GAPS_SEED`.
+
+    Sem gap = ordem alternativa sem suporte fisico — o decoder nao
+    pode garantir que a quimica respeita a transicao.
+    """
+    return {(from_p, to_p) for from_p, to_p, *_ in NELO_CURING_GAPS_SEED}
+
+
 def normalize_phase_code(name: Optional[str]) -> str:
     """Canonical phase code: strip accents, UPPERCASE, spaces/hyphens/
     dots → underscores. Used for curing gap lookups and
@@ -111,6 +125,42 @@ class FactoryState:
 
     # median historical real duration per (fase_id, modelo_id), in hours
     historical_durations: Dict[Tuple[str, str], float] = field(default_factory=dict)
+
+    # Q.126.B — median real duration per fase_id alone (across all models),
+    # used as a second-tier fallback in `median_duration_h` BEFORE the 2x
+    # synthetic buffer. Populated from factory_raw.of_fp (ERP vivo). Empty =
+    # no DB history loaded (keeps the legacy 2x behaviour).
+    historical_durations_by_fase: Dict[str, float] = field(default_factory=dict)
+
+    # Q.133.A2 — p50 CALIBRADO por (fase_id, modelo) em HORAS + n_obs, do job
+    # phase_calibration (plan.phase_duration_calibration). `median_duration_h`
+    # prefere-o sobre a mediana crua de of_fp quando n_obs >= _CALIBRATION_MIN_OBS.
+    # Vazio = sem calibração → comportamento legado (back-compat).
+    calibrated_durations: Dict[Tuple[str, str], Tuple[float, int]] = field(
+        default_factory=dict
+    )
+
+    # Q.133.B — nº de estações paralelas por fase (fase_id → N), do p95 da
+    # concorrência histórica real. O scheduler cria N máquinas por fase e o
+    # resolver atribui a op ao work-center da fase → paralelismo real. Vazio =
+    # pool "MANUAL" único (back-compat).
+    phase_stations: Dict[str, int] = field(default_factory=dict)
+
+    # Q.126.B — real production route per model (OF_P_ID) reconstructed from
+    # factory_raw.of_fp: ordered production phases + median real duration.
+    # Each step: {fase_id, fase_nome, sequence, duration_hours}. Lets the
+    # resolver build a real route when the in-memory curated layer (Excel) is
+    # empty — the production reality. Empty = no DB history loaded.
+    historical_routes_by_model: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
+
+    # Q.131.G — routing master do ERP (tabela PRODUTO_FASE), espelhado em
+    # plan.model_routing_assignment + routing_template_phase, keyed por OF_P_ID.
+    # Fallback REAL (rota do ERP + duration_p50_h minerado de of_fp por
+    # time_mining) para modelos sem >=2 observações por fase em of_fp — cobre
+    # ~99% das ordens (vs 73% só com histórico per-order). Cada step:
+    # {fase_id, fase_nome, sequence, duration_p50_h (float|None), requires_mold,
+    # team_size_default}. Empty = sem templates carregados.
+    template_routes_by_model: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
 
     # historical error rate per fase_id (0.0-1.0)
     historical_error_rates: Dict[str, float] = field(default_factory=dict)
@@ -179,65 +229,103 @@ class FactoryState:
         since semantic layer is in-memory).
         """
         sq = semantic_queries
+        curated_error: Optional[str] = None
         if sq is None:
             try:
+                # fix Q.124 — SemanticQueriesInMemory exige `engine`; antes era
+                # chamado sem argumento → TypeError silencioso → estado vazio.
+                # Resolver o IngestEngine global; sem engine ou sem ingestão ativa,
+                # a camada curada está vazia.
+                from src.factory_data_product.api.endpoints import get_engine
                 from src.factory_data_product.services.semantic_queries_inmemory import (
                     SemanticQueriesInMemory,
                 )
-                sq = SemanticQueriesInMemory()
+                engine = get_engine()
+                if engine is None or engine.get_active_run() is None:
+                    raise RuntimeError(
+                        "camada curada sem ingestão ativa (sem Excel/ETL ERP→curated)"
+                    )
+                sq = SemanticQueriesInMemory(engine)
             except Exception as e:
-                # Sprint Q.8 Fase 1 — booting empty means scheduler runs
-                # with skill_matrix={}, molds_by_model={}: any worker may
-                # do any phase, any mold may be used by any model.
-                # This MUST be loud, not a debug whisper.
+                # Q.126.B — em vez de desistir (loaded_ok=False → 503), cair
+                # para o ERP vivo (factory_raw.of_fp). Só fica loaded_ok=False
+                # no fim se a BD TAMBÉM não tiver histórico real. Isto faz o
+                # CPO planear com dados reais sem depender do Excel curado.
+                curated_error = str(e)
                 logger.warning(
-                    "FactoryState booting EMPTY — curated layer unavailable "
-                    "(%s); scheduler will emit INSUFFICIENT_DATA. Tenant=%s",
+                    "FactoryState: camada curada indisponível (%s); a tentar "
+                    "histórico real da BD (factory_raw). Tenant=%s",
                     e,
                     tenant_id,
                 )
-                try:
-                    from src.shared.metrics import bump_silent_fallback
-                    bump_silent_fallback(
-                        "factory_state", "semantic_layer_unavailable",
-                    )
-                except Exception:  # noqa: S110  Q.61.06: metrics best-effort
-                    pass
-                return cls(
-                    tenant_id=tenant_id,
-                    loaded_ok=False,
-                    load_error=f"semantic_layer_unavailable: {e}",
-                )
+                sq = None
 
         state = cls(tenant_id=tenant_id)
 
-        # Open orders
-        wip = _safe_call(sq, "get_wip")
-        if wip and "data" in wip:
-            state.open_orders = wip["data"].get("open_orders_list", []) or []
-        elif wip and "rows" in wip:
-            state.open_orders = list(wip["rows"])
-
-        # Skill matrix
-        skills = _safe_call(sq, "get_skills_risk", min_capable=1)
-        if skills:
-            # Walk curated engine directly if available for full matrix
-            engine = getattr(sq, "engine", None)
-            if engine is not None:
-                state.skill_matrix = _extract_skill_matrix(engine)
-
-        # Molds
         if sq is not None:
+            # ----- camada curada in-memory (Excel/ETL) -----
+            wip = _safe_call(sq, "get_wip")
+            if wip and "data" in wip:
+                state.open_orders = wip["data"].get("open_orders_list", []) or []
+            elif wip and "rows" in wip:
+                state.open_orders = list(wip["rows"])
+
+            skills = _safe_call(sq, "get_skills_risk", min_capable=1)
+            if skills:
+                engine = getattr(sq, "engine", None)
+                if engine is not None:
+                    state.skill_matrix = _extract_skill_matrix(engine)
+
             engine = getattr(sq, "engine", None)
             if engine is not None:
                 state.molds_by_model, state.molds = _extract_molds(engine)
-
-        # Historical durations + error rates
-        if sq is not None:
-            engine = getattr(sq, "engine", None)
-            if engine is not None:
                 state.historical_durations = _extract_durations(engine)
                 state.historical_error_rates = _extract_error_rates(engine)
+
+        # ----- Q.126.B/C/D — BD viva (factory_raw.*): DB-first p/ dados reais.
+        # Durações/rotas reais ganham sempre (resolvem o fallback 2x sintético);
+        # molds/skills/open_orders preenchem quando a camada curada não trouxe.
+        # Tudo best-effort (session None / tabela ausente → sem alteração).
+        routes_db, dur_pair_db, dur_fase_db = await _load_historical_durations_routes_db(
+            session, tenant_id,
+        )
+        if dur_pair_db:
+            state.historical_durations = dur_pair_db
+        if dur_fase_db:
+            state.historical_durations_by_fase = dur_fase_db
+        if routes_db:
+            state.historical_routes_by_model = routes_db
+
+        # Q.131.G — routing master do ERP (PRODUTO_FASE). Fallback-de-fallback:
+        # carregado sempre (modelos diferentes caem em camadas diferentes do
+        # resolver). Best-effort; tenant-scoped (≠ factory_raw.*).
+        templates_db = await _load_route_templates_db(session, tenant_id)
+        if templates_db:
+            state.template_routes_by_model = templates_db
+
+        # Q.133.A2 — p50 calibrado (loop de aprendizagem). median_duration_h
+        # prefere-o quando n_obs suficiente. Best-effort; vazio = legado.
+        calibration_db = await _load_phase_calibration_db(session, tenant_id)
+        if calibration_db:
+            state.calibrated_durations = calibration_db
+
+        # Q.133.B — N estações paralelas por fase (concorrência histórica real).
+        # Best-effort; vazio → o scheduler usa o pool "MANUAL" (back-compat).
+        try:
+            from src.plan.services.phase_workcenters import derive_phase_stations
+            state.phase_stations = await derive_phase_stations(session, tenant_id)
+        except ImportError as exc:  # pragma: no cover — best-effort
+            logger.debug("Q.133.B phase_stations skipped: %s", exc)
+
+        molds_by_model_db, molds_db = await _load_molds_db(session, tenant_id)
+        if molds_db:
+            state.molds_by_model, state.molds = molds_by_model_db, molds_db
+
+        if not state.skill_matrix:
+            state.skill_matrix = await _load_skills_db(session, tenant_id)
+
+        if not state.open_orders:
+            state.open_orders = await _load_open_orders_db(session, tenant_id)
 
         # Curing/drying gaps (Sprint A D2): DB first, seed fallback
         state.phase_transition_gaps = await _load_phase_transition_gaps(
@@ -261,11 +349,30 @@ class FactoryState:
             logger.debug("FactoryCalendar load skipped: %s", exc)
             state.calendar = None
 
+        # Q.126.B — loaded_ok=False só quando NÃO há camada curada NEM
+        # histórico real na BD (mantém o 503 honesto do scheduler nesse caso).
+        if sq is None and not (
+            state.historical_durations or state.historical_routes_by_model
+        ):
+            state.loaded_ok = False
+            state.load_error = (
+                f"semantic_layer_unavailable: {curated_error}; "
+                "sem histórico real em factory_raw"
+            )
+            try:
+                from src.shared.metrics import bump_silent_fallback
+                bump_silent_fallback(
+                    "factory_state", "semantic_layer_unavailable",
+                )
+            except Exception:  # noqa: S110  Q.61.06: metrics best-effort
+                pass
+
         logger.info(
             f"FactoryState loaded: {len(state.open_orders)} orders, "
             f"{len(state.skill_matrix)} phases with skills, "
             f"{len(state.molds)} molds, "
             f"{len(state.historical_durations)} duration medians, "
+            f"{len(state.historical_routes_by_model)} model routes, "
             f"{len(state.phase_transition_gaps)} curing gaps, "
             f"{len(state.preference_rules)} confirmed rules"
         )
@@ -315,8 +422,22 @@ class FactoryState:
         fallback_hours: float,
     ) -> float:
         key = (str(fase_id), str(modelo_id))
+        # Q.133.A2 — preferir o p50 CALIBRADO (job phase_calibration) quando há
+        # amostra suficiente. É histórico real agregado + (Q.133.A3) o desvio
+        # plano-vs-real. Degrau, não blend → determinístico; dict vazio =
+        # comportamento anterior (back-compat total).
+        cal = self.calibrated_durations.get(key)
+        if cal and cal[1] >= _CALIBRATION_MIN_OBS and cal[0] > 0:
+            return cal[0]
         if key in self.historical_durations:
             return self.historical_durations[key]
+        # Q.126.B — second tier: real median for the fase across all models
+        # (still REAL ERP history, not synthetic) before falling to the 2x
+        # buffer. Covers known fases of new/rare models without inventing a
+        # number. Empty dict (no DB history) => unchanged legacy behaviour.
+        by_fase = self.historical_durations_by_fase.get(str(fase_id))
+        if by_fase and by_fase > 0:
+            return by_fase
         # FASE 6.4 — buffer multiplier was hardcoded 2.0 (NELO rule:
         # standard times diverge from real by up to 25× in the worst
         # cases, so 2× is a conservative-but-cheap default). Now
@@ -460,6 +581,358 @@ def _extract_durations(engine: Any) -> Dict[Tuple[str, str], float]:
     except Exception as e:
         logger.debug(f"duration extraction failed: {e}")
         return {}
+
+
+# ---------------------------------------------------------------------------
+# Q.126 — DB-backed real data from the live ERP mirror (factory_raw.*)
+# ---------------------------------------------------------------------------
+# The in-memory curated layer (SemanticQueriesInMemory, fed by the Excel
+# `Folha_IA_extra.xlsx`) is empty in production, so the CPO fell back to the
+# 2x synthetic buffer (RoutingResolver._standard_template). The ML was already
+# repointed to factory_raw.of_fp (Q.124); these loaders do the same for the
+# CPO. Tempos vêm SEMPRE do histórico real (axioma Spelke). Best-effort: any
+# failure returns empties and never crashes load() nor flips loaded_ok.
+
+# Duration of one phase execution, in hours, from the ISO-text timestamps.
+_OFFP_DUR_H = (
+    "EXTRACT(EPOCH FROM ("
+    "CAST(NULLIF(op.\"OFFP_DATAFIM\", '')    AS timestamp) - "
+    "CAST(NULLIF(op.\"OFFP_DATAINICIO\", '') AS timestamp)))/3600.0"
+)
+# Cleaning shared with build_duration_dataset (Q.124) PLUS a floor.
+# Without the floor the Pintura phase (FP 18) collapses to a ~0.083h median
+# because of ~1600 near-zero punch rows (verified in _audit/q126/); the floor
+# restores the real 3.18h. The ceiling drops phases left open across days.
+_OFFP_DUR_OK = (
+    "NULLIF(op.\"OFFP_DATAINICIO\", '') IS NOT NULL "
+    "AND NULLIF(op.\"OFFP_DATAFIM\", '') IS NOT NULL "
+    "AND CAST(NULLIF(op.\"OFFP_DATAFIM\", '') AS timestamp) "
+    "  > CAST(NULLIF(op.\"OFFP_DATAINICIO\", '') AS timestamp)"
+)
+# Duration bounds (hours): floor = drop sub-3-minute punch artifacts; ceiling
+# = one week (phases left open across days are calendar artifacts, not work).
+# Expressed as 24*7 so it reads as "1 semana", not a magic number.
+_DUR_FLOOR_H = 0.05
+_DUR_CEIL_H = 24.0 * 7
+
+# Q.133.A2 — amostra mínima por (modelo, fase) para preferir o p50 calibrado
+# sobre a mediana crua de of_fp (alinhado com o HAVING count>=5 do job).
+_CALIBRATION_MIN_OBS = 5
+
+# Q.131.F — horizonte de planeamento interactivo. O WIP real tem ~5300 OFs
+# abertas; planear todas (~11k operações) esgota o orçamento da GA logo na
+# geração 1 (sem optimização real) e demora demasiado para um "Replanear"
+# interactivo. Planeamos as N ordens MAIS URGENTES (menor data de entrega) —
+# rolling horizon. O Luis pediu ~200; é o nº onde a GA optimiza em segundos.
+_OPEN_ORDERS_PLAN_CAP = 200
+
+
+async def _load_historical_durations_routes_db(
+    session: Any,
+    tenant_id: UUID,
+) -> Tuple[Dict[str, List[Dict[str, Any]]], Dict[Tuple[str, str], float], Dict[str, float]]:
+    """Q.126.B — real durations + routes from `factory_raw.of_fp` (ERP vivo).
+
+    Returns ``(routes_by_model, durations_by_pair, durations_by_fase)``:
+      * ``routes_by_model[str(OF_P_ID)]`` = ordered production-phase steps
+        ``{fase_id, fase_nome, sequence, duration_hours}`` (ordered by
+        ``FP_SEQUENCIA``, only ``FP_PRODUCAO=true``). Lets the resolver build
+        a REAL route when the in-memory curated layer (Excel) is empty.
+      * ``durations_by_pair[(str(fase), str(model))]`` = real median hours.
+      * ``durations_by_fase[str(fase)]`` = real median per fase across all
+        models — the 2nd-tier fallback before the 2x synthetic buffer.
+    """
+    empty: Tuple[Dict[str, List[Dict[str, Any]]], Dict[Tuple[str, str], float], Dict[str, float]] = ({}, {}, {})
+    if session is None:
+        return empty
+    from sqlalchemy import text
+    from sqlalchemy.exc import SQLAlchemyError
+
+    pair_sql = text(
+        f"""
+        WITH d AS (
+            SELECT ofb."OF_P_ID" AS model, op."OFFP_FP_ID" AS fase_id, {_OFFP_DUR_H} AS h
+            FROM factory_raw.of_fp op
+            JOIN factory_raw.ordemfabrico ofb ON ofb."OF_ID" = op."OFFP_OF_ID"
+            WHERE {_OFFP_DUR_OK} AND ofb."OF_P_ID" IS NOT NULL
+        )
+        SELECT d.model::text AS model, d.fase_id::text AS fase_id,
+               f."FP_NOME" AS fase_nome, f."FP_SEQUENCIA" AS seq,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY d.h) AS median_h
+        FROM d
+        JOIN factory_raw.fases_producao f ON f."FP_ID" = d.fase_id
+        WHERE d.h > {_DUR_FLOOR_H} AND d.h <= {_DUR_CEIL_H} AND f."FP_PRODUCAO" = true
+        GROUP BY d.model, d.fase_id, f."FP_NOME", f."FP_SEQUENCIA"
+        HAVING count(*) >= 2
+        ORDER BY d.model, f."FP_SEQUENCIA"
+        """
+    )
+    fase_sql = text(
+        f"""
+        SELECT op."OFFP_FP_ID"::text AS fase_id,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY {_OFFP_DUR_H}) AS median_h
+        FROM factory_raw.of_fp op
+        WHERE {_OFFP_DUR_OK}
+          AND {_OFFP_DUR_H} > {_DUR_FLOOR_H} AND {_OFFP_DUR_H} <= {_DUR_CEIL_H}
+        GROUP BY op."OFFP_FP_ID"
+        HAVING count(*) >= 5
+        """
+    )
+    try:
+        pair_rows = (await session.execute(pair_sql)).mappings().all()
+        fase_rows = (await session.execute(fase_sql)).mappings().all()
+    except SQLAlchemyError as exc:  # pragma: no cover — DB outage / missing table
+        logger.debug("Q.126.B durations/routes DB load skipped: %s", exc)
+        return empty
+
+    by_pair: Dict[Tuple[str, str], float] = {}
+    routes: Dict[str, List[Dict[str, Any]]] = {}
+    for r in pair_rows:
+        median_h = float(r["median_h"] or 0.0)
+        if median_h <= 0:
+            continue
+        model = str(r["model"])
+        fase_id = str(r["fase_id"])
+        by_pair[(fase_id, model)] = median_h
+        routes.setdefault(model, []).append(
+            {
+                "fase_id": fase_id,
+                "fase_nome": str(r["fase_nome"] or fase_id),
+                "sequence": int(r["seq"] or 0),
+                "duration_hours": median_h,
+            }
+        )
+    # Defensive: keep each route ordered by FP_SEQUENCIA even if the row
+    # order ever changes (the SQL already ORDERs by it).
+    for steps in routes.values():
+        steps.sort(key=lambda s: s["sequence"])
+    by_fase: Dict[str, float] = {
+        str(r["fase_id"]): float(r["median_h"])
+        for r in fase_rows
+        if r["median_h"] and float(r["median_h"]) > 0
+    }
+    return routes, by_pair, by_fase
+
+
+async def _load_route_templates_db(
+    session: Any,
+    tenant_id: UUID,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Q.131.G — routing master do ERP: rota por modelo (OF_P_ID) a partir de
+    `plan.model_routing_assignment` JOIN `plan.routing_template_phase`. Espelha a
+    tabela ERP PRODUTO_FASE (sequência de fases) e a `duration_p50_h` minerada
+    de `of_fp` pelo job `time_mining` (Spelke: tempo real, NUNCA CoeficienteX).
+
+    Fallback REAL para modelos sem ≥2 observações por fase em of_fp (cobre os
+    ~27% que o histórico per-order não cobre). Keyed por `str(model_id)`=OF_P_ID,
+    igual a `historical_routes_by_model`. p50 pode vir NULL (fases sem amostra) —
+    o resolver decide a duração (p50 → mediana-por-fase → ordem em unplanned).
+
+    Best-effort: session None / tabela ausente / outra BD → `{}`. NOTA: estas
+    são tabelas `TenantBase` (tenant-scoped), ao contrário de factory_raw.* —
+    daí o filtro explícito de tenant."""
+    if session is None:
+        return {}
+    from sqlalchemy import text
+    from sqlalchemy.exc import SQLAlchemyError
+
+    sql = text(
+        """
+        SELECT mra.model_id::text          AS model_id,
+               rtp.seq                      AS seq,
+               rtp.phase_id::text           AS phase_id,
+               rtp.phase_name               AS phase_name,
+               rtp.duration_p50_h           AS duration_p50_h,
+               rtp.requires_mold            AS requires_mold,
+               rtp.team_size_default        AS team_size_default
+        FROM plan.model_routing_assignment mra
+        JOIN plan.routing_template_phase rtp
+          ON rtp.template_id = mra.primary_template_id
+        WHERE mra.tenant_id = :tenant AND rtp.tenant_id = :tenant
+        ORDER BY mra.model_id, rtp.seq
+        """
+    )
+    try:
+        rows = (await session.execute(
+            sql, {"tenant": str(tenant_id)}
+        )).mappings().all()
+    except SQLAlchemyError as exc:  # pragma: no cover — DB outage / missing table
+        logger.debug("Q.131.G route_templates DB load skipped: %s", exc)
+        return {}
+
+    templates: Dict[str, List[Dict[str, Any]]] = {}
+    for r in rows:
+        p50 = r["duration_p50_h"]
+        templates.setdefault(str(r["model_id"]), []).append({
+            "fase_id": str(r["phase_id"]),
+            "fase_nome": str(r["phase_name"] or r["phase_id"]),
+            "sequence": int(r["seq"] or 0),
+            "duration_p50_h": float(p50) if p50 is not None else None,
+            "requires_mold": bool(r["requires_mold"]),
+            "team_size_default": int(r["team_size_default"] or 1),
+        })
+    for steps in templates.values():
+        steps.sort(key=lambda s: s["sequence"])
+    return templates
+
+
+async def _load_phase_calibration_db(
+    session: Any,
+    tenant_id: UUID,
+) -> Dict[Tuple[str, str], Tuple[float, int]]:
+    """Q.133.A2 — p50 CALIBRADO por (fase_id, modelo) do job phase_calibration
+    (`plan.phase_duration_calibration`). Devolve `{(fase,modelo): (p50_horas,
+    n_obs)}`. Best-effort: session None / tabela ausente → `{}`. Tenant-scoped
+    (PK composto inclui tenant_id). p50 vem em minutos → converte para horas."""
+    if session is None:
+        return {}
+    from sqlalchemy import text
+    from sqlalchemy.exc import SQLAlchemyError
+
+    sql = text(
+        """
+        SELECT phase_id::text AS fase_id, modelo::text AS modelo, p50_min, n_obs
+        FROM plan.phase_duration_calibration
+        WHERE tenant_id = :tenant AND p50_min > 0
+        """
+    )
+    try:
+        rows = (await session.execute(
+            sql, {"tenant": str(tenant_id)}
+        )).mappings().all()
+    except SQLAlchemyError as exc:  # pragma: no cover — DB outage / missing table
+        logger.debug("Q.133.A2 phase_calibration DB load skipped: %s", exc)
+        return {}
+    out: Dict[Tuple[str, str], Tuple[float, int]] = {}
+    for r in rows:
+        out[(str(r["fase_id"]), str(r["modelo"]))] = (
+            float(r["p50_min"]) / 60.0,
+            int(r["n_obs"]),
+        )
+    return out
+
+
+async def _load_molds_db(
+    session: Any,
+    tenant_id: UUID,
+) -> Tuple[Dict[str, List[MoldInfo]], Dict[str, MoldInfo]]:
+    """Q.126.C — real molds from `factory_raw.of_fp.OFFP_OF_ID_MLD` joined to
+    the model (`OF_P_ID`) via `ordemfabrico`. 1186 (mold, model) pairs vs only
+    6 from ordemfabrico alone (verified in _audit/q126/). Best-effort."""
+    if session is None:
+        return {}, {}
+    from sqlalchemy import text
+    from sqlalchemy.exc import SQLAlchemyError
+    sql = text(
+        """
+        SELECT DISTINCT op."OFFP_OF_ID_MLD"::text AS molde_id,
+                        ofb."OF_P_ID"::text        AS modelo_id
+        FROM factory_raw.of_fp op
+        JOIN factory_raw.ordemfabrico ofb ON ofb."OF_ID" = op."OFFP_OF_ID"
+        WHERE op."OFFP_OF_ID_MLD" IS NOT NULL AND op."OFFP_OF_ID_MLD" <> 0
+          AND ofb."OF_P_ID" IS NOT NULL
+        """
+    )
+    try:
+        rows = (await session.execute(sql)).mappings().all()
+    except SQLAlchemyError as exc:  # pragma: no cover — DB outage / missing table
+        logger.debug("Q.126.C molds DB load skipped: %s", exc)
+        return {}, {}
+    by_model: Dict[str, List[MoldInfo]] = {}
+    by_id: Dict[str, MoldInfo] = {}
+    for r in rows:
+        molde_id = str(r["molde_id"])
+        modelo_id = str(r["modelo_id"])
+        if not molde_id or molde_id == "0":
+            continue
+        info = by_id.get(molde_id)
+        if info is None:
+            info = MoldInfo(molde_id=molde_id, modelo_id=modelo_id, pocket_count=1)
+            by_id[molde_id] = info
+        by_model.setdefault(modelo_id, []).append(info)
+    return by_model, by_id
+
+
+async def _load_skills_db(
+    session: Any,
+    tenant_id: UUID,
+) -> Dict[str, Set[str]]:
+    """Q.126.D — real skill matrix from `factory_raw.offp_eq` (crew records)
+    joined to `of_fp` (phase). ``skill_matrix[str(fase_id)] = {str(E_ID)}``.
+    483 (fase, worker) pairs across 40 phases verified. A PARTIAL matrix is
+    safe: the decoder schedules a phase as manual when it has no workers in
+    the matrix (decoder_resources.py:356), never infeasible."""
+    if session is None:
+        return {}
+    from sqlalchemy import text
+    from sqlalchemy.exc import SQLAlchemyError
+    sql = text(
+        """
+        SELECT DISTINCT o."OFFP_FP_ID"::text   AS fase_id,
+                        eq."OFFPEQ_E_ID"::text AS func_id
+        FROM factory_raw.offp_eq eq
+        JOIN factory_raw.of_fp o ON o."OFFP_ID" = eq."OFFPEQ_OFFP_ID"
+        WHERE eq."OFFPEQ_E_ID" IS NOT NULL AND o."OFFP_FP_ID" IS NOT NULL
+        """
+    )
+    try:
+        rows = (await session.execute(sql)).mappings().all()
+    except SQLAlchemyError as exc:  # pragma: no cover — DB outage / missing table
+        logger.debug("Q.126.D skills DB load skipped: %s", exc)
+        return {}
+    matrix: Dict[str, Set[str]] = {}
+    for r in rows:
+        fase_id = str(r["fase_id"])
+        func_id = str(r["func_id"])
+        if fase_id and func_id:
+            matrix.setdefault(fase_id, set()).add(func_id)
+    return matrix
+
+
+async def _load_open_orders_db(
+    session: Any,
+    tenant_id: UUID,
+) -> List[Dict[str, Any]]:
+    """Q.126.B — real WIP from `factory_raw.ordemfabrico`: open orders
+    (`OF_DATAFIM` NULL) whose current phase (`OF_FP_ID`) is a production phase
+    (`FP_PRODUCAO=true`, which already excludes Entregue/Armazem/Embalado/...).
+    ``modelo_id=OF_P_ID``, deadline = COALESCE of the three date columns.
+    Best-effort, capped. Only used when no curated open_orders are present."""
+    if session is None:
+        return []
+    from sqlalchemy import text
+    from sqlalchemy.exc import SQLAlchemyError
+    sql = text(
+        """
+        SELECT ofb."OF_ID"::text   AS of_id,
+               ofb."OF_P_ID"::text AS modelo_id,
+               COALESCE(ofb."OF_DATAENTREGA", ofb."OF_TR_DATA_PREVISTA",
+                        ofb."OF_PLANO_DATA_PREVISTA") AS data_entrega_prevista
+        FROM factory_raw.ordemfabrico ofb
+        JOIN factory_raw.fases_producao f ON f."FP_ID" = ofb."OF_FP_ID"
+        WHERE ofb."OF_DATAFIM" IS NULL
+          AND ofb."OF_P_ID" IS NOT NULL
+          AND f."FP_PRODUCAO" = true
+        ORDER BY data_entrega_prevista NULLS LAST
+        LIMIT :plan_cap
+        """
+    )
+    try:
+        rows = (await session.execute(
+            sql, {"plan_cap": _OPEN_ORDERS_PLAN_CAP}
+        )).mappings().all()
+    except SQLAlchemyError as exc:  # pragma: no cover — DB outage / missing table
+        logger.debug("Q.126.B open_orders DB load skipped: %s", exc)
+        return []
+    return [
+        {
+            "of_id": str(r["of_id"]),
+            "order_id": str(r["of_id"]),
+            "modelo_id": str(r["modelo_id"]),
+            "data_entrega_prevista": r["data_entrega_prevista"],
+        }
+        for r in rows
+    ]
 
 
 async def _load_phase_transition_gaps(

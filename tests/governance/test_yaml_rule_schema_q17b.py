@@ -49,8 +49,10 @@ def test_event_type_has_exactly_12_members():
     assert len(EventType) == 12
 
 
-def test_action_type_has_exactly_9_members():
-    assert len(ActionType) == 9
+def test_action_type_has_exactly_10_members():
+    # Q.115.H adicionou EXECUTE_RUNBOOK como 10º membro
+    assert len(ActionType) == 10
+    assert ActionType.EXECUTE_RUNBOOK in ActionType
 
 
 def test_condition_op_has_exactly_8_members():

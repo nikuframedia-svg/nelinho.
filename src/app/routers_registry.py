@@ -45,6 +45,12 @@ def register_routers(app: FastAPI) -> None:
     """Mount every API router. Order matches the legacy src/main.py."""
     # Include routers
     app.include_router(core_router)
+    # Q.121.D4 — q115_config ANTES de tenant_config: as rotas literais
+    # /v1/config/revenue-target e /v1/config/client-priority têm de ganhar
+    # precedência sobre o catch-all /v1/config/{category} do tenant_config
+    # (FastAPI casa por ordem de registo, senão dá 400 "Unknown category").
+    from src.app.routers.q115_config import router as q115_config_router
+    app.include_router(q115_config_router)
     app.include_router(tenant_config_router)  # Sprint L.3 — /v1/config/*
 
     # Sprint AA.4 — Trust Index v2.0 endpoint
@@ -131,3 +137,56 @@ def register_routers(app: FastAPI) -> None:
     from src.observability import router as observability_router
 
     app.include_router(observability_router)
+
+    # Q.115.B — config revenue-target/client-priority/user-input: registado
+    # mais acima (Q.121.D4), antes do tenant_config_router.
+
+    # Q.115.C — drag-drop manual reorder com safety_net + Kafka
+    from src.plan.api.reorder import router as reorder_router
+
+    app.include_router(reorder_router)
+
+    # Q.115.G — afinidades operador/fase (GET /v1/learning/affinities)
+    from src.learning.api_affinities import router as affinities_router
+
+    app.include_router(affinities_router)
+
+    # Q.115.V — plan-vs-actual (GET /v1/learning/plan-vs-actual)
+    from src.learning.api_plan_vs_actual import router as plan_vs_actual_router
+
+    app.include_router(plan_vs_actual_router)
+
+    # Q.115.X5 — cancel/retire/deactivate para obras/encomendas/barcos/pessoas
+    from src.master_data.api.cancel import router as cancel_router
+
+    app.include_router(cancel_router)
+
+    # Q.115.X6 — boat-phase-scores + boat-potential
+    from src.learning.api_boat_scores import router as boat_scores_router
+
+    app.include_router(boat_scores_router)
+
+    # Q.116.A — entity summaries (4 sheets contextuais)
+    from src.plan.api.entity_summary import router as entity_summary_router
+
+    app.include_router(entity_summary_router)
+
+    # Q.116.C — order_boost + transport-date overrides
+    from src.plan.api.order_writes import router as order_writes_router
+
+    app.include_router(order_writes_router)
+
+    # Q.116.D — boat_boost upsert
+    from src.plan.api.boat_boost_writes import router as boat_boost_router
+
+    app.include_router(boat_boost_router)
+
+    # Q.116.E — master-data LIST endpoints
+    from src.master_data.api.lists import router as master_data_lists_router
+
+    app.include_router(master_data_lists_router)
+
+    # Q.116.B — editor de fases (allowed_predecessors + is_flexible)
+    from src.plan.api.routing_template_admin import router as routing_admin_router
+
+    app.include_router(routing_admin_router)

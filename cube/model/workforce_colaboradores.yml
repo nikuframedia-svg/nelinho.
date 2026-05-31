@@ -1,0 +1,60 @@
+cubes:
+  - name: workforce_colaboradores
+    description: >
+      Q.106 — colaboradores NELO activos. Fonte:
+      marts.v_workforce_colaboradores_mes (1 row por mês × colaborador
+      × departamento). Definição canónica (Q.82): E_ACTIVO=1 AND
+      E_ENT_ID em sub-tipos de ENT_ID=19 Empregado + ≥1 evento em
+      ENT_MOV no período. Anchor 158 colaboradores activos totais
+      (view FuncionariosActivos canónica). Departamento = cargo
+      canónico (Laminador, Pintor, Acabador, …). Decisão Luís:
+      transparência total — dim `colaborador` permite drill por
+      pessoa e ranking individual.
+    sql_table: marts.v_workforce_colaboradores_mes
+
+    measures:
+      - name: total
+        description: >
+          Contagem de colaboradores DISTINTOS activos no período.
+          COUNT(DISTINCT colaborador_id) sobre ENT_MOV filtrado por
+          E_ACTIVO=1 + cargo em sub-tipos de Empregado.
+        sql: colaborador_id
+        type: countDistinct
+        format: number
+
+      - name: n_eventos
+        description: >
+          Q.106 — número total de eventos ENT_MOV (qualquer tipo).
+          CONTAGEM aditiva entre meses/colaboradores/departamentos.
+          Útil para tendência de actividade RH.
+        sql: n_eventos
+        type: sum
+        format: number
+
+    dimensions:
+      - name: data
+        description: Primeiro dia do mês do evento.
+        sql: data
+        type: time
+
+      - name: colaborador
+        description: >
+          Nome do colaborador NELO (E_NOME via E_ID). Filtro
+          recomendado: `contains` para sub-string ('Silva',
+          'João Silva'). Permite drill por pessoa e ranking.
+        sql: colaborador
+        type: string
+
+      - name: colaborador_id
+        description: ID NELO do colaborador (E_ID).
+        sql: colaborador_id
+        type: number
+
+      - name: departamento
+        description: >
+          Cargo canónico do colaborador (ENTIDADE_TIPO.ENT_NOME via
+          E_ENT_ID). Top: Escritório, Laminador, Acabador, Lixador,
+          Multitarefa, Pintor, Manutenção. Filtro `equals` literal
+          OU `contains`.
+        sql: departamento
+        type: string

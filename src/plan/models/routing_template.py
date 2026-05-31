@@ -33,6 +33,7 @@ from typing import Optional
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    ARRAY,
     Boolean,
     ForeignKey,
     Index,
@@ -102,6 +103,16 @@ class RoutingTemplatePhase(TenantBase):
     # an A/B exclusive pair — pick one, skip the other.
     alternative_group_id: Mapped[Optional[str]] = mapped_column(
         String(32), nullable=True,
+    )
+    # Q.116.B — fases em posicao alternativa. `is_flexible=True` significa
+    # que esta fase pode aparecer em mais do que uma posicao no routing;
+    # `allowed_predecessors` declara quais phase_id strings podem
+    # legitimamente precede-la. Valida-se no service + verify_invariants.
+    is_flexible: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false",
+    )
+    allowed_predecessors: Mapped[Optional[list[str]]] = mapped_column(
+        ARRAY(String(100)), nullable=True,
     )
 
 

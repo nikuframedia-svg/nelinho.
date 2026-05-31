@@ -1,0 +1,44 @@
+cubes:
+  - name: plataforma_etl_freshness
+    description: >
+      Q.108.W3 — Saúde da plataforma — idade dos mirrors ETL. Source:
+      marts.v_etl_freshness_dia (1 linha por source distinta). Snapshot
+      diário; consumidor pega na linha mais recente por source.
+    sql_table: marts.v_etl_freshness_dia
+
+    measures:
+      - name: freshness_avg
+        description: >
+          AVG idade (horas) entre as sources mirrored. TEMPO; cross-row AVG.
+        sql: freshness_h
+        type: avg
+        format: number
+
+      - name: freshness_max
+        description: >
+          MAX idade (horas) — pior caso (sync mais antiga). Sinaliza ETL parado.
+        sql: freshness_h
+        type: max
+        format: number
+
+      - name: failed_30d
+        description: COUNT ETL runs FAILED nos últimos 30 dias.
+        sql: n_failed_30d
+        type: sum
+        format: number
+
+      - name: ok_30d
+        description: COUNT ETL runs OK nos últimos 30 dias.
+        sql: n_ok_30d
+        type: sum
+        format: number
+
+    dimensions:
+      - name: data
+        description: Dia do snapshot.
+        sql: data
+        type: time
+      - name: source
+        description: Nome da source (factory_raw.movimento, factory_raw.of_fp, …).
+        sql: source
+        type: string

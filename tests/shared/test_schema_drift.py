@@ -67,12 +67,38 @@ def _load_revisions():
 
 def test_alembic_chain_has_single_head():
     revs = _load_revisions()
-    parents = {d for d in revs.values() if d}
+    # down_revision pode ser str OU tuplo (migração de merge) — achatar para
+    # que ambos os pais de um merge contem como referenciados.
+    parents: set = set()
+    for d in revs.values():
+        if not d:
+            continue
+        if isinstance(d, (tuple, list)):
+            parents.update(d)
+        else:
+            parents.add(d)
     heads = set(revs.keys()) - parents
     # The chain head moves as new migrations land; what matters is that there
     # is exactly *one* head. Multiple heads mean two parallel branches that
     # would crash at `alembic upgrade head` time.
     assert len(heads) == 1, f"expected single head, got {heads}"
+
+
+def test_alembic_revision_ids_fit_pg_version_num_column():
+    """Q.119.1 — every revision id must be <= 32 chars.
+
+    `alembic_version.version_num` is VARCHAR(32) by default, so a revision
+    id longer than 32 chars crashes `alembic upgrade head` mid-run when it
+    tries to stamp that revision (production runs `upgrade head` before the
+    uvicorn boot, Q.61.16). `q116c_order_boost_transport_override` (36) hit
+    exactly this and blocked deploy. Pin the limit so it can't regress.
+    """
+    revs = _load_revisions()
+    too_long = {r: len(r) for r in revs if len(r) > 32}
+    assert not too_long, (
+        f"revision ids must be <=32 chars (alembic_version.version_num "
+        f"VARCHAR(32)); offenders: {too_long}"
+    )
 
 
 def test_migration_007_creates_shared_schema():

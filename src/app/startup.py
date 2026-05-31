@@ -34,6 +34,10 @@ from src.shared.scheduler import start_scheduler
 
 logger = logging.getLogger(__name__)
 
+# Q.120.A — refs fortes às tasks de background. Sem isto o GC pode coletar a
+# task a meio (RUF006); o done-callback liberta a ref quando ela termina.
+_BACKGROUND_TASKS: set = set()
+
 
 async def run_startup(app: FastAPI) -> None:
     """Execute the startup sequence. Mirrors the old inline body verbatim."""
@@ -198,6 +202,66 @@ async def run_startup(app: FastAPI) -> None:
             await start_notify_listener()
         except Exception as notify_error:
             logger.warning(f"NOTIFY listener failed to start: {notify_error}")
+
+        # Q.115.D — Auto-propose listener: cria Decisions a partir de eventos Kafka.
+        # Graceful: se Kafka não estiver disponível, apenas loga e continua.
+        try:
+            from src.plan.services.auto_propose import AutoProposeService, HANDLED_TOPICS
+            from src.plan.services.auto_propose_cpo_runner import real_cpo_propose_runner
+            from src.shared.database import async_session_factory
+
+            # Q.117.B — runner CPO real (propose-only) em vez do noop. Cria um
+            # commit real + enriquece sandbox_result com cost_delta (€ vs
+            # baseline) e quality_risk (defect-ML). Degrada para proposta sem
+            # schedule se o CPO não puder correr — nunca quebra o listener.
+            _auto_propose_svc = AutoProposeService(
+                session_factory=async_session_factory,
+                cpo_engine_runner=real_cpo_propose_runner,
+            )
+
+            async def _auto_propose_consumer_task() -> None:
+                """Task que consome 4 tópicos Kafka e despacha para AutoProposeService."""
+                import json
+                from aiokafka import AIOKafkaConsumer
+
+                consumer = AIOKafkaConsumer(
+                    *HANDLED_TOPICS,
+                    bootstrap_servers=settings.kafka_bootstrap_servers,
+                    group_id="auto_propose_q115d",
+                    auto_offset_reset="latest",
+                    value_deserializer=lambda v: json.loads(v.decode("utf-8")),
+                )
+                try:
+                    await consumer.start()
+                    logger.info("Q.115.D auto_propose consumer iniciado (tópicos: %s)", list(HANDLED_TOPICS))
+                    async for msg in consumer:
+                        try:
+                            payload = msg.value or {}
+                            await _auto_propose_svc.handle_event(
+                                topic=msg.topic,
+                                payload=payload,
+                            )
+                        except Exception as msg_err:
+                            logger.warning("auto_propose: erro no processamento de mensagem: %s", msg_err)
+                except Exception as consumer_err:
+                    logger.warning("auto_propose consumer falhou: %s", consumer_err)
+                finally:
+                    try:
+                        await consumer.stop()
+                    except Exception as stop_err:
+                        logger.debug("auto_propose consumer.stop falhou: %s", stop_err)
+
+            # Lança a task em background; falha silenciosa (degraded_subsystems)
+            if not settings.is_development:
+                _t = asyncio.create_task(_auto_propose_consumer_task())
+                _BACKGROUND_TASKS.add(_t)
+                _t.add_done_callback(_BACKGROUND_TASKS.discard)
+                logger.info("Q.115.D auto_propose consumer task iniciada")
+            else:
+                logger.info("Q.115.D auto_propose consumer desactivado em desenvolvimento (Kafka opcional)")
+        except Exception as auto_propose_err:
+            logger.warning(f"Q.115.D auto_propose startup failed: {auto_propose_err}")
+            degraded_subsystems.append("auto_propose")
 
         logger.info("ProdPlan ONE started successfully")
 

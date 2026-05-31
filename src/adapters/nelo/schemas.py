@@ -352,6 +352,44 @@ class MoldRow(_Frozen):
     acquired_at: Optional[datetime] = None
 
 
+# ─── Phase history (FasesOf) — historico de fases por OF ───────────────
+
+
+class FasesOfHistoryRow(_Frozen):
+    """Uma linha de `dbo.FasesOf` — execucao de fase por OF.
+
+    Q.115.T: fonte para `plan.fases_of_history`. Alta cardinalidade (~2.6M).
+    Campos nullable: fase_fim (fase pode estar em curso), worker_id, mold_id.
+    """
+
+    of_id: str          # OF_Id (texto — ERP usa string nesta tabela)
+    phase_id: str       # FaseOf_Id (codigo da fase)
+    fase_inicio: datetime
+    fase_fim: Optional[datetime] = None
+    worker_id: Optional[int] = None   # WorkerId (entidade ERP) — pode ser None
+    mold_id: Optional[str] = None     # MoldeId
+
+
+# ─── Worker assignments (WorkerAssignment) — atribuicoes operador/fase ─
+
+
+class WorkerAssignmentRow(_Frozen):
+    """Uma linha de `dbo.WorkerAssignment` — atribuicao de operador a fase.
+
+    Q.115.T: fonte para `hr.worker_phase_assignment`.
+    assignment_type derivado pelo ETL: 'actual' se Iniciado_Em presente,
+    'planned' se so Atribuido_Em.
+    """
+
+    worker_id: Optional[int] = None   # WorkerId (entidade ERP) — nullable no ERP
+    of_id: str            # OF_Id
+    phase_id: str         # FaseOf_Id
+    assigned_at: datetime # Atribuido_Em
+    started_at: Optional[datetime] = None   # Iniciado_Em
+    ended_at: Optional[datetime] = None     # Terminado_Em
+    tipo: Optional[str] = None              # Tipo (string ERP, pode ser None)
+
+
 # ─── Aggregate helpers ──────────────────────────────────────────────────
 
 

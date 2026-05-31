@@ -32,7 +32,7 @@ from fastapi import Header, HTTPException, status
 from fastapi.security.utils import get_authorization_scheme_param
 from starlette.requests import Request
 
-from src.shared.auth.jwt_handler import verify_token
+from src.shared.auth.jwt_handler import UserContext, verify_token
 from src.shared.config import settings
 
 logger = logging.getLogger(__name__)
@@ -172,6 +172,71 @@ def require_user_uuid(
             detail="Invalid user: zero UUID is reserved",
         )
     return x_user_id
+
+
+def get_current_user_or_dev_header(
+    request: Request,
+    x_user_id: UUID | None = Header(default=None, alias="X-User-Id"),
+    x_tenant_id: UUID | None = Header(default=None, alias="X-Tenant-Id"),
+    x_user_role: str | None = Header(default=None, alias="X-User-Role"),
+) -> UserContext:
+    """JWT-first com dev-fallback por headers, devolvendo um ``UserContext``.
+
+    Q.121.D3 — o ``PermissionDependency`` (rbac) dependia de
+    ``jwt_handler.get_current_user``, que usa ``HTTPBearer(auto_error=True)`` e
+    levanta 401 "Not authenticated" SEM Bearer, antes de qualquer fallback. Por
+    isso /v1/work-orders, /v1/master-data/*, /v1/user-input davam 401 no painel
+    dev — enquanto /v1/decisions (que usa os helpers de header) funcionava.
+
+    Esta dependência espelha :func:`require_user_uuid`/:func:`require_tenant_header`:
+
+    1. **JWT primeiro** — Bearer válido → ``UserContext`` do payload.
+    2. **Produção sem JWT → 401** (nunca aceita headers não-assinados).
+    3. **Dev/test sem JWT** → ``UserContext`` a partir de X-User-Id/X-Tenant-Id/
+       X-User-Role (mesmo modelo que /v1/decisions já usa). Zero-UUID rejeitado.
+    """
+    payload = _try_jwt(request)
+    if payload is not None:
+        try:
+            return UserContext(
+                user_id=UUID(payload.sub),
+                tenant_id=UUID(payload.tenant_id),
+                role=payload.role,
+            )
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Token claims are not valid UUIDs: {exc!s}",
+            )
+
+    if settings.environment == "production":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Bearer JWT required in production",
+        )
+
+    if x_user_id is None or x_tenant_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="X-User-Id e X-Tenant-Id headers required (dev)",
+        )
+    if x_user_id == ZERO_UUID or x_tenant_id == ZERO_UUID:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid identity: zero UUID is reserved",
+        )
+    # Q.121.D3 — o frontend envia X-User-Role "admin" (genérico); o enum rbac.Role
+    # canónico do admin é "admin_platform" (tem todas as permissões). Sem isto o
+    # has_permission(Role("admin")) lançava ValueError → 403. Normaliza os aliases
+    # de admin para o valor canónico (string, p/ não importar rbac aqui → circular).
+    role = x_user_role or "viewer"
+    if role in _ADMIN_ROLES:
+        role = "admin_platform"
+    return UserContext(
+        user_id=x_user_id,
+        tenant_id=x_tenant_id,
+        role=role,
+    )
 
 
 class AdminContext:

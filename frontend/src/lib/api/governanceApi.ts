@@ -38,7 +38,11 @@ export interface DecisionListResponse {
   total: number;
   page: number;
   page_size: number;
-  items: DecisionRun[];
+  // Q.119.5 — o backend (DecisionListResponse Pydantic + orval gerado) devolve
+  // `decisions`, NÃO `items`. O tipo à mão dizia `items` → as páginas liam
+  // undefined e mostravam sempre "Sem decisões pendentes" apesar de haver
+  // decisões PROPOSED. Alinhado ao contrato real.
+  decisions: DecisionRun[];
 }
 
 export interface DecisionProposalRequest {
@@ -92,24 +96,34 @@ export const decisionsApi = {
     }),
   
   getAuditTrail: (id: string) =>
-    request<Array<{
-      timestamp: string;
-      event: string;
-      by: string;
-      details: Record<string, any>;
-    }>>(`/v1/decisions/${id}/audit`),
+    request<{
+      decision: DecisionRun;
+      approvals: Array<{
+        approver_id: string;
+        status: string;
+        comment?: string;
+        approved_at?: string;
+      }>;
+      state_changes: {
+        before_state?: Record<string, any>;
+        after_state?: Record<string, any>;
+      } | null;
+    }>(`/v1/decisions/${id}/audit`),
 
   /**
    * Sprint Q.9 Onda 3.4 — bulk approve / reject in one round trip.
    * Per-item: SoD violation on one decision does NOT abort the rest;
    * the response carries `{ok, failed, results}`. Plan v4 §8 WG04.
+   *
+   * Q.130.I (FE-5) — reaponta para `/v1/decisions/bulk` (tabela
+   * `shared.decision_runs`), a MESMA que `list()`/`approve()`. Antes
+   * batia em `/v1/governance/decisions/bulk` (tabela `governance.
+   * decision_run`) e os ids do hub nunca cruzavam → "0 ok, N falhou".
    */
   bulkAct: (
-    items: Array<{
-      decision_id: string;
-      action: 'approve' | 'reject' | 'request_changes';
-      reason?: string;
-    }>,
+    decisionIds: string[],
+    action: 'approve' | 'reject' = 'approve',
+    reason?: string,
   ) =>
     request<{
       ok: number;
@@ -119,22 +133,25 @@ export const decisionsApi = {
         status: 'ok' | 'error';
         error?: string;
       }>;
-    }>(`/v1/governance/decisions/bulk`, {
+    }>(`/v1/decisions/bulk`, {
       method: 'POST',
-      body: JSON.stringify({ items }),
+      body: JSON.stringify({ decision_ids: decisionIds, action, reason }),
     }),
 
   /**
-   * Sprint Q.13.C C.3.2 — modify the action_data payload BEFORE
-   * approving. Plan v4 §8 WG05: "modificar antes de aprovar". Reason
-   * is mandatory (≥10 chars) so the audit trail explains the edit.
+   * Sprint Q.13.C C.3.2 — modify the decision payload BEFORE approving.
+   * Plan v4 §8 WG05: "modificar antes de aprovar". Reason is mandatory
+   * (≥10 chars) so the audit trail explains the edit.
+   *
+   * Q.130.I (FE-5) — reaponta para `/v1/decisions/{id}/payload` (tabela
+   * `shared.decision_runs`); o patch faz merge raso em `after_state`.
    */
   modifyPayload: (
     decisionId: string,
     body: { patch: Record<string, unknown>; reason: string },
   ) =>
     request<DecisionRun>(
-      `/v1/governance/decisions/${encodeURIComponent(decisionId)}/payload`,
+      `/v1/decisions/${encodeURIComponent(decisionId)}/payload`,
       { method: 'PATCH', body: JSON.stringify(body) },
     ),
 };

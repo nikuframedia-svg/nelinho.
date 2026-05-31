@@ -1,0 +1,28 @@
+cubes:
+  - name: producao_wip_fase
+    description: >
+      Q.108.W2 — Work In Progress por fase (snapshot diário). Source:
+      marts.v_wip_fase_dia. CONTAGEM aditiva entre fases (snapshot — re-corre
+      diariamente).
+    sql_table: marts.v_wip_fase_dia
+
+    measures:
+      - name: total
+        description: COUNT operações activas por (data, fase).
+        sql: n_wip
+        type: sum
+        format: number
+
+    dimensions:
+      - name: data
+        description: Dia do snapshot.
+        sql: data
+        type: time
+      - name: fase
+        description: FP_NOME canónico (Laminagem, Pintura, Montagem, …).
+        sql: fase
+        type: string
+      - name: fase_sequencia
+        description: FP_SEQUENCIA ordering (1..29 = produtivas, 30+ terminais).
+        sql: fase_sequencia
+        type: number

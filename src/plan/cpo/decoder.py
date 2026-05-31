@@ -83,6 +83,7 @@ def decode(
     queue_time_minutes: Optional[float] = None,
     post_desmolde_buffer_minutes: Optional[float] = None,
     product_price_eur: Optional[Mapping[str, Union[float, Decimal]]] = None,
+    boost_inputs: Optional[Mapping[str, int]] = None,  # Q.116.D — work_order_id → effective_boost
 ) -> Dict[str, Any]:
     """Decode a chromosome into a feasible schedule.
 
@@ -107,7 +108,14 @@ def decode(
         return _empty_result(horizon_start, warnings=["No machines available"])
 
     # Phase 2 — sanitise permutation (warn on out-of-range/dup/missing).
-    priority_order = _sanitise_permutation(chromosome, operations)
+    # Q.116.D — boost_inputs (work_order_id → effective_boost) re-ordena
+    # o priority_order ANTES do loop principal, sem violar axiomas.
+    boost_map: Optional[Dict[str, int]] = None
+    if boost_inputs:
+        boost_map = {str(k): int(v) for k, v in boost_inputs.items() if v}
+    priority_order = _sanitise_permutation(
+        chromosome, operations, effective_boost=boost_map,
+    )
 
     # Phase 3 — intra-order precedence: group + sort by sequence.
     order_to_ops: Dict[str, List[SchedulingOperation]] = defaultdict(list)
@@ -181,6 +189,9 @@ def decode(
         "backwards_shifts": loop.backwards_shifts,
         "total_idle_hours": round(total_idle_hours, 2),
         "idle_ratio": round(idle_ratio, 4),
+        # Q.134.I — capacidade exposta p/ observabilidade do idle (o idle é
+        # worker-based; num_machines é o nº de estações/centros do plano).
+        "num_machines": len(machines),
         # Sprint A ME1 — Blueprint v2.0 MAP-Elites axes
         "lam_utilization": round(lam_utilization, 2),
         "idle_pct": round(idle_pct, 2),

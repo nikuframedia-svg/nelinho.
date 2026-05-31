@@ -99,6 +99,14 @@ class ScheduleCommit(TenantBase):
         Integer, nullable=False, default=0,
     )
 
+    # Q.116.D — snapshot dos inputs de boost que entraram neste commit.
+    # Forma: {"<work_order_id>": {"client": int, "order": int, "boat": int,
+    # "effective": int}}. Sem isto, replay perde reprodutibilidade quando
+    # o boost manual muda entre commits.
+    boost_inputs_snapshot: Mapped[Dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}",
+    )
+
     trust_index: Mapped[float] = mapped_column(nullable=False, default=0.0)
     operations_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
@@ -118,18 +126,30 @@ def compute_commit_hash(
     kpis: Dict[str, Any],
     operations: List[Dict[str, Any]],
     delta: Optional[Dict[str, Any]] = None,
+    boost_inputs_snapshot: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
-    Deterministic SHA-256 of (parent, kpis, operations, delta).
+    Deterministic SHA-256 of (parent, kpis, operations, delta, boost_inputs).
 
     Canonical JSON is produced via `sort_keys=True` + stable UTF-8 encode.
+
+    Q.116.D: boost_inputs_snapshot enters the hash so that two commits with
+    identical operations/KPIs but different boost inputs produce distinct
+    SHAs — replay reproducibility holds when manual boost values change.
+
+    Backward-compat: the new key is only added to the payload when the
+    snapshot is non-empty. Pre-Q.116.D callsites (no snapshot, or empty
+    dict) keep yielding the SAME hash as before, so historical commits
+    survive verification.
     """
-    payload = {
+    payload: Dict[str, Any] = {
         "parent_sha256": parent_sha256,
         "kpis": kpis,
         "operations": operations,
         "delta": delta or {},
     }
+    if boost_inputs_snapshot:
+        payload["boost_inputs_snapshot"] = boost_inputs_snapshot
     canonical = json.dumps(payload, sort_keys=True, default=str, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 

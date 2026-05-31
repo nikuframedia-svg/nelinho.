@@ -67,6 +67,10 @@ class SchedulingOperation:
     team_size: int = 1
     phase_id: Optional[str] = None  # fase_id from NELO curated layer
 
+    # Q.116.B — fase com posição alternativa (OR de predecessores).
+    is_flexible: bool = False
+    allowed_predecessors: List[str] = None   # phase_ids alternativos
+
     def __post_init__(self):
         if self.predecessor_ops is None:
             self.predecessor_ops = []
@@ -74,6 +78,8 @@ class SchedulingOperation:
             self.required_skills = []
         if self.alternative_machines is None:
             self.alternative_machines = []
+        if self.allowed_predecessors is None:
+            self.allowed_predecessors = []
 
 
 @dataclass

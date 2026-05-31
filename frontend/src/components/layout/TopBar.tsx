@@ -18,6 +18,7 @@ import { useState, useEffect, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, Sparkles } from 'lucide-react';
 import { LiveBadge } from '../dark/LiveBadge';
+import { SyncStatusBadge } from '../dark/SyncStatusBadge';
 import { UmweltPills } from './UmweltPills';
 
 function nowLabels(): { compact: string; full: string } {
@@ -116,6 +117,9 @@ export function TopBar() {
 
       {/* Umwelt switcher (Onda 12 L) */}
       <UmweltPills />
+
+      {/* Frescor do sync ERP — Q.117.A */}
+      <SyncStatusBadge />
 
       {/* Live indicator */}
       <LiveBadge />

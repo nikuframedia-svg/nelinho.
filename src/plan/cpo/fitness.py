@@ -21,6 +21,7 @@ Objectives:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from statistics import mean
 from typing import Any, Callable, Dict, List, Optional
 
 
@@ -72,9 +73,18 @@ class FitnessConfig:
     w_v2_makespan: float = 0.20
     w_v2_tardiness_transport: float = 0.25
     w_v2_idle_operators: float = 0.15
-    w_v2_setup_time: float = 0.15
+    # Q.115.X7 — re-balance (soma=1.0):
+    #   setup 0.15→0.10 (−0.05) + throughput 0.15→0.10 (−0.05)
+    #   + novo revenue_target_alignment=0.10 (+0.10) → delta net 0.
+    # Pesos resultantes: 0.20+0.25+0.15+0.10+0.10+0.10+0.10 = 1.00.
+    w_v2_setup_time: float = 0.10
     w_v2_quality_risk: float = 0.10
-    w_v2_throughput_eur_day: float = 0.15
+    w_v2_throughput_eur_day: float = 0.10
+    w_v2_revenue_target_alignment: float = 0.10
+
+    # ── Q.115.X7 — target diário de faturação (carregado do DB no engine) ──
+    # None = sem target configurado; score de alinhamento passa a 1.0 (neutro).
+    daily_revenue_target_eur: Optional[float] = None
 
     # ── Sprint P.3 — truck consolidation penalty (Blueprint PL14) ──────
     truck_consolidation_weight: float = 0.0      # disabled until transport batches exist
@@ -148,11 +158,87 @@ class FitnessConfig:
         Silent fallback: if the tenant has no adaptive weights row yet,
         this returns a config identical to ``FitnessConfig()``.
         """
+        import logging
+
+        from sqlalchemy.exc import SQLAlchemyError
+
         from src.governance.preference_learning import load_adaptive_weights
 
         adaptive = await load_adaptive_weights(session, tenant_id)
         merged = dict(adaptive)
-        merged.update(overrides)
+
+        # Q.132.B/B2 — ligar a página de Configurações ao motor (modo Blueprint
+        # v2.0). Os sliders `planning.fitness.weight.*` e o revenue target só
+        # fazem efeito em v2; o scheduler corria em legacy → os controlos da UI
+        # eram código morto. Precedência: override-explícito > slider-UI >
+        # adaptive(legacy) > default v2.
+        # Sem session (testes de unidade / callers sem DB) → defaults canónicos:
+        # `planning` fica vazio e nenhuma query corre (honra o contrato
+        # "sem session → FitnessConfig()" que cpo.py/poetiq.py assumem).
+        planning: Dict[str, Any] = {}
+        if session is not None:
+            try:
+                from src.core.services.tenant_config_service import TenantConfigService
+                planning = await TenantConfigService(
+                    session, tenant_id,
+                ).get_category("planning")
+            except (SQLAlchemyError, ImportError, ValueError):  # sem config = default
+                planning = {}
+
+        # Modo v2 controlado por config; default True (= intenção Blueprint v2.0).
+        if "use_v2_weights" not in overrides:
+            explicit_v2 = "fitness.use_v2_weights" in planning
+            merged["use_v2_weights"] = bool(
+                planning.get("fitness.use_v2_weights", True)
+            )
+            # Transparência (Q.132.B2): o scheduler corria em legacy; activar v2
+            # por default muda a função-objectivo. Logamos quando é por default
+            # (não por config explícita) para o flip não ser silencioso.
+            if merged["use_v2_weights"] and not explicit_v2 and session is not None:
+                logging.getLogger(__name__).info(
+                    "FitnessConfig: modo v2 (Blueprint) activo por default; "
+                    "define planning.fitness.use_v2_weights=false para legacy.",
+                )
+
+        # Sliders da UI → pesos v2 normalizados (override do default v2).
+        _slider_map = {
+            "fitness.weight.makespan": "w_v2_makespan",
+            "fitness.weight.tardiness_transport": "w_v2_tardiness_transport",
+            "fitness.weight.idle_operators": "w_v2_idle_operators",
+            "fitness.weight.setup_time": "w_v2_setup_time",
+            "fitness.weight.quality_risk": "w_v2_quality_risk",
+            "fitness.weight.throughput_eur_day": "w_v2_throughput_eur_day",
+        }
+        for cfg_key, field_name in _slider_map.items():
+            if cfg_key in planning:
+                try:
+                    merged[field_name] = float(planning[cfg_key])
+                except (TypeError, ValueError):
+                    pass
+
+        # Revenue target diário (Q.132.B) → activa o revenue_alignment soft
+        # objective (Q.115.X7). Mais recente por `effective_from`. Só com session.
+        if session is not None:
+            try:
+                from sqlalchemy import desc, select
+                from src.core.models.daily_revenue_target import DailyRevenueTarget
+                target = (
+                    await session.execute(
+                        select(DailyRevenueTarget.target_eur)
+                        .where(DailyRevenueTarget.tenant_id == tenant_id)
+                        .order_by(desc(DailyRevenueTarget.effective_from))
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+                if target is not None:
+                    merged["daily_revenue_target_eur"] = float(target)
+            except (SQLAlchemyError, ImportError):  # sem target = alignment neutro
+                logging.getLogger(__name__).debug(
+                    "from_tenant_config: revenue target indisponível",
+                    exc_info=True,
+                )
+
+        merged.update(overrides)  # caller explícito ganha sempre
         return cls(**merged)
 
 
@@ -323,13 +409,17 @@ def _v2_fitness(schedule: Dict[str, Any], cfg: FitnessConfig) -> float:
         mean_risk = float(schedule.get("quality_risk_mean", schedule.get("quality_risk", 0)) or 0)
     hard_hits = sum(1 for r in per_op if r >= cfg.quality_risk_hard_threshold)
 
+    # Q.115.X7 — alinhamento com target diário (negado: score mais alto = fitness menor)
+    revenue_align_score = _revenue_target_alignment(schedule, cfg)
+
     fitness = (
         cfg.w_v2_makespan * norm_makespan
         + cfg.w_v2_tardiness_transport * norm_tardy
         + cfg.w_v2_idle_operators * norm_idle
         + cfg.w_v2_setup_time * norm_setups
         + cfg.w_v2_quality_risk * mean_risk
-        - cfg.w_v2_throughput_eur_day * norm_throughput  # negated: higher throughput → lower fitness
+        - cfg.w_v2_throughput_eur_day * norm_throughput  # negado: throughput maior → fitness menor
+        - cfg.w_v2_revenue_target_alignment * revenue_align_score  # negado: alinhamento maior → fitness menor
     )
     if hard_hits:
         fitness += cfg.quality_risk_hard_penalty * hard_hits * cfg.w_v2_quality_risk
@@ -358,6 +448,57 @@ def build_op_features_for_risk(op_record: Dict[str, Any]) -> Dict[str, Any]:
         "phase_error_rate": float(op_record.get("phase_error_rate", 0.0) or 0.0),
         "queue_depth": int(op_record.get("queue_depth", 0) or 0),
     }
+
+
+def _aggregate_throughput_by_day(schedule: Dict[str, Any]) -> Dict[str, float]:
+    """Agrega throughput €/dia do schedule.
+
+    Lê `throughput_by_day` (dict data→€) se presente; caso contrário usa
+    `throughput_eur_day` (valor médio único) como substituto para um único dia.
+    NÃO lê CoeficienteX directamente — trabalha só sobre agregados já calculados.
+    """
+    by_day: Dict[str, float] = schedule.get("throughput_by_day") or {}
+    if by_day:
+        return {k: float(v) for k, v in by_day.items() if float(v) >= 0}
+    # Fallback: usa o valor médio como representante de um único "dia"
+    avg = float(schedule.get("throughput_eur_day") or 0)
+    if avg > 0:
+        return {"_avg": avg}
+    return {}
+
+
+def _revenue_target_alignment(schedule: Dict[str, Any], cfg: FitnessConfig) -> float:
+    """Score [0, 1] que mede alinhamento com o target diário de faturação.
+
+    Q.115.X7 — soft objective. NÃO usa CoeficienteX directamente;
+    trabalha sobre `throughput_by_day` / `throughput_eur_day` já calculados.
+
+    Sem target configurado (cfg.daily_revenue_target_eur is None) devolve
+    1.0 — score neutro, não penaliza nem premeia.
+
+    Score = max(0, 1 - 2 * avg_dev_pct) onde avg_dev_pct é a média das
+    desvios percentuais absolutos por dia relativamente ao target.
+    Decresce linearmente: 0% desvio → 1.0; 50% desvio → 0.0; >50% → 0.0.
+    """
+    if cfg.daily_revenue_target_eur is None:
+        return 1.0
+
+    target = float(cfg.daily_revenue_target_eur)
+    if target <= 0:
+        return 1.0
+
+    eur_per_day = _aggregate_throughput_by_day(schedule)
+    if not eur_per_day:
+        # Sem dados → desvio máximo (score 0)
+        return 0.0
+
+    deviations_pct = [
+        abs(day_eur - target) / target
+        for day_eur in eur_per_day.values()
+    ]
+    avg_dev_pct = mean(deviations_pct)
+    score = max(0.0, 1.0 - 2.0 * avg_dev_pct)
+    return score
 
 
 def _predict_risks_safe(cfg: FitnessConfig, schedule: Dict[str, Any]) -> List[float]:

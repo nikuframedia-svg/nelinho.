@@ -1,0 +1,102 @@
+cubes:
+  - name: qualidade
+    description: >
+      Q.96 — taxa de defeitos em OF_CHECKLIST. Granularidade
+      (data, fase). OFCH_LOCAL (zona física) NÃO espelhada em
+      factory_raw (pendente Q.98). Anchor: Laminagem em Abril 2026 =
+      331/5 341 = 6,20 % no espelho (vs ~5,3 % MAR-KAYAKS Q.81; o
+      espelho cobre 97k de 3M rows). Defesa contra fracções aditivas:
+      a taxa é RATIO MEASURE — Cube faz SUM(defeitos)/NULLIF(SUM(total_checks),0)
+      em cross-row aggregation, NUNCA SUM(taxa).
+    sql_table: marts.v_taxa_defeitos_dia
+
+    measures:
+      - name: taxa_defeitos
+        description: >
+          Taxa de defeitos = defeitos reais / total de checks. Numerador
+          OFCH_GRAVIDADE >= 1 (1 leve, 2 intermédio, 3 grave); gravidade=0
+          é template e NÃO conta. Denominador COUNT(*) total de checks.
+          Devolvida em FRACAO (0-1 interno; apresentar como % na narração).
+          Por construção 0 <= taxa <= 1 (denominador estável).
+          Q.96.A.0 anchor: Laminagem Abril 2026 = 6,20%.
+        sql: "SUM(defeitos)::float / NULLIF(SUM(total_checks), 0)"
+        type: number
+        format: percent
+
+      - name: defeitos
+        description: >
+          Contagem de defeitos reais (OFCH_GRAVIDADE >= 1). CONTAGEM
+          adimensional — soma sempre OK. Útil para o numerador isolado
+          ou para perguntas "quantos defeitos".
+        sql: defeitos
+        type: sum
+        format: number
+
+      - name: total_checks
+        description: >
+          Contagem total de checks (incluindo templates grav=0).
+          Denominador da taxa; expor para drill-down.
+        sql: total_checks
+        type: sum
+        format: number
+
+      - name: taxa_grave
+        description: >
+          Q.107 — proporção de defeitos GRAVES (OFCH_GRAVIDADE=3)
+          sobre defeitos reais (>=1). Ratio measure no Cube:
+          SUM(defeitos_graves)/NULLIF(SUM(defeitos),0). FRACAO 0-1.
+          NUNCA SUM(taxa_grave). Anchor: 561 graves / 5 660 totais =
+          9.9 % globalmente.
+        sql: "SUM(defeitos_graves)::float / NULLIF(SUM(defeitos), 0)"
+        type: number
+        format: percent
+
+      - name: defeitos_graves
+        description: >
+          Q.107 — contagem absoluta de defeitos GRAVES
+          (OFCH_GRAVIDADE=3). Numerador isolado de taxa_grave.
+          CONTAGEM, aditiva. Anchor: 561 globais.
+        sql: defeitos_graves
+        type: sum
+        format: number
+
+      - name: taxa_intermedia
+        description: >
+          Q.108 Onda A — proporção de defeitos INTERMÉDIOS
+          (OFCH_GRAVIDADE=2) sobre defeitos reais (>=1). Ratio
+          measure no Cube: SUM(defeitos_intermedios)/NULLIF(SUM(defeitos),0).
+          FRACAO 0-1. NUNCA SUM(taxa_intermedia). Anchor global =
+          1 368 intermédios / 5 660 totais = 24.2%. Análoga a
+          taxa_grave (mesma estrutura, gravidade=2 em vez de 3).
+        sql: "SUM(defeitos_intermedios)::float / NULLIF(SUM(defeitos), 0)"
+        type: number
+        format: percent
+
+      - name: defeitos_intermedios
+        description: >
+          Q.108 Onda A — contagem absoluta de defeitos INTERMÉDIOS
+          (OFCH_GRAVIDADE=2). Numerador isolado de taxa_intermedia.
+          CONTAGEM, aditiva. Anchor: 1 368 globais.
+        sql: defeitos_intermedios
+        type: sum
+        format: number
+
+    dimensions:
+      - name: data
+        description: Dia do check (CAST OFCH_DATA_ACTUALIZACAO).
+        sql: data
+        type: time
+
+      - name: fase
+        description: >
+          Nome da fase de produção (FP_NOME via JOIN com fases_producao).
+          71 fases canónicas; '(sem fase)' quando OFCH_FP_ID NULL.
+        sql: fase
+        type: string
+
+      - name: fase_id
+        description: >
+          ID numérico da fase (OFCH_FP_ID). Útil para JOINs com
+          outras medidas de produção (Q.97+).
+        sql: fase_id
+        type: number

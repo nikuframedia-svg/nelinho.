@@ -33,6 +33,8 @@ export interface TimelineLane {
   label: string;
   /** Sub-etiqueta opcional. */
   sublabel?: string;
+  /** Nó React opcional para substituir `label` (ex: Clickable). */
+  labelNode?: ReactNode;
 }
 
 export interface TimelineItem {
@@ -149,7 +151,7 @@ export function TimelineLanes({
                   textOverflow: 'ellipsis',
                 }}
               >
-                {lane.label}
+                {lane.labelNode ?? lane.label}
               </span>
               {lane.sublabel ? (
                 <span style={{ fontSize: 9.5, color: 'var(--fg-3)' }}>

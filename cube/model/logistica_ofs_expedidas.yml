@@ -1,0 +1,65 @@
+cubes:
+  - name: logistica_ofs_expedidas
+    description: >
+      Q.104 Medida 1 — contagem mensal de OFs expedidas. Fonte:
+      marts.v_ofs_expedidas_mes (JOIN N:M TRANSP_OF + TRANSPORTE
+      + lookups). Critério canónico Q.82 §4: TROF_ENVIADO=TRUE +
+      TR_DATA NOT NULL. Anchor 2024 (SUM agregada) = 5 830
+      OFs-expedições (= UE 4 063 + Outros 1 530 + Nacional 237).
+      NOTA: COUNT DISTINCT global 2024 = 5 573; delta ~257 são OFs
+      expedidas em destinos múltiplos no mesmo ano.
+      Transportadora NÃO suportada (98.5 % externos genéricos —
+      buraco residual Q.82).
+    sql_table: marts.v_ofs_expedidas_mes
+
+    measures:
+      - name: total
+        description: >
+          Contagem de OFs expedidas. SUM(n_ofs) da view (cada row =
+          COUNT DISTINCT TROF_OF_ID por sub-grupo mês×destino×tipo).
+          CONTAGEM adimensional. Anchor 2024 = 5 830.
+        sql: n_ofs
+        type: sum
+        format: number
+
+    dimensions:
+      - name: data
+        description: >
+          Primeiro dia do mês de TR_DATA (data canónica do transporte,
+          NÃO OF_DATATRANSPORTE morto). Granularidade mensal. Usa
+          `timeDimensions` com `dateRange`.
+        sql: data
+        type: time
+
+      - name: destino
+        description: >
+          Nome canónico do destino (DEST_NOME via JOIN TR_DEST_ID).
+          4 valores: 'Nacional' (Portugal), 'U.E.' (top — 4 063 OFs
+          2024), 'Outros' (1 530), 'Todos'. 'Desconhecido' quando
+          TR_DEST_ID é NULL (~19 % dos transportes). Usar `equals`
+          literal — note 'U.E.' tem pontos.
+        sql: destino
+        type: string
+
+      - name: destino_id
+        description: >
+          ID numérico do destino (TR_DEST_ID = TRANSP_DESTINO.DEST_ID).
+          Valores: 5=Nacional, 6=U.E., 7=Outros, 8=Todos.
+        sql: destino_id
+        type: number
+
+      - name: tipo_transporte
+        description: >
+          Nome do tipo (TRTP_NOME via JOIN TR_TRTP_ID). Top 2024:
+          'Camião' (3 015 OFs), 'Normal' (1 538 — camião porta-a-porta?),
+          'Barco' (1 201), 'Avião' (76). Hierárquica via TRTP_TRTP_ID
+          (root 10=Exportação, 19=Deslocações). Usar `equals` literal.
+        sql: tipo_transporte
+        type: string
+
+      - name: tipo_transporte_id
+        description: >
+          ID numérico (TR_TRTP_ID = TRANSP_TIPO.TRTP_ID). Valores
+          chave: 1=Avião, 2=Camião, 3=Barco, 4=Normal, 9=Todos.
+        sql: tipo_transporte_id
+        type: number

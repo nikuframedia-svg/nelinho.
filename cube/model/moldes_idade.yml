@@ -1,0 +1,46 @@
+cubes:
+  - name: moldes_idade
+    description: >
+      Q.108.W3 — Idade dos moldes (snapshot). Source: marts.v_moldes_idade
+      a partir de plan.mold.acquired_date. Quando acquired_date é NULL,
+      o molde não contribui para idade_avg/p50/max mas conta em n_activos.
+    sql_table: marts.v_moldes_idade
+
+    measures:
+      - name: activos
+        description: COUNT moldes com active=TRUE.
+        sql: n_activos
+        type: sum
+        format: number
+
+      - name: com_data
+        description: COUNT moldes com acquired_date preenchida.
+        sql: n_com_data
+        type: sum
+        format: number
+
+      - name: idade_avg
+        description: >
+          AVG idade em anos. TEMPO em anos; cross-row AVG (NÃO SUM).
+          Apenas considera moldes com acquired_date IS NOT NULL.
+        sql: idade_anos_avg
+        type: avg
+        format: number
+
+      - name: idade_p50
+        description: Mediana de idade em anos.
+        sql: idade_anos_p50
+        type: avg
+        format: number
+
+      - name: idade_max
+        description: Pior caso — molde mais antigo.
+        sql: idade_anos_max
+        type: max
+        format: number
+
+    dimensions:
+      - name: data
+        description: Dia do snapshot.
+        sql: data
+        type: time

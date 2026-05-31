@@ -1,0 +1,51 @@
+route_id: homologo_anual
+dominio: materiais
+descricao: "Abdicação explícita: comparação homóloga ano vs ano (espelho cobre só 24m incompletos)"
+
+# Q.86 — gaveta de abdicação por DADOS-EM-FALTA. O espelho factory_raw cobre
+# 24 meses (memory: project_dev_stack). Isto significa que pedir "este ano vs
+# ano passado" toca dados parciais em AMBOS os anos (2026 incompleto, 2024
+# também). Devolver comparação sem aviso seria erro silencioso de
+# dados-em-falta — exactamente o tipo de mentira-por-cobertura que a campanha
+# quer evitar (lição Q.83 Q.28 "ciclo olímpico").
+#
+# Sem esta rota, perguntas tipo "este ano vs ano passado" caíam em
+# consumo_materiais (que devolve só o período mais recente) e o utilizador
+# via 1 ano em vez de comparação — ROTA-ERRADA semântica (Q.84/Q.85 Q.29).
+
+utterances:
+  # Q.86 v2 A4 — utterances contrastivas: maximizar vocabulário HOMÓLOGO ANUAL
+  # ("ano vs ano", "ano corrente vs ano anterior", "N vs N-1", "homólogo"),
+  # evitar períodos curtos ("este mês"). Cada utterance refere DOIS anos
+  # explicitamente ou usa "homólogo/anual".
+  - "comparação de consumo de resina entre este ano e o ano passado"
+  - "comparação homóloga ano contra ano"
+  - "evolução anual do consumo de material"
+  - "diferença entre 2026 e 2025 no consumo"
+  - "comparar consumo do ano corrente com o ano anterior"
+  - "homólogo do consumo de matéria-prima"
+  - "consumo do ano N comparado com ano N-1"
+  - "ano vs ano anterior — comparação de material"
+  - "comparação anual de consumo entre dois anos"
+  - "evolução do consumo de resina ano a ano"
+  - "este ano comparado com o homólogo do ano passado"
+  - "como variou o consumo do ano N-1 para o ano N"
+
+abstain: true
+abstain_reason: |
+  Comparação homóloga requer 2 anos completos de dados. O espelho factory_raw
+  cobre só 24 meses incompletos — 2026 está a meio e 2024-2025 podem ter
+  meses em falta na borda. Para evitar comparar dados parciais sem aviso
+  (erro silencioso de dados-em-falta — lição da campanha), abdico
+  explicitamente. Para esta pergunta, consulta o gestor ou peça o relatório
+  homólogo directamente no ERP NELO.
+
+params: {}
+defaults: {}
+sql: ""
+
+hypothesis_flags:
+  - "Q.86: rota-abstain por dados-em-falta — espelho 24m incompletos não suporta homólogo limpo"
+  - "Lição Q.83 Q.28: não inventar comparação contra cobertura parcial"
+
+golden: {}

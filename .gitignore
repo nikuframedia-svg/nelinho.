@@ -188,6 +188,10 @@ models/
 !src/core/models/
 !src/copilot/models/
 !src/ml/models/
+# Q.115.A — packages `models/` adicionais em domínios de negócio
+!src/plan/models/
+!src/hr/models/
+!src/quality/models/
 
 # Q.61.05 — mutmut state (regravavel via scripts/mutation_test.ps1)
 mutmut-cache/
@@ -197,3 +201,15 @@ html/  # mutmut html report output
 # Q.62.E.10 — orval generated/ AGORA versionados (ver linha 135 acima).
 # Esta segunda entrada foi removida; mantemos comentario para historia.
 
+
+# Q.93.E / Q.105.A — índices semânticos do Cube (artefactos de runtime,
+# reconstruíveis via scripts/refresh_cube_material_index.py + refresh_cube_measure_index.py).
+# A fonte (cube/data/material_aliases.yml) e os modelos (cube/model/*.yml) são versionados.
+cube/data/*.faiss
+cube/data/*.npz
+cube/data/*.pkl
+cube/data/*.q93dbis_backup
+
+# Cache de embeddings das rotas (artefacto de runtime)
+routes/.embeddings_cache_real.npz
+routes/*.npz

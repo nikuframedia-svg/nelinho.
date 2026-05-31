@@ -19,6 +19,15 @@ Design:
   the replan via `trigger_reschedule`.
 
 No state is kept inside this module — the scheduler owns the job queue.
+
+Q.115.D — coexistência com AutoProposeService:
+  Este módulo NÃO cria Decisions. A criação de Decision(status=PROPOSED)
+  pertence exclusivamente a `plan.services.auto_propose.AutoProposeService`,
+  que subscreve o mesmo tópico `config.updated`. Os dois outputs são
+  independentes:
+    - replan_hook → APScheduler (re-executa CPO em background)
+    - auto_propose → Decision ledger (proposta visível ao operador)
+  Nunca adicionar `create_decision` a este módulo — duplicaria Decisions.
 """
 
 from __future__ import annotations

@@ -1,0 +1,36 @@
+cubes:
+  - name: plataforma_audit_atividade
+    description: >
+      Q.108.W3 — Actividade auditada. Source: marts.v_audit_atividade_dia
+      sobre core.audit_log. n_actors é COUNT DISTINCT — NÃO aditivo entre
+      dias (mesmo actor pode aparecer em vários dias).
+    sql_table: marts.v_audit_atividade_dia
+
+    measures:
+      - name: entries
+        description: COUNT audit_log entries por dia × entity_type × action.
+        sql: n_entries
+        type: sum
+        format: number
+
+      - name: actors
+        description: >
+          COUNT DISTINCT actors no dia (DAU quando agregada sem outras dims).
+          NÃO aditivo entre dias — usar como métrica diária.
+        sql: n_actors
+        type: max
+        format: number
+
+    dimensions:
+      - name: data
+        description: Dia.
+        sql: data
+        type: time
+      - name: entity_type
+        description: Tipo de entidade auditada (plan_schedule_commit, decision_run, …).
+        sql: entity_type
+        type: string
+      - name: action
+        description: Acção (INSERT, UPDATE, DELETE).
+        sql: action
+        type: string

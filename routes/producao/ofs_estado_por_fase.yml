@@ -1,0 +1,71 @@
+route_id: ofs_estado_por_fase
+dominio: producao
+descricao: "Distribuição das OFs em produção activa por fase, opcionalmente filtrado a uma fase específica (kg/laminagem/cura/etc)"
+
+# Q.86 — fusão de 2 rotas primas (Q.79 ofs_em_producao + ofs_em_fase). A primeira
+# devolve todas as fases activas (snapshot); a segunda filtra por fase ILIKE.
+# Diferem só pelo filtro de fase. Com `fase` opcional, mesma SQL serve "quantas
+# OFs em produção?" (sem fase) e "quantas em laminagem?" (com fase).
+
+utterances:
+  # Q.86 v2 A4 — utterances contrastivas: maximizar vocabulário FACTORY-SPECIFIC
+  # (ordens de fabrico, OFs em fase, kayaks na fase X), evitar termos genéricos
+  # ("estado da produção", "agora" sozinho) que ecoam em meteo/RH/fact.
+  # Cada utterance refere explicitamente "OFs"/"ordens"/"kayaks" + fase.
+  # — Estado geral (sem fase específica) —
+  - "quantas ordens de fabrico em produção activa"
+  - "distribuição das OFs por fase de fabrico"
+  - "em que fase de fabrico estão as OFs"
+  - "quantas OFs estão actualmente em produção"
+  - "snapshot das OFs por fase neste momento"
+  - "ordens de fabrico abertas em produção"
+  - "OFs no shop floor em curso"
+  # — Fase específica —
+  - "quantas OFs estão na fase de laminagem"
+  - "ordens de fabrico em corte"
+  - "quantos kayaks estão na fase de pintura"
+  - "OFs na fase de cura"
+  - "quantas OFs estão no desmolde"
+  - "OFs em controlo de qualidade"
+  - "OFs na fase de colagem"
+  - "OFs na fase de acabamento"
+  - "quantos barcos estão na laminagem agora"
+  - "quantos kayaks na fase de laminagem neste momento"
+  - "kayaks parados na fase de cura"
+  - "OFs estacionadas na fase de pintura"
+
+params:
+  fase:
+    type: texto_nome_fase
+    obrigatorio: false   # Q.86 — quando vazio, SQL devolve distribuição total.
+
+defaults:
+  # Decisão de negócio Q.79: OF activa = FP_SEQUENCIA < 30 (produção física,
+  # exclui Armazém/Entregue/Em Uso/Reparações/Lixo). INTOCÁVEL.
+  seq_max_activa: 30
+
+post_processing: null
+max_rows: 5000
+
+sql: |
+  SELECT
+    fp."FP_ID" AS fase_id,
+    fp."FP_NOME" AS fase_nome,
+    CAST(fp."FP_SEQUENCIA" AS int) AS fase_sequencia,
+    COUNT(*) AS n_ofs
+  FROM factory_raw.ordemfabrico o
+  JOIN factory_raw.fases_producao fp ON fp."FP_ID" = o."OF_FP_ID"
+  WHERE CAST(fp."FP_SEQUENCIA" AS int) < :seq_max_activa
+    AND fp."FP_NOME" ILIKE COALESCE(:fase_pattern, '%')
+  GROUP BY fp."FP_ID", fp."FP_NOME", fp."FP_SEQUENCIA"
+  ORDER BY CAST(fp."FP_SEQUENCIA" AS int), n_ofs DESC
+
+hypothesis_flags:
+  - "OF activa = OF_FP_ID em fase com FP_SEQUENCIA<30 (DECISÃO DE NEGÓCIO Q.79)"
+  - "OF_FP_ID é fase actual da OF (CONFIRMADO Q.79)"
+  - "ILIKE %fase% apanha variantes ('laminagem' inclui peças/Infusão/Double Dutch — todas seq=10)"
+  - "Q.86 fusão: fase opcional via SQL condicional `:fase_pattern::text IS NULL`"
+
+golden:
+  params: {fase: "laminagem"}
+  # Q.86: alternativo (sem fase) — params {} devolve snapshot estado de todas as fases activas.

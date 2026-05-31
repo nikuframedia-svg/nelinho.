@@ -1,0 +1,50 @@
+route_id: causalidade_explicita
+dominio: producao
+descricao: "Abdicação explícita: perguntas causais ('porque', 'razão', 'o que causou')"
+
+# Q.86 — gaveta de recusa por princípio. Causalidade é diferente de evidência:
+# correlação não é causa. O copiloto pode mostrar números (OFs por fase, top
+# materiais consumidos, retrabalhos) mas NÃO pode afirmar a causa de um
+# fenómeno operacional. Sem esta rota, perguntas tipo "porque está a laminagem
+# mais lenta" caíam em consumo_materiais (que devolve top ingredientes do mês)
+# e o utilizador interpretava como causa — erro grave de fundamento.
+#
+# Esta rota apanha utterances causais e devolve abdicação com sugestão de quais
+# evidências factuais o utilizador pode pedir explicitamente.
+
+utterances:
+  # Q.86 v2 A4 — utterances contrastivas: maximizar vocabulário CAUSAL (porque,
+  # porquê, razão de, motivo, explica, o que causou, justifica), evitar
+  # factuais ("quanto/quantos") que ecoam outras rotas. Cada utterance
+  # carrega ≥1 marcador causal forte.
+  - "porque é que a laminagem está mais lenta este mês"
+  - "qual a razão do atraso na produção"
+  - "o que causou o atraso"
+  - "porque está mais lento este mês"
+  - "porquê este problema com a laminagem"
+  - "explica a causa do retrabalho"
+  - "qual o motivo de termos menos produção"
+  - "o que está a originar os defeitos"
+  - "justifica porque caiu a produção este mês"
+  - "qual a causa-raiz do atraso"
+  - "explica porquê este indicador subiu"
+  - "motivo da diferença entre meses"
+
+abstain: true
+abstain_reason: |
+  Posso mostrar evidência (números por fase, top materiais consumidos,
+  retrabalhos por categoria) mas NÃO posso afirmar a causa de um fenómeno
+  operacional — correlação não é causa, e atribuir causa requer diagnóstico
+  humano. Pede a evidência específica que queres ver: "mostra OFs por fase
+  este mês", "top materiais consumidos no período", "retrabalhos por
+  categoria". Depois interpretas tu, ou pede análise ao gestor.
+
+params: {}
+defaults: {}
+sql: ""
+
+hypothesis_flags:
+  - "Q.86: rota-abstain de princípio — copiloto NUNCA conclui causa, apenas evidência"
+  - "Lição da campanha: erro silencioso de causalidade é o mais perigoso (mente sobre porquê)"
+
+golden: {}

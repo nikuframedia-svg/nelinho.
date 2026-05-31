@@ -123,6 +123,12 @@ export const profitKeys = {
   cogsOrder: (orderId: string) => [...profitKeys.all, 'cogs-order', orderId] as const,
   margin: (orderId: string, sellingPrice: number) =>
     [...profitKeys.all, 'margin', orderId, sellingPrice] as const,
+  // Q.115.M — preview defensivo por commit SHA (esconde se 404)
+  preview: (commitSha: string) =>
+    [...profitKeys.all, 'preview', commitSha] as const,
+  // Q.117.D — série histórica de um KPI (gráfico de tendência da tab KPIs)
+  kpiHistory: (name: string, days: number) =>
+    [...profitKeys.all, 'kpi-history', name, days] as const,
 } as const;
 
 // ─── twin (Q.67.2.A) ────────────────────────────────────────────────────
@@ -191,6 +197,14 @@ export const supplyKeys = {
     [...supplyKeys.all, 'copilot-alerts', 'shortage'] as const,
 } as const;
 
+// ─── plan / CPO commits (Q.115.K) ──────────────────────────────────────
+
+export const planKeys = {
+  all: ['plan'] as const,
+  schedule: () => [...planKeys.all, 'schedule'] as const,
+  scheduleCurrent: () => [...planKeys.schedule(), 'current'] as const,
+} as const;
+
 // ─── Reports admin (Q.67.2.B) ──────────────────────────────────────────
 //
 // ReportsAdminPanel (Onda 18/R): 3 mutations (schedule, email, retention).
@@ -201,4 +215,93 @@ export const reportsKeys = {
   schedules: () => [...reportsKeys.all, 'schedules'] as const,
   emails: () => [...reportsKeys.all, 'emails'] as const,
   retentions: () => [...reportsKeys.all, 'retentions'] as const,
+} as const;
+
+// ─── revenue-target (Q.115.B) ───────────────────────────────────────────
+
+export const revenueTargetKeys = {
+  all: ['revenue-target'] as const,
+  lists: () => [...revenueTargetKeys.all, 'list'] as const,
+} as const;
+
+// ─── client-priority (Q.115.B) ──────────────────────────────────────────
+
+export const clientPriorityKeys = {
+  all: ['client-priority'] as const,
+  lists: () => [...clientPriorityKeys.all, 'list'] as const,
+} as const;
+
+// ─── user-input (Q.115.B) ───────────────────────────────────────────────
+
+export const userInputKeys = {
+  all: ['user-input'] as const,
+  lists: () => [...userInputKeys.all, 'list'] as const,
+  list: (status?: string) => [...userInputKeys.lists(), status ?? 'all'] as const,
+} as const;
+
+// ─── learning / affinities (Q.115.G) + plan-vs-actual (Q.115.V) ─────────
+
+export const learningKeys = {
+  all: ['learning'] as const,
+  affinities: (params?: { operator_id?: string; phase_id?: string; top?: number }) =>
+    [...learningKeys.all, 'affinities', params ?? {}] as const,
+  planVsActual: (params?: { days?: number }) =>
+    [...learningKeys.all, 'plan-vs-actual', params ?? {}] as const,
+} as const;
+
+// ─── runbooks (Q.115.H) ─────────────────────────────────────────────────
+
+export const runbookKeys = {
+  all: ['runbooks'] as const,
+  lists: () => [...runbookKeys.all, 'list'] as const,
+  list: (params?: { error_code?: string }) =>
+    [...runbookKeys.lists(), params ?? {}] as const,
+} as const;
+
+// ─── governance (preference-rules) ──────────────────────────────────────
+
+export const governanceKeys = {
+  all: ['governance'] as const,
+  preferenceRules: (params?: { status?: string; type?: string }) =>
+    [...governanceKeys.all, 'preference-rules', params ?? {}] as const,
+} as const;
+
+// ─── quality risk preview (Q.115.E) ─────────────────────────────────────
+
+export const qualityRiskKeys = {
+  all: ['quality-risk'] as const,
+  preview: (operatorId: string, boatId: string, phaseId: string) =>
+    [...qualityRiskKeys.all, 'preview', operatorId, boatId, phaseId] as const,
+} as const;
+
+// ─── entity summaries (Q.116.A) ─────────────────────────────────────────
+
+export const entityKeys = {
+  all: ['entity'] as const,
+  modelo: (id: string) => [...entityKeys.all, 'modelo', id] as const,
+  fase: (id: string) => [...entityKeys.all, 'fase', id] as const,
+  cliente: (id: string) => [...entityKeys.all, 'cliente', id] as const,
+  encomenda: (id: string | number) => [...entityKeys.all, 'encomenda', String(id)] as const,
+  operador: (id: string) => [...entityKeys.all, 'operador', id] as const,
+} as const;
+
+// ─── diagnostics / ERP connection (Q.117.A) ─────────────────────────────
+//
+// Estado da integração ERP NELO (GET /v1/diagnostics/erp-connection):
+// frescor por mirror lido de core.etl_run. Alimenta o SyncStatusBadge no
+// TopBar global — "ERP há Xm" + dot de estado.
+
+export const diagnosticsKeys = {
+  all: ['diagnostics'] as const,
+  erpConnection: () => [...diagnosticsKeys.all, 'erp-connection'] as const,
+} as const;
+
+// ─── master data cancel/retire/deactivate (Q.115.X5) ─────────────────────
+
+export const masterDataKeys = {
+  all: ['master-data'] as const,
+  workOrders: () => [...masterDataKeys.all, 'work-orders'] as const,
+  encomendas: () => [...masterDataKeys.all, 'encomendas'] as const,
+  boats: (showRetired: boolean) => [...masterDataKeys.all, 'boats', { showRetired }] as const,
+  employees: (showInactive: boolean) => [...masterDataKeys.all, 'employees', { showInactive }] as const,
 } as const;

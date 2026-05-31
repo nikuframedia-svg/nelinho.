@@ -1,0 +1,64 @@
+cubes:
+  - name: consumo_material
+    description: >
+      Consumo de matéria-prima por dia × material × unidade.
+      Assente em marts.v_consumo_material_dia (Fase 0, Q.93.A),
+      validada contra rota congelada Q.86 e âncora Q.78 §Q4
+      (Resina Lavesan EN 720 × tambor, Abril 2026 = 4.724).
+      ATENÇÃO: unidade é parte da identidade — NUNCA somar
+      quantidades de unidade_id diferentes (mistura kg/m/tambor).
+      Fonte selada: supply.inventory_ledger_entries (ETL Q.64.A
+      vazio em transaction_type='consume') NÃO é fonte aqui — só
+      a view marts.v_consumo_material_dia.
+    sql_table: marts.v_consumo_material_dia
+
+    measures:
+      - name: consumo
+        description: >
+          Soma de quantidade (já com factor P_UNI_MOV_FACTOR
+          aplicado pela view). Só faz sentido físico quando
+          filtrado por unidade_id; agregação cega entre unidades
+          mistura kg/m/tambor.
+        sql: quantidade
+        type: sum
+        format: number
+
+      - name: custo
+        description: >
+          Custo total em € da matéria-prima consumida.
+          Fórmula: SUM(MOV_QUANTIDADE × P_PRECOCUSTO) — MOV_QUANTIDADE
+          em unidade-base (kg/un), P_PRECOCUSTO em €/unidade-base
+          (validado Q.94.A.0.2 contra Resina Lavesan EN 720 = 7,78 €/kg).
+          NULL para materiais sem preço (P_PRECOCUSTO=0 → NULLIF →
+          excluído da SUM). NUNCA inventa €0.
+          A regra anti-soma-cega herda do consumo: somar custos de
+          unidades diferentes só faz sentido quando todas têm preço
+          em €/unidade-base coerente.
+        sql: custo
+        type: sum
+        format: currency
+
+      - name: n_movimentos
+        description: Número de movimentos registados (linhas de MOVIMENTO).
+        sql: n_movimentos
+        type: sum
+        format: number
+
+    dimensions:
+      - name: data
+        description: Dia do movimento (granularidade base da view).
+        sql: data
+        type: time
+
+      - name: material
+        description: Nome do produto (P_NOME do ERP MAR-KAYAKS).
+        sql: material
+        type: string
+
+      - name: unidade_id
+        description: >
+          Identidade da unidade de medida (22 valores oficiais da
+          tabela UNIDADE do ERP — ver src/copilot/routing/units.py).
+          7=kg, 12=unidades, 18=tambor, etc. Co-identidade com material.
+        sql: unidade_id
+        type: number

@@ -54,6 +54,19 @@ def _precedences_met(
     order_to_ops: Dict[str, List[SchedulingOperation]],
     op_end_at: Dict[str, datetime],
 ) -> bool:
+    # Q.116.B — fase com posição alternativa: requer que PELO MENOS UM
+    # sibling cujo phase_id ∈ allowed_predecessors já tenha terminado.
+    # Não gate na sequência intra-encomenda nem nos predecessor_ops
+    # explícitos — o caminho legacy não se aplica.
+    if op.is_flexible and op.allowed_predecessors:
+        allowed = set(op.allowed_predecessors)
+        siblings = order_to_ops[op.order_id]
+        for prev in siblings:
+            if prev.operation_id == op.operation_id:
+                continue
+            if prev.phase_id in allowed and prev.operation_id in op_end_at:
+                return True
+        return False
     # Intra-order precedence
     siblings = order_to_ops[op.order_id]
     for prev in siblings:
@@ -111,6 +124,43 @@ def _earliest_start(
         return shifted
 
     siblings = order_to_ops[op.order_id]
+
+    # Q.116.B — fase com posição alternativa: predecessor real é o MÁXIMO
+    # end_at entre os siblings cujo phase_id ∈ allowed_predecessors e que
+    # já tenham completado. Se nenhum completou, o op não pode arrancar
+    # ainda — devolvemos um sentinela alto para sinalizar inviável agora.
+    if op.is_flexible and op.allowed_predecessors:
+        allowed = set(op.allowed_predecessors)
+        chosen_pred: Optional[SchedulingOperation] = None
+        chosen_end: Optional[datetime] = None
+        for prev in siblings:
+            if prev.operation_id == op.operation_id:
+                continue
+            if prev.phase_id not in allowed:
+                continue
+            end = op_end_at.get(prev.operation_id)
+            if end is None:
+                continue
+            if chosen_end is None or end > chosen_end:
+                chosen_end = end
+                chosen_pred = prev
+        if chosen_end is None:
+            # Nenhum allowed_predecessor completou — não pode arrancar.
+            return default + timedelta(days=365 * 10)
+        candidate = _with_gaps(chosen_end, chosen_pred)
+        if candidate > earliest:
+            earliest = candidate
+        # Predecessores explícitos continuam a ser honrados se existirem.
+        for pid in op.predecessor_ops:
+            end = op_end_at.get(pid)
+            if end is None:
+                continue
+            pred_op = op_by_id.get(pid) if op_by_id else None
+            candidate = _with_gaps(end, pred_op)
+            if candidate > earliest:
+                earliest = candidate
+        return earliest
+
     for prev in siblings:
         if prev.sequence < op.sequence:
             end = op_end_at.get(prev.operation_id)
@@ -190,6 +240,8 @@ def _pick_workers(
 def _sanitise_permutation(
     chromosome: Chromosome,
     operations: List[SchedulingOperation],
+    *,
+    effective_boost: Optional[Dict[str, int]] = None,
 ) -> List[SchedulingOperation]:
     """FASE 1A.3 (CRIT-10) — validate the chromosome's permutation up front
     and surface anomalies via WARN. The previous list comprehension silently
@@ -198,6 +250,12 @@ def _sanitise_permutation(
     Build `priority_order`: each in-range index at most once, in chromosome
     order. Anything left over is appended in natural index order so every op
     is scheduled exactly once.
+
+    Q.116.D — quando `effective_boost` é passado (map order_id → boost
+    int), o priority_order é re-ordenado por boost DESC com tiebreak
+    estável na posição original. Não viola axiomas Spelke — só altera a
+    ORDEM DE TENTATIVA no while-loop; precedências e gaps continuam
+    enforced no `_earliest_start`.
     """
     op_by_index = list(operations)
     n = len(op_by_index)
@@ -223,6 +281,16 @@ def _sanitise_permutation(
         if i not in seen_idx:
             priority_order.append(op_by_index[i])
             seen_idx.add(i)
+
+    if effective_boost:
+        # Q.116.D — pré-ordena por boost DESC (preserva posição relativa
+        # original como tiebreak, mantém determinismo).
+        indexed = list(enumerate(priority_order))
+        indexed.sort(
+            key=lambda iop: (-effective_boost.get(iop[1].order_id, 0), iop[0])
+        )
+        priority_order = [op for _, op in indexed]
+
     return priority_order
 
 

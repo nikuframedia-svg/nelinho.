@@ -336,6 +336,7 @@ def _empty_result(horizon_start: datetime, warnings: Optional[List[str]] = None)
         "backwards_shifts": 0,
         "total_idle_hours": 0.0,
         "idle_ratio": 0.0,
+        "num_machines": 0,
         "lam_utilization": 0.0,
         "idle_pct": 0.0,
         "tardiness_transport_d": 0.0,

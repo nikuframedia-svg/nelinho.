@@ -44,6 +44,8 @@ MODULES = sorted([
     "src.hr",
     "src.improve",
     "src.infrastructure",
+    "src.learning",  # Q.115.G — afinidades/plan-vs-actual/boat-scores
+    "src.master_data",  # Q.115.X5 — cancel/lists master-data
     "src.ml",
     "src.observability",  # Q.66.E.3 — agent_actions endpoint
     "src.plan",

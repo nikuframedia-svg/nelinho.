@@ -298,3 +298,30 @@ export const transportApi = {
     ),
 };
 
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Q.118.N — Faltas de material (FM04 shortage detector) GET /v1/factory-map/shortage-risks
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface ShortageRiskItem {
+  sku_id: string;
+  on_hand: number;
+  rop: number | null;
+  avg_daily_demand: number;
+  lead_time_days: number;
+  days_to_stockout: number | null;
+  severity: 'HIGH' | 'MED' | 'LOW';
+}
+
+export interface ShortageRisksResponse {
+  horizon_days: number;
+  items: ShortageRiskItem[];
+  counts: { high: number; med: number; low: number };
+}
+
+export const shortageRisksApi = {
+  get: (horizonDays = 14) =>
+    request<ShortageRisksResponse>(
+      `/v1/factory-map/shortage-risks?horizon_days=${horizonDays}`,
+    ),
+};

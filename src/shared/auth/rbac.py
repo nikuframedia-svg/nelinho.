@@ -12,7 +12,9 @@ from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
 
-from .jwt_handler import UserContext, get_current_user
+from .jwt_handler import UserContext
+# Q.121.D3 — dev-fallback por headers (prod continua a exigir Bearer JWT).
+from .headers import get_current_user_or_dev_header
 
 
 class Role(str, Enum):
@@ -367,7 +369,7 @@ def check_sod(
 def require_permission(permission: Permission):
     """Decorator to require a specific permission."""
     async def permission_checker(
-        user: UserContext = Depends(get_current_user),
+        user: UserContext = Depends(get_current_user_or_dev_header),
     ) -> UserContext:
         if not has_permission(user.role, permission):
             raise HTTPException(
@@ -382,7 +384,7 @@ def require_permission(permission: Permission):
 def require_role(allowed_roles: List[Role]):
     """Decorator to require one of the specified roles."""
     async def role_checker(
-        user: UserContext = Depends(get_current_user),
+        user: UserContext = Depends(get_current_user_or_dev_header),
     ) -> UserContext:
         try:
             user_role = Role(user.role)
@@ -417,7 +419,7 @@ class PermissionDependency:
     
     async def __call__(
         self,
-        user: UserContext = Depends(get_current_user),
+        user: UserContext = Depends(get_current_user_or_dev_header),
     ) -> UserContext:
         if self.require_all:
             has_perms = has_all_permissions(user.role, self.permissions)

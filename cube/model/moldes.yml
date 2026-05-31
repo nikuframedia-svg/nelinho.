@@ -1,0 +1,43 @@
+cubes:
+  - name: moldes
+    description: >
+      Q.107 Onda 3 — moldes da NELO. Fonte: factory_raw.moldes (91
+      rows espelhadas). Q.82 reportava 1506 moldes em MAR-KAYAKS
+      (764 em uso) — espelho actual tem subset 91. MLD_UTILIZ é
+      contador de utilizações por molde.
+    sql_table: factory_raw.moldes
+
+    measures:
+      - name: total
+        description: >
+          Contagem de moldes registados no espelho. Anchor = 91.
+          CONTAGEM adimensional.
+        sql: '"MLD_ID"'
+        type: count
+        format: number
+
+      - name: com_utilizacao
+        description: >
+          Moldes com pelo menos 1 utilização (MLD_UTILIZ > 0).
+          Anchor = 55 / 91 (60.4%).
+        sql: 'CASE WHEN "MLD_UTILIZ" > 0 THEN 1 ELSE 0 END'
+        type: sum
+        format: number
+
+      - name: utilizacao_total
+        description: >
+          Q.108 Onda A — soma total de utilizações dos moldes
+          (SUM(MLD_UTILIZ)). Anchor = 101 utilizações acumuladas em
+          91 moldes (55 com utilização > 0). CONTAGEM adimensional.
+        sql: '"MLD_UTILIZ"'
+        type: sum
+        format: number
+
+    dimensions:
+      - name: id
+        sql: '"MLD_ID"'
+        type: number
+        primaryKey: true
+      - name: nome
+        sql: '"MLD_NOME"'
+        type: string

@@ -12,6 +12,7 @@ Version numbers are per (tenant, model_name) and monotonically increasing.
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
@@ -24,6 +25,26 @@ from src.ml.models.orm import MLModelArtifact
 from src.ml.models.storage import ArtifactStorage
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_metrics(metrics: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Coerce NaN/Inf metric values to ``None`` before JSONB storage.
+
+    Postgres JSONB rejects the tokens ``NaN``/``Infinity`` (not valid JSON).
+    A metric can legitimately be undefined (e.g. ``roc_auc`` quando o split
+    de validacao tem uma so classe) — guardamos ``null`` em vez de rebentar
+    o INSERT. Recursivo para dicts/listas aninhados.
+    """
+    def _clean(v: Any) -> Any:
+        if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+            return None
+        if isinstance(v, dict):
+            return {k: _clean(x) for k, x in v.items()}
+        if isinstance(v, list):
+            return [_clean(x) for x in v]
+        return v
+
+    return {k: _clean(v) for k, v in (metrics or {}).items()}
 
 
 class ModelRegistryError(Exception):
@@ -89,7 +110,7 @@ class ModelRegistry:
             model_name=model_name,
             version=next_version,
             storage_uri=storage_uri,
-            metrics=metrics or {},
+            metrics=_sanitize_metrics(metrics),
             active=False,
             trained_by=trained_by,
             training_duration_sec=training_duration_sec,

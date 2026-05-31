@@ -1,0 +1,58 @@
+cubes:
+  - name: workforce_horas_extra
+    description: >
+      Q.106 — horas extra dos colaboradores NELO (MET=1 em
+      factory_raw.ent_mov). Fonte:
+      marts.v_workforce_horas_extra_mes (1 row por mês × colaborador
+      × departamento). MOVENT_HORAS é SEMPRE 0 no ERP (Q.82);
+      calculado via DATEDIFF entre MOVENT_DATA_I e MOVENT_DATA_F.
+      Anchor histórico: 220 057h em 64 784 eventos. 2024: 13 196h em
+      2 721 eventos por 83 colaboradores. Top 2024: Albino Mesquita
+      525h, Isilda Moreira 496h, Bruno Costa Martins 412h.
+      Decisão Luís: transparência total — ranking por pessoa e
+      drill individual permitidos.
+    sql_table: marts.v_workforce_horas_extra_mes
+
+    measures:
+      - name: total
+        description: >
+          Horas extra totais (h). SUM(horas_extra) sobre
+          v_workforce_horas_extra_mes. TEMPO aditivo entre
+          colaboradores/meses/departamentos. Anchor 2024 = 13 196h.
+        sql: horas_extra
+        type: sum
+        format: number
+
+      - name: n_eventos
+        description: >
+          Q.106 — número de eventos MET=1 (Horas Extra) por bucket.
+          CONTAGEM aditiva. Anchor histórico = 64 784 eventos.
+        sql: n_eventos
+        type: sum
+        format: number
+
+    dimensions:
+      - name: data
+        description: Primeiro dia do mês do evento.
+        sql: data
+        type: time
+
+      - name: colaborador
+        description: >
+          Nome do colaborador NELO (E_NOME). Filtro `contains` para
+          sub-string (sobrenome ou nome). Permite ranking individual
+          ("Quem fez mais horas extra?").
+        sql: colaborador
+        type: string
+
+      - name: colaborador_id
+        description: ID NELO do colaborador (E_ID).
+        sql: colaborador_id
+        type: number
+
+      - name: departamento
+        description: >
+          Cargo canónico do colaborador (ENTIDADE_TIPO.ENT_NOME).
+          Filtro `equals` literal recomendado.
+        sql: departamento
+        type: string

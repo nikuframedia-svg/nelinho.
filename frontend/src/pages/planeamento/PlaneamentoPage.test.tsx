@@ -109,6 +109,8 @@ function makeResult(opCount: number): CpoScheduleResult {
       setup_family: null,
     })),
     warnings: [],
+    unplanned_orders: [],
+    orders_coverage: 1,
     commit_sha256: 'commit-sha-aaaa1111',
   };
 }
@@ -234,6 +236,35 @@ describe('PlaneamentoPage — replanear async (Q.62.E.5)', () => {
     expect(
       screen.getByRole('button', { name: /Aprovar \(LIVE\)/i }),
     ).toBeInTheDocument();
+  });
+
+  it('4b. Q.131.H honestidade: banner de ordens sem rota não planeadas', async () => {
+    planeamentoMocks.runScheduleAsync.mockResolvedValue(enqueueResponse);
+    const result = makeResult(6);
+    result.unplanned_orders = ['OF-AAA', 'OF-BBB'];
+    result.orders_coverage = 0.75;
+    planeamentoMocks.pollScheduleJob
+      .mockResolvedValueOnce(jobStatus('in_progress'))
+      .mockResolvedValue(jobStatus('complete', { result }));
+
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderWithProviders(<PlaneamentoPage />, { route: '/planeamento' });
+    await user.click(screen.getByRole('button', { name: /Replanear/i }));
+    await waitFor(() => {
+      expect(planeamentoMocks.pollScheduleJob).toHaveBeenCalled();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+
+    // As ordens órfãs são MOSTRADAS (nunca saltadas em silêncio).
+    await waitFor(() => {
+      expect(
+        screen.getByText(/ordens sem rota conhecida/i),
+      ).toBeInTheDocument();
+    });
+    expect(screen.getByText(/OF-AAA, OF-BBB/)).toBeInTheDocument();
   });
 
   it('5. approve success: banner "Plano aprovado · commit ... → LIVE"', async () => {

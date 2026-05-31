@@ -1,0 +1,132 @@
+cubes:
+  - name: comercial_facturacao
+    description: >
+      Q.102 — facturação NELO via PHC ERP. Fonte: marts.v_facturacao_mes
+      (agregado mensal por cliente × disciplina). Anchors Q.82
+      validados: total €125 372 058 (2009-2026), Canoe Sprint TP_ID=6
+      = €73 018 963 (58.24 %), Gusser KanuSport 2024 = €488 898, total
+      2024 = €9 538 482. HIPÓTESE FORTE: valor é BASE sem IVA (PHC
+      armazena base para reporting fiscal; sem coluna IVA na tabela).
+      Pendente confirmação CFO. Notas crédito subtraem (líquido).
+      A medida vive como `comercial_facturacao.total` no registo do
+      contrato.
+    sql_table: marts.v_facturacao_mes
+
+    measures:
+      - name: total
+        description: >
+          Facturação líquida em €. SUM(facturado_eur) da view (notas
+          crédito subtraem; sinal negativo é o marcador de devolução).
+          DINHEIRO mesma base — aditivo entre clientes/disciplinas/
+          meses. Anchor: total 2009-2026 = €125 372 058.
+        sql: facturado_eur
+        type: sum
+        format: number
+
+      - name: n_facturas
+        description: >
+          Número de linhas de facturação raw em ENTIDADE_PHC_FACT.
+          Q.107 fix: SUM(n_facturas) da view marts.v_facturacao_mes
+          (que já tem n_facturas por mês×cliente×disciplina). Bug
+          anterior Q.102: type=count em coluna ano dava 2582 (rows
+          agregadas da view), não 6774 (rows raw). Anchor 2024 = 6774
+          (Q.82 validado).
+        sql: n_facturas
+        type: sum
+        format: number
+
+      - name: clientes_activos
+        description: >
+          Q.107 — número de clientes IDENTIFICÁVEIS com facturação
+          no período (COUNT DISTINCT cliente_id, excluindo 'Sem
+          cliente registado'). Anchor: 127 clientes 2024 (vs 280
+          acumulado histórico). CONTAGEM mas NÃO aditivo entre meses
+          (mesma identidade pode aparecer em vários meses).
+        sql: cliente_id
+        type: countDistinct
+        format: number
+
+    dimensions:
+      - name: data
+        description: >
+          Primeiro dia do mês de facturação (MAKE_DATE(ano, mes, 1)).
+          Granularidade mensal. Usa `timeDimensions` com `dateRange`
+          (ex.: `["2024-01-01","2024-12-31"]` = ano 2024 inteiro).
+          NOTA: `EPHCF_EPOCA` (ano desportivo Out-Set) está documentada
+          mas esta dim usa ANO calendário, alinhado com perguntas
+          operacionais.
+        sql: data
+        type: time
+
+      - name: ano
+        description: >
+          Ano calendário (int). Útil para drill-down rápido por ano
+          sem dateRange. Range 2009-2026.
+        sql: ano
+        type: number
+
+      - name: cliente
+        description: >
+          Nome canónico do cliente (E_NOME via JOIN
+          ENTIDADE_PHC.EPHC_E_ID → ENTIDADE.E_ID). Top 2024: Gusser
+          KanuSport (€488 898), Olimpijczyk (×2 PHC IDs = €455 196
+          cada), Adnan Aliev / Sel. Turca (€384 650), z) Nelo Rental
+          2017 eliminado (€384 650). 32.6 % das rows agregadas têm
+          'Sem cliente registado' (vendas balcão/loja sem PHC ID).
+          Filtro `equals` literal; usa `contains` para sub-string
+          (ex.: 'olimpijczyk').
+        sql: cliente
+        type: string
+
+      - name: cliente_id
+        description: >
+          ID local do cliente PHC (EPHCF_EPHC_ID = ENTIDADE_PHC.EPHC_ID,
+          PK local NÃO EPHC_PHC_ID externa). 675 IDs distintos. Útil
+          para queries técnicas exactas; nome legível vive em
+          `cliente`.
+        sql: cliente_id
+        type: number
+
+      - name: disciplina
+        description: >
+          Nome canónico da disciplina (TP_NOME via JOIN
+          EPHCF_TP_ID → PRODUTO_TIPO.TP_ID). Valores top: 'Canoe
+          Sprint Ep.' (€73 018 963 = 58.24 % do total), 'Não
+          categorizado' (€14.8M), 'Ocean' (€6.3M), 'Canoe Marathon'
+          (€4.4M), 'Fitness Ep.' (€4.1M), 'Fitness Pl.' (€3.4M).
+          14.3 % das rows agregadas têm 'Não categorizado'. Filtro
+          `equals` literal recomendado (vários nomes parecidos).
+        sql: disciplina
+        type: string
+
+      - name: disciplina_id
+        description: >
+          ID numérico da disciplina (EPHCF_TP_ID = PRODUTO_TIPO.TP_ID).
+          Valores-chave: 6 (Canoe Sprint Ep. — o galináceo €73M),
+          243 (Ocean), 244 (Canoe Marathon), 245 (Fitness Pl.), 246
+          (Fitness Ep.).
+        sql: disciplina_id
+        type: number
+
+      - name: pais
+        description: >
+          Q.108 Onda A — país do cliente (entidade.E_PAIS, string livre
+          em maiúsculas no PHC). Cobertura 2024: ~32.6% das rows são
+          'sem_pais' (vendas balcão sem cliente PHC). Top 2024:
+          POLAND (€995 201, 4 clientes), GERMANY (€493 243), UNITED
+          STATES (€437 355), TURKEY (€434 259), CHINA (€379 555),
+          PORTUGAL (€166 984, 27 clientes nacionais). Filtro
+          recomendado: `equals` literal em maiúsculas.
+        sql: pais
+        type: string
+
+      - name: epoca
+        description: >
+          Q.108 Onda B — época desportiva (EPHCF_EPOCA, int). Ano
+          desportivo NELO: Outubro a Setembro (não calendário). Range
+          2009-2026. Valor distinto de `ano` calendário — uma factura
+          de Dez 2024 pertence à época 2025 (que começou em Out 2024).
+          Útil para reporting alinhado com o ciclo competitivo
+          (Out-Set = uma temporada). Filtro `equals` numérico.
+        sql: epoca
+        type: number

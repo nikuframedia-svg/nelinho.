@@ -8,7 +8,7 @@ interface DropdownOption {
 }
 
 interface DarkCardProps {
-  children: ReactNode;
+  children?: ReactNode;
   title?: string;
   subtitle?: string;
   icon?: ReactNode;

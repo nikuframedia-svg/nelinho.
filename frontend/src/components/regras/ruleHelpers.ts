@@ -23,6 +23,7 @@ export const ACTION_WIRING: Record<string, boolean> = {
   set_config: true,
   create_decision: true, // Q.17.F.6 — wired a governance.decision_run
   pause_writes: true, // Q.17.F.9 — wired ao PauseWritesMiddleware
+  execute_runbook: true, // Q.115.H — wired a governance.decision_run (execute_runbook)
 };
 
 /** Devolve as actions de uma regra cujo subsistema ainda não está ligado. */

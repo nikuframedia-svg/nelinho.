@@ -47,7 +47,10 @@ async def _nelo_erp_sync_job() -> None:
 #: 5/5 min. Master/molds/skills mudam devagar (cadência nocturna chega);
 #: time_mining é pesado (cadência semanal). Estes três espelham dados
 #: que mudam ao longo do dia — stock, calendário, qualidade.
+#: Q.115.T: phase_history e worker_assignment adicionados ao incremental
+#: (15 min em vez de 5 — tabelas de alta cardinalidade).
 _INCREMENTAL_MIRRORS = ["stock", "calendar", "quality"]
+_INCREMENTAL_MIRRORS_PHASE = ["phase_history", "worker_assignment"]
 
 
 async def _nelo_erp_incremental_sync_job() -> None:
@@ -112,6 +115,196 @@ async def _nelo_erp_incremental_sync_job() -> None:
         logger.error(
             "nelo_erp_incremental_sync failed: %s", exc, exc_info=True,
         )
+
+
+async def _nelo_erp_phase_history_incremental_job() -> None:
+    """Q.115.T — sync incremental phase_history + worker_assignment (15 min).
+
+    Alta cardinalidade — corre separado dos outros incrementais para nao
+    bloquear stock/calendar/quality. Watermark por mirror via core.etl_run.
+    No-op quando ``sqlserver_enabled=False``.
+    """
+    from src.shared.config import settings
+
+    if not settings.sqlserver_enabled:
+        logger.debug(
+            "nelo_erp_phase_history_incremental skipped — sqlserver_enabled=False"
+        )
+        return
+
+    from src.adapters.nelo.etl.sync import (
+        _load_mirror_modules,
+        last_sync_watermarks,
+        registered_mirrors,
+        run_nelo_sync,
+    )
+    from src.shared.database import get_session_context
+
+    _load_mirror_modules()
+    known = set(registered_mirrors())
+    selected = [m for m in _INCREMENTAL_MIRRORS_PHASE if m in known]
+    if not selected:
+        logger.warning(
+            "nelo_erp_phase_history_incremental — nenhum mirror registado "
+            "(esperados=%s)", _INCREMENTAL_MIRRORS_PHASE,
+        )
+        return
+
+    tenant_id = UUID("00000000-0000-0000-0000-000000000001")  # dev tenant
+    started = datetime.utcnow()
+    try:
+        async with get_session_context() as session:
+            watermarks = await last_sync_watermarks(session, tenant_id, selected)
+        results = await run_nelo_sync(
+            only=selected, tenant_id=tenant_id, since=watermarks,
+        )
+        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        failed = [r.source for r in results if r.status not in ("ok", "skipped")]
+        logger.info(
+            "nelo_erp_phase_history_incremental mirrors=%s watermarks=%s "
+            "failed=%s elapsed_ms=%s",
+            [r.source for r in results],
+            {k: v.isoformat() for k, v in watermarks.items()},
+            failed or "none", elapsed_ms,
+        )
+    except Exception as exc:
+        logger.error(
+            "nelo_erp_phase_history_incremental failed: %s", exc, exc_info=True,
+        )
+
+
+async def _nelo_erp_raw_incremental_job() -> None:
+    """Q.125 — refresh incremental de 5/5 min das tabelas `factory_raw` de alta
+    velocidade (ordemfabrico/of_fp/movimento/of_checklist/transporte) por upsert
+    da janela recente. Alimenta o dashboard/copiloto — as marts são VIEWs live
+    sobre `factory_raw`, logo ficam frescas sem re-correr `setup_marts_*`.
+
+    DROP-free (upsert por PK) → sem janela de leitura vazia para as views.
+    No-op quando ``sqlserver_enabled=False``.
+    """
+    from src.shared.config import settings
+
+    if not settings.sqlserver_enabled:
+        logger.debug("nelo_erp_raw_incremental skipped — sqlserver_enabled=False")
+        return
+
+    from scripts.q75_setup_raw_mirror import setup as raw_setup
+
+    started = datetime.utcnow()
+    try:
+        results = await raw_setup(incremental=True)
+        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        failed = [r["table"] for r in results if r.get("status") != "ok"]
+        new = sum(r.get("rows_inserted", 0) for r in results)
+        logger.info(
+            "nelo_erp_raw_incremental tables=%s new=%s failed=%s elapsed_ms=%s",
+            [r["table"] for r in results], new, failed or "none", elapsed_ms,
+        )
+    except Exception as exc:
+        logger.error("nelo_erp_raw_incremental failed: %s", exc, exc_info=True)
+
+
+async def _nelo_erp_comercial_job() -> None:
+    """Q.125 — refresh de 5/5 min do espelho Comercial (PHC: faturação,
+    entidades). Full refresh ATÓMICO (TRUNCATE+COPY, DROP-free) — seguro com as
+    marts de faturação dependentes. Tabelas ≤100k → ~1-2 s. No-op se
+    ``sqlserver_enabled=False``.
+    """
+    from src.shared.config import settings
+
+    if not settings.sqlserver_enabled:
+        logger.debug("nelo_erp_comercial skipped — sqlserver_enabled=False")
+        return
+
+    from scripts.q102_setup_comercial_mirror import setup as comercial_setup
+
+    started = datetime.utcnow()
+    try:
+        report = await comercial_setup()
+        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        mirror = report.get("mirror", [])
+        failed = [r["table"] for r in mirror if r.get("status") != "ok"]
+        logger.info(
+            "nelo_erp_comercial tables=%s failed=%s elapsed_ms=%s",
+            [r["table"] for r in mirror], failed or "none", elapsed_ms,
+        )
+    except Exception as exc:
+        logger.error("nelo_erp_comercial failed: %s", exc, exc_info=True)
+
+
+async def _nelo_erp_logistica_job() -> None:
+    """Q.125 — refresh de 5/5 min do espelho Logística (transportes, expedições).
+    Full refresh ATÓMICO (TRUNCATE+COPY, DROP-free). No-op se
+    ``sqlserver_enabled=False``.
+    """
+    from src.shared.config import settings
+
+    if not settings.sqlserver_enabled:
+        logger.debug("nelo_erp_logistica skipped — sqlserver_enabled=False")
+        return
+
+    from scripts.q104_setup_logistica_mirror import setup as logistica_setup
+
+    started = datetime.utcnow()
+    try:
+        report = await logistica_setup()
+        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        mirror = report.get("mirror", report) if isinstance(report, dict) else report
+        failed = [r["table"] for r in mirror if r.get("status") != "ok"]
+        logger.info(
+            "nelo_erp_logistica tables=%s failed=%s elapsed_ms=%s",
+            [r["table"] for r in mirror], failed or "none", elapsed_ms,
+        )
+    except Exception as exc:
+        logger.error("nelo_erp_logistica failed: %s", exc, exc_info=True)
+
+
+async def _nelo_erp_customers_job() -> None:
+    """Q.125 — popula/refresca `core.customers` a partir de `factory_raw.entidade`
+    (tipo Cliente, E_ENT_ID=2). O mirror `master` nunca espelhava clientes →
+    core.customers estava a 0. Refresca entidade do NELO + upsert. 5/5 min.
+    No-op quando ``sqlserver_enabled=False``.
+    """
+    from src.shared.config import settings
+
+    if not settings.sqlserver_enabled:
+        logger.debug("nelo_erp_customers skipped — sqlserver_enabled=False")
+        return
+
+    from scripts.setup_customers_from_entidade import setup as customers_setup
+
+    started = datetime.utcnow()
+    try:
+        report = await customers_setup()
+        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        logger.info(
+            "nelo_erp_customers total=%s new=%s elapsed_ms=%s",
+            report.get("customers_after"), report.get("customers_new"), elapsed_ms,
+        )
+    except Exception as exc:
+        logger.error("nelo_erp_customers failed: %s", exc, exc_info=True)
+
+
+async def _nelo_erp_production_orders_job() -> None:
+    """Q.131.C — espelha `plan.production_orders` de `factory_raw.ordemfabrico`
+    (WIP real: OF não-terminada em fase de produção). A lista de ordens lia 12
+    ordens DEMO; este mirror torna-a 0 demo, keyed por `OF_P_ID` (casa com o
+    routing real). Postgres-interno (lê o factory_raw já espelhado) → corre
+    sempre; a própria função faz no-op se o WIP estiver vazio (dev/test).
+    """
+    from scripts.q131_setup_production_orders_mirror import setup as po_setup
+
+    started = datetime.utcnow()
+    try:
+        report = await po_setup()
+        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        logger.info(
+            "nelo_erp_production_orders wip=%s orders=%s->%s pruned=%s elapsed_ms=%s",
+            report.get("wip_real"), report.get("orders_before"),
+            report.get("orders_after"), report.get("pruned"), elapsed_ms,
+        )
+    except Exception as exc:
+        logger.error("nelo_erp_production_orders failed: %s", exc, exc_info=True)
 
 
 async def _nelo_erp_time_mining_job() -> None:

@@ -1,0 +1,29 @@
+cubes:
+  - name: producao_pecas_cortadas
+    description: >
+      Q.107 Onda 1 — contagem mensal de fases de CORTE terminadas
+      (OFFP_DATAFIM not null, FP_NOME ILIKE '%corte%'). Padrão Q.99
+      paralelo a producao_pecas_laminadas. Anchor Abril 2026 = 4 923
+      (4 fases: Corte 3, Corte peças 28, Corte & Costura 48,
+      Preparação 70). Conta cada fase distinct.
+    sql_table: marts.v_pecas_cortadas_mes
+
+    measures:
+      - name: total
+        description: >
+          Contagem de fases de corte terminadas. SUM(n). CONTAGEM
+          adimensional. Anchor Abril 2026 = 4 923.
+        sql: n
+        type: sum
+        format: number
+
+    dimensions:
+      - name: data
+        sql: data
+        type: time
+      - name: fase
+        sql: fase
+        type: string
+      - name: fase_id
+        sql: fase_id
+        type: number

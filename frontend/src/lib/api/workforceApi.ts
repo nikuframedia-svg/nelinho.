@@ -256,3 +256,26 @@ export const allocationsApiPaginated = {
     request<AllocationsStats>('/v1/workforce/allocations/stats'),
 };
 
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Q.118.Q — SPOF (single point of failure) GET /v1/workforce/risks/spof
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface SpofRecommendation {
+  id: string;
+  priority: string; // RiskLevel (critical/high/medium/low)
+  employee_id: string;
+  employee_name: string;
+  employee_current_phases: string[];
+  target_phase_id: string;
+  target_phase_name: string;
+  reasoning: string[];
+  expected_impact: Record<string, unknown>;
+  estimated_cost: Record<string, number>;
+  trust_index: number;
+}
+
+export const workforceRisksApi = {
+  spof: (limit = 10) =>
+    request<SpofRecommendation[]>(`/v1/workforce/risks/spof?limit=${limit}`),
+};

@@ -1,0 +1,50 @@
+cubes:
+  - name: logistica_atrasos_culpa
+    description: >
+      Q.104 Medida 2 — contagem de atrasos por classificação NELO.
+      Fonte: marts.v_atrasos_culpa_mes (factory_raw.transp_datas +
+      transp_datas_classificacao). **SEMÂNTICA CRÍTICA**: a 'culpa' é
+      CLASSIFICAÇÃO humana NELO registada em TRDT_TRDTCL_ID, NÃO
+      veredito do sistema. O sistema REPORTA a repartição, NÃO atribui
+      responsabilidade. Anchor: total 3 030; Culpa Cliente 2 114
+      (69.8 %), Nelo 790 (26.1 %), Transportador 126 (4.2 %).
+      100 % têm classificação (sem 'sem classificação'). Narração tem
+      de marcar "segundo a classificação registada" — NUNCA "a NELO
+      teve culpa de X" como facto objectivo.
+    sql_table: marts.v_atrasos_culpa_mes
+
+    measures:
+      - name: total
+        description: >
+          Contagem de atrasos registados. SUM(n_atrasos). CONTAGEM
+          adimensional. Anchor: 3 030 totais; 2 114 Cliente / 790 Nelo
+          / 126 Transportador.
+        sql: n_atrasos
+        type: sum
+        format: number
+
+    dimensions:
+      - name: data
+        description: >
+          Primeiro dia do mês de TRDT_DATA_CRIACAO (quando a alteração
+          de data foi registada). Granularidade mensal.
+        sql: data
+        type: time
+
+      - name: culpa
+        description: >
+          Nome da classificação NELO (TRDTCL_NOME). 3 valores: 'Culpa
+          Cliente' (2 114, 69.8 %), 'Culpa Nelo' (790, 26.1 %), 'Culpa
+          Transportador' (126, 4.2 %). Usar `equals` literal. **NOTA
+          SEMÂNTICA**: este é o LABEL REGISTADO por NELO; o sistema
+          reporta, não atribui.
+        sql: culpa
+        type: string
+
+      - name: culpa_id
+        description: >
+          ID numérico (TRDT_TRDTCL_ID = TRANSP_DATAS_CLASSIFICACAO.
+          TRDTCL_ID). Valores: 1=Culpa Nelo, 2=Culpa Transportador,
+          3=Culpa Cliente.
+        sql: culpa_id
+        type: number

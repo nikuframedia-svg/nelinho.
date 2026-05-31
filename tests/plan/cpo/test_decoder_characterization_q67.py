@@ -130,6 +130,7 @@ RESULT_KEYS = {
     "backwards_shifts",
     "total_idle_hours",
     "idle_ratio",
+    "num_machines",  # Q.134.I — capacidade exposta p/ observabilidade do idle
     "lam_utilization",
     "idle_pct",
     "tardiness_transport_d",

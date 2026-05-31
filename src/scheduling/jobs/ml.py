@@ -38,12 +38,40 @@ async def _mold_health_scan_job(tenant_id: UUID) -> None:
 
 
 async def _quality_risk_scoring_job(tenant_id: UUID) -> None:
-    """Stub for Sprint R.2 — real scoring wired when ProductionSchedule flow
-    has enough data. The job logs today so observability is consistent."""
-    logger.info(
-        "quality_risk_scoring tenant=%s (stub — wire scoring model when ready)",
-        tenant_id,
-    )
+    """Q.117.G — pontua o risco de defeito das ordens em curso.
+
+    Deixa de ser stub: corre o ``DefectRiskService`` (Q.53.A/Q.115.E) sobre
+    as ordens ``in-progress``, o que (a) treina+promove o modelo
+    ``quality_risk`` na primeira utilização e (b) regista quantas ordens
+    estão em risco alto. O mesmo serviço alimenta o badge on-demand nas
+    vistas Overall e o ``quality_risk`` das decisões (Q.117.B).
+
+    Best-effort: degrada com ``model_available=false`` quando o histórico é
+    insuficiente; nunca levanta para dentro do scheduler.
+    """
+    from src.quality.services.defect_risk_service import DefectRiskService
+    from src.shared.database import get_session_context
+
+    started = datetime.utcnow()
+    try:
+        async with get_session_context() as session:
+            svc = DefectRiskService(session, tenant_id)
+            result = await svc.defect_risk(top_n=50)
+            await session.commit()
+        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        logger.info(
+            "quality_risk_scoring tenant=%s model_available=%s total=%s "
+            "high_risk=%s elapsed_ms=%s",
+            tenant_id,
+            result.get("model_available"),
+            result.get("total_orders", 0),
+            result.get("high_risk_count", 0),
+            elapsed_ms,
+        )
+    except Exception as exc:
+        logger.error(
+            "quality_risk_scoring tenant=%s failed: %s", tenant_id, exc, exc_info=True,
+        )
 
 
 async def _multivariate_drift_job(tenant_id: UUID) -> None:

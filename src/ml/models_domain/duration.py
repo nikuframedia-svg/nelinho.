@@ -34,7 +34,9 @@ logger = logging.getLogger(__name__)
 
 
 CATEGORICAL_COLS = ("modelo_id", "fase_id")
-NUMERIC_COLS = ("team_size", "mold_pocket_count", "is_rework", "queue_depth")
+# Q.115.V — plan_error_prior adicionado: erro médio histórico plano/real
+# para (modelo_id, fase_id). Default 0 quando histórico vazio.
+NUMERIC_COLS = ("team_size", "mold_pocket_count", "is_rework", "queue_depth", "plan_error_prior")
 
 
 @dataclass
@@ -199,6 +201,73 @@ class DurationModel:
 
 
 # ---------------------------------------------------------------------------
+# Q.115.V — carrega plan_error_priors sincronamente (síncrono: chamado
+# dentro do RetrainJob que já corre num thread do scheduler).
+# ---------------------------------------------------------------------------
+
+
+def _load_plan_error_priors(tenant_id: UUID) -> Dict[str, float]:
+    """Lê deltas médios de plan.plan_execution_observed (síncrono).
+
+    Devolve dict {"{modelo_id}::{phase_id}": avg_delta_min}.
+    Fallback {} quando a tabela está vazia ou ocorre erro.
+    """
+    try:
+        import asyncio
+
+        async def _query() -> Dict[str, float]:
+            from sqlalchemy import func, select
+
+            from src.plan.models.execution_learning import PlanExecutionObserved
+            from src.shared.database import get_session_context
+
+            async with get_session_context() as session:
+                stmt = (
+                    select(
+                        PlanExecutionObserved.modelo,
+                        PlanExecutionObserved.phase_id,
+                        func.avg(
+                            PlanExecutionObserved.observed_duration_min
+                            - PlanExecutionObserved.planned_duration_min
+                        ).label("avg_delta"),
+                    )
+                    .where(
+                        PlanExecutionObserved.tenant_id == tenant_id,
+                        PlanExecutionObserved.observed_duration_min.isnot(None),
+                        PlanExecutionObserved.planned_duration_min > 0,
+                    )
+                    .group_by(
+                        PlanExecutionObserved.modelo,
+                        PlanExecutionObserved.phase_id,
+                    )
+                )
+                result = await session.execute(stmt)
+                rows = result.all()
+                return {
+                    f"{r.modelo or ''}::{r.phase_id!s}": float(r.avg_delta or 0.0)
+                    for r in rows
+                    if r.avg_delta is not None
+                }
+
+        # Tenta reutilizar o event loop se já existe
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # Estamos dentro de um contexto async — usa nest_asyncio ou devolve {}
+                # (seguro: o retreino pode correr sem prior se não houver loop disponível)
+                return {}
+            return loop.run_until_complete(_query())
+        except RuntimeError:
+            return asyncio.run(_query())
+
+    except Exception as exc:
+        logger.warning(
+            "_load_plan_error_priors tenant=%s falhou (fallback=0): %s", tenant_id, exc
+        )
+        return {}
+
+
+# ---------------------------------------------------------------------------
 # RetrainJob
 # ---------------------------------------------------------------------------
 
@@ -213,8 +282,12 @@ class DurationRetrainJob(RetrainJob):
         """
         Pull (fase, modelo, worker-team, mold, duration) rows from the
         curated layer. Empty list if the active ingestion isn't available.
+
+        Q.115.V — inclui plan_error_prior (delta médio histórico plano/real
+        por fase×modelo). Fallback 0.0 quando não há dados de plan_execution_observed.
         """
-        rows = build_training_dataset(self.semantic_queries)
+        priors = _load_plan_error_priors(tenant_id)
+        rows = build_training_dataset(self.semantic_queries, plan_error_priors=priors)
         logger.info(f"DurationRetrainJob extracted {len(rows)} rows")
         return rows
 
@@ -263,7 +336,26 @@ class DurationRetrainJob(RetrainJob):
 # Training dataset builder — independent so Sprint F surrogate can reuse
 # ---------------------------------------------------------------------------
 
-def build_training_dataset(semantic_queries: Any) -> List[Dict[str, Any]]:
+def _get_plan_error_priors(
+    modelo_id: str,
+    fase_id: str,
+    priors: Optional[Dict[str, float]],
+) -> float:
+    """Devolve erro médio histórico plano/real para (modelo_id, fase_id).
+
+    Q.115.V — feature `plan_error_prior` para o DurationModel.
+    Chave do dict: f"{modelo_id}::{fase_id}".
+    Fallback 0.0 quando histórico vazio ou sem dados para esta combinação.
+    """
+    if not priors:
+        return 0.0
+    return priors.get(f"{modelo_id}::{fase_id}", 0.0)
+
+
+def build_training_dataset(
+    semantic_queries: Any,
+    plan_error_priors: Optional[Dict[str, float]] = None,
+) -> List[Dict[str, Any]]:
     """
     Assemble rows of shape {modelo_id, fase_id, team_size, mold_pocket_count,
     is_rework, queue_depth, horas_reais} from the curated layer.
@@ -348,6 +440,10 @@ def build_training_dataset(semantic_queries: Any) -> List[Dict[str, Any]]:
             "mold_pocket_count": mold_pockets.get(mold_id, 1),
             "is_rework": 1 if (of_id, fase_id) in rework_keys else 0,
             "queue_depth": queue_depth.get(fase_id, 0),
+            # Q.115.V — erro médio plano/real histórico; fallback 0.0
+            "plan_error_prior": _get_plan_error_priors(
+                modelo_id, fase_id, plan_error_priors
+            ),
             "horas_reais": float(horas),
             "timestamp": ts,
         })

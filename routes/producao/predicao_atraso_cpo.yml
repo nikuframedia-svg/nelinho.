@@ -1,0 +1,48 @@
+route_id: predicao_atraso_cpo
+dominio: producao
+descricao: "Abdicação explícita: predição de atraso de OFs (tarefa do motor CPO, não do copiloto)"
+
+# Q.88 — gaveta-abstain dedicada (consistente com causalidade_explicita /
+# homologo_anual). Resolve Q.19 da Q.83 ("que OFs vão atrasar a entrega de
+# sexta?") que antes caía em ofs_estado_por_fase ou ABSTAIN genérico.
+#
+# Duas razões para abstain:
+# 1. Predição é responsabilidade do motor de planeamento (OTDRiskService em
+#    src/plan/services/), que treina modelo em factory_curated.order_phase
+#    e devolve P(late). Copiloto é de consulta determinística, não predição.
+# 2. Mesmo factualmente, os campos necessários no espelho factory_raw estão
+#    quase vazios: OF_DATATRANSPORTE MORTO desde 2009-03 (Q.82 logística);
+#    OFFP_DATA_PREVISTA preenchida em apenas ~15% das fases (Q.79).
+
+utterances:
+  - "que OFs vão atrasar a entrega"
+  - "OFs em risco de atraso"
+  - "previsão de atrasos esta semana"
+  - "kayaks que não vão entregar a tempo"
+  - "OFs com risco alto de não cumprir prazo"
+  - "predição de atraso por ordem"
+  - "que ordens estão em risco de slip"
+  - "calcular probabilidade de atraso das OFs"
+  - "OFs com data prevista em risco"
+  - "alerta de OFs atrasadas previstas"
+
+abstain: true
+abstain_reason: |
+  Predição de atraso é tarefa do motor de planeamento (CPO/OTDRiskService),
+  não do copiloto de consulta determinística. Além disso, os campos
+  necessários no espelho estão maioritariamente vazios: OF_DATATRANSPORTE
+  está morto desde 2009-03 (Q.82) e OFFP_DATA_PREVISTA só está preenchido
+  em ~15% das fases (Q.79). Para risco real, pede ao motor CPO directamente
+  ou consulta o gestor de planeamento.
+
+params: {}
+defaults: {}
+sql: ""
+
+hypothesis_flags:
+  - "Q.88: rota-abstain por princípio (predição ≠ consulta) + dados-em-falta"
+  - "Q.79: OFFP_DATA_PREVISTA cobertura ~15% — base factual insuficiente"
+  - "Q.82: OF_DATATRANSPORTE morto desde 2009-03 — confirmar com analista se há campo alternativo"
+  - "OTDRiskService em src/plan/services/otd_risk_service.py — usa factory_curated, não factory_raw"
+
+golden: {}

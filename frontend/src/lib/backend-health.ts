@@ -8,7 +8,9 @@ import { getApiBase } from './api';
 // Q.21.A — porta única via api.ts. Sondas de saúde usam `fetch` cru de
 // propósito (não passam pelo circuit breaker — este é o código que *detecta*
 // o backend em baixo, não pode depender do breaker estar fechado).
-const API_BASE = getApiBase();
+// Q.118.H — `getApiBase()` é resolvido lazy dentro de checkBackendHealth (e
+// não no top-level do módulo): assim importar este módulo não dispara
+// getApiBase() ao carregar, o que partia testes que mockam `../api` sem ele.
 
 export type BackendStatus = 'online' | 'offline' | 'checking';
 
@@ -75,7 +77,9 @@ function notifyListeners(status: BackendStatus): void {
 export async function checkBackendHealth(): Promise<boolean> {
   try {
     notifyListeners('checking');
-    
+
+    const API_BASE = getApiBase();
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 3000); // 3s timeout
     

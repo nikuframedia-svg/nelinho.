@@ -1,0 +1,61 @@
+cubes:
+  - name: aprovacoes_q17
+    description: >
+      Q.108.W1 — Aprovações Q.17 (governance decisions) agregadas por
+      mês × action_type. Source: marts.v_aprovacoes_q17_mes sobre
+      shared.decision_runs. Contagens aditivas + tempo médio aprovação.
+    sql_table: marts.v_aprovacoes_q17_mes
+
+    measures:
+      - name: propostas
+        description: COUNT de decisões propostas no mês. CONTAGEM, aditiva.
+        sql: total_propostas
+        type: sum
+        format: number
+
+      - name: aprovadas
+        description: COUNT de decisões em APPROVED ou EXECUTED.
+        sql: total_aprovadas
+        type: sum
+        format: number
+
+      - name: pendentes
+        description: COUNT em status PROPOSED (à espera de aprovação).
+        sql: total_pendentes
+        type: sum
+        format: number
+
+      - name: rejeitadas
+        description: COUNT em REJECTED ou ROLLED_BACK.
+        sql: total_rejeitadas
+        type: sum
+        format: number
+
+      - name: approval_time_avg
+        description: >
+          Horas médias entre proposed_at e executed_at/rolled_back_at.
+          TEMPO; cross-row aggregation AVG (NÃO SUM — somar médias inválido).
+        sql: approval_time_avg_horas
+        type: avg
+        format: number
+
+      - name: approval_time_p50
+        description: >
+          Mediana (P50) das horas de aprovação. Robusto a outliers.
+          TEMPO; AVG cross-row.
+        sql: approval_time_p50_horas
+        type: avg
+        format: number
+
+    dimensions:
+      - name: data
+        description: Mês de proposed_at.
+        sql: data
+        type: time
+
+      - name: action_type
+        description: >
+          Tipo de acção Q.17 (INCREASE_SS, ADJUST_PRICE, RESCHEDULE_OF, …).
+          Vocabulário declarado em src/governance/actions.
+        sql: action_type
+        type: string

@@ -1,0 +1,38 @@
+cubes:
+  - name: planeamento_reagendamentos
+    description: >
+      Q.108.W1.2 — Reagendamentos do scheduler (CPO commits) por mês.
+      Cada novo `plan.plan_schedule_commits` row é um plano produzido;
+      filhos com parent_id são re-plans. Métrica de actividade do CPO.
+    sql_table: marts.v_reagendamentos_mes
+
+    measures:
+      - name: total
+        description: COUNT total commits do CPO no mês.
+        sql: total_commits
+        type: sum
+        format: number
+
+      - name: live
+        description: COUNT commits que chegaram a status LIVE (aprovados).
+        sql: live_commits
+        type: sum
+        format: number
+
+      - name: draft
+        description: COUNT commits que ficaram em DRAFT.
+        sql: draft_commits
+        type: sum
+        format: number
+
+      - name: replans
+        description: COUNT commits com parent_id (re-plans de commit anterior).
+        sql: replans
+        type: sum
+        format: number
+
+    dimensions:
+      - name: data
+        description: Mês do commit (date_trunc('month', created_at)).
+        sql: data
+        type: time

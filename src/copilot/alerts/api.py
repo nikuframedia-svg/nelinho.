@@ -22,6 +22,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.copilot.alerts.engine import AlertsEngine
 from src.copilot.alerts.models import (
+    CODE_MATERIAL_SHORTAGE_PROJECTED,
+    CODE_MATERIAL_STOCKOUT_IMMINENT,
     STATUS_ACKNOWLEDGED,
     STATUS_ACTIVE,
     STATUS_RESOLVED,
@@ -30,6 +32,18 @@ from src.copilot.alerts.models import (
 from src.shared.database import get_session
 
 router = APIRouter(prefix="/v1/copilot", tags=["Copilot Alerts"])
+
+# BE-8 (Q.130.x): alerts carry no `source` column — detectors are identified by
+# `code`. The supply UI (and any future consumer) filters by a logical *source*,
+# so map a source name to the set of codes its detector emits. Adding a code here
+# is the single place to wire a new source group. Unknown sources match nothing
+# (empty result) rather than silently returning everything.
+_SOURCE_CODE_MAP: Dict[str, List[str]] = {
+    "shortage_detector": [
+        CODE_MATERIAL_SHORTAGE_PROJECTED,
+        CODE_MATERIAL_STOCKOUT_IMMINENT,
+    ],
+}
 
 
 # ---------------------------------------------------------------------------
@@ -97,15 +111,36 @@ async def list_alerts(
         description="active | acknowledged | resolved | all",
     ),
     severity: Optional[str] = Query(default=None, description="INFO | WARN | CRITICAL"),
+    code: Optional[str] = Query(
+        default=None,
+        description="Filter by exact detector code, e.g. MATERIAL_STOCKOUT_IMMINENT",
+    ),
+    source: Optional[str] = Query(
+        default=None,
+        description="Filter by logical source group, e.g. shortage_detector",
+    ),
     limit: int = Query(default=50, ge=1, le=200),
     tenant_id: UUID = Depends(_tenant_id),
     db: AsyncSession = Depends(get_session),
 ):
+    # BE-7: older consumers passed `open` (there is no such status — the active
+    # lifecycle value is `active`). Normalise the legacy alias so the tab is not
+    # silently empty. The FE was fixed in Q.130.J; this keeps the BE forgiving.
+    if status_filter == "open":
+        status_filter = STATUS_ACTIVE
     stmt = select(CopilotAlert).where(CopilotAlert.tenant_id == tenant_id)
     if status_filter and status_filter != "all":
         stmt = stmt.where(CopilotAlert.status == status_filter)
     if severity:
         stmt = stmt.where(CopilotAlert.severity == severity)
+    # BE-8: explicit `code` wins; otherwise a `source` maps to the codes its
+    # detector emits. An unknown source resolves to an empty code set, so the
+    # filter yields no rows (safer than ignoring it and leaking everything).
+    if code:
+        stmt = stmt.where(CopilotAlert.code == code)
+    elif source:
+        codes = _SOURCE_CODE_MAP.get(source, [])
+        stmt = stmt.where(CopilotAlert.code.in_(codes))
     stmt = stmt.order_by(CopilotAlert.created_at.desc()).limit(limit)
 
     result = await db.execute(stmt)

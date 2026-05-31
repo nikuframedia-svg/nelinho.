@@ -16,8 +16,108 @@ import type { CopilotAskRequest, CopilotResponse, DailyFeedbackResponse } from '
 // Re-export types for external use
 export type { CopilotAskRequest, CopilotResponse, DailyFeedbackResponse };
 
+const DEV_TENANT = '00000000-0000-0000-0000-000000000001';
+
+// ── Q.R — Cube-first: adaptador AskCubeResponse → CopilotResponse ───────────
+// O chat passa a perguntar primeiro à camada semântica (Cube, dados reais).
+// Em `abstain` (perguntas causais / fora do catálogo) cai para o pipeline
+// SQL+RAG geral (/ask). A UI do chat já consome CopilotResponse — só wiring.
+
+interface AskCubeResponse {
+  status: 'ok' | 'abstain' | 'no_data' | 'guard_failed' | 'ambiguous';
+  narration?: string | null;
+  query?: Record<string, unknown> | null;
+  data?: Array<Record<string, unknown>>;
+  annotation?: Record<string, unknown> | null;
+  abstain_reason?: string | null;
+  warnings?: string[];
+}
+
+function cubeToCopilotResponse(r: AskCubeResponse): CopilotResponse {
+  const id = `cube-${Date.now()}`;
+  const cubeCitation = {
+    source_type: 'calculation' as const,
+    ref: 'cube',
+    label: 'Cube · camada semântica',
+    confidence: 1,
+    trust_index: 1,
+  };
+
+  const facts: CopilotResponse['facts'] = [];
+  if (r.narration) {
+    facts.push({ text: r.narration, citations: [cubeCitation] });
+  }
+  // Dados crus (amostra) como facto auditável quando o guard rejeitou a
+  // narração ou quando não há narração mas há linhas.
+  if (r.data && r.data.length > 0 && (r.status === 'guard_failed' || !r.narration)) {
+    const preview = r.data
+      .slice(0, 8)
+      .map((row) =>
+        Object.entries(row)
+          .map(([k, v]) => `${k.split('.').pop()}: ${v}`)
+          .join(' · '),
+      )
+      .join('\n');
+    facts.push({ text: preview, citations: [cubeCitation] });
+  }
+
+  const warnings: CopilotResponse['warnings'] = [];
+  if (r.status === 'no_data')
+    warnings.push({ code: 'INSUFFICIENT_EVIDENCE', message: 'Sem dados para os filtros indicados.' });
+  if (r.status === 'ambiguous')
+    warnings.push({ code: 'INSUFFICIENT_EVIDENCE', message: 'Pergunta vaga — especifica material e/ou período.' });
+  if (r.status === 'guard_failed')
+    warnings.push({ code: 'VALIDATION_FAILED', message: 'A narração não passou o guard de números; mostro os dados crus.' });
+  for (const w of r.warnings ?? []) warnings.push({ code: 'VALIDATION_FAILED', message: w });
+
+  const summary =
+    r.narration ??
+    (r.status === 'no_data'
+      ? 'Não há dados para esses filtros.'
+      : r.status === 'ambiguous'
+        ? 'Pergunta demasiado vaga — especifica material e/ou período.'
+        : 'Resposta do Cube.');
+
+  return {
+    suggestion_id: id,
+    correlation_id: id,
+    type: 'ANSWER',
+    intent: 'generic',
+    summary,
+    facts,
+    actions: [],
+    warnings,
+    meta: { model: 'cube+gemma4', tokens: 0, latency_ms: 0, validation_passed: r.status === 'ok' },
+  };
+}
+
+/** Tenta a camada Cube; devolve a resposta adaptada ou null para fazer fallback. */
+async function tryAskCube(userQuery: string): Promise<CopilotResponse | null> {
+  try {
+    const response = await fetch(`${API_BASE}/api/copilot/ask-dev-cube`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Tenant-Id': DEV_TENANT },
+      body: JSON.stringify({ question: userQuery }),
+    });
+    if (!response.ok) return null;
+    const cube = (await response.json()) as AskCubeResponse;
+    // abstain = causal / fora-catálogo → deixar o pipeline geral responder.
+    if (cube.status === 'abstain') return null;
+    return cubeToCopilotResponse(cube);
+  } catch {
+    return null; // Cube indisponível → fallback silencioso
+  }
+}
+
 export const copilotApi = {
   ask: async (data: CopilotAskRequest) => {
+    // Q.R — Cube-first: a pergunta vai primeiro à camada semântica (dados
+    // reais via Cube). Se responder (ok/no_data/ambiguous/guard_failed),
+    // adaptamos e devolvemos. Em `abstain` (causal/fora-catálogo) ou erro,
+    // cai para o pipeline SQL+RAG geral abaixo (comportamento preservado).
+    const cubeAnswer = await tryAskCube(data.user_query);
+    if (cubeAnswer) return cubeAnswer;
+
     // Verificar se há token - se não houver, usar diretamente o endpoint dev
     const token = localStorage.getItem('auth_token') || localStorage.getItem('token');
     
@@ -189,12 +289,14 @@ export const copilotApi = {
   },
   
   listConversations: (params?: { limit?: number; offset?: number; archived?: boolean }) => {
-    // Se não houver token, retornar imediatamente array vazio (sem fazer chamada)
+    // Histórico de conversas exige JWT real. Sem token — ou com um token que não
+    // tem forma de JWT (ex. dev-fallback sem login) — devolve [] sem chamar, para
+    // não gerar 401 de rede/consola. O empty-state continua honesto (ZERO MOCKS).
     const token = typeof window !== 'undefined' ? (localStorage.getItem('auth_token') || localStorage.getItem('token')) : null;
-    if (!token) {
+    if (!token || token.split('.').length !== 3) {
       return Promise.resolve([]);
     }
-    
+
     const queryParams = new URLSearchParams();
     if (params?.limit) queryParams.set('limit', String(params.limit));
     if (params?.offset) queryParams.set('offset', String(params.offset));
@@ -215,6 +317,10 @@ export const copilotApi = {
   },
   
   getConversationMessages: (conversationId: string, params?: { limit?: number; offset?: number }) => {
+    const token = typeof window !== 'undefined' ? (localStorage.getItem('auth_token') || localStorage.getItem('token')) : null;
+    if (!token || token.split('.').length !== 3) {
+      return Promise.resolve([]);
+    }
     const queryParams = new URLSearchParams();
     if (params?.limit) queryParams.set('limit', String(params.limit));
     if (params?.offset) queryParams.set('offset', String(params.offset));
@@ -381,3 +487,40 @@ export const twinApi = {
     request<void>(`/v1/twin/scenarios/${scenarioId}`, { method: 'DELETE' }),
 };
 
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Q.118.J — Alertas proativos do copiloto (GET /v1/copilot/alerts + ack/resolve)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface CopilotAlertItem {
+  id: string;
+  severity: string; // INFO | WARN | CRITICAL
+  code: string;
+  title: string;
+  message_pt: string;
+  context: Record<string, unknown>;
+  entity_refs: string[];
+  status: string; // open | acknowledged | resolved
+  created_at: string | null;
+  acknowledged_at: string | null;
+  acknowledged_by: string | null;
+  resolved_at: string | null;
+}
+
+export const copilotAlertsApi = {
+  list: (params?: { status?: string; severity?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set('status', params.status);
+    if (params?.severity) qs.set('severity', params.severity);
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    return request<CopilotAlertItem[]>(`/v1/copilot/alerts${suffix}`);
+  },
+  acknowledge: (alertId: string) =>
+    request<CopilotAlertItem>(`/v1/copilot/alerts/${encodeURIComponent(alertId)}/acknowledge`, {
+      method: 'POST',
+    }),
+  resolve: (alertId: string) =>
+    request<CopilotAlertItem>(`/v1/copilot/alerts/${encodeURIComponent(alertId)}/resolve`, {
+      method: 'POST',
+    }),
+};

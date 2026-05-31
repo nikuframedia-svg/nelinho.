@@ -35,6 +35,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.models.partner import Customer
 from src.core.services.tenant_config_service import TenantConfigService
 from src.plan.models.order import ProductionOrder
 from src.plan.services.transport_batch_service import (
@@ -70,6 +71,11 @@ class TransportBatchOut(BaseModel):
     destination: Optional[str] = None
     status: str
     assigned_orders_count: Optional[int] = None
+    # Q.116.C — `customer_ids` (UUIDs distintas em core.customers) das
+    # encomendas atribuidas a esta batch. Lista vazia quando a batch
+    # nao tem orders, ou quando nenhum dos clientes esta sincronizado.
+    # Pode ter >1 quando a batch consolida varios clientes (multi-stop).
+    customer_ids: List[str] = Field(default_factory=list)
 
 
 class TransportBatchCreate(BaseModel):
@@ -130,7 +136,11 @@ async def _load_buffer_days(session: AsyncSession, tenant_id: UUID) -> int:
         return DEFAULT_DELIVERY_BUFFER_DAYS
 
 
-def _to_out(row, assigned_count: Optional[int] = None) -> TransportBatchOut:
+def _to_out(
+    row,
+    assigned_count: Optional[int] = None,
+    customer_ids: Optional[List[str]] = None,
+) -> TransportBatchOut:
     return TransportBatchOut(
         id=row.id,
         code=row.code,
@@ -140,7 +150,51 @@ def _to_out(row, assigned_count: Optional[int] = None) -> TransportBatchOut:
         destination=row.destination,
         status=row.status,
         assigned_orders_count=assigned_count,
+        customer_ids=customer_ids or [],
     )
+
+
+async def _resolve_customer_ids_for_orders(
+    session: AsyncSession,
+    tenant_id: UUID,
+    order_ids: List[UUID],
+) -> List[str]:
+    """Resolve UUIDs de clientes para um conjunto de order_ids.
+
+    Q.116.C — pivot ProductionOrder.customer_name → core.customers.id.
+    Devolve lista distinta (ordenada deterministicamente). Pode ter
+    >1 elemento quando a batch consolida varios clientes. Best-effort:
+    se a sondagem falhar (ERP desync, schema), devolve [].
+    """
+    if not order_ids:
+        return []
+    try:
+        ord_stmt = select(ProductionOrder.customer_name).where(
+            ProductionOrder.tenant_id == tenant_id,
+            ProductionOrder.id.in_(order_ids),
+        )
+        ord_rows = (await session.execute(ord_stmt)).all()
+        names = {
+            row[0]
+            for row in ord_rows
+            if row and row[0]
+        }
+        if not names:
+            return []
+        cust_stmt = select(Customer.id).where(
+            Customer.tenant_id == tenant_id,
+            Customer.customer_name.in_(names),
+        )
+        cust_rows = (await session.execute(cust_stmt)).all()
+        seen: list[str] = []
+        for row in cust_rows:
+            val = str(row[0])
+            if val not in seen:
+                seen.append(val)
+        return sorted(seen)
+    except Exception as exc:  # pragma: no cover — best-effort.
+        logger.debug("customer_ids lookup falhou para batch: %s", exc)
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +219,18 @@ async def list_batches(
         since=from_date, until=to_date, status=status_filter,
     )
     counts = await svc.orders_by_batch()
-    return [_to_out(r, len(counts.get(r.id, []))) for r in rows]
+    # Q.116.C — expor customer_ids por batch para o frontend envolver
+    # cliente em `<Clickable>`. Resolvido a partir das order_ids
+    # atribuidas (1 lookup por batch — `/batches` raramente devolve >50
+    # batches por janela tipica de 7d).
+    out: list[TransportBatchOut] = []
+    for r in rows:
+        order_ids = counts.get(r.id, [])
+        customer_ids = await _resolve_customer_ids_for_orders(
+            session, tenant_id, order_ids
+        )
+        out.append(_to_out(r, len(order_ids), customer_ids=customer_ids))
+    return out
 
 
 @router.post(
@@ -205,7 +270,12 @@ async def get_batch(
     except TransportBatchNotFoundError:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="batch not found")
     count = await svc.assigned_count(batch_id)
-    return _to_out(row, assigned_count=count)
+    # Q.116.C — resolver customer_ids para o detalhe individual.
+    order_ids = await svc.list_orders(batch_id)
+    customer_ids = await _resolve_customer_ids_for_orders(
+        session, tenant_id, list(order_ids)
+    )
+    return _to_out(row, assigned_count=count, customer_ids=customer_ids)
 
 
 @router.post(

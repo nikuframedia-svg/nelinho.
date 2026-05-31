@@ -40,14 +40,24 @@ _SCHEMAS = (
 
 
 async def ensure_schemas() -> None:
-    """Create every schema declared in any model's __table_args__."""
-    from sqlalchemy import text
-    from src.shared.database import engine
+    """Create every schema declared in any model's __table_args__.
 
+    Q.119.5 — deriva os schemas directamente da metadata (em vez de confiar
+    so na lista fixa `_SCHEMAS`, que divergia: faltava `ml`, criado em
+    q115_a10 ml_drift_event -> create_all crashava com InvalidSchemaName).
+    Union com `_SCHEMAS` por seguranca (schemas sem tabelas ainda).
+    """
+    from sqlalchemy import text
+    from src.shared.database import Base, engine
+
+    _import_all_models()
+    schemas = set(_SCHEMAS) | {
+        t.schema for t in Base.metadata.tables.values() if t.schema
+    }
     async with engine.begin() as conn:
-        for schema in _SCHEMAS:
+        for schema in sorted(schemas):
             await conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS {schema}'))
-    log.info("ensured %d schemas", len(_SCHEMAS))
+    log.info("ensured %d schemas", len(schemas))
 
 
 async def create_all_tables() -> None:

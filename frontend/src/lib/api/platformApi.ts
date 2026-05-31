@@ -213,10 +213,39 @@ export interface DiagnosticsFullResponse {
   };
 }
 
+// Q.117.A — estado da integração ERP NELO (sync incremental 5/5 min).
+export interface ErpMirrorStatus {
+  source: string;
+  status: string; // 'ok' | 'error' | 'running' | 'never_synced'
+  last_run_at: string | null;
+  finished_at: string | null;
+  rows_read: number;
+  rows_inserted: number;
+  rows_updated: number;
+  rows_skipped: number;
+  error: string | null;
+}
+
+export interface ErpConnectionResponse {
+  enabled: boolean;
+  url_masked: string | null;
+  connected: boolean;
+  detail: string | null;
+  latency_ms: number | null;
+  mirrors: ErpMirrorStatus[];
+  last_sync_at: string | null;
+  lag_seconds: number | null;
+  lag_human: string | null;
+  total_rows_last_sync: number;
+  sync_history_error: string | null;
+  sampled_at: string;
+}
+
 export const diagnosticsApi = {
   modules: () => request<DiagnosticsModulesResponse>('/v1/diagnostics/modules'),
   infrastructure: () => request<InfrastructureResponse>('/v1/diagnostics/infrastructure'),
   full: () => request<DiagnosticsFullResponse>('/v1/diagnostics/full'),
+  erpConnection: () => request<ErpConnectionResponse>('/v1/diagnostics/erp-connection'),
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -529,6 +558,98 @@ export interface MlPromoteResponse {
   decision_id: string | null;
   decision_status?: string;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Q.115.B — Revenue Target (/v1/config/revenue-target)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface RevenueTarget {
+  id: string;
+  effective_from: string;
+  target_eur: number;
+  created_by: string;
+  created_at: string;
+}
+
+export interface RevenueTargetCreate {
+  effective_from: string;
+  target_eur: number;
+}
+
+export const revenueTargetApi = {
+  list: () => request<RevenueTarget[]>('/v1/config/revenue-target'),
+  create: (payload: RevenueTargetCreate) =>
+    request<RevenueTarget>('/v1/config/revenue-target', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Q.115.B — Client Priority (/v1/config/client-priority)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface ClientPriority {
+  id: string;
+  cliente_id: string;
+  prioridade: number;
+  razao: string | null;
+  updated_at: string;
+}
+
+export interface ClientPriorityUpdate {
+  prioridade: number;
+  razao?: string;
+}
+
+export const clientPriorityApi = {
+  list: (params?: { page?: number; page_size?: number }) => {
+    const qs = params ? `?${new URLSearchParams(filterParams(params))}` : '';
+    return request<ClientPriority[]>(`/v1/config/client-priority${qs}`);
+  },
+  update: (clienteId: string, payload: ClientPriorityUpdate) =>
+    request<ClientPriority>(`/v1/config/client-priority/${encodeURIComponent(clienteId)}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Q.115.B — User Input (/v1/user-input)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export type UserInputStatus = 'pending' | 'in_progress' | 'done' | 'rejected';
+
+export interface UserInput {
+  id: string;
+  what: string;
+  where_page: string;
+  economic_reason: string;
+  status: UserInputStatus;
+  pr_url: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UserInputCreate {
+  what: string;
+  where_page: string;
+  economic_reason: string;
+}
+
+export const userInputApi = {
+  create: (payload: UserInputCreate) =>
+    request<UserInput>('/v1/user-input', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  list: (params?: { status?: UserInputStatus }) => {
+    const qs = params?.status ? `?status=${params.status}` : '';
+    return request<UserInput[]>(`/v1/user-input${qs}`);
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
 
 export const mlApi = {
   /** Nomes de todos os modelos no registry (array nu de strings). */

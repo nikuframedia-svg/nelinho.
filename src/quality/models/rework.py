@@ -86,6 +86,10 @@ class ReworkEntry(TenantBase):
 
     of_id: Mapped[str] = mapped_column(String(100), nullable=False)
     model_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    # Barco a que o retrabalho diz respeito. A coluna já existe na BD
+    # (migração q115_a07_rework_entry_boat_id); mapeada aqui para fechar o
+    # drift ORM↔BD detetado na auditoria 2026-05-30.
+    boat_id: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
 
     # Causer — the worker responsible (QA01).
     causer_employee_id: Mapped[Optional[UUID]] = mapped_column(

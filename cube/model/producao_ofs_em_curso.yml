@@ -1,0 +1,42 @@
+cubes:
+  - name: producao_ofs_em_curso
+    description: >
+      Q.99 Onda 1 / Agente A — snapshot do número de Ordens de Fabrico
+      (OFs) em curso por fase de produção. Critério canónico Q.79: "em
+      curso" = OF cujo OF_FP_ID aponta para uma fase com FP_SEQUENCIA <
+      30 (estados não-terminais). Fonte: marts.v_ofs_em_curso_snapshot.
+      Anchor factory_raw espelho: 4 233 OFs em curso (32 fases activas).
+      CONTAGEM adimensional — soma sempre OK (trivialmente aditiva).
+      Sem dim de tempo: é snapshot do estado actual, não histórico de
+      transições. A medida vive como `producao_ofs_em_curso.total`
+      (registo no contrato com a mesma string).
+    sql_table: marts.v_ofs_em_curso_snapshot
+
+    measures:
+      - name: total
+        description: >
+          Contagem de OFs em curso. SUM(n_ofs) da view, que já agrupa
+          por fase activa. SUM cross-row de CONTAGEM é trivial — não
+          mistura unidades, nunca negativo, nunca fraccionário.
+          Anchor Q.99: total sem dims = 4 233.
+        sql: n_ofs
+        type: sum
+        format: number
+
+    dimensions:
+      - name: fase
+        description: >
+          Nome da fase de produção activa (FP_NOME). 32 fases efectivamente
+          pobladas com FP_SEQUENCIA < 30. Top-5 do espelho: Laminagem peças
+          (1 233), Corte peças (1 100), Não Laminado (392), Corte (294),
+          Laminagem Infusão (222).
+        sql: fase
+        type: string
+
+      - name: fase_id
+        description: >
+          ID numérico da fase (FP_ID). Útil para JOINs com outras medidas
+          de produção que partilham `fase_id` como dim canónica (Q.96
+          qualidade, Q.99 outras Ondas).
+        sql: fase_id
+        type: number

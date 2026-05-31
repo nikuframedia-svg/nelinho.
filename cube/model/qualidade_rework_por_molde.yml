@@ -1,0 +1,40 @@
+cubes:
+  - name: qualidade_rework_por_molde
+    description: >
+      Q.108.E.2 — Incidentes de retrabalho agregados por molde×mês. Source:
+      marts.v_rework_por_molde_mes sobre quality.rework_entry com mold_id
+      populado desde Q.108.E.1 (ETL backfill de OF_OF_ID_MLD). Permite
+      identificar moldes problemáticos. CONTAGEM adimensional — soma OK.
+    sql_table: marts.v_rework_por_molde_mes
+
+    measures:
+      - name: total
+        description: >
+          Contagem de incidentes de retrabalho por (mês, molde). Inclui
+          todos os incidents — categorizados (MOLD-X, PAINT-X, etc.) e
+          plain rework. Útil para top-N moldes problemáticos.
+        sql: rework_count
+        type: sum
+        format: number
+
+      - name: graves
+        description: >
+          Sub-contagem com OFFP_RETORNO_GRAVE=true (severe_return). Sinal
+          de incidentes que pediram intervenção do chefe — proxy de
+          severidade no mundo NELO.
+        sql: rework_grave
+        type: sum
+        format: number
+
+    dimensions:
+      - name: data
+        description: Mês do incidente (primeiro dia, date_trunc('month')).
+        sql: data
+        type: time
+
+      - name: molde_id
+        description: >
+          Chave do molde (ERP `OF_OF_ID_MLD`, parent OF). NUNCA NULL nesta
+          view (filtro `mold_id IS NOT NULL` na construção da mart).
+        sql: molde_id
+        type: string
