@@ -204,3 +204,15 @@ def register_routers(app: FastAPI) -> None:
     from src.plan.api.phase_config_admin import router as phase_config_router
 
     app.include_router(phase_config_router)
+
+    # Q.155.B — melhores operadores por fase (curado manual + sugestões)
+    from src.plan.api.phase_preferred_operators import (
+        router as phase_preferred_operators_router,
+    )
+
+    app.include_router(phase_preferred_operators_router)
+
+    # Q.155.E — índice de complexidade do barco (badges na UI)
+    from src.plan.api.boat_complexity_api import router as boat_complexity_router
+
+    app.include_router(boat_complexity_router)

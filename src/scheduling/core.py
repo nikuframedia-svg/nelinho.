@@ -61,6 +61,7 @@ from src.scheduling.jobs.preference_learning import (
 )
 from src.scheduling.jobs.boat_phase_score_job import _boat_phase_score_job
 from src.scheduling.jobs.boat_potential_job import _boat_potential_job
+from src.scheduling.jobs.boat_complexity_job import _boat_complexity_job
 from src.scheduling.jobs.phase_operator_affinity import _phase_operator_affinity_job
 from src.scheduling.jobs.auto_cpo_replan_job import _auto_cpo_replan_global_job
 from src.scheduling.jobs.capture_plan_execution import (
@@ -484,6 +485,19 @@ def register_tenant(
         args=[tenant_id],
         id=f"boat_potential:{tenant_id}",
         name=f"boat_potential[{tenant_id}]",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Q.155.A — boat_complexity (ICB): peças + tinta + fases por barco.
+    # 04:25 UTC, logo após o boat_potential. Idempotente. Alimenta o matching
+    # "barco difícil ↔ melhores operadores" no CPO.
+    _scheduler.add_job(
+        _boat_complexity_job,
+        trigger=CronTrigger(hour=4, minute=25, timezone="UTC"),
+        args=[tenant_id],
+        id=f"boat_complexity:{tenant_id}",
+        name=f"boat_complexity[{tenant_id}]",
         replace_existing=True,
         coalesce=True,
         max_instances=1,

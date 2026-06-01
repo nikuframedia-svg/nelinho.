@@ -73,6 +73,10 @@ from src.governance.models import phase_operator_affinity as _governance_phase_a
 # Q.115.X6 — afinidade barco/fase + potencialidade por barco
 from src.governance.models import boat_phase_score as _governance_boat_phase_score
 from src.governance.models import boat_potential as _governance_boat_potential
+# Q.155.A — índice de complexidade do barco (ICB)
+from src.governance.models import boat_complexity as _governance_boat_complexity
+# Q.155.B — melhores operadores por fase (curado manual)
+from src.governance.models import phase_preferred_operator as _governance_phase_preferred_operator
 
 # ─── hr ─────────────────────────────────────────────────────────────────
 from src.hr.models import allocation as _hr_allocation
