@@ -2306,6 +2306,54 @@ def is_fractional_measure(measure: str) -> bool:
     return spec is not None and spec.unit == CanonicalUnit.FRACAO
 
 
+def measure_display_unit(measure: str) -> str:
+    """Unidade de apresentação ('€' | '%' | '') de um card de KPI.
+
+    Espelha a convenção do `formatValue` do frontend (KPIsTab): DINHEIRO → €,
+    FRACAO → % (ratio 0-1 mostrado como percentagem), restantes → '' (número
+    cru — contagem, quantidade física, horas, temperatura). Medida fora do
+    registo → ''.
+    """
+    if is_monetary_measure(measure):
+        return "€"
+    if is_fractional_measure(measure):
+        return "%"
+    return ""
+
+
+def list_measure_catalog() -> list[dict[str, object]]:
+    """Catálogo serializável das measures registadas — alimenta o picker de KPIs.
+
+    Itera o `MEASURE_REGISTRY` (fonte única) e devolve, por medida, os campos
+    que o menu "Adicionar indicador" do frontend precisa. NÃO toca no Cube REST
+    (lê só o contrato) → determinístico e barato. Ordenado por (domínio, nome)
+    para um menu estável.
+
+    Cada entrada:
+      - `name`: id canónico ("consumo_material.consumo").
+      - `label`: `description` PT-PT (fallback para `name`).
+      - `unit`: '€' | '%' | '' (ver `measure_display_unit`).
+      - `domain`: prefixo do cube ("consumo_material") — agrupa o menu.
+      - `dimensions`: lista ordenada de `dimensions_supported`.
+      - `supports_period`: True se a medida tem a dimensão `tempo` (habilita o
+        filtro "este mês" no card).
+    """
+    catalog: list[dict[str, object]] = []
+    for name, spec in MEASURE_REGISTRY.items():
+        catalog.append(
+            {
+                "name": name,
+                "label": spec.description or name,
+                "unit": measure_display_unit(name),
+                "domain": name.split(".", 1)[0],
+                "dimensions": sorted(spec.dimensions_supported),
+                "supports_period": "tempo" in spec.dimensions_supported,
+            }
+        )
+    catalog.sort(key=lambda m: (m["domain"], m["name"]))
+    return catalog
+
+
 def can_sum_measures(measures: list[str]) -> tuple[bool, str | None]:
     """Verifica matriz de soma (SUM_COMPATIBILITY).
 

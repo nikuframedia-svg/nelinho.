@@ -131,6 +131,19 @@ export const profitKeys = {
     [...profitKeys.all, 'kpi-history', name, days] as const,
 } as const;
 
+// ─── cube semantic layer — dashboard + picker de measures ───────────────
+//
+// Tab KPIs do LLM: dashboard curado (7 cards) + picker das 127 measures do
+// contrato (catálogo estático + valores ad-hoc por selecção).
+
+export const cubeKeys = {
+  all: ['cube'] as const,
+  dashboard: () => [...cubeKeys.all, 'dashboard-dev'] as const,
+  measures: () => [...cubeKeys.all, 'measures'] as const,
+  measureCards: (selection: readonly string[]) =>
+    [...cubeKeys.all, 'measure-cards', selection] as const,
+} as const;
+
 // ─── twin (Q.67.2.A) ────────────────────────────────────────────────────
 //
 // Digital Twin sandbox (Onda 17/Q): scenarios CRUD + compare.

@@ -22,10 +22,15 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from src.copilot.cube.client import CubeClient
+from src.copilot.cube.measure_contract import (
+    MEASURE_REGISTRY,
+    list_measure_catalog,
+    measure_display_unit,
+)
 from src.copilot.routers._common import dev_only
 from src.copilot.cube.interpret import interpret
 from src.copilot.cube.material_retrieval import MaterialIndex
@@ -385,3 +390,120 @@ async def cube_dashboard_dev() -> DashboardResponse:
         cards=list(results[:n_cards]),
         charts=list(results[n_cards:]),
     )
+
+
+# ────────────────── Picker de KPIs — catálogo + cards ad-hoc ──────────────────
+# O dashboard acima é CURADO (7 cards fixos). Estes dois endpoints abrem o
+# semantic layer inteiro: `measures-dev` lista TODAS as measures registadas no
+# contrato (para o menu "Adicionar indicador"); `measure-cards-dev` corre as
+# que o utilizador escolher, reusando o mesmo `_run_card` do dashboard. Lista
+# fechada: só measures do MEASURE_REGISTRY são aceites (nunca SQL/medida livre).
+
+# Limite defensivo de cards por pedido — o picker não pede mais que isto.
+MAX_MEASURE_CARDS = 60
+
+
+class MeasureCatalogEntry(BaseModel):
+    name: str
+    label: str
+    unit: str           # "", "%", "€"
+    domain: str
+    dimensions: list[str] = Field(default_factory=list)
+    supports_period: bool
+
+
+class MeasureCatalogResponse(BaseModel):
+    measures: list[MeasureCatalogEntry] = Field(default_factory=list)
+
+
+class MeasureCardRequestItem(BaseModel):
+    measure: str
+    period: Literal["none", "month"] = "none"
+
+
+class MeasureCardsRequest(BaseModel):
+    items: list[MeasureCardRequestItem] = Field(default_factory=list)
+
+
+class MeasureCardsResponse(BaseModel):
+    cards: list[DashboardCard] = Field(default_factory=list)
+
+
+@router.get(
+    "/cube/measures-dev",
+    response_model=MeasureCatalogResponse,
+    include_in_schema=False,
+    dependencies=[Depends(dev_only)],
+)
+async def cube_measures_dev() -> MeasureCatalogResponse:
+    """Catálogo das measures do Cube para o picker de KPIs (dev-only, sem LLM).
+
+    Lê só o `MEASURE_REGISTRY` (contrato) — sem round-trip ao Cube. A página de
+    KPIs usa isto para encher o menu "Adicionar indicador" com TODAS as measures
+    registadas, não só o conjunto curado do dashboard.
+    """
+    return MeasureCatalogResponse(
+        measures=[MeasureCatalogEntry(**m) for m in list_measure_catalog()]
+    )
+
+
+def _coerce_card_specs(items: list[MeasureCardRequestItem]) -> list[_CardSpec]:
+    """Valida o pedido do picker e constrói `_CardSpec` transientes.
+
+    - Rejeita measures fora do `MEASURE_REGISTRY` (lista fechada) com 422.
+    - `period="month"` só passa se a measure suportar `tempo`; senão cai para
+      "none" (evita uma timeDimension inválida num cube sem `.data`).
+    - Dedup por measure (um card por medida), preservando a ordem de escolha.
+    - Unidade de apresentação via `measure_display_unit` (igual ao catálogo) →
+      card coerente com o `formatValue` do frontend.
+    """
+    specs: list[_CardSpec] = []
+    seen: set[str] = set()
+    for item in items:
+        spec_def = MEASURE_REGISTRY.get(item.measure)
+        if spec_def is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"measure desconhecida no contrato: {item.measure}",
+            )
+        if item.measure in seen:
+            continue
+        seen.add(item.measure)
+        supports_period = "tempo" in spec_def.dimensions_supported
+        period = "month" if (item.period == "month" and supports_period) else "none"
+        specs.append(
+            _CardSpec(
+                key=item.measure,
+                label=spec_def.description or item.measure,
+                unit=measure_display_unit(item.measure),
+                measure=item.measure,
+                period=period,
+            )
+        )
+    return specs
+
+
+@router.post(
+    "/cube/measure-cards-dev",
+    response_model=MeasureCardsResponse,
+    include_in_schema=False,
+    dependencies=[Depends(dev_only)],
+)
+async def cube_measure_cards_dev(request: MeasureCardsRequest) -> MeasureCardsResponse:
+    """Valores actuais das measures escolhidas no picker (dev-only, sem LLM).
+
+    Reutiliza o `_run_card` do dashboard: cada item vira um `_CardSpec` e corre
+    em paralelo contra o Cube REST. Degrada por item (`no_data`/`error`) tal
+    como o dashboard. NUNCA soma cross-measure — cada card é uma measure
+    agregada pelo Cube na sua própria query.
+    """
+    specs = _coerce_card_specs(request.items[:MAX_MEASURE_CARDS])
+    if not specs:
+        return MeasureCardsResponse(cards=[])
+    today = date.today()
+    cube = CubeClient()
+    try:
+        cards = await asyncio.gather(*[_run_card(cube, s, today) for s in specs])
+    finally:
+        await cube.close()
+    return MeasureCardsResponse(cards=list(cards))
