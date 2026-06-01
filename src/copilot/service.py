@@ -41,7 +41,7 @@ from src.copilot.fact_pack_builder import (
     resolve_semantic_queries,
     store_copilot_audit,
 )
-from src.copilot.guardrails import check_security_flag
+from src.copilot.guardrails import check_security_flag, is_write_request
 from src.copilot.intent_router import detect_intent
 from src.copilot.ollama_client import get_ollama_client
 from src.copilot.rag import retrieve_rag_chunks
@@ -50,6 +50,7 @@ from src.copilot.response_renderer import (
     create_model_offline_response,
     create_security_flag_response,
     create_validation_error_response,
+    create_write_rejection_response,
     extract_chart_blocks,
     validate_explanation_quality,
 )
@@ -112,6 +113,7 @@ class CopilotService:
 
     # Pure delegates (no session) — static for monkeypatch friendliness.
     _create_security_flag_response = staticmethod(create_security_flag_response)
+    _create_write_rejection_response = staticmethod(create_write_rejection_response)
     _create_model_offline_response = staticmethod(create_model_offline_response)
     _create_validation_error_response = staticmethod(create_validation_error_response)
     _validate_explanation_quality = staticmethod(validate_explanation_quality)
@@ -220,6 +222,15 @@ class CopilotService:
                 f"SECURITY_FLAG detetado para query: {request.user_query[:100]}"
             )
             return self._create_security_flag_response(correlation_id), {}
+
+        # 1.1. Rejeitar pedidos de escrita (copiloto é READ-ONLY).
+        # Detecção precoce evita que o LLM alucine que fez a acção.
+        if is_write_request(request.user_query):
+            logger.info(
+                "WRITE_REQUEST_BLOCKED: query contém verbo de escrita: %s",
+                request.user_query[:100],
+            )
+            return self._create_write_rejection_response(correlation_id), {}
 
         # 1.5. Conversation history for multi-turn context
         conversation_history: List[Dict[str, str]] = []

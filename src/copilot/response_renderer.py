@@ -343,6 +343,37 @@ def normalize_facts_with_citations(
 # Error response builders — shapes pinned by characterization tests.
 # ---------------------------------------------------------------------------
 
+def create_write_rejection_response(correlation_id: UUID) -> CopilotResponse:
+    """Criar resposta para pedidos de escrita (copiloto é READ-ONLY)."""
+    return CopilotResponse(
+        suggestion_id=uuid4(),
+        correlation_id=correlation_id,
+        type="ANSWER",
+        intent="generic",
+        summary=(
+            "Não posso fazer isso directamente — sou read-only. "
+            "Para criar ou modificar dados, usa a interface da plataforma."
+        ),
+        facts=[],
+        actions=[],
+        warnings=[
+            {
+                "code": "WRITE_REQUEST_BLOCKED",
+                "message": (
+                    "O copiloto não pode criar, modificar nem apagar dados. "
+                    "Usa a interface da plataforma ou solicita ao administrador."
+                ),
+            }
+        ],
+        meta={
+            "model": "none",
+            "tokens": 0,
+            "latency_ms": 0,
+            "validation_passed": True,
+        },
+    )
+
+
 def create_security_flag_response(correlation_id: UUID) -> CopilotResponse:
     """Criar resposta para SECURITY_FLAG."""
     return CopilotResponse(

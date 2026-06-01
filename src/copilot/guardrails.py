@@ -219,12 +219,36 @@ def validate_response_structure(
 def check_security_flag(user_query: str) -> bool:
     """
     Verificar se query deve ser bloqueada por segurança.
-    
+
     Returns:
         True se deve bloquear (SECURITY_FLAG)
     """
     risk_score, _ = detect_prompt_injection(user_query)
     return risk_score > 0.7  # Threshold para bloquear
+
+
+# Verbos de escrita que o copiloto (read-only) nunca pode executar.
+# Detecta pedidos como "adiciona", "cria", "apaga", "modifica" no input.
+_WRITE_VERBS_PT = re.compile(
+    r"\b(adiciona|adicion[ae]|insert[ae]|cria|cri[ae]|criar|apaga|apag[ae]|"
+    r"elimin[ae]|remov[ae]|remov[ae]r|delet[ae]|modif[ie][ace]|altera|alter[ae]|"
+    r"edita|edit[ae]|actualiz[ae]|actualiza|atualiz[ae]|atualiza|"
+    r"regist[ae]|cadastra|cadastr[ae]|muda|mud[ae]|coloc[ae]|p[oõ]e|p[oõ]e|"
+    r"insere|inserir|acrescenta|acrescent[ae])\b",
+    re.IGNORECASE,
+)
+
+
+def is_write_request(user_query: str) -> bool:
+    """Detecta se a query é um pedido de escrita/modificação.
+
+    O copiloto é READ-ONLY — nunca pode criar, modificar nem apagar dados.
+    Detecção precoce (pré-LLM) evita que o LLM alucine que fez a escrita.
+
+    Returns:
+        True se parece um pedido de escrita.
+    """
+    return bool(_WRITE_VERBS_PT.search(user_query))
 
 
 # ============================================================================
