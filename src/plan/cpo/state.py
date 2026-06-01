@@ -199,6 +199,11 @@ class FactoryState:
     # Vazio = sem overrides (comportamento legado intacto).
     phase_config: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
+    # Q.153.C1 — order_ids excluídos/adiados do plano (reversível). Carregado
+    # de plan.plan_exclusion; as open_orders são filtradas em load(). Vazio =
+    # nada excluído (comportamento legado intacto).
+    excluded_order_ids: Set[str] = field(default_factory=set)
+
     # Q.140.F — preferência por sector → fase, por (employee_code, fase_id),
     # valor em [0,1]. Deriva do nível efectivo por sector (override manual >
     # derivado do histórico real > semente ERP), mapeado da fase para o seu
@@ -381,6 +386,22 @@ class FactoryState:
         # Q.135.F3 — overrides de configuração de fase (plan.phase_config).
         # Best-effort: tabela ausente / session None → {} (back-compat).
         state.phase_config = await _load_phase_config_db(session, tenant_id)
+
+        # Q.153.C1 — barcos excluídos/adiados do plano (reversível). Filtra as
+        # open_orders aqui, no carregamento, para que cada replan honre as
+        # exclusões correntes. Best-effort: tabela ausente / session None → set().
+        state.excluded_order_ids = await _load_plan_exclusions_db(session, tenant_id)
+        if state.excluded_order_ids and state.open_orders:
+            before = len(state.open_orders)
+            state.open_orders = [
+                o for o in state.open_orders
+                if str(o.get("order_id") or o.get("of_id") or "")
+                not in state.excluded_order_ids
+            ]
+            logger.info(
+                "Q.153.C1 exclusões: %d barcos excluídos do plano (%d→%d ordens)",
+                len(state.excluded_order_ids), before, len(state.open_orders),
+            )
 
         # Q.53.B — factory working calendar. Best-effort: a missing /
         # empty table leaves `calendar` falling back to Mon-Fri; only an
@@ -1225,6 +1246,38 @@ def _extract_error_rates(engine: Any) -> Dict[str, float]:
 # ---------------------------------------------------------------------------
 # Q.135.F3 — phase config overrides loader
 # ---------------------------------------------------------------------------
+
+
+async def _load_plan_exclusions_db(
+    session: Any,
+    tenant_id: UUID,
+) -> Set[str]:
+    """Q.153.C1 — order_ids excluídos/adiados do plano (plan.plan_exclusion).
+
+    Devolve o conjunto de `order_id` (str) a EXCLUIR do plano. Best-effort:
+    session None / tabela ausente → ``set()`` (back-compat). Espelha o padrão
+    de `_load_phase_config_db`.
+    """
+    if session is None:
+        return set()
+    from sqlalchemy import text
+    from sqlalchemy.exc import SQLAlchemyError
+
+    sql = text(
+        """
+        SELECT order_id::text AS order_id
+        FROM plan.plan_exclusion
+        WHERE tenant_id = :tenant
+        """
+    )
+    try:
+        rows = (await session.execute(
+            sql, {"tenant": str(tenant_id)}
+        )).mappings().all()
+    except SQLAlchemyError as exc:
+        logger.debug("Q.153.C1 plan_exclusion DB load skipped: %s", exc)
+        return set()
+    return {str(r["order_id"]) for r in rows}
 
 
 async def _load_phase_config_db(

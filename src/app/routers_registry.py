@@ -185,6 +185,11 @@ def register_routers(app: FastAPI) -> None:
 
     app.include_router(boat_boost_router)
 
+    # Q.153.C1 — exclusão reversível de barco do plano
+    from src.plan.api.plan_exclusion_writes import router as plan_exclusion_router
+
+    app.include_router(plan_exclusion_router)
+
     # Q.116.E — master-data LIST endpoints
     from src.master_data.api.lists import router as master_data_lists_router
 

@@ -229,6 +229,17 @@ async def run_cpo_schedule(
         )
 
     orders = request.orders or state.open_orders
+    # Q.153.C1 — honrar exclusões também quando os orders vêm explícitos no
+    # request (o filtro de state.load() só cobre state.open_orders).
+    if state.excluded_order_ids:
+        orders = [
+            o for o in orders
+            if str(
+                (o.get("order_id") or o.get("of_id"))
+                if isinstance(o, dict)
+                else (getattr(o, "order_id", None) or getattr(o, "of_id", ""))
+            ) not in state.excluded_order_ids
+        ]
     if not orders:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
