@@ -32,6 +32,7 @@ import type { PlanSelection } from '../../components/overall/selection';
 import { usePendingDecisions } from '../../hooks/usePendingDecisions';
 import { OperationEditSheet } from '../../components/overall/OperationEditSheet';
 import { CellOpsSheet } from '../../components/overall/CellOpsSheet';
+import { planeamentoApi } from '../../components/planeamento/planeamentoApi';
 import { CellExpandProvider } from '../../components/overall/cellExpand';
 import { employeesApi } from '../../lib/api/masterDataApi';
 
@@ -217,6 +218,68 @@ export default function OverallPage(): ReactNode {
       setLocalOverrides(new Map());
     },
   });
+
+  // ── Q.153.B2 — Replanear (async) + Aprovar (DRAFT→LIVE) no /overall ─────────
+  const [replanJobId, setReplanJobId] = useState<string | null>(null);
+
+  const replanMutation = useMutation({
+    mutationFn: () =>
+      planeamentoApi.runScheduleAsync({
+        horizon_days: 42,
+        message: 'Replaneamento via /overall',
+      }),
+    onSuccess: (resp) => {
+      setReplanJobId(resp.job_id);
+      toast.info('Replaneamento em curso…');
+    },
+    onError: (err: unknown) => {
+      const e = err as { message?: string };
+      toast.error(`Falha ao replanear: ${e.message ?? 'erro desconhecido'}`);
+    },
+  });
+
+  const replanJobQuery = useQuery({
+    queryKey: ['cpo', 'replan-job', replanJobId],
+    queryFn: () => planeamentoApi.pollScheduleJob(replanJobId as string),
+    enabled: Boolean(replanJobId),
+    refetchInterval: (query) => {
+      const st = query.state.data?.state;
+      return st === 'complete' || st === 'failed' ? false : 2000;
+    },
+  });
+
+  useEffect(() => {
+    const st = replanJobQuery.data?.state;
+    if (!replanJobId || !st) return;
+    if (st === 'complete') {
+      queryClient.invalidateQueries({ queryKey: planKeys.scheduleCurrent() });
+      toast.success('Novo plano pronto (Rascunho). Reveja e aprove.');
+      setReplanJobId(null);
+    } else if (st === 'failed') {
+      toast.error(`Replaneamento falhou: ${replanJobQuery.data?.error ?? 'erro'}`);
+      setReplanJobId(null);
+    }
+  }, [replanJobQuery.data?.state, replanJobId, queryClient, toast]);
+
+  const approveMutation = useMutation({
+    mutationFn: (sha: string) => planeamentoApi.approveCommit(sha),
+    onSuccess: (resp) => {
+      queryClient.invalidateQueries({ queryKey: planKeys.scheduleCurrent() });
+      toast.success(`Plano aprovado · LIVE · ${resp.commit_sha256.slice(0, 8)}`);
+    },
+    onError: (err: unknown) => {
+      const e = err as { status?: number; message?: string };
+      if (e.status === 403) {
+        toast.error('Não pode aprovar o plano que propôs (segregação de funções).');
+      } else if (e.status === 409) {
+        toast.info('Plano já está LIVE.');
+      } else {
+        toast.error(`Falha ao aprovar: ${e.message ?? 'erro desconhecido'}`);
+      }
+    },
+  });
+
+  const isReplanning = replanMutation.isPending || Boolean(replanJobId);
 
   // ── Operações = plano (futuro) + actuals (passado real), Q.141.H ────────────
   const operations: ScheduledOp[] = useMemo(() => {
@@ -453,6 +516,28 @@ export default function OverallPage(): ReactNode {
             >
               {mode === 'ver' ? 'Editar' : 'A editar'}
             </DarkButton>
+
+            {/* Q.153.B2 — Replanear (async) + Aprovar (DRAFT→LIVE) */}
+            <DarkButton
+              size="sm"
+              variant="secondary"
+              disabled={isReplanning}
+              onClick={() => replanMutation.mutate()}
+            >
+              {isReplanning ? 'A replanear…' : 'Replanear'}
+            </DarkButton>
+
+            {latestCommit && latestCommit.status !== 'LIVE' && (
+              <DarkButton
+                size="sm"
+                variant="primary"
+                disabled={approveMutation.isPending}
+                onClick={() => approveMutation.mutate(latestCommit.commit_sha256)}
+                title="Promover este plano de Rascunho para LIVE (aprovação humana)."
+              >
+                {approveMutation.isPending ? 'A aprovar…' : 'Aprovar plano'}
+              </DarkButton>
+            )}
           </div>
         }
       />

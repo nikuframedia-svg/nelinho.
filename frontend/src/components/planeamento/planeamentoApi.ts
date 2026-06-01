@@ -180,6 +180,14 @@ export interface CpoJobApproveResponse {
   approved_at: string;
 }
 
+/** Q.153.B1 — resposta de PUT /v1/plan/cpo/commits/{sha}/approve. */
+export interface CommitApproveResponse {
+  commit_sha256: string;
+  previous_status: string;
+  new_status: string;
+  approved_at: string;
+}
+
 export const planeamentoApi = {
   /** Q.62.D.2 — corre o CPO v4 syncronamente (legacy, ainda bloqueia ate 30s).
    *  Mantido para tests + cases sem worker Arq. Frontend novo usa
@@ -215,6 +223,15 @@ export const planeamentoApi = {
   approveScheduleJob: (jobId: string) =>
     apiFetch<CpoJobApproveResponse>(
       `/v1/plan/cpo/schedule/job/${encodeURIComponent(jobId)}/approve`,
+      { method: 'PUT' },
+    ),
+
+  /** Q.153.B1 — promove um commit DRAFT → LIVE por commit_sha (o robô cria
+   *  DRAFTs cujo job Arq expira em 1h; este caminho aprova-os na mesma). É o
+   *  que o botão "Aprovar plano" do /overall usa. */
+  approveCommit: (sha: string) =>
+    apiFetch<CommitApproveResponse>(
+      `/v1/plan/cpo/commits/${encodeURIComponent(sha)}/approve`,
       { method: 'PUT' },
     ),
 
