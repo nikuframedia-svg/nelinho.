@@ -1,11 +1,16 @@
-"""Sprint C 1.1 — product_pricing wire to CPO endpoint.
+"""Sprint C 1.1 + Q.138.H — product_pricing wire to CPO endpoint.
 
 Before this fix the decoder was ready to compute throughput €/day but
 nothing ever passed `product_price_eur` — the CEO's €30-35K/day target
 could not move the GA's needle.
 
+Q.138.H (2026-06-01): corrigido o casamento de chaves.
+- ANTES: _load_product_prices devolvia {uuid: price} (UUID de core.products.id)
+- DEPOIS: devolve {product_code: price} onde product_code = str(P_ID) do ERP
+- Razão: plan.production_orders.product_id é INTEGER ERP, não UUID.
+
 Covers:
-* `_load_product_prices` returns `{product_id: price}` for the latest
+* `_load_product_prices` returns `{product_code: price}` for the latest
   valid row per product (rows ordered DESC by valid_from → take first)
 * Empty `product_pricing` table → empty dict (not an exception)
 * Expired rows (`valid_to` in the past) are excluded
@@ -66,21 +71,29 @@ def test_load_product_prices_empty_table_returns_empty_dict():
 
 def test_load_product_prices_picks_first_row_per_product():
     """The query already orders DESC by valid_from — the helper keeps the
-    first row it sees per product (i.e. the latest-valid)."""
-    product_1 = uuid4()
-    product_2 = uuid4()
+    first row it sees per product (i.e. the latest-valid).
+
+    Q.138.H: a fake session devolve (product_code, price, valid_from)
+    onde product_code é string numérica ERP (ex: "20205"), NÃO UUID.
+    """
+    # product_code = str(P_ID) do ERP, como devolvido pelo JOIN core.products
+    product_code_1 = "20205"
+    product_code_2 = "20235"
     today = date.today()
     rows = [
-        # Product 1 — two rows; the newer (2025) must win.
-        (product_1, Decimal("2400.00"), today - timedelta(days=30)),
-        (product_1, Decimal("2000.00"), today - timedelta(days=365)),
+        # Product 1 — two rows; the newer must win.
+        (product_code_1, Decimal("2400.00"), today - timedelta(days=30)),
+        (product_code_1, Decimal("2000.00"), today - timedelta(days=365)),
         # Product 2 — single row.
-        (product_2, Decimal("1800.00"), today),
+        (product_code_2, Decimal("1800.00"), today),
     ]
     session = _FakeSession(rows)
     prices = asyncio.run(_load_product_prices(session, TENANT_A))
-    assert prices[str(product_1)] == 2400.0  # latest
-    assert prices[str(product_2)] == 1800.0
+    assert prices[product_code_1] == 2400.0  # latest
+    assert prices[product_code_2] == 1800.0
+    # Confirmar que nao ha UUIDs (len 36) como chaves
+    for key in prices:
+        assert len(key) < 36, f"UUID encontrado como chave: {key!r}"
 
 
 def test_load_product_prices_swallows_db_errors():

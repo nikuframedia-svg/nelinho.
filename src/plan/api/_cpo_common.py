@@ -119,30 +119,39 @@ async def _load_product_prices(
     db: AsyncSession,
     tenant_id: UUID,
 ) -> Dict[str, float]:
-    """Sprint C 1.1 — current sale prices per product (€).
+    """Sprint C 1.1 + Q.138.H — current sale prices per product (€).
 
     Pulls the latest-valid `ProductPricing` row per product for this
     tenant. Used by the CPO decoder to compute `throughput_eur_day`
     (F1 final wire — without this the fitness term stays at 0 and the
     €30–35K/day CEO target cannot be optimised).
 
-    Returns `{product_id: sale_value_default_eur}` as strings → floats
-    so the decoder's `product_price_eur` mapping is cheap to read.
+    Q.138.H FIX — chave do mapa é `core.products.product_code` (string
+    numérica, ex: "20205") em vez do UUID de `core.products.id`.
+    Razão: `plan.production_orders.product_id` é o INTEGER ERP (P_ID)
+    e o decoder procura `price_lookup.get(str(op.product_id))`.
+    Sem o JOIN, as chaves eram UUIDs e o casamento falhava → throughput=0.
+
+    Returns `{product_code: sale_value_default_eur}` strings → floats.
     An empty dict is returned when no rows exist — decoder then falls
     back to `throughput_eur_day=0.0` (no-op, backwards compatible).
     """
     from datetime import date as _date
     from sqlalchemy import and_, or_, select
 
+    from src.core.models.product import Product
     from src.profit.models.pricing import ProductPricing
 
     today = _date.today()
+    # Q.138.H: JOIN com core.products para obter product_code = str(P_ID)
+    # que é o mesmo identificador usado em plan.production_orders.product_id.
     stmt = (
         select(
-            ProductPricing.product_id,
+            Product.product_code,
             ProductPricing.sale_value_default_eur,
             ProductPricing.valid_from,
         )
+        .join(Product, Product.id == ProductPricing.product_id)
         .where(
             and_(
                 ProductPricing.tenant_id == tenant_id,
@@ -154,7 +163,7 @@ async def _load_product_prices(
                 ),
             )
         )
-        .order_by(ProductPricing.product_id, ProductPricing.valid_from.desc())
+        .order_by(Product.product_code, ProductPricing.valid_from.desc())
     )
     try:
         rows = (await db.execute(stmt)).all()
@@ -162,10 +171,10 @@ async def _load_product_prices(
         logger.warning("product_pricing lookup failed, using empty map: %s", exc)
         return {}
 
-    # Latest-valid per product (rows are ordered DESC by valid_from — keep first).
+    # Latest-valid per product_code (rows ordered DESC by valid_from — keep first).
     prices: Dict[str, float] = {}
-    for product_id, price, _valid_from in rows:
-        key = str(product_id)
+    for product_code, price, _valid_from in rows:
+        key = str(product_code)
         if key not in prices:
             prices[key] = float(price)
     return prices
