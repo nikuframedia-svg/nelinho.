@@ -422,6 +422,8 @@ export interface ReorderRequest {
   new_phase: string;
   new_start_ts: string; // ISO 8601 com tz
   new_operator_id?: string | null;
+  /** Q.153.D1 — motivo do ajuste (do MoveBoatConfirm); guardado no delta+audit. */
+  reason?: string;
 }
 
 export interface ReorderResponse {

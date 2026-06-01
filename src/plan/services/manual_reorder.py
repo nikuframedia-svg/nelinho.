@@ -222,9 +222,14 @@ async def apply_manual_reorder(
     new_start_ts: datetime,
     new_operator_id: Optional[str],
     author: str = "operator",
+    reason: Optional[str] = None,
     state_skills: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Aplica reorder manual, valida axiomas Spelke, cria novo ScheduleCommit.
+
+    Q.153.D1 — `reason` (opcional) é o motivo do ajuste (do MoveBoatConfirm);
+    guardado no delta, no `user_preference_signal` (uniforme com o apply-move)
+    e no `audit_change`, na mesma tx.
 
     Raises:
         SafetyNetViolation: se qualquer axioma Spelke for violado.
@@ -318,6 +323,8 @@ async def apply_manual_reorder(
     }
     if new_operator_id is not None:
         delta["new_operator_id"] = new_operator_id
+    if reason:
+        delta["reason"] = reason
 
     now = datetime.now(timezone.utc)
     sha = compute_commit_hash(
@@ -346,6 +353,11 @@ async def apply_manual_reorder(
             "author": author,
             "at": now.isoformat(),
             "source": "manual_drag",
+            # Q.153.D1 — uniforme com o preview_apply (reason/weekday/hour) p/ a
+            # Camada-1 minerar ambos os caminhos de escrita de forma igual.
+            "reason": reason,
+            "weekday": now.weekday(),
+            "hour": now.hour,
         },
         status="DRAFT",
     )
@@ -386,8 +398,9 @@ async def apply_manual_reorder(
             "start_ts": new_start_ts.isoformat(),
             "operator_id": new_operator_id,
             "commit_sha": sha,
+            "reason": reason,
         },
-        reason=f"Q.115.C drag-drop manual op={operation_id}",
+        reason=reason or f"Q.115.C drag-drop manual op={operation_id}",
     )
 
     delta_summary: Dict[str, Any] = {

@@ -15,8 +15,10 @@ import { addDays, startOfDay, format } from 'date-fns';
 import { pt } from 'date-fns/locale';
 import { Calendar, AlertTriangle, Ship, RotateCcw } from 'lucide-react';
 import { planKeys } from '../../lib/api/keys';
-import { cpoCommitsApi, planOperationsApi, timelineActualsApi, copilotAlertsApi, planExclusionApi } from '../../lib/api';
-import type { CpoCommit, TimelineActualItem, CopilotAlertItem, ExcludedBoat } from '../../lib/api';
+import { cpoCommitsApi, planOperationsApi, timelineActualsApi, copilotAlertsApi, planExclusionApi, schedulePreviewApi } from '../../lib/api';
+import type { CpoCommit, TimelineActualItem, CopilotAlertItem, ExcludedBoat, PreviewDeltaResult } from '../../lib/api';
+import { MoveBoatConfirm } from '../producao/MoveBoatConfirm';
+import type { ActiveOrderCard } from '../producao/fabricaApi';
 import { PageHeader, DarkCard, DarkButton, EmptyState } from '../../components/dark';
 import { useToastContext } from '../../components/ToastProvider';
 import { PorBarcoView } from '../../components/overall/views/PorBarcoView';
@@ -96,6 +98,15 @@ export default function OverallPage(): ReactNode {
   // Q.153.C0 — "Só barcos" (ligado por defeito): esconde acessórios/straps das
   // vistas (a Por Barco inundava com ~1912 lanes de straps dos realizados).
   const [boatsOnly, setBoatsOnly] = useState(true);
+  // Q.153.D1 — drag em curso a aguardar confirmação (preview→reorder). O drag
+  // deixa de commitar logo: mostra a consequência (MoveBoatConfirm) e só escreve
+  // após o motivo (≥10 chars). null = sem movimento pendente.
+  const [pendingMove, setPendingMove] = useState<{
+    op: ScheduledOp;
+    newPhase: string;
+    newStartTs: string;
+    newOperatorId?: string;
+  } | null>(null);
   // Q.149.C.3 — alertas de override manual já dispensados nesta sessão.
   const [dismissedAlerts, setDismissedAlerts] = useState<Set<string>>(() => new Set());
 
@@ -211,6 +222,7 @@ export default function OverallPage(): ReactNode {
     onSuccess: (resp) => {
       queryClient.invalidateQueries({ queryKey: planKeys.scheduleCurrent() });
       setLocalOverrides(new Map());
+      setPendingMove(null); // Q.153.D1 — fecha o modal de confirmação no sucesso.
       toast.success(`Plano actualizado · ${resp.commit_sha.slice(0, 8)}`);
     },
     onError: (err: unknown) => {
@@ -457,23 +469,68 @@ export default function OverallPage(): ReactNode {
     }
   }, [selection, mode, toast]);
 
-  // ── Handler drag-drop central ──────────────────────────────────────────────
+  // ── Handler drag-drop central (Q.153.D1: preview → confirmar → reorder) ─────
+  // Deixou de commitar logo. Guarda o movimento pendente; o MoveBoatConfirm
+  // mostra a consequência (preview-delta) e só o `onConfirm(motivo)` escreve.
   const handleDrop = useCallback(
     (opId: string, newPhase: string, newStartTs: string, newOperatorId?: string) => {
-      setLocalOverrides((prev) => {
-        const next = new Map(prev);
-        next.set(opId, { phase_id: newPhase, start: newStartTs });
-        return next;
-      });
-      reorderMutation.mutate({
-        operation_id: opId,
-        new_phase: newPhase,
-        new_start_ts: newStartTs,
-        new_operator_id: newOperatorId ?? null,
-      });
+      const op = operations.find((o) => o.id === opId);
+      if (!op) return;
+      reorderMutation.reset(); // limpa erro stale de um movimento anterior
+      setPendingMove({ op, newPhase, newStartTs, newOperatorId });
     },
-    [reorderMutation],
+    [operations, reorderMutation],
   );
+
+  // Q.153.D1 — preview da consequência do movimento pendente (read-only, NÃO
+  // apply-move; o /overall conhece o operation_id directamente).
+  const previewQuery = useQuery({
+    queryKey: ['cpo', 'preview-delta', pendingMove?.op.id, pendingMove?.newPhase, pendingMove?.newOperatorId],
+    queryFn: () =>
+      schedulePreviewApi.previewDelta({
+        operation_id: pendingMove!.op.id,
+        new_phase_id: pendingMove!.newPhase,
+        new_worker_ids: pendingMove!.newOperatorId ? [pendingMove!.newOperatorId] : undefined,
+      }),
+    enabled: Boolean(pendingMove),
+  });
+
+  const handleConfirmMove = useCallback(
+    async (reason: string) => {
+      if (!pendingMove) return;
+      try {
+        await reorderMutation.mutateAsync({
+          operation_id: pendingMove.op.id,
+          new_phase: pendingMove.newPhase,
+          new_start_ts: pendingMove.newStartTs,
+          new_operator_id: pendingMove.newOperatorId ?? null,
+          reason,
+        });
+        // sucesso fecha o modal via onSuccess; erro mantém-no aberto (applyError).
+      } catch {
+        /* erro já tratado no onError (toast); modal fica aberto p/ ver o erro */
+      }
+    },
+    [pendingMove, reorderMutation],
+  );
+
+  // ActiveOrderCard mínimo a partir da op (reuso do MoveBoatConfirm sem refactor).
+  const pendingBoatCard: ActiveOrderCard | null = useMemo(() => {
+    if (!pendingMove) return null;
+    const op = pendingMove.op;
+    return {
+      id: op.id,
+      hull: op.order_id ?? null,
+      product_name: op.product_id ?? null,
+      product_type: null,
+      customer_name: op.cliente ?? null,
+      phase: op.phase_name ?? op.phase_id,
+      phase_sequence: null,
+      status: op.status ?? 'plan',
+      created_date: null,
+      transport_date: null,
+    };
+  }, [pendingMove]);
 
   // ── Reset window ───────────────────────────────────────────────────────────
   const resetToToday = useCallback(() => {
@@ -1010,6 +1067,38 @@ export default function OverallPage(): ReactNode {
               { onSuccess: () => clearSelection() },
             )
           }
+        />
+      )}
+
+      {/* Q.153.D1 — preview de consequência no drag → confirmar → reorder. */}
+      {pendingMove && pendingBoatCard && (
+        <MoveBoatConfirm
+          boat={pendingBoatCard}
+          targetPhase={pendingMove.newPhase}
+          preview={previewQuery.data ?? null}
+          previewLoading={previewQuery.isLoading}
+          previewError={
+            previewQuery.isError
+              ? ((previewQuery.error as { message?: string })?.message ?? 'erro ao pré-visualizar')
+              : null
+          }
+          applying={reorderMutation.isPending}
+          applyError={
+            reorderMutation.isError
+              ? (() => {
+                  const e = reorderMutation.error as {
+                    status?: number;
+                    data?: { axiom?: string; reason_pt?: string };
+                    message?: string;
+                  };
+                  return e.status === 422 && e.data?.axiom
+                    ? `Violou axioma "${e.data.axiom}": ${e.data.reason_pt ?? 'sem detalhe'}`
+                    : (e.message ?? 'falha desconhecida');
+                })()
+              : null
+          }
+          onConfirm={handleConfirmMove}
+          onCancel={() => setPendingMove(null)}
         />
       )}
     </div>

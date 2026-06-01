@@ -576,3 +576,66 @@ def test_a2_exclusivity_reads_workers_list():
 
     # operador livre (worker-LIVRE) → sem violação
     _check_operator_exclusivity(ops, "op-1", "worker-LIVRE", new_ts)
+
+
+# ---------------------------------------------------------------------------
+# Q.153.D1 — `reason` persiste no delta + user_preference_signal + audit
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_d1_reason_persisted_keeps_manual_drag():
+    """O motivo (do MoveBoatConfirm) fica no delta, no user_preference_signal e
+    no audit, SEM mudar `tipo='manual_drag'` (o reapply do robô continua a
+    apanhá-lo)."""
+    ops = [_make_op("op-1", "PINTURA", operator_id="w-A")]
+    parent = _FakeCommit(operations=ops)
+    session = _FakeSession(parent)
+    new_ts = _BASE_TS + timedelta(hours=8)
+    motivo = "antecipar p/ libertar molde K1 7ML"
+
+    with _patch_kafka(), _patch_audit() as audit_mock:
+        await apply_manual_reorder(
+            session=session,
+            tenant_id=TENANT_ID,
+            operation_id="op-1",
+            new_phase="MONTAGEM",
+            new_start_ts=new_ts,
+            new_operator_id=None,
+            reason=motivo,
+        )
+
+    commit = session.added[0]
+    # delta mantém manual_drag (invariante do reapply Q.142) + ganha reason
+    assert commit.delta["tipo"] == "manual_drag"
+    assert commit.delta["reason"] == motivo
+    # user_preference_signal uniforme com preview_apply (reason/weekday/hour)
+    assert commit.user_preference_signal["reason"] == motivo
+    assert "weekday" in commit.user_preference_signal
+    assert "hour" in commit.user_preference_signal
+    # audit_change recebe o reason no new_values
+    call_kwargs = audit_mock.await_args.kwargs
+    assert call_kwargs["new_values"]["reason"] == motivo
+
+
+@pytest.mark.asyncio
+async def test_d1_reason_optional_backcompat():
+    """Sem reason (caminho legado da Timeline) → delta continua manual_drag,
+    reason None, e não rebenta."""
+    ops = [_make_op("op-1", "PINTURA", operator_id="w-A")]
+    parent = _FakeCommit(operations=ops)
+    session = _FakeSession(parent)
+
+    with _patch_kafka(), _patch_audit():
+        await apply_manual_reorder(
+            session=session,
+            tenant_id=TENANT_ID,
+            operation_id="op-1",
+            new_phase="MONTAGEM",
+            new_start_ts=_BASE_TS + timedelta(hours=8),
+            new_operator_id=None,
+        )
+
+    commit = session.added[0]
+    assert commit.delta["tipo"] == "manual_drag"
+    assert "reason" not in commit.delta  # não polui o delta quando ausente
+    assert commit.user_preference_signal["reason"] is None

@@ -36,6 +36,11 @@ class ReorderRequest(BaseModel):
     new_operator_id: Optional[str] = Field(
         default=None, description="Novo operador (opcional)"
     )
+    # Q.153.D1 — motivo do ajuste (do MoveBoatConfirm; opcional p/ retro-compat
+    # com a Timeline que ainda não pede motivo). Guardado no delta + audit.
+    reason: Optional[str] = Field(
+        default=None, max_length=2000, description="Motivo do ajuste (opcional)"
+    )
 
 
 class ReorderResponse(BaseModel):
@@ -73,6 +78,7 @@ async def reorder_operation(
             new_phase=body.new_phase,
             new_start_ts=body.new_start_ts,
             new_operator_id=body.new_operator_id,
+            reason=body.reason,
         )
     except SafetyNetViolation as exc:
         raise HTTPException(
