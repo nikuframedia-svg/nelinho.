@@ -21,6 +21,12 @@ try:
 except ImportError:  # pragma: no cover
     APSCHEDULER_AVAILABLE = False
 
+# Q.144.B — jitter (s) para escalonar os 6 jobs de sync ERP de 5 min, que de
+# outro modo disparavam todos no mesmo instante (rajada que pressiona o
+# event-loop/pool e podia estagnar pedidos do frontend). Cada corrida espalha-se
+# por 0..jitter s, partindo o "thundering herd" sem perder a cadência de 5 min.
+_ERP_SYNC_JITTER_S = 25
+
 from src.scheduling.jobs.alerts import _alerts_scan_job
 from src.scheduling.jobs.audit import _audit_retention_purge_job
 from src.scheduling.jobs.causal import _causal_discovery_job
@@ -181,7 +187,7 @@ def start_scheduler(
     # No-op quando sqlserver_enabled=False.
     _scheduler.add_job(
         _nelo_erp_incremental_sync_job,
-        trigger=IntervalTrigger(minutes=5),
+        trigger=IntervalTrigger(minutes=5, jitter=_ERP_SYNC_JITTER_S),
         id="nelo_erp_incremental_sync",
         name="nelo_erp_incremental_sync",
         replace_existing=True,
@@ -208,7 +214,7 @@ def start_scheduler(
     # coalesce + max_instances=1 evitam acumular. No-op se sqlserver_enabled=False.
     _scheduler.add_job(
         _nelo_erp_raw_incremental_job,
-        trigger=IntervalTrigger(minutes=5),
+        trigger=IntervalTrigger(minutes=5, jitter=_ERP_SYNC_JITTER_S),
         id="nelo_erp_raw_incremental",
         name="nelo_erp_raw_incremental",
         replace_existing=True,
@@ -217,7 +223,7 @@ def start_scheduler(
     )
     _scheduler.add_job(
         _nelo_erp_comercial_job,
-        trigger=IntervalTrigger(minutes=5),
+        trigger=IntervalTrigger(minutes=5, jitter=_ERP_SYNC_JITTER_S),
         id="nelo_erp_comercial",
         name="nelo_erp_comercial",
         replace_existing=True,
@@ -226,7 +232,7 @@ def start_scheduler(
     )
     _scheduler.add_job(
         _nelo_erp_logistica_job,
-        trigger=IntervalTrigger(minutes=5),
+        trigger=IntervalTrigger(minutes=5, jitter=_ERP_SYNC_JITTER_S),
         id="nelo_erp_logistica",
         name="nelo_erp_logistica",
         replace_existing=True,
@@ -237,7 +243,7 @@ def start_scheduler(
     # O mirror `master` nunca espelhava clientes. 5/5 min, DROP-free (upsert).
     _scheduler.add_job(
         _nelo_erp_customers_job,
-        trigger=IntervalTrigger(minutes=5),
+        trigger=IntervalTrigger(minutes=5, jitter=_ERP_SYNC_JITTER_S),
         id="nelo_erp_customers",
         name="nelo_erp_customers",
         replace_existing=True,
@@ -250,7 +256,7 @@ def start_scheduler(
     # se o WIP estiver vazio. 5/5 min, upsert idempotente.
     _scheduler.add_job(
         _nelo_erp_production_orders_job,
-        trigger=IntervalTrigger(minutes=5),
+        trigger=IntervalTrigger(minutes=5, jitter=_ERP_SYNC_JITTER_S),
         id="nelo_erp_production_orders",
         name="nelo_erp_production_orders",
         replace_existing=True,

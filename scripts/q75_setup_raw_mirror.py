@@ -425,7 +425,9 @@ async def setup(
                 stats = {"table": spec.nelo_name, "status": "error",
                          "error": f"{type(exc).__name__}: {exc}"}
             results.append(stats)
-            print(f"  → {stats}", flush=True)
+            # ASCII-only: Windows console (cp1252/colorama) rebenta com '→'
+            # (UnicodeEncodeError) e abortava o loop de espelho a meio (Q.144.A).
+            print(f"  -> {stats}", flush=True)
     finally:
         await pg_conn.close()
         await sql_engine.dispose()

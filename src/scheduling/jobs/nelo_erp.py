@@ -306,6 +306,29 @@ async def _nelo_erp_production_orders_job() -> None:
     except Exception as exc:
         logger.error("nelo_erp_production_orders failed: %s", exc, exc_info=True)
 
+    # Q.143.B — com as ordens frescas, deriva os camiões reais (upcoming) das
+    # production_orders. Idempotente e preserva drag-drop manual. Best-effort:
+    # uma falha aqui não compromete o mirror acima.
+    from src.shared.database import get_session_context
+    from src.plan.services.transport_batch_service import TransportBatchService
+
+    tenant_id = UUID("00000000-0000-0000-0000-000000000001")  # dev tenant
+    tb_started = datetime.utcnow()
+    try:
+        async with get_session_context() as session:
+            svc = TransportBatchService(session, tenant_id)
+            summary = await svc.refresh_from_orders()
+            await session.commit()
+        tb_elapsed_ms = int((datetime.utcnow() - tb_started).total_seconds() * 1000)
+        logger.info(
+            "transport_batch_refresh created=%s touched=%s assigned=%s "
+            "overflow=%s elapsed_ms=%s",
+            summary["batches_created"], summary["batches_touched"],
+            summary["orders_assigned"], summary["overflow"], tb_elapsed_ms,
+        )
+    except Exception as exc:
+        logger.error("transport_batch_refresh failed: %s", exc, exc_info=True)
+
 
 async def _nelo_erp_time_mining_job() -> None:
     """Q.25.D — mineracao historica de tempos (o mirror pesado, semanal).

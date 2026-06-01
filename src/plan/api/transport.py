@@ -53,6 +53,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/transport", tags=["Transport"])
 
+# Q.143.B — janela de derivação de camiões a partir das ordens reais.
+_REFRESH_HORIZON_DEFAULT_DAYS = 45
+_REFRESH_HORIZON_MAX_DAYS = 180
+
 
 def get_tenant_id(x_tenant_id: UUID = Header(..., alias="X-Tenant-Id")) -> UUID:
     return x_tenant_id
@@ -92,6 +96,14 @@ class TransportBatchCreate(BaseModel):
 
 class AssignOrderIn(BaseModel):
     order_id: UUID
+
+
+class RefreshFromOrdersOut(BaseModel):
+    """Q.143.B — sumário da derivação de camiões a partir das ordens reais."""
+    batches_created: int
+    batches_touched: int
+    orders_assigned: int
+    overflow: int
 
 
 class TransportSuggestionOut(BaseModel):
@@ -256,6 +268,34 @@ async def create_batch(
     )
     await session.commit()
     return _to_out(row, assigned_count=0)
+
+
+@router.post(
+    "/batches/refresh-from-orders",
+    response_model=RefreshFromOrdersOut,
+)
+async def refresh_batches_from_orders(
+    horizon_days: int = Query(
+        default=_REFRESH_HORIZON_DEFAULT_DAYS, ge=1, le=_REFRESH_HORIZON_MAX_DAYS,
+    ),
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+) -> RefreshFromOrdersOut:
+    """Q.143.B — popula os camiões a partir das `production_orders` reais.
+
+    Para cada data de transporte na janela [hoje, hoje+horizon], garante um
+    camião OPEN `SHP-{date}` e atribui-lhe as ordens dessa data que ainda não
+    têm camião — preservando o drag-drop manual. Idempotente. DRAFT-safe (só
+    cria/preenche camiões OPEN; não despacha nada — Q.17).
+    """
+    capacity = await _load_truck_capacity(session, tenant_id)
+    svc = TransportBatchService(session, tenant_id)
+    summary = await svc.refresh_from_orders(
+        horizon_days=horizon_days,
+        default_capacity=capacity,
+    )
+    await session.commit()
+    return RefreshFromOrdersOut(**summary)
 
 
 @router.get("/batches/{batch_id}", response_model=TransportBatchOut)
@@ -611,6 +651,10 @@ async def boats_by_transport_date(
 class ReadyBoat(BaseModel):
     of_id: int
     model: Optional[str] = None
+    # Q.143.E — referência da OF (ex: "Encomenda Rent", "Box nº 1"). Muitos
+    # itens "Embalado" são encomendas custom sem modelo de catálogo (P_NOME =
+    # "Encomenda de Cliente"); a referência desambigua-os honestamente.
+    reference: Optional[str] = None
     ready_since: Optional[str] = None  # data de entrada na fase Embalado (ISO)
     days_ready: Optional[int] = None
 
@@ -649,7 +693,8 @@ async def ready_to_ship(
         await session.execute(
             text(
                 """
-                SELECT o."OF_ID" AS of_id, p."P_NOME" AS model, ph.ds AS ready_since
+                SELECT o."OF_ID" AS of_id, p."P_NOME" AS model,
+                       NULLIF(o."OF_REFERENCIA", '') AS reference, ph.ds AS ready_since
                 FROM factory_raw.ordemfabrico o
                 JOIN factory_raw.fases_producao f ON f."FP_ID" = o."OF_FP_ID"
                 LEFT JOIN factory_raw.produto p ON p."P_ID" = o."OF_P_ID"
@@ -677,6 +722,7 @@ async def ready_to_ship(
             ReadyBoat(
                 of_id=int(r["of_id"]),
                 model=r["model"],
+                reference=r["reference"],
                 ready_since=(str(r["ready_since"])[:10] if r["ready_since"] else None),
                 days_ready=d,
             )

@@ -9,7 +9,7 @@ spread-out batches (truck consolidation — Sprint P.3).
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
@@ -17,6 +17,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.governance.audit_service import audit_change
+from src.plan.models.order import OrderStatus, ProductionOrder
 from src.plan.models.transport import TransportBatch, TransportBatchAssignment
 
 
@@ -210,6 +211,99 @@ class TransportBatchService:
         row.status = "DISPATCHED"
         await self.session.flush()
         return row
+
+    async def refresh_from_orders(
+        self,
+        *,
+        horizon_days: int = 45,
+        default_capacity: int = 50,
+        today: Optional[date] = None,
+    ) -> dict[str, int]:
+        """Q.143.A — deriva camiões reais a partir das `production_orders`.
+
+        Para cada `transport_date` distinta na janela [hoje, hoje+horizon],
+        garante um camião OPEN `SHP-{date}` e atribui-lhe as ordens dessa data
+        que ainda NÃO têm camião — até à capacidade. Preserva o drag-drop
+        manual (nunca reatribui uma ordem já colocada) e nunca toca em camiões
+        FROZEN/DISPATCHED.
+
+        Idempotente: uma 2ª corrida não cria camiões nem atribui nada novo.
+        Devolve `{batches_created, batches_touched, orders_assigned, overflow}`.
+        """
+        ref_today = today or date.today()
+        until = ref_today + timedelta(days=horizon_days)
+
+        # 1. Ordens elegíveis (futuras, não canceladas) agrupadas por data.
+        stmt = (
+            select(ProductionOrder)
+            .where(
+                ProductionOrder.tenant_id == self.tenant_id,
+                ProductionOrder.transport_date.is_not(None),
+                ProductionOrder.transport_date >= ref_today,
+                ProductionOrder.transport_date <= until,
+                ProductionOrder.status != OrderStatus.CANCELLED,
+            )
+            .order_by(ProductionOrder.transport_date, ProductionOrder.legacy_id)
+        )
+        orders = list((await self.session.execute(stmt)).scalars().all())
+
+        by_date: dict[date, list[ProductionOrder]] = {}
+        for o in orders:
+            if o.transport_date is not None:
+                by_date.setdefault(o.transport_date, []).append(o)
+
+        # 2. Ordens já atribuídas a QUALQUER camião — nunca reatribuir
+        #    (preserva movimentos manuais e corridas anteriores).
+        existing_by_batch = await self.orders_by_batch()
+        already_assigned: set[UUID] = {
+            oid for ids in existing_by_batch.values() for oid in ids
+        }
+
+        # Camiões existentes na janela, indexados por data (1 lookup).
+        existing_batches = await self.list_batches(since=ref_today, until=until)
+        batch_by_date: dict[date, TransportBatch] = {}
+        for b in existing_batches:
+            batch_by_date.setdefault(b.transport_date, b)
+
+        summary = {
+            "batches_created": 0,
+            "batches_touched": 0,
+            "orders_assigned": 0,
+            "overflow": 0,
+        }
+
+        for tdate in sorted(by_date.keys()):
+            day_orders = by_date[tdate]
+            batch = batch_by_date.get(tdate)
+            if batch is None:
+                batch = await self.create_batch(
+                    code=f"SHP-{tdate.isoformat()}",
+                    transport_date=tdate,
+                    truck_capacity_units=default_capacity,
+                )
+                batch_by_date[tdate] = batch
+                summary["batches_created"] += 1
+            elif batch.status != "OPEN":
+                # Camião congelado/despachado — não mexer.
+                continue
+
+            used = len(existing_by_batch.get(batch.id, []))
+            free = max(0, batch.truck_capacity_units - used)
+            assigned_here = 0
+            for o in day_orders:
+                if o.id in already_assigned:
+                    continue
+                if assigned_here >= free:
+                    summary["overflow"] += 1
+                    continue
+                await self.assign_order(batch_id=batch.id, order_id=o.id)
+                already_assigned.add(o.id)
+                assigned_here += 1
+                summary["orders_assigned"] += 1
+            if assigned_here > 0:
+                summary["batches_touched"] += 1
+
+        return summary
 
     async def _get(self, batch_id: UUID) -> TransportBatch:
         stmt = select(TransportBatch).where(
