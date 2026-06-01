@@ -276,6 +276,11 @@ def test_modelo_happy_path_with_routing():
     assert len(body["routing_template"]["phases"]) == 2
     assert body["routing_template"]["phases"][0]["phase_id"] == "laminagem"
     assert body["routing_template"]["phases"][0]["duration_p50_h"] == 4.5
+    # Q.116.C — tab Encomendas: lista as 3 encomendas não-CANCELLED.
+    assert len(body["orders"]) == 3
+    assert {o["legacy_id"] for o in body["orders"]} == {1, 2, 3}
+    # Q.116.E — sem afinidades enfileiradas → drill-down honesto vazio.
+    assert body["phase_drilldown"] == []
 
 
 def test_modelo_without_routing_template_returns_none():
@@ -313,6 +318,71 @@ def test_modelo_no_orders_no_routing():
     assert body["routing_template"] is None
     assert body["active_orders_count"] == 0
     assert body["in_production_count"] == 0
+    assert body["orders"] == []
+    assert body["phase_drilldown"] == []
+
+
+def test_modelo_orders_excludes_cancelled():
+    """Q.116.C — a tab Encomendas exclui encomendas CANCELLED."""
+    session = FakeSession()
+    session.queue_scalars([
+        _order(legacy_id=10, product_name="C2-X", current_phase_name="Laminagem"),
+        _order(legacy_id=11, product_name="C2-X", status_=OrderStatus.CANCELLED),
+    ])
+    session.queue_scalar(None)  # sem routing assignment
+
+    client = _minimal_app(session)
+    resp = client.get("/v1/entity/modelo/C2-X", headers=_HEADERS)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert {o["legacy_id"] for o in body["orders"]} == {10}
+    # sem routing → sem drill-down.
+    assert body["phase_drilldown"] == []
+
+
+@pytest.mark.asyncio
+async def test_build_phase_drilldown_groups_top_operators_by_phase():
+    """Q.116.E — agrupa top-3 operadores por fase, na ordem `seq` da rota."""
+    from src.plan.api.entity_summary import _build_phase_drilldown
+
+    op1, op2, op3 = uuid4(), uuid4(), uuid4()
+    routing = SimpleNamespace(
+        phases=[
+            SimpleNamespace(phase_id="laminagem", phase_name="Laminagem", seq=1),
+            SimpleNamespace(phase_id="cura", phase_name="Cura", seq=2),
+        ]
+    )
+    session = FakeSession()
+    # call 1 — afinidades das fases da rota (score DESC).
+    session.queue_scalars([
+        _affinity(phase_id="laminagem", operator_id=op1, score=0.92, sample_count=20),
+        _affinity(phase_id="laminagem", operator_id=op2, score=0.80, sample_count=10),
+        _affinity(phase_id="cura", operator_id=op3, score=0.75, sample_count=8),
+    ])
+    # call 2 — nomes dos operadores.
+    session.queue_scalars([
+        _employee(id_=op1, name="João Silva"),
+        _employee(id_=op2, name="Maria Costa"),
+        _employee(id_=op3, name="Rui Tó"),
+    ])
+
+    result = await _build_phase_drilldown(session, TEST_TENANT_ID, routing)
+
+    assert [p.phase_id for p in result] == ["laminagem", "cura"]
+    lam = result[0]
+    assert lam.seq == 1
+    assert [o.operator_name for o in lam.top_operators] == ["João Silva", "Maria Costa"]
+    assert lam.top_operators[0].score == 0.92
+    assert result[1].top_operators[0].operator_name == "Rui Tó"
+
+
+@pytest.mark.asyncio
+async def test_build_phase_drilldown_empty_without_routing():
+    """Q.116.E — sem rota resolvida → lista vazia (honesto, sem query)."""
+    from src.plan.api.entity_summary import _build_phase_drilldown
+
+    session = FakeSession()
+    assert await _build_phase_drilldown(session, TEST_TENANT_ID, None) == []
 
 
 # ─── FASE ────────────────────────────────────────────────────────────────────

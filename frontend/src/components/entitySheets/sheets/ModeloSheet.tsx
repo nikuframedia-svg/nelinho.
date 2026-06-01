@@ -1,9 +1,11 @@
 /**
- * ModeloSheet — sheet contextual de modelo (Q.116.A + Q.116.B + Q.116.D).
+ * ModeloSheet — sheet contextual de modelo (Q.116.A/B/C/D/E).
  *
  * Tabs: Fases · Encomendas · Em produção · Drill-down
  * Q.116.B: tab Fases com drag-drop reorder + modal posição alternativa
+ * Q.116.C: tab Encomendas com lista de encomendas activas do modelo
  * Q.116.D: tab Em produção com instrução de boost + contagem
+ * Q.116.E: tab Drill-down com top operadores (afinidade) por fase da rota
  */
 
 import { useState, useCallback } from 'react';
@@ -46,6 +48,8 @@ import {
   type PhaseInTemplate,
   type BoatInProduction,
   type BoatBoostUpsert,
+  type OrderInList,
+  type PhaseDrilldown,
 } from '../../../lib/api/entityApi';
 import { Clickable } from '../Clickable';
 import { useToastContext } from '../../ToastProvider';
@@ -106,22 +110,7 @@ export default function ModeloSheet({ modelId, onClose }: ModeloSheetProps) {
       )}
 
       {tab === 'encomendas' && (
-        <div>
-          <div
-            style={{
-              fontSize: 13,
-              color: 'var(--fg-2)',
-              marginBottom: 12,
-            }}
-          >
-            Encomendas activas: {data.active_orders_count}
-          </div>
-          <EmptyState
-            title="Q.116.C vai adicionar lista"
-            hint="A lista de encomendas deste modelo virá no sub-sprint Q.116.C."
-            size="sm"
-          />
-        </div>
+        <TabEncomendas orders={data.orders} />
       )}
 
       {tab === 'em-producao' && (
@@ -129,13 +118,152 @@ export default function ModeloSheet({ modelId, onClose }: ModeloSheetProps) {
       )}
 
       {tab === 'drill-down' && (
-        <EmptyState
-          title="Q.116.E vai adicionar drill-down"
-          hint="Drill-down por fase com top operadores virá no Q.116.E."
-          size="sm"
-        />
+        <TabDrilldown phases={data.phase_drilldown} />
       )}
     </Sheet>
+  );
+}
+
+// ─── Tab Encomendas (Q.116.C) ───────────────────────────────────────────────
+
+function statusVariant(
+  status: string,
+): 'success' | 'warning' | 'danger' | 'info' | 'neutral' {
+  const s = status.toLowerCase();
+  if (s === 'concluida' || s === 'completed' || s === 'done') return 'success';
+  if (s === 'em_producao' || s === 'in_progress' || s === 'active') return 'info';
+  if (s === 'atrasada' || s === 'delayed' || s === 'overdue') return 'danger';
+  if (s === 'pendente' || s === 'pending') return 'warning';
+  return 'neutral';
+}
+
+function TabEncomendas({ orders }: { orders: OrderInList[] }) {
+  if (orders.length === 0) {
+    return (
+      <EmptyState
+        title="Sem encomendas activas"
+        hint="Este modelo não tem encomendas activas registadas."
+        size="sm"
+      />
+    );
+  }
+  return (
+    <DarkTable>
+      <DarkTableHead>
+        <DarkTableRow>
+          <DarkTableHeader>#</DarkTableHeader>
+          <DarkTableHeader>Fase actual</DarkTableHeader>
+          <DarkTableHeader>Transporte</DarkTableHeader>
+          <DarkTableHeader>Estado</DarkTableHeader>
+        </DarkTableRow>
+      </DarkTableHead>
+      <DarkTableBody>
+        {orders.map((o) => (
+          <DarkTableRow key={o.legacy_id}>
+            <DarkTableCell>
+              <Clickable kind="encomenda" id={o.legacy_id}>
+                #{o.legacy_id}
+              </Clickable>
+            </DarkTableCell>
+            <DarkTableCell>
+              <Clickable kind="fase" id={o.current_phase_name}>
+                {o.current_phase_name}
+              </Clickable>
+            </DarkTableCell>
+            <DarkTableCell mono>{o.transport_date ?? '—'}</DarkTableCell>
+            <DarkTableCell>
+              <DarkBadge variant={statusVariant(o.status)} size="sm">
+                {o.status}
+              </DarkBadge>
+            </DarkTableCell>
+          </DarkTableRow>
+        ))}
+      </DarkTableBody>
+    </DarkTable>
+  );
+}
+
+// ─── Tab Drill-down (Q.116.E) ────────────────────────────────────────────────
+
+function TabDrilldown({ phases }: { phases: PhaseDrilldown[] }) {
+  if (phases.length === 0) {
+    return (
+      <EmptyState
+        title="Sem afinidades por fase"
+        hint="Ainda não há sinal de afinidade operador-fase para a rota deste modelo."
+        size="sm"
+      />
+    );
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {phases.map((p) => (
+        <div key={p.phase_id}>
+          <div
+            style={{
+              fontSize: 13,
+              fontWeight: 600,
+              marginBottom: 6,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+            }}
+          >
+            <span style={{ color: 'var(--fg-3)', minWidth: 24, textAlign: 'right' }}>
+              {p.seq}
+            </span>
+            <Clickable kind="fase" id={p.phase_id}>
+              {p.phase_name ?? p.phase_id}
+            </Clickable>
+          </div>
+          <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid var(--bd-1)', color: 'var(--fg-2)' }}>
+                <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 500 }}>
+                  Operador
+                </th>
+                <th style={{ textAlign: 'right', padding: '6px 8px', fontWeight: 500 }}>
+                  Score (0-1)
+                </th>
+                <th style={{ textAlign: 'right', padding: '6px 8px', fontWeight: 500 }}>
+                  Amostras
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {p.top_operators.map((op) => (
+                <tr key={op.operator_id} style={{ borderBottom: '1px solid var(--bd-1)' }}>
+                  <td style={{ padding: '8px 8px' }}>
+                    <Clickable kind="operador" id={op.operator_id}>
+                      {op.operator_name}
+                    </Clickable>
+                  </td>
+                  <td
+                    style={{
+                      padding: '8px 8px',
+                      textAlign: 'right',
+                      fontVariantNumeric: 'tabular-nums',
+                    }}
+                  >
+                    {op.score.toFixed(3)}
+                  </td>
+                  <td
+                    style={{
+                      padding: '8px 8px',
+                      textAlign: 'right',
+                      fontVariantNumeric: 'tabular-nums',
+                      color: 'var(--fg-2)',
+                    }}
+                  >
+                    {op.sample_count}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </div>
   );
 }
 

@@ -62,6 +62,16 @@ export interface ModeloSummary {
   active_orders_count: number;
   in_production_count: number;
   in_production_boats: BoatInProduction[];   // Q.116.G
+  orders: OrderInList[];                      // Q.116.C — encomendas activas
+  phase_drilldown: PhaseDrilldown[];          // Q.116.E — top operadores por fase
+}
+
+// Q.116.E — uma fase da rota do modelo + os seus top operadores
+export interface PhaseDrilldown {
+  phase_id: string;
+  phase_name: string | null;
+  seq: number;
+  top_operators: OperatorScore[];
 }
 
 export interface OperatorScore {

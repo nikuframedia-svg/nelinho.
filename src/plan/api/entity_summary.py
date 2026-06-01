@@ -104,6 +104,12 @@ class ModeloSummary(BaseModel):
     # TODO Q.117.X: paginar quando ultrapassar 20 — modelos populares
     # como K1-Vanquish-L podem ter muito mais.
     in_production_boats: List[BoatInProduction] = Field(default_factory=list)
+    # Q.116.C — lista (até 20) de encomendas activas do modelo. Reutiliza
+    # o shape OrderInList (mesmo do ClienteSummary). Forward-ref resolvido
+    # via model_rebuild() no fim do bloco de schemas.
+    orders: List["OrderInList"] = Field(default_factory=list)
+    # Q.116.E — drill-down por fase da rota com top operadores (afinidade).
+    phase_drilldown: List["PhaseDrilldown"] = Field(default_factory=list)
 
 
 class OperatorScore(BaseModel):
@@ -111,6 +117,15 @@ class OperatorScore(BaseModel):
     operator_name: str
     score: float
     sample_count: int
+
+
+class PhaseDrilldown(BaseModel):
+    """Q.116.E — uma fase da rota do modelo + os seus top operadores."""
+
+    phase_id: str
+    phase_name: Optional[str]
+    seq: int
+    top_operators: List[OperatorScore] = Field(default_factory=list)
 
 
 class BoatScore(BaseModel):
@@ -204,6 +219,11 @@ class OperadorSummary(BaseModel):
     active: bool
     top_phases: List[TopPhaseForOperator]
     total_phases_with_data: int
+
+
+# Resolve forward-refs: ModeloSummary referencia OrderInList/PhaseDrilldown
+# que são definidos mais abaixo (from __future__ annotations → lazy).
+ModeloSummary.model_rebuild()
 
 
 # ─── Router ──────────────────────────────────────────────────────────────────
@@ -339,6 +359,82 @@ async def _build_boats_in_production(
     return out
 
 
+async def _build_phase_drilldown(
+    session: AsyncSession,
+    tenant_id: UUID,
+    routing: "RoutingTemplateOut | None",
+) -> List["PhaseDrilldown"]:
+    """Q.116.E — top operadores (afinidade) por fase da rota do modelo.
+
+    Uma só query batch a `PhaseOperatorAffinity` para todas as fases da rota
+    (evita N+1), agrupada em Python (top-3/fase, score DESC) + um batch
+    `Employee` para nomes. Devolve só as fases COM sinal de afinidade, na
+    ordem `seq` da rota. Lista vazia quando não há routing nem afinidades —
+    honesto, sem mock.
+    """
+    if routing is None or not routing.phases:
+        return []
+
+    phase_ids = [p.phase_id for p in routing.phases]
+    aff_stmt = (
+        select(PhaseOperatorAffinity)
+        .where(
+            and_(
+                PhaseOperatorAffinity.tenant_id == tenant_id,
+                PhaseOperatorAffinity.phase_id.in_(phase_ids),
+            )
+        )
+        .order_by(PhaseOperatorAffinity.score.desc())
+    )
+    affinities = list((await session.execute(aff_stmt)).scalars().all())
+    if not affinities:
+        return []
+
+    # Agrupa por fase (input já ordenado score DESC) → top-3 por fase.
+    by_phase: dict[str, List[PhaseOperatorAffinity]] = {}
+    for a in affinities:
+        bucket = by_phase.setdefault(a.phase_id, [])
+        if len(bucket) < 3:
+            bucket.append(a)
+
+    operator_ids = list({a.operator_id for a in affinities})
+    emp_map: dict = {}
+    if operator_ids:
+        emp_stmt = select(Employee).where(
+            and_(
+                Employee.tenant_id == tenant_id,
+                Employee.id.in_(operator_ids),
+            )
+        )
+        emp_map = {
+            e.id: e.employee_name
+            for e in (await session.execute(emp_stmt)).scalars().all()
+        }
+
+    out: List[PhaseDrilldown] = []
+    for p in sorted(routing.phases, key=lambda ph: ph.seq):
+        bucket = by_phase.get(p.phase_id, [])
+        if not bucket:
+            continue  # só fases com sinal de afinidade
+        out.append(
+            PhaseDrilldown(
+                phase_id=p.phase_id,
+                phase_name=p.phase_name,
+                seq=p.seq,
+                top_operators=[
+                    OperatorScore(
+                        operator_id=str(a.operator_id),
+                        operator_name=emp_map.get(a.operator_id, str(a.operator_id)),
+                        score=float(a.score),
+                        sample_count=int(a.sample_count),
+                    )
+                    for a in bucket
+                ],
+            )
+        )
+    return out
+
+
 # ─── Endpoint: Modelo ────────────────────────────────────────────────────────
 
 
@@ -447,6 +543,33 @@ async def get_modelo_summary(
         session, tenant_id, in_production, model_id
     )
 
+    # Q.116.C — encomendas activas (não-CANCELLED) do modelo para a tab
+    # Encomendas. Mesmo shape/semântica que ClienteSummary.orders, ordenadas
+    # created_date DESC (None no fim), limit 20.
+    model_orders = [o for o in orders if o.status != OrderStatus.CANCELLED]
+    model_orders.sort(
+        key=lambda o: (o.created_date is None, o.created_date),
+        reverse=True,
+    )
+    orders_out = [
+        OrderInList(
+            legacy_id=int(o.legacy_id),
+            product_name=o.product_name,
+            current_phase_name=o.current_phase_name,
+            transport_date=(
+                o.transport_date.isoformat() if o.transport_date is not None else None
+            ),
+            status=_status_value(o),
+        )
+        for o in model_orders[:20]
+    ]
+
+    # Q.116.E — drill-down por fase: top operadores (afinidade) para cada
+    # fase da rota resolvida. Vazio quando o modelo não tem routing.
+    phase_drilldown_out = await _build_phase_drilldown(
+        session, tenant_id, routing_template_out
+    )
+
     return ModeloSummary(
         model_id=model_id,
         model_name=model_id,  # business-key é também o nome humano no NELO
@@ -455,6 +578,8 @@ async def get_modelo_summary(
         active_orders_count=active_orders_count,
         in_production_count=in_production_count,
         in_production_boats=in_production_boats,
+        orders=orders_out,
+        phase_drilldown=phase_drilldown_out,
     )
 
 
