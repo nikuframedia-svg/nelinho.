@@ -59,14 +59,17 @@ export function transformApiToPhaseRisks(apiData: any): PhaseRisk[] {
  * Generate SPOF alerts from phase risks
  */
 export function generateSPOFAlertsFromRisks(phaseRisks: PhaseRisk[]): SPOFAlert[] {
+  // ZERO MOCKS: `/factory/skills-risk` dá risco POR FASE mas não a identidade
+  // do operador apto. Não inventamos nomes ("Funcionário apto N"): o alerta
+  // descreve a FASE; o operador fica "não identificado" até haver dados reais.
   return phaseRisks
     .filter(p => p.isSPOF || p.aptosActive <= 2)
     .slice(0, 5)
-    .map((p, idx) => ({
+    .map((p) => ({
       phaseId: p.phaseId,
       phaseName: p.phaseName,
-      employeeId: `emp-${p.phaseId}-1`,
-      employeeName: `Funcionário apto ${idx + 1}`,
+      employeeId: '',
+      employeeName: 'Operador apto (não identificado)',
       backlogHours: p.backlogHours,
       ordersAffected: p.ordersAtRisk,
       estimatedDailyCost: Math.floor(p.backlogHours * 5.54 / 8),
@@ -78,43 +81,28 @@ export function generateSPOFAlertsFromRisks(phaseRisks: PhaseRisk[]): SPOFAlert[
  * Generate dependency graph from phase and employee data
  */
 export function generateDependencyGraphFromData(phaseRisks: PhaseRisk[], employeesCount: number): DependencyGraphData {
-  const nodes = [
-    ...phaseRisks.map(p => ({
-      id: `phase-${p.phaseId}`,
-      type: 'phase' as const,
-      label: p.phaseName,
-      data: { id: p.phaseId, name: p.phaseName, description: '' },
-      riskLevel: p.riskLevel as any,
-      size: 25,
-    })),
-    ...Array.from({ length: Math.min(employeesCount, 10) }, (_, i) => ({
-      id: `emp-${i}`,
-      type: 'employee' as const,
-      label: `Funcionário ${i + 1}`,
-      data: { id: `emp-${i}`, name: `Funcionário ${i + 1}`, isActive: true, aptitudes: [] },
-      size: 18,
-    })),
-  ];
-
-  // Generate edges (employee-to-phase connections)
-  const edges = phaseRisks.flatMap((p, pIdx) => 
-    Array.from({ length: Math.min(p.aptosActive, 3) }, (_, eIdx) => ({
-      id: `e-${pIdx}-${eIdx}`,
-      source: `emp-${(pIdx + eIdx) % Math.min(employeesCount, 10)}`,
-      target: `phase-${p.phaseId}`,
-      type: 'aptitude' as const,
-    }))
-  );
+  // ZERO MOCKS: o endpoint não dá os links operador↔fase, por isso NÃO
+  // inventamos nós "Funcionário N" nem arestas de aptidão. O grafo mostra só
+  // as fases reais (e o seu risco); quando o ETL expuser as aptidões reais,
+  // os operadores entram aqui com identidade verdadeira.
+  const nodes = phaseRisks.map(p => ({
+    id: `phase-${p.phaseId}`,
+    type: 'phase' as const,
+    label: p.phaseName,
+    data: { id: p.phaseId, name: p.phaseName, description: '' },
+    riskLevel: p.riskLevel as any,
+    size: 25,
+  }));
 
   return {
     nodes,
-    edges,
+    edges: [],
     metadata: {
       totalEmployees: employeesCount,
       totalPhases: phaseRisks.length,
-      totalLinks: edges.length,
+      totalLinks: 0,
       spofNodes: phaseRisks.filter(p => p.isSPOF).map(p => `phase-${p.phaseId}`),
-      criticalPaths: phaseRisks.filter(p => p.isSPOF).map(p => [`phase-${p.phaseId}`, `emp-0`]),
+      criticalPaths: [],
     },
   };
 }
@@ -125,13 +113,16 @@ export function generateDependencyGraphFromData(phaseRisks: PhaseRisk[], employe
 export function generateTrainingRecommendationsFromRisks(phaseRisks: PhaseRisk[]): TrainingRecommendation[] {
   const criticalPhases = phaseRisks.filter(p => p.isSPOF || p.riskLevel === 'critical' || p.riskLevel === 'high');
   
+  // ZERO MOCKS: a recomendação é POR FASE ("formar +1 operador para esta
+  // fase"). Não inventamos o operador a formar ("Funcionário N") — fica vazio
+  // até o ETL dar as aptidões reais; o render mostra só a fase-alvo.
   return criticalPhases.slice(0, 3).map((phase, idx) => ({
     id: `rec-${idx + 1}`,
     priority: phase.isSPOF ? 'critical' : 'high',
     employee: {
-      id: `emp-${idx + 1}`,
-      name: `Funcionário ${idx + 1}`,
-      currentPhases: ['Fase Base'],
+      id: '',
+      name: '',
+      currentPhases: [] as string[],
     },
     targetPhase: {
       id: phase.phaseId,

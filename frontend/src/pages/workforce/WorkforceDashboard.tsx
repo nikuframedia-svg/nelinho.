@@ -60,20 +60,20 @@ export function WorkforceDashboard() {
   const dependencyGraph = useMemo(() => generateDependencyGraphFromData(phaseRisks, employeesCount), [phaseRisks, employeesCount]);
   const trainingRecommendations = useMemo(() => generateTrainingRecommendationsFromRisks(phaseRisks), [phaseRisks]);
 
-  // Sprint Q.12 — Detect synthetic fallback (sem `phases_with_risk`
-  // estamos a gerar fases com Math.random()). Sinalizar ao operador
-  // em vez de apresentar dados inventados como reais.
-  const isSyntheticData = useMemo(() => {
-    if (isLoadingSkillsRisk) return false;
-    return !skillsRiskData?.data?.phases_with_risk && phaseRisks.length > 0;
-  }, [skillsRiskData, phaseRisks.length, isLoadingSkillsRisk]);
+  // Q.116.F — `/factory/skills-risk` só devolve risco REAL por fase quando o
+  // ETL tem `phases_with_risk`. Sem isso, `transformApiToPhaseRisks` devolve
+  // [] (ZERO MOCKS: nada de fases inventadas). `hasRealRisk` separa os dois
+  // mundos: com dados → dashboard; sem dados → empty-state honesto.
+  const hasRealRisk = phaseRisks.length > 0;
 
   // Calculate summary stats
   const summary = useMemo(() => {
     const totalPhases = phaseRisks.length;
     const phasesAtRisk = phaseRisks.filter(p => p.riskLevel === 'critical' || p.riskLevel === 'high').length;
     const spofCount = phaseRisks.filter(p => p.isSPOF).length;
-    const avgRiskScore = phaseRisks.reduce((sum, p) => sum + p.riskScore, 0) / totalPhases;
+    const avgRiskScore = totalPhases
+      ? phaseRisks.reduce((sum, p) => sum + p.riskScore, 0) / totalPhases
+      : 0;
     const totalBacklogAtRisk = phaseRisks.filter(p => p.isSPOF).reduce((sum, p) => sum + p.backlogHours, 0);
     
     return {
@@ -219,19 +219,23 @@ export function WorkforceDashboard() {
         </div>
       }
     >
-      {/* Synthetic-data banner — só aparece quando o endpoint não retorna `phases_with_risk` */}
-      {isSyntheticData && (
+      {/* Q.116.F — sem risco real por fase: empty-state honesto (ZERO MOCKS).
+          O endpoint não devolveu `phases_with_risk`; em vez de inventar fases
+          mostramos a razão e apontamos para o ETL. Os indicadores abaixo ficam
+          a zero / vazios até haver dados reais. */}
+      {!isLoadingSkillsRisk && !hasRealRisk && (
         <div className="mb-6 bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">
           <div className="flex items-start gap-3">
             <AlertTriangle className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
             <div>
               <h3 className="font-semibold text-amber-400 text-sm mb-1">
-                Dados sintéticos — API workforce não retornou risco real
+                Sem telemetria de competências
               </h3>
               <p className="text-xs text-slate-400">
-                As fases mostradas abaixo são geradas a partir do total de skills/fases conhecido,
-                mas os <strong>nomes, números e níveis de risco são placeholder</strong>.
-                Ingestir o Excel NELO ou verificar o endpoint <code className="bg-slate-800 px-1 rounded">/factory/skills-risk</code>.
+                O endpoint <code className="bg-slate-800 px-1 rounded">/factory/skills-risk</code> não
+                devolveu risco por fase (<code className="bg-slate-800 px-1 rounded">phases_with_risk</code>).
+                Ingerir o Excel NELO ou correr o ETL de competências para ver dados reais — os
+                indicadores ficam a zero até lá, sem valores inventados.
               </p>
             </div>
           </div>
@@ -410,7 +414,9 @@ export function WorkforceDashboard() {
                     <TrustBadge trustIndex={rec.trustIndex} size="sm" showLabel={false} />
                   </div>
                   <p className="text-sm text-white mb-1">
-                    <span className="text-cyan-400">{rec.employee.name}</span>
+                    <span className="text-cyan-400">
+                      {rec.employee.name || 'Formar +1 operador'}
+                    </span>
                     {' → '}
                     <span className="text-indigo-400">{rec.targetPhase.name}</span>
                   </p>
