@@ -408,3 +408,42 @@ class SectorPreferenceService:
             "ranking": ranking[:limit],
             "total": len(ranking),
         }
+
+    async def phase_preference_map(self) -> Dict[Tuple[str, str], float]:
+        """Q.140.F — mapa (employee_code, fase_id) → preferência [0,1] p/ o CPO.
+
+        Nível efectivo por sector (override manual > derivado do histórico real
+        > semente ERP) mapeado de cada fase para o seu grupo de área e
+        normalizado /3.0. Inclui TODOS os workers com histórico (não só os que
+        têm linha em core.employees) — os overrides aplicam-se só a quem tem
+        UUID. Read-only; vazio = sem histórico. NUNCA inclui € (CoeficienteX).
+        """
+        history = await self._fetch_phase_history()
+        if not history:
+            return {}
+        erp = await self._fetch_erp_levels()
+        overrides_all = await self._fetch_overrides()
+        dim = await self._fetch_employee_dim(list(history.keys()))
+
+        out: Dict[Tuple[str, str], float] = {}
+        for code, stats in history.items():
+            ident = dim.get(code)
+            emp_overrides: Dict[str, float] = {}
+            if ident is not None:
+                emp_id = str(ident[0])
+                emp_overrides = {
+                    a: lvl for (e, a), lvl in overrides_all.items() if e == emp_id
+                }
+            levels = build_sector_levels(
+                stats, erp_level=erp.get(code), overrides=emp_overrides,
+            )
+            eff_by_area = {
+                lvl.area_group: lvl.effective_level
+                for lvl in levels
+                if lvl.effective_level is not None
+            }
+            for st in stats:
+                eff = eff_by_area.get(area_group_for_phase(st.fase_nome, st.fase_id))
+                if eff is not None:
+                    out[(code, str(st.fase_id))] = max(0.0, min(1.0, eff / 3.0))
+        return out
