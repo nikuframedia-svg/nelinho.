@@ -203,6 +203,10 @@ export const planKeys = {
   all: ['plan'] as const,
   schedule: () => [...planKeys.all, 'schedule'] as const,
   scheduleCurrent: () => [...planKeys.schedule(), 'current'] as const,
+  // Q.141 — linha temporal: actuals (o que aconteceu) por intervalo.
+  timeline: () => [...planKeys.all, 'timeline'] as const,
+  actuals: (from: string, to: string) =>
+    [...planKeys.timeline(), 'actuals', from, to] as const,
 } as const;
 
 // ─── Reports admin (Q.67.2.B) ──────────────────────────────────────────
