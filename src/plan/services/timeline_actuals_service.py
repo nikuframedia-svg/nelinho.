@@ -28,7 +28,7 @@ from __future__ import annotations
 import logging
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
-from uuid import UUID
+from uuid import NAMESPACE_OID, UUID, uuid5
 
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -50,7 +50,8 @@ DEFAULT_CAP = 5000
 # cronológica. factory_raw partilhado → SEM filtro de tenant.
 _FASES_BY_RANGE_SQL = text(
     """
-    SELECT o."OFFP_OF_ID"::text          AS of_id,
+    SELECT o."OFFP_ID"::text             AS offp_id,
+           o."OFFP_OF_ID"::text          AS of_id,
            o."OFFP_FP_ID"::text          AS phase_id,
            o."OFFP_DATAINICIO"           AS fase_inicio,
            NULLIF(o."OFFP_DATAFIM", '')  AS fase_fim
@@ -83,6 +84,23 @@ _NOMES_FASE_SQL = text(
     SELECT "FP_ID"::text AS fase_id, "FP_NOME" AS fase_nome
     FROM factory_raw.fases_producao
     WHERE "FP_ID"::text = ANY(:fase_ids)
+    """
+)
+
+# Q.141.B — operador(es) por fase-de-OF: of_fp.OFFP_ID → offp_eq → entidade.
+# NÃO se usa plan.fases_of_history.worker_id porque o ETL grava-o SEMPRE NULL
+# (src/adapters/nelo/etl/phase_history.py). Esta é a cadeia real (a mesma do
+# sector_preference_service). OFFPEQ_CHEFE marca o líder da equipa.
+_WORKERS_BY_OFFP_SQL = text(
+    """
+    SELECT eq."OFFPEQ_OFFP_ID"::text AS offp_id,
+           eq."OFFPEQ_E_ID"::text    AS e_id,
+           eq."OFFPEQ_CHEFE"         AS is_chefe,
+           e."E_NOME"                AS nome
+    FROM factory_raw.offp_eq eq
+    LEFT JOIN factory_raw.entidade e ON e."E_ID" = eq."OFFPEQ_E_ID"
+    WHERE eq."OFFPEQ_OFFP_ID"::text = ANY(:offp_ids)
+      AND eq."OFFPEQ_E_ID" IS NOT NULL
     """
 )
 
@@ -124,6 +142,11 @@ def _duration_min(start: Any, end: Any) -> Optional[float]:
     return round(delta, 1) if delta >= 0 else None
 
 
+def worker_uuid(e_id: str) -> UUID:
+    """UUID determinístico do operador a partir do E_ID do ERP (uuid5)."""
+    return uuid5(NAMESPACE_OID, f"operator:{e_id}")
+
+
 # ── Shaping puro (testável sem BD) ───────────────────────────────────────────
 
 def shape_actuals_items(
@@ -147,8 +170,11 @@ def shape_actuals_items(
         dur = r.get("duration_min")
         # of_fp não traz duração; deriva-se de start/end quando ambos existem.
         dur_min = float(dur) if dur is not None else _duration_min(inicio, fim)
+        offp_id = str(r.get("offp_id")) if r.get("offp_id") is not None else None
         items.append(
             {
+                "id": offp_id,
+                "offp_id": offp_id,
                 "of_id": of_id,
                 "barco_nome": barco_by_of.get(of_id),
                 "modelo_id": modelo_by_of.get(of_id),
@@ -162,6 +188,35 @@ def shape_actuals_items(
                 "source": "fase",
             }
         )
+    return items
+
+
+def attach_workers(
+    items: List[Dict[str, Any]],
+    worker_rows: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Preenche worker_nome/worker_id por offp_id (Q.141.B), in-place.
+
+    A equipa (1+ operadores) é agregada num item só (espelha o /overall, que faz
+    `workers[0]` + nomes juntos): `worker_nome` = nomes juntos por " + " (chefe
+    primeiro), `worker_id` = uuid5 do E_ID do chefe (ou do 1.º). Fases sem
+    operador (ex. Cura) ficam com worker_* None — enriquecimento, nunca filtro.
+    """
+    by_offp: Dict[str, List[Dict[str, Any]]] = {}
+    for w in worker_rows:
+        offp = str(w.get("offp_id")) if w.get("offp_id") is not None else None
+        if offp is None or w.get("e_id") is None:
+            continue
+        by_offp.setdefault(offp, []).append(w)
+    for it in items:
+        crew = by_offp.get(it.get("offp_id"))
+        if not crew:
+            continue
+        # Chefe primeiro, depois ordem estável por e_id.
+        crew_sorted = sorted(crew, key=lambda w: (not bool(w.get("is_chefe")), str(w.get("e_id"))))
+        nomes = [str(w.get("nome") or w.get("e_id")) for w in crew_sorted]
+        it["worker_nome"] = " + ".join(nomes)
+        it["worker_id"] = str(worker_uuid(str(crew_sorted[0]["e_id"])))
     return items
 
 
@@ -239,4 +294,21 @@ class TimelineActualsService:
         fase_ids = sorted({str(r["phase_id"]) for r in rows if r.get("phase_id")})
         barco_by_of, modelo_by_of, fase_by_id = await self._resolve_names(of_ids, fase_ids)
         items = shape_actuals_items(rows, barco_by_of, modelo_by_of, fase_by_id)
+        # Q.141.B — enriquecer com operadores reais (offp_eq+entidade).
+        offp_ids = sorted({str(r["offp_id"]) for r in rows if r.get("offp_id")})
+        worker_rows = await self._fetch_workers(offp_ids)
+        items = attach_workers(items, worker_rows)
         return items, truncated
+
+    async def _fetch_workers(self, offp_ids: List[str]) -> List[Dict[str, Any]]:
+        """Operadores por OFFP_ID (offp_eq ⋈ entidade). Best-effort → []."""
+        if self.session is None or not offp_ids:
+            return []
+        try:
+            rows = (
+                await self.session.execute(_WORKERS_BY_OFFP_SQL, {"offp_ids": offp_ids})
+            ).mappings().all()
+        except SQLAlchemyError as exc:  # pragma: no cover
+            logger.warning("timeline actuals: workers query failed: %s", exc)
+            return []
+        return [dict(r) for r in rows]

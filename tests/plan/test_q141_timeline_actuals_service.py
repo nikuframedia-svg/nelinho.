@@ -13,7 +13,9 @@ import pytest
 
 from src.plan.services.timeline_actuals_service import (
     TimelineActualsService,
+    attach_workers,
     shape_actuals_items,
+    worker_uuid,
 )
 
 _TENANT = UUID("11111111-1111-1111-1111-111111111111")
@@ -121,6 +123,53 @@ async def test_actuals_items_smoke_with_fake_session():
     assert len(items) == 1
     assert items[0]["barco_nome"] == "K1"
     assert items[0]["phase_nome"] == "Pintura Acabamento"
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Q.141.B — attach_workers (operadores via offp_eq+entidade)
+# ─────────────────────────────────────────────────────────────────────────
+
+def _it(offp_id):
+    return {"offp_id": offp_id, "worker_id": None, "worker_nome": None}
+
+
+def test_attach_workers_single_operator():
+    out = attach_workers(
+        [_it("P1")],
+        [{"offp_id": "P1", "e_id": "20363", "is_chefe": True, "nome": "Carlos"}],
+    )
+    assert out[0]["worker_nome"] == "Carlos"
+    assert out[0]["worker_id"] == str(worker_uuid("20363"))
+
+
+def test_attach_workers_crew_chefe_first():
+    out = attach_workers(
+        [_it("P1")],
+        [
+            {"offp_id": "P1", "e_id": "2", "is_chefe": False, "nome": "Bruno"},
+            {"offp_id": "P1", "e_id": "1", "is_chefe": True, "nome": "Ana"},
+        ],
+    )
+    assert out[0]["worker_nome"] == "Ana + Bruno"  # chefe primeiro
+    assert out[0]["worker_id"] == str(worker_uuid("1"))
+
+
+def test_attach_workers_phase_without_crew_stays_none():
+    out = attach_workers([_it("P9")], [])
+    assert out[0]["worker_id"] is None
+    assert out[0]["worker_nome"] is None
+
+
+def test_attach_workers_no_name_falls_back_to_eid():
+    out = attach_workers(
+        [_it("P1")], [{"offp_id": "P1", "e_id": "999", "is_chefe": True, "nome": None}],
+    )
+    assert out[0]["worker_nome"] == "999"
+
+
+def test_worker_uuid_is_deterministic_and_distinct():
+    assert worker_uuid("20363") == worker_uuid("20363")
+    assert worker_uuid("1") != worker_uuid("2")
 
 
 @pytest.mark.asyncio
