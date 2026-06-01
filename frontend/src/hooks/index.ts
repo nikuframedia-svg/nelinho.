@@ -85,3 +85,6 @@ export {
   detectHonestEmptyState,
 } from './useHonestEmptyState';
 export type { HonestEmptyState } from './useHonestEmptyState';
+
+// Q.154.A — mapa employee_code → employee_name (nomes em vez de códigos)
+export { useEmployeeNamesByCode } from './useEmployeeNamesByCode';

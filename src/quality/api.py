@@ -84,7 +84,34 @@ class ReworkCreateRequest(BaseModel):
     notes: Optional[str] = None
 
 
-def _rework_to_dict(row) -> dict[str, Any]:
+async def _resolve_phase_names(
+    session: AsyncSession, tenant_id: UUID, phase_ids: set[str]
+) -> dict[str, str]:
+    """Mapa phase_id → phase_name (resolver canónico = routing_template_phase).
+
+    Q.154.D — mesmo padrão de ``entity_summary`` (top_phases). Devolve só os que
+    resolvem; quem chama faz fallback ao phase_id cru. Ignora None/vazios.
+    """
+    from src.plan.models.routing_template import RoutingTemplatePhase
+
+    ids = {p for p in phase_ids if p}
+    if not ids:
+        return {}
+    stmt = select(RoutingTemplatePhase.phase_id, RoutingTemplatePhase.phase_name).where(
+        and_(
+            RoutingTemplatePhase.tenant_id == tenant_id,
+            RoutingTemplatePhase.phase_id.in_(ids),
+        )
+    )
+    out: dict[str, str] = {}
+    for pid, pname in (await session.execute(stmt)).all():
+        if pid not in out and pname:
+            out[pid] = pname
+    return out
+
+
+def _rework_to_dict(row, phase_names: dict[str, str] | None = None) -> dict[str, Any]:
+    names = phase_names or {}
     return {
         "id": str(row.id),
         "of_id": row.of_id,
@@ -92,6 +119,9 @@ def _rework_to_dict(row) -> dict[str, Any]:
         "error_description": row.error_description,
         "phase_id_causer": row.phase_id_causer,
         "phase_id_rework": row.phase_id_rework,
+        # Q.154.D — nomes humanos das fases (None = sem hit no routing → FE usa id).
+        "phase_name_causer": names.get(row.phase_id_causer) if row.phase_id_causer else None,
+        "phase_name_rework": names.get(row.phase_id_rework) if row.phase_id_rework else None,
         "causer_employee_id": str(row.causer_employee_id) if row.causer_employee_id else None,
         "chefe_employee_id": str(row.chefe_employee_id) if row.chefe_employee_id else None,
         "mold_id": row.mold_id,
@@ -120,7 +150,10 @@ async def create_rework(
     if kwargs.get("hours_lost") is not None:
         kwargs["hours_lost"] = Decimal(str(kwargs["hours_lost"]))
     row = await svc.record(**kwargs)
-    return _rework_to_dict(row)
+    names = await _resolve_phase_names(
+        session, tenant_id, {row.phase_id_causer, row.phase_id_rework}
+    )
+    return _rework_to_dict(row, names)
 
 
 @router.get("/rework")
@@ -139,7 +172,11 @@ async def list_rework(
         of_id=of_id, phase_id=phase_id, mold_id=mold_id,
         since=since, until=until, limit=limit,
     )
-    return [_rework_to_dict(r) for r in rows]
+    phase_ids: set[str] = set()
+    for r in rows:
+        phase_ids.update({r.phase_id_causer, r.phase_id_rework})
+    names = await _resolve_phase_names(session, tenant_id, phase_ids)
+    return [_rework_to_dict(r, names) for r in rows]
 
 
 @router.patch("/rework/{rework_id}/resolve")
@@ -156,7 +193,10 @@ async def resolve_rework(
         raise HTTPException(
             status.HTTP_404_NOT_FOUND, detail=f"Rework {rework_id} not found",
         )
-    return _rework_to_dict(row)
+    names = await _resolve_phase_names(
+        session, tenant_id, {row.phase_id_causer, row.phase_id_rework}
+    )
+    return _rework_to_dict(row, names)
 
 
 # ─── Q.54.S — qualidade dos moldes (camada curada) ────────────────────────

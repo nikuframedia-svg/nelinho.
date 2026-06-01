@@ -30,3 +30,5 @@ export {
 } from './learningApi';
 // runbookApi (Q.115.H) — já re-exportado via export * from './qualityApi' acima
 export * from './entityApi';
+export * from './phasePreferredApi';
+export * from './boatComplexityApi';

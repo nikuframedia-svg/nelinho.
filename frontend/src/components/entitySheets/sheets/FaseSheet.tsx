@@ -19,6 +19,9 @@ import {
   type CuringGap,
 } from '../../../lib/api/entityApi';
 import { useToastContext } from '../../ToastProvider';
+import { useEmployeeNamesByCode } from '../../../hooks/useEmployeeNamesByCode';
+import { useBoatComplexity } from '../../../hooks/useBoatComplexity';
+import { ComplexityBadge } from '../../overall/ComplexityBadge';
 
 export interface FaseSheetProps {
   phaseId: string;
@@ -89,6 +92,7 @@ export default function FaseSheet({ phaseId, onClose }: FaseSheetProps) {
 }
 
 function TabOperadores({ operators }: { operators: OperatorScore[] }) {
+  const empNameByCode = useEmployeeNamesByCode();
   if (operators.length === 0) {
     return (
       <EmptyState
@@ -121,7 +125,7 @@ function TabOperadores({ operators }: { operators: OperatorScore[] }) {
             style={{ borderBottom: '1px solid var(--bd-1)' }}
           >
             <td style={{ padding: '8px 8px' }}>
-              {op.operator_name ?? op.operator_id}
+              {op.operator_name ?? empNameByCode.get(op.operator_id) ?? op.operator_id}
             </td>
             <td style={{ padding: '8px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
               {op.score.toFixed(3)}
@@ -137,6 +141,7 @@ function TabOperadores({ operators }: { operators: OperatorScore[] }) {
 }
 
 function TabBarcos({ boats }: { boats: BoatScore[] }) {
+  const { byName } = useBoatComplexity();
   if (boats.length === 0) {
     return (
       <EmptyState
@@ -182,7 +187,13 @@ function TabBarcos({ boats }: { boats: BoatScore[] }) {
               style={{ borderBottom: '1px solid var(--bd-1)' }}
             >
               <td style={{ padding: '8px 8px' }}>
-                {b.boat_id}
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  {b.boat_id}
+                  <ComplexityBadge
+                    score={byName.get(String(b.boat_id))?.score}
+                    rank={byName.get(String(b.boat_id))?.rank}
+                  />
+                </span>
               </td>
               <td style={{ padding: '8px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                 {b.score.toFixed(3)}
@@ -297,6 +308,7 @@ function TabCura({
 function TabConfiguracao({ phaseId }: { phaseId: string }) {
   const toast = useToastContext();
   const queryClient = useQueryClient();
+  const empNameByCode = useEmployeeNamesByCode();
 
   const { data, isLoading, error } = useQuery({
     queryKey: entityKeys.faseConfig(phaseId),
@@ -431,7 +443,7 @@ function TabConfiguracao({ phaseId }: { phaseId: string }) {
                     onChange={() => toggleWorker(wid)}
                     style={{ accentColor: 'var(--accent)', width: 15, height: 15 }}
                   />
-                  <span style={{ flex: 1, fontVariantNumeric: 'tabular-nums' }}>{wid}</span>
+                  <WorkerLabel code={wid} name={empNameByCode.get(wid)} />
                   {isAffinity && (
                     <span style={{ color: '#f59e0b', fontSize: 12 }}>★ afinidade</span>
                   )}
@@ -607,6 +619,27 @@ function TabConfiguracao({ phaseId }: { phaseId: string }) {
         </button>
       </div>
     </div>
+  );
+}
+
+/**
+ * WorkerLabel (Q.154.A) — mostra o NOME do colaborador com o código pequeno ao
+ * lado (referência cruzada com o ERP e com o whitelist guardado). Sem nome
+ * resolvido (ex. operador histórico fora do core), mostra só o código cru.
+ */
+function WorkerLabel({ code, name }: { code: string; name?: string }) {
+  if (!name) {
+    return <span style={{ flex: 1, fontVariantNumeric: 'tabular-nums' }}>{code}</span>;
+  }
+  return (
+    <span style={{ flex: 1, display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
+      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {name}
+      </span>
+      <span style={{ color: 'var(--fg-3)', fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>
+        {code}
+      </span>
+    </span>
   );
 }
 

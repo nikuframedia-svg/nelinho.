@@ -64,12 +64,19 @@ export function OperationEditSheet({
 
   const canSave = date.length === 10 && !isPending;
 
+  // Q.154.B — prefere o nome do barco (op.cliente); o código fica entre parêntesis.
+  const boatLabel = op.cliente
+    ? `${op.cliente}${op.order_id ? ` (#${op.order_id})` : ''}`
+    : op.order_id
+      ? `Barco #${op.order_id}`
+      : op.id;
+
   return (
     <Sheet
       open
       onClose={onClose}
       title="Editar operação"
-      subtitle={`${op.order_id ? `Barco #${op.order_id}` : op.id} · fase atual ${op.phase_name}${op.operator_name ? ` · ${op.operator_name}` : ''}`}
+      subtitle={`${boatLabel} · fase atual ${op.phase_name}${op.operator_name ? ` · ${op.operator_name}` : ''}`}
       width={440}
       footer={
         <>

@@ -7,6 +7,8 @@
  */
 import { Sheet } from '../dark/Sheet';
 import type { ScheduledOp } from './types';
+import { ComplexityBadge } from './ComplexityBadge';
+import { useBoatComplexity } from '../../hooks/useBoatComplexity';
 
 export function CellOpsSheet({
   ops,
@@ -17,6 +19,7 @@ export function CellOpsSheet({
   onPick: (op: ScheduledOp) => void;
   onClose: () => void;
 }) {
+  const { byId } = useBoatComplexity();
   const sorted = [...ops].sort(
     (a, b) => (a.start ?? '').localeCompare(b.start ?? '') || (a.order_id ?? '').localeCompare(b.order_id ?? ''),
   );
@@ -43,8 +46,20 @@ export function CellOpsSheet({
               style={{ background: op.source === 'actual' ? 'var(--green)' : 'var(--gray-bd)' }}
             />
             <div className="min-w-0 flex-1">
-              <div className="text-xs font-medium truncate" style={{ color: 'var(--fg-0)' }}>
-                {op.order_id ? `#${op.order_id}` : op.id} · {op.phase_name}
+              <div className="text-xs font-medium truncate flex items-center gap-1.5" style={{ color: 'var(--fg-0)' }}>
+                {/* Q.154.B — nome do barco quando existe; código pequeno ao lado. */}
+                <span className="truncate">
+                  {op.cliente ? op.cliente : op.order_id ? `#${op.order_id}` : op.id}
+                  {op.cliente && op.order_id && (
+                    <span style={{ color: 'var(--fg-3)', fontWeight: 400 }}>{` #${op.order_id}`}</span>
+                  )}
+                  {` · ${op.phase_name}`}
+                </span>
+                {/* Q.155.E — badge de complexidade do barco. */}
+                {(() => {
+                  const c = op.product_id ? byId.get(String(op.product_id)) : undefined;
+                  return <ComplexityBadge score={c?.score} rank={c?.rank} />;
+                })()}
               </div>
               <div className="text-[11px] truncate" style={{ color: 'var(--fg-3)' }}>
                 {op.operator_name ?? 'sem operador'}

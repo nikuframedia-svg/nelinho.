@@ -329,6 +329,34 @@ export const masterDataKeys = {
   employees: (showInactive: boolean) => [...masterDataKeys.all, 'employees', { showInactive }] as const,
 } as const;
 
+// ─── core master-data (Q.154.A) ──────────────────────────────────────────
+//
+// Colaboradores p/ resolver `employee_code → employee_name` em vários sítios
+// (FaseSheet, editor de plano). `employeesForPlanEditor()` tem o MESMO valor do
+// literal histórico do OverallPage (Q.147.C) DE PROPÓSITO: o TanStack Query
+// desduplica o fetch e reaproveita o cache de 10 min. Se mudares um, muda o
+// outro (OverallPage.tsx ~L175 + hooks/useEmployeeNamesByCode.ts).
+
+export const coreKeys = {
+  all: ['core'] as const,
+  employees: () => [...coreKeys.all, 'employees'] as const,
+  employeesForPlanEditor: () =>
+    [...coreKeys.employees(), 'for-plan-editor'] as const, // → ['core','employees','for-plan-editor']
+} as const;
+
+// ─── Q.155 — melhores operadores por fase (curado manual) ─────────────────
+
+export const phasePreferredKeys = {
+  all: ['phase-preferred'] as const,
+  phases: () => [...phasePreferredKeys.all, 'phases'] as const,
+  forPhase: (phaseId: string) => [...phasePreferredKeys.all, 'phase', phaseId] as const,
+} as const;
+
+export const boatComplexityKeys = {
+  all: ['boat-complexity'] as const,
+  list: () => [...boatComplexityKeys.all, 'list'] as const,
+} as const;
+
 // ─── workforce sectors / níveis por sector (Q.140) ───────────────────────
 //
 // Níveis por (pessoa × sector) + ranking por sector. ranking(area) e

@@ -462,6 +462,36 @@ def test_rework_entry_roundtrip():
     assert row.error_code == "X"
 
 
+def test_rework_to_dict_resolves_phase_names_q154d():
+    """Q.154.D — `_rework_to_dict` mostra o NOME da fase (não o id) quando o
+    mapa resolve; cai a None (FE usa o id) quando não há hit."""
+    from src.quality.api import _rework_to_dict
+
+    row = ReworkEntry(
+        id=uuid4(),
+        tenant_id=TEST_TENANT_ID,
+        of_id="OF-1",
+        error_code="X",
+        phase_id_causer="Laminagem",
+        phase_id_rework="Pintura",
+        detected_at=datetime.now(timezone.utc),
+        context={},
+    )
+
+    # Com mapa resolvido → nomes humanos.
+    names = {"Laminagem": "Laminagem", "Pintura": "Pintura final"}
+    out = _rework_to_dict(row, names)
+    assert out["phase_id_rework"] == "Pintura"
+    assert out["phase_name_rework"] == "Pintura final"
+    assert out["phase_name_causer"] == "Laminagem"
+
+    # Sem mapa → nomes a None (fallback ao id no frontend), ids intactos.
+    bare = _rework_to_dict(row)
+    assert bare["phase_name_rework"] is None
+    assert bare["phase_name_causer"] is None
+    assert bare["phase_id_rework"] == "Pintura"
+
+
 def test_error_catalog_default_severity():
     row = ErrorCatalog(
         id=uuid4(),

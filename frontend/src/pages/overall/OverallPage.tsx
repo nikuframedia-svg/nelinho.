@@ -16,7 +16,7 @@ import { pt } from 'date-fns/locale';
 import { Calendar, AlertTriangle, Ship, RotateCcw } from 'lucide-react';
 import { planKeys } from '../../lib/api/keys';
 import { cpoCommitsApi, planOperationsApi, timelineActualsApi, copilotAlertsApi, planExclusionApi, schedulePreviewApi } from '../../lib/api';
-import type { CpoCommit, TimelineActualItem, CopilotAlertItem, ExcludedBoat, PreviewDeltaResult } from '../../lib/api';
+import type { CpoCommit, TimelineActualItem, CopilotAlertItem, ExcludedBoat } from '../../lib/api';
 import { MoveBoatConfirm } from '../producao/MoveBoatConfirm';
 import type { ActiveOrderCard } from '../producao/fabricaApi';
 import { PageHeader, DarkCard, DarkButton, EmptyState } from '../../components/dark';

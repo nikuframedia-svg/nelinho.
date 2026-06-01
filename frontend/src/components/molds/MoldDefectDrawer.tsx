@@ -23,6 +23,9 @@ interface ReworkRow {
   of_id?: string;
   phase_id_rework?: string;
   phase_id_causer?: string;
+  // Q.154.D — nomes humanos das fases (backend resolve via routing_template_phase).
+  phase_name_rework?: string | null;
+  phase_name_causer?: string | null;
   cost_eur?: number;
   resolved_at?: string | null;
 }
@@ -146,7 +149,11 @@ export function MoldDefectDrawer({ open, moldId, moldCode, onClose }: DrawerProp
                         {r.of_id ?? '—'}
                       </td>
                       <td className="px-3 py-2" style={{ color: 'var(--fg-2)' }}>
-                        {r.phase_id_rework ?? r.phase_id_causer ?? '—'}
+                        {r.phase_name_rework ??
+                          r.phase_name_causer ??
+                          r.phase_id_rework ??
+                          r.phase_id_causer ??
+                          '—'}
                       </td>
                       <td className="px-3 py-2 text-right tabular-nums" style={{ color: 'var(--fg-1)' }}>
                         €{(r.cost_eur ?? 0).toFixed(0)}
