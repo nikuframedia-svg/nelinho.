@@ -193,7 +193,9 @@ function TabFases({ routing, modelId }: TabFasesProps) {
       entityApi.updateTemplateSequence(routing!.id, { phase_order: order }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: entityKeys.modelo(modelId) });
-      toast.success('Sequência guardada.');
+      // Q.153.C3 — CTA: a nova sequência só entra no plano no próximo replan
+      // (o CPO lê os templates em state.py:_load_route_templates_db).
+      toast.success('Sequência guardada · Replaneie no /overall para o CPO respeitar a nova ordem.');
       setDirty(false);
     },
     onError: (err: unknown) => {

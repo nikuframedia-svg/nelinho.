@@ -51,6 +51,7 @@ __all__ = [
     "merge_commit_with_orders",
     "pick_operation_for_order",
     "is_boat_by_order_ids",
+    "product_id_by_order_ids",
 ]
 
 
@@ -260,3 +261,40 @@ async def is_boat_by_order_ids(
         logger.warning("is_boat_by_order_ids query failed: %s", exc)
         return {}
     return {str(r["of_id"]): bool(r["is_boat"]) for r in rows}
+
+
+async def product_id_by_order_ids(
+    session: "AsyncSession",
+    order_ids: Iterable[Any],
+) -> Dict[str, str]:
+    """Q.153.C3 — mapa ``{order_id: product_id}`` (= ``OF_P_ID``, o modelo).
+
+    As operações do commit não guardam o ``product_id`` da OF; sem ele o
+    /overall não consegue abrir o editor de sequência do MODELO (ModeloSheet)
+    a partir de um barco. Resolve-se ao LER, por order_id (mesmo padrão de
+    ``is_boat_by_order_ids``). Best-effort: ausente → ``{}``.
+    """
+    if session is None:
+        return {}
+    ids = sorted({str(o).strip() for o in order_ids if o is not None and str(o).strip()})
+    if not ids:
+        return {}
+
+    from sqlalchemy import text
+    from sqlalchemy.exc import SQLAlchemyError
+
+    sql = text(
+        """
+        SELECT "OF_ID"::text   AS of_id,
+               "OF_P_ID"::text AS product_id
+        FROM factory_raw.ordemfabrico
+        WHERE "OF_ID"::text = ANY(:ids)
+          AND "OF_P_ID" IS NOT NULL
+        """
+    )
+    try:
+        rows = (await session.execute(sql, {"ids": ids})).mappings().all()
+    except SQLAlchemyError as exc:  # pragma: no cover — tabela ausente/dev
+        logger.warning("product_id_by_order_ids query failed: %s", exc)
+        return {}
+    return {str(r["of_id"]): str(r["product_id"]) for r in rows if r["product_id"]}

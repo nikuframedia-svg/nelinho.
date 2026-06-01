@@ -35,6 +35,7 @@ import { CellOpsSheet } from '../../components/overall/CellOpsSheet';
 import { planeamentoApi } from '../../components/planeamento/planeamentoApi';
 import { CellExpandProvider } from '../../components/overall/cellExpand';
 import { employeesApi } from '../../lib/api/masterDataApi';
+import { useEntitySheet } from '../../components/entitySheets';
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
@@ -78,6 +79,7 @@ function usePrefersReducedMotion(): boolean {
 export default function OverallPage(): ReactNode {
   const toast = useToastContext();
   const queryClient = useQueryClient();
+  const { openSheet } = useEntitySheet();
   const reducedMotion = usePrefersReducedMotion();
   const variants = reducedMotion ? reducedVariants : panelVariants;
 
@@ -368,6 +370,8 @@ export default function OverallPage(): ReactNode {
         phase_id: String(it.phase_id ?? 'UNKNOWN'),
         phase_name: String(it.phase_nome ?? it.phase_id ?? 'UNKNOWN'),
         order_id: it.of_id ? String(it.of_id) : undefined,
+        // Q.153.C3 — modelo (OF_P_ID) p/ abrir o ModeloSheet de barcos só-realizados.
+        product_id: it.modelo_id ? String(it.modelo_id) : undefined,
         operator_id: it.worker_id ?? undefined,
         operator_name: it.worker_nome ?? undefined,
         cliente: it.barco_nome ?? undefined,
@@ -494,6 +498,23 @@ export default function OverallPage(): ReactNode {
     return s.size;
   }, [filteredOperations]);
 
+  // Q.153.C3 — product_id (modelo) da selecção, p/ abrir o editor de sequência
+  // do modelo na tab Fases. Clicar numa op emite kind='op'; resolvemos o modelo
+  // dessa op (ou de uma op do barco, se a selecção for um barco).
+  const selectedBoatProductId = useMemo(() => {
+    if (!selection) return null;
+    if (selection.kind === 'op') {
+      return operations.find((o) => o.id === selection.id)?.product_id ?? null;
+    }
+    if (selection.kind === 'boat') {
+      return (
+        operations.find((o) => (o.order_id ?? o.id) === selection.id && o.product_id)
+          ?.product_id ?? null
+      );
+    }
+    return null;
+  }, [selection, operations]);
+
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
     // Q.146.A — capar ao viewport (TopBar=52px) + overflow-hidden: o `<main>` da
@@ -564,6 +585,19 @@ export default function OverallPage(): ReactNode {
             >
               {mode === 'ver' ? 'Editar' : 'A editar'}
             </DarkButton>
+
+            {/* Q.153.C3 — acesso de 1ª classe ao editor de sequência do modelo
+                (abre o ModeloSheet na tab Fases) quando há um barco seleccionado. */}
+            {selectedBoatProductId && (
+              <DarkButton
+                size="sm"
+                variant="outline"
+                onClick={() => openSheet('modelo', selectedBoatProductId)}
+                title="Editar a sequência de fases deste modelo de barco"
+              >
+                Editar sequência do modelo
+              </DarkButton>
+            )}
 
             {/* Q.153.B2 — Replanear (async) + Aprovar (DRAFT→LIVE) */}
             <DarkButton

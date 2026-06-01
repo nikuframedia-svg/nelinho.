@@ -29,6 +29,8 @@ export interface CpoOperation {
   setup_family: string | null;
   /** Q.153.C0 — barco (boats-only Q.136) vs acessório; injectado ao ler o commit. */
   is_boat?: boolean;
+  /** Q.153.C3 — modelo (OF_P_ID); injectado ao ler o commit p/ abrir o ModeloSheet. */
+  product_id?: string;
 }
 
 export interface CpoScheduleResult {

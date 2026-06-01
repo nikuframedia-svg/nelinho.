@@ -99,22 +99,29 @@ async def get_commit(
     commit = await _resolve_commit_or_404(service, sha)
     payload = CommitsService.to_dict(commit, include_operations=include_operations)
 
-    # Q.153.C0 — enriquecer cada operação com `is_boat` (predicado boats-only
-    # Q.136), ao LER, para o /overall poder focar barcos vs acessórios/straps.
+    # Q.153.C0/C3 — enriquecer cada operação, ao LER, com:
+    #   * `is_boat` (predicado boats-only Q.136) → toggle "Só barcos" no /overall;
+    #   * `product_id` (= OF_P_ID, o modelo) → abrir o editor de sequência do
+    #     MODELO a partir de um barco (as ops do commit não guardam o modelo).
     # Read-time join (mirror de /commits/{sha}/orders) → funciona já para DRAFTs
-    # existentes, sem mexer no CPO nem re-planear. Best-effort: {} → is_boat ausente.
+    # existentes, sem mexer no CPO nem re-planear. Best-effort: {} → campo ausente.
     ops = payload.get("operations")
     if include_operations and ops:
-        from src.plan.services.cpo_commit_orders import is_boat_by_order_ids
-
-        boat_map = await is_boat_by_order_ids(
-            db, [op.get("order_id") for op in ops]
+        from src.plan.services.cpo_commit_orders import (
+            is_boat_by_order_ids,
+            product_id_by_order_ids,
         )
-        if boat_map:
+
+        order_ids = [op.get("order_id") for op in ops]
+        boat_map = await is_boat_by_order_ids(db, order_ids)
+        modelo_map = await product_id_by_order_ids(db, order_ids)
+        if boat_map or modelo_map:
             for op in ops:
                 oid = str(op.get("order_id") or "").strip()
                 if oid in boat_map:
                     op["is_boat"] = boat_map[oid]
+                if oid in modelo_map and not op.get("product_id"):
+                    op["product_id"] = modelo_map[oid]
 
     return CommitResponse(**payload)
 
