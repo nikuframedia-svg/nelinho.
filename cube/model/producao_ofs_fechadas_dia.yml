@@ -1,0 +1,24 @@
+cubes:
+  - name: producao_ofs_fechadas_dia
+    description: >
+      Q.152 — OFs produzidas/fechadas por DIA. Source:
+      marts.v_ofs_fechadas_dia (COUNT de factory_raw.ordemfabrico com
+      OF_DATAFIM preenchida). MESMA definição canónica de fecho que
+      producao_throughput_modelo (OF_DATAFIM do header), mas granularidade
+      DIÁRIA e sem modelo/disciplina — responde "quantas OFs hoje". NÃO
+      confundir com producao_lead_time_of.ofs_fechadas (envelope of_fp,
+      granularidade MENSAL). CONTAGEM aditiva.
+    sql_table: marts.v_ofs_fechadas_dia
+
+    measures:
+      - name: total
+        description: COUNT de OFs fechadas (OF_DATAFIM preenchida) no dia. CONTAGEM aditiva.
+        sql: n_ofs_fechadas
+        type: sum
+        format: number
+
+    dimensions:
+      - name: data
+        description: Dia de fecho (cast OF_DATAFIM as date).
+        sql: data
+        type: time

@@ -1136,6 +1136,8 @@ MEASURE_REGISTRY: dict[str, MeasureSpec] = {
         synonyms=(
             "OFs fechadas", "OFs terminadas", "OFs concluídas",
             "ordens de fabrico fechadas", "throughput OFs", "barcos terminados",
+            "OFs produzidas", "produzidas no mês", "produção mensal",
+            "barcos produzidos no mês",
         ),
     ),
     "producao_lead_time_of.lead_time_avg": MeasureSpec(
@@ -2186,6 +2188,28 @@ MEASURE_REGISTRY: dict[str, MeasureSpec] = {
             "throughput modelo", "throughput semanal", "OFs por modelo",
             "produção por modelo", "barcos por modelo", "K1 throughput",
             "K2 throughput", "K4 throughput",
+        ),
+    ),
+    # ── Q.152: OFs produzidas/fechadas por DIA (granularidade diária) ──
+    "producao_ofs_fechadas_dia.total": MeasureSpec(
+        name="producao_ofs_fechadas_dia.total",
+        unit=CanonicalUnit.CONTAGEM,
+        dimensions_supported=frozenset({"tempo"}),
+        business_decision=(
+            "Q.152: COUNT(*) de OFs fechadas por DIA em "
+            "marts.v_ofs_fechadas_dia (OF_DATAFIM preenchida no header de "
+            "factory_raw.ordemfabrico). MESMA definição canónica de fecho que "
+            "producao_throughput_modelo (OF_DATAFIM), mas granularidade DIÁRIA "
+            "— responde 'quantas OFs hoje'. CONTAGEM aditiva. NÃO confundir com "
+            "producao_lead_time_of.ofs_fechadas (envelope of_fp, MENSAL)."
+        ),
+        description="Número de OFs produzidas/fechadas por dia (OF_DATAFIM)",
+        synonyms=(
+            "OFs produzidas", "ofs produzidas", "ordens produzidas",
+            "produção do dia", "OFs fechadas hoje", "barcos produzidos",
+            "produzidas hoje", "throughput diário", "OFs concluídas hoje",
+            "quantas ofs hoje", "produzimos hoje", "barcos feitos hoje",
+            "ordens de fabrico produzidas",
         ),
     ),
     # ── Q.106 Medida 1: colaboradores NELO activos ──

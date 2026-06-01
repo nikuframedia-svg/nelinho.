@@ -83,6 +83,34 @@ histórico** — perguntas com período ("este mês") → abstain.
 **Sinónimos PT-PT aceitáveis**: "OFs em curso" ≈ "OFs activas" ≈ "OFs em
 produção" ≈ "kayaks a ser feitos".
 
+⚠️ **NÃO confundir com `producao_ofs_fechadas_dia`**: "em curso" = ainda a ser
+feitas (NÃO produzidas). "produzidas / fechadas / concluídas / acabadas" =
+TERMINADAS → usa `producao_ofs_fechadas_dia`, NÃO este cube. Este cube é
+snapshot SEM tempo — perguntas com "hoje/ontem/no dia" NÃO são deste cube.
+
+### Cube: `producao_ofs_fechadas_dia`
+OFs **produzidas/fechadas por DIA** (terminadas). Q.152. Fonte:
+`OF_DATAFIM` (data de fecho do header da OF). É a medida certa para "quantas
+OFs foram **produzidas/feitas/concluídas/fechadas hoje** (ou ontem, ou num dia)".
+TEM histórico diário — usa `timeDimensions` com `dateRange` ao dia.
+
+**Measures**
+- `producao_ofs_fechadas_dia.total` — contagem de OFs fechadas no dia.
+  CONTAGEM adimensional, aditiva.
+
+**Dimensions**
+- `producao_ofs_fechadas_dia.data` — `time` — dia de fecho (`OF_DATAFIM`).
+  Granularidade DIÁRIA. Para "hoje" usa `period_label="hoje"` +
+  `dateRange ["{TODAY}", "{TODAY}"]`; para "ontem", `period_label="ontem"`.
+
+**Sinónimos PT-PT aceitáveis**: "OFs produzidas" ≈ "OFs feitas" ≈ "OFs
+concluídas" ≈ "OFs fechadas" ≈ "barcos produzidos" ≈ "produção do dia".
+
+**Quando escolher esta vs as outras**: "produzidas/feitas/fechadas/concluídas
+HOJE/ontem/num dia" → esta (diária). "em curso/activas/a ser feitas" →
+`producao_ofs_em_curso`. "fechadas/produzidas NO MÊS" → `producao_lead_time_of`
+(mensal). NUNCA somar com `producao_ofs_em_curso` (conceitos opostos).
+
 ### Cube: `producao_pecas_laminadas`
 Contagem mensal de fases de laminagem TERMINADAS (`OFFP_DATAFIM` não-NULL,
 `FP_NOME ILIKE '%lamin%'`). Q.99. Plano B — `vPecasLaminadas` não está
@@ -926,6 +954,28 @@ disciplina-centric; agrupar por disciplina, ordenar desc):
     "filters": [],
     "timeDimensions": [
       {"dimension": "logistica_ofs_expedidas.data", "dateRange": ["2024-01-01", "2024-12-31"]}
+    ],
+    "order": [],
+    "limit": null
+  }
+}
+```
+
+**Pergunta:** "Quantas OFs foram produzidas hoje?"
+**Saída** (Q.152: "produzidas/fechadas/concluídas HOJE" → cube DIÁRIO
+`producao_ofs_fechadas_dia`, NÃO `producao_ofs_em_curso`; `period_label="hoje"`
+— o código sobrepõe o `dateRange` com o dia exacto):
+```json
+{
+  "abstain": false,
+  "reason": "",
+  "period_label": "hoje",
+  "query": {
+    "measures": ["producao_ofs_fechadas_dia.total"],
+    "dimensions": [],
+    "filters": [],
+    "timeDimensions": [
+      {"dimension": "producao_ofs_fechadas_dia.data", "dateRange": ["{TODAY}", "{TODAY}"]}
     ],
     "order": [],
     "limit": null

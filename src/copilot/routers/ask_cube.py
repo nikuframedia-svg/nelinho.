@@ -242,6 +242,7 @@ class _ChartSpec:
 # Cards: indicadores reais de operações com dados do NELO (OFs em curso, taxa de
 # defeitos, faturação, consumo, backlog, lead time, expedições).
 _CARD_SPECS: tuple[_CardSpec, ...] = (
+    _CardSpec("ofs_produzidas_hoje", "OFs produzidas hoje", "", "producao_ofs_fechadas_dia.total", "today"),
     _CardSpec("ofs_em_curso", "OFs em curso", "", "producao_ofs_em_curso.total", "none"),
     _CardSpec("taxa_defeitos", "Taxa de defeitos", "%", "qualidade.taxa_defeitos", "none"),
     _CardSpec("facturacao_mes", "Faturação (mês)", "€", "comercial_facturacao.total", "month"),
@@ -318,6 +319,11 @@ async def _run_card(cube: CubeClient, spec: _CardSpec, today: date) -> Dashboard
         start, end = _current_month_range(today)
         dim = f"{spec.measure.split('.', 1)[0]}.data"
         payload["timeDimensions"] = [{"dimension": dim, "dateRange": [start, end]}]
+    elif spec.period == "today":
+        dim = f"{spec.measure.split('.', 1)[0]}.data"
+        payload["timeDimensions"] = [
+            {"dimension": dim, "dateRange": [today.isoformat(), today.isoformat()]}
+        ]
     try:
         result = await cube.load(payload)
         if not result.data:
