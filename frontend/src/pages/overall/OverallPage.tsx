@@ -15,8 +15,8 @@ import { addDays, startOfDay, format } from 'date-fns';
 import { pt } from 'date-fns/locale';
 import { Calendar, AlertTriangle } from 'lucide-react';
 import { planKeys } from '../../lib/api/keys';
-import { cpoCommitsApi, planOperationsApi } from '../../lib/api';
-import type { CpoCommit } from '../../lib/api';
+import { cpoCommitsApi, planOperationsApi, timelineActualsApi } from '../../lib/api';
+import type { CpoCommit, TimelineActualItem } from '../../lib/api';
 import { PageHeader, DarkCard, DarkButton, EmptyState } from '../../components/dark';
 import { useToastContext } from '../../components/ToastProvider';
 import { PorBarcoView } from '../../components/overall/views/PorBarcoView';
@@ -108,6 +108,18 @@ export default function OverallPage(): ReactNode {
     refetchOnWindowFocus: false,
   });
 
+  // ── Q.141.H — actuals (o que ACONTECEU) no intervalo (passado real) ─────────
+  const actualsFrom = format(windowStart, 'yyyy-MM-dd');
+  const actualsTo = format(windowEnd, 'yyyy-MM-dd');
+  const { data: actualsData } = useQuery({
+    queryKey: planKeys.actuals(actualsFrom, actualsTo),
+    queryFn: () => timelineActualsApi.list({ from: actualsFrom, to: actualsTo }),
+    // Só vale a pena quando a janela inclui passado/hoje.
+    enabled: windowStart <= today,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+
   // ── Mutation Q.115.C ───────────────────────────────────────────────────────
   const [localOverrides, setLocalOverrides] = useState<
     Map<string, { phase_id: string; start: string }>
@@ -131,38 +143,66 @@ export default function OverallPage(): ReactNode {
     },
   });
 
-  // ── Operações com overrides locais ─────────────────────────────────────────
+  // ── Operações = plano (futuro) + actuals (passado real), Q.141.H ────────────
   const operations: ScheduledOp[] = useMemo(() => {
-    if (!commitDetail?.operations) return [];
-    return commitDetail.operations.map((op: Record<string, unknown>) => {
-      const override = localOverrides.get(String(op.id ?? op.operation_id ?? ''));
-      return {
-        id: String(op.id ?? op.operation_id ?? ''),
-        phase_id: override?.phase_id ?? String(op.phase_id ?? op.phase_name ?? 'UNKNOWN'),
-        phase_name: String(op.phase_name ?? op.phase_id ?? 'UNKNOWN'),
-        order_id: op.order_id ? String(op.order_id) : undefined,
-        product_id: op.product_id ? String(op.product_id) : undefined,
-        // Q.135.F4 — as operações do CPO trazem os operadores em `workers: [code,…]`,
-        // não em `operator_id`. Sem este fallback a vista "Por pessoa" mostrava
-        // sempre "sem-operador". Usa o 1.º worker como lane e junta os pares no nome.
-        operator_id: op.operator_id
-          ? String(op.operator_id)
-          : Array.isArray(op.workers) && op.workers.length > 0
-            ? String((op.workers as unknown[])[0])
-            : undefined,
-        operator_name: op.operator_name
-          ? String(op.operator_name)
-          : Array.isArray(op.workers) && op.workers.length > 0
-            ? (op.workers as unknown[]).map((w) => String(w)).join(' + ')
-            : undefined,
-        cliente: op.client_name ? String(op.client_name) : undefined,
-        start: override?.start ?? (op.start as string | undefined),
-        end: op.end as string | undefined,
-        duration_min: op.duration_min as number | undefined,
-        status: op.status as string | undefined,
-      } satisfies ScheduledOp;
-    });
-  }, [commitDetail, localOverrides]);
+    // Plano CPO (futuro) — tag source 'plan'.
+    const planOps: ScheduledOp[] = (commitDetail?.operations ?? []).map(
+      (op: Record<string, unknown>) => {
+        const override = localOverrides.get(String(op.id ?? op.operation_id ?? ''));
+        return {
+          id: String(op.id ?? op.operation_id ?? ''),
+          phase_id: override?.phase_id ?? String(op.phase_id ?? op.phase_name ?? 'UNKNOWN'),
+          phase_name: String(op.phase_name ?? op.phase_id ?? 'UNKNOWN'),
+          order_id: op.order_id ? String(op.order_id) : undefined,
+          product_id: op.product_id ? String(op.product_id) : undefined,
+          // Q.135.F4 — operadores vêm em `workers: [code,…]`, não `operator_id`.
+          operator_id: op.operator_id
+            ? String(op.operator_id)
+            : Array.isArray(op.workers) && op.workers.length > 0
+              ? String((op.workers as unknown[])[0])
+              : undefined,
+          operator_name: op.operator_name
+            ? String(op.operator_name)
+            : Array.isArray(op.workers) && op.workers.length > 0
+              ? (op.workers as unknown[]).map((w) => String(w)).join(' + ')
+              : undefined,
+          cliente: op.client_name ? String(op.client_name) : undefined,
+          start: override?.start ?? (op.start as string | undefined),
+          end: op.end as string | undefined,
+          duration_min: op.duration_min as number | undefined,
+          status: op.status as string | undefined,
+          source: 'plan',
+        } satisfies ScheduledOp;
+      },
+    );
+
+    // Actuals (passado real, of_fp) — tag source 'actual'.
+    const actualOps: ScheduledOp[] = (actualsData?.items ?? []).map(
+      (it: TimelineActualItem) => ({
+        id: String(it.id ?? `act-${it.of_id}-${it.phase_id}-${it.start}`),
+        phase_id: String(it.phase_id ?? 'UNKNOWN'),
+        phase_name: String(it.phase_nome ?? it.phase_id ?? 'UNKNOWN'),
+        order_id: it.of_id ? String(it.of_id) : undefined,
+        operator_id: it.worker_id ?? undefined,
+        operator_name: it.worker_nome ?? undefined,
+        cliente: it.barco_nome ?? undefined,
+        start: it.start,
+        end: it.end ?? undefined,
+        duration_min: it.duration_min ?? undefined,
+        status: 'realizado',
+        source: 'actual',
+      } satisfies ScheduledOp),
+    );
+
+    // Dedupe: uma fase já REALIZADA (actual) não volta a aparecer como plano.
+    const doneKeys = new Set(
+      actualOps.map((o) => `${o.order_id ?? ''}__${o.phase_id}`),
+    );
+    const planFiltered = planOps.filter(
+      (o) => !doneKeys.has(`${o.order_id ?? ''}__${o.phase_id}`),
+    );
+    return [...actualOps, ...planFiltered];
+  }, [commitDetail, localOverrides, actualsData]);
 
   // ── Handler drag-drop central ──────────────────────────────────────────────
   const handleDrop = useCallback(
@@ -364,6 +404,23 @@ export default function OverallPage(): ReactNode {
                     Plano degradado
                   </span>
                 )}
+                {/* Q.141.H — legenda Realizado (sólido) vs Planeado (tracejado) */}
+                <span className="flex items-center gap-2 text-[10px]" style={{ color: 'var(--fg-3)' }}>
+                  <span className="inline-flex items-center gap-1">
+                    <span
+                      className="inline-block w-3 h-2 rounded-sm"
+                      style={{ background: 'var(--green-bg)', border: '1px solid var(--green-bd)' }}
+                    />
+                    Realizado
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <span
+                      className="inline-block w-3 h-2 rounded-sm"
+                      style={{ background: 'var(--gray-bg)', border: '1px dashed var(--gray-bd)' }}
+                    />
+                    Planeado
+                  </span>
+                </span>
                 {selection && (
                   <button
                     onClick={clearSelection}
