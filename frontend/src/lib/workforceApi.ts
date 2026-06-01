@@ -25,6 +25,64 @@ import { apiFetch } from './api';
 // anterior não enviava header `X-Tenant-Id` nenhum, pelo que estes endpoints
 // `/v1/workforce/*` falhavam o `require_tenant_header` do backend.
 
+// ── Q.140 — Níveis por sector ───────────────────────────────────────────────
+
+export interface SectorLevelScale {
+  min: number;
+  max: number;
+  best: number;
+  step: number;
+  convention: string;
+}
+
+export interface SectorList {
+  sectors: string[];
+  level_scale: SectorLevelScale;
+}
+
+export interface SectorRankingRow {
+  rank: number;
+  employee_id: string;
+  employee_name: string | null;
+  employee_code: string;
+  effective_level: number | null;
+  derived_level: number | null;
+  erp_level: number | null;
+  override_level: number | null;
+  source: string;
+  ops_total: number;
+  defects: number;
+  recency_days: number | null;
+}
+
+export interface SectorRanking {
+  area_group: string;
+  level_scale: SectorLevelScale;
+  ranking: SectorRankingRow[];
+  total: number;
+}
+
+export interface SectorLevel {
+  area_group: string;
+  apt: boolean;
+  derived_level: number | null;
+  erp_level: number | null;
+  override_level: number | null;
+  effective_level: number | null;
+  source: string;
+  ops_total: number;
+  defects: number;
+  recency_days: number | null;
+}
+
+export interface EmployeeSectorLevels {
+  employee_id: string;
+  employee_name: string | null;
+  employee_code: string | null;
+  level_scale: SectorLevelScale;
+  sectors: SectorLevel[];
+}
+
 /**
  * Workforce API client
  */
@@ -95,6 +153,42 @@ export const workforceApi = {
       method: 'POST',
       body: JSON.stringify(scenarioIds),
     });
+  },
+
+  // ── Q.140 — Níveis por sector + ranking por sector ──────────────────────
+
+  /** Lista os 7 grupos de área (sectores) + a escala (3=melhor). */
+  async listSectors(): Promise<SectorList> {
+    return apiFetch<SectorList>('/v1/workforce/sectors');
+  },
+
+  /** Ranking inverso de um sector: colaboradores aptos ordenados por preferência. */
+  async getSectorRanking(areaGroup: string, limit = 100): Promise<SectorRanking> {
+    const qs = `area_group=${encodeURIComponent(areaGroup)}&limit=${limit}`;
+    return apiFetch<SectorRanking>(`/v1/workforce/sectors/ranking?${qs}`);
+  },
+
+  /** Os 7 sectores de UM colaborador, cada um com nível efectivo independente. */
+  async getEmployeeSectorLevels(employeeId: string): Promise<EmployeeSectorLevels> {
+    return apiFetch<EmployeeSectorLevels>(
+      `/v1/workforce/employees/${encodeURIComponent(employeeId)}/sector-levels`,
+    );
+  },
+
+  /** Atribui manualmente o nível de um colaborador num sector (override). */
+  async setSectorLevel(
+    employeeId: string,
+    areaGroup: string,
+    nivel: number,
+    reason?: string,
+  ): Promise<{ employee_id: string; area_group: string; nivel: number }> {
+    return apiFetch(
+      `/v1/workforce/employees/${encodeURIComponent(employeeId)}/sector-level`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ area_group: areaGroup, nivel, reason }),
+      },
+    );
   },
 };
 
