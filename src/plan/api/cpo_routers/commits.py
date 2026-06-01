@@ -11,6 +11,7 @@ Endpoints:
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
@@ -18,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.governance.audit_service import audit_change
 from src.plan.api._cpo_common import (
     _build_narrative,
     _format_delta_pct,
@@ -26,6 +28,8 @@ from src.plan.api._cpo_common import (
     _tenant_id,
 )
 from src.plan.cpo.commits import CommitsService
+from src.shared.auth.headers import get_current_user_or_dev_header
+from src.shared.auth.jwt_handler import UserContext
 from src.shared.database import get_session
 
 router = APIRouter()
@@ -451,4 +455,82 @@ async def decide_on_commit(
         commit_sha256=updated.commit_sha256,
         rejected_alternatives=list(updated.rejected_alternatives or []),
         user_preference_signal=dict(updated.user_preference_signal or {}),
+    )
+
+
+# =============================================================================
+# PUT /commits/{sha}/approve  (Q.153.B1 — DRAFT → LIVE por commit_sha)
+# =============================================================================
+
+class CommitApproveResponse(BaseModel):
+    """Resposta de `PUT /v1/plan/cpo/commits/{sha}/approve`."""
+
+    commit_sha256: str
+    previous_status: str
+    new_status: str
+    approved_at: str
+
+
+@router.put("/commits/{sha}/approve", response_model=CommitApproveResponse)
+async def approve_commit(
+    sha: str,
+    tenant_id: UUID = Depends(_tenant_id),
+    db: AsyncSession = Depends(get_session),
+    approver: UserContext = Depends(get_current_user_or_dev_header),
+):
+    """Q.153.B1 — promove um commit DRAFT→LIVE directamente por commit_sha.
+
+    O robô (Q.137) cria DRAFTs em background cujo job Arq expira em 1h
+    (`keep_result`), tornando-os inaprováveis via
+    `/schedule/job/{id}/approve` (que precisa do job vivo no Redis). Este
+    endpoint promove por `commit_sha` — é o caminho que o botão "Aprovar
+    plano" do /overall usa (Q.153.B2). Um clique humano fecha o ciclo
+    automático→DRAFT→LIVE.
+
+    Invariantes (iguais ao approve-by-job, Q.132.G):
+      * SoD: o aprovador não pode ser o proponente (`commit.author`);
+        commits "system" (auto/robô) são aprováveis por qualquer aprovador
+        autorizado.
+      * Audit (axioma 7): a transição DRAFT→LIVE escreve `audit_log` na
+        MESMA transacção que o `commit.status = LIVE`.
+    """
+    service = CommitsService(db, tenant_id)
+    commit = await _resolve_commit_or_404(service, sha)
+
+    prev_status = str(getattr(commit, "status", "DRAFT") or "DRAFT")
+    if prev_status == "LIVE":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"Commit {sha[:8]} já está LIVE",
+        )
+
+    proposer = str(getattr(commit, "author", "") or "")
+    if proposer and proposer != "system" and proposer == str(approver.user_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Segregação de funções: não pode aprovar o plano que propôs. "
+                "Outro utilizador autorizado tem de o rever."
+            ),
+        )
+
+    commit.status = "LIVE"
+    await audit_change(
+        db,
+        tenant_id=tenant_id,
+        entity_type="schedule_commit",
+        entity_id=commit.id,
+        action="UPDATE",
+        old_values={"status": prev_status},
+        new_values={"status": "LIVE"},
+        actor_id=approver.user_id,
+        actor_role=str(getattr(approver, "role", "") or ""),
+        reason=f"approve CPO schedule {sha[:8]} DRAFT->LIVE (commit_sha)",
+    )
+    await db.commit()
+
+    return CommitApproveResponse(
+        commit_sha256=commit.commit_sha256,
+        previous_status=prev_status,
+        new_status="LIVE",
+        approved_at=datetime.utcnow().isoformat() + "Z",
     )
