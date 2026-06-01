@@ -236,6 +236,17 @@ async def list_decisions(
             "action_type": d.action_type,
             "target": d.target,
             "status": d.status,
+            # Q.153 (auditoria) — a lista trazia só campos escalares, mas os
+            # cartões de decisão (confiança, porquê, consequências, "Ver plano",
+            # €) e o what-if das Simulações leem TODOS de `sandbox_result` →
+            # ficavam vazios porque nenhuma vista busca o detalhe. Devolvemos o
+            # sandbox_result SEM o array pesado `operations` (que o
+            # real_cpo_propose_runner enche com o plano inteiro), para não inflar
+            # o payload de até 50 decisões. As entidades clicáveis (que dependem
+            # de `operations`) ficam para o detalhe GET /v1/decisions/{id}.
+            "sandbox_result": {
+                k: v for k, v in (d.sandbox_result or {}).items() if k != "operations"
+            },
             "proposed_by": str(d.proposed_by),
             "proposed_at": d.proposed_at.isoformat(),
             "executed_at": d.executed_at.isoformat() if d.executed_at else None,
@@ -386,6 +397,34 @@ async def approve_decision(
     await session.flush()
 
     await session.commit()
+
+    # Q.153 — publicar no canal realtime (SSE) para a página /decisoes e o feed
+    # de atividade refletirem a decisão sem esperar o poll de 5s. O ledger shared
+    # não publicava DECISION_APPROVED/REJECTED (só execute/rollback o faziam), por
+    # isso os listeners `useRealtimeType` ficavam mudos. `event_type` casa com o
+    # nome do atributo em Topics. Best-effort: a decisão já está committada.
+    event_type = "DECISION_REJECTED" if is_reject else "DECISION_APPROVED"
+    try:
+        from src.shared.kafka_client import EventBase, Topics, publish_event
+
+        await publish_event(
+            getattr(Topics, event_type),
+            EventBase(
+                event_type=event_type,
+                tenant_id=tenant_id,
+                source_module="shared.api.decisions",
+                payload={
+                    "decision_id": str(decision_id),
+                    "approver_id": str(user_id),
+                    "status": decision_status,
+                },
+            ),
+        )
+    except Exception as exc:  # pragma: no cover - best-effort
+        logger.warning(
+            "%s publish failed for %s: %s — decisão na mesma registada",
+            event_type, decision_id, exc,
+        )
 
     logger.info(
         "Decision %s: id=%s, approver=%s",

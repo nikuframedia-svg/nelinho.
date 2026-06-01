@@ -53,6 +53,7 @@ _TYPE_MAP: Dict[str, str] = {
     "SCENARIO_SIMULATED": "scenario",
     "DECISION_PROPOSED": "user",
     "DECISION_APPROVED": "user",
+    "DECISION_REJECTED": "user",
     "DECISION_EXECUTED": "system",
     "DECISION_ROLLED_BACK": "system",
     "EMPLOYEE_ALLOCATED": "user",
@@ -63,6 +64,7 @@ _STATUS_MAP: Dict[str, str] = {
     "INGESTION_COMPLETED": "success",
     "INGESTION_FAILED": "error",
     "DECISION_APPROVED": "success",
+    "DECISION_REJECTED": "warning",
     "DECISION_EXECUTED": "success",
     "DECISION_ROLLED_BACK": "warning",
     "MOLD_MAINT_DUE": "warning",
@@ -90,6 +92,7 @@ def _title_for(event_type: str, payload: Dict[str, Any]) -> str:
         "SCENARIO_SIMULATED": "Cenário simulado",
         "DECISION_PROPOSED": "Decisão proposta",
         "DECISION_APPROVED": "Decisão aprovada",
+        "DECISION_REJECTED": "Decisão rejeitada",
         "DECISION_EXECUTED": "Decisão executada",
         "DECISION_ROLLED_BACK": "Decisão revertida",
         "EMPLOYEE_ALLOCATED": "Trabalhador alocado",
@@ -135,6 +138,7 @@ def _link_for(event_type: str, payload: Dict[str, Any]) -> Optional[str]:
         "SCENARIO_SIMULATED": "/twin",
         "DECISION_PROPOSED": "/decisions",
         "DECISION_APPROVED": "/decisions",
+        "DECISION_REJECTED": "/decisions",
         "DECISION_EXECUTED": "/decisions",
     }
     return routes.get(event_type)

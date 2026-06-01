@@ -72,6 +72,10 @@ class Topics:
     # GOVERNANCE events (Sprint A WG1)
     DECISION_PROPOSED = "prodplan.governance.decision_proposed"
     DECISION_APPROVED = "prodplan.governance.decision_approved"
+    # Q.153 — a rejeição passa a ser um evento de 1ª classe (antes só havia
+    # APPROVED). O frontend já escutava `DECISION_REJECTED`
+    # (DecisoesPage useRealtimeType) mas nada o publicava — listener morto.
+    DECISION_REJECTED = "prodplan.governance.decision_rejected"
     DECISION_EXECUTED = "prodplan.governance.decision_executed"
     DECISION_ROLLED_BACK = "prodplan.governance.decision_rolled_back"
 

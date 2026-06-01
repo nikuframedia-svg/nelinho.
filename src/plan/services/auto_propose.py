@@ -221,6 +221,36 @@ class AutoProposeService:
             )
             await session.commit()
 
+        # Q.153 — publicar DECISION_PROPOSED no canal realtime (SSE) para a
+        # página /decisoes refletir a nova proposta sem esperar o poll de 5s.
+        # Antes, o ledger shared nunca publicava este evento (só execute/rollback
+        # o faziam), por isso os listeners `useRealtimeType('DECISION_PROPOSED')`
+        # nunca disparavam. Best-effort: a decisão e o audit já estão committados;
+        # uma falha de publish não os desfaz.
+        try:
+            from src.shared.kafka_client import EventBase, Topics, publish_event
+
+            await publish_event(
+                Topics.DECISION_PROPOSED,
+                EventBase(
+                    event_type="DECISION_PROPOSED",
+                    tenant_id=tenant_id,
+                    source_module="plan.services.auto_propose",
+                    payload={
+                        "decision_id": str(decision.id),
+                        "action_type": decision.action_type,
+                        "title": decision.title,
+                        "source": "auto_propose",
+                        "trigger_topic": topic,
+                    },
+                ),
+            )
+        except Exception as exc:  # pragma: no cover - best-effort
+            logger.warning(
+                "DECISION_PROPOSED publish failed for %s: %s — decisão na mesma criada",
+                decision.id, exc,
+            )
+
         return decision
 
 

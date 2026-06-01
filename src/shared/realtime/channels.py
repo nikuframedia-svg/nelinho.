@@ -41,6 +41,7 @@ CHANNELS: Dict[str, FrozenSet[str]] = {
     "governance": frozenset({
         Topics.DECISION_PROPOSED,
         Topics.DECISION_APPROVED,
+        Topics.DECISION_REJECTED,
         Topics.DECISION_EXECUTED,
         Topics.DECISION_ROLLED_BACK,
     }),
@@ -54,6 +55,7 @@ CHANNELS: Dict[str, FrozenSet[str]] = {
     "timeline": frozenset({
         Topics.DECISION_PROPOSED,
         Topics.DECISION_APPROVED,
+        Topics.DECISION_REJECTED,
         Topics.DECISION_EXECUTED,
         Topics.DECISION_ROLLED_BACK,
         Topics.SCHEDULE_CREATED,

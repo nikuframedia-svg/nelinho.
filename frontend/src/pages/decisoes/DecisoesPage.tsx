@@ -18,7 +18,7 @@ import { useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Inbox, RefreshCw, FlaskConical, History } from 'lucide-react';
-import { decisionKeys } from '../../lib/api/keys';
+import { decisionKeys, planKeys } from '../../lib/api/keys';
 import { decisionsApi, type DecisionRun } from '../../lib/api';
 import { PageHeader, Tabs, DarkButton, EmptyState } from '../../components/dark';
 import { useTabRouting } from '../../hooks/useTabRouting';
@@ -63,6 +63,11 @@ function DecidirTab() {
 
   const invalidate = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: decisionKeys.lists() });
+    // Q.153 — invalidação cruzada: as decisões shared são quase todas
+    // AUTO_PROPOSE_SCHEDULE (replaneamentos), por isso decidir uma deve
+    // refrescar o /overall. Antes só a própria lista se invalidava → o
+    // planeamento ficava stale depois de aprovar/rejeitar.
+    queryClient.invalidateQueries({ queryKey: planKeys.all });
   }, [queryClient]);
 
   // Realtime SSE (canal governance): push em vez de esperar o polling de 5s.

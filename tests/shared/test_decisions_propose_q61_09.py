@@ -391,3 +391,162 @@ def test_approve_rejects_when_approver_is_proposer():
         json={"comment": "self"},
     )
     assert resp.status_code == 403
+
+
+# ─── Q.153 — list devolve sandbox_result aparado (sem `operations`) ──────
+
+
+class _ListSession:
+    """Stand-in para o list path: 1º execute = count, 2º execute = scalars().
+
+    O endpoint faz `await session.execute(count_query)` e depois
+    `await session.execute(query)` — devolvemos objectos com a forma certa
+    (`scalar()` e `scalars().all()`) sem precisar de uma BD real.
+    """
+
+    def __init__(self, decisions) -> None:
+        self._decisions = decisions
+        self._calls = 0
+
+    async def execute(self, _stmt):
+        self._calls += 1
+        decisions = self._decisions
+        if self._calls == 1:
+            class _Count:
+                def scalar(self_inner):
+                    return len(decisions)
+
+            return _Count()
+
+        class _Scalars:
+            def all(self_inner):
+                return list(decisions)
+
+        class _Result:
+            def scalars(self_inner):
+                return _Scalars()
+
+        return _Result()
+
+
+def test_list_returns_trimmed_sandbox_result():
+    """Q.153 — a lista devolve `sandbox_result` (os cartões e o what-if das
+    Simulações leem dele), mas SEM o array pesado `operations` (o plano
+    inteiro), para nao inflar o payload de ate 50 decisoes."""
+    from datetime import datetime, timezone
+
+    decision = SimpleNamespace(
+        id=uuid4(),
+        tenant_id=TENANT,
+        title="Replaneamento automatico",
+        action_type="AUTO_PROPOSE_SCHEDULE",
+        target="OF-001",
+        status=DecisionStatus.PROPOSED.value,
+        sandbox_result={
+            "commit_sha": "abc123",
+            "kpis": {"makespan_hours": 12.5, "num_late_orders": 2},
+            "if_accept": ["Novo plano: makespan 12.5 h"],
+            "if_reject": ["Mantem o plano atual"],
+            "why": "Replaneamento proposto pelo CPO",
+            "quality_risk": "medio",
+            "cost_delta": 1500.0,
+            "operations": [{"order_id": 1, "phase_id": "p1"}] * 500,  # pesado
+        },
+        before_state={},
+        after_state={"commit_sha": "abc123"},
+        proposed_by=PROPOSER,
+        proposed_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+        executed_at=None,
+        rolled_back_at=None,
+    )
+    session = _ListSession([decision])
+    client = TestClient(_approve_app(session))  # mesma app helper serve
+
+    resp = client.get(
+        "/v1/shared/decisions?status_filter=PROPOSED",
+        headers={"x-tenant-id": str(TENANT)},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["total"] == 1
+    (row,) = body["decisions"]
+
+    sb = row["sandbox_result"]
+    # Campos escalares do cartao presentes …
+    assert sb["commit_sha"] == "abc123"
+    assert sb["kpis"]["makespan_hours"] == 12.5
+    assert sb["if_accept"] and sb["if_reject"]
+    assert sb["why"] and sb["quality_risk"] == "medio"
+    assert sb["cost_delta"] == 1500.0
+    # … mas o array pesado `operations` e aparado.
+    assert "operations" not in sb
+
+
+# ─── Q.153 — approve/reject publicam evento realtime (SSE) ────────────────
+
+
+def _decision_proposed() -> SimpleNamespace:
+    return SimpleNamespace(
+        id=uuid4(),
+        tenant_id=TENANT,
+        action_type="GENERIC_ACTION",
+        status=DecisionStatus.PROPOSED.value,
+        proposed_by=PROPOSER,
+    )
+
+
+def test_approve_publishes_decision_approved_event(monkeypatch):
+    """Q.153 — aprovar publica DECISION_APPROVED (antes o ledger shared não
+    publicava nada → os listeners SSE da página /decisoes ficavam mudos)."""
+    import src.shared.kafka_client as kc
+
+    published: list[tuple[str, str]] = []
+
+    async def _fake_publish(topic, event):
+        published.append((topic, event.event_type))
+        return True
+
+    monkeypatch.setattr(kc, "publish_event", _fake_publish)
+
+    session = _ApproveSession(_decision_proposed(), existing_approval=None)
+    decision = session.decision
+    client = TestClient(_approve_app(session))
+
+    resp = client.post(
+        f"/v1/shared/decisions/{decision.id}/approve",
+        headers={"x-tenant-id": str(TENANT), "x-user-id": str(APPROVER)},
+        json={"status": "APPROVED"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert published, "approve não publicou nenhum evento realtime"
+    assert published[0][1] == "DECISION_APPROVED"
+    assert published[0][0] == kc.Topics.DECISION_APPROVED
+
+
+def test_reject_publishes_decision_rejected_event(monkeypatch):
+    """Q.153 — rejeitar publica DECISION_REJECTED (tópico novo; o FE já o
+    escutava mas nada o publicava)."""
+    import src.shared.kafka_client as kc
+
+    published: list[tuple[str, str]] = []
+
+    async def _fake_publish(topic, event):
+        published.append((topic, event.event_type))
+        return True
+
+    monkeypatch.setattr(kc, "publish_event", _fake_publish)
+
+    session = _ApproveSession(_decision_proposed(), existing_approval=None)
+    decision = session.decision
+    client = TestClient(_approve_app(session))
+
+    resp = client.post(
+        f"/v1/shared/decisions/{decision.id}/approve",
+        headers={"x-tenant-id": str(TENANT), "x-user-id": str(APPROVER)},
+        json={"status": "REJECTED"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert published, "reject não publicou nenhum evento realtime"
+    assert published[0][1] == "DECISION_REJECTED"
+    assert published[0][0] == kc.Topics.DECISION_REJECTED
+    assert decision.status == DecisionStatus.REJECTED.value
