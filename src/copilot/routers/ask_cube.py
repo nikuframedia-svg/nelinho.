@@ -29,6 +29,7 @@ from src.copilot.cube.client import CubeClient
 from src.copilot.routers._common import dev_only
 from src.copilot.cube.interpret import interpret
 from src.copilot.cube.material_retrieval import MaterialIndex
+from src.copilot.cube.measure_retrieval import MeasureIndex
 from src.copilot.cube.narrate import narrate_with_guard
 from src.copilot.ollama_client import OllamaClient
 from src.shared.auth.jwt_handler import UserContext, get_current_user
@@ -73,6 +74,7 @@ async def _process(
     cube: CubeClient | None = None,
     ollama: OllamaClient | None = None,
     material_index: MaterialIndex | None = None,
+    measure_index: MeasureIndex | None = None,
 ) -> AskCubeResponse:
     # Cliente novo por request: evita partilhar pool httpx entre event loops
     # (importante para testes pytest-asyncio, que criam loop por teste).
@@ -94,6 +96,7 @@ async def _process(
             catalog=catalog,
             material_index=material_index,
             ollama=ollama,
+            measure_index=measure_index,
         )
         if interp.abstain or interp.query is None:
             return AskCubeResponse(

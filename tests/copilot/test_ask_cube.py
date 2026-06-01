@@ -539,11 +539,23 @@ async def test_ambiguous_when_data_exceeds_threshold():
         ]
     )
 
+    # StubMeasureIndex: score > MEASURE_RETRIEVAL_THRESHOLD (0.02) para que
+    # o interpret não faça abstain antes de chegar ao LLM. O FakeOllama tem
+    # exactamente 1 chat_response — se o StubMeasureIndex devolver score
+    # fraco, o interpret abstém antes de chamar o LLM e o teste falha.
+    class StubMeasureIndex:
+        def load(self) -> None:
+            pass
+
+        async def top_k_hybrid(self, q, ollama, k=5):
+            return [("consumo_material.consumo", 0.9)]
+
     resp = await _process(
         "Como está o consumo?",
         cube=FakeCube(),  # type: ignore[arg-type]
         ollama=fake_llm,  # type: ignore[arg-type]
         material_index=StubIndex(),  # type: ignore[arg-type]
+        measure_index=StubMeasureIndex(),  # type: ignore[arg-type]
     )
 
     assert resp.status == "ambiguous", f"got {resp.status} (warnings={resp.warnings})"

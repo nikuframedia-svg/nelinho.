@@ -260,7 +260,8 @@ MEASURE_REGISTRY: dict[str, MeasureSpec] = {
             "consumo", "consumimos", "consumido", "gasto", "gastámos",
             "gasta", "usado", "usámos", "usaram", "matéria-prima",
             "material", "resina", "gelcoat", "acetona", "fibra", "cola",
-            "kg", "quantidade", "saiu",
+            "kg", "quantidade", "saiu", "saiu para producao",
+            "saiu para produção", "saída para produção", "dispensado",
         ),
     ),
     "consumo_material.custo": MeasureSpec(

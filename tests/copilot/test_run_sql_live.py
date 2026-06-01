@@ -31,7 +31,15 @@ from src.copilot.tools.schema_introspection import (
 from src.copilot.tools.sql_runner import SqlRunnerError, run_sql
 from src.shared.config import get_settings
 
-pytestmark = pytest.mark.integration
+# loop_scope="module" — todos os async tests neste ficheiro partilham o
+# mesmo event loop. Necessário porque test_real_statement_timeout usa
+# pg_sleep(10) cancelado via statement_timeout; o asyncpg emite cancel
+# tasks pendentes que ficam presos se o loop fechar entre testes
+# (Windows ProactorEventLoop + asyncpg _request_cancel → RuntimeError).
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.asyncio(loop_scope="module"),
+]
 
 
 async def _db_available() -> bool:
@@ -48,7 +56,7 @@ async def _db_available() -> bool:
     return True
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture(autouse=True, scope="module")
 async def skip_if_no_db():
     """Marca skip se a BD dev não está de pé. Mensagem clara — sem
     crashes confusos quando o programador esqueceu o Postgres."""
@@ -134,9 +142,17 @@ async def test_real_list_database_tables_returns_schemas():
 
 async def test_real_describe_table_returns_columns():
     """`describe_table` devolve colunas reais — testamos contra
-    `information_schema.columns` que sabemos existir."""
-    info = await describe_table("information_schema", "columns")
+    `plan.production_orders` (tabela real, sempre presente em dev).
+
+    Nota: `information_schema.columns` é uma VIEW (relkind='v'), não uma
+    tabela base — o `describe_table` só cobre relkind='r'. Usamos uma
+    tabela do nosso schema que sabemos existir após bootstrap.
+    """
+    info = await describe_table("plan", "production_orders")
     assert isinstance(info, dict)
+    assert info.get("exists") is not False, (
+        "plan.production_orders deve existir (bootstrap correu?)"
+    )
     # A implementação pode usar `columns` ou `cols` — aceitamos ambos.
     cols_key = next(
         (k for k in ("columns", "cols", "fields") if k in info), None,

@@ -23,6 +23,7 @@ SELECT do copiloto NÃO é uma mudança de estado, é telemetria de query.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 import time
@@ -118,6 +119,12 @@ async def run_sql(query: str, max_rows: int | None = None) -> dict[str, Any]:
         )
         raise SqlRunnerError(f"SQL execution failed: {exc}") from exc
     finally:
+        # Dar um ciclo do event loop para o asyncpg processar quaisquer
+        # cancel callbacks pendentes (ex: após statement_timeout) antes
+        # de fechar o pool. Sem isto, no Windows/ProactorEventLoop os
+        # cancel tasks ficam pendentes no loop seguinte → RuntimeError
+        # "Event loop is closed" nos testes de integração subsequentes.
+        await asyncio.sleep(0)
         await engine.dispose()
 
     # Telemetria estruturada — trace_id é injectado pelo
