@@ -572,7 +572,11 @@ export default function OverallPage(): ReactNode {
                   selection={selection}
                   onClearSelection={clearSelection}
                 >
-                  <PorExpedicaoView startDate={windowStart} endDate={windowEnd} />
+                  <PorExpedicaoView
+                    startDate={windowStart}
+                    endDate={windowEnd}
+                    expeditions={actualsData?.expeditions ?? []}
+                  />
                 </ViewPanel>
               </motion.div>
             </div>
