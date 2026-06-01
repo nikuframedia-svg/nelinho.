@@ -766,6 +766,9 @@ def test_operador_happy_path_with_affinities():
     assert body["top_phases"][1]["phase_id"] == "cura"
     assert body["top_phases"][1]["phase_name"] == "Cura"
     assert body["total_phases_with_data"] == 2
+    # Q.116.F — sem plano enfileirado / sem factory_raw → empty honesto.
+    assert body["today_tasks"] == []
+    assert body["phase_history"] == []
 
 
 def test_operador_404_when_employee_missing():
@@ -826,6 +829,109 @@ def test_operador_no_affinities_yet():
     assert body["active"] is True
     assert body["top_phases"] == []
     assert body["total_phases_with_data"] == 0
+
+
+@pytest.mark.asyncio
+async def test_build_operator_today_tasks_filters_by_worker_and_today():
+    """Q.116.F — só operações de HOJE com o employee_code em `workers`."""
+    from src.plan.api.entity_summary import _build_operator_today_tasks
+
+    today = datetime.now(timezone.utc).date().isoformat()
+    commit = SimpleNamespace(
+        tenant_id=TEST_TENANT_ID,
+        operations=[
+            # match — hoje + worker OP-7.
+            {
+                "operation_id": "1001::laminagem",
+                "order_id": "1001",
+                "phase_id": "laminagem",
+                "workers": ["OP-7", "OP-2"],
+                "start_time": f"{today}T08:00:00",
+                "end_time": f"{today}T10:00:00",
+            },
+            # ignorada — outro operador.
+            {
+                "operation_id": "1002::cura",
+                "order_id": "1002",
+                "phase_id": "cura",
+                "workers": ["OP-9"],
+                "start_time": f"{today}T08:00:00",
+                "end_time": f"{today}T09:00:00",
+            },
+            # ignorada — não é hoje.
+            {
+                "operation_id": "1003::laminagem",
+                "order_id": "1003",
+                "phase_id": "laminagem",
+                "workers": ["OP-7"],
+                "start_time": "2020-01-01T08:00:00",
+                "end_time": "2020-01-01T10:00:00",
+            },
+        ],
+    )
+    session = FakeSession()
+    session.queue_scalar(commit)            # call 1 — último commit
+    session.queue_scalars([])               # par para call 1
+    session.queue_scalar(None)              # par para call 2
+    session.queue_scalars([("laminagem", "Laminagem")])  # call 2 — nomes de fase
+
+    tasks = await _build_operator_today_tasks(session, TEST_TENANT_ID, "OP-7")
+
+    assert len(tasks) == 1
+    assert tasks[0].operation_id == "1001::laminagem"
+    assert tasks[0].order_legacy_id == 1001
+    assert tasks[0].phase_name == "Laminagem"
+    assert tasks[0].start_time == f"{today}T08:00:00"
+
+
+@pytest.mark.asyncio
+async def test_build_operator_today_tasks_empty_without_commit():
+    """Q.116.F — sem plano (commit None) → lista vazia honesta."""
+    from src.plan.api.entity_summary import _build_operator_today_tasks
+
+    session = FakeSession()  # fila vazia → scalar None → commit None
+    assert await _build_operator_today_tasks(session, TEST_TENANT_ID, "OP-7") == []
+    assert await _build_operator_today_tasks(session, TEST_TENANT_ID, None) == []
+
+
+@pytest.mark.asyncio
+async def test_build_operator_phase_history_maps_rows():
+    """Q.116.F — mapeia linhas de factory_raw + calcula horas."""
+    from src.plan.api.entity_summary import _build_operator_phase_history
+
+    class _MappingExec:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def mappings(self):
+            return self
+
+        def all(self):
+            return self._rows
+
+    class _HistSession:
+        def __init__(self, rows):
+            self._rows = rows
+
+        async def execute(self, stmt, params=None):
+            return _MappingExec(self._rows)
+
+    rows = [
+        {
+            "of_id": "1001",
+            "phase_id": "40",
+            "phase_name": "Acabamento",
+            "started": "2026-05-01T08:00:00",
+            "finished": "2026-05-01T12:00:00",
+        },
+    ]
+    out = await _build_operator_phase_history(_HistSession(rows), "OP-7")
+    assert len(out) == 1
+    assert out[0].of_legacy_id == 1001
+    assert out[0].phase_name == "Acabamento"
+    assert out[0].hours == 4.0
+    # sem employee_code → vazio sem tocar na BD.
+    assert await _build_operator_phase_history(_HistSession(rows), None) == []
 
 
 # ─── Q.116.G — boost breakdown + in_production_boats ──────────────────────────

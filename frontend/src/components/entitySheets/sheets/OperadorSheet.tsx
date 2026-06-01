@@ -1,7 +1,8 @@
 /**
- * OperadorSheet — sheet contextual de operador (Q.116.E, read-only).
+ * OperadorSheet — sheet contextual de operador (Q.116.E/F, read-only).
  *
  * Tabs: Top fases · Atividade hoje · Histórico
+ * Q.116.F: Atividade hoje (tarefas do plano) + Histórico (fases do ERP)
  */
 
 import { useState } from 'react';
@@ -11,7 +12,13 @@ import { SheetError } from '../SheetError';
 import { Tabs } from '../../dark/Tabs';
 import { EmptyState } from '../../dark/EmptyState';
 import { entityKeys } from '../../../lib/api/keys';
-import { entityApi, type TopPhaseForOperator } from '../../../lib/api/entityApi';
+import {
+  entityApi,
+  type TopPhaseForOperator,
+  type OperatorTask,
+  type OperatorPhaseHistory,
+} from '../../../lib/api/entityApi';
+import { Clickable } from '../Clickable';
 
 export interface OperadorSheetProps {
   operatorId: string;
@@ -65,19 +72,11 @@ export default function OperadorSheet({ operatorId, onClose }: OperadorSheetProp
       )}
 
       {tab === 'atividade' && (
-        <EmptyState
-          title="Sem dados de atividade"
-          hint="Q.116.F vai mostrar tarefas do dia."
-          size="sm"
-        />
+        <TabAtividade tasks={data.today_tasks} />
       )}
 
       {tab === 'historico' && (
-        <EmptyState
-          title="Sem histórico"
-          hint="Q.116.F vai mostrar histórico de fases."
-          size="sm"
-        />
+        <TabHistorico history={data.phase_history} />
       )}
     </Sheet>
   );
@@ -123,6 +122,108 @@ function TabTopFases({ phases }: { phases: TopPhaseForOperator[] }) {
             </td>
             <td style={{ padding: '8px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: 'var(--fg-2)' }}>
               {p.sample_count}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+// ─── Tab Atividade hoje (Q.116.F) ────────────────────────────────────────────
+
+function fmtTime(iso: string | null): string {
+  if (!iso) return '—';
+  const m = iso.match(/T(\d{2}:\d{2})/);
+  return m ? m[1] : iso;
+}
+
+function TabAtividade({ tasks }: { tasks: OperatorTask[] }) {
+  if (tasks.length === 0) {
+    return (
+      <EmptyState
+        title="Sem tarefas para hoje"
+        hint="Este operador não tem operações atribuídas no plano de hoje (ou ainda não há plano)."
+        size="sm"
+      />
+    );
+  }
+  return (
+    <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+      <thead>
+        <tr style={{ borderBottom: '1px solid var(--bd-1)', color: 'var(--fg-2)' }}>
+          <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 500 }}>#</th>
+          <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 500 }}>Fase</th>
+          <th style={{ textAlign: 'right', padding: '6px 8px', fontWeight: 500 }}>Início</th>
+          <th style={{ textAlign: 'right', padding: '6px 8px', fontWeight: 500 }}>Fim</th>
+        </tr>
+      </thead>
+      <tbody>
+        {tasks.map((t) => (
+          <tr key={t.operation_id} style={{ borderBottom: '1px solid var(--bd-1)' }}>
+            <td style={{ padding: '8px 8px' }}>
+              {t.order_legacy_id != null ? (
+                <Clickable kind="encomenda" id={t.order_legacy_id}>
+                  #{t.order_legacy_id}
+                </Clickable>
+              ) : (
+                '—'
+              )}
+            </td>
+            <td style={{ padding: '8px 8px' }}>{t.phase_name}</td>
+            <td style={{ padding: '8px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+              {fmtTime(t.start_time)}
+            </td>
+            <td style={{ padding: '8px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: 'var(--fg-2)' }}>
+              {fmtTime(t.end_time)}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+// ─── Tab Histórico de fases (Q.116.F) ────────────────────────────────────────
+
+function TabHistorico({ history }: { history: OperatorPhaseHistory[] }) {
+  if (history.length === 0) {
+    return (
+      <EmptyState
+        title="Sem histórico no ERP"
+        hint="Ainda não há registo de fases trabalhadas (factory_raw.of_fp) para este operador."
+        size="sm"
+      />
+    );
+  }
+  return (
+    <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+      <thead>
+        <tr style={{ borderBottom: '1px solid var(--bd-1)', color: 'var(--fg-2)' }}>
+          <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 500 }}>#</th>
+          <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 500 }}>Fase</th>
+          <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 500 }}>Início</th>
+          <th style={{ textAlign: 'right', padding: '6px 8px', fontWeight: 500 }}>Horas</th>
+        </tr>
+      </thead>
+      <tbody>
+        {history.map((h, i) => (
+          <tr key={`${h.of_legacy_id ?? 'x'}-${h.phase_id}-${i}`} style={{ borderBottom: '1px solid var(--bd-1)' }}>
+            <td style={{ padding: '8px 8px' }}>
+              {h.of_legacy_id != null ? (
+                <Clickable kind="encomenda" id={h.of_legacy_id}>
+                  #{h.of_legacy_id}
+                </Clickable>
+              ) : (
+                '—'
+              )}
+            </td>
+            <td style={{ padding: '8px 8px' }}>{h.phase_name ?? h.phase_id}</td>
+            <td style={{ padding: '8px 8px', color: 'var(--fg-2)', fontVariantNumeric: 'tabular-nums' }}>
+              {h.started_at ? h.started_at.slice(0, 16).replace('T', ' ') : '—'}
+            </td>
+            <td style={{ padding: '8px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: 'var(--fg-2)' }}>
+              {h.hours != null ? h.hours.toFixed(1) : '—'}
             </td>
           </tr>
         ))}

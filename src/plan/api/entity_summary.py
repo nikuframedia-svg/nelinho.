@@ -22,7 +22,8 @@ Padrões:
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
+from datetime import datetime, timezone
+from typing import Any, List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -212,6 +213,27 @@ class TopPhaseForOperator(BaseModel):
     sample_count: int
 
 
+class OperatorTask(BaseModel):
+    """Q.116.F — tarefa do operador no plano de hoje (último ScheduleCommit)."""
+
+    operation_id: str
+    order_legacy_id: Optional[int]
+    phase_name: str
+    start_time: Optional[str]
+    end_time: Optional[str]
+
+
+class OperatorPhaseHistory(BaseModel):
+    """Q.116.F — fase trabalhada no histórico real (factory_raw.of_fp)."""
+
+    of_legacy_id: Optional[int]
+    phase_id: str
+    phase_name: Optional[str]
+    started_at: Optional[str]
+    finished_at: Optional[str]
+    hours: Optional[float]
+
+
 class OperadorSummary(BaseModel):
     operator_id: str
     operator_name: str
@@ -219,6 +241,9 @@ class OperadorSummary(BaseModel):
     active: bool
     top_phases: List[TopPhaseForOperator]
     total_phases_with_data: int
+    # Q.116.F — tarefas de hoje (plano) + histórico de fases (ERP).
+    today_tasks: List[OperatorTask] = Field(default_factory=list)
+    phase_history: List[OperatorPhaseHistory] = Field(default_factory=list)
 
 
 # Resolve forward-refs: ModeloSummary referencia OrderInList/PhaseDrilldown
@@ -238,6 +263,26 @@ router = APIRouter(prefix="/v1/entity", tags=["Q.116.A Entity Summary"])
 def _status_value(order: ProductionOrder) -> str:
     s = order.status
     return s.value if hasattr(s, "value") else str(s)
+
+
+def _safe_int(value: Any) -> Optional[int]:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _hours_between(start: Any, end: Any) -> Optional[float]:
+    """Horas entre dois timestamps ISO (texto). None se faltar ou for inválido."""
+    if not start or not end:
+        return None
+    try:
+        s = datetime.fromisoformat(str(start).replace("Z", "+00:00"))
+        e = datetime.fromisoformat(str(end).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    delta = (e - s).total_seconds() / 3600.0
+    return round(delta, 1) if delta >= 0 else None
 
 
 async def _build_boats_in_production(
@@ -432,6 +477,140 @@ async def _build_phase_drilldown(
                 ],
             )
         )
+    return out
+
+
+async def _build_operator_phase_history(
+    session: AsyncSession,
+    employee_code: Optional[str],
+    limit: int = 30,
+) -> List["OperatorPhaseHistory"]:
+    """Q.116.F — histórico de fases trabalhadas pelo operador (factory_raw).
+
+    Fonte: `factory_raw.offp_eq ⋈ of_fp` por `OFFPEQ_E_ID = employee_code`
+    (mesma cadeia do job de afinidades Q.150 + nomes de fase via
+    `fases_producao`). `text()` defensivo — em dev sem factory_raw devolve
+    lista vazia (honesto, sem mock).
+    """
+    if not employee_code:
+        return []
+    from sqlalchemy import text
+
+    stmt = text(
+        """
+        SELECT o."OFFP_OF_ID"::text          AS of_id,
+               o."OFFP_FP_ID"::text          AS phase_id,
+               fp."FP_NOME"                  AS phase_name,
+               o."OFFP_DATAINICIO"           AS started,
+               NULLIF(o."OFFP_DATAFIM", '')  AS finished
+        FROM factory_raw.offp_eq eq
+        JOIN factory_raw.of_fp o ON o."OFFP_ID" = eq."OFFPEQ_OFFP_ID"
+        LEFT JOIN factory_raw.fases_producao fp ON fp."FP_ID" = o."OFFP_FP_ID"
+        WHERE eq."OFFPEQ_E_ID" = :ecode
+          AND o."OFFP_FP_ID" IS NOT NULL
+          AND NULLIF(o."OFFP_DATAINICIO", '') IS NOT NULL
+        ORDER BY o."OFFP_DATAINICIO" DESC
+        LIMIT :lim
+        """
+    )
+    try:
+        rows = (
+            await session.execute(stmt, {"ecode": str(employee_code), "lim": limit})
+        ).mappings().all()
+    except Exception as exc:  # pragma: no cover — factory_raw ausente em dev.
+        logger.debug("operator phase_history skipped (%s)", exc)
+        return []
+
+    out: List[OperatorPhaseHistory] = []
+    for r in rows:
+        started = r["started"]
+        finished = r["finished"]
+        out.append(
+            OperatorPhaseHistory(
+                of_legacy_id=_safe_int(r["of_id"]),
+                phase_id=str(r["phase_id"]),
+                phase_name=r["phase_name"],
+                started_at=str(started) if started is not None else None,
+                finished_at=str(finished) if finished is not None else None,
+                hours=_hours_between(started, finished),
+            )
+        )
+    return out
+
+
+async def _build_operator_today_tasks(
+    session: AsyncSession,
+    tenant_id: UUID,
+    employee_code: Optional[str],
+) -> List["OperatorTask"]:
+    """Q.116.F — tarefas de HOJE do operador no último ScheduleCommit.
+
+    O operador vive em `op["workers"]` como `employee_code` (Q.140.F/Q.148),
+    não em `operator_id`. Filtramos as operações cujo `start_time` começa
+    hoje (UTC). Import/lookup defensivos — sem plano devolve lista vazia
+    (honesto, sem mock).
+    """
+    if not employee_code:
+        return []
+    try:
+        from src.plan.cpo.commits import ScheduleCommit
+
+        stmt = (
+            select(ScheduleCommit)
+            .where(ScheduleCommit.tenant_id == tenant_id)
+            .order_by(ScheduleCommit.created_at.desc())
+            .limit(1)
+        )
+        commit = (await session.execute(stmt)).scalar_one_or_none()
+    except Exception as exc:  # pragma: no cover — defesa: modelo/tabela ausente.
+        logger.debug("operator today_tasks commit lookup skipped (%s)", exc)
+        return []
+    if commit is None:
+        return []
+
+    today_iso = datetime.now(timezone.utc).date().isoformat()
+    ecode = str(employee_code)
+    raw_tasks: List[dict] = []
+    for op in (getattr(commit, "operations", None) or []):
+        workers = op.get("workers") or []
+        if ecode not in [str(w) for w in workers]:
+            continue
+        start = op.get("start_time")
+        if not start or str(start)[:10] != today_iso:
+            continue
+        raw_tasks.append(op)
+
+    if not raw_tasks:
+        return []
+
+    # Nomes de fase via RoutingTemplatePhase (mesmo namespace do decoder).
+    phase_ids = list({op.get("phase_id") for op in raw_tasks if op.get("phase_id")})
+    name_map: dict = {}
+    if phase_ids:
+        names_stmt = select(
+            RoutingTemplatePhase.phase_id, RoutingTemplatePhase.phase_name
+        ).where(
+            and_(
+                RoutingTemplatePhase.tenant_id == tenant_id,
+                RoutingTemplatePhase.phase_id.in_(phase_ids),
+            )
+        )
+        for pid, pname in (await session.execute(names_stmt)).all():
+            if pid not in name_map and pname:
+                name_map[pid] = pname
+
+    out: List[OperatorTask] = [
+        OperatorTask(
+            operation_id=str(op.get("operation_id") or ""),
+            order_legacy_id=_safe_int(op.get("order_id")),
+            phase_name=name_map.get(op.get("phase_id"))
+            or (str(op.get("phase_id")) if op.get("phase_id") else "—"),
+            start_time=op.get("start_time"),
+            end_time=op.get("end_time"),
+        )
+        for op in raw_tasks
+    ]
+    out.sort(key=lambda t: t.start_time or "")
     return out
 
 
@@ -1071,6 +1250,14 @@ async def get_operador_summary(
     count_result = await session.execute(count_stmt)
     total_phases_with_data = int(count_result.scalar() or 0)
 
+    # Q.116.F — tarefas de hoje (último plano) + histórico de fases (ERP).
+    today_tasks = await _build_operator_today_tasks(
+        session, tenant_id, employee.employee_code
+    )
+    phase_history = await _build_operator_phase_history(
+        session, employee.employee_code
+    )
+
     return OperadorSummary(
         operator_id=str(employee.id),
         operator_name=employee.employee_name,
@@ -1078,4 +1265,6 @@ async def get_operador_summary(
         active=active_flag,
         top_phases=top_phases,
         total_phases_with_data=total_phases_with_data,
+        today_tasks=today_tasks,
+        phase_history=phase_history,
     )

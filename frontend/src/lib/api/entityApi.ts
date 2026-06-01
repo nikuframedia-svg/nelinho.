@@ -15,6 +15,25 @@ export interface TopPhaseForOperator {
   sample_count: number;
 }
 
+// Q.116.F — tarefa do operador no plano de hoje
+export interface OperatorTask {
+  operation_id: string;
+  order_legacy_id: number | null;
+  phase_name: string;
+  start_time: string | null;
+  end_time: string | null;
+}
+
+// Q.116.F — fase trabalhada no histórico real (factory_raw.of_fp)
+export interface OperatorPhaseHistory {
+  of_legacy_id: number | null;
+  phase_id: string;
+  phase_name: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  hours: number | null;
+}
+
 export interface OperadorSummary {
   operator_id: string;
   operator_name: string;
@@ -22,6 +41,8 @@ export interface OperadorSummary {
   active: boolean;
   top_phases: TopPhaseForOperator[];
   total_phases_with_data: number;
+  today_tasks: OperatorTask[];          // Q.116.F — atividade de hoje
+  phase_history: OperatorPhaseHistory[]; // Q.116.F — histórico de fases
 }
 
 export interface PhaseInTemplate {
