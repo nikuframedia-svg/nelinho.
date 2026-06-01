@@ -13,6 +13,7 @@ import pytest
 
 from src.plan.services.timeline_actuals_service import (
     TimelineActualsService,
+    aggregate_by_day,
     attach_workers,
     shape_actuals_items,
     shape_expeditions,
@@ -101,6 +102,56 @@ def test_shape_expeditions_unresolved_boat_tolerated():
 
 def test_shape_expeditions_empty():
     assert shape_expeditions([]) == []
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Q.141.D — aggregate_by_day
+# ─────────────────────────────────────────────────────────────────────────
+
+def _ai(of_id, barco, phase_id, phase_nome, start, dur, worker_id=None, worker_nome=None):
+    return {"of_id": of_id, "barco_nome": barco, "phase_id": phase_id,
+            "phase_nome": phase_nome, "start": start, "duration_min": dur,
+            "worker_id": worker_id, "worker_nome": worker_nome}
+
+
+def test_aggregate_by_barco_counts_days_and_orders():
+    items = [
+        _ai("OF1", "K1", "5", "Pintura", "2026-05-01T08:00", 60),
+        _ai("OF1", "K1", "5", "Pintura", "2026-05-01T10:00", 30),
+        _ai("OF1", "K1", "1", "Laminagem", "2026-05-02T08:00", 120),
+        _ai("OF2", "C2", "1", "Laminagem", "2026-05-01T08:00", 90),
+    ]
+    lanes = aggregate_by_day(items, "barco")
+    assert [l["group_key"] for l in lanes] == ["OF1", "OF2"]  # ops_total desc
+    of1 = lanes[0]
+    assert of1["ops_total"] == 3
+    days = {d["date"]: d for d in of1["days"]}
+    assert days["2026-05-01"]["ops_count"] == 2
+    assert days["2026-05-01"]["total_duration_min"] == 90.0
+    assert days["2026-05-02"]["ops_count"] == 1
+
+
+def test_aggregate_by_operador_groups_nulls():
+    items = [
+        _ai("OF1", "K1", "5", "Pintura", "2026-05-01T08:00", 60, worker_id="u1", worker_nome="Ana"),
+        _ai("OF2", "C2", "2", "Cura", "2026-05-01T09:00", 30),  # sem operador
+    ]
+    lanes = aggregate_by_day(items, "operador")
+    keys = {l["group_key"] for l in lanes}
+    assert "u1" in keys and "sem-operador" in keys
+    sem = next(l for l in lanes if l["group_key"] == "sem-operador")
+    assert sem["group_label"] == "Sem operador"
+
+
+def test_aggregate_sample_capped():
+    items = [_ai("OF1", "K1", "5", "Pintura", f"2026-05-0{i}T08:00", 10) for i in range(1, 9)]
+    lanes = aggregate_by_day(items, "barco", sample_size=3)
+    assert len(lanes[0]["sample"]) == 3
+    assert lanes[0]["ops_total"] == 8
+
+
+def test_aggregate_empty():
+    assert aggregate_by_day([], "barco") == []
 
 
 @pytest.mark.asyncio

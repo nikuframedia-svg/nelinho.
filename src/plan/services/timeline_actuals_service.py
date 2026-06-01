@@ -261,6 +261,57 @@ def shape_expeditions(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
+def _group_key_label(item: Dict[str, Any], group_by: str) -> Tuple[str, str]:
+    if group_by == "fase":
+        return (item.get("phase_id") or "?", item.get("phase_nome") or item.get("phase_id") or "?")
+    if group_by == "operador":
+        # NULs (fases sem operador) numa lane única, sempre ordenada no fim.
+        return (item.get("worker_id") or "sem-operador", item.get("worker_nome") or "Sem operador")
+    return (item.get("of_id") or "?", item.get("barco_nome") or item.get("of_id") or "?")
+
+
+def aggregate_by_day(
+    items: List[Dict[str, Any]], group_by: str, *, sample_size: int = 5,
+) -> List[Dict[str, Any]]:
+    """Q.141.D — agrega items por (group × dia) para intervalos grandes (mês).
+
+    `group_by` ∈ {barco, fase, operador}. Cada lane: {group_key, group_label,
+    ops_total, days:[{date, ops_count, total_duration_min}], sample:[item,…]}.
+    Dias sem ops NÃO aparecem (não se inventa). Ordenado por ops_total desc.
+    """
+    lanes: Dict[str, Dict[str, Any]] = {}
+    for it in items:
+        key, label = _group_key_label(it, group_by)
+        lane = lanes.setdefault(
+            key, {"group_key": key, "group_label": label, "_days": {}, "sample": [], "ops_total": 0}
+        )
+        day = (it.get("start") or "")[:10]
+        d = lane["_days"].setdefault(day, {"date": day, "ops_count": 0, "total_duration_min": 0.0})
+        d["ops_count"] += 1
+        if it.get("duration_min"):
+            d["total_duration_min"] += float(it["duration_min"])
+        lane["ops_total"] += 1
+        if len(lane["sample"]) < sample_size:
+            lane["sample"].append(it)
+
+    out: List[Dict[str, Any]] = []
+    for lane in lanes.values():
+        days = sorted(lane["_days"].values(), key=lambda x: x["date"])
+        for dd in days:
+            dd["total_duration_min"] = round(dd["total_duration_min"], 1)
+        out.append(
+            {
+                "group_key": lane["group_key"],
+                "group_label": lane["group_label"],
+                "ops_total": lane["ops_total"],
+                "days": days,
+                "sample": lane["sample"],
+            }
+        )
+    out.sort(key=lambda lvl: (-lvl["ops_total"], lvl["group_label"] or ""))
+    return out
+
+
 # ── Service ──────────────────────────────────────────────────────────────────
 
 class TimelineActualsService:
