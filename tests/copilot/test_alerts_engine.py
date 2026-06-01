@@ -29,11 +29,14 @@ from src.copilot.alerts.engine import (
 from src.copilot.alerts.models import (
     CODE_BOTTLENECK_FORMATION,
     CODE_DELIVERY_RISK,
+    CODE_DURATION_FALLBACK_HIGH,
+    CODE_ORDERS_WITHOUT_ROUTING,
     CODE_QUALITY_DEGRADATION,
     CODE_SKILLS_CONCENTRATION,
     CopilotAlert,
     STATUS_ACTIVE,
 )
+from src.plan.cpo.scheduler_run import _upsert_cpo_alert
 from src.plan.models.order import OrderStatus, ProductionOrder
 
 
@@ -299,3 +302,82 @@ class TestDedup:
             a for a in _added_alerts(fake_session) if a.code == CODE_BOTTLENECK_FORMATION
         ]
         assert len(bottleneck_alerts) == 1
+
+
+# ---------------------------------------------------------------------------
+# Q.138.G — dedup de alertas CPO sem entity_refs (_upsert_cpo_alert)
+# ---------------------------------------------------------------------------
+
+class TestCpoAlertUpsertDedup:
+    """Prova que _upsert_cpo_alert nunca cria 2 linhas activas para o mesmo code.
+
+    Cenário: scheduler corre 2 vezes seguidas com as mesmas ordens sem rota.
+    Após o segundo upsert deve existir exactamente 1 alerta activo com o
+    code ORDERS_WITHOUT_ROUTING — não 2.
+    """
+
+    async def test_second_call_updates_existing_alert_not_inserts(
+        self, fake_session, tenant_id,
+    ):
+        # --- primeira chamada: nenhum alerta activo → insere ---
+        fake_session.queue_scalars([])  # SELECT → 0 rows → vai inserir
+        await _upsert_cpo_alert(
+            fake_session,
+            tenant_id,
+            code=CODE_ORDERS_WITHOUT_ROUTING,
+            title="4 ordens sem rota — não planeadas",
+            message_pt="4 ordens ficaram fora do plano.",
+            context={"unplanned_count": 4, "unplanned_orders": ["A", "B", "C", "D"]},
+        )
+        inserted_after_first = _added_alerts(fake_session)
+        assert len(inserted_after_first) == 1
+        assert inserted_after_first[0].code == CODE_ORDERS_WITHOUT_ROUTING
+
+        # --- segunda chamada: alerta activo já existe → actualiza, não insere ---
+        existing_alert = inserted_after_first[0]
+        # O SELECT devolve o alerta existente
+        fake_session.queue_scalars([existing_alert])
+        await _upsert_cpo_alert(
+            fake_session,
+            tenant_id,
+            code=CODE_ORDERS_WITHOUT_ROUTING,
+            title="5 ordens sem rota — não planeadas",
+            message_pt="5 ordens ficaram fora do plano.",
+            context={"unplanned_count": 5, "unplanned_orders": ["A", "B", "C", "D", "E"]},
+        )
+
+        # Continua a haver só 1 alert em session.added (nenhum novo insert)
+        all_alerts = _added_alerts(fake_session)
+        assert len(all_alerts) == 1, (
+            f"Esperado 1 alerta (upsert), mas há {len(all_alerts)} — bug de dedup"
+        )
+        # O alerta existente foi actualizado com o novo contexto
+        assert existing_alert.context["unplanned_count"] == 5
+        assert existing_alert.title == "5 ordens sem rota — não planeadas"
+
+    async def test_different_codes_both_inserted(self, fake_session, tenant_id):
+        """Alertas de codes diferentes não se interferem."""
+        # Primeiro code
+        fake_session.queue_scalars([])  # SELECT → 0 rows
+        await _upsert_cpo_alert(
+            fake_session, tenant_id,
+            code=CODE_ORDERS_WITHOUT_ROUTING,
+            title="4 sem rota",
+            message_pt="...",
+            context={},
+        )
+        # Segundo code diferente
+        fake_session.queue_scalars([])  # SELECT → 0 rows
+        await _upsert_cpo_alert(
+            fake_session, tenant_id,
+            code=CODE_DURATION_FALLBACK_HIGH,
+            title="Plano degradado",
+            message_pt="...",
+            context={},
+        )
+
+        all_alerts = _added_alerts(fake_session)
+        assert len(all_alerts) == 2
+        codes = {a.code for a in all_alerts}
+        assert CODE_ORDERS_WITHOUT_ROUTING in codes
+        assert CODE_DURATION_FALLBACK_HIGH in codes

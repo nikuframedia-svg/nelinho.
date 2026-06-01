@@ -20,10 +20,11 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 from uuid import UUID
 
 from fastapi import HTTPException, status
+from sqlalchemy import and_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,6 +41,53 @@ logger = logging.getLogger(__name__)
 # marked `degraded` and a WARN CopilotAlert is emitted (soft-warn: the plan is
 # still returned). Conservative default; the operator decides.
 _DURATION_FALLBACK_ALERT_THRESHOLD = 0.20
+
+
+async def _upsert_cpo_alert(
+    session: AsyncSession,
+    tenant_id: UUID,
+    code: str,
+    title: str,
+    message_pt: str,
+    context: Dict[str, Any],
+    severity: str = "WARN",
+) -> None:
+    """Q.138.G — upsert CPO alert sem entity_refs.
+
+    Alertas do scheduler não têm entity_refs (são alertas globais de plano),
+    por isso o dedup do AlertsEngine não os apanha. Esta função verifica se
+    já existe um alerta ACTIVO com o mesmo (tenant_id, code) e, se sim,
+    actualiza title/message_pt/context/updated_at em vez de criar duplicado.
+    """
+    from src.copilot.alerts.models import CopilotAlert, STATUS_ACTIVE
+
+    stmt = select(CopilotAlert).where(
+        and_(
+            CopilotAlert.tenant_id == tenant_id,
+            CopilotAlert.code == code,
+            CopilotAlert.status == STATUS_ACTIVE,
+        )
+    ).limit(1)
+    result = await session.execute(stmt)
+    existing = result.scalars().first()
+
+    if existing is not None:
+        existing.title = title
+        existing.message_pt = message_pt
+        existing.context = context
+        existing.updated_at = datetime.utcnow()
+        return
+
+    alert = CopilotAlert(
+        tenant_id=tenant_id,
+        severity=severity,
+        code=code,
+        title=title,
+        message_pt=message_pt,
+        context=context,
+        entity_refs=[],
+    )
+    session.add(alert)
 
 
 async def _parent_sha(service: CommitsService, commit: ScheduleCommit) -> Optional[str]:
@@ -194,13 +242,9 @@ async def run_cpo_schedule(
 
     if resolver.engine_unavailable:
         try:
-            from src.copilot.alerts.models import (
-                CODE_ROUTING_ENGINE_UNAVAILABLE,
-                CopilotAlert,
-            )
-            alert = CopilotAlert(
-                tenant_id=tenant_id,
-                severity="WARN",
+            from src.copilot.alerts.models import CODE_ROUTING_ENGINE_UNAVAILABLE
+            await _upsert_cpo_alert(
+                session, tenant_id,
                 code=CODE_ROUTING_ENGINE_UNAVAILABLE,
                 title="Routing engine unavailable — schedule built on 2× buffer templates",
                 message_pt=(
@@ -210,9 +254,7 @@ async def run_cpo_schedule(
                     "até 25× da realidade. Re-ingere os dados curados e volta a planear."
                 ),
                 context={"resolved_orders": len(orders)},
-                entity_refs=[],
             )
-            session.add(alert)
             await session.flush()
         except Exception as alert_exc:
             logger.warning("CPO schedule: failed to emit routing alert: %s", alert_exc)
@@ -230,14 +272,10 @@ async def run_cpo_schedule(
         except ImportError:  # metrics best-effort (prometheus/metrics ausente)
             pass
         try:
-            from src.copilot.alerts.models import (
-                CODE_DURATION_FALLBACK_HIGH,
-                CopilotAlert,
-            )
+            from src.copilot.alerts.models import CODE_DURATION_FALLBACK_HIGH
             pct = round(resolver.fallback_fraction * 100.0)
-            alert = CopilotAlert(
-                tenant_id=tenant_id,
-                severity="WARN",
+            await _upsert_cpo_alert(
+                session, tenant_id,
                 code=CODE_DURATION_FALLBACK_HIGH,
                 title=f"Plano degradado — {pct}% das operações sem histórico real",
                 message_pt=(
@@ -251,9 +289,7 @@ async def run_cpo_schedule(
                     "resolved_ops": resolver.resolved_ops,
                     "fallback_fraction": round(resolver.fallback_fraction, 4),
                 },
-                entity_refs=[],
             )
-            session.add(alert)
             await session.flush()
         except (SQLAlchemyError, ImportError, TypeError, ValueError) as alert_exc:
             logger.warning(
@@ -268,15 +304,11 @@ async def run_cpo_schedule(
     if unplanned_ids:
         coverage_pct = round(resolver.orders_coverage * 100.0, 1)
         try:
-            from src.copilot.alerts.models import (
-                CODE_ORDERS_WITHOUT_ROUTING,
-                CopilotAlert,
-            )
+            from src.copilot.alerts.models import CODE_ORDERS_WITHOUT_ROUTING
             preview = ", ".join(unplanned_ids[:5])
             more = f" (+{len(unplanned_ids) - 5})" if len(unplanned_ids) > 5 else ""
-            alert = CopilotAlert(
-                tenant_id=tenant_id,
-                severity="WARN",
+            await _upsert_cpo_alert(
+                session, tenant_id,
                 code=CODE_ORDERS_WITHOUT_ROUTING,
                 title=f"{len(unplanned_ids)} ordens sem rota — não planeadas",
                 message_pt=(
@@ -292,9 +324,7 @@ async def run_cpo_schedule(
                     "orders_coverage": round(resolver.orders_coverage, 4),
                     "reasons": sorted({u["reason"] for u in resolver.unplanned}),
                 },
-                entity_refs=[],
             )
-            session.add(alert)
             await session.flush()
         except (SQLAlchemyError, ImportError, TypeError, ValueError) as alert_exc:
             logger.warning(
