@@ -367,6 +367,29 @@ async def get_qualification_metrics(
     return metrics.to_dict()
 
 
+# ---------------------------------------------------------------------------
+# Sector levels (Q.140.C) — nível por (pessoa × sector), independente
+# ---------------------------------------------------------------------------
+
+@router.get("/{employee_id}/sector-levels")
+async def get_sector_levels(
+    employee_id: UUID,
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Os 7 sectores de um colaborador, cada um com nível INDEPENDENTE.
+
+    Q.140 — uma pessoa multi-funcional pode ser nível 3.0 na Pintura e 1.5 na
+    Laminagem. `effective_level` por precedência override > derivado (histórico
+    real factory_raw) > semente ERP E_NIVEL. Read-only; a edição é o PATCH
+    /sector-level. Escala 3=melhor documentada em `level_scale`.
+    """
+    from src.workforce.sector_preference_service import SectorPreferenceService
+
+    svc = SectorPreferenceService(session, tenant_id)
+    return await svc.per_employee_sector_levels(employee_id)
+
+
 @router.patch("/{employee_id}/skills")
 async def toggle_skill(
     employee_id: UUID,
