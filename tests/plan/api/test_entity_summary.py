@@ -511,6 +511,12 @@ def test_cliente_happy_path_with_orders():
     # `orders` lista todas as não-CANCELLED até 20: 2.
     assert len(body["orders"]) == 2
     assert {o["legacy_id"] for o in body["orders"]} == {101, 102}
+    # Q.116.D — secção Histórico presente; sem completed_date → sem lead-time,
+    # sem mart enfileirado → revenue None (com nota honesta).
+    assert body["history"] is not None
+    assert body["history"]["completed_orders_count"] == 0
+    assert body["history"]["avg_lead_time_days"] is None
+    assert body["history"]["revenue_eur"] is None
 
 
 def test_cliente_404_when_customer_missing():
@@ -543,6 +549,44 @@ def test_cliente_no_priority_no_orders():
     assert body["priority"] is None
     assert body["active_orders_count"] == 0
     assert body["orders"] == []
+
+
+@pytest.mark.asyncio
+async def test_build_cliente_history_lead_time_and_revenue():
+    """Q.116.D — lead-time médio das concluídas + revenue do mart."""
+    from src.plan.api.entity_summary import _build_cliente_history
+
+    orders = [
+        _order(legacy_id=201, created_date=date(2026, 1, 1),
+               completed_date=date(2026, 1, 11)),  # 10 dias
+        _order(legacy_id=202, created_date=date(2026, 2, 1),
+               completed_date=date(2026, 2, 21)),  # 20 dias
+        _order(legacy_id=203, created_date=date(2026, 3, 1),
+               completed_date=None),               # ignorada (sem fim)
+    ]
+    session = FakeSession()
+    session.queue_scalar(125000.0)  # SUM(facturado_eur)
+
+    hist = await _build_cliente_history(session, "Acme Náutica", orders)
+    assert hist.completed_orders_count == 2
+    assert hist.avg_lead_time_days == 15.0
+    assert {lt.legacy_id for lt in hist.lead_times} == {201, 202}
+    assert hist.revenue_eur == 125000.0
+    assert hist.revenue_note  # nota honesta presente
+
+
+@pytest.mark.asyncio
+async def test_build_cliente_history_empty_honest():
+    """Q.116.D — sem concluídas e sem match no mart → vazio honesto."""
+    from src.plan.api.entity_summary import _build_cliente_history
+
+    session = FakeSession()  # revenue query → exhausted → None
+    hist = await _build_cliente_history(session, "Desconhecido", [])
+    assert hist.completed_orders_count == 0
+    assert hist.avg_lead_time_days is None
+    assert hist.lead_times == []
+    assert hist.revenue_eur is None
+    assert hist.revenue_note
 
 
 # ─── ENCOMENDA ───────────────────────────────────────────────────────────────

@@ -131,12 +131,28 @@ export interface OrderInList {
   status: string;
 }
 
+// Q.116.D — lead-time de uma encomenda concluída
+export interface LeadTimeEntry {
+  legacy_id: number;
+  days: number;
+}
+
+// Q.116.D — histórico do cliente: lead-time + revenue
+export interface ClienteHistory {
+  completed_orders_count: number;
+  avg_lead_time_days: number | null;
+  lead_times: LeadTimeEntry[];
+  revenue_eur: number | null;
+  revenue_note: string | null;
+}
+
 export interface ClienteSummary {
   customer_id: string;
   customer_name: string;
   priority: number | null;
   active_orders_count: number;
   orders: OrderInList[];
+  history: ClienteHistory | null;  // Q.116.D
 }
 
 export interface PhaseHistoryEntry {

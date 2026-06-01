@@ -2,6 +2,7 @@
  * ClienteSheet — sheet contextual de cliente (Q.116.A/D).
  *
  * Tabs: Prioridade · Encomendas · Histórico
+ * Q.116.D: tab Histórico com lead-time (encomendas concluídas) + revenue (marts)
  */
 
 import { useState } from 'react';
@@ -13,7 +14,7 @@ import { DarkBadge } from '../../dark/DarkBadge';
 import { DarkButton } from '../../dark/DarkButton';
 import { EmptyState } from '../../dark/EmptyState';
 import { entityKeys, clientPriorityKeys } from '../../../lib/api/keys';
-import { entityApi, type OrderInList } from '../../../lib/api/entityApi';
+import { entityApi, type OrderInList, type ClienteHistory } from '../../../lib/api/entityApi';
 import { clientPriorityApi } from '../../../lib/api/platformApi';
 import { useToastContext } from '../../ToastProvider';
 
@@ -84,11 +85,7 @@ export default function ClienteSheet({ customerId, onClose }: ClienteSheetProps)
       )}
 
       {tab === 'historico' && (
-        <EmptyState
-          title="Q.116.D vai adicionar histórico"
-          hint="Lead time histórico e revenue virão no Q.116.D."
-          size="sm"
-        />
+        <TabHistorico history={data.history} />
       )}
     </Sheet>
   );
@@ -255,5 +252,92 @@ function TabEncomendas({ orders }: { orders: OrderInList[] }) {
         ))}
       </tbody>
     </table>
+  );
+}
+
+// ─── Tab Histórico (Q.116.D) ──────────────────────────────────────────────────
+
+const HIST_TILE: React.CSSProperties = {
+  flex: 1,
+  background: 'var(--bg-2)',
+  border: '1px solid var(--bd-1)',
+  borderRadius: 8,
+  padding: '12px 14px',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 4,
+};
+
+function TabHistorico({ history }: { history: ClienteHistory | null }) {
+  if (!history) {
+    return (
+      <EmptyState
+        title="Sem histórico"
+        hint="Ainda não há dados de histórico para este cliente."
+        size="sm"
+      />
+    );
+  }
+
+  const eur = (v: number) =>
+    new Intl.NumberFormat('pt-PT', {
+      style: 'currency',
+      currency: 'EUR',
+      maximumFractionDigits: 0,
+    }).format(v);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ display: 'flex', gap: 12 }}>
+        <div style={HIST_TILE}>
+          <div style={{ fontSize: 12, color: 'var(--fg-2)' }}>Lead-time médio</div>
+          <div style={{ fontSize: 20, fontWeight: 600, color: 'var(--fg-0)', fontVariantNumeric: 'tabular-nums' }}>
+            {history.avg_lead_time_days != null ? `${history.avg_lead_time_days} dias` : '—'}
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--fg-3)' }}>
+            {history.completed_orders_count > 0
+              ? `${history.completed_orders_count} encomenda(s) concluída(s)`
+              : 'Sem encomendas concluídas com datas.'}
+          </div>
+        </div>
+        <div style={HIST_TILE}>
+          <div style={{ fontSize: 12, color: 'var(--fg-2)' }}>Facturação</div>
+          <div style={{ fontSize: 20, fontWeight: 600, color: 'var(--fg-0)', fontVariantNumeric: 'tabular-nums' }}>
+            {history.revenue_eur != null ? eur(history.revenue_eur) : '—'}
+          </div>
+          {history.revenue_note && (
+            <div style={{ fontSize: 11, color: 'var(--fg-3)' }}>{history.revenue_note}</div>
+          )}
+        </div>
+      </div>
+
+      {history.lead_times.length > 0 && (
+        <div>
+          <div style={{ fontSize: 12, color: 'var(--fg-2)', marginBottom: 6 }}>
+            Lead-time por encomenda concluída
+          </div>
+          <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid var(--bd-1)', color: 'var(--fg-2)' }}>
+                <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 500 }}>#</th>
+                <th style={{ textAlign: 'right', padding: '6px 8px', fontWeight: 500 }}>Dias</th>
+              </tr>
+            </thead>
+            <tbody>
+              {history.lead_times.map((lt) => (
+                <tr key={lt.legacy_id} style={{ borderBottom: '1px solid var(--bd-1)' }}>
+                  <td style={{ padding: '8px 8px', color: 'var(--fg-2)', fontVariantNumeric: 'tabular-nums' }}>
+                    {lt.legacy_id}
+                  </td>
+                  <td style={{ padding: '8px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                    {lt.days}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }

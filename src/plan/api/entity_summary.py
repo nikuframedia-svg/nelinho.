@@ -158,12 +158,36 @@ class OrderInList(BaseModel):
     status: str
 
 
+class LeadTimeEntry(BaseModel):
+    """Q.116.D — lead-time de uma encomenda concluída do cliente."""
+
+    legacy_id: int
+    days: float
+
+
+class ClienteHistory(BaseModel):
+    """Q.116.D — histórico do cliente: lead-time + revenue.
+
+    Cada secção é independente e honesta: `avg_lead_time_days`/`lead_times`
+    ficam vazios sem encomendas concluídas; `revenue_eur` fica None quando o
+    mart de facturação não existe (dev) ou o nome do cliente não casa.
+    """
+
+    completed_orders_count: int = 0
+    avg_lead_time_days: Optional[float] = None
+    lead_times: List[LeadTimeEntry] = Field(default_factory=list)
+    revenue_eur: Optional[float] = None
+    revenue_note: Optional[str] = None
+
+
 class ClienteSummary(BaseModel):
     customer_id: str
     customer_name: str
     priority: Optional[int]
     active_orders_count: int
     orders: List[OrderInList]
+    # Q.116.D — secção Histórico (lead-time + revenue).
+    history: Optional[ClienteHistory] = None
 
 
 class PhaseHistoryEntry(BaseModel):
@@ -614,6 +638,81 @@ async def _build_operator_today_tasks(
     return out
 
 
+def _as_date(value: Any) -> Any:
+    """datetime → date; date passa tal e qual; None → None."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    return value
+
+
+async def _build_cliente_history(
+    session: AsyncSession,
+    customer_name: Optional[str],
+    customer_orders: List[ProductionOrder],
+) -> "ClienteHistory":
+    """Q.116.D — lead-time (encomendas concluídas) + revenue (marts).
+
+    Lead-time: `completed_date − created_date` das encomendas concluídas já
+    casadas pelo nome (mesma base honesta do gap Q.53.I). Revenue:
+    `SUM(facturado_eur)` em `marts.v_facturacao_mes` por nome de cliente —
+    `text()` defensivo, None quando a view não existe (dev) ou não casa.
+    """
+    # ── Lead-time (em memória, sem query) ───────────────────────────────
+    lead_times: List[LeadTimeEntry] = []
+    for o in customer_orders:
+        cd = _as_date(getattr(o, "created_date", None))
+        fd = _as_date(getattr(o, "completed_date", None))
+        if cd is None or fd is None:
+            continue
+        days = (fd - cd).days
+        if days < 0:
+            continue
+        lead_times.append(LeadTimeEntry(legacy_id=int(o.legacy_id), days=float(days)))
+
+    avg_lead = (
+        round(sum(lt.days for lt in lead_times) / len(lead_times), 1)
+        if lead_times
+        else None
+    )
+
+    # ── Revenue (marts.v_facturacao_mes, por nome) ──────────────────────
+    revenue_eur: Optional[float] = None
+    revenue_note: Optional[str] = None
+    if customer_name:
+        try:
+            from sqlalchemy import text
+
+            rev = (
+                await session.execute(
+                    text(
+                        "SELECT SUM(facturado_eur) AS total "
+                        "FROM marts.v_facturacao_mes WHERE cliente = :name"
+                    ),
+                    {"name": customer_name},
+                )
+            ).scalar()
+            if rev is not None:
+                revenue_eur = float(rev)
+                revenue_note = "Base sem IVA (PHC) · match por nome de cliente."
+            else:
+                revenue_note = (
+                    "Sem facturação para este nome (ou mart por sincronizar)."
+                )
+        except Exception as exc:  # pragma: no cover — mart ausente em dev.
+            logger.debug("cliente revenue skipped (%s)", exc)
+            revenue_note = "Mart de facturação indisponível."
+
+    return ClienteHistory(
+        completed_orders_count=len(lead_times),
+        avg_lead_time_days=avg_lead,
+        lead_times=lead_times[:20],
+        revenue_eur=revenue_eur,
+        revenue_note=revenue_note,
+    )
+
+
 # ─── Endpoint: Modelo ────────────────────────────────────────────────────────
 
 
@@ -978,12 +1077,18 @@ async def get_cliente_summary(
         for o in customer_orders[:20]
     ]
 
+    # Q.116.D — secção Histórico (lead-time das concluídas + revenue do mart).
+    history = await _build_cliente_history(
+        session, customer.customer_name, customer_orders
+    )
+
     return ClienteSummary(
         customer_id=str(customer.id),
         customer_name=customer.customer_name,
         priority=priority,
         active_orders_count=active_orders_count,
         orders=orders_out,
+        history=history,
     )
 
 
