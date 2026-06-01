@@ -109,6 +109,13 @@ export default function CopilotPage() {
   const [activeConversation, setActiveConversation] = useState<string | null>(
     () => localStorage.getItem(ACTIVE_CONV_KEY),
   );
+  // O id restaurado do localStorage pode apontar para uma conversa que já
+  // não existe (BD recriada, seed antigo). Sinalizamos que ainda não foi
+  // validado contra o histórico para evitar um GET …/messages → 404 ruidoso
+  // antes do self-heal. Conversas criadas em runtime entram já validadas.
+  const [restoredUnverified, setRestoredUnverified] = useState<boolean>(
+    () => !!localStorage.getItem(ACTIVE_CONV_KEY),
+  );
   const [pending, setPending] = useState<PendingAsk | null>(() => readPending());
   const [mode, setMode] = useState<CopilotMode>('factual');
   const [input, setInput] = useState('');
@@ -150,11 +157,29 @@ export default function CopilotPage() {
     return conversations.filter((c) => c.title.toLowerCase().includes(q));
   }, [conversations, search]);
 
+  // Valida o id restaurado do localStorage assim que o histórico chega: se
+  // não existir lá, é stale (BD recriada) → recomeça em vez de disparar um
+  // GET …/messages que dá 404. Se existir, liberta a messagesQuery.
+  useEffect(() => {
+    if (!restoredUnverified) return;
+    if (!conversationsQuery.isSuccess) return;
+    const stillExists = conversations.some((c) => c.id === activeConversation);
+    if (!stillExists) {
+      setActiveConversation(null);
+      setMessages([]);
+      clearPending();
+      setPending(null);
+    }
+    setRestoredUnverified(false);
+  }, [restoredUnverified, conversationsQuery.isSuccess, conversations, activeConversation]);
+
   // ─── Mensagens da conversa seleccionada ───────────────────────────────
   const messagesQuery = useQuery({
     queryKey: ['copilot', 'conversation', activeConversation],
     queryFn: () => copilotApi.getConversationMessages(activeConversation!, { limit: 100 }),
-    enabled: !!activeConversation,
+    // Não buscamos mensagens de um id restaurado do localStorage enquanto ele
+    // não for confirmado no histórico — evita o 404 transitório.
+    enabled: !!activeConversation && !restoredUnverified,
     refetchOnWindowFocus: false,
     // Enquanto houver uma pergunta em curso (marcador local), faz polling:
     // o pedido pode ter sido lançado num mount anterior e a resposta cai
@@ -186,6 +211,9 @@ export default function CopilotPage() {
           const conv = await copilotApi.createConversation(userQuery.slice(0, 80));
           convId = conv.id;
           setActiveConversation(conv.id);
+          // Conversa acabada de criar no servidor: já é válida, não precisa
+          // de passar pela validação contra o histórico.
+          setRestoredUnverified(false);
           const p = readPending();
           if (p) writePending({ ...p, conversationId: conv.id });
         } catch {
@@ -465,6 +493,8 @@ export default function CopilotPage() {
                     onClick={() => {
                       setActiveConversation(c.id);
                       setMessages([]);
+                      // Conversa escolhida na lista existe por definição.
+                      setRestoredUnverified(false);
                     }}
                     className={`w-full text-left rounded-md mb-0.5 transition-colors ${
                       active ? 'bg-bg-3' : 'hover:bg-bg-2'
