@@ -188,6 +188,7 @@ def _pick_workers(
     *,
     state: Optional[FactoryState] = None,
     quality_weight: float = 0.0,
+    fase_id: Optional[str] = None,
 ) -> List[str]:
     """Pick N workers from the pool by blending availability and experience.
 
@@ -203,6 +204,14 @@ def _pick_workers(
     * `quality_weight = 1` → pick the most experienced workers in the
       pool regardless of when they're free (good for high-stakes ops).
     * Anything in between (the chromosome default is 0.3) blends both.
+
+    Q.140.G — quando `fase_id` é dado e `state.preference_score_for(w, fase_id)`
+    tem valor (nível por sector: override manual > derivado real), esse valor
+    SUBSTITUI o `skill_count` como `skill_score` desse worker. Assim a ordem de
+    preferência por sector que o Luis atribui passa a mandar na escolha. É só
+    uma REORDENAÇÃO do `pool` (que já vem filtrado por `workers_for` — axioma 5
+    intacto); sem preferência cai no `skill_count` (back-compat exacto). É um
+    [0,1] de nível/qualidade, NUNCA € (CoeficienteX).
 
     Ties are broken deterministically by worker id so schedules are
     reproducible across runs.
@@ -226,7 +235,11 @@ def _pick_workers(
         free_at = worker_free_at.get(worker, earliest)
         hours_until_free = max(0.0, (free_at - earliest).total_seconds() / 3600.0)
         availability = 1.0 / (1.0 + hours_until_free)
-        skill = skill_scores.get(worker, 0.0)
+        # Q.140.G — preferência por sector tem precedência sobre o skill_count.
+        pref = None
+        if state is not None and qw > 0.0 and fase_id is not None:
+            pref = state.preference_score_for(worker, fase_id)
+        skill = pref if pref is not None else skill_scores.get(worker, 0.0)
         combined = skill * qw + availability * (1.0 - qw)
         # Return negative because `sorted(..., reverse=False)` + negation
         # gives us "highest combined first" with worker-id as a stable
@@ -375,6 +388,7 @@ def _select_workers(
         pool, total_workers_needed, worker_free_at, earliest_pred_end,
         state=state,
         quality_weight=float(getattr(chromosome, "quality_weight", 0.0) or 0.0),
+        fase_id=str(op.phase_id) if op.phase_id else None,
     )
     if len(picked) < total_workers_needed:
         # Sprint Q.8 — pair-preferred phases accept a solo downgrade.

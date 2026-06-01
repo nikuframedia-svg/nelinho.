@@ -198,3 +198,65 @@ def test_decoder_uses_chromosome_quality_weight():
     # The point here is that the call path doesn't crash and still picks
     # a valid worker from the pool.
     assert result_a["operations"][0]["workers"][0] in {"w_master", "w_novice"}
+
+
+# ---------------------------------------------------------------------------
+# Q.140.G — preferência por sector tem precedência sobre o skill_count
+# ---------------------------------------------------------------------------
+
+
+def test_pick_workers_prefers_sector_preference_over_skill_count():
+    """Nível por sector (override>derivado) vence a versatilidade global.
+
+    w_master é o mais versátil (skill_count=3), mas a preferência por sector
+    diz que w_novice é melhor NESTA fase → com quality_weight=1 ganha w_novice.
+    """
+    state = _state_with_skills({
+        "PHASE_A": {"w_master", "w_novice"},
+        "PHASE_B": {"w_master"},
+        "PHASE_C": {"w_master"},
+    })
+    state.sector_preferences = {
+        ("w_novice", "PHASE_A"): 1.0,
+        ("w_master", "PHASE_A"): 0.2,
+    }
+    ref = _ref_time()
+    free_at = {"w_master": ref, "w_novice": ref}  # ambos livres
+    picked = _pick_workers(
+        {"w_master", "w_novice"}, team_size=1, worker_free_at=free_at,
+        earliest=ref, state=state, quality_weight=1.0, fase_id="PHASE_A",
+    )
+    assert picked == ["w_novice"]  # preferência por sector manda
+
+
+def test_pick_workers_without_preferences_falls_back_to_skill_count():
+    """Sem sector_preferences, o comportamento é o de Sprint A (skill_count)."""
+    state = _state_with_skills({
+        "PHASE_A": {"w_master", "w_novice"},
+        "PHASE_B": {"w_master"},
+        "PHASE_C": {"w_master"},
+    })
+    ref = _ref_time()
+    free_at = {"w_master": ref, "w_novice": ref}
+    picked = _pick_workers(
+        {"w_master", "w_novice"}, team_size=1, worker_free_at=free_at,
+        earliest=ref, state=state, quality_weight=1.0, fase_id="PHASE_A",
+    )
+    assert picked == ["w_master"]  # versatilidade ganha (sem preferência)
+
+
+def test_pick_workers_fase_id_none_ignores_preference():
+    """fase_id=None (chamada legada) → preferência ignorada, usa skill_count."""
+    state = _state_with_skills({
+        "PHASE_A": {"w_master", "w_novice"},
+        "PHASE_B": {"w_master"},
+        "PHASE_C": {"w_master"},
+    })
+    state.sector_preferences = {("w_novice", "PHASE_A"): 1.0}
+    ref = _ref_time()
+    free_at = {"w_master": ref, "w_novice": ref}
+    picked = _pick_workers(
+        {"w_master", "w_novice"}, team_size=1, worker_free_at=free_at,
+        earliest=ref, state=state, quality_weight=1.0,  # fase_id default None
+    )
+    assert picked == ["w_master"]  # preferência ignorada sem fase_id
