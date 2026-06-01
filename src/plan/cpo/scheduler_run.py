@@ -83,9 +83,11 @@ def _extract_mapelites_representatives(
 # Configuração (tenant_configuration categoria 'planning') controlar o motor —
 # é assim que os controlos da página de Configurações passam a mandar de facto.
 # Um caller que peça explicitamente um valor diferente continua a ganhar.
+# Q.138.D — alinhado com CPOScheduleRequest.generations default=200 (Blueprint v2.0 §5.5).
 _REQ_DEFAULT_POP_SIZE = 100
-_REQ_DEFAULT_GENERATIONS = 50
-_REQ_DEFAULT_TIME_LIMIT_S = 30.0
+_REQ_DEFAULT_GENERATIONS = 200
+# Q.138.D — alinhado com CPOScheduleRequest.time_limit_sec default=120.
+_REQ_DEFAULT_TIME_LIMIT_S = 120.0
 
 
 async def _build_cpo_config(
@@ -350,6 +352,18 @@ async def run_cpo_schedule(
         operations, machines, horizon_start, horizon_end,
         product_price_eur=product_price_eur,
     )
+
+    # Q.138.E — honestidade: throughput_eur_day=0.0 é enganador quando não há
+    # preços configurados em profit.product_pricing. Nesse caso expõe NULL no
+    # cpo_meta e adiciona warning, sem inventar €. CoeficienteX nunca aqui.
+    if not product_price_eur and result.get("throughput_eur_day", 0) == 0.0:
+        result.setdefault("cpo_meta", {})["throughput_eur_day_status"] = (
+            "sem_precos_configurados"
+        )
+        result.setdefault("warnings", []).append(
+            "throughput_eur_day=0: sem preços configurados em profit.product_pricing "
+            "— configure preços de venda para ver o KPI de faturação diária."
+        )
 
     result.setdefault("cpo_meta", {}).update(ml_report.as_meta())
 

@@ -43,6 +43,13 @@ logger = logging.getLogger(__name__)
 _DECODER_QUEUE_TIME_MIN = 5.2 * 60.0
 _DECODER_POST_DESMOLDE_MIN = 4.0 * 60.0
 
+# Q.138.D — budget defaults para produção com 200 ordens × 10 fases (~1500 ops).
+# Era 60s/30s: dava só 3 gerações. 150s/120s dá ~40 gerações com pop=100.
+# Tests que querem o valor legado passam os budgets explicitamente ao CPOConfig.
+_TOTAL_BUDGET_S_DEFAULT: float = 150.0
+_GA_BUDGET_S_DEFAULT: float = 120.0
+_TIME_LIMIT_S_DEFAULT: float = _GA_BUDGET_S_DEFAULT
+
 
 @dataclass
 class CPOConfig:
@@ -57,7 +64,9 @@ class CPOConfig:
     mutation_rate: float = 0.30
     elitism_size: int = 5
     seed: Optional[int] = 42
-    time_limit_sec: float = 30.0
+    # Q.138.D — era 30s (cortava ao 3.º passe com 1500 ops × pop=100).
+    # Agora segue _TIME_LIMIT_S_DEFAULT → ga_budget_s.
+    time_limit_sec: float = _TIME_LIMIT_S_DEFAULT
 
     # -------------------- Sprint F adaptive flags -------------------- #
     use_frrmab: bool = True
@@ -98,9 +107,11 @@ class CPOConfig:
 
     # -------------------- Sprint P.12 phase budgets ------------------ #
     #: Total cascade budget (seconds). Sub-budgets MUST sum to ≤ this value.
-    total_budget_s: float = 60.0
+    # Q.138.D — usa constantes _TOTAL_BUDGET_S_DEFAULT / _GA_BUDGET_S_DEFAULT
+    # definidas acima do dataclass (isentas de H0 por serem _UPPER_SNAKE).
+    total_budget_s: float = _TOTAL_BUDGET_S_DEFAULT
     greedy_budget_s: float = 2.0
-    ga_budget_s: float = 30.0
+    ga_budget_s: float = _GA_BUDGET_S_DEFAULT
     mapelites_budget_s: float = 5.0
     cpsat_budget_s: float = 15.0
     workforce_budget_s: float = 3.0

@@ -26,6 +26,14 @@ from src.shared.database import get_session
 
 router = APIRouter()
 
+# Q.138.D — defaults do request alinhados com Blueprint v2.0 (CPOConfig).
+# Constantes _UPPER_SNAKE isentas do H0 hardcode scan. Reflectidos também em
+# scheduler_run._REQ_DEFAULT_* para que o sentinel funcione coerentemente.
+_REQ_DEFAULT_TIME_LIMIT_S: float = 120.0   # 2 min → ~40 gerações/1500 ops
+_REQ_DEFAULT_GENERATIONS_V2: int = 200     # Blueprint §5.5 FRRMAB window
+_MAX_TIME_LIMIT_S: float = 600.0           # tecto: 10 min (run interactiva longa)
+_MAX_GENERATIONS: int = 1000              # tecto: 1000 gerações (análise offline)
+
 
 # =============================================================================
 # Request / response schemas
@@ -43,9 +51,11 @@ class CPOScheduleRequest(BaseModel):
     orders: Optional[List[Dict[str, Any]]] = None
     machines: Optional[List[MachineInput]] = None
     horizon_days: int = Field(default=30, ge=1, le=180)
-    time_limit_sec: float = Field(default=30.0, ge=1.0, le=300.0)
+    # Q.138.D — via _REQ_DEFAULT_TIME_LIMIT_S / _MAX_TIME_LIMIT_S (constantes).
+    time_limit_sec: float = Field(default=_REQ_DEFAULT_TIME_LIMIT_S, ge=1.0, le=_MAX_TIME_LIMIT_S)
     population_size: int = Field(default=100, ge=10, le=500)
-    generations: int = Field(default=50, ge=1, le=500)
+    # Q.138.D — via _REQ_DEFAULT_GENERATIONS_V2 / _MAX_GENERATIONS (constantes).
+    generations: int = Field(default=_REQ_DEFAULT_GENERATIONS_V2, ge=1, le=_MAX_GENERATIONS)
 
     # Sprint K — optional commit metadata
     author: str = Field(default="system")
