@@ -15,8 +15,8 @@ import { addDays, startOfDay, format } from 'date-fns';
 import { pt } from 'date-fns/locale';
 import { Calendar, AlertTriangle } from 'lucide-react';
 import { planKeys } from '../../lib/api/keys';
-import { cpoCommitsApi, planOperationsApi, timelineActualsApi } from '../../lib/api';
-import type { CpoCommit, TimelineActualItem } from '../../lib/api';
+import { cpoCommitsApi, planOperationsApi, timelineActualsApi, copilotAlertsApi } from '../../lib/api';
+import type { CpoCommit, TimelineActualItem, CopilotAlertItem } from '../../lib/api';
 import { PageHeader, DarkCard, DarkButton, EmptyState } from '../../components/dark';
 import { useToastContext } from '../../components/ToastProvider';
 import { PorBarcoView } from '../../components/overall/views/PorBarcoView';
@@ -90,6 +90,8 @@ export default function OverallPage(): ReactNode {
   const [expandedCellOps, setExpandedCellOps] = useState<ScheduledOp[] | null>(null);
   // Q.147.D — filtro/foco (barco/operador/fase/cliente). Esconde lanes vazias.
   const [filterText, setFilterText] = useState('');
+  // Q.149.C.3 — alertas de override manual já dispensados nesta sessão.
+  const [dismissedAlerts, setDismissedAlerts] = useState<Set<string>>(() => new Set());
 
   // Q.141.F — escala PT do toggle → escala EN da Timeline (day/week/month).
   const ganttScale: 'day' | 'week' | 'month' =
@@ -159,6 +161,25 @@ export default function OverallPage(): ReactNode {
     retry: 0,
     refetchOnWindowFocus: false,
   });
+
+  // Q.149.C.3 — overrides manuais que o reapply do robô já não conseguiu manter
+  // (a pessoa escolhida deixou de bater com o WIP). Sem isto, a pessoa "revertia
+  // sozinha" no replan sem o utilizador perceber porquê. Filtra-se pelo prefixo
+  // do code porque cada alerta é MANUAL_OVERRIDE_INVALID:<op> (não fixo).
+  const { data: overrideAlertsRaw } = useQuery({
+    queryKey: planKeys.manualOverrideAlerts(),
+    queryFn: () => copilotAlertsApi.list({ status: 'active', severity: 'WARN' }),
+    refetchInterval: 30_000,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+  const overrideAlerts: CopilotAlertItem[] = useMemo(
+    () =>
+      (overrideAlertsRaw ?? []).filter(
+        (a) => a.code.startsWith('MANUAL_OVERRIDE_INVALID') && !dismissedAlerts.has(a.id),
+      ),
+    [overrideAlertsRaw, dismissedAlerts],
+  );
 
   // Q.148.B — mapa código→nome: o plano guarda códigos de worker; resolver para
   // nome real torna a mudança de operador VISÍVEL (drill/Por-pessoa/editor).
@@ -444,6 +465,34 @@ export default function OverallPage(): ReactNode {
 
         {/* Faixa colapsável de riscos operacionais */}
         <RiskStrip />
+
+        {/* Q.149.C.3 — overrides manuais que o reapply do robô já não manteve */}
+        {overrideAlerts.length > 0 && (
+          <div className="flex flex-col gap-1.5">
+            {overrideAlerts.map((a) => (
+              <div
+                key={a.id}
+                className="flex items-start gap-2 px-3 py-2 rounded-lg text-xs"
+                style={{
+                  background: 'var(--red-bg)',
+                  border: '1px solid var(--red-bd)',
+                  color: 'var(--red)',
+                }}
+              >
+                <AlertTriangle size={13} className="flex-shrink-0 mt-0.5" />
+                <span className="flex-1">{a.message_pt}</span>
+                <button
+                  type="button"
+                  onClick={() => setDismissedAlerts((prev) => new Set(prev).add(a.id))}
+                  className="flex-shrink-0 opacity-70 hover:opacity-100"
+                  aria-label="Dispensar alerta"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Banner editar activo */}
         {mode === 'editar' && (

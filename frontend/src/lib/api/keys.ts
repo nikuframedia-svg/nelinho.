@@ -207,6 +207,9 @@ export const planKeys = {
   timeline: () => [...planKeys.all, 'timeline'] as const,
   actuals: (from: string, to: string) =>
     [...planKeys.timeline(), 'actuals', from, to] as const,
+  // Q.149.C.3 — alertas de override manual que o reapply do robô já não
+  // conseguiu re-aplicar (a pessoa escolhida deixou de ser viável com o WIP).
+  manualOverrideAlerts: () => [...planKeys.all, 'manual-override-alerts'] as const,
 } as const;
 
 // ─── Reports admin (Q.67.2.B) ──────────────────────────────────────────
