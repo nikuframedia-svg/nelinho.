@@ -145,7 +145,7 @@ class FakeSession:
         self.begin_nested_calls = getattr(self, "begin_nested_calls", 0) + 1
         return _FakeNestedTransaction()
 
-    async def execute(self, stmt: Any) -> "_FakeResult":
+    async def execute(self, stmt: Any, *args: Any, **kwargs: Any) -> "_FakeResult":
         scalar = self._scalar_queue.pop(0) if self._scalar_queue else None
         scalars = self._scalars_queue.pop(0) if self._scalars_queue else []
         return _FakeResult(scalar, scalars)

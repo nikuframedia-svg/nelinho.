@@ -26,7 +26,7 @@ from decimal import Decimal
 from typing import Any, Optional
 from uuid import UUID
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.profit.models.pricing import OrderRevenue
@@ -175,43 +175,42 @@ class ThroughputService:
                 date_from=as_of.replace(day=1), date_to=as_of, top_n=10,
             ),
             "currency": "EUR",
-            "source": "order_revenue",
+            "source": "factory_raw.entidade_phc_fact",
         }
 
     # ─── internals ────────────────────────────────────────────────────────
 
     async def _sum_revenue(self, date_from: date, date_to: date) -> Decimal:
-        stmt = select(func.coalesce(
-            func.sum(OrderRevenue.total_revenue_eur), 0,
-        )).where(
-            and_(
-                OrderRevenue.tenant_id == self.tenant_id,
-                OrderRevenue.recognised_at >= date_from,
-                OrderRevenue.recognised_at <= date_to,
-            )
-        )
-        result = (await self.session.execute(stmt)).scalar_one_or_none()
+        # Q.138.A — lê faturação real do ERP (factory_raw.entidade_phc_fact)
+        # em vez da tabela fantasma profit.order_revenue (ETL nunca implementado).
+        # Granularidade diária: EPHCF_ANO/MES/DIA reconstituem a data.
+        # Sem tenant_id: tabela raw do ERP NELO, tenant-agnostic (igual ao OEE).
+        stmt = text("""
+            SELECT COALESCE(SUM("EPHCF_FACTURADO"), 0)
+            FROM factory_raw.entidade_phc_fact
+            WHERE MAKE_DATE("EPHCF_ANO", "EPHCF_MES", "EPHCF_DIA") BETWEEN :d_from AND :d_to
+        """)
+        result = (await self.session.execute(
+            stmt, {"d_from": date_from, "d_to": date_to}
+        )).scalar_one_or_none()
         return Decimal(str(result or 0))
 
     async def _daily_buckets(
         self, date_from: date, date_to: date,
     ) -> list[tuple[date, Decimal]]:
-        stmt = (
-            select(
-                OrderRevenue.recognised_at,
-                func.coalesce(func.sum(OrderRevenue.total_revenue_eur), 0),
-            )
-            .where(
-                and_(
-                    OrderRevenue.tenant_id == self.tenant_id,
-                    OrderRevenue.recognised_at.is_not(None),
-                    OrderRevenue.recognised_at >= date_from,
-                    OrderRevenue.recognised_at <= date_to,
-                )
-            )
-            .group_by(OrderRevenue.recognised_at)
-        )
-        rows = (await self.session.execute(stmt)).all()
+        # Q.138.A — mesma fonte real, agrupado por dia.
+        stmt = text("""
+            SELECT
+                MAKE_DATE("EPHCF_ANO", "EPHCF_MES", "EPHCF_DIA") AS dia,
+                COALESCE(SUM("EPHCF_FACTURADO"), 0) AS total
+            FROM factory_raw.entidade_phc_fact
+            WHERE MAKE_DATE("EPHCF_ANO", "EPHCF_MES", "EPHCF_DIA") BETWEEN :d_from AND :d_to
+            GROUP BY dia
+            ORDER BY dia
+        """)
+        rows = (await self.session.execute(
+            stmt, {"d_from": date_from, "d_to": date_to}
+        )).all()
         return [(r[0], Decimal(str(r[1] or 0))) for r in rows]
 
 

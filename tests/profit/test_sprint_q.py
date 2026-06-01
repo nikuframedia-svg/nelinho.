@@ -250,6 +250,42 @@ class TestThroughputService:
         assert on_target_band(Decimal("32000"), Decimal("30000"), Decimal("35000"))["status"] == "within"
         assert on_target_band(Decimal("40000"), Decimal("30000"), Decimal("35000"))["status"] == "above"
 
+    @pytest.mark.asyncio
+    async def test_dashboard_ytd_from_phc_fact_nonzero(self, fake_session):
+        """Q.138.A — ThroughputService lê factory_raw.entidade_phc_fact
+        (não a tabela fantasma order_revenue). Quando a fonte tem dados, o
+        YTD deve ser >0 e aparecer no response do dashboard."""
+        # load_targets — sem config → defaults
+        _queue(fake_session, scalars=[])
+        # throughput_today — 2026-06-01, sem dados ainda (honesto €0)
+        _queue(fake_session, scalar=Decimal("0"))
+        # throughput_mtd — Junho ainda vazio
+        _queue(fake_session, scalar=Decimal("0"))
+        # throughput_ytd — dados reais de Jan-Mai/2026
+        _queue(fake_session, scalar=Decimal("2595146.14"))
+        # throughput_trend — 9 dias com dados em Maio
+        _queue(fake_session, scalars=[
+            (date(2026, 5, 28), Decimal("55286.11")),
+            (date(2026, 5, 29), Decimal("31275.00")),
+        ])
+        # top_skus — order_revenue vazia, lista honesta vazia
+        _queue(fake_session, scalars=[])
+
+        svc = ThroughputService(fake_session, TEST_TENANT_ID)
+        out = await svc.dashboard(as_of=date(2026, 6, 1))
+
+        assert out["throughput_eur"]["ytd"] > 0, (
+            "YTD deve ser >0 quando a fonte PHC tem dados reais"
+        )
+        assert out["throughput_eur"]["ytd"] == pytest.approx(2595146.14, rel=1e-4)
+        assert out["throughput_eur"]["today"] == 0.0  # honesto: sem dados de 2026-06-01
+        assert out["throughput_eur"]["on_target"]["status"] == "below"  # 0 < 30K
+        assert out["source"] == "factory_raw.entidade_phc_fact"
+        # trend densificado cobre 14 dias; dias sem dados têm eur=0
+        assert len(out["trend_14d"]) == 14
+        dias_com_dados = [p for p in out["trend_14d"] if p["eur"] != 0.0]
+        assert len(dias_com_dados) == 2
+
 
 # ---------------------------------------------------------------------------
 # Q.6 — Priority report helpers
