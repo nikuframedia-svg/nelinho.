@@ -26,7 +26,13 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from src.plan.cpo.chromosome import Chromosome
 from src.plan.cpo.decoder import decode
-from src.plan.cpo.fitness import FitnessConfig, compute_fitness
+from src.plan.cpo.fitness import (
+    _NORM_IDLE_H,
+    _NORM_MAKESPAN_H,
+    _NORM_TARDINESS_H,
+    FitnessConfig,
+    compute_fitness,
+)
 from src.plan.cpo.frrmab import FRRMAB
 from src.plan.cpo.greedy_pipeline import GreedyPipeline, PHASE_BUDGETS_S
 from src.plan.cpo.mapelites import MAPElites3D
@@ -241,10 +247,27 @@ class CPOv4Engine:
                 post_desmolde_buffer_minutes=post_desmolde_min,
                 product_price_eur=product_price_eur,
             )
+        # Q.153.A3 — escalar as referências de normalização da fitness ao
+        # baseline ANTES de o avaliar, para o GA ter gradiente real em
+        # pontualidade/horizonte. `ref = max(constante, valor_baseline)`:
+        # com a dívida herdada (~619 000h) uma constante fixa fazia o termo
+        # colar em 1.0 e o GA ficava cego ao "mais pontual".
+        self.fitness_config.norm_ref_makespan_h = max(
+            _NORM_MAKESPAN_H, float(baseline.get("makespan_hours", 0) or 0),
+        )
+        self.fitness_config.norm_ref_tardiness_h = max(
+            _NORM_TARDINESS_H, float(baseline.get("tardiness_beyond_today_h", 0) or 0),
+        )
+        self.fitness_config.norm_ref_idle_h = max(
+            _NORM_IDLE_H, float(baseline.get("total_idle_hours", 0) or 0),
+        )
+
         baseline_fit = compute_fitness(baseline, self.fitness_config)
         logger.info(
             f"CPO baseline: makespan={baseline['makespan_hours']:.1f}h, "
-            f"tardy={baseline['num_late_orders']}, fitness={baseline_fit:.2f}"
+            f"tardy={baseline['num_late_orders']}, "
+            f"newly_late={baseline.get('num_newly_late', 0)}, "
+            f"fitness={baseline_fit:.2f}"
         )
 
         # Surrogate context (static across the run, cheap to precompute).

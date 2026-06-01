@@ -86,6 +86,16 @@ class FitnessConfig:
     # None = sem target configurado; score de alinhamento passa a 1.0 (neutro).
     daily_revenue_target_eur: Optional[float] = None
 
+    # ── Q.153.A3 — referências de normalização dinâmicas (escala NELO) ──
+    # None = usa as constantes _NORM_* (back-compat: pin tests com
+    # FitnessConfig() ficam iguais). O engine escala-as ao baseline de cada
+    # run (`ref = max(constante, valor_baseline)`) para o GA ter gradiente
+    # real em pontualidade/horizonte — senão tardiness/makespan colam em 1.0
+    # com a dívida herdada (~619 000h) e o GA fica cego ao "mais pontual".
+    norm_ref_makespan_h: Optional[float] = None
+    norm_ref_tardiness_h: Optional[float] = None
+    norm_ref_idle_h: Optional[float] = None
+
     # ── Sprint P.3 — truck consolidation penalty (Blueprint PL14) ──────
     truck_consolidation_weight: float = 0.0      # disabled until transport batches exist
     truck_consolidation_tolerance_h: float = 12.0
@@ -389,13 +399,24 @@ def _v2_fitness(schedule: Dict[str, Any], cfg: FitnessConfig) -> float:
             return 0.0
         return max(0.0, min(1.0, float(value) / ref))
 
-    norm_makespan = _norm(schedule.get("makespan_hours", 0) or 0, _NORM_MAKESPAN_H)
+    # Q.153.A3 — referências dinâmicas (escaladas ao baseline pelo engine);
+    # caem nas constantes quando não definidas (back-compat).
+    ref_makespan = cfg.norm_ref_makespan_h or _NORM_MAKESPAN_H
+    ref_tardy = cfg.norm_ref_tardiness_h or _NORM_TARDINESS_H
+    ref_idle = cfg.norm_ref_idle_h or _NORM_IDLE_H
+
+    norm_makespan = _norm(schedule.get("makespan_hours", 0) or 0, ref_makespan)
+    # Q.153.A3 — preferir o atraso EVITÁVEL (Q.153.A2) ao atraso cru: a
+    # dívida herdada saturava o termo. Fallback p/ callers/legacy.
     norm_tardy = _norm(
-        schedule.get("total_tardiness_transport_hours",
-                     schedule.get("total_tardiness_hours", 0)) or 0,
-        _NORM_TARDINESS_H,
+        schedule.get(
+            "tardiness_beyond_today_h",
+            schedule.get("total_tardiness_transport_hours",
+                         schedule.get("total_tardiness_hours", 0)),
+        ) or 0,
+        ref_tardy,
     )
-    norm_idle = _norm(schedule.get("total_idle_hours", 0) or 0, _NORM_IDLE_H)
+    norm_idle = _norm(schedule.get("total_idle_hours", 0) or 0, ref_idle)
     norm_setups = _norm(schedule.get("setups", 0) or 0, _NORM_SETUPS)
     norm_throughput = _norm(
         schedule.get("throughput_eur_day", 0) or 0, _NORM_THROUGHPUT_EUR_DAY,
