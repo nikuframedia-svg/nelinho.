@@ -179,6 +179,41 @@ async def test_happy_path_reorder():
     audit_mock.assert_awaited_once()
 
 
+@pytest.mark.asyncio
+async def test_reorder_recomputes_end_time_no_end_before_start():
+    """Q.153.A1 — arrastar uma op para o futuro recalcula o end_time
+    (preserva a duração real); nunca deixa end<start."""
+    ops = [
+        _make_op("op-1", "PINTURA", start_offset_h=0, duration_h=2,
+                 operator_id="worker-X"),
+        _make_op("op-2", "MONTAGEM", start_offset_h=4, operator_id="worker-Y"),
+    ]
+    parent = _FakeCommit(operations=ops)
+    session = _FakeSession(parent)
+
+    # Arrasta op-1 ~1 ano para a frente (o bug deixava end no passado).
+    new_ts = _BASE_TS + timedelta(days=365)
+
+    with _patch_kafka(), _patch_audit():
+        await apply_manual_reorder(
+            session=session,
+            tenant_id=TENANT_ID,
+            operation_id="op-1",
+            new_phase="PINTURA",
+            new_start_ts=new_ts,
+            new_operator_id=None,
+            author="operador-teste",
+        )
+
+    commit = session.added[0]
+    moved = next(o for o in commit.operations if o["operation_id"] == "op-1")
+    start = datetime.fromisoformat(moved["start_time"])
+    end = datetime.fromisoformat(moved["end_time"])
+    assert end > start, "end<=start após o drag — bug Q.153.A1"
+    # Duração (2h) preservada.
+    assert end == new_ts + timedelta(hours=2)
+
+
 # ---------------------------------------------------------------------------
 # 2. Property test Hypothesis — 12 cenarios minimos
 # ---------------------------------------------------------------------------

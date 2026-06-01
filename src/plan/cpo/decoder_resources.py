@@ -89,7 +89,7 @@ def _earliest_start(
     post_desmolde_extra: Optional[timedelta] = None,
     op_by_id: Optional[Dict[str, SchedulingOperation]] = None,
     state: Optional[FactoryState] = None,
-) -> datetime:
+) -> Optional[datetime]:
     """Earliest start honouring precedences, queue time (PL22),
     post-Desmolde buffer (PL21) and curing/drying constraints (§3.8).
 
@@ -128,7 +128,10 @@ def _earliest_start(
     # Q.116.B — fase com posição alternativa: predecessor real é o MÁXIMO
     # end_at entre os siblings cujo phase_id ∈ allowed_predecessors e que
     # já tenham completado. Se nenhum completou, o op não pode arrancar
-    # ainda — devolvemos um sentinela alto para sinalizar inviável agora.
+    # ainda — devolvemos None (Q.153.A1) para o loop o deixar pending e
+    # retentar numa passagem seguinte; se nunca ficar pronto, o ramo de
+    # deadlock marca-o infeasible SEM o agendar (em vez de o agendar a
+    # +10 anos, que poluía makespan/datas com lixo end<start).
     if op.is_flexible and op.allowed_predecessors:
         allowed = set(op.allowed_predecessors)
         chosen_pred: Optional[SchedulingOperation] = None
@@ -145,8 +148,8 @@ def _earliest_start(
                 chosen_end = end
                 chosen_pred = prev
         if chosen_end is None:
-            # Nenhum allowed_predecessor completou — não pode arrancar.
-            return default + timedelta(days=365 * 10)
+            # Nenhum allowed_predecessor completou — não pode arrancar agora.
+            return None
         candidate = _with_gaps(chosen_end, chosen_pred)
         if candidate > earliest:
             earliest = candidate
@@ -497,14 +500,22 @@ def _run_scheduling_loop(
                     continue
                 batch_peers = peers
 
-            earliest_pred_end = max(
+            earliest_candidates = [
                 _earliest_start(
                     p, order_to_ops, op_end_at, horizon_start,
                     queue_gap=queue_gap, post_desmolde_extra=post_desmolde_extra,
                     op_by_id=op_by_id, state=state,
                 )
                 for p in batch_peers
-            )
+            ]
+            # Q.153.A1 — fase flexível cujo allowed_predecessor ainda não
+            # completou devolve None: deixa pending e retenta na próxima
+            # passagem (em vez de agendar a +10 anos). Se nunca ficar pronto,
+            # o ramo de deadlock (não-progresso) marca-o infeasible.
+            if any(c is None for c in earliest_candidates):
+                new_pending.append(op)
+                continue
+            earliest_pred_end = max(earliest_candidates)
 
             best_machine, used_variant_b = _select_machine(
                 op, chromosome, machine_free_at, machine_ids, earliest_pred_end,

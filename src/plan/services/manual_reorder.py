@@ -13,7 +13,7 @@ Invariantes:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
@@ -257,6 +257,17 @@ async def apply_manual_reorder(
     modified_ops[target_idx] = dict(original_op)
     modified_ops[target_idx]["phase_id"] = new_phase
     modified_ops[target_idx]["start_time"] = new_start_ts.isoformat()
+    # Q.153.A1 — recalcular o end_time ao mover o start (preservando a
+    # duração real). Sem isto, arrastar uma op para o futuro deixava o end
+    # na data antiga → end<start (lixo no plano e no makespan).
+    _dur_min = original_op.get("duration_minutes")
+    if _dur_min is None:
+        _os = _to_aware(original_op.get("start_time") or original_op.get("start_ts"))
+        _oe = _to_aware(original_op.get("end_time") or original_op.get("end_ts"))
+        _dur_min = ((_oe - _os).total_seconds() / 60.0) if (_os and _oe) else 0.0
+    modified_ops[target_idx]["end_time"] = (
+        new_start_ts + timedelta(minutes=float(_dur_min))
+    ).isoformat()
     if new_operator_id is not None:
         # Q.148.A1 — o operador canónico da op é `workers` (lista, o que o decoder
         # do CPO produz). Escrever só `operator_id` deixava a pessoa por mudar —
