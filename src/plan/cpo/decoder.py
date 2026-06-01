@@ -161,9 +161,10 @@ def decode(
 
     # Phase 9 — KPI accumulation.
     makespan_hours = _compute_makespan_hours(loop.scheduled, horizon_start)
-    tardy_hours, late_orders, due_by_order = _compute_tardiness(
-        loop.scheduled, operations,
-    )
+    tard = _compute_tardiness(loop.scheduled, operations, horizon_start)
+    tardy_hours = tard["tardy_hours"]
+    late_orders = tard["late_orders"]
+    due_by_order = tard["due_by_order"]
     total_idle_hours, idle_ratio = _compute_idle_metrics(
         loop.scheduled, horizon_start, horizon_end,
     )
@@ -183,6 +184,10 @@ def decode(
         "makespan_hours": round(makespan_hours, 2),
         "total_tardiness_hours": round(tardy_hours, 2),
         "num_late_orders": late_orders,
+        # Q.153.A2 — dívida herdada vs atraso novo/evitável.
+        "num_already_overdue": tard["num_already_overdue"],
+        "num_newly_late": tard["num_newly_late"],
+        "tardiness_beyond_today_h": round(tard["tardiness_beyond_today_h"], 2),
         "otd_delivery": round(otd_delivery, 4),
         "setups": loop.setups,
         "routing_variants_applied": loop.routing_variants_applied,

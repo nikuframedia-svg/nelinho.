@@ -45,13 +45,24 @@ def _compute_makespan_hours(
 def _compute_tardiness(
     scheduled: List[ScheduledOp],
     operations: List[SchedulingOperation],
-) -> Tuple[float, int, Dict[str, Optional[datetime]]]:
-    """Return `(tardy_hours, late_orders, due_by_order)`.
+    horizon_start: datetime,
+) -> Dict[str, object]:
+    """Tardiness KPIs separando dívida herdada de atraso novo (Q.153.A2).
 
-    Tardy hours sum the per-order overshoot beyond the earliest `due_date`
-    seen on any op in that order. `late_orders` counts orders whose last
-    scheduled op finishes after due. `due_by_order` is returned so the
-    caller can compute OTD against the same denominator.
+    ~88% das OFs chegam com a data de entrega já no passado (dívida
+    herdada). Medir só o atraso cru faria com que TODAS contassem como
+    atrasadas e o GA não distinguiria um plano melhor de um pior. Medimos
+    a pontualidade do PLANO contra `effective_due = max(due, horizon_start)`
+    para o GA optimizar o atraso NOVO/evitável (`tardiness_beyond_today_h`),
+    sem mascarar a dívida (`num_already_overdue`). Nunca mutamos `due_date`.
+
+    Chaves devolvidas:
+      tardy_hours              — atraso total vs due real (legacy; safety_net)
+      late_orders              — nº ordens que acabam depois do due real (legacy)
+      num_already_overdue      — nº ordens com due < horizon_start (herdado)
+      num_newly_late           — nº ordens que acabam depois de effective_due
+      tardiness_beyond_today_h — atraso evitável vs effective_due (alvo do GA)
+      due_by_order             — due real por ordem (p/ OTD no mesmo denominador)
     """
     due_by_order: Dict[str, Optional[datetime]] = {}
     for op in operations:
@@ -68,15 +79,42 @@ def _compute_tardiness(
 
     tardy_hours = 0.0
     late_orders = 0
+    num_already_overdue = 0
+    num_newly_late = 0
+    tardiness_beyond_today_h = 0.0
     for order_id, end_time in order_last_end.items():
         due = due_by_order.get(order_id)
         if due is None:
             continue
+        overdue_at_start = due < horizon_start
+        if overdue_at_start:
+            num_already_overdue += 1
+        # Legacy — atraso vs due real (mantém safety_net/OTD inalterados).
         if end_time > due:
             late_orders += 1
             tardy_hours += (end_time - due).total_seconds() / 3600.0
+        # Q.153.A2 — magnitude evitável vs effective_due = max(due, hoje).
+        # Inclui o tempo-para-limpar de ordens já vencidas (o GA ganha
+        # gradiente: acabar os atrasados quanto antes), mas SEM a dívida
+        # histórica que saturava a fitness.
+        effective_due = due if due > horizon_start else horizon_start
+        if end_time > effective_due:
+            tardiness_beyond_today_h += (
+                (end_time - effective_due).total_seconds() / 3600.0
+            )
+            # "newly late" = o plano atrasou uma ordem que NÃO estava já
+            # vencida à entrada (atraso genuinamente causado pelo plano).
+            if not overdue_at_start:
+                num_newly_late += 1
 
-    return tardy_hours, late_orders, due_by_order
+    return {
+        "tardy_hours": tardy_hours,
+        "late_orders": late_orders,
+        "num_already_overdue": num_already_overdue,
+        "num_newly_late": num_newly_late,
+        "tardiness_beyond_today_h": tardiness_beyond_today_h,
+        "due_by_order": due_by_order,
+    }
 
 
 def _compute_idle_metrics(

@@ -124,6 +124,9 @@ RESULT_KEYS = {
     "makespan_hours",
     "total_tardiness_hours",
     "num_late_orders",
+    "num_already_overdue",  # Q.153.A2 — dívida herdada vs atraso novo
+    "num_newly_late",
+    "tardiness_beyond_today_h",
     "otd_delivery",
     "setups",
     "routing_variants_applied",
