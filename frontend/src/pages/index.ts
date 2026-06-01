@@ -13,8 +13,9 @@ export { CustomersPage } from './core/CustomersPage';
 export { SuppliersPage } from './core/SuppliersPage';
 
 // PLAN Module
-// SchedulingPage removida em Q.53.G — Planeamento consolidado em
-// pages/planeamento/PlaneamentoPage.tsx (rota /scheduling redireciona).
+// Planeamento vive em pages/overall/OverallPage.tsx (rota /overall). A antiga
+// SchedulingPage (Q.53.G) e a PlaneamentoPage (Q.153.D3) foram removidas —
+// /overall absorveu replanear/aprovar + drag-drop + preview.
 export { MRPPage } from './plan/MRPPage';
 export { CapacityPage } from './plan/CapacityPage';
 
