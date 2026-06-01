@@ -1,13 +1,12 @@
-"""Q.115.X6.A — job diário: calcula score de afinidade barco/fase.
+"""Q.115.X6.A / Q.150.B — job diário: score de afinidade barco/fase (REAL).
 
-Fonte: plan.fases_of_history (90 dias) + quality.rework_entry (90 dias).
-Destino: governance.boat_phase_score (UPSERT idempotente).
+Fonte: factory_raw.of_fp (Q.150). NÃO se usa plan.fases_of_history (vazio
+neste deployment) nem quality.rework_entry. barco = product_name (via
+plan.production_orders por OFFP_OF_ID); conclusão = OFFP_DATAFIM não-vazio;
+defeito = OFFP_RETURN. Destino: governance.boat_phase_score (UPSERT idempotente).
 
-Lógica:
-    score = (concluidas - peso_defeito * defect_count) / sample_count
-    normalizado [0,1] e com cap 10% face ao valor anterior.
-
-Corre às 03:45 UTC, depois do phase_operator_affinity (03:30).
+Lógica: score = clamp(win_rate − peso_defeito × taxa_defeito), cap 10% face
+ao anterior. Corre às 03:45 UTC, depois do phase_operator_affinity (03:30).
 """
 from __future__ import annotations
 
@@ -16,11 +15,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Tuple
 from uuid import UUID
 
-from sqlalchemy import func, select, text
+from sqlalchemy import select, text
 
 from src.governance.models.boat_phase_score import BoatPhaseScore
-from src.plan.models.fases_of_history import FasesOfHistory
-from src.quality.models.rework import ReworkEntry
 from src.shared.database import get_session_context
 
 logger = logging.getLogger(__name__)
@@ -59,35 +56,38 @@ async def _boat_phase_score_job(tenant_id: UUID) -> None:
     para um of_id, o par é ignorado.
     """
     started = datetime.now(timezone.utc)
-    cutoff = started - timedelta(days=90)
+    cutoff_iso = (started - timedelta(days=90)).strftime("%Y-%m-%dT%H:%M:%S")
+    now_iso = started.strftime("%Y-%m-%dT%H:%M:%S")
 
     try:
         async with get_session_context() as session:
-            # ── 1. Agrega throughput por (boat, phase) via join ──────────────
-            # Join fases_of_history → production_orders para obter product_name
-            # como boat_id. Uma linha conta quando fase_fim IS NOT NULL.
+            # ── 1. Agrega (barco, fase) do histórico REAL (of_fp), 90d ───────
+            # barco = product_name (via production_orders por OFFP_OF_ID).
+            # conclusão = OFFP_DATAFIM não-vazio; defeito = OFFP_RETURN.
+            # Janela [cutoff, now] — of_fp tem linhas planeadas (futuras).
             stmt = text(
                 """
-                SELECT
-                    COALESCE(po.product_name, foh.of_id) AS boat_id,
-                    foh.phase_id,
-                    COUNT(*) AS total,
-                    COUNT(foh.fase_fim) AS concluidas
-                FROM plan.fases_of_history foh
+                SELECT COALESCE(po.product_name, o."OFFP_OF_ID"::text) AS boat_id,
+                       o."OFFP_FP_ID"::text AS phase_id,
+                       COUNT(*) AS total,
+                       COUNT(NULLIF(o."OFFP_DATAFIM", '')) AS concluidas,
+                       COUNT(*) FILTER (WHERE o."OFFP_RETURN") AS defects
+                FROM factory_raw.of_fp o
                 LEFT JOIN plan.production_orders po
-                    ON po.tenant_id = foh.tenant_id
-                    AND CAST(po.legacy_id AS TEXT) = foh.of_id
-                WHERE
-                    foh.tenant_id = :tid
-                    AND foh.fase_inicio >= :cutoff
-                    AND foh.phase_id IS NOT NULL
-                GROUP BY
-                    COALESCE(po.product_name, foh.of_id),
-                    foh.phase_id
+                  ON po.tenant_id = :tid
+                  AND CAST(po.legacy_id AS TEXT) = o."OFFP_OF_ID"::text
+                WHERE NULLIF(o."OFFP_DATAINICIO", '') IS NOT NULL
+                  AND o."OFFP_DATAINICIO" >= :cutoff
+                  AND o."OFFP_DATAINICIO" <= :now
+                  AND o."OFFP_FP_ID" IS NOT NULL
+                GROUP BY COALESCE(po.product_name, o."OFFP_OF_ID"::text), o."OFFP_FP_ID"
                 """
             )
-            result = await session.execute(stmt, {"tid": tenant_id, "cutoff": cutoff})
-            phase_rows = result.all()
+            phase_rows = (
+                await session.execute(
+                    stmt, {"tid": tenant_id, "cutoff": cutoff_iso, "now": now_iso}
+                )
+            ).all()
 
             if not phase_rows:
                 logger.info(
@@ -95,33 +95,7 @@ async def _boat_phase_score_job(tenant_id: UUID) -> None:
                 )
                 return
 
-            # ── 2. Agrega defeitos por (boat, phase) ────────────────────────
-            stmt_defects = text(
-                """
-                SELECT
-                    COALESCE(re.model_id, re.of_id) AS boat_id,
-                    re.phase_id_causer AS phase_id,
-                    COUNT(*) AS defect_count
-                FROM quality.rework_entry re
-                WHERE
-                    re.tenant_id = :tid
-                    AND re.detected_at >= :cutoff
-                    AND re.phase_id_causer IS NOT NULL
-                GROUP BY
-                    COALESCE(re.model_id, re.of_id),
-                    re.phase_id_causer
-                """
-            )
-            def_result = await session.execute(
-                stmt_defects, {"tid": tenant_id, "cutoff": cutoff}
-            )
-            defect_map: Dict[Tuple[str, str], int] = {
-                (r.boat_id, r.phase_id): r.defect_count
-                for r in def_result.all()
-                if r.boat_id and r.phase_id
-            }
-
-            # ── 3. Lê scores anteriores para aplicar o cap ──────────────────
+            # ── 2. Lê scores anteriores para aplicar o cap ──────────────────
             prev_stmt = select(
                 BoatPhaseScore.boat_id,
                 BoatPhaseScore.phase_id,
@@ -133,20 +107,20 @@ async def _boat_phase_score_job(tenant_id: UUID) -> None:
                 for r in prev_result.all()
             }
 
-            # ── 4. Calcula scores e persiste via UPSERT ──────────────────────
+            # ── 3. Calcula scores e persiste via UPSERT ──────────────────────
             now_ts = datetime.now(timezone.utc)
             upserted = 0
             for row in phase_rows:
                 boat_id: str = row.boat_id
                 phase_id: str = row.phase_id
-                total: int = row.total
-                concluidas: int = row.concluidas
+                total: int = int(row.total or 0)
+                concluidas: int = int(row.concluidas or 0)
+                defect_count: int = int(row.defects or 0)
 
                 if total == 0 or not boat_id or not phase_id:
                     continue
 
-                defect_count = defect_map.get((boat_id, phase_id), 0)
-                # score bruto: taxa de conclusão penalizada por defeitos
+                # score bruto: taxa de conclusão penalizada por defeitos (OFFP_RETURN)
                 win_rate = concluidas / total
                 penalty = _DEFECT_WEIGHT * (defect_count / total)
                 raw_score = _clamp(win_rate - penalty)

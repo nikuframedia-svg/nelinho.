@@ -1,11 +1,15 @@
-"""Q.115.G — job diário: calcula afinidade operador/fase a partir do histórico real.
+"""Q.115.G / Q.150.A — job diário: afinidade operador/fase do histórico REAL.
 
-Fonte: plan.fases_of_history (FaseOf_Inicio→FaseOf_Fim, 90 dias).
+Fonte: `factory_raw.offp_eq ⋈ factory_raw.of_fp` (Q.150). NÃO se usa
+`plan.fases_of_history` porque o ETL grava `worker_id` SEMPRE NULL neste
+deployment → 0 linhas. O operador é `OFFPEQ_E_ID` (= `employee_code`),
+resolvido a `core.employees.id` — o id que `get_fase_summary` usa para
+resolver o NOME (join `PhaseOperatorAffinity.operator_id == Employee.id`).
 Destino: governance.phase_operator_affinity (UPSERT idempotente).
 
-Cap 10%: score não pode alterar mais de 0.1 face ao valor anterior
-(ou face a 0.5 neutro se for primeira vez). Garante estabilidade
-face a picos de amostras.
+Score = taxa de conclusão (`OFFP_DATAFIM` não-vazio) × (1 − taxa de defeito
+`OFFP_RETURN`). Cap 10%: score não muda mais de 0.1 face ao anterior (ou 0.5
+neutro na 1ª vez) — estabilidade face a picos de amostras.
 """
 from __future__ import annotations
 
@@ -14,10 +18,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Tuple
 from uuid import UUID
 
-from sqlalchemy import func, select, text
+from sqlalchemy import select, text
 
+from src.core.models.employee import Employee
 from src.governance.models.phase_operator_affinity import PhaseOperatorAffinity
-from src.plan.models.fases_of_history import FasesOfHistory
 from src.shared.database import get_session_context
 
 logger = logging.getLogger(__name__)
@@ -51,30 +55,35 @@ async def _phase_operator_affinity_job(tenant_id: UUID) -> None:
     """
 
     started = datetime.now(timezone.utc)
-    cutoff = started - timedelta(days=90)
+    cutoff_iso = (started - timedelta(days=90)).strftime("%Y-%m-%dT%H:%M:%S")
+    now_iso = started.strftime("%Y-%m-%dT%H:%M:%S")
 
     try:
         async with get_session_context() as session:
-            # ── 1. Agrega histórico dos últimos 90 dias ──────────────────
-            # Uma linha é "concluída" quando fase_fim IS NOT NULL.
-            # worker_id e phase_id não nulos são obrigatórios.
-            stmt = (
-                select(
-                    FasesOfHistory.worker_id,
-                    FasesOfHistory.phase_id,
-                    func.count().label("total"),
-                    func.count(FasesOfHistory.fase_fim).label("concluidas"),
-                )
-                .where(
-                    FasesOfHistory.tenant_id == tenant_id,
-                    FasesOfHistory.fase_inicio >= cutoff,
-                    FasesOfHistory.worker_id.is_not(None),
-                    FasesOfHistory.phase_id.is_not(None),
-                )
-                .group_by(FasesOfHistory.worker_id, FasesOfHistory.phase_id)
+            # ── 1. Agrega o histórico REAL (offp_eq ⋈ of_fp) dos últimos 90d ──
+            # Operador = OFFPEQ_E_ID (conta toda a equipa). Conclusão =
+            # OFFP_DATAFIM não-vazio. Defeito = OFFP_RETURN. Janela [cutoff, now]
+            # — of_fp tem linhas com data FUTURA (planeadas) que não são histórico.
+            stmt = text(
+                """
+                SELECT eq."OFFPEQ_E_ID"::text AS e_id,
+                       o."OFFP_FP_ID"::text   AS phase_id,
+                       COUNT(*)               AS total,
+                       COUNT(NULLIF(o."OFFP_DATAFIM", '')) AS completed,
+                       COUNT(*) FILTER (WHERE o."OFFP_RETURN") AS defects
+                FROM factory_raw.offp_eq eq
+                JOIN factory_raw.of_fp o ON o."OFFP_ID" = eq."OFFPEQ_OFFP_ID"
+                WHERE eq."OFFPEQ_E_ID" IS NOT NULL
+                  AND o."OFFP_FP_ID" IS NOT NULL
+                  AND NULLIF(o."OFFP_DATAINICIO", '') IS NOT NULL
+                  AND o."OFFP_DATAINICIO" >= :cutoff
+                  AND o."OFFP_DATAINICIO" <= :now
+                GROUP BY eq."OFFPEQ_E_ID", o."OFFP_FP_ID"
+                """
             )
-            result = await session.execute(stmt)
-            rows = result.all()
+            rows = (
+                await session.execute(stmt, {"cutoff": cutoff_iso, "now": now_iso})
+            ).mappings().all()
 
             if not rows:
                 logger.info(
@@ -82,39 +91,52 @@ async def _phase_operator_affinity_job(tenant_id: UUID) -> None:
                 )
                 return
 
-            # ── 2. Lê scores anteriores para aplicar o cap ───────────────
-            stmt_prev = select(
-                PhaseOperatorAffinity.operator_id,
-                PhaseOperatorAffinity.phase_id,
-                PhaseOperatorAffinity.score,
-            ).where(PhaseOperatorAffinity.tenant_id == tenant_id)
-            prev_result = await session.execute(stmt_prev)
+            # ── 2. Resolve E_ID → core.employees.id (o id que get_fase_summary
+            #       usa p/ resolver o nome). E_ID sem Employee → ignorado (sem
+            #       linha fantasma; só falamos de operadores conhecidos).
+            emp_rows = (
+                await session.execute(
+                    select(Employee.employee_code, Employee.id).where(
+                        Employee.tenant_id == tenant_id
+                    )
+                )
+            ).all()
+            emp_id_by_code: Dict[str, UUID] = {str(c): i for c, i in emp_rows if c}
+
+            # ── 3. Lê scores anteriores para aplicar o cap ───────────────
+            prev_result = await session.execute(
+                select(
+                    PhaseOperatorAffinity.operator_id,
+                    PhaseOperatorAffinity.phase_id,
+                    PhaseOperatorAffinity.score,
+                ).where(PhaseOperatorAffinity.tenant_id == tenant_id)
+            )
             previous: Dict[Tuple[UUID, str], float] = {
-                (r.operator_id, r.phase_id): r.score
-                for r in prev_result.all()
+                (r.operator_id, r.phase_id): r.score for r in prev_result.all()
             }
 
-            # ── 3. Calcula scores e persiste via UPSERT ──────────────────
+            # ── 4. Calcula scores e persiste via UPSERT ──────────────────
             now_ts = datetime.now(timezone.utc)
             upserted = 0
+            no_employee = 0
             for row in rows:
-                worker_id: UUID = row.worker_id
-                phase_id: str = row.phase_id
-                total: int = row.total
-                concluidas: int = row.concluidas
-
+                total = int(row["total"] or 0)
                 if total == 0:
                     continue
+                emp_id = emp_id_by_code.get(str(row["e_id"]))
+                if emp_id is None:
+                    no_employee += 1
+                    continue
+                phase_id = str(row["phase_id"])
+                completed = int(row["completed"] or 0)
+                defects = int(row["defects"] or 0)
 
-                win_rate = concluidas / total
-                # quality_factor: não temos quality_score em fases_of_history → 1.0
-                quality_factor = 1.0
-                raw_score = _clamp(win_rate * quality_factor)
+                # Q.150 — taxa de conclusão penalizada pela taxa de defeito.
+                win_rate = completed / total
+                defect_rate = defects / total
+                raw_score = _clamp(win_rate * (1.0 - defect_rate))
+                final_score = _apply_cap(raw_score, previous.get((emp_id, phase_id)))
 
-                prev = previous.get((worker_id, phase_id))
-                final_score = _apply_cap(raw_score, prev)
-
-                # UPSERT via INSERT ... ON CONFLICT DO UPDATE
                 await session.execute(
                     text(
                         """
@@ -131,7 +153,7 @@ async def _phase_operator_affinity_job(tenant_id: UUID) -> None:
                     ),
                     {
                         "tid": tenant_id,
-                        "oid": worker_id,
+                        "oid": emp_id,
                         "pid": phase_id,
                         "score": final_score,
                         "cnt": total,
@@ -144,8 +166,8 @@ async def _phase_operator_affinity_job(tenant_id: UUID) -> None:
 
         elapsed_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
         logger.info(
-            "phase_operator_affinity_job: tenant=%s pares=%s elapsed_ms=%s",
-            tenant_id, upserted, elapsed_ms,
+            "phase_operator_affinity_job: tenant=%s pares=%s sem_employee=%s elapsed_ms=%s",
+            tenant_id, upserted, no_employee, elapsed_ms,
         )
 
     except Exception as exc:

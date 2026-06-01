@@ -101,96 +101,118 @@ def test_cap_10_pct_segunda_execucao():
     assert abs(score_run2 - score_run1 - 0.1) < 1e-9
 
 
-# ─── 3. Job: sem dados → sem erro ────────────────────────────────────────────
+# ─── 3-4. Job repontado (Q.150): of_fp ⋈ offp_eq + resolução E_ID→Employee.id ─
+
+
+class _Res:
+    """Result fake: serve `.mappings().all()` (agregação) e `.all()` (selects)."""
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    def mappings(self):
+        return self
+
+    def all(self):
+        return self._rows
+
+
+def _run_job(agg_rows, emp_rows, prev_rows):
+    """Corre o job com sessão fake. Devolve a lista de params de UPSERT captados."""
+    captured: list[dict] = []
+
+    async def _exec(stmt, params=None):
+        if params and "cutoff" in params:      # 1) agregação of_fp
+            return _Res(agg_rows)
+        if params and "oid" in params:          # 4) UPSERT — captura
+            captured.append(params)
+            return _Res([])
+        s = str(stmt).lower()
+        if "employee" in s:                      # 2) mapa E_ID→Employee.id
+            return _Res(emp_rows)
+        return _Res(prev_rows)                    # 3) scores anteriores
+
+    sess = AsyncMock()
+    sess.execute = AsyncMock(side_effect=_exec)
+    sess.commit = AsyncMock()
+    ctx = MagicMock()
+    ctx.__aenter__ = AsyncMock(return_value=sess)
+    ctx.__aexit__ = AsyncMock(return_value=False)
+
+    import src.scheduling.jobs.phase_operator_affinity as _job_mod
+
+    async def _go():
+        original = _job_mod.get_session_context
+        try:
+            _job_mod.get_session_context = lambda: ctx
+            from src.scheduling.jobs.phase_operator_affinity import (
+                _phase_operator_affinity_job,
+            )
+            await _phase_operator_affinity_job(TEST_TENANT)
+        finally:
+            _job_mod.get_session_context = original
+        return sess
+
+    return _go, captured
 
 
 @pytest.mark.asyncio
 async def test_job_sem_dados_nao_crasha():
-    """Tenant sem ops nos últimos 90d → job termina sem erro, zero upserts."""
-    from src.scheduling.jobs.phase_operator_affinity import _phase_operator_affinity_job
-
-    fake_result = MagicMock()
-    fake_result.all.return_value = []
-
-    fake_session = AsyncMock()
-    fake_session.execute = AsyncMock(return_value=fake_result)
-    fake_session.commit = AsyncMock()
-
-    mock_ctx = MagicMock()
-    mock_ctx.__aenter__ = AsyncMock(return_value=fake_session)
-    mock_ctx.__aexit__ = AsyncMock(return_value=False)
-
-    import src.scheduling.jobs.phase_operator_affinity as _job_mod
-
-    original = _job_mod.get_session_context
-    try:
-        _job_mod.get_session_context = lambda: mock_ctx
-        await _phase_operator_affinity_job(TEST_TENANT)
-    finally:
-        _job_mod.get_session_context = original
-
-    # commit nunca chamado (early return antes do loop)
-    fake_session.commit.assert_not_called()
+    """Sem histórico real (of_fp vazio na janela) → termina sem erro, sem commit."""
+    go, captured = _run_job(agg_rows=[], emp_rows=[], prev_rows=[])
+    sess = await go()
+    sess.commit.assert_not_called()
+    assert captured == []
 
 
-# ─── 4. Job: idempotente (mesmos dados 2x → mesmo score) ─────────────────────
+@pytest.mark.asyncio
+async def test_job_escreve_employee_id_e_score_com_defeito():
+    """Q.150: operator_id = Employee.id (resolvido por employee_code==E_ID) e
+    score = conclusão × (1 − taxa de defeito) (OFFP_RETURN)."""
+    emp_id = uuid4()
+    agg = [{"e_id": "20366", "phase_id": "40", "total": 10, "completed": 8, "defects": 2}]
+    emp = [("20366", emp_id)]
+    # previous=0.6 → raw 0.64 passa o cap (delta 0.04)
+    prev = [SimpleNamespace(operator_id=emp_id, phase_id="40", score=0.6)]
+
+    go, captured = _run_job(agg, emp, prev)
+    await go()
+
+    assert len(captured) == 1
+    p = captured[0]
+    assert p["oid"] == emp_id          # NÃO uuid5 — o Employee.id real
+    assert p["pid"] == "40"
+    assert p["cnt"] == 10
+    # raw = (8/10) * (1 - 2/10) = 0.8 * 0.8 = 0.64
+    assert abs(p["score"] - 0.64) < 1e-9
+
+
+@pytest.mark.asyncio
+async def test_job_ignora_eid_sem_employee():
+    """E_ID do ERP sem linha em core.employees → ignorado (sem linha fantasma)."""
+    agg = [{"e_id": "99999", "phase_id": "40", "total": 5, "completed": 5, "defects": 0}]
+    emp = [("20366", uuid4())]   # mapa não tem o 99999
+    go, captured = _run_job(agg, emp, prev_rows=[])
+    sess = await go()
+    assert captured == []           # nenhum UPSERT
+    sess.commit.assert_called()      # mas o job fecha a tx na mesma
 
 
 @pytest.mark.asyncio
 async def test_job_idempotente():
-    """Correr o job 2x com os mesmos dados produz scores idênticos."""
-    from src.scheduling.jobs.phase_operator_affinity import _phase_operator_affinity_job
+    """Mesmos dados + mesmo score anterior → mesmo resultado (UPSERT idempotente)."""
+    emp_id = uuid4()
+    agg = [{"e_id": "20366", "phase_id": "40", "total": 10, "completed": 8, "defects": 2}]
+    emp = [("20366", emp_id)]
+    prev = [SimpleNamespace(operator_id=emp_id, phase_id="40", score=0.64)]
 
-    # Agregado da query: 8 de 10 concluídas
-    history_row = SimpleNamespace(
-        worker_id=OP_A, phase_id=PHASE_X, total=10, concluidas=8
-    )
-    prev_row = SimpleNamespace(operator_id=OP_A, phase_id=PHASE_X, score=0.5)
+    go1, cap1 = _run_job(agg, emp, prev)
+    await go1()
+    go2, cap2 = _run_job(agg, emp, prev)
+    await go2()
 
-    upserted_scores: list[float] = []
-
-    async def _fake_execute(stmt, params=None):
-        result = MagicMock()
-        if params is not None:
-            # Chamada de UPSERT — captura o score
-            upserted_scores.append(params["score"])
-            result.all.return_value = []
-            return result
-        # Distingue query de aggregado vs query de previous pelo tipo stmt
-        stmt_str = str(stmt)
-        if "group_by" in stmt_str.lower() or "worker_id" in stmt_str.lower():
-            result.all.return_value = [history_row]
-        else:
-            result.all.return_value = [prev_row]
-        return result
-
-    fake_session = AsyncMock()
-    fake_session.execute = AsyncMock(side_effect=_fake_execute)
-    fake_session.commit = AsyncMock()
-
-    mock_ctx = MagicMock()
-    mock_ctx.__aenter__ = AsyncMock(return_value=fake_session)
-    mock_ctx.__aexit__ = AsyncMock(return_value=False)
-
-    import src.scheduling.jobs.phase_operator_affinity as _job_mod
-
-    original = _job_mod.get_session_context
-    try:
-        _job_mod.get_session_context = lambda: mock_ctx
-        await _phase_operator_affinity_job(TEST_TENANT)
-        score_run1 = upserted_scores[-1] if upserted_scores else None
-
-        # 2ª execução: o score anterior é o que foi calculado na 1ª
-        upserted_scores.clear()
-        await _phase_operator_affinity_job(TEST_TENANT)
-        score_run2 = upserted_scores[-1] if upserted_scores else None
-    finally:
-        _job_mod.get_session_context = original
-
-    assert score_run1 is not None
-    assert score_run2 is not None
-    # Com os mesmos dados históricos e o mesmo score anterior, deve produzir o mesmo resultado
-    assert abs(score_run1 - score_run2) < 1e-6
+    assert cap1 and cap2
+    assert abs(cap1[0]["score"] - cap2[0]["score"]) < 1e-9
 
 
 # ─── 5. Endpoint GET /v1/learning/affinities ─────────────────────────────────

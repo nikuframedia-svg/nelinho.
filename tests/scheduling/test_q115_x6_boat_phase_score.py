@@ -129,75 +129,86 @@ def test_cap_10_pct_segunda_execucao():
     assert abs(score_run2 - score_run1 - 0.1) < 1e-9
 
 
-# ─── 4. Idempotente ──────────────────────────────────────────────────────────
+# ─── 4. Job repontado (Q.150): of_fp, boat_id=product_name, defeito=OFFP_RETURN ─
+
+
+def _run_boat_job(agg_rows, prev_rows):
+    """Corre o job com sessão fake. Devolve (go, captured_upserts)."""
+    captured: list[dict] = []
+
+    class _Res:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def all(self):
+            return self._rows
+
+    async def _exec(stmt, params=None):
+        if params and "cutoff" in params:    # 1) agregação of_fp
+            return _Res(agg_rows)
+        if params and "bid" in params:        # 3) UPSERT — captura
+            captured.append(params)
+            return _Res([])
+        return _Res(prev_rows)                 # 2) scores anteriores
+
+    sess = AsyncMock()
+    sess.execute = AsyncMock(side_effect=_exec)
+    sess.commit = AsyncMock()
+    ctx = MagicMock()
+    ctx.__aenter__ = AsyncMock(return_value=sess)
+    ctx.__aexit__ = AsyncMock(return_value=False)
+
+    import src.scheduling.jobs.boat_phase_score_job as _job_mod
+
+    async def _go():
+        original = _job_mod.get_session_context
+        try:
+            _job_mod.get_session_context = lambda: ctx
+            from src.scheduling.jobs.boat_phase_score_job import _boat_phase_score_job
+            await _boat_phase_score_job(TEST_TENANT)
+        finally:
+            _job_mod.get_session_context = original
+        return sess
+
+    return _go, captured
+
+
+@pytest.mark.asyncio
+async def test_job_score_com_defeito_e_boat_id():
+    """Q.150: boat_id = product_name; score = win_rate − 0.3·taxa_defeito."""
+    agg = [SimpleNamespace(
+        boat_id="Nacra 450", phase_id="40", total=10, concluidas=8, defects=2,
+    )]
+    # previous=0.7 → raw 0.74 passa o cap (delta 0.04)
+    prev = [SimpleNamespace(boat_id="Nacra 450", phase_id="40", score=0.7)]
+
+    go, captured = _run_boat_job(agg, prev)
+    await go()
+
+    assert len(captured) == 1
+    p = captured[0]
+    assert p["bid"] == "Nacra 450"
+    assert p["pid"] == "40"
+    assert p["cnt"] == 10
+    # raw = 0.8 − 0.3·(2/10) = 0.8 − 0.06 = 0.74
+    assert abs(p["score"] - 0.74) < 1e-9
 
 
 @pytest.mark.asyncio
 async def test_job_idempotente():
-    """Correr o job 2x com os mesmos dados produz scores idênticos."""
-    from src.scheduling.jobs.boat_phase_score_job import _boat_phase_score_job
+    """Mesmos dados + mesmo score anterior → mesmo resultado."""
+    agg = [SimpleNamespace(
+        boat_id=BOAT_A, phase_id=PHASE_X, total=10, concluidas=8, defects=0,
+    )]
+    prev = [SimpleNamespace(boat_id=BOAT_A, phase_id=PHASE_X, score=0.7)]
 
-    # Simula: 8 de 10 concluídas, zero defeitos
-    phase_row = SimpleNamespace(
-        boat_id=BOAT_A, phase_id=PHASE_X, total=10, concluidas=8
-    )
-    prev_row = SimpleNamespace(boat_id=BOAT_A, phase_id=PHASE_X, score=0.5)
-    # defect row vazio
-    empty_result = MagicMock()
-    empty_result.all.return_value = []
+    go1, c1 = _run_boat_job(agg, prev)
+    await go1()
+    go2, c2 = _run_boat_job(agg, prev)
+    await go2()
 
-    upserted_scores: list[float] = []
-
-    call_idx = [0]
-
-    async def _fake_execute(stmt_or_text, params=None):
-        result = MagicMock()
-        if params is not None and "score" in (params or {}):
-            upserted_scores.append(params["score"])
-            result.all.return_value = []
-            return result
-        call_idx[0] += 1
-        n = call_idx[0]
-        if n == 1:
-            # throughput query
-            result.all.return_value = [phase_row]
-        elif n == 2:
-            # defect query
-            result.all.return_value = []
-        else:
-            # previous scores
-            result.all.return_value = [prev_row]
-        return result
-
-    fake_session = AsyncMock()
-    fake_session.execute = AsyncMock(side_effect=_fake_execute)
-    fake_session.commit = AsyncMock()
-
-    mock_ctx = MagicMock()
-    mock_ctx.__aenter__ = AsyncMock(return_value=fake_session)
-    mock_ctx.__aexit__ = AsyncMock(return_value=False)
-
-    import src.scheduling.jobs.boat_phase_score_job as _job_mod
-
-    original = _job_mod.get_session_context
-    try:
-        _job_mod.get_session_context = lambda: mock_ctx
-
-        # 1ª execução
-        await _boat_phase_score_job(TEST_TENANT)
-        score1 = upserted_scores[-1] if upserted_scores else None
-
-        # Reset contadores para simular 2ª execução com os mesmos dados
-        call_idx[0] = 0
-        upserted_scores.clear()
-        await _boat_phase_score_job(TEST_TENANT)
-        score2 = upserted_scores[-1] if upserted_scores else None
-    finally:
-        _job_mod.get_session_context = original
-
-    assert score1 is not None
-    assert score2 is not None
-    assert abs(score1 - score2) < 1e-6
+    assert c1 and c2
+    assert abs(c1[0]["score"] - c2[0]["score"]) < 1e-9
 
 
 # ─── 5. Endpoint GET /v1/learning/boat-phase-scores ──────────────────────────
