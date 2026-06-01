@@ -76,6 +76,30 @@ def test_shape_empty_rows_is_empty():
     assert shape_actuals_items([], {}, {}, {}) == []
 
 
+def test_shape_propagates_is_boat_q153_c0():
+    """Q.153.C0 — is_boat (boats-only Q.136) propaga-se por of_id; ausente=None."""
+    rows = [
+        _row("OF_BOAT", "5", datetime(2026, 5, 1, 8), None, None),
+        _row("OF_STRAP", "5", datetime(2026, 5, 1, 8), None, None),
+        _row("OF_UNKNOWN", "5", datetime(2026, 5, 1, 8), None, None),
+    ]
+    items = shape_actuals_items(
+        rows, {}, {}, {},
+        is_boat_by_of={"OF_BOAT": True, "OF_STRAP": False},
+    )
+    by_of = {it["of_id"]: it["is_boat"] for it in items}
+    assert by_of["OF_BOAT"] is True
+    assert by_of["OF_STRAP"] is False
+    assert by_of["OF_UNKNOWN"] is None  # desconhecido — não esconder por omissão
+
+
+def test_shape_is_boat_defaults_none_when_map_absent_q153_c0():
+    """Sem mapa de is_boat (chamadores legados de 4 args) → is_boat None, sem rebentar."""
+    rows = [_row("OF1", "5", datetime(2026, 5, 1, 8), None, None)]
+    items = shape_actuals_items(rows, {}, {}, {})
+    assert items[0]["is_boat"] is None
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # Service — best-effort
 # ─────────────────────────────────────────────────────────────────────────

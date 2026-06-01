@@ -36,12 +36,22 @@ campos optimizados a ``null`` — assim o frontend mostra o gap.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping, Optional
+import logging
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Mapping, Optional
 
 from src.plan.models.order import ProductionOrder
 from src.plan.services.phase_classification import phase_sequence
 
-__all__ = ["merge_commit_with_orders", "pick_operation_for_order"]
+if TYPE_CHECKING:  # pragma: no cover — só p/ type-check, evita import em runtime
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
+
+__all__ = [
+    "merge_commit_with_orders",
+    "pick_operation_for_order",
+    "is_boat_by_order_ids",
+]
 
 
 def _op_order_key(op: Mapping[str, Any]) -> str:
@@ -208,3 +218,45 @@ def merge_commit_with_orders(
         out.append(item)
 
     return out
+
+
+async def is_boat_by_order_ids(
+    session: "AsyncSession",
+    order_ids: Iterable[Any],
+) -> Dict[str, bool]:
+    """Q.153.C0 — mapa ``{order_id: is_boat}`` a partir de ``factory_raw``.
+
+    Barco = ``P_QTDDECK > 0 AND P_QTDCASCO > 0`` — **o mesmo predicado
+    boats-only** que o CPO aplica na geração do plano (``state.py``
+    ``_load_open_orders_db``, Q.136). ``order_id`` == ``OF_ID`` (o ``legacy_id``
+    da ``ProductionOrder``).
+
+    Acessórios/componentes (Banco/Leme/Strap…) têm deck/casco 0/NULL → ``False``.
+    Best-effort: sessão ausente, sem ids, ou tabela/coluna em falta → ``{}`` (o
+    chamador trata ``is_boat`` ausente como "desconhecido", nunca 5xx).
+    """
+    if session is None:
+        return {}
+    ids = sorted({str(o).strip() for o in order_ids if o is not None and str(o).strip()})
+    if not ids:
+        return {}
+
+    from sqlalchemy import text
+    from sqlalchemy.exc import SQLAlchemyError
+
+    # LEFT JOIN: OF sem produto → is_boat NULL → tratado como não-barco (False).
+    sql = text(
+        """
+        SELECT ofb."OF_ID"::text AS of_id,
+               (p."P_QTDDECK" > 0 AND p."P_QTDCASCO" > 0) AS is_boat
+        FROM factory_raw.ordemfabrico ofb
+        LEFT JOIN factory_raw.produto p ON p."P_ID" = ofb."OF_P_ID"
+        WHERE ofb."OF_ID"::text = ANY(:ids)
+        """
+    )
+    try:
+        rows = (await session.execute(sql, {"ids": ids})).mappings().all()
+    except SQLAlchemyError as exc:  # pragma: no cover — tabela ausente/dev
+        logger.warning("is_boat_by_order_ids query failed: %s", exc)
+        return {}
+    return {str(r["of_id"]): bool(r["is_boat"]) for r in rows}

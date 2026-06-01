@@ -97,9 +97,26 @@ async def get_commit(
     """Get one commit by full SHA-256 or short prefix (>=7 chars)."""
     service = CommitsService(db, tenant_id)
     commit = await _resolve_commit_or_404(service, sha)
-    return CommitResponse(**CommitsService.to_dict(
-        commit, include_operations=include_operations
-    ))
+    payload = CommitsService.to_dict(commit, include_operations=include_operations)
+
+    # Q.153.C0 — enriquecer cada operação com `is_boat` (predicado boats-only
+    # Q.136), ao LER, para o /overall poder focar barcos vs acessórios/straps.
+    # Read-time join (mirror de /commits/{sha}/orders) → funciona já para DRAFTs
+    # existentes, sem mexer no CPO nem re-planear. Best-effort: {} → is_boat ausente.
+    ops = payload.get("operations")
+    if include_operations and ops:
+        from src.plan.services.cpo_commit_orders import is_boat_by_order_ids
+
+        boat_map = await is_boat_by_order_ids(
+            db, [op.get("order_id") for op in ops]
+        )
+        if boat_map:
+            for op in ops:
+                oid = str(op.get("order_id") or "").strip()
+                if oid in boat_map:
+                    op["is_boat"] = boat_map[oid]
+
+    return CommitResponse(**payload)
 
 
 # =============================================================================

@@ -625,6 +625,8 @@ export interface TimelineActualItem {
   start?: string;
   end?: string;
   duration_min?: number | null;
+  /** Q.153.C0 — barco (boats-only Q.136) vs acessório/strap; null = desconhecido. */
+  is_boat?: boolean | null;
   source: string;
 }
 

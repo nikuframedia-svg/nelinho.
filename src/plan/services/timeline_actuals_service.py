@@ -66,12 +66,16 @@ _FASES_BY_RANGE_SQL = text(
     """
 )
 
-# OF_ID → (OF_P_ID modelo, P_NOME barco). LEFT JOIN: of sem produto → barco None.
+# OF_ID → (OF_P_ID modelo, P_NOME barco, is_boat). LEFT JOIN: of sem produto →
+# barco None / is_boat False. Q.153.C0 — is_boat = predicado boats-only Q.136
+# (P_QTDDECK>0 AND P_QTDCASCO>0), o MESMO que o CPO aplica na geração do plano,
+# para o /overall poder focar barcos vs acessórios/straps nos realizados.
 _NOMES_OF_SQL = text(
     """
     SELECT o."OF_ID"::text   AS of_id,
            o."OF_P_ID"::text AS modelo_id,
-           p."P_NOME"        AS barco_nome
+           p."P_NOME"        AS barco_nome,
+           (p."P_QTDDECK" > 0 AND p."P_QTDCASCO" > 0) AS is_boat
     FROM factory_raw.ordemfabrico o
     LEFT JOIN factory_raw.produto p ON p."P_ID" = o."OF_P_ID"
     WHERE o."OF_ID"::text = ANY(:of_ids)
@@ -178,14 +182,18 @@ def shape_actuals_items(
     barco_by_of: Dict[str, Optional[str]],
     modelo_by_of: Dict[str, Optional[str]],
     fase_by_id: Dict[str, Optional[str]],
+    is_boat_by_of: Optional[Dict[str, Optional[bool]]] = None,
 ) -> List[Dict[str, Any]]:
     """Converte linhas cruas de fases_of_history em items canónicos da timeline.
 
     Item: {of_id, barco_nome, modelo_id, phase_id, phase_nome, worker_id,
-    worker_nome, start, end, duration_min, source}. `worker_*` ficam None aqui
-    (preenchidos em Q.141.B via offp_eq). Fase em curso → end None. Nome de fase
-    em falta → cai no próprio phase_id (padrão plan_vs_actual).
+    worker_nome, start, end, duration_min, is_boat, source}. `worker_*` ficam
+    None aqui (preenchidos em Q.141.B via offp_eq). Fase em curso → end None.
+    Nome de fase em falta → cai no próprio phase_id (padrão plan_vs_actual).
+    Q.153.C0 — `is_boat` (boats-only Q.136) quando conhecido, senão None (o
+    /overall trata None como "desconhecido", não esconde por omissão).
     """
+    boat_map = is_boat_by_of or {}
     items: List[Dict[str, Any]] = []
     for r in history_rows:
         of_id = str(r.get("of_id")) if r.get("of_id") is not None else None
@@ -209,6 +217,7 @@ def shape_actuals_items(
                 "start": _iso(inicio),
                 "end": _iso(fim),
                 "duration_min": dur_min,
+                "is_boat": boat_map.get(of_id),
                 "source": "fase",
             }
         )
@@ -343,13 +352,22 @@ class TimelineActualsService:
 
     async def _resolve_names(
         self, of_ids: List[str], fase_ids: List[str],
-    ) -> Tuple[Dict[str, Optional[str]], Dict[str, Optional[str]], Dict[str, Optional[str]]]:
-        """(barco_by_of, modelo_by_of, fase_by_id) — best-effort, em lote."""
+    ) -> Tuple[
+        Dict[str, Optional[str]],
+        Dict[str, Optional[str]],
+        Dict[str, Optional[str]],
+        Dict[str, Optional[bool]],
+    ]:
+        """(barco_by_of, modelo_by_of, fase_by_id, is_boat_by_of) — best-effort.
+
+        Q.153.C0 — `is_boat_by_of` (boats-only Q.136) vem da mesma query de nomes.
+        """
         barco_by_of: Dict[str, Optional[str]] = {}
         modelo_by_of: Dict[str, Optional[str]] = {}
         fase_by_id: Dict[str, Optional[str]] = {}
+        is_boat_by_of: Dict[str, Optional[bool]] = {}
         if self.session is None:
-            return barco_by_of, modelo_by_of, fase_by_id
+            return barco_by_of, modelo_by_of, fase_by_id, is_boat_by_of
         if of_ids:
             try:
                 rows = (
@@ -358,6 +376,8 @@ class TimelineActualsService:
                 for r in rows:
                     barco_by_of[str(r["of_id"])] = r.get("barco_nome")
                     modelo_by_of[str(r["of_id"])] = r.get("modelo_id")
+                    ib = r.get("is_boat")
+                    is_boat_by_of[str(r["of_id"])] = None if ib is None else bool(ib)
             except SQLAlchemyError as exc:  # pragma: no cover
                 logger.warning("timeline actuals: of-names query failed: %s", exc)
         if fase_ids:
@@ -369,7 +389,7 @@ class TimelineActualsService:
                     fase_by_id[str(r["fase_id"])] = r.get("fase_nome")
             except SQLAlchemyError as exc:  # pragma: no cover
                 logger.warning("timeline actuals: fase-names query failed: %s", exc)
-        return barco_by_of, modelo_by_of, fase_by_id
+        return barco_by_of, modelo_by_of, fase_by_id, is_boat_by_of
 
     async def actuals_items(
         self, from_d: date, to_d: date, *, cap: int = DEFAULT_CAP,
@@ -384,8 +404,12 @@ class TimelineActualsService:
             return [], truncated
         of_ids = sorted({str(r["of_id"]) for r in rows if r.get("of_id")})
         fase_ids = sorted({str(r["phase_id"]) for r in rows if r.get("phase_id")})
-        barco_by_of, modelo_by_of, fase_by_id = await self._resolve_names(of_ids, fase_ids)
-        items = shape_actuals_items(rows, barco_by_of, modelo_by_of, fase_by_id)
+        barco_by_of, modelo_by_of, fase_by_id, is_boat_by_of = await self._resolve_names(
+            of_ids, fase_ids
+        )
+        items = shape_actuals_items(
+            rows, barco_by_of, modelo_by_of, fase_by_id, is_boat_by_of
+        )
         # Q.141.B — enriquecer com operadores reais (offp_eq+entidade).
         offp_ids = sorted({str(r["offp_id"]) for r in rows if r.get("offp_id")})
         worker_rows = await self._fetch_workers(offp_ids)

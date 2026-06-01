@@ -13,7 +13,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { addDays, startOfDay, format } from 'date-fns';
 import { pt } from 'date-fns/locale';
-import { Calendar, AlertTriangle } from 'lucide-react';
+import { Calendar, AlertTriangle, Ship } from 'lucide-react';
 import { planKeys } from '../../lib/api/keys';
 import { cpoCommitsApi, planOperationsApi, timelineActualsApi, copilotAlertsApi } from '../../lib/api';
 import type { CpoCommit, TimelineActualItem, CopilotAlertItem } from '../../lib/api';
@@ -91,6 +91,9 @@ export default function OverallPage(): ReactNode {
   const [expandedCellOps, setExpandedCellOps] = useState<ScheduledOp[] | null>(null);
   // Q.147.D — filtro/foco (barco/operador/fase/cliente). Esconde lanes vazias.
   const [filterText, setFilterText] = useState('');
+  // Q.153.C0 — "Só barcos" (ligado por defeito): esconde acessórios/straps das
+  // vistas (a Por Barco inundava com ~1912 lanes de straps dos realizados).
+  const [boatsOnly, setBoatsOnly] = useState(true);
   // Q.149.C.3 — alertas de override manual já dispensados nesta sessão.
   const [dismissedAlerts, setDismissedAlerts] = useState<Set<string>>(() => new Set());
 
@@ -315,6 +318,8 @@ export default function OverallPage(): ReactNode {
           end: (op.end as string | undefined) ?? (op.end_time as string | undefined),
           duration_min: (op.duration_min as number | undefined) ?? (op.duration_minutes as number | undefined),
           status: op.status as string | undefined,
+          // Q.153.C0 — barco vs acessório (injectado pelo backend ao ler o commit).
+          is_boat: typeof op.is_boat === 'boolean' ? op.is_boat : undefined,
           source: 'plan',
         } satisfies ScheduledOp;
       },
@@ -334,6 +339,8 @@ export default function OverallPage(): ReactNode {
         end: it.end ?? undefined,
         duration_min: it.duration_min ?? undefined,
         status: 'realizado',
+        // Q.153.C0 — barco vs acessório/strap dos realizados (of_fp).
+        is_boat: typeof it.is_boat === 'boolean' ? it.is_boat : undefined,
         source: 'actual',
       } satisfies ScheduledOp),
     );
@@ -378,13 +385,18 @@ export default function OverallPage(): ReactNode {
   // editingOp usam `operations` completo). Filtrar esconde lanes vazias (as
   // lanes derivam das ops passadas à vista).
   const filteredOperations = useMemo(() => {
+    // Q.153.C0 — "Só barcos" (ligado por defeito): esconde acessórios/straps
+    // (is_boat===false). Mantém os de is_boat desconhecido (undefined) — honesto,
+    // não esconde por omissão; a vista Por Barco passa de ~1912 lanes para barcos.
+    let base = operations;
+    if (boatsOnly) base = base.filter((o) => o.is_boat !== false);
     const q = filterText.trim().toLowerCase();
-    if (!q) return operations;
-    return operations.filter((o) =>
+    if (!q) return base;
+    return base.filter((o) =>
       [o.order_id, o.operator_name, o.phase_name, o.cliente]
         .some((v) => (v ?? '').toLowerCase().includes(q)),
     );
-  }, [operations, filterText]);
+  }, [operations, filterText, boatsOnly]);
 
   // Op em edição: em modo Editar, clicar numa op de PLANO abre o editor.
   const editingOp = useMemo(() => {
@@ -738,6 +750,24 @@ export default function OverallPage(): ReactNode {
                   </button>
                 );
               })}
+
+              {/* Q.153.C0 — "Só barcos": esconde acessórios/straps (ligado por
+                  defeito). Sem isto a Por Barco mostra ~1912 lanes de straps. */}
+              <button
+                type="button"
+                onClick={() => setBoatsOnly((b) => !b)}
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition"
+                style={
+                  boatsOnly
+                    ? { background: 'var(--accent)', color: '#fff' }
+                    : { color: 'var(--fg-2)', background: 'var(--bg-4)', border: '1px solid var(--bd-2)' }
+                }
+                title={boatsOnly ? 'A mostrar só barcos — clica para incluir acessórios/straps' : 'A mostrar tudo — clica para só barcos'}
+                aria-pressed={boatsOnly}
+              >
+                <Ship size={13} />
+                {boatsOnly ? 'Só barcos' : 'Mostrar acessórios'}
+              </button>
 
               {/* Q.147.D — filtro/foco: narra a vista a um subconjunto legível. */}
               <input

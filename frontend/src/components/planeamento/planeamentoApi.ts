@@ -27,6 +27,8 @@ export interface CpoOperation {
   end_time: string; // ISO
   duration_minutes: number;
   setup_family: string | null;
+  /** Q.153.C0 — barco (boats-only Q.136) vs acessório; injectado ao ler o commit. */
+  is_boat?: boolean;
 }
 
 export interface CpoScheduleResult {

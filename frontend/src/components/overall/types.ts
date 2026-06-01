@@ -20,4 +20,7 @@ export interface ScheduledOp {
   /** Q.141 — 'actual' = o que aconteceu (passado real, of_fp); 'plan' = plano
    * CPO (futuro). Ausente = plano (back-compat). Controla read-only + estilo. */
   source?: 'actual' | 'plan';
+  /** Q.153.C0 — barco (P_QTDDECK>0 AND P_QTDCASCO>0, boats-only Q.136) vs
+   * acessório/strap. `undefined` = desconhecido (não esconder por omissão). */
+  is_boat?: boolean;
 }
