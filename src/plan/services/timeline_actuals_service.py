@@ -104,6 +104,30 @@ _WORKERS_BY_OFFP_SQL = text(
     """
 )
 
+# Q.141.C — expedições REAIS: transp_of (TROF_ENVIADO) ⋈ transporte (TR_DATA),
+# critério canónico do measure_contract.py (Q.82 §4). A data vive em
+# `transporte.TR_DATA` (texto ISO), NÃO em OF_DATATRANSPORTE (morto desde 2009).
+# transp_of.TROF_TR_ID → transporte.TR_ID.
+_EXPEDICOES_SQL = text(
+    """
+    SELECT tof."TROF_OF_ID"::text AS of_id,
+           t."TR_DATA"            AS transport_date,
+           o."OF_P_ID"::text      AS modelo_id,
+           p."P_NOME"             AS barco_nome
+    FROM factory_raw.transp_of tof
+    JOIN factory_raw.transporte t ON t."TR_ID" = tof."TROF_TR_ID"
+    LEFT JOIN factory_raw.ordemfabrico o ON o."OF_ID" = tof."TROF_OF_ID"
+    LEFT JOIN factory_raw.produto p ON p."P_ID" = o."OF_P_ID"
+    WHERE tof."TROF_ENVIADO" = true
+      AND t."TR_DATA" IS NOT NULL
+      AND t."TR_DATA" <> ''
+      AND t."TR_DATA" >= :lower
+      AND t."TR_DATA" < :upper
+    ORDER BY t."TR_DATA" ASC
+    LIMIT :cap
+    """
+)
+
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -220,6 +244,23 @@ def attach_workers(
     return items
 
 
+def shape_expeditions(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Q.141.C — items de expedição (barcos que SAÍRAM) de transp_of⋈transporte."""
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        of_id = str(r.get("of_id")) if r.get("of_id") is not None else None
+        out.append(
+            {
+                "of_id": of_id,
+                "barco_nome": r.get("barco_nome"),
+                "modelo_id": r.get("modelo_id"),
+                "transport_date": _iso(r.get("transport_date")),
+                "source": "transp_of",
+            }
+        )
+    return out
+
+
 # ── Service ──────────────────────────────────────────────────────────────────
 
 class TimelineActualsService:
@@ -312,3 +353,22 @@ class TimelineActualsService:
             logger.warning("timeline actuals: workers query failed: %s", exc)
             return []
         return [dict(r) for r in rows]
+
+    async def expeditions(
+        self, from_d: date, to_d: date, *, cap: int = DEFAULT_CAP,
+    ) -> Tuple[List[Dict[str, Any]], bool]:
+        """Barcos que SAÍRAM no intervalo (transp_of⋈transporte). Best-effort."""
+        if self.session is None:
+            return [], False
+        lower, upper = _day_bounds(from_d, to_d)
+        try:
+            rows = (
+                await self.session.execute(
+                    _EXPEDICOES_SQL, {"lower": lower, "upper": upper, "cap": cap + 1},
+                )
+            ).mappings().all()
+        except SQLAlchemyError as exc:  # pragma: no cover — tabela ausente/dev
+            logger.warning("timeline actuals: expeditions query failed: %s", exc)
+            return [], False
+        truncated = len(rows) > cap
+        return shape_expeditions([dict(r) for r in rows[:cap]]), truncated

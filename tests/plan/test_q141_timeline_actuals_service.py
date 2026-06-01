@@ -15,6 +15,7 @@ from src.plan.services.timeline_actuals_service import (
     TimelineActualsService,
     attach_workers,
     shape_actuals_items,
+    shape_expeditions,
     worker_uuid,
 )
 
@@ -77,6 +78,37 @@ def test_shape_empty_rows_is_empty():
 # ─────────────────────────────────────────────────────────────────────────
 # Service — best-effort
 # ─────────────────────────────────────────────────────────────────────────
+
+# ─────────────────────────────────────────────────────────────────────────
+# Q.141.C — shape_expeditions (barcos que saíram)
+# ─────────────────────────────────────────────────────────────────────────
+
+def test_shape_expeditions_basic():
+    out = shape_expeditions([
+        {"of_id": "117968", "transport_date": "2026-05-08", "modelo_id": "P1", "barco_nome": "K1"},
+    ])
+    assert out == [{
+        "of_id": "117968", "barco_nome": "K1", "modelo_id": "P1",
+        "transport_date": "2026-05-08", "source": "transp_of",
+    }]
+
+
+def test_shape_expeditions_unresolved_boat_tolerated():
+    out = shape_expeditions([{"of_id": "9", "transport_date": "2026-05-09",
+                              "modelo_id": None, "barco_nome": None}])
+    assert out[0]["barco_nome"] is None
+
+
+def test_shape_expeditions_empty():
+    assert shape_expeditions([]) == []
+
+
+@pytest.mark.asyncio
+async def test_expeditions_none_session_is_empty():
+    svc = TimelineActualsService(session=None, tenant_id=_TENANT)  # type: ignore[arg-type]
+    exps, trunc = await svc.expeditions(date(2026, 5, 1), date(2026, 5, 31))
+    assert exps == [] and trunc is False
+
 
 @pytest.mark.asyncio
 async def test_actuals_items_none_session_is_empty():
