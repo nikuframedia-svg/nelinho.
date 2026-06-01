@@ -29,6 +29,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, distinct, func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.models.client_priority import ClientPriority
@@ -541,7 +542,7 @@ async def _build_operator_phase_history(
         rows = (
             await session.execute(stmt, {"ecode": str(employee_code), "lim": limit})
         ).mappings().all()
-    except Exception as exc:  # pragma: no cover — factory_raw ausente em dev.
+    except (SQLAlchemyError, AttributeError) as exc:  # factory_raw ausente em dev.
         logger.debug("operator phase_history skipped (%s)", exc)
         return []
 
@@ -586,7 +587,7 @@ async def _build_operator_today_tasks(
             .limit(1)
         )
         commit = (await session.execute(stmt)).scalar_one_or_none()
-    except Exception as exc:  # pragma: no cover — defesa: modelo/tabela ausente.
+    except (ImportError, SQLAlchemyError) as exc:  # modelo/tabela ausente.
         logger.debug("operator today_tasks commit lookup skipped (%s)", exc)
         return []
     if commit is None:
@@ -700,7 +701,7 @@ async def _build_cliente_history(
                 revenue_note = (
                     "Sem facturação para este nome (ou mart por sincronizar)."
                 )
-        except Exception as exc:  # pragma: no cover — mart ausente em dev.
+        except SQLAlchemyError as exc:  # mart de facturação ausente em dev.
             logger.debug("cliente revenue skipped (%s)", exc)
             revenue_note = "Mart de facturação indisponível."
 
