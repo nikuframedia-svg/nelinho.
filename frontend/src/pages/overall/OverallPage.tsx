@@ -73,6 +73,10 @@ export default function OverallPage(): ReactNode {
   const [scale, setScale] = useState<TimelineScale>('dia');
   const [mode, setMode] = useState<ViewMode>('ver');
 
+  // Q.141.F — escala PT do toggle → escala EN da Timeline (day/week/month).
+  const ganttScale: 'day' | 'week' | 'month' =
+    scale === 'dia' ? 'day' : scale === 'semana' ? 'week' : 'month';
+
   // ── Seleção partilhada entre as 4 vistas (C2) ─────────────────────────────
   const [selection, setSelection] = useState<PlanSelection | null>(null);
 
@@ -463,6 +467,7 @@ export default function OverallPage(): ReactNode {
                       editable={mode === 'editar'}
                       startDate={windowStart}
                       endDate={windowEnd}
+                      scale={ganttScale}
                       onDrop={handleDrop}
                       selection={selection}
                       onSelect={handleSelect}
@@ -496,6 +501,7 @@ export default function OverallPage(): ReactNode {
                       editable={mode === 'editar'}
                       startDate={windowStart}
                       endDate={windowEnd}
+                      scale={ganttScale}
                       onDrop={handleDrop}
                       selection={selection}
                       onSelect={handleSelect}
@@ -529,6 +535,7 @@ export default function OverallPage(): ReactNode {
                       editable={mode === 'editar'}
                       startDate={windowStart}
                       endDate={windowEnd}
+                      scale={ganttScale}
                       onDrop={handleDrop}
                       selection={selection}
                       onSelect={handleSelect}

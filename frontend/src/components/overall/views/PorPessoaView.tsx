@@ -18,7 +18,8 @@ import type { DragEndEvent } from '@dnd-kit/core';
 import { useQuery } from '@tanstack/react-query';
 import { EmptyState } from '../../dark';
 import { Clickable } from '../../entitySheets';
-import { Timeline, buildDaySlots, dateToSlotIndex } from '../Timeline';
+import { Timeline, buildSlots, dateToSlotIndex } from '../Timeline';
+import type { TimelineScale } from '../Timeline';
 import type { TimelineLane, TimelineItem } from '../../dark';
 import { learningAffinitiesApi } from '../../../lib/api/planApi';
 import { learningKeys } from '../../../lib/api/keys';
@@ -37,6 +38,7 @@ interface PorPessoaViewProps {
   onDrop: (opId: string, newPhase: string, newStartTs: string, newOperatorId?: string) => void;
   selection?: PlanSelection | null;
   onSelect?: (sel: PlanSelection) => void;
+  scale?: TimelineScale;
 }
 
 // ─── Droppable slot por pessoa ───────────────────────────────────────────────
@@ -122,6 +124,7 @@ export const PorPessoaView = memo(function PorPessoaView({
   onDrop,
   selection,
   onSelect,
+  scale = 'day',
 }: PorPessoaViewProps): ReactNode {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -148,7 +151,7 @@ export const PorPessoaView = memo(function PorPessoaView({
     return m;
   }, [affinities]);
 
-  const slots = buildDaySlots(startDate, endDate);
+  const slots = buildSlots(scale, startDate, endDate);
 
   // Swimlane por operador
   const operadores = useMemo(() => {
@@ -190,7 +193,7 @@ export const PorPessoaView = memo(function PorPessoaView({
     const map = new Map<string, ScheduledOp[]>();
     for (const op of operations) {
       const operadorId = op.operator_id ?? op.operator_name ?? 'sem-operador';
-      const slotIdx = dateToSlotIndex(op.start, startDate);
+      const slotIdx = dateToSlotIndex(op.start, startDate, scale);
       const slotId =
         slotIdx !== null && slotIdx < slots.length ? slots[slotIdx]?.id : null;
       if (!slotId) continue;
@@ -199,7 +202,7 @@ export const PorPessoaView = memo(function PorPessoaView({
       map.get(key)!.push(op);
     }
     return map;
-  }, [operations, slots, startDate]);
+  }, [operations, slots, startDate, scale]);
 
   const items: TimelineItem[] = useMemo(() => {
     const result: TimelineItem[] = [];
@@ -252,7 +255,7 @@ export const PorPessoaView = memo(function PorPessoaView({
       <Timeline
         startDate={startDate}
         endDate={endDate}
-        scale="day"
+        scale={scale}
         lanes={lanes}
         items={items}
         slotWidth={72}

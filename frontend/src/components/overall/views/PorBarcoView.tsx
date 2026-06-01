@@ -17,7 +17,8 @@ import {
 import type { DragEndEvent } from '@dnd-kit/core';
 import { EmptyState } from '../../dark';
 import { Clickable } from '../../entitySheets';
-import { Timeline, buildDaySlots, dateToSlotIndex } from '../Timeline';
+import { Timeline, buildSlots, dateToSlotIndex } from '../Timeline';
+import type { TimelineScale } from '../Timeline';
 import type { TimelineLane, TimelineItem } from '../../dark';
 import type { ScheduledOp } from '../types';
 import type { PlanSelection } from '../selection';
@@ -43,6 +44,7 @@ interface PorBarcoViewProps {
   onDrop: (opId: string, newPhase: string, newStartTs: string, newOperatorId?: string) => void;
   selection?: PlanSelection | null;
   onSelect?: (sel: PlanSelection) => void;
+  scale?: TimelineScale;
 }
 
 // ─── Droppable slot por barco ───────────────────────────────────────────────
@@ -112,12 +114,13 @@ export const PorBarcoView = memo(function PorBarcoView({
   onDrop,
   selection,
   onSelect,
+  scale = 'day',
 }: PorBarcoViewProps): ReactNode {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
   );
 
-  const slots = buildDaySlots(startDate, endDate);
+  const slots = buildSlots(scale, startDate, endDate);
 
   // Swimlane por barco
   const boats = useMemo(() => {
@@ -159,7 +162,7 @@ export const PorBarcoView = memo(function PorBarcoView({
     const map = new Map<string, ScheduledOp[]>();
     for (const op of operations) {
       const boatId = op.order_id ?? op.id;
-      const slotIdx = dateToSlotIndex(op.start, startDate);
+      const slotIdx = dateToSlotIndex(op.start, startDate, scale);
       const slotId =
         slotIdx !== null && slotIdx < slots.length ? slots[slotIdx]?.id : null;
       if (!slotId) continue;
@@ -168,7 +171,7 @@ export const PorBarcoView = memo(function PorBarcoView({
       map.get(key)!.push(op);
     }
     return map;
-  }, [operations, slots, startDate]);
+  }, [operations, slots, startDate, scale]);
 
   const items: TimelineItem[] = useMemo(() => {
     const result: TimelineItem[] = [];
@@ -218,7 +221,7 @@ export const PorBarcoView = memo(function PorBarcoView({
       <Timeline
         startDate={startDate}
         endDate={endDate}
-        scale="day"
+        scale={scale}
         lanes={lanes}
         items={items}
         slotWidth={72}
