@@ -489,3 +489,55 @@ async def test_sem_commit_base():
                 new_start_ts=_BASE_TS,
                 new_operator_id=None,
             )
+
+
+# ---------------------------------------------------------------------------
+# Q.148.A1 — mudar o operador escreve o campo CANÓNICO `workers`
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_a1_operator_change_writes_workers():
+    """new_operator_id aplica-se em `workers` (não só operator_id) — senão a
+    pessoa não muda (o decoder CPO usa `workers`), incl. no reapply do robô."""
+    ops = [_make_op("op-1", "PINTURA", start_offset_h=0, operator_id="worker-X")]
+    parent = _FakeCommit(operations=ops)
+    session = _FakeSession(parent)
+
+    with _patch_kafka(), _patch_audit():
+        await apply_manual_reorder(
+            session=session,
+            tenant_id=TENANT_ID,
+            operation_id="op-1",
+            new_phase="PINTURA",
+            new_start_ts=_BASE_TS,
+            new_operator_id="worker-Z",
+        )
+
+    commit = session.added[0]
+    op = next(o for o in commit.operations if o["operation_id"] == "op-1")
+    assert op["workers"] == ["worker-Z"]  # campo canónico mudou
+    assert op["operator_id"] == "worker-Z"  # consistente
+    # o pai não foi mutado
+    assert "workers" not in parent.operations[0] or parent.operations[0].get("workers") != ["worker-Z"]
+
+
+# ---------------------------------------------------------------------------
+# Q.148.A2 — exclusividade de operador lê `workers` (lista)
+# ---------------------------------------------------------------------------
+
+def test_a2_exclusivity_reads_workers_list():
+    """O axioma apanha um operador já ocupado quando este vive em `workers`."""
+    occupied = _make_op("op-2", "MONTAGEM", start_offset_h=0, duration_h=4)
+    occupied.pop("operator_id", None)
+    occupied["workers"] = ["worker-Z", "worker-Q"]  # op CPO: operador em `workers`
+    target = _make_op("op-1", "PINTURA", start_offset_h=10)
+    ops = [target, occupied]
+
+    # worker-Z já está em op-2 entre 08:00–12:00; mover op-1 para 09:00 → conflito
+    new_ts = _BASE_TS + timedelta(hours=1)
+    with pytest.raises(SafetyNetViolation) as exc:
+        _check_operator_exclusivity(ops, "op-1", "worker-Z", new_ts)
+    assert exc.value.axiom_name == "exclusividade_operador"
+
+    # operador livre (worker-LIVRE) → sem violação
+    _check_operator_exclusivity(ops, "op-1", "worker-LIVRE", new_ts)

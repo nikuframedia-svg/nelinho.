@@ -48,6 +48,26 @@ class SafetyNetViolation(Exception):
 _CURING_GAP_HOURS = 16.0  # NELO_CURING_GAPS_SEED minimo quimico
 
 
+def _to_aware(value: Any) -> Optional[datetime]:
+    """Q.148.A2 — parse + normaliza para tz-aware (UTC se naive).
+
+    As ops do decoder CPO guardam `start_time` naive ('...T08:00:00') e as
+    edições manuais guardam aware ('...+00:00'). Comparar mistos rebenta com
+    'can't compare offset-naive and offset-aware datetimes' — agora os axiomas
+    só comparam aware.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    if isinstance(value, datetime) and value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value if isinstance(value, datetime) else None
+
+
 def _check_operator_exclusivity(
     ops: List[Dict[str, Any]],
     target_op_id: str,
@@ -60,21 +80,25 @@ def _check_operator_exclusivity(
     for op in ops:
         if str(op.get("operation_id", "")) == target_op_id:
             continue
-        op_op_id = str(op.get("operator_id") or op.get("worker_id") or "")
-        if op_op_id != new_operator_id:
+        # Q.148.A2 — o operador da op vive em `workers` (lista, do decoder CPO);
+        # ler só operator_id/worker_id deixava o axioma cego ao double-booking.
+        op_operators: set[str] = set()
+        op_workers = op.get("workers")
+        if isinstance(op_workers, list):
+            op_operators.update(str(w) for w in op_workers)
+        single = op.get("operator_id") or op.get("worker_id")
+        if single:
+            op_operators.add(str(single))
+        if new_operator_id not in op_operators:
             continue
         # Verifica sobreposicao temporal
-        op_start = op.get("start_time") or op.get("start_ts")
-        op_end = op.get("end_time") or op.get("end_ts")
-        if op_start is None or op_end is None:
+        op_start = _to_aware(op.get("start_time") or op.get("start_ts"))
+        op_end = _to_aware(op.get("end_time") or op.get("end_ts"))
+        new_ts = _to_aware(new_start_ts)
+        if op_start is None or op_end is None or new_ts is None:
             continue
-        if isinstance(op_start, str):
-            op_start = datetime.fromisoformat(op_start)
-        if isinstance(op_end, str):
-            op_end = datetime.fromisoformat(op_end)
         # Sobreposicao: new_start dentro da janela da outra op
-        # (sem end da nova op, usamos 1 minuto de margem)
-        if op_start <= new_start_ts < op_end:
+        if op_start <= new_ts < op_end:
             raise SafetyNetViolation(
                 axiom_name="exclusividade_operador",
                 operation_id=target_op_id,
@@ -105,12 +129,11 @@ def _check_precedence(
     )
     if predecessor is None:
         return
-    pred_end = predecessor.get("end_time") or predecessor.get("end_ts")
-    if pred_end is None:
+    pred_end = _to_aware(predecessor.get("end_time") or predecessor.get("end_ts"))
+    new_ts = _to_aware(new_start_ts)
+    if pred_end is None or new_ts is None:
         return
-    if isinstance(pred_end, str):
-        pred_end = datetime.fromisoformat(pred_end)
-    if new_start_ts < pred_end:
+    if new_ts < pred_end:
         raise SafetyNetViolation(
             axiom_name="precedencia_monotonica",
             operation_id=target_op_id,
@@ -169,12 +192,11 @@ def _check_curing_gap(
     if target_op is None:
         return
     # So valida se a op anterior e marcada como curing_end
-    curing_end = target_op.get("curing_end_ts") or target_op.get("curing_end_time")
-    if curing_end is None:
+    curing_end = _to_aware(target_op.get("curing_end_ts") or target_op.get("curing_end_time"))
+    new_ts = _to_aware(new_start_ts)
+    if curing_end is None or new_ts is None:
         return
-    if isinstance(curing_end, str):
-        curing_end = datetime.fromisoformat(curing_end)
-    gap_hours = (new_start_ts - curing_end).total_seconds() / 3600.0
+    gap_hours = (new_ts - curing_end).total_seconds() / 3600.0
     if gap_hours < _CURING_GAP_HOURS:
         raise SafetyNetViolation(
             axiom_name="curing_gap",
@@ -236,7 +258,12 @@ async def apply_manual_reorder(
     modified_ops[target_idx]["phase_id"] = new_phase
     modified_ops[target_idx]["start_time"] = new_start_ts.isoformat()
     if new_operator_id is not None:
+        # Q.148.A1 — o operador canónico da op é `workers` (lista, o que o decoder
+        # do CPO produz). Escrever só `operator_id` deixava a pessoa por mudar —
+        # inclusive no reapply do robô (Q.142), que re-aplicava o move mas não o
+        # operador. (Fases-par perdem o 2º worker — o editor escolhe 1.)
         modified_ops[target_idx]["operator_id"] = new_operator_id
+        modified_ops[target_idx]["workers"] = [new_operator_id]
 
     # ── Axiomas Spelke (por ordem de severidade) ──────────────────────
     _check_operator_exclusivity(modified_ops, operation_id, new_operator_id, new_start_ts)
