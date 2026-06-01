@@ -36,12 +36,17 @@ def _clamp(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
 
 
 def _percentile_90(values: List[float]) -> float:
-    """Percentil 90 simples sem dependências externas."""
+    """Percentil 90 simples sem dependências externas.
+
+    BUGFIX Q.138.D: usa (n-1)*0.9 (interpolação linear) em vez de n*0.9
+    que causava off-by-one e retornava o max em vez do p90.
+    Exemplo: [10..100] → idx=int(9*0.9)=8 → sorted[8]=90.0 (correcto).
+    """
     if not values:
         return 1.0
     sorted_vals = sorted(values)
-    idx = int(len(sorted_vals) * 0.9)
-    return sorted_vals[min(idx, len(sorted_vals) - 1)] or 1.0
+    idx = int((len(sorted_vals) - 1) * 0.9)
+    return sorted_vals[idx] or 1.0
 
 
 async def _boat_potential_job(tenant_id: UUID) -> None:
