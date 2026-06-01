@@ -178,6 +178,27 @@ async def run_startup(app: FastAPI) -> None:
                         tenant_lookup_error,
                     )
                 register_ml_retrain_jobs(scheduler_instance, tenants=active_tenant_ids)
+
+                # Q.149.B — jobs por-tenant (afinidade operador/fase @03:30,
+                # shortage, quality scoring, mold health, preference detector)
+                # só são agendados por register_tenant. Sem isto a aba
+                # "Operadores" do FaseSheet fica eternamente "sem dados" e o
+                # auto_cpo_replan não tem tenant. Registar os tenants activos
+                # da BD (mesma lista do ML retrain) — corrige dev E prod.
+                from src.shared.scheduler import register_tenant as _register_tenant
+
+                for _tid in active_tenant_ids:
+                    try:
+                        _register_tenant(_tid)
+                    except Exception as _reg_err:  # noqa: BLE001
+                        logger.warning(
+                            "register_tenant falhou tid=%s (%s)", _tid, _reg_err
+                        )
+                if active_tenant_ids:
+                    logger.info(
+                        "register_tenant: %d tenant(s) — jobs por-tenant agendados",
+                        len(active_tenant_ids),
+                    )
             except Exception as ml_error:
                 logger.warning(f"ML retrain job registration failed: {ml_error}")
 
