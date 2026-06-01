@@ -203,6 +203,10 @@ export const planKeys = {
   all: ['plan'] as const,
   schedule: () => [...planKeys.all, 'schedule'] as const,
   scheduleCurrent: () => [...planKeys.schedule(), 'current'] as const,
+  // Q.141 — linha temporal: actuals (o que aconteceu) por intervalo.
+  timeline: () => [...planKeys.all, 'timeline'] as const,
+  actuals: (from: string, to: string) =>
+    [...planKeys.timeline(), 'actuals', from, to] as const,
 } as const;
 
 // ─── Reports admin (Q.67.2.B) ──────────────────────────────────────────
@@ -305,4 +309,17 @@ export const masterDataKeys = {
   encomendas: () => [...masterDataKeys.all, 'encomendas'] as const,
   boats: (showRetired: boolean) => [...masterDataKeys.all, 'boats', { showRetired }] as const,
   employees: (showInactive: boolean) => [...masterDataKeys.all, 'employees', { showInactive }] as const,
+} as const;
+
+// ─── workforce sectors / níveis por sector (Q.140) ───────────────────────
+//
+// Níveis por (pessoa × sector) + ranking por sector. ranking(area) e
+// employeeLevels(id) invalidam-se após o PATCH /sector-level.
+
+export const sectorKeys = {
+  all: ['workforce-sectors'] as const,
+  list: () => [...sectorKeys.all, 'list'] as const,
+  ranking: (areaGroup: string) => [...sectorKeys.all, 'ranking', areaGroup] as const,
+  employeeLevels: (employeeId: string) =>
+    [...sectorKeys.all, 'employee', employeeId] as const,
 } as const;

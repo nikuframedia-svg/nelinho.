@@ -7,6 +7,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Sheet } from '../../dark/Sheet';
+import { SheetError } from '../SheetError';
 import { Tabs } from '../../dark/Tabs';
 import { EmptyState } from '../../dark/EmptyState';
 import { DarkBadge } from '../../dark/DarkBadge';
@@ -50,14 +51,7 @@ export default function FaseSheet({ phaseId, onClose }: FaseSheetProps) {
   }
 
   if (error || !data) {
-    return (
-      <Sheet open={true} onClose={onClose} title="Erro" width={720}>
-        <div style={{ color: 'var(--danger, #ef4444)', fontSize: 14 }}>
-          Erro ao carregar dados:{' '}
-          {error instanceof Error ? error.message : 'Erro desconhecido'}
-        </div>
-      </Sheet>
-    );
+    return <SheetError error={error} onClose={onClose} kind="fase" />;
   }
 
   return (

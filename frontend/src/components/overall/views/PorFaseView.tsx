@@ -19,12 +19,16 @@ import {
 import type { DragEndEvent } from '@dnd-kit/core';
 import { EmptyState } from '../../dark';
 import { Clickable } from '../../entitySheets';
-import { Timeline, buildDaySlots, dateToSlotIndex } from '../Timeline';
+import { Timeline, buildSlots, dateToSlotIndex } from '../Timeline';
+import type { TimelineScale } from '../Timeline';
 import type { TimelineLane, TimelineItem } from '../../dark';
 import type { ScheduledOp } from '../types';
 import type { PlanSelection } from '../selection';
 import { opMatchesSelection } from '../selection';
 import { OpCard } from './OpCard';
+import { DensityCell, DENSITY_THRESHOLD } from './DensityCell';
+import { useCellExpand } from '../cellExpand';
+import { CountBadge } from './CountBadge';
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -36,6 +40,7 @@ interface PorFaseViewProps {
   onDrop: (opId: string, newPhase: string, newStartTs: string, newOperatorId?: string) => void;
   selection?: PlanSelection | null;
   onSelect?: (sel: PlanSelection) => void;
+  scale?: TimelineScale;
 }
 
 // ─── Droppable slot: fase + dia ───────────────────────────────────────────────
@@ -47,6 +52,7 @@ function PhaseDropSlot({
   editable,
   selection,
   onSelect,
+  compact = false,
 }: {
   phaseId: string;
   slotId: string;
@@ -54,9 +60,21 @@ function PhaseDropSlot({
   editable: boolean;
   selection?: PlanSelection | null;
   onSelect?: (sel: PlanSelection) => void;
+  compact?: boolean;
 }) {
   const dropId = `${phaseId}__${slotId}`;
   const { setNodeRef, isOver } = useDroppable({ id: dropId });
+  const expand = useCellExpand();
+
+  // Q.141.J — escalas grossas (semana/mês): contagem por célula em vez de
+  // milhares de cartões. Verde quando há realizado, neutro quando só plano.
+  if (compact) {
+    return (
+      <div ref={setNodeRef} className="h-full w-full flex items-center justify-center p-0.5">
+        {ops.length > 0 && <CountBadge ops={ops} />}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -65,23 +83,27 @@ function PhaseDropSlot({
         isOver && editable ? 'bg-teal-500/10 ring-1 ring-teal-500/40' : ''
       }`}
     >
-      {ops.map((op) => {
-        const selected = opMatchesSelection(op, selection ?? null);
-        const dimmed = !!selection && !selected;
-        return (
-          <OpCard
-            key={op.id}
-            op={op}
-            editable={editable}
-            draggableId={op.id}
-            selected={selected}
-            dimmed={dimmed}
-            onSelect={onSelect}
-            primaryLabel={op.order_id}
-            showBoost
-          />
-        );
-      })}
+      {ops.length > DENSITY_THRESHOLD ? (
+        <DensityCell ops={ops} onClick={() => expand?.(ops)} />
+      ) : (
+        ops.map((op) => {
+          const selected = opMatchesSelection(op, selection ?? null);
+          const dimmed = !!selection && !selected;
+          return (
+            <OpCard
+              key={op.id}
+              op={op}
+              editable={editable}
+              draggableId={op.id}
+              selected={selected}
+              dimmed={dimmed}
+              onSelect={onSelect}
+              primaryLabel={op.order_id}
+              showBoost
+            />
+          );
+        })
+      )}
     </div>
   );
 }
@@ -94,6 +116,7 @@ function renderOpItem(
   editable: boolean,
   selection: PlanSelection | null,
   onSelect?: (sel: PlanSelection) => void,
+  compact = false,
 ): ReactNode {
   const ops = opsByPhaseSlot.get(item.id) ?? [];
   const [phaseId, slotId] = item.id.split('__slot__');
@@ -105,6 +128,7 @@ function renderOpItem(
       editable={editable}
       selection={selection}
       onSelect={onSelect}
+      compact={compact}
     />
   );
 }
@@ -117,12 +141,13 @@ export const PorFaseView = memo(function PorFaseView({
   onDrop,
   selection,
   onSelect,
+  scale = 'day',
 }: PorFaseViewProps): ReactNode {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
   );
 
-  const slots = buildDaySlots(startDate, endDate);
+  const slots = buildSlots(scale, startDate, endDate);
 
   const phases = useMemo(() => {
     const seen = new Map<string, string>();
@@ -152,7 +177,7 @@ export const PorFaseView = memo(function PorFaseView({
   const opsByPhaseSlot = useMemo(() => {
     const map = new Map<string, ScheduledOp[]>();
     for (const op of operations) {
-      const slotIdx = dateToSlotIndex(op.start, startDate);
+      const slotIdx = dateToSlotIndex(op.start, startDate, scale);
       const slotId = slotIdx !== null && slotIdx < slots.length
         ? slots[slotIdx]?.id
         : null;
@@ -162,13 +187,15 @@ export const PorFaseView = memo(function PorFaseView({
       map.get(key)!.push(op);
     }
     return map;
-  }, [operations, slots, startDate]);
+  }, [operations, slots, startDate, scale]);
 
   const items: TimelineItem[] = useMemo(() => {
     const result: TimelineItem[] = [];
     for (const [key, ops] of opsByPhaseSlot.entries()) {
       if (ops.length === 0) continue;
-      const [phaseId, , slotId] = key.split('__slot__');
+      // Q.146.B — `split('__slot__')` devolve 2 partes; `[a, , c]` lia slotId=undefined
+      // → findIndex(-1) → continue → items=[] → grelha vazia. Agora [phaseId, slotId].
+      const [phaseId, slotId] = key.split('__slot__');
       const slotIdx = slots.findIndex((s) => s.id === slotId);
       if (slotIdx === -1) continue;
       result.push({
@@ -210,13 +237,13 @@ export const PorFaseView = memo(function PorFaseView({
       <Timeline
         startDate={startDate}
         endDate={endDate}
-        scale="day"
+        scale={scale}
         lanes={lanes}
         items={items}
         slotWidth={72}
         laneHeight={56}
         renderItem={(item) =>
-          renderOpItem(item, opsByPhaseSlot, editable, selection ?? null, onSelect)
+          renderOpItem(item, opsByPhaseSlot, editable, selection ?? null, onSelect, scale !== 'day')
         }
       />
     </DndContext>

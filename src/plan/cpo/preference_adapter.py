@@ -31,6 +31,14 @@ The four Camada 1 rule types map to:
   preferred worker is assigned to the flagged phase, positive otherwise.
   The reward magnitude is smaller than the penalty so the schedule
   doesn't corrupt itself with needless re-assignments.
+
+  Q.140 boundary (anti dupla-contagem): este reward atua sobre
+  ``PreferenceRule(type=operator_affinity)`` CONFIRMADAS por humano, ao nível
+  da FITNESS. É distinto da preferência por sector da Q.140, que vive na
+  ESCOLHA do pool (``decoder_resources._pick_workers`` via
+  ``FactoryState.preference_score_for``) e deriva do nível por sector
+  (override manual + histórico real), não de regras confirmadas. Fontes e
+  camadas diferentes → não há dupla contagem.
 * ``tradeoff_preference`` — **skipped at fitness level**. These rules
   are already acted on by Sprint D.4 ``AdaptiveFitnessWeights`` which
   rebalances the weight vector up-front.

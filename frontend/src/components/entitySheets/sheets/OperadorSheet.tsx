@@ -7,6 +7,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Sheet } from '../../dark/Sheet';
+import { SheetError } from '../SheetError';
 import { Tabs } from '../../dark/Tabs';
 import { EmptyState } from '../../dark/EmptyState';
 import { entityKeys } from '../../../lib/api/keys';
@@ -42,14 +43,7 @@ export default function OperadorSheet({ operatorId, onClose }: OperadorSheetProp
   }
 
   if (error || !data) {
-    return (
-      <Sheet open={true} onClose={onClose} title="Erro" width={720}>
-        <div style={{ color: 'var(--danger, #ef4444)', fontSize: 14 }}>
-          Erro ao carregar dados:{' '}
-          {error instanceof Error ? error.message : 'Erro desconhecido'}
-        </div>
-      </Sheet>
-    );
+    return <SheetError error={error} onClose={onClose} kind="operador" />;
   }
 
   const subtitle = `${data.role ?? '—'} · ${data.active ? 'Activo' : 'Inactivo'} · ${data.total_phases_with_data} fases com dados`;

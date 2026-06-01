@@ -18,7 +18,7 @@ Verifica:
 from __future__ import annotations
 
 import asyncio
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 
@@ -105,11 +105,15 @@ RECENT_ERRORS = [
 ]
 
 # ─── Shipments (data.jsx SHIPMENTS) ────────────────────────────────────────
+# Q.143.B — datas relativas a hoje (nunca no passado). Os camiões reais são
+# derivados das `production_orders` por `refresh_from_orders` (endpoint
+# /batches/refresh-from-orders); estes 3 são só a moldura de demo quando não há
+# espelho ERP. Código segue o padrão `SHP-{date}` para deduplicar com o refresh.
 SHIPMENTS = [
-    # date, code, destination, capacity, priority
-    (date(2026, 5, 16), "SHP-2026-05-16", "Fed. Francesa + Fed. Portuguesa", 50, 100),
-    (date(2026, 5, 20), "SHP-2026-05-20", "Cliente Privado DE", 50, 100),
-    (date(2026, 5, 22), "SHP-2026-05-22", "Fed. Italiana + Equipa Sueca", 50, 100),
+    # offset_days (a partir de hoje), destination, capacity, priority
+    (4, "Fed. Francesa + Fed. Portuguesa", 50, 100),
+    (8, "Cliente Privado DE", 50, 100),
+    (10, "Fed. Italiana + Equipa Sueca", 50, 100),
 ]
 
 # ─── Suggestions (data.jsx SUGGESTIONS) ────────────────────────────────────
@@ -365,7 +369,10 @@ async def upsert_recent_errors(
 
 
 async def upsert_shipments(session: AsyncSession) -> None:
-    for transport_date, code, destination, cap, priority in SHIPMENTS:
+    today = date.today()
+    for offset_days, destination, cap, priority in SHIPMENTS:
+        transport_date = today + timedelta(days=offset_days)
+        code = f"SHP-{transport_date.isoformat()}"
         stmt = select(TransportBatch).where(
             TransportBatch.tenant_id == DEV_TENANT_ID,
             TransportBatch.code == code,

@@ -15,6 +15,8 @@ interface ViewPanelProps {
   selection?: PlanSelection | null;
   onClearSelection?: () => void;
   children: ReactNode;
+  /** Q.146.A — permite `h-full` para o painel preencher um container de altura fixa. */
+  className?: string;
 }
 
 export const ViewPanel = memo(function ViewPanel({
@@ -23,10 +25,11 @@ export const ViewPanel = memo(function ViewPanel({
   selection,
   onClearSelection,
   children,
+  className,
 }: ViewPanelProps) {
   return (
     <div
-      className="flex flex-col rounded-xl border overflow-hidden"
+      className={`flex flex-col rounded-xl border overflow-hidden ${className ?? ''}`}
       style={{
         background: 'var(--bg-2)',
         borderColor: 'var(--bd-2)',

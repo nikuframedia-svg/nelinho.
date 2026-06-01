@@ -1,7 +1,7 @@
 // ExpedicaoPage · ListaTab (Q.60.S). ZERO MOCKS — endpoints reais.
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Truck, Check } from 'lucide-react';
+import { Truck, Check, DownloadCloud, Loader2 } from 'lucide-react';
 import { KPIBig, EmptyState } from '../../../components/dark';
 import { transportApi, ceoDashboardApi, type TransportBatch, type TransportManifest, type TransportManifestBoat } from '../../../lib/api';
 import { shortDate, type BatchCounts, countManifest } from '../expedicaoShared';
@@ -11,10 +11,14 @@ export function ListaTab({
   batches,
   isLoading,
   isError,
+  onSync,
+  isSyncing,
 }: {
   batches: TransportBatch[];
   isLoading: boolean;
   isError: boolean;
+  onSync?: () => void;
+  isSyncing?: boolean;
 }) {
   const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -148,8 +152,21 @@ export function ListaTab({
     return (
       <EmptyState
         title="Sem expedições agendadas"
-        hint="Cria um camião para o próximo cliente no ERP."
+        hint="Sincroniza do ERP para criar os camiões a partir das ordens reais (data de transporte). Idempotente — não desfaz movimentos manuais."
         icon={<Truck size={32} />}
+        action={
+          onSync ? (
+            <button
+              type="button"
+              onClick={onSync}
+              disabled={isSyncing}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-teal-500/15 text-teal-200 hover:bg-teal-500/25 border border-teal-400/25 text-xs font-medium transition-colors disabled:opacity-60"
+            >
+              {isSyncing ? <Loader2 size={13} className="animate-spin" /> : <DownloadCloud size={13} />}
+              {isSyncing ? 'A sincronizar…' : 'Sincronizar do ERP'}
+            </button>
+          ) : undefined
+        }
       />
     );
   }
@@ -157,7 +174,7 @@ export function ListaTab({
   return (
     <div className="space-y-4">
       {/* KPIs */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
         <KPIBig
           label="OTD · semana"
           value={otdQuery.data ? Math.round(otdQuery.data.otd_pct) : '—'}
@@ -213,14 +230,7 @@ export function ListaTab({
       </div>
 
       {/* Split-pane */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: '1fr 1.1fr',
-          gap: 14,
-          minHeight: 480,
-        }}
-      >
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.1fr] gap-3.5 min-h-[480px]">
         {/* Esquerda — lista de camiões (drop targets) */}
         <div>
           <div

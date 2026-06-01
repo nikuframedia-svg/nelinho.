@@ -9,7 +9,7 @@
  */
 import { getErrorMessage } from '../api-errors';
 import { logToEndpoint } from '../logger';
-import { getCircuitBreaker } from '../circuit-breaker';
+import { getCircuitBreaker, resetCircuitBreaker } from '../circuit-breaker';
 
 // Q.21.A — porta única. O `.env` de dev usa 8001 e o backend arranca em 8001
 // (ver agent_docs/HANDOFF.md §4.7). O fallback aqui tem de concordar com o
@@ -19,6 +19,32 @@ import { getCircuitBreaker } from '../circuit-breaker';
 export const API_BASE =
   import.meta.env.VITE_API_URL ||
   (import.meta.env.DEV ? 'http://127.0.0.1:8001' : window.location.origin);
+
+// Q.144.D — auto-cura do circuit breaker. Quando o breaker abre (blip
+// transitório, ex. rajada de sync ERP), sonda `/health` de 5/5 s e fecha-o
+// sozinho ao primeiro 200 — para um glitch de segundos não trancar a UI
+// inteira até o utilizador recarregar. A sonda usa `fetch` directo (salta o
+// breaker, que de outro modo a bloquearia).
+let healthRecoveryTimer: ReturnType<typeof setInterval> | null = null;
+
+function startHealthRecovery(): void {
+  if (healthRecoveryTimer || typeof window === 'undefined') return;
+  healthRecoveryTimer = setInterval(() => {
+    void fetch(`${API_BASE}/health`)
+      .then((res) => {
+        if (res.ok) {
+          resetCircuitBreaker();
+          if (healthRecoveryTimer) {
+            clearInterval(healthRecoveryTimer);
+            healthRecoveryTimer = null;
+          }
+        }
+      })
+      .catch(() => {
+        /* backend ainda em baixo — continua a sondar */
+      });
+  }, 5000);
+}
 
 // Retry configuration
 const MAX_RETRIES = 1; // Reduced from 3 to 1 to avoid flooding console
@@ -179,6 +205,9 @@ export async function request<T>(
     } catch (circuitError: any) {
       // Circuit breaker rejected (circuit is open)
       if (circuitError.message?.includes('Circuit breaker is open')) {
+        // Q.144.D — arranca a sonda de saúde para fechar o breaker assim que o
+        // backend voltar, sem depender de reload manual.
+        startHealthRecovery();
         const errorObj = new Error('Backend indisponível. Circuit breaker está aberto.');
         (errorObj as any).status = 503;
         throw errorObj;

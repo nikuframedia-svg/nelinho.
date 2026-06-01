@@ -17,4 +17,7 @@ export interface ScheduledOp {
   status?: string;
   /** Campo Q.116.D — exposto via /entity/encomenda mas ainda não no /schedule (Q.116.G). */
   effective_boost?: number;
+  /** Q.141 — 'actual' = o que aconteceu (passado real, of_fp); 'plan' = plano
+   * CPO (futuro). Ausente = plano (back-compat). Controla read-only + estilo. */
+  source?: 'actual' | 'plan';
 }

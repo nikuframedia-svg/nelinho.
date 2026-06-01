@@ -7,8 +7,8 @@
  */
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { Truck, Target, Flag, RefreshCw, CalendarDays, PackageCheck } from 'lucide-react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Truck, Target, Flag, RefreshCw, CalendarDays, PackageCheck, DownloadCloud, Loader2 } from 'lucide-react';
 import { PageHeader, Tabs } from '../../components/dark';
 import { transportApi } from '../../lib/api';
 import { ListaTab } from './tabs/ListaTab';
@@ -24,14 +24,28 @@ export default function ExpedicaoPage() {
   const [searchParams] = useSearchParams();
   const dateParam = searchParams.get('date');
   const [tab, setTab] = useState<TabId>(dateParam ? 'pordata' : 'lista');
+  const queryClient = useQueryClient();
+
+  // Q.143.D — janela: só camiões de hoje−3d em diante (esconde o histórico).
+  const fromDate = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 3);
+    return d.toISOString().slice(0, 10);
+  }, []);
 
   const batchesQuery = useQuery({
-    queryKey: ['expedicao', 'batches'],
-    queryFn: () => transportApi.listBatches(),
+    queryKey: ['expedicao', 'batches', fromDate],
+    queryFn: () => transportApi.listBatches({ from_date: fromDate }),
     staleTime: 60_000,
     retry: 0,
   });
   const batches = useMemo(() => batchesQuery.data ?? [], [batchesQuery.data]);
+
+  // Q.143.B — derivar camiões reais das ordens (idempotente, preserva manual).
+  const syncMutation = useMutation({
+    mutationFn: () => transportApi.refreshFromOrders(),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['expedicao'] }),
+  });
 
   const tabs = [
     { id: 'lista', label: 'Expedições', icon: <Truck size={13} /> },
@@ -52,14 +66,26 @@ export default function ExpedicaoPage() {
         subtitle="Camiões de 50 lugares · arrasta barcos entre expedições · CTP encaixa em camiões existentes"
         helpId="expedicao"
         actions={
-          <button
-            type="button"
-            onClick={() => batchesQuery.refetch()}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-transparent text-text-dark-secondary hover:bg-white/5 hover:text-text-dark-primary border border-white/[0.08] text-xs font-medium transition-colors"
-          >
-            <RefreshCw size={13} />
-            Atualizar
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => syncMutation.mutate()}
+              disabled={syncMutation.isPending}
+              title="Cria/preenche os camiões a partir das ordens reais (data de transporte). Idempotente — não desfaz movimentos manuais."
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-teal-500/15 text-teal-200 hover:bg-teal-500/25 border border-teal-400/25 text-xs font-medium transition-colors disabled:opacity-60"
+            >
+              {syncMutation.isPending ? <Loader2 size={13} className="animate-spin" /> : <DownloadCloud size={13} />}
+              {syncMutation.isPending ? 'A sincronizar…' : 'Sincronizar do ERP'}
+            </button>
+            <button
+              type="button"
+              onClick={() => batchesQuery.refetch()}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-transparent text-text-dark-secondary hover:bg-white/5 hover:text-text-dark-primary border border-white/[0.08] text-xs font-medium transition-colors"
+            >
+              <RefreshCw size={13} />
+              Atualizar
+            </button>
+          </div>
         }
       />
 
@@ -77,6 +103,8 @@ export default function ExpedicaoPage() {
             batches={batches}
             isLoading={batchesQuery.isLoading}
             isError={batchesQuery.isError}
+            onSync={() => syncMutation.mutate()}
+            isSyncing={syncMutation.isPending}
           />
         )}
         {tab === 'pordata' && (
@@ -94,6 +122,8 @@ export default function ExpedicaoPage() {
             batches={batches}
             isLoading={batchesQuery.isLoading}
             isError={batchesQuery.isError}
+            onSync={() => syncMutation.mutate()}
+            isSyncing={syncMutation.isPending}
           />
         )}
       </div>

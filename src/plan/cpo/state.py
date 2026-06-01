@@ -199,6 +199,15 @@ class FactoryState:
     # Vazio = sem overrides (comportamento legado intacto).
     phase_config: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
+    # Q.140.F — preferência por sector → fase, por (employee_code, fase_id),
+    # valor em [0,1]. Deriva do nível efectivo por sector (override manual >
+    # derivado do histórico real > semente ERP), mapeado da fase para o seu
+    # grupo de área e normalizado /3.0. É o sinal que o `_pick_workers` usa
+    # para REORDENAR o pool apto por preferência (NUNCA alarga — axioma 5).
+    # Vazio = sem preferência → ranking por skill_count (back-compat exacto).
+    # NUNCA contém € (CoeficienteX): vem só de nível/qualidade/afinidade.
+    sector_preferences: Dict[Tuple[str, str], float] = field(default_factory=dict)
+
     # ----- NELO domain rules ---------------------------------------
 
     #: Phase codes where the scheduler MUST place a 2-person crew (hard
@@ -331,6 +340,14 @@ class FactoryState:
         if not state.skill_matrix:
             state.skill_matrix = await _load_skills_db(session, tenant_id)
 
+        # Q.140.F — preferência por sector → fase (override manual > derivado).
+        # Best-effort; vazio = ranking por skill_count (back-compat). Só
+        # REORDENA o pool apto no decoder, nunca o alarga (axioma 5).
+        if not state.sector_preferences:
+            state.sector_preferences = await _load_sector_preferences_db(
+                session, tenant_id,
+            )
+
         if not state.open_orders:
             # Q.136.A — `planning.scope` decide boats_only (default) vs all.
             from sqlalchemy.exc import SQLAlchemyError
@@ -456,6 +473,20 @@ class FactoryState:
             1 for skill_pool in self.skill_matrix.values()
             if funcionario_id in skill_pool
         )
+
+    def preference_score_for(
+        self, funcionario_id: str, fase_id: str,
+    ) -> Optional[float]:
+        """Q.140.F — preferência [0,1] do worker para a fase, ou None.
+
+        Lookup directo em `sector_preferences[(employee_code, fase_id)]`
+        (já com o nível por sector resolvido e mapeado da fase para a área).
+        `None` = sem sinal → o decoder cai no `skill_count` (back-compat).
+        Função pura, sem efeitos — segura no hot-path da GA.
+        """
+        if not self.sector_preferences:
+            return None
+        return self.sector_preferences.get((str(funcionario_id), str(fase_id)))
 
     def median_duration_h(
         self,
@@ -952,6 +983,35 @@ async def _load_skills_db(
         if fase_id and func_id:
             matrix.setdefault(fase_id, set()).add(func_id)
     return matrix
+
+
+async def _load_sector_preferences_db(
+    session: Any,
+    tenant_id: UUID,
+) -> Dict[Tuple[str, str], float]:
+    """Q.140.F — preferência por (employee_code, fase_id) ∈ [0,1] para o CPO.
+
+    Deriva do nível por sector (override manual > derivado do histórico real
+    > semente ERP), via `SectorPreferenceService.phase_preference_map`. Keyed
+    por `employee_code` (= a chave do skill_matrix do CPO) — o serviço já
+    resolve o gap UUID↔employee_code internamente. Best-effort: serviço/tabela
+    ausente ou vazia → {} (back-compat exacto: o decoder usa skill_count).
+    NUNCA usa € (CoeficienteX) — só nível/qualidade/afinidade.
+    """
+    if session is None:
+        return {}
+    try:
+        from src.workforce.sector_preference_service import (
+            SectorPreferenceService,
+        )
+    except ImportError as exc:  # pragma: no cover — workforce ausente
+        logger.debug("Q.140.F sector preferences skipped (import): %s", exc)
+        return {}
+    try:
+        return await SectorPreferenceService(session, tenant_id).phase_preference_map()
+    except Exception as exc:  # pragma: no cover — best-effort
+        logger.warning("Q.140.F sector preferences load failed: %s", exc)
+        return {}
 
 
 async def _load_open_orders_db(

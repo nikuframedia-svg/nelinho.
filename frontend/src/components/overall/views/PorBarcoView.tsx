@@ -17,12 +17,16 @@ import {
 import type { DragEndEvent } from '@dnd-kit/core';
 import { EmptyState } from '../../dark';
 import { Clickable } from '../../entitySheets';
-import { Timeline, buildDaySlots, dateToSlotIndex } from '../Timeline';
+import { Timeline, buildSlots, dateToSlotIndex } from '../Timeline';
+import type { TimelineScale } from '../Timeline';
+import { CountBadge } from './CountBadge';
 import type { TimelineLane, TimelineItem } from '../../dark';
 import type { ScheduledOp } from '../types';
 import type { PlanSelection } from '../selection';
 import { opMatchesSelection } from '../selection';
 import { OpCard } from './OpCard';
+import { DensityCell, DENSITY_THRESHOLD } from './DensityCell';
+import { useCellExpand } from '../cellExpand';
 
 // ─── Tipos internos ────────────────────────────────────────────────────────
 
@@ -33,6 +37,7 @@ interface BoatDropSlotProps {
   editable: boolean;
   selection?: PlanSelection | null;
   onSelect?: (sel: PlanSelection) => void;
+  compact?: boolean;
 }
 
 interface PorBarcoViewProps {
@@ -43,13 +48,23 @@ interface PorBarcoViewProps {
   onDrop: (opId: string, newPhase: string, newStartTs: string, newOperatorId?: string) => void;
   selection?: PlanSelection | null;
   onSelect?: (sel: PlanSelection) => void;
+  scale?: TimelineScale;
 }
 
 // ─── Droppable slot por barco ───────────────────────────────────────────────
 
-function BoatDropSlot({ boatId, slotId, ops, editable, selection, onSelect }: BoatDropSlotProps) {
+function BoatDropSlot({ boatId, slotId, ops, editable, selection, onSelect, compact = false }: BoatDropSlotProps) {
   const dropId = `boat__${boatId}__${slotId}`;
   const { setNodeRef, isOver } = useDroppable({ id: dropId });
+  const expand = useCellExpand();
+
+  if (compact) {
+    return (
+      <div ref={setNodeRef} className="h-full w-full flex items-center justify-center p-0.5">
+        {ops.length > 0 && <CountBadge ops={ops} />}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -58,23 +73,27 @@ function BoatDropSlot({ boatId, slotId, ops, editable, selection, onSelect }: Bo
         isOver && editable ? 'bg-teal-500/10 ring-1 ring-teal-500/40' : ''
       }`}
     >
-      {ops.map((op) => {
-        const selected = opMatchesSelection(op, selection ?? null);
-        const dimmed = !!selection && !selected;
-        return (
-          <OpCard
-            key={op.id}
-            op={op}
-            editable={editable}
-            draggableId={op.id}
-            selected={selected}
-            dimmed={dimmed}
-            onSelect={onSelect}
-            primaryLabel={op.phase_name}
-            showQuality
-          />
-        );
-      })}
+      {ops.length > DENSITY_THRESHOLD ? (
+        <DensityCell ops={ops} onClick={() => expand?.(ops)} />
+      ) : (
+        ops.map((op) => {
+          const selected = opMatchesSelection(op, selection ?? null);
+          const dimmed = !!selection && !selected;
+          return (
+            <OpCard
+              key={op.id}
+              op={op}
+              editable={editable}
+              draggableId={op.id}
+              selected={selected}
+              dimmed={dimmed}
+              onSelect={onSelect}
+              primaryLabel={op.phase_name}
+              showQuality
+            />
+          );
+        })
+      )}
     </div>
   );
 }
@@ -87,6 +106,7 @@ function renderBoatItem(
   editable: boolean,
   selection: PlanSelection | null,
   onSelect?: (sel: PlanSelection) => void,
+  compact = false,
 ): ReactNode {
   const ops = opsByBoatSlot.get(item.id) ?? [];
   const [, boatId, , slotId] = item.id.split('__');
@@ -98,6 +118,7 @@ function renderBoatItem(
       editable={editable}
       selection={selection}
       onSelect={onSelect}
+      compact={compact}
     />
   );
 }
@@ -112,12 +133,13 @@ export const PorBarcoView = memo(function PorBarcoView({
   onDrop,
   selection,
   onSelect,
+  scale = 'day',
 }: PorBarcoViewProps): ReactNode {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
   );
 
-  const slots = buildDaySlots(startDate, endDate);
+  const slots = buildSlots(scale, startDate, endDate);
 
   // Swimlane por barco
   const boats = useMemo(() => {
@@ -159,7 +181,7 @@ export const PorBarcoView = memo(function PorBarcoView({
     const map = new Map<string, ScheduledOp[]>();
     for (const op of operations) {
       const boatId = op.order_id ?? op.id;
-      const slotIdx = dateToSlotIndex(op.start, startDate);
+      const slotIdx = dateToSlotIndex(op.start, startDate, scale);
       const slotId =
         slotIdx !== null && slotIdx < slots.length ? slots[slotIdx]?.id : null;
       if (!slotId) continue;
@@ -168,7 +190,7 @@ export const PorBarcoView = memo(function PorBarcoView({
       map.get(key)!.push(op);
     }
     return map;
-  }, [operations, slots, startDate]);
+  }, [operations, slots, startDate, scale]);
 
   const items: TimelineItem[] = useMemo(() => {
     const result: TimelineItem[] = [];
@@ -218,12 +240,12 @@ export const PorBarcoView = memo(function PorBarcoView({
       <Timeline
         startDate={startDate}
         endDate={endDate}
-        scale="day"
+        scale={scale}
         lanes={lanes}
         items={items}
         slotWidth={72}
         laneHeight={56}
-        renderItem={(item) => renderBoatItem(item, opsByBoatSlot, editable, selection ?? null, onSelect)}
+        renderItem={(item) => renderBoatItem(item, opsByBoatSlot, editable, selection ?? null, onSelect, scale !== 'day')}
       />
     </DndContext>
   );

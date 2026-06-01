@@ -63,6 +63,17 @@ class QualityScoreOverridePayload(BaseModel):
     reason: str = Field(..., min_length=10, max_length=500)
 
 
+class SectorLevelPayload(BaseModel):
+    """Q.140.D — atribuição manual de nível a UM sector de UM colaborador.
+
+    Escala invertida (3.0=melhor); o serviço clamp-a ao meio-passo válido.
+    """
+
+    area_group: str = Field(..., min_length=1, max_length=50)
+    nivel: float = Field(..., ge=1.0, le=3.0)
+    reason: Optional[str] = Field(default=None, max_length=500)
+
+
 class SoftDeletePayload(BaseModel):
     reason: Optional[str] = Field(default=None, max_length=500)
 
@@ -367,6 +378,29 @@ async def get_qualification_metrics(
     return metrics.to_dict()
 
 
+# ---------------------------------------------------------------------------
+# Sector levels (Q.140.C) — nível por (pessoa × sector), independente
+# ---------------------------------------------------------------------------
+
+@router.get("/{employee_id}/sector-levels")
+async def get_sector_levels(
+    employee_id: UUID,
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Os 7 sectores de um colaborador, cada um com nível INDEPENDENTE.
+
+    Q.140 — uma pessoa multi-funcional pode ser nível 3.0 na Pintura e 1.5 na
+    Laminagem. `effective_level` por precedência override > derivado (histórico
+    real factory_raw) > semente ERP E_NIVEL. Read-only; a edição é o PATCH
+    /sector-level. Escala 3=melhor documentada em `level_scale`.
+    """
+    from src.workforce.sector_preference_service import SectorPreferenceService
+
+    svc = SectorPreferenceService(session, tenant_id)
+    return await svc.per_employee_sector_levels(employee_id)
+
+
 @router.patch("/{employee_id}/skills")
 async def toggle_skill(
     employee_id: UUID,
@@ -461,6 +495,119 @@ async def toggle_skill(
         "employee_id": str(employee_id),
         "phase_id": body.phase_id,
         "can_do": body.can_do,
+        "nivel": nivel,
+        "preference_rule_logged": True,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Sector level override (Q.140.D) — nível manual por (pessoa × sector)
+# ---------------------------------------------------------------------------
+
+@router.patch("/{employee_id}/sector-level")
+async def set_sector_level(
+    employee_id: UUID,
+    body: SectorLevelPayload,
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Atribui manualmente o nível de UM colaborador num sector (grupo de área).
+
+    O Luis quer poder pôr um nível DIFERENTE por sector (ex.: 3.0 na Pintura,
+    1.5 na Laminagem). O override persiste como `PreferenceRule
+    (workforce_override, predicate.field='sector_level')` — mesmo padrão do
+    PATCH /skills: alimenta a Camada 1, escreve `audit_change` na MESMA tx e faz
+    dedupe por (employee_id, field, area_group). É o nível autoritativo (vence o
+    derivado e a semente ERP no `effective_level`).
+    """
+    from src.workforce.levels import AREA_GROUPS, clamp_level
+
+    if body.area_group not in AREA_GROUPS:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"sector desconhecido: {body.area_group!r} (válidos: {list(AREA_GROUPS)})",
+        )
+
+    nivel = clamp_level(body.nivel)
+
+    try:
+        from src.governance.audit_service import audit_change
+        from src.governance.models import (
+            PreferenceRule,
+            PreferenceRuleStatus,
+            PreferenceRuleType,
+        )
+        from sqlalchemy import select
+
+        stmt = select(PreferenceRule).where(
+            PreferenceRule.tenant_id == tenant_id,
+            PreferenceRule.type == PreferenceRuleType.WORKFORCE_OVERRIDE.value,
+            PreferenceRule.predicate.contains(
+                {
+                    "employee_id": str(employee_id),
+                    "field": "sector_level",
+                    "area_group": body.area_group,
+                }
+            ),
+        )
+        existing = (await session.execute(stmt)).scalar_one_or_none()
+
+        predicate = {
+            "employee_id": str(employee_id),
+            "field": "sector_level",
+            "area_group": body.area_group,
+            "nivel": nivel,
+            "reason": body.reason,
+        }
+        description = (
+            f"Sector level override: employee={employee_id} "
+            f"sector={body.area_group} nivel={nivel}"
+        )
+        if existing is None:
+            new_rule = PreferenceRule(
+                tenant_id=tenant_id,
+                type=PreferenceRuleType.WORKFORCE_OVERRIDE.value,
+                description=description,
+                predicate=predicate,
+                confidence=1.0,
+                status=PreferenceRuleStatus.DETECTED.value,
+            )
+            session.add(new_rule)
+            await session.flush()
+            await audit_change(
+                session,
+                tenant_id=tenant_id,
+                entity_type="preference_rule",
+                entity_id=new_rule.id,
+                action="INSERT",
+                old_values=None,
+                new_values={
+                    "type": PreferenceRuleType.WORKFORCE_OVERRIDE.value,
+                    "status": PreferenceRuleStatus.DETECTED.value,
+                    "employee_id": str(employee_id),
+                    "field": "sector_level",
+                    "area_group": body.area_group,
+                    "nivel": nivel,
+                },
+                reason="Q.140.D — override de nível por sector",
+            )
+        else:
+            existing.predicate = predicate
+            existing.description = description
+            await session.flush()
+        await session.commit()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("sector level override failed: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="failed to persist sector level override",
+        )
+
+    return {
+        "employee_id": str(employee_id),
+        "area_group": body.area_group,
         "nivel": nivel,
         "preference_rule_logged": True,
     }

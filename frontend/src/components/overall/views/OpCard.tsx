@@ -31,6 +31,13 @@ function statusStyle(status?: string): React.CSSProperties {
   return { background: 'var(--gray-bg)', borderColor: 'var(--gray-bd)' };
 }
 
+// Q.141.H — Realizado (actual, sólido verde) vs Planeado (plan, tracejado).
+function cardStyle(op: ScheduledOp): React.CSSProperties {
+  if (op.source === 'actual')
+    return { background: 'var(--green-bg)', borderColor: 'var(--green-bd)', borderStyle: 'solid' };
+  return { ...statusStyle(op.status), borderStyle: 'dashed' };
+}
+
 // ─── Props ────────────────────────────────────────────────────────────────────
 
 interface OpCardProps {
@@ -58,9 +65,11 @@ export const OpCard = memo(function OpCard({
   showBoost = false,
   showQuality = false,
 }: OpCardProps) {
+  // Q.141.I — o passado (actuals) é read-only; só o plano futuro é arrastável.
+  const effectiveEditable = editable && op.source !== 'actual';
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: draggableId,
-    disabled: !editable,
+    disabled: !effectiveEditable,
   });
 
   const isAccelerated = showBoost && (op.effective_boost ?? 0) > 50;
@@ -84,18 +93,18 @@ export const OpCard = memo(function OpCard({
   return (
     <div
       ref={setNodeRef}
-      style={{ ...selectionStyle, ...opacityStyle, ...statusStyle(op.status) }}
+      style={{ ...selectionStyle, ...opacityStyle, ...cardStyle(op) }}
       {...attributes}
       {...listeners}
       onClick={handleClick}
       className={[
         'relative flex items-center gap-1 px-1.5 py-1 rounded border text-[10px] truncate',
-        editable ? 'cursor-grab active:cursor-grabbing' : 'cursor-default',
+        effectiveEditable ? 'cursor-grab active:cursor-grabbing' : 'cursor-default',
         onSelect ? 'hover:ring-1 hover:ring-[color:var(--accent)]/40' : '',
       ].join(' ')}
       title={`${op.order_id ?? op.id} · ${op.phase_name}${isAccelerated ? ` · Acelerada (boost ${op.effective_boost})` : ''}${op.operator_name ? ` · ${op.operator_name}` : ''}`}
     >
-      {editable && <GripVertical size={9} className="flex-shrink-0" style={{ color: 'var(--fg-3)' }} />}
+      {effectiveEditable && <GripVertical size={9} className="flex-shrink-0" style={{ color: 'var(--fg-3)' }} />}
 
       <span className="truncate font-medium font-mono tabular-nums" style={{ color: 'var(--fg-1)' }}>
         {op.order_id ? (

@@ -10,7 +10,20 @@
  */
 
 import type { ReactNode } from 'react';
-import { format, eachDayOfInterval, startOfDay, isToday } from 'date-fns';
+import {
+  format,
+  eachDayOfInterval,
+  eachWeekOfInterval,
+  eachMonthOfInterval,
+  startOfDay,
+  isToday,
+  isSameMonth,
+  isWithinInterval,
+  endOfWeek,
+  differenceInCalendarDays,
+  differenceInCalendarWeeks,
+  differenceInCalendarMonths,
+} from 'date-fns';
 import { pt } from 'date-fns/locale';
 import { TimelineLanes } from '../dark';
 import type { TimelineSlot, TimelineLane, TimelineItem } from '../dark';
@@ -18,6 +31,8 @@ import type { TimelineSlot, TimelineLane, TimelineItem } from '../dark';
 // ─── Tipos públicos ──────────────────────────────────────────────────────────
 
 export type TimelineScale = 'day' | 'week' | 'month';
+
+const _WEEK_OPTS = { weekStartsOn: 1 as const };
 
 export interface TimelineProps {
   startDate: Date;
@@ -32,28 +47,60 @@ export interface TimelineProps {
 
 // ─── Helpers públicos ────────────────────────────────────────────────────────
 
-/** Constrói TimelineSlots a partir do intervalo [startDate, endDate] em escala "day". */
+/** Constrói TimelineSlots em escala "day". */
 export function buildDaySlots(startDate: Date, endDate: Date): TimelineSlot[] {
-  const days = eachDayOfInterval({ start: startDate, end: endDate });
-  return days.map((d) => ({
+  return eachDayOfInterval({ start: startDate, end: endDate }).map((d) => ({
     id: format(d, 'yyyy-MM-dd'),
     label: format(d, 'd MMM', { locale: pt }),
     highlight: isToday(d),
   }));
 }
 
+/** Escala "week" — Q.141.F. id = data de início da semana (segunda). */
+export function buildWeekSlots(startDate: Date, endDate: Date): TimelineSlot[] {
+  const now = new Date();
+  return eachWeekOfInterval({ start: startDate, end: endDate }, _WEEK_OPTS).map((w) => ({
+    id: format(w, 'yyyy-MM-dd'),
+    label: `Sem ${format(w, 'd MMM', { locale: pt })}`,
+    highlight: isWithinInterval(now, { start: w, end: endOfWeek(w, _WEEK_OPTS) }),
+  }));
+}
+
+/** Escala "month" — Q.141.F. id = data de início do mês. */
+export function buildMonthSlots(startDate: Date, endDate: Date): TimelineSlot[] {
+  const now = new Date();
+  return eachMonthOfInterval({ start: startDate, end: endDate }).map((m) => ({
+    id: format(m, 'yyyy-MM-dd'),
+    label: format(m, 'MMM yyyy', { locale: pt }),
+    highlight: isSameMonth(now, m),
+  }));
+}
+
+/** Dispatcher por escala (Q.141.F). */
+export function buildSlots(
+  scale: TimelineScale, startDate: Date, endDate: Date,
+): TimelineSlot[] {
+  if (scale === 'week') return buildWeekSlots(startDate, endDate);
+  if (scale === 'month') return buildMonthSlots(startDate, endDate);
+  return buildDaySlots(startDate, endDate);
+}
+
 /**
- * Dado uma data ISO e o início da timeline, devolve o índice de coluna (0-based).
- * Retorna null se a data cair fora do intervalo.
+ * Índice de coluna (0-based) de uma data ISO, conforme a escala. `null` se a
+ * data faltar; nunca negativo (datas antes do início caem na coluna 0).
  */
 export function dateToSlotIndex(
   isoDate: string | undefined | null,
   startDate: Date,
+  scale: TimelineScale = 'day',
 ): number | null {
   if (!isoDate) return null;
   const d = startOfDay(new Date(isoDate));
   const s = startOfDay(startDate);
-  const diff = Math.round((d.getTime() - s.getTime()) / 86_400_000);
+  let diff: number;
+  if (scale === 'week') diff = differenceInCalendarWeeks(d, s, _WEEK_OPTS);
+  else if (scale === 'month') diff = differenceInCalendarMonths(d, s);
+  else diff = differenceInCalendarDays(d, s);
   return diff < 0 ? 0 : diff;
 }
 
@@ -69,19 +116,8 @@ export function Timeline({
   laneHeight = 52,
   renderItem,
 }: TimelineProps): ReactNode {
-  // Para já só "day" está implementado; week/month ficarão para Q.115.L.
-  if (scale !== 'day') {
-    return (
-      <div
-        className="text-xs text-slate-400 p-4 text-center"
-        style={{ border: '1px solid var(--bd-1)', borderRadius: 'var(--r-md)' }}
-      >
-        Vista por semana/mês disponível em Q.115.L.
-      </div>
-    );
-  }
-
-  const slots = buildDaySlots(startDate, endDate);
+  // Q.141.F — dia/semana/mês reais (o stub "Q.115.L" foi removido).
+  const slots = buildSlots(scale, startDate, endDate);
 
   return (
     <TimelineLanes

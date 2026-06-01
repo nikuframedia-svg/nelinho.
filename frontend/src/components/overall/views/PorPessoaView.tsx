@@ -18,7 +18,9 @@ import type { DragEndEvent } from '@dnd-kit/core';
 import { useQuery } from '@tanstack/react-query';
 import { EmptyState } from '../../dark';
 import { Clickable } from '../../entitySheets';
-import { Timeline, buildDaySlots, dateToSlotIndex } from '../Timeline';
+import { Timeline, buildSlots, dateToSlotIndex } from '../Timeline';
+import type { TimelineScale } from '../Timeline';
+import { CountBadge } from './CountBadge';
 import type { TimelineLane, TimelineItem } from '../../dark';
 import { learningAffinitiesApi } from '../../../lib/api/planApi';
 import { learningKeys } from '../../../lib/api/keys';
@@ -26,6 +28,8 @@ import type { ScheduledOp } from '../types';
 import type { PlanSelection } from '../selection';
 import { opMatchesSelection } from '../selection';
 import { OpCard } from './OpCard';
+import { DensityCell, DENSITY_THRESHOLD } from './DensityCell';
+import { useCellExpand } from '../cellExpand';
 
 // ─── Tipos ──────────────────────────────────────────────────────────────────
 
@@ -37,6 +41,7 @@ interface PorPessoaViewProps {
   onDrop: (opId: string, newPhase: string, newStartTs: string, newOperatorId?: string) => void;
   selection?: PlanSelection | null;
   onSelect?: (sel: PlanSelection) => void;
+  scale?: TimelineScale;
 }
 
 // ─── Droppable slot por pessoa ───────────────────────────────────────────────
@@ -48,6 +53,7 @@ function PessoaDropSlot({
   editable,
   selection,
   onSelect,
+  compact = false,
 }: {
   operadorId: string;
   slotId: string;
@@ -55,9 +61,19 @@ function PessoaDropSlot({
   editable: boolean;
   selection?: PlanSelection | null;
   onSelect?: (sel: PlanSelection) => void;
+  compact?: boolean;
 }) {
   const dropId = `pessoa__${operadorId}__slot__${slotId}`;
   const { setNodeRef, isOver } = useDroppable({ id: dropId });
+  const expand = useCellExpand();
+
+  if (compact) {
+    return (
+      <div ref={setNodeRef} className="h-full w-full flex items-center justify-center p-0.5">
+        {ops.length > 0 && <CountBadge ops={ops} />}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -66,23 +82,27 @@ function PessoaDropSlot({
         isOver && editable ? 'bg-teal-500/10 ring-1 ring-teal-500/40' : ''
       }`}
     >
-      {ops.map((op) => {
-        const selected = opMatchesSelection(op, selection ?? null);
-        const dimmed = !!selection && !selected;
-        return (
-          <OpCard
-            key={op.id}
-            op={op}
-            editable={editable}
-            draggableId={`pessoa__${op.id}`}
-            selected={selected}
-            dimmed={dimmed}
-            onSelect={onSelect}
-            primaryLabel={op.order_id}
-            showQuality
-          />
-        );
-      })}
+      {ops.length > DENSITY_THRESHOLD ? (
+        <DensityCell ops={ops} onClick={() => expand?.(ops)} />
+      ) : (
+        ops.map((op) => {
+          const selected = opMatchesSelection(op, selection ?? null);
+          const dimmed = !!selection && !selected;
+          return (
+            <OpCard
+              key={op.id}
+              op={op}
+              editable={editable}
+              draggableId={`pessoa__${op.id}`}
+              selected={selected}
+              dimmed={dimmed}
+              onSelect={onSelect}
+              primaryLabel={op.order_id}
+              showQuality
+            />
+          );
+        })
+      )}
     </div>
   );
 }
@@ -95,11 +115,15 @@ function renderPessoaItem(
   editable: boolean,
   selection: PlanSelection | null,
   onSelect?: (sel: PlanSelection) => void,
+  compact = false,
 ): ReactNode {
   const ops = opsByPessoaSlot.get(item.id) ?? [];
   // key: pessoa__operadorId__slot__slotId
   const withoutPrefix = item.id.replace(/^pessoa__/, '');
-  const [operadorId, , slotId] = withoutPrefix.split('__slot__');
+  // Q.146.C — `split('__slot__')` dá 2 partes; `[a, , c]` lia slotId=undefined →
+  // o id do drop-slot ficava `…__slot__undefined` → ao largar um op na lane de
+  // outro operador, a data ia "undefined" → reatribuição de operador partida.
+  const [operadorId, slotId] = withoutPrefix.split('__slot__');
   return (
     <PessoaDropSlot
       operadorId={operadorId ?? ''}
@@ -108,6 +132,7 @@ function renderPessoaItem(
       editable={editable}
       selection={selection}
       onSelect={onSelect}
+      compact={compact}
     />
   );
 }
@@ -122,6 +147,7 @@ export const PorPessoaView = memo(function PorPessoaView({
   onDrop,
   selection,
   onSelect,
+  scale = 'day',
 }: PorPessoaViewProps): ReactNode {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -148,7 +174,7 @@ export const PorPessoaView = memo(function PorPessoaView({
     return m;
   }, [affinities]);
 
-  const slots = buildDaySlots(startDate, endDate);
+  const slots = buildSlots(scale, startDate, endDate);
 
   // Swimlane por operador
   const operadores = useMemo(() => {
@@ -190,7 +216,7 @@ export const PorPessoaView = memo(function PorPessoaView({
     const map = new Map<string, ScheduledOp[]>();
     for (const op of operations) {
       const operadorId = op.operator_id ?? op.operator_name ?? 'sem-operador';
-      const slotIdx = dateToSlotIndex(op.start, startDate);
+      const slotIdx = dateToSlotIndex(op.start, startDate, scale);
       const slotId =
         slotIdx !== null && slotIdx < slots.length ? slots[slotIdx]?.id : null;
       if (!slotId) continue;
@@ -199,7 +225,7 @@ export const PorPessoaView = memo(function PorPessoaView({
       map.get(key)!.push(op);
     }
     return map;
-  }, [operations, slots, startDate]);
+  }, [operations, slots, startDate, scale]);
 
   const items: TimelineItem[] = useMemo(() => {
     const result: TimelineItem[] = [];
@@ -252,12 +278,12 @@ export const PorPessoaView = memo(function PorPessoaView({
       <Timeline
         startDate={startDate}
         endDate={endDate}
-        scale="day"
+        scale={scale}
         lanes={lanes}
         items={items}
         slotWidth={72}
         laneHeight={56}
-        renderItem={(item) => renderPessoaItem(item, opsByPessoaSlot, editable, selection ?? null, onSelect)}
+        renderItem={(item) => renderPessoaItem(item, opsByPessoaSlot, editable, selection ?? null, onSelect, scale !== 'day')}
       />
     </DndContext>
   );

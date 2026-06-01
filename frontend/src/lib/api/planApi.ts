@@ -609,3 +609,57 @@ export const schedulePreviewApi = {
     }),
 };
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Q.141 — Timeline actuals (o que ACONTECEU: passado real de of_fp)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface TimelineActualItem {
+  id?: string;
+  of_id?: string;
+  barco_nome?: string | null;
+  modelo_id?: string | null;
+  phase_id?: string;
+  phase_nome?: string;
+  worker_id?: string | null;
+  worker_nome?: string | null;
+  start?: string;
+  end?: string;
+  duration_min?: number | null;
+  source: string;
+}
+
+export interface TimelineExpedition {
+  of_id?: string;
+  barco_nome?: string | null;
+  modelo_id?: string | null;
+  transport_date?: string;
+  source: string;
+}
+
+export interface TimelineActualsResponse {
+  from: string;
+  to: string;
+  granularity: 'raw' | 'day';
+  group_by?: string | null;
+  items: TimelineActualItem[];
+  lanes: unknown[];
+  expeditions: TimelineExpedition[];
+  truncated: boolean;
+}
+
+export const timelineActualsApi = {
+  /** O que aconteceu no intervalo (fases reais + expedições). Datas YYYY-MM-DD. */
+  list: (params: {
+    from: string;
+    to: string;
+    group_by?: string;
+    granularity?: 'raw' | 'day' | 'auto';
+    limit?: number;
+  }) =>
+    request<TimelineActualsResponse>(
+      `/v1/plan/timeline/actuals?${new URLSearchParams(
+        filterParams({ ...params, limit: params.limit?.toString() }),
+      )}`,
+    ),
+};
+

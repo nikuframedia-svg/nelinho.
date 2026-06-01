@@ -310,6 +310,13 @@ export const transportApi = {
   /** Q.135.F2.2 — ritmo real de expedição por mês×destino×tipo (mart). */
   throughput: (months = 6) =>
     request<ThroughputRow[]>(`/v1/plan/transport/throughput?months=${months}`),
+
+  /** Q.143.B — deriva os camiões reais das production_orders (idempotente). */
+  refreshFromOrders: () =>
+    request<RefreshFromOrdersResult>(
+      '/v1/plan/transport/batches/refresh-from-orders',
+      { method: 'POST' },
+    ),
 };
 
 export interface BoatOnDate {
@@ -334,8 +341,18 @@ export interface ByDateResponse {
 export interface ReadyBoat {
   of_id: number;
   model: string | null;
+  /** Q.143.E — referência da OF (ex: "Encomenda Rental"); desambigua os itens
+   *  custom cujo modelo de catálogo é o genérico "Encomenda de Cliente". */
+  reference: string | null;
   ready_since: string | null;
   days_ready: number | null;
+}
+
+export interface RefreshFromOrdersResult {
+  batches_created: number;
+  batches_touched: number;
+  orders_assigned: number;
+  overflow: number;
 }
 
 export interface ReadyResponse {

@@ -39,6 +39,7 @@ from src.factory_data_product.models.curated import (
 )
 from src.plan.models.schedule import ProductionSchedule
 from src.quality.models.rework import ReworkEntry
+from src.workforce.levels import area_group_for_phase
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,9 @@ class QualityScoreResult:
     operations: int                 # raw scheduled-ops count
     defect_rate: float              # smoothed
     method: str                     # "laplace_smoothed" or "default_no_history"
+    # Q.140.A — quando o score é escopado a um grupo de área (sector), o
+    # nome do grupo fica aqui; None = score global (comportamento anterior).
+    area_group: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -69,6 +73,7 @@ class QualityScoreResult:
             "operations": self.operations,
             "defect_rate": round(self.defect_rate, 4),
             "method": self.method,
+            "area_group": self.area_group,
         }
 
 
@@ -163,7 +168,9 @@ class EmployeeExtrasService:
     # Quality score
     # ─────────────────────────────────────────────────────────────────────
 
-    async def quality_score(self, employee_id: UUID) -> QualityScoreResult:
+    async def quality_score(
+        self, employee_id: UUID, *, area_group: Optional[str] = None,
+    ) -> QualityScoreResult:
         """Laplace-smoothed quality score in [1, 10].
 
         Formula::
@@ -186,9 +193,20 @@ class EmployeeExtrasService:
         ``quality_event`` (defeitos). É o mesmo fallback que o
         ``skill_matrix`` já fazia — sem ele todos os operadores saíam
         como "sem histórico" quando o histórico real existe.
+
+        Q.140.A — ``area_group`` escopa o score a um sector (grupo de
+        área). Conta só as ops/defeitos das fases cujo
+        ``area_group_for_phase`` casa com o grupo, reusando o histórico
+        per-fase do ``skill_matrix``. ``None`` = score global (acima).
+        Permite um nível DIFERENTE por sector para a mesma pessoa.
         """
         emp = await self._get_employee(employee_id)
         code = emp.employee_code if emp is not None else None
+
+        if area_group is not None:
+            return await self._quality_score_for_area(
+                employee_id, code, area_group,
+            )
 
         # Camada de governança: ProductionSchedule + ReworkEntry.
         ops = await self._count_ops(employee_id)
@@ -221,6 +239,99 @@ class EmployeeExtrasService:
             defect_rate=rate,
             method="laplace_smoothed",
         )
+
+    async def _quality_score_for_area(
+        self,
+        employee_id: UUID,
+        employee_code: Optional[str],
+        area_group: str,
+    ) -> QualityScoreResult:
+        """quality_score escopado a um grupo de área (Q.140.A).
+
+        Reaproveita o histórico per-fase do ``skill_matrix`` (que já junta
+        curated + ERP real) e os defeitos per-fase, somando só as fases
+        cujo ``area_group_for_phase`` casa com ``area_group``. Mesma
+        fórmula Laplace; ``default_no_history`` quando o sector não tem ops.
+        """
+        rows = await self.skill_matrix(employee_id)
+        scoped = [
+            r for r in rows
+            if area_group_for_phase(r.phase_name, r.phase_id) == area_group
+        ]
+        ops = sum(r.ops_count for r in scoped)
+        defects = 0
+        if scoped:
+            defects_by_phase = await self._curated_defects_by_phase(employee_code)
+            area_phase_ids = {r.phase_id for r in scoped}
+            defects = sum(
+                v for pid, v in defects_by_phase.items() if pid in area_phase_ids
+            )
+
+        if ops == 0 and defects == 0:
+            return QualityScoreResult(
+                employee_id=employee_id,
+                score=DEFAULT_SCORE,
+                defects=0,
+                operations=0,
+                defect_rate=0.0,
+                method="default_no_history",
+                area_group=area_group,
+            )
+
+        rate = (defects + SMOOTHING_ALPHA) / (ops + SMOOTHING_BETA)
+        score = max(1.0, min(10.0, 10.0 - 10.0 * rate))
+        return QualityScoreResult(
+            employee_id=employee_id,
+            score=score,
+            defects=defects,
+            operations=ops,
+            defect_rate=rate,
+            method="laplace_smoothed",
+            area_group=area_group,
+        )
+
+    async def _curated_defects_by_phase(
+        self, employee_code: Optional[str],
+    ) -> dict[str, int]:
+        """Defeitos curados agregados POR fase_id para um operador (Q.140.A).
+
+        Mesma junção que ``_count_curated_defects`` (allocation →
+        order_phase → quality_event) mas ``GROUP BY fase_id`` — uma única
+        query devolve {fase_id: nº de erros}. Usado para escopar o
+        quality_score a um grupo de área.
+        """
+        if not employee_code:
+            return {}
+        try:
+            stmt = (
+                select(
+                    CuratedOrderPhase.fase_id,
+                    func.coalesce(func.sum(CuratedQualityEvent.quantidade), 0),
+                )
+                .select_from(CuratedAllocation)
+                .join(
+                    CuratedOrderPhase,
+                    CuratedOrderPhase.fase_of_id == CuratedAllocation.fase_of_id,
+                )
+                .join(
+                    CuratedQualityEvent,
+                    and_(
+                        CuratedQualityEvent.of_id == CuratedOrderPhase.of_id,
+                        CuratedQualityEvent.fase_id == CuratedOrderPhase.fase_id,
+                    ),
+                )
+                .where(CuratedAllocation.funcionario_id == employee_code)
+                .group_by(CuratedOrderPhase.fase_id)
+            )
+            rows = (await self.session.execute(stmt)).all()
+            return {str(r[0]): int(r[1] or 0) for r in rows}
+        except Exception as exc:  # pragma: no cover — defensivo
+            logger.warning(
+                "curated defects-by-phase failed for employee_code=%s: %s",
+                employee_code,
+                exc,
+            )
+            return {}
 
     # ─────────────────────────────────────────────────────────────────────
     # Q.62.C.1 — Team-wide defect rate (Hipotese A: comportamento da equipa)
