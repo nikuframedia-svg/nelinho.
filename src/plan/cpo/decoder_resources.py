@@ -183,6 +183,18 @@ def _earliest_start(
     return earliest
 
 
+# Q.155.D — "barco difícil ↔ melhores operadores". Ligado por defeito.
+# Constantes nomeadas (sem magic numbers): a complexidade [0,1] do barco sobe o
+# peso da preferência (`_COMPLEXITY_SKILL_BOOST`); fases finas (pool ≤ limiar)
+# ficam ISENTAS — não há "top-5" real para escolher (validado contra o ERP).
+_COMPLEXITY_SKILL_BOOST = 0.5
+_MIN_POOL_FOR_MATCHING = 6
+# Bónus aditivo (proporcional à complexidade) que GARANTE que o operador CURADO
+# domina nos barcos difíceis — senão empatava com qualquer max-skill e o
+# desempate por id roubava-lhe o lugar. Barco simples (complexity~0) → sem bónus.
+_CURATED_COMPLEXITY_BONUS = 1.0
+
+
 def _pick_workers(
     pool: set,
     team_size: int,
@@ -192,6 +204,7 @@ def _pick_workers(
     state: Optional[FactoryState] = None,
     quality_weight: float = 0.0,
     fase_id: Optional[str] = None,
+    op_complexity: float = 0.0,
 ) -> List[str]:
     """Pick N workers from the pool by blending availability and experience.
 
@@ -223,27 +236,45 @@ def _pick_workers(
         return []
 
     qw = max(0.0, min(1.0, float(quality_weight)))
+    # Q.155.D — barco mais complexo → maior peso da preferência (puxa os
+    # melhores/curados). op_complexity=0 (fase fina isenta ou sem ICB) → qw_eff=qw
+    # (back-compat exacto). Só REORDENA o pool já apto; team_size e pool intactos.
+    qw_eff = min(1.0, qw + max(0.0, float(op_complexity)) * _COMPLEXITY_SKILL_BOOST)
 
     # Pre-compute per-worker skill score once; scale normalises against
     # the busiest worker in the pool so the score stays in [0, 1].
     skill_scores: Dict[str, float] = {}
-    if state is not None and qw > 0.0:
+    if state is not None and qw_eff > 0.0:
         raw_counts = {w: float(state.skill_count(w)) for w in pool}
         max_count = max(raw_counts.values(), default=1.0)
         if max_count <= 0:
             max_count = 1.0
         skill_scores = {w: c / max_count for w, c in raw_counts.items()}
 
+    # Q.155.D — acessores opt-in (defensivo p/ stubs de teste sem estes métodos).
+    _pref_rank = getattr(state, "preferred_rank_score", None) if state else None
+    _pref_sector = getattr(state, "preference_score_for", None) if state else None
+
     def _score(worker: str) -> Tuple[float, str]:
         free_at = worker_free_at.get(worker, earliest)
         hours_until_free = max(0.0, (free_at - earliest).total_seconds() / 3600.0)
         availability = 1.0 / (1.0 + hours_until_free)
-        # Q.140.G — preferência por sector tem precedência sobre o skill_count.
+        # Preferência: curados (página Melhores por fase, Q.155.D) têm precedência;
+        # senão a preferência por sector (Q.140.G); senão o skill_count.
+        rank_score = None
         pref = None
-        if state is not None and qw > 0.0 and fase_id is not None:
-            pref = state.preference_score_for(worker, fase_id)
+        if qw_eff > 0.0 and fase_id is not None:
+            if _pref_rank is not None:
+                rank_score = _pref_rank(worker, fase_id)
+            pref = rank_score
+            if pref is None and _pref_sector is not None:
+                pref = _pref_sector(worker, fase_id)
         skill = pref if pref is not None else skill_scores.get(worker, 0.0)
-        combined = skill * qw + availability * (1.0 - qw)
+        combined = skill * qw_eff + availability * (1.0 - qw_eff)
+        # Q.155.D — barco difícil → o operador CURADO domina, proporcional à
+        # complexidade (garante que ganha o empate; barco simples → sem efeito).
+        if rank_score is not None:
+            combined += float(op_complexity) * _CURATED_COMPLEXITY_BONUS
         # Return negative because `sorted(..., reverse=False)` + negation
         # gives us "highest combined first" with worker-id as a stable
         # tie-break.
@@ -387,11 +418,19 @@ def _select_workers(
             )
         return [[] for _ in batch_peers], team_size
 
+    # Q.155.D — complexidade do barco desta op (0 = sem boost). Fases finas
+    # (pool ≤ limiar) ficam ISENTAS: não há "top-5" real e já estão saturadas.
+    op_complexity = 0.0
+    _bc = getattr(state, "boat_complexity", None)
+    if _bc is not None and len(pool) > _MIN_POOL_FOR_MATCHING:
+        op_complexity = _bc(str(getattr(op, "model_id", "") or ""))
+
     picked = _pick_workers(
         pool, total_workers_needed, worker_free_at, earliest_pred_end,
         state=state,
         quality_weight=float(getattr(chromosome, "quality_weight", 0.0) or 0.0),
         fase_id=str(op.phase_id) if op.phase_id else None,
+        op_complexity=op_complexity,
     )
     if len(picked) < total_workers_needed:
         # Sprint Q.8 — pair-preferred phases accept a solo downgrade.

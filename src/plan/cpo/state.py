@@ -213,6 +213,18 @@ class FactoryState:
     # NUNCA contém € (CoeficienteX): vem só de nível/qualidade/afinidade.
     sector_preferences: Dict[Tuple[str, str], float] = field(default_factory=dict)
 
+    # Q.155.D — complexidade do barco (ICB) por modelo/produto (P_ID == op.model_id),
+    # valor [0,1]. Barco mais complexo → sobe o peso da preferência no `_pick_workers`
+    # (puxa os melhores operadores). Vazio = sem boost (back-compat). Dimensionless,
+    # NUNCA € (vem de governance.boat_complexity: peças+tinta+fases reais).
+    boat_model_complexity: Dict[str, float] = field(default_factory=dict)
+
+    # Q.155.D — melhores operadores CURADOS por fase (phase_id → [employee_code,…]
+    # ordenados por rank). É a "definição manual" da página Melhores por fase. O
+    # decoder prefere-os (sobretudo nos barcos complexos). NUNCA alarga o pool apto
+    # (axioma 5) — só REORDENA. Vazio = cai na preferência por sector (Q.140).
+    phase_preferred_operators: Dict[str, List[str]] = field(default_factory=dict)
+
     # ----- NELO domain rules ---------------------------------------
 
     #: Phase codes where the scheduler MUST place a 2-person crew (hard
@@ -350,6 +362,18 @@ class FactoryState:
         # REORDENA o pool apto no decoder, nunca o alarga (axioma 5).
         if not state.sector_preferences:
             state.sector_preferences = await _load_sector_preferences_db(
+                session, tenant_id,
+            )
+
+        # Q.155.D — ICB (complexidade) + melhores curados por fase. Best-effort:
+        # tabelas ausentes / session None → {} (sem boost, back-compat exacto).
+        # Alimentam "barco difícil ↔ melhores operadores" no `_pick_workers`.
+        if not state.boat_model_complexity:
+            state.boat_model_complexity = await _load_boat_complexity_db(
+                session, tenant_id,
+            )
+        if not state.phase_preferred_operators:
+            state.phase_preferred_operators = await _load_phase_preferred_operators_db(
                 session, tenant_id,
             )
 
@@ -508,6 +532,32 @@ class FactoryState:
         if not self.sector_preferences:
             return None
         return self.sector_preferences.get((str(funcionario_id), str(fase_id)))
+
+    def boat_complexity(self, model_id: str) -> float:
+        """Q.155.D — complexidade [0,1] do modelo de barco (P_ID), ou 0.0.
+
+        0.0 = sem boost (back-compat). Função pura — segura no hot-path."""
+        if not self.boat_model_complexity or not model_id:
+            return 0.0
+        return float(self.boat_model_complexity.get(str(model_id), 0.0))
+
+    def preferred_rank_score(
+        self, funcionario_id: str, fase_id: str,
+    ) -> Optional[float]:
+        """Q.155.D — score [0,1] do operador na lista CURADA da fase, ou None.
+
+        rank 1 → 1.0; cada posição abaixo perde 0.05 (mínimo 0.5). É uma
+        PREFERÊNCIA manual (página Melhores por fase): tem precedência sobre o
+        sector (Q.140), mas NUNCA alarga o pool (o decoder já filtrou por
+        `workers_for` — axioma 5). `None` = não curado → cai no sector/skill."""
+        ranked = self.phase_preferred_operators.get(str(fase_id))
+        if not ranked:
+            return None
+        try:
+            idx = ranked.index(str(funcionario_id))
+        except ValueError:
+            return None
+        return max(0.5, 1.0 - 0.05 * idx)
 
     def median_duration_h(
         self,
@@ -1032,6 +1082,64 @@ async def _load_sector_preferences_db(
         return await SectorPreferenceService(session, tenant_id).phase_preference_map()
     except Exception as exc:  # pragma: no cover — best-effort
         logger.warning("Q.140.F sector preferences load failed: %s", exc)
+        return {}
+
+
+async def _load_boat_complexity_db(
+    session: Any,
+    tenant_id: UUID,
+) -> Dict[str, float]:
+    """Q.155.D — ICB [0,1] por product_id (= P_ID = op.model_id) do barco.
+
+    Best-effort: tabela ausente / session None → {} (sem boost, back-compat)."""
+    if session is None:
+        return {}
+    try:
+        from sqlalchemy import text
+
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT product_id, complexity_score "
+                    "FROM governance.boat_complexity WHERE tenant_id = :t"
+                ),
+                {"t": str(tenant_id)},
+            )
+        ).all()
+        return {str(r[0]): float(r[1]) for r in rows}
+    except Exception as exc:  # pragma: no cover — best-effort
+        logger.debug("Q.155.D boat_complexity load skipped: %s", exc)
+        return {}
+
+
+async def _load_phase_preferred_operators_db(
+    session: Any,
+    tenant_id: UUID,
+) -> Dict[str, List[str]]:
+    """Q.155.D — melhores curados por fase: phase_id → [employee_code,…] (rank).
+
+    Best-effort: tabela ausente / session None → {} (cai no sector/skill)."""
+    if session is None:
+        return {}
+    try:
+        from sqlalchemy import text
+
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT phase_id, employee_code FROM "
+                    "governance.phase_preferred_operator "
+                    "WHERE tenant_id = :t ORDER BY phase_id, rank"
+                ),
+                {"t": str(tenant_id)},
+            )
+        ).all()
+        out: Dict[str, List[str]] = {}
+        for phase_id, code in rows:
+            out.setdefault(str(phase_id), []).append(str(code))
+        return out
+    except Exception as exc:  # pragma: no cover — best-effort
+        logger.debug("Q.155.D phase_preferred_operators load skipped: %s", exc)
         return {}
 
 
