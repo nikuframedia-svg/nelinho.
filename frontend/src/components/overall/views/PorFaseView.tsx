@@ -26,6 +26,7 @@ import type { ScheduledOp } from '../types';
 import type { PlanSelection } from '../selection';
 import { opMatchesSelection } from '../selection';
 import { OpCard } from './OpCard';
+import { CountBadge } from './CountBadge';
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -49,6 +50,7 @@ function PhaseDropSlot({
   editable,
   selection,
   onSelect,
+  compact = false,
 }: {
   phaseId: string;
   slotId: string;
@@ -56,9 +58,20 @@ function PhaseDropSlot({
   editable: boolean;
   selection?: PlanSelection | null;
   onSelect?: (sel: PlanSelection) => void;
+  compact?: boolean;
 }) {
   const dropId = `${phaseId}__${slotId}`;
   const { setNodeRef, isOver } = useDroppable({ id: dropId });
+
+  // Q.141.J — escalas grossas (semana/mês): contagem por célula em vez de
+  // milhares de cartões. Verde quando há realizado, neutro quando só plano.
+  if (compact) {
+    return (
+      <div ref={setNodeRef} className="h-full w-full flex items-center justify-center p-0.5">
+        {ops.length > 0 && <CountBadge ops={ops} />}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -96,6 +109,7 @@ function renderOpItem(
   editable: boolean,
   selection: PlanSelection | null,
   onSelect?: (sel: PlanSelection) => void,
+  compact = false,
 ): ReactNode {
   const ops = opsByPhaseSlot.get(item.id) ?? [];
   const [phaseId, slotId] = item.id.split('__slot__');
@@ -107,6 +121,7 @@ function renderOpItem(
       editable={editable}
       selection={selection}
       onSelect={onSelect}
+      compact={compact}
     />
   );
 }
@@ -219,7 +234,7 @@ export const PorFaseView = memo(function PorFaseView({
         slotWidth={72}
         laneHeight={56}
         renderItem={(item) =>
-          renderOpItem(item, opsByPhaseSlot, editable, selection ?? null, onSelect)
+          renderOpItem(item, opsByPhaseSlot, editable, selection ?? null, onSelect, scale !== 'day')
         }
       />
     </DndContext>

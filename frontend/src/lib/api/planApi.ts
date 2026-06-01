@@ -649,9 +649,17 @@ export interface TimelineActualsResponse {
 
 export const timelineActualsApi = {
   /** O que aconteceu no intervalo (fases reais + expedições). Datas YYYY-MM-DD. */
-  list: (params: { from: string; to: string; group_by?: string }) =>
+  list: (params: {
+    from: string;
+    to: string;
+    group_by?: string;
+    granularity?: 'raw' | 'day' | 'auto';
+    limit?: number;
+  }) =>
     request<TimelineActualsResponse>(
-      `/v1/plan/timeline/actuals?${new URLSearchParams(filterParams(params))}`,
+      `/v1/plan/timeline/actuals?${new URLSearchParams(
+        filterParams({ ...params, limit: params.limit?.toString() }),
+      )}`,
     ),
 };
 

@@ -115,9 +115,15 @@ export default function OverallPage(): ReactNode {
   // ── Q.141.H — actuals (o que ACONTECEU) no intervalo (passado real) ─────────
   const actualsFrom = format(windowStart, 'yyyy-MM-dd');
   const actualsTo = format(windowEnd, 'yyyy-MM-dd');
+  // Q.141.J — sempre raw (para o gantt ter items em qualquer intervalo); cap
+  // generoso nas escalas grossas (mês cheio ~17k fases) e leve no dia.
+  const actualsLimit = scale === 'dia' ? 5000 : 20000;
   const { data: actualsData } = useQuery({
-    queryKey: planKeys.actuals(actualsFrom, actualsTo),
-    queryFn: () => timelineActualsApi.list({ from: actualsFrom, to: actualsTo }),
+    queryKey: [...planKeys.actuals(actualsFrom, actualsTo), actualsLimit],
+    queryFn: () =>
+      timelineActualsApi.list({
+        from: actualsFrom, to: actualsTo, granularity: 'raw', limit: actualsLimit,
+      }),
     // Só vale a pena quando a janela inclui passado/hoje.
     enabled: windowStart <= today,
     retry: false,
@@ -425,6 +431,15 @@ export default function OverallPage(): ReactNode {
                     Planeado
                   </span>
                 </span>
+                {actualsData?.truncated && (
+                  <span
+                    className="text-[10px] px-2 py-0.5 rounded-full"
+                    style={{ background: 'var(--yellow-bg)', border: '1px solid var(--yellow-bd)', color: 'var(--yellow)' }}
+                    title="Intervalo grande: a mostrar as fases mais recentes. Reduz o intervalo para veres tudo."
+                  >
+                    Realizado truncado · mais recentes
+                  </span>
+                )}
                 {selection && (
                   <button
                     onClick={clearSelection}

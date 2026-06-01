@@ -61,7 +61,7 @@ _FASES_BY_RANGE_SQL = text(
       AND o."OFFP_DATAINICIO" IS NOT NULL
       AND o."OFFP_DATAINICIO" >= :lower
       AND o."OFFP_DATAINICIO" < :upper
-    ORDER BY o."OFFP_DATAINICIO" ASC
+    ORDER BY o."OFFP_DATAINICIO" DESC
     LIMIT :cap
     """
 )

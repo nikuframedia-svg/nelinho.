@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.plan.services.timeline_actuals_service import (
+    DEFAULT_CAP,
     TimelineActualsService,
     aggregate_by_day,
 )
@@ -47,6 +48,7 @@ async def get_actuals(
     to: date = Query(..., description="Data final inclusiva (YYYY-MM-DD)."),
     group_by: Optional[str] = Query(None, description="barco | fase | operador (p/ day)."),
     granularity: str = Query("auto", description="raw | day | auto."),
+    limit: int = Query(DEFAULT_CAP, ge=1, le=50_000, description="Cap de fases raw."),
     tenant_id: UUID = Depends(get_tenant_id),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
@@ -66,8 +68,8 @@ async def get_actuals(
         gran = "day" if span > 31 else "raw"
 
     svc = TimelineActualsService(session, tenant_id)
-    items, items_trunc = await svc.actuals_items(from_, to)
-    expeditions, exp_trunc = await svc.expeditions(from_, to)
+    items, items_trunc = await svc.actuals_items(from_, to, cap=limit)
+    expeditions, exp_trunc = await svc.expeditions(from_, to, cap=limit)
 
     resp: dict = {
         "from": from_.isoformat(),

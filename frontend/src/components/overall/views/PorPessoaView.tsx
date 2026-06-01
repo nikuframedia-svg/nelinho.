@@ -20,6 +20,7 @@ import { EmptyState } from '../../dark';
 import { Clickable } from '../../entitySheets';
 import { Timeline, buildSlots, dateToSlotIndex } from '../Timeline';
 import type { TimelineScale } from '../Timeline';
+import { CountBadge } from './CountBadge';
 import type { TimelineLane, TimelineItem } from '../../dark';
 import { learningAffinitiesApi } from '../../../lib/api/planApi';
 import { learningKeys } from '../../../lib/api/keys';
@@ -50,6 +51,7 @@ function PessoaDropSlot({
   editable,
   selection,
   onSelect,
+  compact = false,
 }: {
   operadorId: string;
   slotId: string;
@@ -57,9 +59,18 @@ function PessoaDropSlot({
   editable: boolean;
   selection?: PlanSelection | null;
   onSelect?: (sel: PlanSelection) => void;
+  compact?: boolean;
 }) {
   const dropId = `pessoa__${operadorId}__slot__${slotId}`;
   const { setNodeRef, isOver } = useDroppable({ id: dropId });
+
+  if (compact) {
+    return (
+      <div ref={setNodeRef} className="h-full w-full flex items-center justify-center p-0.5">
+        {ops.length > 0 && <CountBadge ops={ops} />}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -97,6 +108,7 @@ function renderPessoaItem(
   editable: boolean,
   selection: PlanSelection | null,
   onSelect?: (sel: PlanSelection) => void,
+  compact = false,
 ): ReactNode {
   const ops = opsByPessoaSlot.get(item.id) ?? [];
   // key: pessoa__operadorId__slot__slotId
@@ -110,6 +122,7 @@ function renderPessoaItem(
       editable={editable}
       selection={selection}
       onSelect={onSelect}
+      compact={compact}
     />
   );
 }
@@ -260,7 +273,7 @@ export const PorPessoaView = memo(function PorPessoaView({
         items={items}
         slotWidth={72}
         laneHeight={56}
-        renderItem={(item) => renderPessoaItem(item, opsByPessoaSlot, editable, selection ?? null, onSelect)}
+        renderItem={(item) => renderPessoaItem(item, opsByPessoaSlot, editable, selection ?? null, onSelect, scale !== 'day')}
       />
     </DndContext>
   );

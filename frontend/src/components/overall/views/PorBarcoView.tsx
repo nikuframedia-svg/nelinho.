@@ -19,6 +19,7 @@ import { EmptyState } from '../../dark';
 import { Clickable } from '../../entitySheets';
 import { Timeline, buildSlots, dateToSlotIndex } from '../Timeline';
 import type { TimelineScale } from '../Timeline';
+import { CountBadge } from './CountBadge';
 import type { TimelineLane, TimelineItem } from '../../dark';
 import type { ScheduledOp } from '../types';
 import type { PlanSelection } from '../selection';
@@ -34,6 +35,7 @@ interface BoatDropSlotProps {
   editable: boolean;
   selection?: PlanSelection | null;
   onSelect?: (sel: PlanSelection) => void;
+  compact?: boolean;
 }
 
 interface PorBarcoViewProps {
@@ -49,9 +51,17 @@ interface PorBarcoViewProps {
 
 // ─── Droppable slot por barco ───────────────────────────────────────────────
 
-function BoatDropSlot({ boatId, slotId, ops, editable, selection, onSelect }: BoatDropSlotProps) {
+function BoatDropSlot({ boatId, slotId, ops, editable, selection, onSelect, compact = false }: BoatDropSlotProps) {
   const dropId = `boat__${boatId}__${slotId}`;
   const { setNodeRef, isOver } = useDroppable({ id: dropId });
+
+  if (compact) {
+    return (
+      <div ref={setNodeRef} className="h-full w-full flex items-center justify-center p-0.5">
+        {ops.length > 0 && <CountBadge ops={ops} />}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -89,6 +99,7 @@ function renderBoatItem(
   editable: boolean,
   selection: PlanSelection | null,
   onSelect?: (sel: PlanSelection) => void,
+  compact = false,
 ): ReactNode {
   const ops = opsByBoatSlot.get(item.id) ?? [];
   const [, boatId, , slotId] = item.id.split('__');
@@ -100,6 +111,7 @@ function renderBoatItem(
       editable={editable}
       selection={selection}
       onSelect={onSelect}
+      compact={compact}
     />
   );
 }
@@ -226,7 +238,7 @@ export const PorBarcoView = memo(function PorBarcoView({
         items={items}
         slotWidth={72}
         laneHeight={56}
-        renderItem={(item) => renderBoatItem(item, opsByBoatSlot, editable, selection ?? null, onSelect)}
+        renderItem={(item) => renderBoatItem(item, opsByBoatSlot, editable, selection ?? null, onSelect, scale !== 'day')}
       />
     </DndContext>
   );

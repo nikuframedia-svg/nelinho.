@@ -104,6 +104,22 @@ def test_long_range_auto_is_day_aggregated(_stub_service):
     assert body["lanes"][0]["group_key"] == "OF1"
 
 
+def test_limit_param_accepted(_stub_service):
+    r = _client().get(
+        "/v1/plan/timeline/actuals",
+        params={"from": "2026-05-01", "to": "2026-05-07", "limit": 100}, headers=_HEADERS,
+    )
+    assert r.status_code == 200
+
+
+def test_limit_too_large_is_422(_stub_service):
+    r = _client().get(
+        "/v1/plan/timeline/actuals",
+        params={"from": "2026-05-01", "to": "2026-05-07", "limit": 99999}, headers=_HEADERS,
+    )
+    assert r.status_code == 422
+
+
 def test_best_effort_empty_when_no_session():
     # Sem _stub_service: session=None → service devolve vazio → 200, nunca 5xx.
     r = _client().get("/v1/plan/timeline/actuals",
