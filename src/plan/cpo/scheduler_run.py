@@ -24,7 +24,7 @@ from typing import Any, Dict, Optional
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import and_, select
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -52,48 +52,55 @@ async def _upsert_cpo_alert(
     context: Dict[str, Any],
     severity: str = "WARN",
 ) -> None:
-    """Q.138.G — upsert CPO alert sem entity_refs.
+    """Q.138.I — upsert CPO alert via INSERT ... ON CONFLICT DO UPDATE.
 
-    Alertas do scheduler não têm entity_refs (são alertas globais de plano),
-    por isso o dedup do AlertsEngine não os apanha. Esta função verifica se
-    já existe um alerta ACTIVO com o mesmo (tenant_id, code) e, se sim,
-    actualiza title/message_pt/context/updated_at em vez de criar duplicado.
+    Usa o unique partial index (tenant_id, code) WHERE status='active'
+    (migração 069) para dedup a nível de BD. Elimina a race-condition do
+    SELECT-then-INSERT anterior (Q.138.G) que falhava quando a transacção
+    da sessão não tinha ainda visto o flush anterior.
     """
-    from src.copilot.alerts.models import CopilotAlert, STATUS_ACTIVE
+    from sqlalchemy import text as _text
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from src.copilot.alerts.models import CopilotAlert
 
-    stmt = select(CopilotAlert).where(
-        and_(
-            CopilotAlert.tenant_id == tenant_id,
-            CopilotAlert.code == code,
-            CopilotAlert.status == STATUS_ACTIVE,
+    now = datetime.utcnow()
+    stmt = (
+        pg_insert(CopilotAlert)
+        .values(
+            id=__import__("uuid").uuid4(),
+            tenant_id=tenant_id,
+            severity=severity,
+            code=code,
+            title=title,
+            message_pt=message_pt,
+            context=context,
+            entity_refs=[],
+            status="active",
+            created_at=now,
+            updated_at=now,
         )
-    ).limit(1)
-    result = await session.execute(stmt)
-    existing = result.scalars().first()
-
-    if existing is not None:
-        existing.title = title
-        existing.message_pt = message_pt
-        existing.context = context
-        existing.updated_at = datetime.utcnow()
-        return
-
-    alert = CopilotAlert(
-        tenant_id=tenant_id,
-        severity=severity,
-        code=code,
-        title=title,
-        message_pt=message_pt,
-        context=context,
-        entity_refs=[],
+        .on_conflict_do_update(
+            index_elements=["tenant_id", "code"],
+            index_where=_text("status = 'active'"),
+            set_={
+                "title": title,
+                "message_pt": message_pt,
+                "context": context,
+                "severity": severity,
+                "updated_at": now,
+            },
+        )
     )
-    session.add(alert)
+    await session.execute(stmt)
+    # Q.138.I — commit explícito: session.execute de statement raw não marca
+    # session.new/dirty, por isso get_session/get_session_context não chamam
+    # commit() automaticamente. Mesmo padrão do CommitsService (Q.133.A.1).
+    await session.commit()
 
 
 async def _parent_sha(service: CommitsService, commit: ScheduleCommit) -> Optional[str]:
     if commit.parent_id is None:
         return None
-    from sqlalchemy import select
     stmt = select(ScheduleCommit.commit_sha256).where(
         ScheduleCommit.id == commit.parent_id
     )
