@@ -295,3 +295,98 @@ async def test_reapply_real_axiom_enforcement(monkeypatch):
     assert stats_bad["rejected"] == 1 and stats_bad["reapplied"] == 0
     assert len(s_bad.added) == 0          # NENHUM commit que viole o axioma
     assert alerts == ["ord::B"]           # humano alertado
+
+
+# ---------------------------------------------------------------------------
+# Q.149.C.1 — o OPERADOR sobrevive ao replan (guarda anti-regressão Q.148)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_reapply_operator_survives_replan(monkeypatch):
+    """Depois do reapply, a op leva o operador novo no campo CANÓNICO `workers`
+    (o que o grid e o decoder CPO lêem). Sem isto a pessoa que o humano escolheu
+    desaparece no replano seguinte — era o bug Q.148 (escrevia só operator_id).
+
+    Este teste FALHA se alguém reverter o Q.148 e passa no código actual.
+    """
+    ops = [
+        {"operation_id": "ord::B", "phase_id": "PINTURA",
+         "start_time": _BASE_TS.isoformat(),
+         "end_time": (_BASE_TS + timedelta(hours=2)).isoformat(),
+         "workers": ["w-old"], "operator_id": "w-old"},
+    ]
+    overrides = [
+        {"operation_id": "ord::B", "to_phase": "PINTURA",
+         "to_ts": (_BASE_TS + timedelta(hours=10)).isoformat(), "new_operator_id": "w-9"},
+    ]
+
+    async def active(self):
+        return overrides
+
+    monkeypatch.setattr(
+        "src.plan.cpo.commits.CommitsService.active_manual_overrides", active,
+    )
+
+    with patch.object(mr, "publish_event", new=AsyncMock()), \
+            patch.object(mr, "audit_change", new=AsyncMock()):
+        session = _RealishSession(_FakeCommit(ops))
+        stats = await reapply_manual_overrides(session, TENANT)
+
+    assert stats["reapplied"] == 1 and stats["rejected"] == 0
+    assert len(session.added) == 1
+    commit = session.added[0]
+    op = next(o for o in commit.operations if o["operation_id"] == "ord::B")
+    assert op["workers"] == ["w-9"]       # campo canónico — a pessoa MUDOU
+    assert op["operator_id"] == "w-9"     # consistente
+    assert ops[0]["workers"] == ["w-old"]  # o parent não foi mutado
+
+
+@pytest.mark.asyncio
+async def test_reapply_exclusivity_chained(monkeypatch):
+    """Dois overrides pondo o MESMO operador em janelas sobrepostas: o 1º aplica,
+    o 2º é rejeitado pela exclusividade — provando que o reapply encadeia (lê o
+    `workers` do commit que acabou de criar) e não deixa double-booking."""
+    ops = [
+        {"operation_id": "ord::A", "phase_id": "PINTURA",
+         "start_time": _BASE_TS.isoformat(),
+         "end_time": (_BASE_TS + timedelta(hours=4)).isoformat(),
+         "workers": ["w-a"], "operator_id": "w-a"},
+        {"operation_id": "ord::B", "phase_id": "MONTAGEM",
+         "start_time": (_BASE_TS + timedelta(hours=12)).isoformat(),
+         "end_time": (_BASE_TS + timedelta(hours=14)).isoformat(),
+         "workers": ["w-b"], "operator_id": "w-b"},
+    ]
+    overrides = [
+        # 1) ord::A passa a w-9 (mantém 08:00–12:00)
+        {"operation_id": "ord::A", "to_phase": "PINTURA",
+         "to_ts": _BASE_TS.isoformat(), "new_operator_id": "w-9"},
+        # 2) ord::B passa a w-9 às 09:00 → dentro da janela de ord::A → conflito
+        {"operation_id": "ord::B", "to_phase": "MONTAGEM",
+         "to_ts": (_BASE_TS + timedelta(hours=1)).isoformat(), "new_operator_id": "w-9"},
+    ]
+
+    async def active(self):
+        return overrides
+
+    monkeypatch.setattr(
+        "src.plan.cpo.commits.CommitsService.active_manual_overrides", active,
+    )
+    alerts: List[str] = []
+
+    async def fake_alert(session, tenant_id, operation_id, reason_pt):
+        alerts.append(operation_id)
+
+    monkeypatch.setattr(mr, "_emit_override_invalid_alert", fake_alert)
+
+    with patch.object(mr, "publish_event", new=AsyncMock()), \
+            patch.object(mr, "audit_change", new=AsyncMock()):
+        session = _RealishSession(_FakeCommit(ops))
+        stats = await reapply_manual_overrides(session, TENANT)
+
+    assert stats["reapplied"] == 1       # ord::A
+    assert stats["rejected"] == 1        # ord::B (double-booking)
+    assert alerts == ["ord::B"]
+    op_a = next(
+        o for o in session.added[-1].operations if o["operation_id"] == "ord::A"
+    )
+    assert op_a["workers"] == ["w-9"]
