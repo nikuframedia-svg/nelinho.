@@ -363,3 +363,102 @@ async def apply_manual_reorder(
         sha[:12], operation_id, from_phase, new_phase, tenant_id,
     )
     return {"commit_sha": sha, "delta_summary": delta_summary}
+
+
+# ---------------------------------------------------------------------------
+# Q.142.D — re-aplicar overrides manuais após o solve automático (robô)
+# ---------------------------------------------------------------------------
+
+async def _emit_override_invalid_alert(
+    session: AsyncSession,
+    tenant_id: UUID,
+    operation_id: str,
+    reason_pt: str,
+) -> None:
+    """Alerta (upsert idempotente, padrão Q.138.I) quando um override manual
+    deixou de ser viável com o WIP atual. Best-effort — nunca rebenta."""
+    from sqlalchemy.exc import SQLAlchemyError
+
+    try:
+        from src.plan.cpo.scheduler_run import _upsert_cpo_alert
+
+        await _upsert_cpo_alert(
+            session,
+            tenant_id,
+            code=f"MANUAL_OVERRIDE_INVALID:{operation_id}"[:64],
+            title="Ajuste manual já não é viável",
+            message_pt=(
+                f"O teu ajuste manual da operação {operation_id} já não é "
+                f"compatível com o plano atual e não foi re-aplicado: {reason_pt}"
+            ),
+            context={"operation_id": operation_id, "reason": reason_pt},
+            severity="WARN",
+        )
+    except (SQLAlchemyError, ImportError, RuntimeError, OSError) as exc:
+        logger.warning(
+            "reapply: emitir alerta de override inviável falhou op=%s (%s)",
+            operation_id, exc,
+        )
+
+
+async def reapply_manual_overrides(
+    session: AsyncSession,
+    tenant_id: UUID,
+    *,
+    state_skills: Optional[Dict[str, Any]] = None,
+) -> Dict[str, int]:
+    """Q.142.D — re-aplica os overrides manuais ativos por cima do DRAFT fresco
+    que o robô acabou de gerar (chamado pelo worker após `run_cpo_schedule`).
+
+    Cada move é re-validado pelos 4 axiomas Spelke + safety_net via
+    `apply_manual_reorder` (autoria `system` → não se auto-coleta no ciclo
+    seguinte). Move inviável é **descartado**, nunca forçado:
+      * op inexistente (ordem expedida / fase já passou) → skip;
+      * `SafetyNetViolation` (axioma deixou de bater com o novo WIP) → skip +
+        `CopilotAlert` para o humano.
+
+    Commit após cada sucesso → transacção distinta → `created_at` distinto →
+    `get_latest()` encadeia o override seguinte sobre o anterior (Postgres
+    `now()` é estável por transacção). Best-effort: nunca rebenta — o DRAFT do
+    robô fica de pé. Devolve `{"reapplied", "skipped", "rejected"}`.
+    """
+    overrides = await CommitsService(session, tenant_id).active_manual_overrides()
+    stats = {"reapplied": 0, "skipped": 0, "rejected": 0}
+
+    for ov in overrides:
+        op_id = str(ov.get("operation_id") or "")
+        try:
+            new_ts = datetime.fromisoformat(str(ov.get("to_ts")))
+        except (ValueError, TypeError):
+            logger.warning("reapply: to_ts inválido op=%s (%r) — skip", op_id, ov.get("to_ts"))
+            stats["skipped"] += 1
+            continue
+
+        try:
+            await apply_manual_reorder(
+                session=session,
+                tenant_id=tenant_id,
+                operation_id=op_id,
+                new_phase=str(ov.get("to_phase") or ""),
+                new_start_ts=new_ts,
+                new_operator_id=ov.get("new_operator_id"),
+                author="system",  # author=system → excluído da próxima coleta
+                state_skills=state_skills,
+            )
+            await session.commit()  # tx distinta → created_at distinto → encadeia
+            stats["reapplied"] += 1
+            logger.info("reapply: override op=%s re-aplicado em %s", op_id, ov.get("to_phase"))
+        except SafetyNetViolation as exc:
+            await session.rollback()
+            stats["rejected"] += 1
+            await _emit_override_invalid_alert(session, tenant_id, op_id, exc.reason_pt)
+            logger.info(
+                "reapply: op=%s rejeitado pelo safety_net (%s) — alerta emitido",
+                op_id, exc.axiom_name,
+            )
+        except ValueError as exc:
+            await session.rollback()
+            stats["skipped"] += 1
+            logger.info("reapply: op=%s já não está no plano fresco — skip (%s)", op_id, exc)
+
+    return stats

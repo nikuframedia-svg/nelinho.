@@ -92,6 +92,30 @@ async def cpo_schedule_job(
         async with get_session_context() as session:
             result = await run_cpo_schedule(session, tenant_id, request)
 
+            # Q.142.D — re-aplicar os ajustes manuais (drag-drop) por cima do
+            # DRAFT fresco para que "se aguentem" ao replan automático. O robô
+            # planeia sozinho MAS respeita os moves do humano (revalidados pelos
+            # axiomas Spelke; move inviável → alerta, nunca forçado). Best-effort:
+            # falha aqui nunca derruba o job — o DRAFT do robô fica de pé.
+            from sqlalchemy.exc import SQLAlchemyError
+
+            try:
+                from src.plan.services.manual_reorder import reapply_manual_overrides
+
+                stats = await reapply_manual_overrides(session, tenant_id)
+                if stats.get("reapplied") or stats.get("rejected"):
+                    logger.info(
+                        "cpo_schedule_job: overrides manuais reaplicados=%d "
+                        "rejeitados=%d skipped=%d",
+                        stats.get("reapplied", 0),
+                        stats.get("rejected", 0),
+                        stats.get("skipped", 0),
+                    )
+            except (SQLAlchemyError, RuntimeError, ValueError, OSError, ImportError) as exc:
+                logger.warning(
+                    "cpo_schedule_job: reapply de overrides manuais falhou (%s)", exc,
+                )
+
     logger.info(
         "cpo_schedule_job complete: job_id=%s commit_sha=%s status=%s "
         "solve_time=%.2fs",

@@ -155,6 +155,39 @@ def compute_commit_hash(
 
 
 # =============================================================================
+# Q.142.C — overrides manuais ativos (para o robô re-aplicar após cada solve)
+# =============================================================================
+
+# Cap defensivo: no cold-start (sem commit LIVE) a janela de overrides seria
+# "desde sempre". Varremos só os N commits mais recentes (DESC+limit) e
+# revertemos para ASC — chega para o last-wins sem percorrer o histórico todo.
+_OVERRIDE_SCAN_LIMIT = 500
+
+
+def _reduce_overrides(rows: List["ScheduleCommit"]) -> List[Dict[str, Any]]:
+    """Last-wins por `operation_id` sobre commits de drag manual ordenados por
+    `created_at` ascendente. Lógica pura (sem BD) → testável isoladamente.
+
+    Cada commit traz um delta `tipo="manual_drag"`; um drag posterior do mesmo
+    `operation_id` substitui o anterior. Devolve a lista dos overrides efetivos:
+    `{operation_id, to_phase, to_ts, new_operator_id}`.
+    """
+    overrides: Dict[str, Dict[str, Any]] = {}
+    for c in rows:
+        d = dict(getattr(c, "delta", None) or {})
+        op = d.get("operation_id")
+        if not op:
+            continue
+        overrides[str(op)] = {
+            "operation_id": str(op),
+            "to_phase": d.get("to_phase"),
+            "to_ts": d.get("to_ts"),
+            "new_operator_id": d.get("new_operator_id"),
+        }
+    return list(overrides.values())
+
+
+# =============================================================================
 # Service
 # =============================================================================
 
@@ -260,6 +293,45 @@ class CommitsService:
         )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def latest_live(self) -> Optional[ScheduleCommit]:
+        """O commit LIVE (aprovado) mais recente, ou None. Baseline da janela
+        de overrides manuais ativos (Q.142.C)."""
+        stmt = (
+            select(ScheduleCommit)
+            .where(
+                (ScheduleCommit.tenant_id == self.tenant_id)
+                & (ScheduleCommit.status == "LIVE")
+            )
+            .order_by(desc(ScheduleCommit.created_at))
+            .limit(1)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def active_manual_overrides(self) -> List[Dict[str, Any]]:
+        """Q.142.C — overrides manuais ATIVOS para o robô re-aplicar após cada
+        solve automático (Q.142.D). São os deltas `tipo="manual_drag"` de
+        autoria HUMANA (`author != "system"`) criados DESDE o último commit LIVE
+        — a aprovação DRAFT→LIVE "assa" os ajustes no plano aprovado e reinicia
+        a janela. Last-wins por `operation_id`.
+
+        Os commits re-aplicados pelo próprio robô usam `author="system"` → ficam
+        excluídos daqui (não se auto-coletam em loop).
+        """
+        live = await self.latest_live()
+        stmt = select(ScheduleCommit).where(
+            (ScheduleCommit.tenant_id == self.tenant_id)
+            & (ScheduleCommit.author != "system")
+            & (ScheduleCommit.delta["tipo"].astext == "manual_drag")
+        )
+        if live is not None:
+            stmt = stmt.where(ScheduleCommit.created_at > live.created_at)
+        # Safety-valve: aos N mais recentes (DESC+limit), depois ASC p/ last-wins.
+        stmt = stmt.order_by(desc(ScheduleCommit.created_at)).limit(_OVERRIDE_SCAN_LIMIT)
+        rows = list((await self.session.execute(stmt)).scalars().all())
+        rows.reverse()  # ASC → _reduce_overrides faz o last-wins corretamente
+        return _reduce_overrides(rows)
 
     async def list_commits(self, limit: int = 50) -> List[ScheduleCommit]:
         stmt = (

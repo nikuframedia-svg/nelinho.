@@ -100,6 +100,14 @@ muda; o worker corre-o e persiste um **DRAFT** que aparece sozinho no grid
 src.plan.cpo.worker.WorkerSettings` num terminal separado (Redis em docker:
 `nelo-redis`).
 
+> **Q.142.B — o unit `nelinho-arq.service` usa o layout `prodplan`** (`/opt/prodplan`,
+> `User=prodplan`, `/etc/prodplan/env`, `After/PartOf=prodplan-api.service`), igual ao
+> `prodplan-api.service`. O `REDIS_PASSWORD` em `/etc/prodplan/env` **tem de bater certo**
+> com o `REDIS_URL`/`settings.redis_url` — é o mesmo Redis que a API usa para enfileirar
+> (`_enqueue_cpo`) e o worker para consumir. Se diferirem, o enqueue cai em best-effort
+> (log + skip) e nenhum auto-plano aparece. Confirmar com `journalctl -u nelinho-arq -n 50`
+> (sem erros de auth do Redis no arranque).
+
 ## 6. Smoke test
 
 ```bash

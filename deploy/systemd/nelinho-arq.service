@@ -1,26 +1,28 @@
 [Unit]
 # Q.62.D.1 — Arq worker para CPO scheduler (e jobs futuros).
-# Corre em paralelo ao uvicorn nelinho-api.service para libertar o
-# endpoint /v1/plan/cpo/schedule (que bloqueava 30s).
-Description=Nelinho Arq Worker (CPO scheduler + async jobs)
-After=network.target redis-server.service nelinho-api.service
+# Q.142.B — paths alinhados ao prodplan-api.service (/opt/prodplan, User=prodplan,
+# /etc/prodplan/env); antes apontava para /opt/nelinho e o worker não arrancava.
+# Corre em paralelo ao uvicorn prodplan-api.service para libertar o
+# endpoint /v1/plan/cpo/schedule (que bloqueava 30s) e correr os auto-planos (Q.137).
+Description=ProdPlan ONE Arq Worker (CPO scheduler + async jobs)
+After=network.target redis-server.service prodplan-api.service
 Wants=redis-server.service
-PartOf=nelinho-api.service
+PartOf=prodplan-api.service
 
 [Service]
 Type=simple
-User=nelinho
-Group=nelinho
-WorkingDirectory=/opt/nelinho
+User=prodplan
+Group=prodplan
+WorkingDirectory=/opt/prodplan
 
 # Reuse o mesmo venv que a API usa.
-Environment="PATH=/opt/nelinho/.venv/bin:/usr/bin"
-Environment="PYTHONPATH=/opt/nelinho"
-EnvironmentFile=/etc/nelinho/env
+Environment="PATH=/opt/prodplan/.venv/bin:/usr/bin"
+Environment="PYTHONPATH=/opt/prodplan"
+EnvironmentFile=/etc/prodplan/env
 
 # Arq worker — uma instancia. Para escalar adicionar
-# nelinho-arq@1.service, @2.service etc com max_jobs ajustado.
-ExecStart=/opt/nelinho/.venv/bin/arq src.plan.cpo.worker.WorkerSettings
+# prodplan-arq@1.service, @2.service etc com max_jobs ajustado.
+ExecStart=/opt/prodplan/.venv/bin/arq src.plan.cpo.worker.WorkerSettings
 
 # Resilience: restart se cair (Redis blip, OOM, etc).
 Restart=on-failure

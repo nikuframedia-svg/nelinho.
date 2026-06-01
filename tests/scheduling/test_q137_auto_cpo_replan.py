@@ -45,7 +45,7 @@ def _patch(monkeypatch, *, enabled=True, gap=60, watermark=(777, "2026-05-31")):
 
     calls: list = []
 
-    async def fake_enqueue(tid):
+    async def fake_enqueue(tid, _wm):
         calls.append(tid)
         return True
 
@@ -122,9 +122,42 @@ async def test_enqueue_redis_down_is_best_effort(monkeypatch):
     """Redis em baixo → _enqueue_cpo devolve False; o job não crasha nem grava."""
     _patch(monkeypatch)  # config/watermark ok
 
-    async def enqueue_fail(_tid):
+    async def enqueue_fail(_tid, _wm):
         return False  # Redis/arq indisponível
 
     monkeypatch.setattr(job, "_enqueue_cpo", enqueue_fail)
     await job._auto_cpo_replan_global_job([])  # não levanta
     assert TENANT not in job._last_run  # não grava estado se não enfileirou
+
+
+@pytest.mark.asyncio
+async def test_enqueue_uses_deterministic_job_id(monkeypatch):
+    """Q.142.A — mesmo watermark → MESMO `_job_id` (dedup multi-worker sob
+    `--workers 2`); watermark diferente → `_job_id` diferente (novo plano)."""
+    captured: list = []
+
+    class FakeRedis:
+        async def enqueue_job(self, *args, **kwargs):
+            captured.append(kwargs.get("_job_id"))
+            return object()  # arq devolve um Job; aqui basta truthy
+
+        async def close(self):
+            pass
+
+    async def fake_create_pool(_settings):
+        return FakeRedis()
+
+    # `_enqueue_cpo` faz `from arq.connections import create_pool` em runtime,
+    # logo patch no atributo do módulo intercepta a chamada real.
+    monkeypatch.setattr("arq.connections.create_pool", fake_create_pool)
+
+    wm = (777, "2026-05-31 10:00:00")
+    ok1 = await job._enqueue_cpo(TENANT, wm)
+    ok2 = await job._enqueue_cpo(TENANT, wm)                       # mesmo WIP
+    ok3 = await job._enqueue_cpo(TENANT, (778, "2026-06-01 09:00"))  # WIP mudou
+
+    assert ok1 and ok2 and ok3
+    assert captured[0] is not None
+    assert captured[0].startswith(f"auto_cpo:{TENANT}:")
+    assert captured[0] == captured[1]   # watermark igual → MESMO job_id (Arq dedup)
+    assert captured[2] != captured[0]   # watermark diferente → job_id diferente
