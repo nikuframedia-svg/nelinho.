@@ -27,6 +27,7 @@ import type { ScheduledOp } from '../../components/overall/types';
 import { AutoProposeOverlay } from '../../components/overall/AutoProposeOverlay';
 import { ViewPanel } from '../../components/overall/ViewPanel';
 import { RiskStrip } from '../../components/overall/RiskStrip';
+import { PeriodSelector } from '../../components/overall/PeriodSelector';
 import type { PlanSelection } from '../../components/overall/selection';
 import { usePendingDecisions } from '../../hooks/usePendingDecisions';
 
@@ -224,6 +225,17 @@ export default function OverallPage(): ReactNode {
                 {' '}{pendingDecisions.length === 1 ? 'decisão pendente' : 'decisões pendentes'}
               </Link>
             )}
+
+            {/* Q.141.E — selector de intervalo (atalhos + custom) */}
+            <PeriodSelector
+              start={windowStart}
+              end={windowEnd}
+              today={today}
+              onChange={({ start, end }) => {
+                setWindowStart(start);
+                setWindowEnd(end);
+              }}
+            />
 
             {/* Toggle escala */}
             <div
