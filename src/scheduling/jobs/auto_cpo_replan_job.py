@@ -14,6 +14,7 @@ baixo → log + skip, sem crashar o scheduler.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
@@ -94,8 +95,21 @@ async def _read_config(session, tenant_id: UUID) -> Tuple[bool, int]:
         return True, _DEFAULT_MIN_GAP_MIN
 
 
-async def _enqueue_cpo(tenant_id: UUID) -> bool:
-    """Enfileira `cpo_schedule_job` no Arq. Best-effort: Redis/arq down → False."""
+async def _enqueue_cpo(tenant_id: UUID, watermark: Tuple[int, str]) -> bool:
+    """Enfileira `cpo_schedule_job` no Arq. Best-effort: Redis/arq down → False.
+
+    Q.142.A — dedup determinístico via `_job_id`. Sob `uvicorn --workers 2` há 2
+    schedulers in-process (1 por worker), cada um com o seu `_last_run`/watermark
+    in-memory → ambos achavam que era "1ª corrida" e enfileiravam → 2 DRAFTs
+    idênticos por ciclo. Como os 2 workers computam o MESMO watermark do MESMO
+    WIP, geram o MESMO `_job_id` e o Arq coalesce para 1 só job (dentro de
+    `keep_result=3600s` ≈ rate-limit de 60 min) → 1 só DRAFT. WIP muda → novo
+    watermark → novo `_job_id` → novo plano.
+
+    Usa-se `_job_id` e NÃO `with_advisory_lock` (o padrão de causal/dpo) porque
+    este job é rápido — só enfileira; o lock session-level libertava-se em ms e
+    não cobria ticks desfasados entre workers. O dedup tem de ser durável (Arq).
+    """
     try:
         from arq.connections import RedisSettings, create_pool
 
@@ -107,11 +121,16 @@ async def _enqueue_cpo(tenant_id: UUID) -> bool:
         logger.warning("auto_cpo_replan: Arq/Redis indisponível (%s); skip", exc)
         return False
     try:
+        wm_sig = hashlib.sha256(
+            f"{watermark[0]}|{watermark[1]}".encode("utf-8")
+        ).hexdigest()[:16]
+        job_id = f"auto_cpo:{tenant_id}:{wm_sig}"
         await redis.enqueue_job(
             "cpo_schedule_job",
             CPOScheduleRequest().model_dump(mode="json"),
             str(tenant_id),
             "system",
+            _job_id=job_id,
         )
     finally:
         await redis.close()
@@ -140,7 +159,7 @@ async def _auto_cpo_replan_global_job(tenant_ids: List[UUID]) -> None:
                 continue  # sem barcos / sem dados → nada a planear
             if last is not None and wm == last[1]:
                 continue  # WIP inalterado desde o último plano → não repetir
-            if await _enqueue_cpo(tid):
+            if await _enqueue_cpo(tid, wm):
                 _last_run[tid] = (now, wm)
                 logger.info(
                     "auto_cpo_replan: CPO enfileirado tenant=%s wip_barcos=%s",
