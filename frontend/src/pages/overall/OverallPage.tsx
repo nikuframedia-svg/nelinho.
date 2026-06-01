@@ -13,10 +13,10 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { addDays, startOfDay, format } from 'date-fns';
 import { pt } from 'date-fns/locale';
-import { Calendar, AlertTriangle, Ship } from 'lucide-react';
+import { Calendar, AlertTriangle, Ship, RotateCcw } from 'lucide-react';
 import { planKeys } from '../../lib/api/keys';
-import { cpoCommitsApi, planOperationsApi, timelineActualsApi, copilotAlertsApi } from '../../lib/api';
-import type { CpoCommit, TimelineActualItem, CopilotAlertItem } from '../../lib/api';
+import { cpoCommitsApi, planOperationsApi, timelineActualsApi, copilotAlertsApi, planExclusionApi } from '../../lib/api';
+import type { CpoCommit, TimelineActualItem, CopilotAlertItem, ExcludedBoat } from '../../lib/api';
 import { PageHeader, DarkCard, DarkButton, EmptyState } from '../../components/dark';
 import { useToastContext } from '../../components/ToastProvider';
 import { PorBarcoView } from '../../components/overall/views/PorBarcoView';
@@ -281,6 +281,42 @@ export default function OverallPage(): ReactNode {
       }
     },
   });
+
+  // ── Q.153.C2 — barcos excluídos do plano (zona de remoção por drag) ─────────
+  const excludedQuery = useQuery({
+    queryKey: planKeys.excludedBoats(),
+    queryFn: () => planExclusionApi.listExcludedBoats(),
+  });
+  const excludedBoats: ExcludedBoat[] = excludedQuery.data ?? [];
+
+  const excludeMutation = useMutation({
+    mutationFn: (orderId: string) => planExclusionApi.excludeBoat(orderId),
+    onSuccess: (_resp, orderId) => {
+      queryClient.invalidateQueries({ queryKey: planKeys.excludedBoats() });
+      toast.info(`Barco ${orderId} excluído — Replaneie para aplicar`);
+    },
+    onError: (err: unknown) => {
+      const e = err as { message?: string };
+      toast.error(`Falha ao excluir: ${e.message ?? 'erro desconhecido'}`);
+    },
+  });
+
+  const reincludeMutation = useMutation({
+    mutationFn: (orderId: string) => planExclusionApi.reincludeBoat(orderId),
+    onSuccess: (_resp, orderId) => {
+      queryClient.invalidateQueries({ queryKey: planKeys.excludedBoats() });
+      toast.success(`Barco ${orderId} reposto — Replaneie para aplicar`);
+    },
+    onError: (err: unknown) => {
+      const e = err as { message?: string };
+      toast.error(`Falha ao repor: ${e.message ?? 'erro desconhecido'}`);
+    },
+  });
+
+  const handleExclude = useCallback(
+    (orderId: string) => excludeMutation.mutate(orderId),
+    [excludeMutation],
+  );
 
   const isReplanning = replanMutation.isPending || Boolean(replanJobId);
 
@@ -563,6 +599,53 @@ export default function OverallPage(): ReactNode {
         {/* Faixa colapsável de riscos operacionais */}
         <RiskStrip />
 
+        {/* Q.153.C2 — barcos excluídos do plano (repor no plano) */}
+        {excludedBoats.length > 0 && (
+          <div
+            className="flex flex-col gap-1.5 rounded-lg p-2.5"
+            style={{ background: 'var(--bg-3)', border: '1px solid var(--bd-2)' }}
+          >
+            <div className="flex items-center gap-2 text-xs font-semibold" style={{ color: 'var(--fg-2)' }}>
+              <Ship size={13} />
+              {excludedBoats.length === 1
+                ? '1 barco excluído do plano'
+                : `${excludedBoats.length} barcos excluídos do plano`}
+              <span className="font-normal" style={{ color: 'var(--fg-3)' }}>
+                — voltam no próximo replan se forem repostos
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {excludedBoats.map((b) => (
+                <div
+                  key={b.order_id}
+                  className="flex items-center gap-2 px-2 py-1 rounded-md text-xs"
+                  style={{ background: 'var(--bg-4)', border: '1px solid var(--bd-2)' }}
+                >
+                  <span className="font-mono tabular-nums" style={{ color: 'var(--fg-1)' }}>
+                    {b.order_id}
+                  </span>
+                  {b.reason && (
+                    <span className="truncate max-w-[160px]" style={{ color: 'var(--fg-3)' }} title={b.reason}>
+                      {b.reason}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => reincludeMutation.mutate(b.order_id)}
+                    disabled={reincludeMutation.isPending}
+                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium transition disabled:opacity-50"
+                    style={{ color: 'var(--accent)', background: 'transparent' }}
+                    title="Repor este barco no plano"
+                  >
+                    <RotateCcw size={11} />
+                    Repor no plano
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Q.149.C.3 — overrides manuais que o reapply do robô já não manteve */}
         {overrideAlerts.length > 0 && (
           <div className="flex flex-col gap-1.5">
@@ -827,6 +910,7 @@ export default function OverallPage(): ReactNode {
                     endDate={windowEnd}
                     scale={ganttScale}
                     onDrop={handleDrop}
+                    onExclude={handleExclude}
                     selection={selection}
                     onSelect={handleSelect}
                   />
@@ -838,6 +922,7 @@ export default function OverallPage(): ReactNode {
                     endDate={windowEnd}
                     scale={ganttScale}
                     onDrop={handleDrop}
+                    onExclude={handleExclude}
                     selection={selection}
                     onSelect={handleSelect}
                   />

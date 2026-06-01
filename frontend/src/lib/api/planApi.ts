@@ -439,6 +439,34 @@ export const planOperationsApi = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// PLAN EXCLUSION API (Q.153.C — tirar/repor barco do plano, reversível)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface ExcludedBoat {
+  order_id: string;
+  reason?: string | null;
+  excluded_by: string;
+  excluded_at: string; // ISO
+}
+
+export const planExclusionApi = {
+  /** POST /v1/plan/boats/{order_id}/exclude — exclui/adia (reversível, idempotente). */
+  excludeBoat: (orderId: string, reason?: string) =>
+    request<ExcludedBoat>(`/v1/plan/boats/${encodeURIComponent(orderId)}/exclude`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: reason ?? null }),
+    }),
+  /** DELETE /v1/plan/boats/{order_id}/exclude — repõe no plano (idempotente). */
+  reincludeBoat: (orderId: string) =>
+    request<{ order_id: string; reincluded: boolean }>(
+      `/v1/plan/boats/${encodeURIComponent(orderId)}/exclude`,
+      { method: 'DELETE' },
+    ),
+  /** GET /v1/plan/boats/excluded — lista os barcos actualmente excluídos. */
+  listExcludedBoats: () => request<ExcludedBoat[]>('/v1/plan/boats/excluded'),
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // LEARNING AFFINITIES API (Q.115.G)
 // ═══════════════════════════════════════════════════════════════════════════════
 

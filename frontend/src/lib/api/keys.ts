@@ -223,6 +223,8 @@ export const planKeys = {
   // Q.149.C.3 — alertas de override manual que o reapply do robô já não
   // conseguiu re-aplicar (a pessoa escolhida deixou de ser viável com o WIP).
   manualOverrideAlerts: () => [...planKeys.all, 'manual-override-alerts'] as const,
+  // Q.153.C2 — barcos excluídos/adiados do plano (drag p/ zona de remoção).
+  excludedBoats: () => [...planKeys.all, 'excluded-boats'] as const,
 } as const;
 
 // ─── Reports admin (Q.67.2.B) ──────────────────────────────────────────

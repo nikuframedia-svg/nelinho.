@@ -27,6 +27,7 @@ import { opMatchesSelection } from '../selection';
 import { OpCard } from './OpCard';
 import { DensityCell, DENSITY_THRESHOLD } from './DensityCell';
 import { useCellExpand } from '../cellExpand';
+import { RemoveZone, REMOVE_ZONE_ID } from './RemoveZone';
 
 // ─── Tipos internos ────────────────────────────────────────────────────────
 
@@ -46,6 +47,8 @@ interface PorBarcoViewProps {
   startDate: Date;
   endDate: Date;
   onDrop: (opId: string, newPhase: string, newStartTs: string, newOperatorId?: string) => void;
+  /** Q.153.C2 — arrastar uma op para a RemoveZone exclui o barco (order_id). */
+  onExclude?: (orderId: string) => void;
   selection?: PlanSelection | null;
   onSelect?: (sel: PlanSelection) => void;
   scale?: TimelineScale;
@@ -131,6 +134,7 @@ export const PorBarcoView = memo(function PorBarcoView({
   startDate,
   endDate,
   onDrop,
+  onExclude,
   selection,
   onSelect,
   scale = 'day',
@@ -210,20 +214,25 @@ export const PorBarcoView = memo(function PorBarcoView({
     (event: DragEndEvent) => {
       if (!event.over || !editable) return;
       const opId = String(event.active.id);
+      const op = operations.find((o) => o.id === opId);
+      if (!op) return;
+
+      // Q.153.C2 — largou na zona de remoção → excluir o barco (order_id).
+      if (String(event.over.id) === REMOVE_ZONE_ID) {
+        if (op.order_id && onExclude) onExclude(op.order_id);
+        return;
+      }
+
       // dropId: boat__boatId__slotId
       const dropTarget = String(event.over.id);
       const parts = dropTarget.split('__');
       if (parts.length < 3) return;
       const newDate = parts[parts.length - 1]; // slotId = yyyy-MM-dd
 
-      // Encontra a op para saber a fase
-      const op = operations.find((o) => o.id === opId);
-      if (!op) return;
-
       // Drag dentro do barco: mantém phase, muda start_ts
       onDrop(opId, op.phase_id, `${newDate}T08:00:00+00:00`);
     },
-    [editable, operations, onDrop],
+    [editable, operations, onDrop, onExclude],
   );
 
   if (boats.length === 0) {
@@ -237,6 +246,7 @@ export const PorBarcoView = memo(function PorBarcoView({
 
   return (
     <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+      {editable && onExclude && <RemoveZone />}
       <Timeline
         startDate={startDate}
         endDate={endDate}

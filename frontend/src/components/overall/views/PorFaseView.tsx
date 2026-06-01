@@ -29,6 +29,7 @@ import { OpCard } from './OpCard';
 import { DensityCell, DENSITY_THRESHOLD } from './DensityCell';
 import { useCellExpand } from '../cellExpand';
 import { CountBadge } from './CountBadge';
+import { RemoveZone, REMOVE_ZONE_ID } from './RemoveZone';
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -38,6 +39,8 @@ interface PorFaseViewProps {
   startDate: Date;
   endDate: Date;
   onDrop: (opId: string, newPhase: string, newStartTs: string, newOperatorId?: string) => void;
+  /** Q.153.C2 — arrastar uma op para a RemoveZone exclui o barco (order_id). */
+  onExclude?: (orderId: string) => void;
   selection?: PlanSelection | null;
   onSelect?: (sel: PlanSelection) => void;
   scale?: TimelineScale;
@@ -139,6 +142,7 @@ export const PorFaseView = memo(function PorFaseView({
   startDate,
   endDate,
   onDrop,
+  onExclude,
   selection,
   onSelect,
   scale = 'day',
@@ -212,6 +216,14 @@ export const PorFaseView = memo(function PorFaseView({
     (event: DragEndEvent) => {
       if (!event.over) return;
       const opId = String(event.active.id);
+
+      // Q.153.C2 — largou na zona de remoção → excluir o barco (order_id).
+      if (String(event.over.id) === REMOVE_ZONE_ID) {
+        const op = operations.find((o) => o.id === opId);
+        if (op?.order_id && onExclude) onExclude(op.order_id);
+        return;
+      }
+
       const dropTarget = String(event.over.id);
       const parts = dropTarget.split('__');
       if (parts.length < 2) return;
@@ -220,7 +232,7 @@ export const PorFaseView = memo(function PorFaseView({
       const newStartTs = newDate.includes('T') ? newDate : `${newDate}T08:00:00+00:00`;
       onDrop(opId, newPhaseId, newStartTs);
     },
-    [onDrop],
+    [onDrop, onExclude, operations],
   );
 
   if (phases.length === 0) {
@@ -234,6 +246,7 @@ export const PorFaseView = memo(function PorFaseView({
 
   return (
     <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+      {editable && onExclude && <RemoveZone />}
       <Timeline
         startDate={startDate}
         endDate={endDate}
