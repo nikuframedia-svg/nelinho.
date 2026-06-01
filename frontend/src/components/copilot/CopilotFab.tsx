@@ -8,15 +8,16 @@ export function CopilotFab() {
   const [initialEntity, setInitialEntity] = useState<{ entity_type?: string; entity_id?: string } | null>(null);
   const [showTooltip, setShowTooltip] = useState(false);
   const [openedViaFab, setOpenedViaFab] = useState(false);
-  const [buttonSize, setButtonSize] = useState({ width: '100px', height: '100px' });
-  
-  // Responsive button size
+  const [buttonSize, setButtonSize] = useState({ width: '72px', height: '72px' });
+
+  // Responsive button size — Q.143.F: encolhido (era 140/100) para não tapar
+  // nem capturar cliques sobre o conteúdo no canto inferior-direito (tabelas).
   useEffect(() => {
     const updateSize = () => {
       if (window.innerWidth >= 640) {
-        setButtonSize({ width: '140px', height: '140px' });
+        setButtonSize({ width: '92px', height: '92px' });
       } else {
-        setButtonSize({ width: '100px', height: '100px' });
+        setButtonSize({ width: '72px', height: '72px' });
       }
     };
     

@@ -9,12 +9,12 @@
  * camiões (assign) opera sobre WIP (production_orders) — por isso a sugestão é
  * INFORMATIVA (que barcos deviam ir a seguir), não um auto-compor.
  */
-import { useMemo, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Package, Truck, Clock } from 'lucide-react';
+import { Package, Truck, Clock, ChevronDown } from 'lucide-react';
 import { DarkBadge, DarkCard, EmptyState } from '../../../components/dark';
 import { SkeletonLoader } from '../../../components/ui/Skeleton';
-import { transportApi } from '../../../lib/api/supplyApi';
+import { transportApi, type ReadyBoat } from '../../../lib/api/supplyApi';
 import { Clickable } from '../../../components/entitySheets';
 
 const TRUCK_CAP = 26; // moda real Vila do Conde (Q.13.E)
@@ -42,6 +42,9 @@ export function ProntosTab(): ReactNode {
     const weeks = Math.max(1, months.size * 4.33);
     return Math.round(total / weeks);
   }, [thrQ.data]);
+
+  // Q.143.E — o resto (além do próximo camião) fica colapsado por defeito.
+  const [showAll, setShowAll] = useState(false);
 
   if (readyQ.isLoading) return <SkeletonLoader count={6} />;
   if (readyQ.isError) {
@@ -107,31 +110,63 @@ export function ProntosTab(): ReactNode {
         <DarkCard className="p-0 overflow-hidden">
           <div className="grid grid-cols-[auto_1fr_auto] gap-x-4 px-4 py-2 text-[10px] uppercase tracking-wide text-text-dark-tertiary border-b border-white/[0.06]">
             <span>Barco</span>
-            <span>Modelo</span>
+            <span>Item / referência</span>
             <span>Pronto há</span>
           </div>
-          {data.boats.map((b, i) => (
-            <div
-              key={b.of_id}
-              className="grid grid-cols-[auto_1fr_auto] gap-x-4 items-center px-4 py-2 border-b border-white/[0.04] text-sm"
-              style={i < TRUCK_CAP ? { background: 'var(--accent-bg)' } : undefined}
-            >
-              <span className="font-mono tabular-nums text-text-dark-secondary">
-                <Clickable kind="encomenda" id={b.of_id}>#{b.of_id}</Clickable>
-              </span>
-              <span className="text-text-dark-primary truncate flex items-center gap-1.5">
-                <Package size={11} className="text-text-dark-tertiary" />
-                {b.model ?? '—'}
-              </span>
-              <span className="text-text-dark-tertiary text-xs tabular-nums flex items-center gap-1">
-                <Clock size={10} />
-                {b.days_ready != null ? `${b.days_ready} dias` : '—'}
-                {i < TRUCK_CAP && <DarkBadge variant="accent" size="sm">próximo</DarkBadge>}
-              </span>
-            </div>
+          {/* Próximo camião — sempre visível e destacado */}
+          {nextTruck.map((b) => (
+            <ReadyRow key={b.of_id} boat={b} isNext />
           ))}
+
+          {/* Resto — colapsado por defeito (174 linhas seriam ruído) */}
+          {showAll && data.boats.slice(TRUCK_CAP).map((b) => (
+            <ReadyRow key={b.of_id} boat={b} isNext={false} />
+          ))}
+
+          {data.boats.length > TRUCK_CAP && (
+            <button
+              type="button"
+              onClick={() => setShowAll((v) => !v)}
+              className="w-full flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-medium text-text-dark-secondary hover:text-text-dark-primary hover:bg-white/[0.03] transition-colors"
+            >
+              <ChevronDown size={13} className={showAll ? 'rotate-180 transition-transform' : 'transition-transform'} />
+              {showAll
+                ? 'Mostrar só o próximo camião'
+                : `Mostrar mais ${data.boats.length - TRUCK_CAP} prontos`}
+            </button>
+          )}
         </DarkCard>
       )}
+    </div>
+  );
+}
+
+/** Linha de um barco pronto. Mostra o modelo real e, quando é o genérico
+ *  "Encomenda de Cliente", a referência da OF como descritor honesto (Q.143.E). */
+function ReadyRow({ boat: b, isNext }: { boat: ReadyBoat; isNext: boolean }): ReactNode {
+  const generic = !b.model || b.model === 'Encomenda de Cliente';
+  const primary = generic && b.reference ? b.reference : (b.model ?? '—');
+  const secondary = generic && b.reference && b.model ? b.model : null;
+  return (
+    <div
+      className="grid grid-cols-[auto_1fr_auto] gap-x-4 items-center px-4 py-2 border-b border-white/[0.04] text-sm"
+      style={isNext ? { background: 'var(--accent-bg)' } : undefined}
+    >
+      <span className="font-mono tabular-nums text-text-dark-secondary">
+        <Clickable kind="encomenda" id={b.of_id}>#{b.of_id}</Clickable>
+      </span>
+      <span className="min-w-0 flex items-center gap-1.5">
+        <Package size={11} className="text-text-dark-tertiary flex-shrink-0" />
+        <span className="truncate text-text-dark-primary">{primary}</span>
+        {secondary && (
+          <span className="truncate text-text-dark-tertiary text-xs">· {secondary}</span>
+        )}
+      </span>
+      <span className="text-text-dark-tertiary text-xs tabular-nums flex items-center gap-1">
+        <Clock size={10} />
+        {b.days_ready != null ? `${b.days_ready} dias` : '—'}
+        {isNext && <DarkBadge variant="accent" size="sm">próximo</DarkBadge>}
+      </span>
     </div>
   );
 }

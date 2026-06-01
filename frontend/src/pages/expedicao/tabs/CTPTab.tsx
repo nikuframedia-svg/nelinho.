@@ -28,7 +28,7 @@ export function CTPTab({
   );
 
   const [truckDate, setTruckDate] = useState('');
-  const [capacity, setCapacity] = useState('6');
+  const [capacity, setCapacity] = useState('50'); // camião-tipo NELO (50 lugares)
   const [startFrom, setStartFrom] = useState('');
 
   // Resultado da última avaliação — mutation porque o CTP só *computa*
@@ -64,14 +64,7 @@ export function CTPTab({
   };
 
   return (
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: '320px 1fr',
-        gap: 14,
-        alignItems: 'start',
-      }}
-    >
+    <div className="grid grid-cols-1 lg:grid-cols-[340px_1fr] gap-3.5 items-start">
       {/* ─── Esquerda — formulário do pedido ─────────────────────────── */}
       <div
         style={{
@@ -160,7 +153,6 @@ export function CTPTab({
               value={truckDate}
               min={todayIso()}
               onChange={(e) => setTruckDate(e.target.value)}
-              className="text-slate-900"
               style={ctpInputStyle}
             />
           </div>
@@ -173,7 +165,6 @@ export function CTPTab({
               max={100}
               value={capacity}
               onChange={(e) => setCapacity(e.target.value)}
-              className="text-slate-900 placeholder:text-slate-400"
               style={ctpInputStyle}
             />
             {!capacityValid && capacity !== '' ? (
@@ -189,7 +180,6 @@ export function CTPTab({
               type="date"
               value={startFrom}
               onChange={(e) => setStartFrom(e.target.value)}
-              className="text-slate-900"
               style={ctpInputStyle}
             />
             <div style={{ fontSize: 10, color: 'var(--fg-3)', marginTop: 3 }}>
@@ -265,14 +255,18 @@ export function CTPTab({
   );
 }
 
+// Q.143.C — input escuro (tema dark). `colorScheme: dark` faz o date-picker
+// nativo render-ar escuro em vez do calendário branco que destoava.
 export const ctpInputStyle: React.CSSProperties = {
   width: '100%',
   padding: '6px 10px',
-  background: 'white',
+  background: 'var(--bg-3)',
+  color: 'var(--fg-0)',
   border: '1px solid var(--bd-2)',
   borderRadius: 6,
   fontSize: 12,
   outline: 'none',
+  colorScheme: 'dark',
 };
 
 export function FieldLabel({ children }: { children: React.ReactNode }) {

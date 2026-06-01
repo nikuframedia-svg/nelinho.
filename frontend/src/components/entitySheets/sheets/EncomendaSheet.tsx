@@ -7,6 +7,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Sheet } from '../../dark/Sheet';
+import { SheetError } from '../SheetError';
 import { Tabs } from '../../dark/Tabs';
 import { DarkBadge } from '../../dark/DarkBadge';
 import { DarkButton } from '../../dark/DarkButton';
@@ -49,14 +50,7 @@ export default function EncomendaSheet({ workOrderId, onClose }: EncomendaSheetP
   }
 
   if (error || !data) {
-    return (
-      <Sheet open={true} onClose={onClose} title="Erro" width={720}>
-        <div style={{ color: 'var(--danger, #ef4444)', fontSize: 14 }}>
-          Erro ao carregar dados:{' '}
-          {error instanceof Error ? error.message : 'Erro desconhecido'}
-        </div>
-      </Sheet>
-    );
+    return <SheetError error={error} onClose={onClose} kind="encomenda" />;
   }
 
   const subtitle = `${data.product_name} · ${data.customer_name ?? 'sem cliente'} · ${data.status}`;

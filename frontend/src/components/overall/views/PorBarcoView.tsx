@@ -25,6 +25,8 @@ import type { ScheduledOp } from '../types';
 import type { PlanSelection } from '../selection';
 import { opMatchesSelection } from '../selection';
 import { OpCard } from './OpCard';
+import { DensityCell, DENSITY_THRESHOLD } from './DensityCell';
+import { useCellExpand } from '../cellExpand';
 
 // ─── Tipos internos ────────────────────────────────────────────────────────
 
@@ -54,6 +56,7 @@ interface PorBarcoViewProps {
 function BoatDropSlot({ boatId, slotId, ops, editable, selection, onSelect, compact = false }: BoatDropSlotProps) {
   const dropId = `boat__${boatId}__${slotId}`;
   const { setNodeRef, isOver } = useDroppable({ id: dropId });
+  const expand = useCellExpand();
 
   if (compact) {
     return (
@@ -70,23 +73,27 @@ function BoatDropSlot({ boatId, slotId, ops, editable, selection, onSelect, comp
         isOver && editable ? 'bg-teal-500/10 ring-1 ring-teal-500/40' : ''
       }`}
     >
-      {ops.map((op) => {
-        const selected = opMatchesSelection(op, selection ?? null);
-        const dimmed = !!selection && !selected;
-        return (
-          <OpCard
-            key={op.id}
-            op={op}
-            editable={editable}
-            draggableId={op.id}
-            selected={selected}
-            dimmed={dimmed}
-            onSelect={onSelect}
-            primaryLabel={op.phase_name}
-            showQuality
-          />
-        );
-      })}
+      {ops.length > DENSITY_THRESHOLD ? (
+        <DensityCell ops={ops} onClick={() => expand?.(ops)} />
+      ) : (
+        ops.map((op) => {
+          const selected = opMatchesSelection(op, selection ?? null);
+          const dimmed = !!selection && !selected;
+          return (
+            <OpCard
+              key={op.id}
+              op={op}
+              editable={editable}
+              draggableId={op.id}
+              selected={selected}
+              dimmed={dimmed}
+              onSelect={onSelect}
+              primaryLabel={op.phase_name}
+              showQuality
+            />
+          );
+        })
+      )}
     </div>
   );
 }

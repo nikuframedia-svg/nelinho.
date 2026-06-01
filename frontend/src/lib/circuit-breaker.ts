@@ -13,7 +13,7 @@ export interface CircuitBreakerConfig {
 
 const DEFAULT_CONFIG: CircuitBreakerConfig = {
   failureThreshold: 5,
-  timeout: 60000, // 60 seconds
+  timeout: 20000, // Q.144.D — 20s (era 60s): recupera mais depressa de um blip
   halfOpenMaxCalls: 3,
 };
 

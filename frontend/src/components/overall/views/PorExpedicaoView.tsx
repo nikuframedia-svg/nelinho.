@@ -43,8 +43,10 @@ interface PorExpedicaoViewProps {
 // ─── API local (endpoint pode não existir) ──────────────────────────────────
 
 function fetchTransportBatches(since: string, until: string): Promise<TransportBatch[]> {
+  // Q.146.D — o backend (`list_batches`) espera `from_date`/`to_date`; `since`/`until`
+  // eram ignorados → devolvia TODOS os lotes (fora da janela visível).
   return request<TransportBatch[]>(
-    `/v1/plan/transport/batches?since=${since}&until=${until}`,
+    `/v1/plan/transport/batches?from_date=${since}&to_date=${until}`,
   );
 }
 

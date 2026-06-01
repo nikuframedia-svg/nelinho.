@@ -28,6 +28,8 @@ import type { ScheduledOp } from '../types';
 import type { PlanSelection } from '../selection';
 import { opMatchesSelection } from '../selection';
 import { OpCard } from './OpCard';
+import { DensityCell, DENSITY_THRESHOLD } from './DensityCell';
+import { useCellExpand } from '../cellExpand';
 
 // ─── Tipos ──────────────────────────────────────────────────────────────────
 
@@ -63,6 +65,7 @@ function PessoaDropSlot({
 }) {
   const dropId = `pessoa__${operadorId}__slot__${slotId}`;
   const { setNodeRef, isOver } = useDroppable({ id: dropId });
+  const expand = useCellExpand();
 
   if (compact) {
     return (
@@ -79,23 +82,27 @@ function PessoaDropSlot({
         isOver && editable ? 'bg-teal-500/10 ring-1 ring-teal-500/40' : ''
       }`}
     >
-      {ops.map((op) => {
-        const selected = opMatchesSelection(op, selection ?? null);
-        const dimmed = !!selection && !selected;
-        return (
-          <OpCard
-            key={op.id}
-            op={op}
-            editable={editable}
-            draggableId={`pessoa__${op.id}`}
-            selected={selected}
-            dimmed={dimmed}
-            onSelect={onSelect}
-            primaryLabel={op.order_id}
-            showQuality
-          />
-        );
-      })}
+      {ops.length > DENSITY_THRESHOLD ? (
+        <DensityCell ops={ops} onClick={() => expand?.(ops)} />
+      ) : (
+        ops.map((op) => {
+          const selected = opMatchesSelection(op, selection ?? null);
+          const dimmed = !!selection && !selected;
+          return (
+            <OpCard
+              key={op.id}
+              op={op}
+              editable={editable}
+              draggableId={`pessoa__${op.id}`}
+              selected={selected}
+              dimmed={dimmed}
+              onSelect={onSelect}
+              primaryLabel={op.order_id}
+              showQuality
+            />
+          );
+        })
+      )}
     </div>
   );
 }
@@ -113,7 +120,10 @@ function renderPessoaItem(
   const ops = opsByPessoaSlot.get(item.id) ?? [];
   // key: pessoa__operadorId__slot__slotId
   const withoutPrefix = item.id.replace(/^pessoa__/, '');
-  const [operadorId, , slotId] = withoutPrefix.split('__slot__');
+  // Q.146.C — `split('__slot__')` dá 2 partes; `[a, , c]` lia slotId=undefined →
+  // o id do drop-slot ficava `…__slot__undefined` → ao largar um op na lane de
+  // outro operador, a data ia "undefined" → reatribuição de operador partida.
+  const [operadorId, slotId] = withoutPrefix.split('__slot__');
   return (
     <PessoaDropSlot
       operadorId={operadorId ?? ''}

@@ -26,6 +26,8 @@ import type { ScheduledOp } from '../types';
 import type { PlanSelection } from '../selection';
 import { opMatchesSelection } from '../selection';
 import { OpCard } from './OpCard';
+import { DensityCell, DENSITY_THRESHOLD } from './DensityCell';
+import { useCellExpand } from '../cellExpand';
 import { CountBadge } from './CountBadge';
 
 // ─── Props ────────────────────────────────────────────────────────────────────
@@ -62,6 +64,7 @@ function PhaseDropSlot({
 }) {
   const dropId = `${phaseId}__${slotId}`;
   const { setNodeRef, isOver } = useDroppable({ id: dropId });
+  const expand = useCellExpand();
 
   // Q.141.J — escalas grossas (semana/mês): contagem por célula em vez de
   // milhares de cartões. Verde quando há realizado, neutro quando só plano.
@@ -80,23 +83,27 @@ function PhaseDropSlot({
         isOver && editable ? 'bg-teal-500/10 ring-1 ring-teal-500/40' : ''
       }`}
     >
-      {ops.map((op) => {
-        const selected = opMatchesSelection(op, selection ?? null);
-        const dimmed = !!selection && !selected;
-        return (
-          <OpCard
-            key={op.id}
-            op={op}
-            editable={editable}
-            draggableId={op.id}
-            selected={selected}
-            dimmed={dimmed}
-            onSelect={onSelect}
-            primaryLabel={op.order_id}
-            showBoost
-          />
-        );
-      })}
+      {ops.length > DENSITY_THRESHOLD ? (
+        <DensityCell ops={ops} onClick={() => expand?.(ops)} />
+      ) : (
+        ops.map((op) => {
+          const selected = opMatchesSelection(op, selection ?? null);
+          const dimmed = !!selection && !selected;
+          return (
+            <OpCard
+              key={op.id}
+              op={op}
+              editable={editable}
+              draggableId={op.id}
+              selected={selected}
+              dimmed={dimmed}
+              onSelect={onSelect}
+              primaryLabel={op.order_id}
+              showBoost
+            />
+          );
+        })
+      )}
     </div>
   );
 }
@@ -186,7 +193,9 @@ export const PorFaseView = memo(function PorFaseView({
     const result: TimelineItem[] = [];
     for (const [key, ops] of opsByPhaseSlot.entries()) {
       if (ops.length === 0) continue;
-      const [phaseId, , slotId] = key.split('__slot__');
+      // Q.146.B — `split('__slot__')` devolve 2 partes; `[a, , c]` lia slotId=undefined
+      // → findIndex(-1) → continue → items=[] → grelha vazia. Agora [phaseId, slotId].
+      const [phaseId, slotId] = key.split('__slot__');
       const slotIdx = slots.findIndex((s) => s.id === slotId);
       if (slotIdx === -1) continue;
       result.push({
