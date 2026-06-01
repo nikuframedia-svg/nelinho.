@@ -71,6 +71,11 @@ class CPOScheduleResponse(BaseModel):
     makespan_hours: float
     total_tardiness_hours: float
     num_late_orders: int
+    # Q.153.A2 — dívida herdada (já vencida à entrada) vs atraso novo/evitável
+    # (causado pelo plano, medido para lá de hoje). Default 0 = back-compat.
+    num_already_overdue: int = 0
+    num_newly_late: int = 0
+    tardiness_beyond_today_h: float = 0.0
     setups: int
     avg_utilization: float
     safety_net_triggered: bool = False

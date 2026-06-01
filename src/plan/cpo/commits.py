@@ -552,6 +552,11 @@ def _extract_kpis(schedule_result: Dict[str, Any]) -> Dict[str, Any]:
         "makespan_hours": schedule_result.get("makespan_hours", 0.0),
         "total_tardiness_hours": schedule_result.get("total_tardiness_hours", 0.0),
         "num_late_orders": schedule_result.get("num_late_orders", 0),
+        # Q.153.A2 — dívida herdada vs atraso novo/evitável (para o /overall
+        # rotular honestamente "X já vencidos à entrada" vs "Y atrasados pelo plano").
+        "num_already_overdue": schedule_result.get("num_already_overdue", 0),
+        "num_newly_late": schedule_result.get("num_newly_late", 0),
+        "tardiness_beyond_today_h": schedule_result.get("tardiness_beyond_today_h", 0.0),
         "setups": schedule_result.get("setups", 0),
         "throughput_eur_day": schedule_result.get("throughput_eur_day", 0.0),
         "throughput_eur_total": schedule_result.get("throughput_eur_total", 0.0),

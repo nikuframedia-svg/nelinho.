@@ -529,6 +529,10 @@ async def run_cpo_schedule(
         "makespan_hours": float(result.get("makespan_hours", 0.0)),
         "total_tardiness_hours": float(result.get("total_tardiness_hours", 0.0)),
         "num_late_orders": int(result.get("num_late_orders", 0)),
+        # Q.153.A2 — dívida herdada vs atraso novo/evitável.
+        "num_already_overdue": int(result.get("num_already_overdue", 0)),
+        "num_newly_late": int(result.get("num_newly_late", 0)),
+        "tardiness_beyond_today_h": float(result.get("tardiness_beyond_today_h", 0.0)),
         "setups": int(result.get("setups", 0)),
         "avg_utilization": float(result.get("avg_utilization", 0.0)),
         "safety_net_triggered": bool(result.get("safety_net_triggered", False)),
