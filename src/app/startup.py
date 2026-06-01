@@ -190,7 +190,7 @@ async def run_startup(app: FastAPI) -> None:
                 for _tid in active_tenant_ids:
                     try:
                         _register_tenant(_tid)
-                    except Exception as _reg_err:  # noqa: BLE001
+                    except Exception as _reg_err:
                         logger.warning(
                             "register_tenant falhou tid=%s (%s)", _tid, _reg_err
                         )
