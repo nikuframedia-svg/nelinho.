@@ -215,12 +215,43 @@ class PreviewDeltaService:
         The new commit's `delta` field carries the structured mutation +
         the operator's reason, so Camada 1 can mine the rejected/accepted
         outcome later.
+
+        Q.153.D2 — o delta é gravado no MESMO formato que o `manual_drag` do
+        /overall (`tipo`, `to_phase`, `to_ts`, `new_operator_id`), por isso o
+        robô RE-APLICA este move no próximo replan (`reapply_manual_overrides`,
+        revalidando os axiomas Spelke) em vez de o ignorar — uma edição manual
+        em /producao já não desaparece em silêncio.
+
+        Contrato da impedância barco↔operação (não a elimina, formaliza-a):
+        um boat-move (`order_id`) escolhe UMA operação (`pick_operation_for_order`)
+        e herda o seu `start_time` (é uma decisão de FASE, não de cada operação).
+        Se o barco tiver várias operações futuras, só a escolhida sobrevive como
+        override; as restantes seguem o plano do robô (cuja precedência o reapply
+        revalida).
         """
         commit, schedule_before = await self._load_base_schedule()
         if commit is None:
             raise ValueError("no base commit; cannot apply move")
         mutation.operation_id = await self._resolve_operation_id(
             schedule_before, mutation
+        )
+
+        # Q.153.D2 — ler a op ORIGINAL (antes da mutação) para gravar o delta no
+        # MESMO formato que o `manual_drag` do /overall. Sem isto, este move
+        # (preview_apply) desaparecia silenciosamente no replan do robô, porque
+        # `active_manual_overrides` só apanha `tipo=="manual_drag"` com
+        # `to_phase`/`to_ts`. Boat-move = mudança de FASE: o tempo herda-se do
+        # plano (a op fica no seu start_time; o reapply revalida a precedência).
+        orig_op = _find_op(schedule_before, mutation.operation_id) or {}
+        from_phase = orig_op.get("phase_id")
+        from_ts = orig_op.get("start_time") or orig_op.get("start_ts") or ""
+        applied_at = datetime.now(timezone.utc)
+        to_ts = str(from_ts) if from_ts else applied_at.isoformat()
+        to_phase = mutation.new_phase_id or from_phase
+        new_operator_id = (
+            mutation.new_worker_ids[0]
+            if mutation.new_worker_ids
+            else None
         )
 
         schedule_after = copy.deepcopy(schedule_before)
@@ -234,13 +265,22 @@ class PreviewDeltaService:
 
         ops_after = list(schedule_after.get("operations") or [])
         delta = {
+            # Q.153.D2 — `tipo="manual_drag"` faz o robô RE-APLICAR este move
+            # (revalidando os axiomas Spelke); `kind` fica como sub-tag de origem.
+            "tipo": "manual_drag",
             "kind": "preview_apply",
             "operation_id": mutation.operation_id,
+            "from_phase": from_phase,
+            "to_phase": to_phase,
+            "from_ts": str(from_ts),
+            "to_ts": to_ts,
             "new_phase_id": mutation.new_phase_id,
             "new_worker_ids": mutation.new_worker_ids,
             "reason": reason,
-            "applied_at": datetime.now(timezone.utc).isoformat(),
+            "applied_at": applied_at.isoformat(),
         }
+        if new_operator_id is not None:
+            delta["new_operator_id"] = new_operator_id
 
         new_sha = compute_commit_hash(
             parent_sha256=commit.commit_sha256,
@@ -257,7 +297,6 @@ class PreviewDeltaService:
         # to spot temporal patterns ("never propose Friday Laminagem") —
         # without it, the reason was lost inside `delta["reason"]` only,
         # which the detector ignores.
-        applied_at = datetime.now(timezone.utc)
         user_preference_signal = {
             "reason": reason,
             "author": author,
@@ -299,6 +338,10 @@ class PreviewDeltaService:
                 "new_phase_id": mutation.new_phase_id,
                 "operations_count": len(ops_after),
                 "kind": "preview_apply",
+                # Q.153.D2 — formato unificado (reaplicável no replan).
+                "tipo": "manual_drag",
+                "to_phase": to_phase,
+                "to_ts": to_ts,
             },
             reason=f"Q.66.B.3 — preview-apply: {reason[:80]}",
         )
