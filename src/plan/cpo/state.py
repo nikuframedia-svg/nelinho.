@@ -357,6 +357,16 @@ class FactoryState:
         if not state.skill_matrix:
             state.skill_matrix = await _load_skills_db(session, tenant_id)
 
+        # Q.158.B — gate DECLARADO (Entidade_Fase → hr.employee_skills.is_certified):
+        # onde a NELO declarou QUEM PODE fazer a fase, essa é a verdade (o
+        # histórico of_fp deixa de ser o gate e fica para o ranking). Inerte
+        # até o mirror Q.158.A correr (is_certified default False → {}).
+        qualified = await _load_qualified_db(session, tenant_id)
+        if qualified:
+            state.skill_matrix = _apply_qualification_gate(
+                state.skill_matrix, qualified,
+            )
+
         # Q.140.F — preferência por sector → fase (override manual > derivado).
         # Best-effort; vazio = ranking por skill_count (back-compat). Só
         # REORDENA o pool apto no decoder, nunca o alarga (axioma 5).
@@ -1039,9 +1049,16 @@ async def _load_skills_db(
                         eq."OFFPEQ_E_ID"::text AS func_id
         FROM factory_raw.offp_eq eq
         JOIN factory_raw.of_fp o ON o."OFFP_ID" = eq."OFFPEQ_OFFP_ID"
-        WHERE eq."OFFPEQ_E_ID" IS NOT NULL AND o."OFFP_FP_ID" IS NOT NULL
+        LEFT JOIN core.employees e
+               ON e.employee_code = eq."OFFPEQ_E_ID"::text
+              AND e.tenant_id = :tenant_id
+        WHERE eq."OFFPEQ_E_ID" IS NOT NULL
+          AND o."OFFP_FP_ID" IS NOT NULL
+          AND (e.employee_code IS NULL OR e.status = 'ACTIVE')
         """
     )
+    # bind tenant_id so the LEFT JOIN is scoped correctly
+    sql = sql.bindparams(tenant_id=str(tenant_id))
     try:
         rows = (await session.execute(sql)).mappings().all()
     except SQLAlchemyError as exc:  # pragma: no cover — DB outage / missing table
@@ -1054,6 +1071,68 @@ async def _load_skills_db(
         if fase_id and func_id:
             matrix.setdefault(fase_id, set()).add(func_id)
     return matrix
+
+
+async def _load_qualified_db(
+    session: Any,
+    tenant_id: UUID,
+) -> Dict[str, Set[str]]:
+    """Q.158.B — gate DECLARADO de polivalência (a "matriz definida na
+    Entidade_Fase" do Nuno): ``hr.employee_skills.is_certified = True``, keyed
+    ``fase_id`` (skill_code = FP_ID) → ``{employee_code (= E_ID)}``. Só ACTIVE.
+
+    Inerte enquanto o mirror Q.158.A não correr (``is_certified`` default False
+    → {} → o gate não se aplica, back-compat exacto). Quando a matriz declarada
+    existe, É a verdade (axioma 5: competência real declarada, não inventada).
+    O histórico ``of_fp`` deixa de ser o gate e alimenta só o ranking."""
+    if session is None:
+        return {}
+    from sqlalchemy import text
+    from sqlalchemy.exc import SQLAlchemyError
+    sql = text(
+        """
+        SELECT DISTINCT s.skill_code     AS fase_id,
+                        e.employee_code  AS func_id
+        FROM hr.employee_skills es
+        JOIN hr.skills s        ON s.id = es.skill_id
+        JOIN core.employees e   ON e.id = es.employee_id
+        WHERE es.tenant_id = :t
+          AND es.is_certified = true
+          AND e.status = 'ACTIVE'
+          AND s.skill_code IS NOT NULL
+          AND e.employee_code IS NOT NULL
+        """
+    ).bindparams(t=str(tenant_id))
+    try:
+        rows = (await session.execute(sql)).mappings().all()
+    except SQLAlchemyError as exc:  # pragma: no cover — tabela ausente / outage
+        logger.debug("Q.158.B qualified gate load skipped: %s", exc)
+        return {}
+    matrix: Dict[str, Set[str]] = {}
+    for r in rows:
+        fase_id = str(r["fase_id"])
+        func_id = str(r["func_id"])
+        if fase_id and func_id:
+            matrix.setdefault(fase_id, set()).add(func_id)
+    return matrix
+
+
+def _apply_qualification_gate(
+    history: Dict[str, Set[str]],
+    qualified: Dict[str, Set[str]],
+) -> Dict[str, Set[str]]:
+    """Q.158.B — aplica o gate declarado (Entidade_Fase) por fase.
+
+    Para cada fase com qualificações declaradas, o pool elegível É o conjunto
+    qualificado (a Entidade_Fase = quem PODE). Fases sem dados declarados
+    mantêm o histórico (partial-safe, nunca regride a vazio). ``qualified``
+    vazio → devolve o histórico intacto (back-compat exacto). Função pura."""
+    if not qualified:
+        return history
+    merged: Dict[str, Set[str]] = dict(history)
+    for fase_id, pool in qualified.items():
+        merged[fase_id] = set(pool)
+    return merged
 
 
 async def _load_sector_preferences_db(
@@ -1164,9 +1243,13 @@ async def _load_open_orders_db(
     backward-scheduling como due_date — os 53% com prazo futuro são honrados.
 
     Q.136.A — `scope` (config `planning.scope`): `boats_only` (default) planeia
-    SÓ barcos (`PRODUTO.P_QTDDECK>0 AND P_QTDCASCO>0`); sem isto ~56% do WIP são
-    acessórios/componentes (Banco/Leme/Strap…). `all` = comportamento legacy
-    (LEFT JOIN não dropa nada → back-compat exacto).
+    SÓ barcos (raiz de `PRODUTO_TIPO` = Kayak TP_ID=1 AND OF_ID<10M); sem isto
+    ~56% do WIP são acessórios/componentes (Banco/Leme/Strap…). `all` =
+    comportamento legacy (LEFT JOIN não dropa nada → back-compat exacto).
+
+    Q.157.H — critério deck+casco substituído por join a
+    `factory_raw.v_of_is_boat` (is_boat = raiz=Kayak AND OF_ID<10M). Valida
+    811/811 barcos reais + exclui pagaias TP331 (OF_ID≥10M).
 
     Q.136.B — devolve `current_fase_id` (= `OF_FP_ID`) para o RoutingResolver
     truncar a rota à fase atual (não re-planear fases já feitas)."""
@@ -1175,16 +1258,32 @@ async def _load_open_orders_db(
     from sqlalchemy import text
     from sqlalchemy.exc import SQLAlchemyError
 
-    # Filtro boats-only: P_QTDDECK/P_QTDCASCO>0 = barco (deck+casco). Acessórios/
-    # componentes = 0/NULL → excluídos. LEFT JOIN para `all` não dropar órfãos.
-    boats_filter = (
-        'AND p."P_QTDDECK" > 0 AND p."P_QTDCASCO" > 0'
-        if scope == "boats_only"
-        else ""
-    )
+    # Q.157.H — critério raiz=Kayak AND OF_ID<10M (via v_of_is_boat).
+    # Substitui o critério deck+casco que perdia C1/Nacra/Prepreg e incluía pagaias.
+    # scope="boats_only": JOIN INNER a v_of_is_boat filtrando is_boat=true.
+    # scope="all": sem join extra → back-compat exacto (não dropa órfãos).
+    if scope == "boats_only":
+        boats_join = (
+            "JOIN factory_raw.v_of_is_boat vb"
+            ' ON vb.of_id = ofb."OF_ID" AND vb.is_boat = true'
+        )
+    else:
+        boats_join = ""
     sql = text(
         f"""
-        SELECT of_id, modelo_id, current_fase_id, data_entrega_prevista
+        -- Q.158 — inclui done_fase_ids: array de OFFP_FP_ID::text com
+        -- OFFP_DATAFIM preenchido para este barco. Fonte de verdade para
+        -- o RoutingResolver não re-planear fases já concluídas.
+        WITH done AS (
+          SELECT op."OFFP_OF_ID"::text AS of_id,
+                 array_agg(op."OFFP_FP_ID"::text) AS done_fase_ids
+          FROM factory_raw.of_fp op
+          WHERE op."OFFP_DATAFIM" IS NOT NULL
+          GROUP BY op."OFFP_OF_ID"
+        )
+        SELECT q.of_id, q.modelo_id, q.current_fase_id,
+               q.data_entrega_prevista,
+               COALESCE(done.done_fase_ids, ARRAY[]::text[]) AS done_fase_ids
         FROM (
           SELECT ofb."OF_ID"::text   AS of_id,
                  ofb."OF_P_ID"::text AS modelo_id,
@@ -1196,24 +1295,24 @@ async def _load_open_orders_db(
                  NULLIF(ofb."OF_DATA", '') AS of_data_sort
           FROM factory_raw.ordemfabrico ofb
           JOIN factory_raw.fases_producao f ON f."FP_ID" = ofb."OF_FP_ID"
-          LEFT JOIN factory_raw.produto p ON p."P_ID" = ofb."OF_P_ID"
+          {boats_join}
           WHERE ofb."OF_DATAFIM" IS NULL
             AND ofb."OF_P_ID" IS NOT NULL
             AND f."FP_PRODUCAO" = true
-            {boats_filter}
         ) q
+        LEFT JOIN done ON done.of_id = q.of_id
         ORDER BY
           -- Q.157.B (corrigido): a data-alvo NÃO é 99.5% nula nos BARCOS — é 95%
           -- preenchida, 53% futura (medi antes na população errada: todas as OFs,
           -- 99% acessórios). Por isso: barcos com PRAZO PLANEADO FUTURO primeiro
           -- (por prazo asc = mais urgente), depois os restantes (sem prazo futuro,
           -- ou data-lixo no passado) FIFO por antiguidade de criação (OF_DATA).
-          CASE WHEN data_entrega_prevista IS NOT NULL
-                    AND data_entrega_prevista::timestamp > now() THEN 0 ELSE 1 END,
-          CASE WHEN data_entrega_prevista IS NOT NULL
-                    AND data_entrega_prevista::timestamp > now()
-               THEN data_entrega_prevista::timestamp END ASC,
-          of_data_sort ASC
+          CASE WHEN q.data_entrega_prevista IS NOT NULL
+                    AND q.data_entrega_prevista::timestamp > now() THEN 0 ELSE 1 END,
+          CASE WHEN q.data_entrega_prevista IS NOT NULL
+                    AND q.data_entrega_prevista::timestamp > now()
+               THEN q.data_entrega_prevista::timestamp END ASC,
+          q.of_data_sort ASC
         LIMIT :plan_cap
         """
     )
@@ -1239,6 +1338,11 @@ async def _load_open_orders_db(
                 str(r["current_fase_id"]) if r["current_fase_id"] is not None else None
             ),
             "data_entrega_prevista": r["data_entrega_prevista"],
+            # Q.158 — fases já concluídas (OFFP_DATAFIM preenchido); lista de
+            # fase_id (texto). O RoutingResolver usa-as para nunca re-planear
+            # trabalho já feito. Pode ser None quando PostgreSQL devolve NULL
+            # para ARRAY[]::text[] em alguns drivers (tratado no resolver).
+            "completed_fase_ids": list(r["done_fase_ids"]) if r["done_fase_ids"] else [],
         }
         for r in rows
     ]

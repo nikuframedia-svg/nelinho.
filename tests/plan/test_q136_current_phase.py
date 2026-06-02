@@ -139,17 +139,25 @@ async def _captured_sql(scope: str) -> str:
 
 @pytest.mark.asyncio
 async def test_scope_all_has_no_boats_filter_backcompat():
-    """`scope=all` reproduz o legacy: SEM filtro deck/casco (LEFT JOIN não dropa
+    """`scope=all` reproduz o legacy: SEM filtro de barco (LEFT JOIN não dropa
     linhas → mesmo conjunto que antes do Q.136)."""
     sql_all = await _captured_sql("all")
+    # Q.157.H — critério deck+casco removido; scope=all nunca filtra barcos
     assert "P_QTDDECK" not in sql_all
     assert "P_QTDCASCO" not in sql_all
+    assert "v_of_is_boat" not in sql_all
 
 
 @pytest.mark.asyncio
-async def test_scope_boats_only_applies_deck_casco_filter():
+async def test_scope_boats_only_applies_boat_criterion():
+    """Q.157.H — scope=boats_only usa v_of_is_boat (raiz=Kayak AND OF_ID<10M),
+    NÃO o critério deck+casco."""
     sql_boats = await _captured_sql("boats_only")
-    assert 'P_QTDDECK" > 0' in sql_boats
-    assert 'P_QTDCASCO" > 0' in sql_boats
+    # novo critério: join à view
+    assert "v_of_is_boat" in sql_boats
+    assert "is_boat" in sql_boats
+    # critério antigo deve estar ausente
+    assert "P_QTDDECK" not in sql_boats
+    assert "P_QTDCASCO" not in sql_boats
     # ambos os scopes devolvem current_fase_id (planear-da-fase-atual)
     assert "current_fase_id" in sql_boats

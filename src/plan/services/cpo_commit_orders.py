@@ -277,13 +277,14 @@ async def is_boat_by_order_ids(
 ) -> Dict[str, bool]:
     """Q.153.C0 — mapa ``{order_id: is_boat}`` a partir de ``factory_raw``.
 
-    Barco = ``P_QTDDECK > 0 AND P_QTDCASCO > 0`` — **o mesmo predicado
-    boats-only** que o CPO aplica na geração do plano (``state.py``
-    ``_load_open_orders_db``, Q.136). ``order_id`` == ``OF_ID`` (o ``legacy_id``
-    da ``ProductionOrder``).
+    Barco = raiz de ``PRODUTO_TIPO`` é Kayak (TP_ID=1) **AND** ``OF_ID < 10M``
+    — via ``factory_raw.v_of_is_boat`` (Q.157.H). O mesmo critério que o CPO
+    aplica na geração do plano (``state.py`` ``_load_open_orders_db``).
+    ``order_id`` == ``OF_ID`` (o ``legacy_id`` da ``ProductionOrder``).
 
-    Acessórios/componentes (Banco/Leme/Strap…) têm deck/casco 0/NULL → ``False``.
-    Best-effort: sessão ausente, sem ids, ou tabela/coluna em falta → ``{}`` (o
+    Captura C1/Nacra/Prepreg que o critério deck+casco perdia; exclui pagaias
+    TP331 (OF_ID≥10M, raiz=Kayak mas não barco).
+    Best-effort: sessão ausente, sem ids, ou view em falta → ``{}`` (o
     chamador trata ``is_boat`` ausente como "desconhecido", nunca 5xx).
     """
     if session is None:
@@ -295,13 +296,14 @@ async def is_boat_by_order_ids(
     from sqlalchemy import text
     from sqlalchemy.exc import SQLAlchemyError
 
-    # LEFT JOIN: OF sem produto → is_boat NULL → tratado como não-barco (False).
+    # Q.157.H — join a v_of_is_boat (raiz=Kayak AND OF_ID<10M).
+    # LEFT JOIN: OF sem entrada na view → is_boat NULL → tratado como False.
     sql = text(
         """
         SELECT ofb."OF_ID"::text AS of_id,
-               (p."P_QTDDECK" > 0 AND p."P_QTDCASCO" > 0) AS is_boat
+               COALESCE(vb.is_boat, false) AS is_boat
         FROM factory_raw.ordemfabrico ofb
-        LEFT JOIN factory_raw.produto p ON p."P_ID" = ofb."OF_P_ID"
+        LEFT JOIN factory_raw.v_of_is_boat vb ON vb.of_id = ofb."OF_ID"
         WHERE ofb."OF_ID"::text = ANY(:ids)
         """
     )

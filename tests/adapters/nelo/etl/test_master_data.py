@@ -114,6 +114,39 @@ def test_map_worker_inactive_status():
     assert mapped["status"] == EmploymentStatus.TERMINATED
 
 
+def test_map_worker_z_prefix_is_terminated_even_when_activo_true():
+    """Q.158 — prefixo 'z) ' = saiu da NELO (convenção ERP).
+
+    O ERP renomeia ex-trabalhadores com 'z) ' antes do nome para os empurrar
+    para o fim das listas. Isso SEMPRE acompanha E_ACTIVO=0, mas tratamos
+    ambos os sinais como TERMINATED por defence-in-depth.
+    """
+    mapped = _map_worker(_entity(entity_id=23307, name="z) Deodato da Costa Vidal", active=False))
+    assert mapped["status"] == EmploymentStatus.TERMINATED
+    assert mapped["employee_code"] == "23307"
+
+
+def test_map_worker_z_prefix_terminated_defence_in_depth():
+    """Se E_ACTIVO=True mas nome tem prefixo 'z) ', ainda é TERMINATED.
+
+    Caso hipotético onde o flag E_ACTIVO ainda não foi actualizado mas o
+    operador já foi renomeado com z). O CPO não deve incluí-lo.
+    """
+    mapped = _map_worker(_entity(entity_id=99999, name="z) Fulano Sicrano", active=True))
+    assert mapped["status"] == EmploymentStatus.TERMINATED
+
+
+def test_map_worker_zacarias_active_not_terminated():
+    """Nomes reais que começam por 'Z' maiúsculo NÃO são ex-trabalhadores.
+
+    A convenção ERP usa 'z) ' (minúsculo + parêntesis + espaço). Nomes como
+    'Zacarias', 'Zita', 'Zsolt' são clientes/atletas, nunca aparecem como
+    operadores internos com esse prefixo.
+    """
+    mapped = _map_worker(_entity(entity_id=33428, name="Zacharias Maniatis", active=True))
+    assert mapped["status"] == EmploymentStatus.ACTIVE
+
+
 def test_map_labor_rate_maps_cost_per_hour_to_loaded_rate():
     """Q.26.C — E_CUSTOHORA -> loaded_rate; burden 0 (custo ja e total)."""
     emp_id = uuid4()

@@ -49,19 +49,52 @@ class RoutingRow:
 
 
 def _truncate_route_to_current(
-    rows: List["RoutingRow"], current_fase_id: Optional[str]
+    rows: List["RoutingRow"],
+    current_fase_id: Optional[str],
+    completed_fase_ids: Optional[set] = None,
 ) -> List["RoutingRow"]:
-    """Q.136.B — corta a rota às fases AINDA por fazer, a partir da fase atual
-    (`OF_FP_ID`). A rota vem ordenada por `sequence`; a fase atual é INCLUÍDA
-    (re-fazê-la inteira = conservador e seguro). Fase atual ausente, ou fora da
-    rota (ex. estado pré-produção "Não Laminado") → rota completa (fallback)."""
+    """Q.136.B / Q.158 — corta a rota às fases AINDA por fazer.
+
+    Lógica (por prioridade):
+
+    1. Remove SEMPRE as fases em `completed_fase_ids` (= OFFP_DATAFIM IS NOT
+       NULL no ERP). Isto é a fonte de verdade: trabalho já feito nunca volta
+       ao plano, independentemente do apontador OF_FP_ID.
+
+    2. Das fases restantes (por fazer), começa na 1ª por ordem de `sequence`.
+       Se `current_fase_id` está nessas fases, usa-o como piso (inclusivo).
+       Se `current_fase_id` não existe na rota (apontador inválido / estado
+       pré-produção) — NÃO faz fallback para a rota completa; começa
+       simplesmente na 1ª fase por fazer.
+
+    3. Se `completed_fase_ids` é None ou vazio e `current_fase_id` está na
+       rota, comportamento legado mantém-se (back-compat exacto com Q.136.B).
+
+    A rota de entrada deve vir ordenada por `sequence` (o caller garante-o).
+    """
+    # Passo 1: filtrar fases já concluídas pelo histórico real
+    done = set(str(f) for f in (completed_fase_ids or set()))
+    todo_rows = [r for r in rows if str(r.fase_id) not in done]
+
+    if not todo_rows:
+        # Tudo concluído: nada a planear
+        return []
+
     if not current_fase_id:
-        return rows
-    cur_seqs = [r.sequence for r in rows if str(r.fase_id) == str(current_fase_id)]
-    if not cur_seqs:
-        return rows
-    cur_seq = min(cur_seqs)
-    return [r for r in rows if r.sequence >= cur_seq]
+        # Sem apontador: tudo por fazer (após remover concluídas)
+        return todo_rows
+
+    # Passo 2: localizar o piso na sub-rota por-fazer
+    cur_str = str(current_fase_id)
+    cur_seqs = [r.sequence for r in todo_rows if str(r.fase_id) == cur_str]
+    if cur_seqs:
+        # Apontador válido e ainda por fazer: inclusivo
+        cur_seq = min(cur_seqs)
+        return [r for r in todo_rows if r.sequence >= cur_seq]
+
+    # Passo 3: apontador inválido ou fase já concluída — começar da 1ª por fazer
+    # (NÃO fallback para rota completa: evita re-planeamento de trabalho já feito)
+    return todo_rows
 
 
 class RoutingResolver:
@@ -170,10 +203,13 @@ class RoutingResolver:
             })
             return []
 
-        # Q.136.B — planear a partir da FASE ATUAL: o barco está a meio, descarta
-        # as fases já feitas (rota ordenada por sequence). Fase atual fora da rota
-        # (ex. "Não Laminado", estado pré-produção) ou ausente → rota completa.
-        rows = _truncate_route_to_current(rows, order.get("current_fase_id"))
+        # Q.136.B / Q.158 — planear a partir da FASE ATUAL: o barco está a meio,
+        # descarta fases já feitas. Usa completed_fase_ids (OFFP_DATAFIM reais)
+        # como fonte primária de verdade; current_fase_id como piso secundário.
+        completed_fase_ids: set = set(order.get("completed_fase_ids") or [])
+        rows = _truncate_route_to_current(
+            rows, order.get("current_fase_id"), completed_fase_ids
+        )
 
         # Q.131.H — ordem efectivamente planeada (≥1 operação).
         self.planned_order_ids.add(order_id)

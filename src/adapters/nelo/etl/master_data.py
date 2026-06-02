@@ -102,17 +102,26 @@ def _map_worker(row: EntityRow) -> Optional[Dict[str, Any]]:
     Only NELO-internal entities reach here (the adapter filters on
     ``is_internal``). ``entry_date`` (E_DATAENTRADA) feeds ``hire_date``;
     a missing date falls back to the explicit 1900-01-01 sentinel.
+
+    NELO ERP convention: ex-workers are renamed with a ``z) `` prefix
+    (lowercase z + closing-paren + space) so they sort to the bottom of
+    every picker list. That rename always accompanies ``E_ACTIVO=0`` —
+    we treat BOTH signals as TERMINATED for defence-in-depth.
     """
     if row.entity_id in (None, ""):
         return None
     hire = row.entry_date.date() if row.entry_date is not None else _HIRE_DATE_UNKNOWN
+    name = str(row.name or row.entity_id)
+    # z) prefix = ERP convention for ex-worker; E_ACTIVO=0 is canonical but
+    # the prefix adds a second safety net in case the flag lags behind.
+    is_terminated = (not row.active) or name.lower().startswith("z) ")
     return {
         "employee_code": str(row.entity_id),
-        "employee_name": str(row.name or row.entity_id),
+        "employee_name": name,
         "hire_date": hire,
         "status": (
-            EmploymentStatus.ACTIVE if row.active
-            else EmploymentStatus.TERMINATED
+            EmploymentStatus.TERMINATED if is_terminated
+            else EmploymentStatus.ACTIVE
         ),
     }
 
