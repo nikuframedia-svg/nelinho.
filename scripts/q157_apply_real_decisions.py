@@ -40,12 +40,24 @@ async def main() -> None:
 
     seed = _load_seed_module()
 
-    # 1. Purga os 3 fakes persistidos (sob tenant_scope p/ RLS, se houver).
+    # 1. Purga os 3 fakes-seed + as decisões de MOLDE (fora de âmbito, Q.157.F).
+    from sqlalchemy import delete
+
     with tenant_scope(DEV_TENANT):
         async with async_session_factory() as session:
             removed = await seed.purge_fake_suggestions(session)
+            mold = await session.execute(
+                delete(SharedDecisionRun).where(
+                    SharedDecisionRun.tenant_id == DEV_TENANT,
+                    SharedDecisionRun.status == DecisionStatus.PROPOSED.value,
+                    SharedDecisionRun.action_type == "MOLD_MAINTENANCE",
+                )
+            )
             await session.commit()
-    print(f">> purgadas {removed} decisões-seed (fake) PROPOSED")
+    print(
+        f">> purgadas {removed} seed (fake) + {mold.rowcount or 0} molde "
+        "(fora de âmbito) PROPOSED"
+    )
 
     # 2. Gera as reais (o job envolve tenant_scope por tenant internamente).
     await _auto_propose_signals_job([DEV_TENANT])

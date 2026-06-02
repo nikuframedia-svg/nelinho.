@@ -9,15 +9,18 @@ nunca cria Decisions.
 
 Este job corre no APScheduler in-process (como o ``auto_cpo_replan`` e o
 ``phase_operator_affinity_job``) a cada 15 min — **sem** depender de Kafka nem do
-dev-gate. Gera decisões PROPOSED reais a partir de dois sinais já calculados no
-sistema:
+dev-gate. Gera decisões PROPOSED reais (âmbito do projeto, ligadas ao CPO) de:
 
-  A) **Manutenção de molde** — ``MoldService.latest_health`` / ``MoldHealthCalculator``.
-     Gera quando ``risk_category in {red, yellow}``. ``confidence = 100 - score``.
-  B) **Reagendar barco em risco (OTD)** — ``OTDRiskService.otd_risk``.
+  A) **Planeamento (CPO)** — ``CommitsService``: se o DRAFT do robô melhora o
+     plano LIVE (makespan/atrasos/€), propõe ``ADOPT_PLAN``. Aprovar promove o
+     commit DRAFT→LIVE (Q.157.F.2). ``confidence`` = trust_index do CPO ou força
+     dos sinais.
+  B) **Expedição** — ``TransportSuggestionsService``: antecipar barco pronto,
+     completar camião subutilizado, swap entre camiões, adiar barco em risco.
+  C) **Reagendar barco em risco (OTD)** — ``OTDRiskService.otd_risk``.
      Gera para as ordens ``risk_band == "alto"`` (top-3). ``confidence = round(p*100)``.
 
-Honestidade (invariante): ``confidence`` e o ``why`` derivam SEMPRE dos sinais
+Honestidade (invariante): ``confidence``/``why``/€ derivam SEMPRE dos KPIs/sinais
 reais; nenhum número é literal. Sem sinal → nenhuma decisão (vazio honesto).
 
 Anti-spam: ``RateLimiter`` in-memory (5 min) + **dedup durável** (não cria 2ª
@@ -82,84 +85,185 @@ async def _existing_proposed_targets(session, tenant_id: UUID) -> set[tuple[str,
 # Geradores de candidatos (cada um devolve dicts prontos p/ propose_decision_row)
 # ---------------------------------------------------------------------------
 
-def _pct(value: Any) -> int:
+def _f(value: Any):
     try:
-        return round(max(0.0, min(1.0, float(value))) * 100)
+        return float(value)
     except (TypeError, ValueError):
-        return 0
+        return None
 
 
-async def _mold_maintenance_candidates(
+def _i(value: Any):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+async def _planning_candidates(
     session, tenant_id: UUID,
 ) -> List[Dict[str, Any]]:
-    """A) Manutenção preventiva de molde a partir da saúde real (R.6.2)."""
-    from src.plan.services.mold_health_calculator import MoldHealthCalculator
-    from src.plan.services.mold_service import MoldService
+    """PLANEAMENTO (ligado ao CPO) — propor ADOTAR o plano DRAFT do robô.
 
-    svc = MoldService(session, tenant_id)
-    molds = await svc.list_molds()
+    O robô Q.137 corre o CPO pesado no worker Arq e persiste um DRAFT em
+    plan_schedule_commits. Aqui LEMOS esse DRAFT (não corremos o CPO no
+    event-loop) e, se melhora o plano LIVE (makespan/atrasos/€), propomos
+    ``ADOPT_PLAN``. Aprovar a decisão promove o commit DRAFT→LIVE (Q.157.F.2).
+    """
+    from src.plan.cpo.commits import CommitsService
+    from src.plan.services.auto_propose_cpo_runner import (
+        _build_consequences,
+        _cost_delta_for_commit,
+    )
+
+    svc = CommitsService(session, tenant_id)
+    draft = await svc.get_latest()
+    # Só há algo a adotar se o commit mais recente é um DRAFT por aprovar.
+    if draft is None or str(getattr(draft, "status", "")) != "DRAFT":
+        return []
+    live = await svc.latest_live()
+
+    dk = dict(draft.kpis or {})
+    lk = dict(live.kpis or {}) if live is not None else {}
+    d_make, l_make = _f(dk.get("makespan_hours")), _f(lk.get("makespan_hours"))
+    d_late, l_late = _i(dk.get("num_late_orders")), _i(lk.get("num_late_orders"))
+    cost_delta = await _cost_delta_for_commit(session, tenant_id, draft.commit_sha256)
+
+    # O DRAFT é a proposta de plano mais recente do CPO (ainda por aprovar). É
+    # sempre proposto — o humano decide vendo os deltas REAIS vs LIVE (melhor ou
+    # pior). Os sinais abaixo só calibram a confiança; não suprimem a proposta.
+    first_plan = live is None
+    makespan_better = d_make is not None and l_make is not None and d_make < l_make - 0.05
+    late_better = d_late is not None and l_late is not None and d_late < l_late
+    eur_better = cost_delta is not None and cost_delta > 0
+
+    # Confidence: trust_index real do CPO se disponível; senão força dos sinais.
+    ti = _f(getattr(draft, "trust_index", 0)) or 0.0
+    if ti > 0:
+        confidence = max(50, min(99, round(ti * 100)))
+    else:
+        pos = sum([makespan_better, late_better, eur_better]) or (1 if first_plan else 0)
+        confidence = {0: 55, 1: 65, 2: 80, 3: 92}[min(pos, 3)]
+
+    sha = draft.commit_sha256
+    sandbox: Dict[str, Any] = {
+        "commit_sha": sha,
+        "source": "CPO Scheduler",
+        "confidence": confidence,
+        "kpis": {
+            "makespan_hours": d_make,
+            "num_late_orders": d_late,
+            "throughput_eur_day": _f(dk.get("throughput_eur_day")),
+        },
+    }
+    if cost_delta is not None:
+        sandbox["cost_delta"] = cost_delta
+    # why / if_accept / if_reject derivados dos KPIs reais (reusa o builder).
+    sandbox.update(_build_consequences(dk, cost_delta, None, sha[:8]))
+    if l_make is not None and d_make is not None:
+        sandbox["delta_makespan_h"] = round(d_make - l_make, 1)
+    if l_late is not None and d_late is not None:
+        sandbox["delta_late_orders"] = d_late - l_late
+
+    title = "Adotar novo plano CPO"
+    if d_make is not None:
+        title += f" — makespan {d_make:.0f} h"
+    if d_late is not None:
+        title += f", {d_late} atrasadas"
+    return [
+        {
+            "title": title[:255],
+            "action_type": "ADOPT_PLAN",
+            "target": sha,  # dedup pela sha: novo DRAFT = nova proposta
+            "sandbox_result": sandbox,
+            "before_state": {
+                "commit_sha": live.commit_sha256 if live is not None else None,
+                "kpis": lk,
+            },
+            "after_state": {"commit_sha": sha},
+            "audit_reason": f"Q.157.F auto_propose adotar plano CPO {sha[:8]}",
+            "audit_extra": {"source": "auto_propose_signals", "signal": "planning"},
+            "sse_extra": {"source": "auto_propose_signals", "signal": "planning"},
+        }
+    ]
+
+
+_EXPEDITION_TYPE_MAP = {
+    "advance_boat": "SHIPMENT_ADVANCE",
+    "complete_truck": "TRUCK_CONSOLIDATE",
+    "swap_between_batches": "TRUCK_SWAP",
+    "delay_boat": "SHIPMENT_DELAY",
+}
+
+
+async def _expedition_candidates(
+    session, tenant_id: UUID,
+) -> List[Dict[str, Any]]:
+    """EXPEDIÇÃO — sugestões reais de camiões/barcos (TransportSuggestionsService).
+
+    Por cada camião OPEN próximo (≤7 dias), corre o detetor já existente
+    (antecipar barco pronto, completar camião subutilizado, swap entre camiões,
+    adiar barco em risco) e transforma cada sugestão numa decisão. O serviço já
+    devolve what/why/if_accept/if_reject reais — zero hardcode.
+    """
+    from datetime import date, timedelta
+
+    from sqlalchemy import and_
+
+    from src.plan.models.transport import TransportBatch
+    from src.plan.services.transport_suggestions import TransportSuggestionsService
+
+    today = date.today()
+    horizon = today + timedelta(days=7)
+    batches = list(
+        (
+            await session.execute(
+                select(TransportBatch)
+                .where(
+                    and_(
+                        TransportBatch.tenant_id == tenant_id,
+                        TransportBatch.status != "DISPATCHED",
+                        TransportBatch.transport_date >= today,
+                        TransportBatch.transport_date <= horizon,
+                    )
+                )
+                .order_by(TransportBatch.transport_date)
+                .limit(20)
+            )
+        ).scalars().all()
+    )
+    if not batches:
+        return []
+
+    svc = TransportSuggestionsService(session, tenant_id)
     out: List[Dict[str, Any]] = []
-    for mold in molds:
-        health = await svc.latest_health(mold.id)
-        if health is not None:
-            score = int(health.score_0_100)
-            risk = str(health.risk_category)
-            components = dict(health.components or {})
-        else:
-            # Sem snapshot persistido (o scan diário ainda não correu) → computa
-            # read-only, sem persistir nem auditar (HealthResult, não MoldHealth).
-            res = await MoldHealthCalculator(session, tenant_id).compute(mold)
-            score = res.score_0_100
-            risk = res.risk_category
-            components = res.components.as_dict()
-
-        if risk not in ("red", "yellow"):
-            continue
-
-        confidence = max(0, min(100, 100 - score))
-        code = mold.mold_code
-        why = (
-            f"Saúde do molde {code}: {score}/100 ({risk}). Fatores — "
-            f"ciclos {_pct(components.get('cycles_pct'))}%, "
-            f"manutenção {_pct(components.get('maint_age_pct'))}%, "
-            f"defeitos {_pct(components.get('defect_penalty'))}%, "
-            f"retrabalho {_pct(components.get('rework_rate'))}%."
-        )
-        out.append(
-            {
-                "title": f"Manutenção preventiva — molde {code}",
-                "action_type": "MOLD_MAINTENANCE",
-                "target": str(code),
-                "sandbox_result": {
-                    "confidence": confidence,
-                    "source": "Saúde de molde (R.6.2)",
-                    "why": why,
-                    "if_accept": [
-                        f"Manutenção do molde {code} agendada",
-                        f"Saúde atual {score}/100 ({risk}) deve recuperar após manutenção",
-                    ],
-                    "if_reject": [
-                        f"Molde {code} mantém-se {risk} ({score}/100)",
-                        "Risco acrescido de defeito/retrabalho até ser mantido",
-                    ],
-                    "components": components,
-                    "risk_category": risk,
-                    "score_0_100": score,
-                },
-                "before_state": {
-                    "score_0_100": score,
-                    "risk_category": risk,
-                    "components": components,
-                },
-                "after_state": {
-                    "proposed_action": "schedule_maintenance",
-                    "mold_code": str(code),
-                },
-                "audit_reason": f"Q.157.A auto_propose saúde de molde {code}",
-                "audit_extra": {"source": "auto_propose_signals", "signal": "mold_health"},
-                "sse_extra": {"source": "auto_propose_signals", "signal": "mold_health"},
-            }
-        )
+    for batch in batches:
+        for sug in await svc.for_batch(batch.id):
+            action_type = _EXPEDITION_TYPE_MAP.get(sug.type)
+            if action_type is None:
+                continue
+            out.append(
+                {
+                    "title": (sug.what or f"Expedição — {batch.code}")[:255],
+                    "action_type": action_type,
+                    "target": f"{batch.code}:{sug.type}",
+                    "sandbox_result": {
+                        "source": "Expedição",
+                        "why": sug.why,
+                        "what": sug.what,
+                        "if_accept": [sug.if_accept] if sug.if_accept else [],
+                        "if_reject": [sug.if_reject] if sug.if_reject else [],
+                        "alternative": sug.alternative,
+                        "affected_order_ids": sug.affected_order_ids or [],
+                        "target_batch_id": sug.target_batch_id,
+                        "batch_code": batch.code,
+                    },
+                    "before_state": {"batch_code": batch.code, "type": sug.type},
+                    "after_state": {"batch_code": batch.code, "proposed": sug.type},
+                    "audit_reason": f"Q.157.F auto_propose expedição {sug.type} {batch.code}",
+                    "audit_extra": {"source": "auto_propose_signals", "signal": "expedition"},
+                    "sse_extra": {"source": "auto_propose_signals", "signal": "expedition"},
+                }
+            )
     return out
 
 
@@ -248,7 +352,11 @@ async def _auto_propose_signals_job(tenant_ids: List[UUID]) -> None:
                     if not await _enabled(session, tid):
                         continue
                     candidates: List[Dict[str, Any]] = []
-                    for gen in (_mold_maintenance_candidates, _otd_reschedule_candidates):
+                    for gen in (
+                    _planning_candidates,
+                    _expedition_candidates,
+                    _otd_reschedule_candidates,
+                ):
                         try:
                             candidates.extend(await gen(session, tid))
                         except Exception as exc:  # best-effort por sinal

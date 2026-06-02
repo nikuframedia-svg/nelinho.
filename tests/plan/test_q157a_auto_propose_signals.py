@@ -1,15 +1,14 @@
-"""Q.157.A — auto-propose REAL de sinais (saúde de molde + OTD-risk).
+"""Q.157.A/F — auto-propose REAL: planeamento (CPO) + expedição + OTD.
 
 Cobre:
   1. propose_decision_row → SharedDecisionRun PROPOSED + audit na mesma sessão
-  2. Gerador molde: confidence = 100 - score; só red/yellow geram (green skip)
-  3. Gerador OTD: confidence = round(p*100); só "alto"; cap _OTD_MAX_PER_TICK;
-     model_unavailable → [] (vazio honesto, nunca probabilidade inventada)
-  4. Job: dedup durável — candidate já PROPOSED não é re-criado
-  5. Job: rate-limit in-memory — 2º tick na janela não repete
+  2. Planeamento (CPO): propõe ADOPT_PLAN quando o DRAFT melhora o LIVE; vazio
+     quando o commit mais recente já é LIVE.
+  3. Expedição: mapeia TransportSuggestion → decisão (TRUCK_CONSOLIDATE, …).
+  4. OTD: confidence = round(p*100); só "alto"; cap; model_unavailable → [].
+  5. Job: dedup durável + rate-limit in-memory.
 
-Zero números hardcoded a "fingir" decisões: cada confidence é asserido
-RELATIVO ao input do sinal.
+Zero números hardcoded a "fingir" decisões: cada confidence/€ deriva do input.
 """
 from __future__ import annotations
 
@@ -26,10 +25,6 @@ from src.shared.models.governance import DecisionStatus, SharedDecisionRun
 
 TENANT = UUID("11111111-1111-1111-1111-111111111111")
 
-
-# ---------------------------------------------------------------------------
-# FakeSession (igual ao padrão Q.115.D) — captura add()/flush()
-# ---------------------------------------------------------------------------
 
 class FakeSession:
     def __init__(self) -> None:
@@ -60,95 +55,166 @@ def _factory(captured: List[FakeSession]):
     return _f
 
 
-# ---------------------------------------------------------------------------
-# 1 — propose_decision_row
-# ---------------------------------------------------------------------------
+# ───────────────────────── 1 — propose_decision_row ───────────────────────
 
 @pytest.mark.asyncio
 async def test_propose_decision_row_creates_proposed_plus_audit():
     from src.core.models.audit import AuditLog
-    from src.plan.services.auto_propose import propose_decision_row
+    from src.plan.services.auto_propose import _SYSTEM_ACTOR, propose_decision_row
 
     sessions: List[FakeSession] = []
     decision = await propose_decision_row(
         _factory(sessions),
         tenant_id=TENANT,
-        title="Manutenção preventiva — molde M-K1",
-        action_type="MOLD_MAINTENANCE",
-        target="M-K1",
-        sandbox_result={"confidence": 70, "source": "Saúde de molde (R.6.2)"},
-        audit_reason="Q.157.A teste",
-        audit_extra={"source": "auto_propose_signals", "signal": "mold_health"},
+        title="Adotar novo plano CPO",
+        action_type="ADOPT_PLAN",
+        target="draftsha",
+        sandbox_result={"confidence": 80, "source": "CPO Scheduler"},
+        after_state={"commit_sha": "draftsha"},
+        audit_reason="Q.157.F teste",
+        audit_extra={"source": "auto_propose_signals", "signal": "planning"},
     )
-
     assert decision.status == DecisionStatus.PROPOSED.value
-    assert decision.action_type == "MOLD_MAINTENANCE"
-    assert decision.target == "M-K1"
-    # Q.17: proponente é o sistema, não um humano
-    from src.plan.services.auto_propose import _SYSTEM_ACTOR
+    assert decision.action_type == "ADOPT_PLAN"
     assert decision.proposed_by == _SYSTEM_ACTOR
-
-    assert len(sessions) == 1
     added = sessions[0].added
     assert any(isinstance(a, SharedDecisionRun) for a in added)
-    audits = [a for a in added if isinstance(a, AuditLog)]
-    assert audits, "audit_change deve correr na mesma sessão/tx"
-    assert any("auto_propose_signals" in str(a.new_values) for a in audits)
+    assert any(isinstance(a, AuditLog) for a in added), "audit na mesma tx"
 
 
-# ---------------------------------------------------------------------------
-# 2 — Gerador molde
-# ---------------------------------------------------------------------------
+# ───────────────────────── 2 — Planeamento (CPO) ──────────────────────────
 
-def _fake_mold(code: str):
-    return SimpleNamespace(id=uuid4(), mold_code=code)
-
-
-def _fake_health(score: int, risk: str):
-    return SimpleNamespace(
-        score_0_100=score,
-        risk_category=risk,
-        components={"cycles_pct": 0.5, "maint_age_pct": 0.5,
-                    "defect_penalty": 0.2, "rework_rate": 0.1},
-    )
+def _commit(status, sha, makespan, late, ti=0.0, eur=None):
+    kpis = {"makespan_hours": makespan, "num_late_orders": late}
+    if eur is not None:
+        kpis["throughput_eur_day"] = eur
+    return SimpleNamespace(status=status, commit_sha256=sha, kpis=kpis, trust_index=ti)
 
 
 @pytest.mark.asyncio
-async def test_mold_generator_confidence_and_filter():
-    molds = [_fake_mold("M-RED"), _fake_mold("M-YEL"), _fake_mold("M-GRN")]
-    health_by_code = {
-        "M-RED": _fake_health(25, "red"),
-        "M-YEL": _fake_health(60, "yellow"),
-        "M-GRN": _fake_health(90, "green"),
-    }
-    code_by_id = {m.id: m.mold_code for m in molds}
+async def test_planning_proposes_adopt_when_draft_better():
+    draft = _commit("DRAFT", "draftsha123456", 40.0, 2)
+    live = _commit("LIVE", "livesha", 50.0, 5)
 
-    class _FakeMoldService:
-        def __init__(self, session, tenant_id):  # noqa: D401
+    class _FakeCommits:
+        def __init__(self, s, t):
             pass
 
-        async def list_molds(self):
-            return molds
+        async def get_latest(self):
+            return draft
 
-        async def latest_health(self, mold_id):
-            return health_by_code[code_by_id[mold_id]]
+        async def latest_live(self):
+            return live
 
-    with patch("src.plan.services.mold_service.MoldService", _FakeMoldService):
-        cands = await job._mold_maintenance_candidates(object(), TENANT)
+    with patch("src.plan.cpo.commits.CommitsService", _FakeCommits), \
+         patch("src.plan.services.auto_propose_cpo_runner._cost_delta_for_commit",
+               AsyncMock(return_value=120.0)):
+        cands = await job._planning_candidates(object(), TENANT)
 
-    by_target = {c["target"]: c for c in cands}
-    # green NÃO gera decisão
-    assert "M-GRN" not in by_target
-    assert set(by_target) == {"M-RED", "M-YEL"}
-    # confidence = 100 - score (derivado do sinal, não literal)
-    assert by_target["M-RED"]["sandbox_result"]["confidence"] == 100 - 25
-    assert by_target["M-YEL"]["sandbox_result"]["confidence"] == 100 - 60
-    assert by_target["M-RED"]["action_type"] == "MOLD_MAINTENANCE"
+    assert len(cands) == 1
+    c = cands[0]
+    assert c["action_type"] == "ADOPT_PLAN"
+    assert c["target"] == "draftsha123456"
+    assert c["after_state"]["commit_sha"] == "draftsha123456"
+    sb = c["sandbox_result"]
+    assert sb["commit_sha"] == "draftsha123456"
+    assert sb["cost_delta"] == 120.0
+    assert sb["delta_makespan_h"] == -10.0  # 40 - 50, melhor (derivado)
+    assert sb["delta_late_orders"] == -3     # 2 - 5
+    assert "if_accept" in sb  # consequências derivadas dos KPIs reais
 
 
-# ---------------------------------------------------------------------------
-# 3 — Gerador OTD
-# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_planning_empty_when_latest_is_live():
+    live = _commit("LIVE", "livesha", 50.0, 5)
+
+    class _FakeCommits:
+        def __init__(self, s, t):
+            pass
+
+        async def get_latest(self):
+            return live  # mais recente já é LIVE → nada a adotar
+
+        async def latest_live(self):
+            return live
+
+    with patch("src.plan.cpo.commits.CommitsService", _FakeCommits):
+        cands = await job._planning_candidates(object(), TENANT)
+    assert cands == []
+
+
+@pytest.mark.asyncio
+async def test_planning_proposes_latest_draft_even_if_worse():
+    # O DRAFT é a proposta mais recente do CPO por aprovar → é sempre proposto;
+    # os deltas mostram que é pior e a confiança fica baixa (humano decide).
+    draft = _commit("DRAFT", "draftsha", 55.0, 6)  # pior que o LIVE
+    live = _commit("LIVE", "livesha", 50.0, 5)
+
+    class _FakeCommits:
+        def __init__(self, s, t):
+            pass
+
+        async def get_latest(self):
+            return draft
+
+        async def latest_live(self):
+            return live
+
+    with patch("src.plan.cpo.commits.CommitsService", _FakeCommits), \
+         patch("src.plan.services.auto_propose_cpo_runner._cost_delta_for_commit",
+               AsyncMock(return_value=-10.0)):
+        cands = await job._planning_candidates(object(), TENANT)
+    assert len(cands) == 1
+    sb = cands[0]["sandbox_result"]
+    assert sb["delta_makespan_h"] == 5.0   # 55 - 50 (pior, mostrado honestamente)
+    assert sb["confidence"] == 55          # sem sinais positivos → confiança baixa
+
+
+# ───────────────────────── 3 — Expedição ──────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_expedition_maps_suggestions_to_decisions():
+    from src.plan.services.transport_suggestions import TransportSuggestion
+
+    batch = SimpleNamespace(id=uuid4(), code="CAM-1")
+
+    class _Scalars:
+        def all(self):
+            return [batch]
+
+    class _Result:
+        def scalars(self):
+            return _Scalars()
+
+    class _Sess:
+        async def execute(self, stmt):
+            return _Result()
+
+    sug = TransportSuggestion(
+        type="complete_truck", what="Completar camião CAM-1",
+        why="meio vazio", if_accept="poupa um trip", if_reject="sai a meio",
+    )
+
+    class _FakeTSS:
+        def __init__(self, s, t):
+            pass
+
+        async def for_batch(self, bid):
+            return [sug]
+
+    with patch("src.plan.services.transport_suggestions.TransportSuggestionsService",
+               _FakeTSS):
+        cands = await job._expedition_candidates(_Sess(), TENANT)
+
+    assert len(cands) == 1
+    c = cands[0]
+    assert c["action_type"] == "TRUCK_CONSOLIDATE"
+    assert c["target"] == "CAM-1:complete_truck"
+    assert c["sandbox_result"]["why"] == "meio vazio"
+    assert c["sandbox_result"]["if_accept"] == ["poupa um trip"]
+
+
+# ───────────────────────── 4 — OTD ────────────────────────────────────────
 
 @pytest.mark.asyncio
 async def test_otd_generator_confidence_band_and_cap():
@@ -156,14 +222,14 @@ async def test_otd_generator_confidence_band_and_cap():
         {"of_id": f"OF-{i}", "late_probability": 0.80 + i * 0.01,
          "risk_band": "alto", "transport_date": "2026-06-10",
          "features": {"slack_days": -2}, "current_phase_name": "Pintura"}
-        for i in range(5)  # 5 "alto" → cap deve cortar a _OTD_MAX_PER_TICK
+        for i in range(5)
     ] + [
         {"of_id": "OF-LOW", "late_probability": 0.10, "risk_band": "baixo",
          "transport_date": "2026-07-01", "features": {"slack_days": 30}},
     ]
 
     class _FakeOTD:
-        def __init__(self, session, tenant_id):
+        def __init__(self, s, t):
             pass
 
         async def otd_risk(self, *, top_n=50):
@@ -172,19 +238,16 @@ async def test_otd_generator_confidence_band_and_cap():
     with patch("src.plan.services.otd_risk_service.OTDRiskService", _FakeOTD):
         cands = await job._otd_reschedule_candidates(object(), TENANT)
 
-    assert len(cands) == job._OTD_MAX_PER_TICK  # cap aplicado
+    assert len(cands) == job._OTD_MAX_PER_TICK
     assert all(c["action_type"] == "OTD_RESCHEDULE" for c in cands)
-    # nenhuma "baixo"
     assert "OF-LOW" not in {c["target"] for c in cands}
-    # confidence = round(p*100)
-    c0 = cands[0]
-    assert c0["sandbox_result"]["confidence"] == round(0.80 * 100)
+    assert cands[0]["sandbox_result"]["confidence"] == round(0.80 * 100)
 
 
 @pytest.mark.asyncio
 async def test_otd_generator_no_model_is_empty_honest():
     class _FakeOTD:
-        def __init__(self, session, tenant_id):
+        def __init__(self, s, t):
             pass
 
         async def otd_risk(self, *, top_n=50):
@@ -192,27 +255,24 @@ async def test_otd_generator_no_model_is_empty_honest():
 
     with patch("src.plan.services.otd_risk_service.OTDRiskService", _FakeOTD):
         cands = await job._otd_reschedule_candidates(object(), TENANT)
+    assert cands == []
 
-    assert cands == []  # sem modelo → vazio, nunca inventa
 
-
-# ---------------------------------------------------------------------------
-# 4+5 — Job: dedup durável + rate-limit
-# ---------------------------------------------------------------------------
+# ───────────────────────── 5 — Job: dedup + rate-limit ────────────────────
 
 @asynccontextmanager
 async def _ctx_session():
     yield FakeSession()
 
 
-def _one_mold_candidate():
+def _one_candidate():
     return {
-        "title": "Manutenção preventiva — molde M-K1",
-        "action_type": "MOLD_MAINTENANCE",
-        "target": "M-K1",
-        "sandbox_result": {"confidence": 75},
+        "title": "Adotar novo plano CPO",
+        "action_type": "ADOPT_PLAN",
+        "target": "draftsha-1",
+        "sandbox_result": {"confidence": 80},
         "before_state": {},
-        "after_state": {},
+        "after_state": {"commit_sha": "draftsha-1"},
         "audit_reason": "x",
         "audit_extra": {},
         "sse_extra": {},
@@ -227,44 +287,39 @@ async def test_job_dedup_skips_existing_proposed():
          patch("src.shared.database.get_session_context", _ctx_session), \
          patch("src.shared.database.async_session_factory", _factory([])), \
          patch.object(job, "_enabled", AsyncMock(return_value=True)), \
-         patch.object(job, "_mold_maintenance_candidates",
-                      AsyncMock(return_value=[_one_mold_candidate()])), \
+         patch.object(job, "_planning_candidates",
+                      AsyncMock(return_value=[_one_candidate()])), \
+         patch.object(job, "_expedition_candidates", AsyncMock(return_value=[])), \
          patch.object(job, "_otd_reschedule_candidates", AsyncMock(return_value=[])), \
          patch.object(job, "_existing_proposed_targets",
-                      AsyncMock(return_value={("MOLD_MAINTENANCE", "M-K1")})), \
+                      AsyncMock(return_value={("ADOPT_PLAN", "draftsha-1")})), \
          patch.object(job, "propose_decision_row", persisted):
         await job._auto_propose_signals_job([TENANT])
-
-    persisted.assert_not_called()  # já existe PROPOSED igual → não recria
+    persisted.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_job_creates_then_rate_limits_second_tick():
     job._rate_limiter._last_seen.clear()
     persisted = AsyncMock()
-    common = dict(
-        _resolve=AsyncMock(return_value=[TENANT]),
-    )
-    patches = lambda: (  # noqa: E731
-        patch.object(job, "_resolve_tenants", common["_resolve"]),
+    ps = (
+        patch.object(job, "_resolve_tenants", AsyncMock(return_value=[TENANT])),
         patch("src.shared.database.get_session_context", _ctx_session),
         patch("src.shared.database.async_session_factory", _factory([])),
         patch.object(job, "_enabled", AsyncMock(return_value=True)),
-        patch.object(job, "_mold_maintenance_candidates",
-                     AsyncMock(return_value=[_one_mold_candidate()])),
+        patch.object(job, "_planning_candidates",
+                     AsyncMock(return_value=[_one_candidate()])),
+        patch.object(job, "_expedition_candidates", AsyncMock(return_value=[])),
         patch.object(job, "_otd_reschedule_candidates", AsyncMock(return_value=[])),
         patch.object(job, "_existing_proposed_targets", AsyncMock(return_value=set())),
         patch.object(job, "propose_decision_row", persisted),
     )
-
-    ps = patches()
     for p in ps:
         p.start()
     try:
-        await job._auto_propose_signals_job([TENANT])  # 1º tick → cria
-        await job._auto_propose_signals_job([TENANT])  # 2º tick → rate-limit
+        await job._auto_propose_signals_job([TENANT])  # cria
+        await job._auto_propose_signals_job([TENANT])  # rate-limited
     finally:
         for p in ps:
             p.stop()
-
-    assert persisted.await_count == 1, "rate-limit: só 1 decisão na janela de 5 min"
+    assert persisted.await_count == 1

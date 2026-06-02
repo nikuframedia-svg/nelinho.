@@ -396,6 +396,41 @@ async def approve_decision(
     decision.status = decision_status
     await session.flush()
 
+    # Q.157.F.2 — ligar /decisoes ao CPO: aprovar uma decisão de PLANEAMENTO
+    # promove o commit CPO (DRAFT→LIVE) na MESMA tx (write-gate: SoD já validado
+    # acima, audit dentro do promote). Rejeitar não promove. Best-effort: commit
+    # inexistente/já-LIVE não falha o approve (a decisão fica APPROVED na mesma).
+    if not is_reject:
+        sb = getattr(decision, "sandbox_result", None) or {}
+        after = getattr(decision, "after_state", None) or {}
+        commit_sha = str(
+            after.get("commit_sha") or sb.get("commit_sha") or ""
+        ).strip()
+        planning_types = {"ADOPT_PLAN", "REPLAN", "AUTO_PROPOSE_SCHEDULE"}
+        if commit_sha and decision.action_type in planning_types:
+            try:
+                from src.plan.cpo.commits import CommitsService
+
+                promoted = await CommitsService(
+                    session, tenant_id,
+                ).promote_to_live(commit_sha, approver_id=user_id)
+                if promoted is not None:
+                    logger.info(
+                        "decision %s approved → CPO plan %s promoted to LIVE",
+                        decision_id, commit_sha[:8],
+                    )
+                else:
+                    logger.warning(
+                        "decision %s approved but CPO commit %s not found — "
+                        "decisão fica APPROVED na mesma",
+                        decision_id, commit_sha[:8],
+                    )
+            except Exception as exc:  # best-effort — não falha o approve
+                logger.warning(
+                    "decision %s approve: promote CPO commit %s falhou: %s",
+                    decision_id, commit_sha[:8], exc,
+                )
+
     await session.commit()
 
     # Q.153 — publicar no canal realtime (SSE) para a página /decisoes e o feed

@@ -309,6 +309,45 @@ class CommitsService:
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def promote_to_live(
+        self,
+        sha: str,
+        *,
+        approver_id: UUID,
+        approver_role: str = "",
+    ) -> Optional[ScheduleCommit]:
+        """Q.157.F.2 — promove um commit DRAFT→LIVE (mesma lógica do botão
+        "Aprovar plano" do /overall, ``cpo_routers/commits.py``).
+
+        Escreve ``audit_change`` na sessão mas **NÃO** faz commit — o chamador
+        controla a transacção (ex.: ``approve_decision`` promove o plano na mesma
+        tx em que aprova a decisão). Idempotente: já-LIVE → devolve sem mexer.
+        ``None`` se o commit não existe.
+        """
+        from src.governance.audit_service import audit_change
+
+        commit = await self.get_by_sha(sha) or await self.get_by_sha_prefix(sha)
+        if commit is None:
+            return None
+        prev_status = str(getattr(commit, "status", "DRAFT") or "DRAFT")
+        if prev_status == "LIVE":
+            return commit  # idempotente
+        commit.status = "LIVE"
+        await audit_change(
+            self.session,
+            tenant_id=self.tenant_id,
+            entity_type="schedule_commit",
+            entity_id=commit.id,
+            action="UPDATE",
+            old_values={"status": prev_status},
+            new_values={"status": "LIVE"},
+            actor_id=approver_id,
+            actor_role=approver_role,
+            reason=f"Q.157.F approve decisão → promove plano {sha[:8]} DRAFT->LIVE",
+        )
+        await self.session.flush()
+        return commit
+
     async def active_manual_overrides(self) -> List[Dict[str, Any]]:
         """Q.142.C — overrides manuais ATIVOS para o robô re-aplicar após cada
         solve automático (Q.142.D). São os deltas `tipo="manual_drag"` de
