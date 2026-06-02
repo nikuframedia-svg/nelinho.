@@ -1151,8 +1151,17 @@ async def _load_open_orders_db(
     """Q.126.B — real WIP from `factory_raw.ordemfabrico`: open orders
     (`OF_DATAFIM` NULL) whose current phase (`OF_FP_ID`) is a production phase
     (`FP_PRODUCAO=true`, which already excludes Entregue/Armazem/Embalado/...).
-    ``modelo_id=OF_P_ID``, deadline = COALESCE of the three date columns.
+    ``modelo_id=OF_P_ID``, deadline = COALESCE of the real date columns.
     Best-effort, capped. Only used when no curated open_orders are present.
+
+    Q.157.B (corrigido) — a data-alvo é 95% preenchida e 53% FUTURA nos BARCOS
+    (``OF_PLANO_DATA_PREVISTA`` 95%/48%, COALESCE 95%/53%; ``OF_DATAENTREGA`` 0%).
+    A medição "0.5%" anterior era na população errada — todas as OFs abertas, 99%
+    acessórios. Por isso a selecção é: **barcos com prazo planeado FUTURO primeiro**
+    (por prazo asc = mais urgente), depois os restantes (sem prazo futuro / data-
+    lixo no passado) **FIFO por antiguidade de criação** (``OF_DATA``). O
+    ``data_entrega_prevista`` (COALESCE de datas reais) alimenta o
+    backward-scheduling como due_date — os 53% com prazo futuro são honrados.
 
     Q.136.A — `scope` (config `planning.scope`): `boats_only` (default) planeia
     SÓ barcos (`PRODUTO.P_QTDDECK>0 AND P_QTDCASCO>0`); sem isto ~56% do WIP são
@@ -1175,19 +1184,36 @@ async def _load_open_orders_db(
     )
     sql = text(
         f"""
-        SELECT ofb."OF_ID"::text   AS of_id,
-               ofb."OF_P_ID"::text AS modelo_id,
-               ofb."OF_FP_ID"::text AS current_fase_id,
-               COALESCE(ofb."OF_DATAENTREGA", ofb."OF_TR_DATA_PREVISTA",
-                        ofb."OF_PLANO_DATA_PREVISTA") AS data_entrega_prevista
-        FROM factory_raw.ordemfabrico ofb
-        JOIN factory_raw.fases_producao f ON f."FP_ID" = ofb."OF_FP_ID"
-        LEFT JOIN factory_raw.produto p ON p."P_ID" = ofb."OF_P_ID"
-        WHERE ofb."OF_DATAFIM" IS NULL
-          AND ofb."OF_P_ID" IS NOT NULL
-          AND f."FP_PRODUCAO" = true
-          {boats_filter}
-        ORDER BY data_entrega_prevista NULLS LAST
+        SELECT of_id, modelo_id, current_fase_id, data_entrega_prevista
+        FROM (
+          SELECT ofb."OF_ID"::text   AS of_id,
+                 ofb."OF_P_ID"::text AS modelo_id,
+                 ofb."OF_FP_ID"::text AS current_fase_id,
+                 -- NULLIF: '' (vazio) → NULL, senão o ::timestamp do ORDER BY rebenta.
+                 COALESCE(NULLIF(ofb."OF_DATAENTREGA", ''),
+                          NULLIF(ofb."OF_TR_DATA_PREVISTA", ''),
+                          NULLIF(ofb."OF_PLANO_DATA_PREVISTA", '')) AS data_entrega_prevista,
+                 NULLIF(ofb."OF_DATA", '') AS of_data_sort
+          FROM factory_raw.ordemfabrico ofb
+          JOIN factory_raw.fases_producao f ON f."FP_ID" = ofb."OF_FP_ID"
+          LEFT JOIN factory_raw.produto p ON p."P_ID" = ofb."OF_P_ID"
+          WHERE ofb."OF_DATAFIM" IS NULL
+            AND ofb."OF_P_ID" IS NOT NULL
+            AND f."FP_PRODUCAO" = true
+            {boats_filter}
+        ) q
+        ORDER BY
+          -- Q.157.B (corrigido): a data-alvo NÃO é 99.5% nula nos BARCOS — é 95%
+          -- preenchida, 53% futura (medi antes na população errada: todas as OFs,
+          -- 99% acessórios). Por isso: barcos com PRAZO PLANEADO FUTURO primeiro
+          -- (por prazo asc = mais urgente), depois os restantes (sem prazo futuro,
+          -- ou data-lixo no passado) FIFO por antiguidade de criação (OF_DATA).
+          CASE WHEN data_entrega_prevista IS NOT NULL
+                    AND data_entrega_prevista::timestamp > now() THEN 0 ELSE 1 END,
+          CASE WHEN data_entrega_prevista IS NOT NULL
+                    AND data_entrega_prevista::timestamp > now()
+               THEN data_entrega_prevista::timestamp END ASC,
+          of_data_sort ASC
         LIMIT :plan_cap
         """
     )

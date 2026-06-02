@@ -1,9 +1,13 @@
 """Q.67.4.E — jobs do copilot (RAG schema reindex).
 
 Job nocturno que re-indexa os schema docs PT-PT no RAG do copilot.
-Cron 04:00 (low traffic). Idempotente — usa `force=False` por default
-(só re-indexa se schema mudou). Em prod, mudanças de schema vêm de
-deploy (Alembic), 1 reindex/dia é suficiente.
+Cron 04:00 (low traffic).
+
+Q.157.C — usa `force=True` (refresh canónico: delete + reingest). O
+`ingest_schema_docs` com `force=False` NÃO detecta "schema mudou" — apenas
+ACUMULA um novo chunk por tabela a cada corrida, duplicando o índice todas
+as noites. `force=True` apaga os chunks `schema_docs` do tenant e reingere,
+deixando exactamente 1 chunk por tabela (idempotente).
 """
 
 from __future__ import annotations
@@ -40,8 +44,9 @@ async def _copilot_schema_reindex_job() -> None:
             chunks = await ingest_schema_docs(
                 session=session,
                 tenant_id=tenant_id,
-                force=False,
+                force=True,  # Q.157.C — refresh canónico, sem duplicar
             )
+            await session.commit()
         logger.info(
             "copilot_schema_reindex ok chunks=%d tenant=%s",
             chunks, tenant_id,

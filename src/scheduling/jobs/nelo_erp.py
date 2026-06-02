@@ -204,6 +204,47 @@ async def _nelo_erp_raw_incremental_job() -> None:
         logger.error("nelo_erp_raw_incremental failed: %s", exc, exc_info=True)
 
 
+async def _nelo_erp_raw_full_nightly_job() -> None:
+    """Q.157.0 — full-copy nocturno das tabelas `factory_raw` de baixa velocidade.
+
+    O job incremental de 5 min (`_nelo_erp_raw_incremental_job`) só toca as
+    tabelas com PK+watermark (ordemfabrico/of_fp/movimento/of_checklist) e
+    **salta** as de full-copy (produto/fases_producao/moldes/entidade/
+    produto_fase/produto_componente/offp_eq/apontamento_trabalho). O comentário
+    do q75 assumia um "full mirror nocturno" para essas — que nunca chegou a ser
+    registado no scheduler, por isso ficavam DIAS stale (offp_eq/produto a 3 dias
+    no audit de 2026-06-02). Este job fecha esse gap.
+
+    Cada tabela é refrescada via `_mirror_table` (TRUNCATE+COPY atómico, DROP-free
+    → seguro com as marts/VIEWs dependentes) e o `_synced_at` volta a `now()`.
+    Corre 02:30 UTC (depois do mirror curado das 02:00, antes da calibração das
+    06:40). No-op quando ``sqlserver_enabled=False``.
+    """
+    from src.shared.config import settings
+
+    if not settings.sqlserver_enabled:
+        logger.debug("nelo_erp_raw_full_nightly skipped — sqlserver_enabled=False")
+        return
+
+    from scripts.q75_setup_raw_mirror import RAW_TABLES
+    from scripts.q75_setup_raw_mirror import setup as raw_setup
+
+    # Só as tabelas que o incremental NÃO cobre (sem PK+watermark single-col).
+    full_only = [t.nelo_name for t in RAW_TABLES if not t.supports_incremental]
+    started = datetime.utcnow()
+    try:
+        results = await raw_setup(incremental=False, only=full_only)
+        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        failed = [r["table"] for r in results if r.get("status") != "ok"]
+        copied = sum(r.get("rows", 0) for r in results)
+        logger.info(
+            "nelo_erp_raw_full_nightly tables=%s rows=%s failed=%s elapsed_ms=%s",
+            [r["table"] for r in results], copied, failed or "none", elapsed_ms,
+        )
+    except Exception as exc:
+        logger.error("nelo_erp_raw_full_nightly failed: %s", exc, exc_info=True)
+
+
 async def _nelo_erp_comercial_job() -> None:
     """Q.125 — refresh de 5/5 min do espelho Comercial (PHC: faturação,
     entidades). Full refresh ATÓMICO (TRUNCATE+COPY, DROP-free) — seguro com as

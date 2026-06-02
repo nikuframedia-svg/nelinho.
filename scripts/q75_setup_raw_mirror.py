@@ -180,11 +180,13 @@ async def _mirror_table(
     col_names = [c[0] for c in cols]
     pg_table = spec.pg_name
 
-    # 1. DROP + CREATE factory_raw.<t>
+    # 1. CREATE idempotente — DROP-free. Q.157.0: o DROP anterior rebentava com
+    #    `DependentObjectsStillExistError` nas tabelas com VIEWs marts
+    #    dependentes (produto/fases_producao/entidade/offp_eq), por isso o
+    #    full-copy nocturno dessas falhava em silêncio e ficavam dias stale.
     col_defs = ", ".join(f'"{name}" {pgtype}' for name, pgtype in cols)
-    await pg_conn.execute(f'DROP TABLE IF EXISTS factory_raw."{pg_table}"')
     await pg_conn.execute(
-        f'CREATE TABLE factory_raw."{pg_table}" ({col_defs}, '
+        f'CREATE TABLE IF NOT EXISTS factory_raw."{pg_table}" ({col_defs}, '
         f'_synced_at timestamptz DEFAULT now())',
     )
 
@@ -198,27 +200,32 @@ async def _mirror_table(
         )
     select_sql = text(f"SELECT {select_cols} FROM [{spec.nelo_name}]{where}")
 
-    # 3. Bulk copy via asyncpg copy_records_to_table. `conn.stream()`
-    #    faz server-side cursor — não carrega milhões de rows em memória.
+    # 3. TRUNCATE + bulk copy numa SÓ transação (DROP-free e atómico p/ as
+    #    VIEWs — nunca veem a tabela vazia; TRUNCATE mantém o OID). `conn.stream`
+    #    faz server-side cursor — não carrega milhões de rows em memória
+    #    (offp_eq ~1.4M). Se a leitura ao ERP falhar a meio, o rollback mantém
+    #    os dados antigos (melhor que o DROP, que deixava a tabela apagada).
     total = 0
-    async with sql_engine.connect() as conn:
-        result = await conn.stream(select_sql)
-        batch: list[tuple] = []
-        async for row in result:
-            batch.append(tuple(_coerce_value(v) for v in row))
-            if len(batch) >= READ_CHUNK:
+    async with pg_conn.transaction():
+        await pg_conn.execute(f'TRUNCATE factory_raw."{pg_table}"')
+        async with sql_engine.connect() as conn:
+            result = await conn.stream(select_sql)
+            batch: list[tuple] = []
+            async for row in result:
+                batch.append(tuple(_coerce_value(v) for v in row))
+                if len(batch) >= READ_CHUNK:
+                    await pg_conn.copy_records_to_table(
+                        pg_table, schema_name="factory_raw",
+                        columns=col_names, records=batch,
+                    )
+                    total += len(batch)
+                    batch = []
+            if batch:
                 await pg_conn.copy_records_to_table(
                     pg_table, schema_name="factory_raw",
                     columns=col_names, records=batch,
                 )
                 total += len(batch)
-                batch = []
-        if batch:
-            await pg_conn.copy_records_to_table(
-                pg_table, schema_name="factory_raw",
-                columns=col_names, records=batch,
-            )
-            total += len(batch)
 
     elapsed = time.monotonic() - t0
     return {

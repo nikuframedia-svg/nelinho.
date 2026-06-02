@@ -36,6 +36,7 @@ from src.copilot.cube.measure_contract import (
     is_derived_measure_request,
     is_period_mismatch,
     is_unsupported_concept_request,
+    render_catalog_block,
     resolve_question_period,
 )
 from src.copilot.cube.query import (
@@ -347,8 +348,21 @@ def _filter_catalog_blocks(template: str, candidate_cubes: set[str]) -> str:
             kept_blocks.append("### Cube: " + block)
 
     if not kept_blocks:
-        # Retrieval trouxe candidatos mas nenhum match no template — degrade.
-        return template
+        # Q.157.D — NENHUMA candidata tem bloco curado no .md (34 de 48 cubes
+        # não têm). Em vez de degradar para o template inteiro (14 blocos
+        # irrelevantes), gera os blocos das candidatas a partir do
+        # MEASURE_REGISTRY — assim o LLM tem descrição + dimensões da medida que
+        # o retrieval surgiu. SÓ neste caso: quando ALGUMA candidata já tem
+        # bloco curado, mantemos só esse(s); acrescentar blocos gerados
+        # tangenciais polui o prompt e faz o LLM abstain (regressão medida em
+        # test_synonyms_match_consumo).
+        generated = [
+            g for g in (render_catalog_block(c) for c in sorted(candidate_cubes))
+            if g
+        ]
+        if not generated:
+            return template
+        kept_blocks = generated
 
     new_catalog_section = "\n".join(kept_blocks)
     return template[:start_match.start()] + new_catalog_section + template[end_match.start():]

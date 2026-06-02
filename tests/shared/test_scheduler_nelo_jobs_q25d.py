@@ -43,3 +43,29 @@ async def test_start_scheduler_registers_both_nelo_erp_jobs():
     finally:
         sched.shutdown(wait=False)
         scheduler._scheduler = None
+
+
+@pytest.mark.asyncio
+async def test_raw_full_nightly_job_noop_when_sqlserver_disabled(monkeypatch):
+    """Q.157.0 — o full-copy nocturno faz no-op limpo sem o flag (nunca
+    importa o q75 nem liga ao ERP sem `sqlserver_enabled`)."""
+    from src.scheduling.jobs import nelo_erp as nelo_jobs
+
+    monkeypatch.setattr(settings, "sqlserver_enabled", False)
+    assert await nelo_jobs._nelo_erp_raw_full_nightly_job() is None
+
+
+@pytest.mark.asyncio
+async def test_start_scheduler_registers_raw_full_nightly():
+    """Q.157.0 — `start_scheduler` regista `nelo_erp_raw_full_nightly` (o job
+    que refresca as tabelas factory_raw de full-copy, antes ausente)."""
+    scheduler._scheduler = None
+    sched = scheduler.start_scheduler(tenants=None)
+    if sched is None:
+        pytest.skip("APScheduler nao instalado")
+    try:
+        job_ids = {job.id for job in sched.get_jobs()}
+        assert "nelo_erp_raw_full_nightly" in job_ids
+    finally:
+        sched.shutdown(wait=False)
+        scheduler._scheduler = None

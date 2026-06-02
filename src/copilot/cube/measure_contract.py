@@ -3038,3 +3038,54 @@ def _validate_registry() -> None:
 
 
 _validate_registry()
+
+
+# ─── Q.157.D — catálogo de measures gerado para o prompt do interpret ──────
+#
+# O `cube_interpret.md` descreve à mão só ~14 dos 48 cubes. Quando o retrieval
+# de medida (Q.105.A) traz uma medida de um dos outros 34 cubes, o LLM recebe-a
+# no enum (constrained decoding) mas SEM bloco de catálogo a descrever o que é.
+# Este gerador produz um bloco no mesmo formato dos escritos à mão, a partir do
+# MEASURE_REGISTRY — usado como fallback no `_filter_catalog_blocks` do
+# interpret para os cubes sem bloco curado. Auto-gerado → nunca diverge.
+
+_UNIT_LABEL: dict[CanonicalUnit, str] = {
+    CanonicalUnit.QUANTIDADE_FISICA: "quantidade física (kg/m²/unidade — não somar entre sub-unidades)",
+    CanonicalUnit.DINHEIRO: "€ (dinheiro)",
+    CanonicalUnit.TEMPO: "tempo (horas)",
+    CanonicalUnit.CONTAGEM: "contagem (nº)",
+    CanonicalUnit.FRACAO: "fração 0-1 (apresentar como %)",
+    CanonicalUnit.TEMPERATURA: "temperatura (°C — agrega MAX/AVG, nunca SUM)",
+}
+
+
+def render_catalog_block(cube_name: str) -> str:
+    """Q.157.D — bloco Markdown de catálogo para um cube, gerado do
+    ``MEASURE_REGISTRY``, no formato dos blocos ``### Cube: `x``` escritos à
+    mão no ``cube_interpret.md``. Devolve "" se o cube não tiver medidas.
+
+    Inclui, por medida: nome canónico, descrição, unidade canónica, dimensões
+    suportadas e sinónimos — o suficiente para o LLM a usar correctamente
+    mesmo sem bloco curado.
+    """
+    specs = [
+        spec for name, spec in MEASURE_REGISTRY.items()
+        if name.split(".", 1)[0] == cube_name
+    ]
+    if not specs:
+        return ""
+    lines = [
+        f"### Cube: `{cube_name}`",
+        "(catálogo auto-gerado do MEASURE_REGISTRY — Q.157.D)",
+        "",
+        "**Measures**",
+    ]
+    for spec in sorted(specs, key=lambda s: s.name):
+        unit = _UNIT_LABEL.get(spec.unit, getattr(spec.unit, "value", str(spec.unit)))
+        dims = ", ".join(sorted(spec.dimensions_supported)) or "—"
+        desc = (spec.description or "").strip().rstrip(".")
+        line = f"- `{spec.name}` — {desc}. Unidade: {unit}; dimensões: {dims}."
+        if spec.synonyms:
+            line += f" Sinónimos: {', '.join(spec.synonyms[:8])}."
+        lines.append(line)
+    return "\n".join(lines) + "\n"

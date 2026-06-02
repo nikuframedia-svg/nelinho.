@@ -110,6 +110,10 @@ async def test_freshness_reports_six_mirrors_json() -> None:
                 "--mode", "freshness",
                 "--stale-hours", "48",
                 "--json",
+                # factory_raw vive na BD partilhada e pode estar legitimamente
+                # stale (full-copy nocturno) — exclui-o para o teste de
+                # core.etl_run ser determinístico (Q.157.0).
+                "--no-factory-raw",
             ],
             cwd=str(_REPO_ROOT),
             env={"PYTHONPATH": env_pythonpath, **_clean_env()},
@@ -146,9 +150,12 @@ async def test_freshness_reports_six_mirrors_json() -> None:
                 f"{mirror}: last_status={entry['last_status']!r}, esperava 'ok'"
             )
             assert entry["idade_horas"] is not None
-            # Janela larga para tolerar latência do test runner.
-            assert 11.0 <= entry["idade_horas"] <= 14.0, (
-                f"{mirror}: idade_horas={entry['idade_horas']}, esperava ~12h"
+            # Numa BD a sincronizar (sync saudável), o mirror real pode ter
+            # uma linha MAIS recente que o seed de 12h — o `DISTINCT ON (source)
+            # ORDER BY started_at DESC` escolhe a mais recente. Por isso só
+            # exigimos idade sã e não-stale (<48h), não exactamente ~12h.
+            assert 0.0 <= entry["idade_horas"] <= 14.0, (
+                f"{mirror}: idade_horas={entry['idade_horas']}, esperava <14h"
             )
 
     finally:

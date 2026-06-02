@@ -49,6 +49,7 @@ from src.scheduling.jobs.nelo_erp import (
     _nelo_erp_logistica_job,
     _nelo_erp_phase_history_incremental_job,
     _nelo_erp_production_orders_job,
+    _nelo_erp_raw_full_nightly_job,
     _nelo_erp_raw_incremental_job,
     _nelo_erp_sync_job,
     _nelo_erp_time_mining_job,
@@ -219,6 +220,20 @@ def start_scheduler(
         trigger=IntervalTrigger(minutes=5, jitter=_ERP_SYNC_JITTER_S),
         id="nelo_erp_raw_incremental",
         name="nelo_erp_raw_incremental",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Q.157.0 — full-copy nocturno das tabelas factory_raw de baixa velocidade
+    # (produto/fases_producao/moldes/entidade/produto_fase/produto_componente/
+    # offp_eq/apontamento_trabalho). O incremental de 5 min salta-as; sem este
+    # job ficavam dias stale (audit 2026-06-02: offp_eq/produto a 3 dias). 02:30
+    # UTC = depois do mirror curado (02:00), antes da calibração (06:40).
+    _scheduler.add_job(
+        _nelo_erp_raw_full_nightly_job,
+        trigger=CronTrigger(hour=2, minute=30, timezone="UTC"),
+        id="nelo_erp_raw_full_nightly",
+        name="nelo_erp_raw_full_nightly",
         replace_existing=True,
         coalesce=True,
         max_instances=1,

@@ -12,6 +12,13 @@ O modo ``freshness`` aceita ``--stale-hours N`` (default 24): o script
 sai com exit code ``1`` se qualquer mirror tiver idade > N horas. Útil
 para um job de CI que dispara alarme quando o sync nocturno morre.
 
+Q.157.0 — o ``freshness`` inclui POR DEFEITO as tabelas ``factory_raw.*``
+(via ``MAX(_synced_at)``), com idade-máxima por cadência (5-min → 1.5h;
+full-copy nocturno → 26h). O raw-sync não escreve em ``core.etl_run``, por
+isso sem isto um raw morto era invisível (audit 2026-06-02: produto/offp_eq
+parados 3 dias). ``--no-factory-raw`` desliga (usado pelo teste de
+integração, que não controla o estado do factory_raw na BD partilhada).
+
 ``--json`` emite a saída como JSON em vez de texto — usado pelo teste
 de integração ``tests/adapters/nelo/test_etl_freshness.py``.
 """
@@ -112,6 +119,13 @@ def _ensure_aware(dt: datetime | None) -> datetime | None:
     return dt
 
 
+# Cadência não-diária de alguns mirrors curados — sem isto o alarme cria
+# falso-positivo todos os dias (ex.: time_mining é semanal, Domingo 01:00).
+_CORE_CADENCE_MAX_H: dict[str, float] = {
+    "time_mining": 8 * 24.0,  # semanal → folga de 8 dias
+}
+
+
 async def _run_freshness() -> list[dict[str, Any]]:
     """Lê o último run por ``source`` em ``core.etl_run``.
 
@@ -149,6 +163,7 @@ async def _run_freshness() -> list[dict[str, Any]]:
             "rows_read": int(row.rows_read or 0),
             "rows_skipped": int(row.rows_skipped or 0),
             "idade_horas": idade_horas,
+            "expected_max_hours": _CORE_CADENCE_MAX_H.get(row.source),
             "error": row.error,
         })
         seen.add(row.source)
@@ -173,6 +188,71 @@ async def _run_freshness() -> list[dict[str, Any]]:
     return out
 
 
+# Idade-máxima esperada (h) por cadência de sync das tabelas factory_raw.
+_RAW_INCREMENTAL_MAX_H = 1.5   # 5-min: morto se > 1.5h (folga p/ jitter/Tailscale)
+_RAW_NIGHTLY_MAX_H = 26.0      # full-copy nocturno: morto se > 26h
+
+
+def _factory_raw_cadence() -> dict[str, float]:
+    """pg_table -> idade-máxima-esperada (h), derivada das RAW_TABLES do q75.
+    Incremental (5-min) -> 1.5h; full-copy nocturno -> 26h. Best-effort:
+    tabelas fora do q75 (comercial/logística/IoT) ficam sem entrada e caem no
+    ``--stale-hours`` global."""
+    try:
+        from scripts.q75_setup_raw_mirror import RAW_TABLES
+    except Exception:  # pragma: no cover - q75 importa sempre em prod
+        return {}
+    return {
+        t.pg_name: (
+            _RAW_INCREMENTAL_MAX_H if t.supports_incremental else _RAW_NIGHTLY_MAX_H
+        )
+        for t in RAW_TABLES
+    }
+
+
+async def _run_factory_raw_freshness(now: datetime) -> list[dict[str, Any]]:
+    """Frescura das tabelas ``factory_raw.*`` via ``MAX(_synced_at)``.
+
+    O raw-sync (q75/q102/q104) NÃO escreve em ``core.etl_run`` — só carimba
+    ``_synced_at`` em cada tabela. Sem este check, um raw-sync morto (ex.:
+    full-copy nocturno parado 3 dias, audit 2026-06-02) era invisível ao
+    alarme (Q.157.0). Cada tabela com coluna ``_synced_at`` é reportada como
+    source ``factory_raw.<tabela>`` com a sua idade-máxima esperada.
+    """
+    cadence = _factory_raw_cadence()
+    out: list[dict[str, Any]] = []
+    async with async_session_factory() as s:
+        tbls = (await s.execute(text(
+            "SELECT table_name FROM information_schema.columns "
+            "WHERE table_schema='factory_raw' AND column_name='_synced_at' "
+            "ORDER BY table_name"
+        ))).scalars().all()
+        for t in tbls:
+            try:
+                mx = (await s.execute(text(
+                    f'SELECT max(_synced_at) FROM factory_raw."{t}"'
+                ))).scalar()
+            except Exception:  # pragma: no cover - defensivo
+                continue
+            synced = _ensure_aware(mx)
+            idade = (
+                round((now - synced).total_seconds() / 3600.0, 2)
+                if synced else None
+            )
+            out.append({
+                "source": f"factory_raw.{t}",
+                "last_status": "ok" if synced else "never_ran",
+                "last_run_at": synced.isoformat() if synced else None,
+                "last_finished_at": synced.isoformat() if synced else None,
+                "rows_inserted": 0, "rows_updated": 0,
+                "rows_read": 0, "rows_skipped": 0,
+                "idade_horas": idade,
+                "expected_max_hours": cadence.get(t),
+                "error": None,
+            })
+    return out
+
+
 def _print_freshness(rows: list[dict[str, Any]], stale_hours: float) -> None:
     print(f"{'SOURCE':<22} {'STATUS':<10} {'IDADE_H':>8} {'INS+UPD':>10}  LAST_RUN_AT")
     print("-" * 78)
@@ -181,11 +261,12 @@ def _print_freshness(rows: list[dict[str, Any]], stale_hours: float) -> None:
         idade_str = f"{idade:>8.2f}" if idade is not None else f"{'—':>8}"
         ins_upd = (r["rows_inserted"] or 0) + (r["rows_updated"] or 0)
         last = r["last_run_at"] or "—"
+        threshold = r.get("expected_max_hours") or stale_hours
         marker = ""
         if r["last_status"] == "never_ran":
             marker = "  [NUNCA CORREU]"
-        elif idade is not None and idade > stale_hours:
-            marker = f"  [STALE > {stale_hours}h]"
+        elif idade is not None and idade > threshold:
+            marker = f"  [STALE > {threshold}h]"
         elif r["last_status"] not in ("ok", "running"):
             marker = "  [FAIL]"
         print(
@@ -202,7 +283,10 @@ def _is_stale(rows: list[dict[str, Any]], stale_hours: float) -> list[str]:
             stale.append(r["source"])
             continue
         idade = r["idade_horas"]
-        if idade is not None and idade > stale_hours:
+        # factory_raw traz a sua própria idade-máxima por cadência; core.etl_run
+        # usa o --stale-hours global (expected_max_hours ausente → None).
+        threshold = r.get("expected_max_hours") or stale_hours
+        if idade is not None and idade > threshold:
             stale.append(r["source"])
     return stale
 
@@ -230,6 +314,14 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Emite o relatório em JSON (para integração CI).",
     )
+    p.add_argument(
+        "--no-factory-raw",
+        dest="include_factory_raw",
+        action="store_false",
+        help="(freshness) NÃO incluir factory_raw._synced_at no relatório. "
+             "Por defeito o raw-sync é incluído (Q.157.0) para o alarme não "
+             "ter o ponto cego que deixou passar 3 dias de staleness.",
+    )
     return p
 
 
@@ -242,8 +334,12 @@ async def _amain(args: argparse.Namespace) -> int:
             _print_fullness(report)
         return 0
 
-    # freshness
+    # freshness — core.etl_run (mirrors curados) + factory_raw._synced_at
+    # (raw-sync, que não escreve em etl_run — Q.157.0 fecha esse ponto cego).
     rows = await _run_freshness()
+    if args.include_factory_raw:
+        rows += await _run_factory_raw_freshness(_utcnow())
+        rows.sort(key=lambda r: r["source"])
     stale = _is_stale(rows, args.stale_hours)
     if args.as_json:
         print(json.dumps(

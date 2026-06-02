@@ -476,24 +476,36 @@ async def load_phase_histories(
     limit: int = 100_000,
 ) -> "pd.DataFrame":
     """
-    Retorna DataFrame [of_id, phase_code, phase_order] de plan.fases_of_history.
-    Fallback para factory_curated.order_phase se a tabela ainda não existir.
+    Retorna DataFrame [of_id, phase_code, phase_order].
+
+    Q.157.A — fonte primária: ``factory_raw.of_fp`` (ERP vivo, ~538k execuções
+    de fase). ``plan.fases_of_history`` está vazia neste deployment (0 linhas) —
+    o mesmo motivo que levou o Q.150 a repontar os jobs de afinidade para
+    ``factory_raw``. ``phase_order`` = ordem de execução REAL (ROW_NUMBER por
+    ``OFFP_DATAINICIO``). Fallback para ``factory_curated.order_phase`` por baixo.
+    Datas são texto ISO em factory_raw → ``CAST(NULLIF(...,'') AS timestamp)``,
+    o mesmo tratamento do CPO em ``state._load_historical_durations_routes_db``.
     """
     import pandas as pd
 
     sql = text(
         """
-        SELECT of_id, phase_code, phase_order
-        FROM plan.fases_of_history
-        WHERE tenant_id = :tenant_id
-        ORDER BY of_id, phase_order
+        SELECT op."OFFP_OF_ID"::text AS of_id,
+               op."OFFP_FP_ID"::text AS phase_code,
+               ROW_NUMBER() OVER (
+                   PARTITION BY op."OFFP_OF_ID"
+                   ORDER BY CAST(NULLIF(op."OFFP_DATAINICIO", '') AS timestamp)
+               ) AS phase_order
+        FROM factory_raw.of_fp op
+        WHERE NULLIF(op."OFFP_DATAINICIO", '') IS NOT NULL
+          AND op."OFFP_OF_ID" IS NOT NULL
+          AND op."OFFP_FP_ID" IS NOT NULL
+        ORDER BY op."OFFP_OF_ID", phase_order
         LIMIT :limit
         """
     )
     try:
-        rows = (
-            await session.execute(sql, {"tenant_id": str(tenant_id), "limit": limit})
-        ).mappings().all()
+        rows = (await session.execute(sql, {"limit": limit})).mappings().all()
         if rows:
             return pd.DataFrame([dict(r) for r in rows])
     except Exception as exc:
@@ -558,29 +570,33 @@ async def load_throughput_ts(
     limit: int = 50_000,
 ) -> "pd.DataFrame":
     """
-    Retorna DataFrame [date, boat_id, ops_concluidas] de plan.fases_of_history.
-    Fallback para order_phase se a tabela não existir.
+    Retorna DataFrame [date, boat_id, ops_concluidas].
+
+    Q.157.A — fonte primária: ``factory_raw.of_fp`` (ERP vivo). Conta as fases
+    CONCLUÍDAS (``OFFP_DATAFIM`` preenchido) por dia e por modelo (``OF_P_ID``,
+    via join à ordemfabrico). ``plan.fases_of_history`` está vazia neste
+    deployment. Fallback para ``factory_curated.order_phase`` por baixo.
     """
     import pandas as pd
 
     sql = text(
         """
         SELECT
-            DATE(completed_at) AS date,
-            boat_id::text AS boat_id,
+            DATE(CAST(NULLIF(op."OFFP_DATAFIM", '') AS timestamp)) AS date,
+            ofb."OF_P_ID"::text AS boat_id,
             COUNT(*) AS ops_concluidas
-        FROM plan.fases_of_history
-        WHERE tenant_id = :tenant_id
-          AND completed_at IS NOT NULL
-        GROUP BY DATE(completed_at), boat_id
+        FROM factory_raw.of_fp op
+        JOIN factory_raw.ordemfabrico ofb ON ofb."OF_ID" = op."OFFP_OF_ID"
+        WHERE NULLIF(op."OFFP_DATAFIM", '') IS NOT NULL
+          AND ofb."OF_P_ID" IS NOT NULL
+        GROUP BY DATE(CAST(NULLIF(op."OFFP_DATAFIM", '') AS timestamp)),
+                 ofb."OF_P_ID"
         ORDER BY date, boat_id
         LIMIT :limit
         """
     )
     try:
-        rows = (
-            await session.execute(sql, {"tenant_id": str(tenant_id), "limit": limit})
-        ).mappings().all()
+        rows = (await session.execute(sql, {"limit": limit})).mappings().all()
         if rows:
             df = pd.DataFrame([dict(r) for r in rows])
             df["date"] = pd.to_datetime(df["date"])
