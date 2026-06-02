@@ -37,7 +37,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
-from src.plan.services.auto_propose import propose_decision_row
+from src.plan.services.auto_propose import _SYSTEM_ACTOR, propose_decision_row
 from src.plan.services.rate_limiter import RateLimiter
 from src.scheduling.jobs.auto_cpo_replan_job import _resolve_tenants
 from src.shared.auth.tenant_context import tenant_scope
@@ -68,17 +68,89 @@ async def _enabled(session, tenant_id: UUID) -> bool:
         return True
 
 
-async def _existing_proposed_targets(session, tenant_id: UUID) -> set[tuple[str, str]]:
-    """`{(action_type, target)}` das decisões já PROPOSED (dedup durável)."""
+async def _blocked_targets(session, tenant_id: UUID) -> set[tuple[str, str]]:
+    """`{(action_type, target)}` de QUALQUER decisão já existente (qualquer
+    status). Q.157.G.2: bloqueia re-propor o mesmo target — não duplica os
+    PROPOSED abertos E respeita o "não" humano (REJECTED) e os já decididos
+    (APPROVED/EXECUTED). Para ADOPT_PLAN o target é a sha (única por plano), por
+    isso um plano NOVO (nova sha) é proposto à mesma."""
     rows = (
         await session.execute(
             select(SharedDecisionRun.action_type, SharedDecisionRun.target).where(
                 SharedDecisionRun.tenant_id == tenant_id,
-                SharedDecisionRun.status == DecisionStatus.PROPOSED.value,
             )
         )
     ).all()
     return {(str(a), str(t)) for a, t in rows}
+
+
+async def _publish_decision_rejected(tenant_id: UUID, decision) -> None:
+    """Publica DECISION_REJECTED no SSE (best-effort)."""
+    try:
+        from src.shared.kafka_client import EventBase, Topics, publish_event
+
+        await publish_event(
+            Topics.DECISION_REJECTED,
+            EventBase(
+                event_type="DECISION_REJECTED",
+                tenant_id=tenant_id,
+                source_module="scheduling.jobs.auto_propose_signals_job",
+                payload={
+                    "decision_id": str(decision.id),
+                    "action_type": decision.action_type,
+                    "reason": "superseded",
+                },
+            ),
+        )
+    except Exception as exc:  # pragma: no cover - best-effort
+        logger.debug("DECISION_REJECTED publish falhou para %s: %s", decision.id, exc)
+
+
+async def _supersede_stale_adopt_plans(
+    session_factory, tenant_id: UUID, keep_sha,
+) -> int:
+    """Q.157.G.1 — marca REJECTED ("superseded") os ADOPT_PLAN PROPOSED cujo
+    target != keep_sha. Mantém ≤1 ADOPT_PLAN aberto (o plano CPO mais recente).
+    Se keep_sha é None (sem DRAFT por adotar / já LIVE), supersede TODOS.
+    Audit na mesma tx; SSE best-effort. Devolve nº superseded."""
+    from src.governance.audit_service import audit_change
+
+    superseded = []
+    async with session_factory() as session:
+        rows = (
+            await session.execute(
+                select(SharedDecisionRun).where(
+                    SharedDecisionRun.tenant_id == tenant_id,
+                    SharedDecisionRun.action_type == "ADOPT_PLAN",
+                    SharedDecisionRun.status == DecisionStatus.PROPOSED.value,
+                )
+            )
+        ).scalars().all()
+        for d in rows:
+            if keep_sha is not None and str(d.target) == str(keep_sha):
+                continue
+            d.status = DecisionStatus.REJECTED.value
+            await audit_change(
+                session,
+                tenant_id=tenant_id,
+                entity_type="decision_run",
+                entity_id=d.id,
+                action="UPDATE",
+                old_values={"status": DecisionStatus.PROPOSED.value},
+                new_values={"status": DecisionStatus.REJECTED.value, "reason": "superseded"},
+                actor_id=_SYSTEM_ACTOR,
+                reason=(
+                    "Q.157.G ADOPT_PLAN superseded por plano "
+                    f"{(keep_sha or 'LIVE')[:8]}"
+                ),
+            )
+            superseded.append(d)
+        if superseded:
+            await session.commit()
+
+    for d in superseded:
+        await _publish_decision_rejected(tenant_id, d)
+    return len(superseded)
 
 
 # ---------------------------------------------------------------------------
@@ -353,10 +425,10 @@ async def _auto_propose_signals_job(tenant_ids: List[UUID]) -> None:
                         continue
                     candidates: List[Dict[str, Any]] = []
                     for gen in (
-                    _planning_candidates,
-                    _expedition_candidates,
-                    _otd_reschedule_candidates,
-                ):
+                        _planning_candidates,
+                        _expedition_candidates,
+                        _otd_reschedule_candidates,
+                    ):
                         try:
                             candidates.extend(await gen(session, tid))
                         except Exception as exc:  # best-effort por sinal
@@ -364,13 +436,33 @@ async def _auto_propose_signals_job(tenant_ids: List[UUID]) -> None:
                                 "auto_propose_signals: gerador %s falhou tenant=%s: %s",
                                 getattr(gen, "__name__", gen), tid, exc,
                             )
-                    existing = await _existing_proposed_targets(session, tid)
+
+                # Q.157.G.1 — supersede ADOPT_PLAN obsoletos: mantém ≤1 aberto (o
+                # plano CPO mais recente). keep_sha = target do candidato de plano
+                # (ou None se não há DRAFT por adotar → supersede todos).
+                keep_sha = next(
+                    (c["target"] for c in candidates if c["action_type"] == "ADOPT_PLAN"),
+                    None,
+                )
+                superseded = await _supersede_stale_adopt_plans(
+                    async_session_factory, tid, keep_sha,
+                )
+                if superseded:
+                    logger.info(
+                        "auto_propose_signals: %d ADOPT_PLAN superseded tenant=%s",
+                        superseded, tid,
+                    )
+
+                # Bloqueados = qualquer target já existente (Q.157.G.2): não
+                # duplica abertos, não re-propõe rejeitados/decididos. Lido DEPOIS
+                # do supersede para refletir os que acabaram de ser rejeitados.
+                async with get_session_context() as session2:
+                    blocked = await _blocked_targets(session2, tid)
 
                 created = 0
                 for cand in candidates:
                     key = f"{tid}:{cand['action_type']}:{cand['target']}"
-                    # Dedup durável: já existe uma PROPOSED igual ainda aberta.
-                    if (cand["action_type"], cand["target"]) in existing:
+                    if (cand["action_type"], cand["target"]) in blocked:
                         continue
                     # Rate-limit in-memory (5 min) para não repetir entre ticks.
                     if not _rate_limiter.is_allowed(key):

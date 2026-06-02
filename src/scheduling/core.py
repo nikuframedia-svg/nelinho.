@@ -331,13 +331,15 @@ def start_scheduler(
         coalesce=True,
         max_instances=1,
     )
-    # Q.157.A — auto-propose REAL: a cada 15 min gera decisões PROPOSED a partir
-    # de sinais do plano vivo (saúde de molde + risco OTD) → enchem a landing
-    # /decisoes com propostas reais (não o seed). In-process, sem Kafka/dev-gate.
-    # Q.17: nascem PROPOSED (nunca auto-LIVE). Dedup durável + rate-limit 5 min.
+    # Q.157.A/F/G — auto-propose REAL: gera decisões PROPOSED de sinais do plano
+    # vivo (planeamento CPO ADOPT_PLAN + expedição + OTD) → enchem a landing
+    # /decisoes. In-process, sem Kafka/dev-gate. Q.17: nascem PROPOSED (nunca
+    # auto-LIVE). Supersede mantém ≤1 ADOPT_PLAN aberto; bloqueia re-propor
+    # rejeitados. Q.157.G.3: 5 min (job leve) alinha com o sync ERP → menos
+    # latência mudança→ADOPT_PLAN.
     _scheduler.add_job(
         _auto_propose_signals_job,
-        trigger=IntervalTrigger(minutes=15),
+        trigger=IntervalTrigger(minutes=5, jitter=_ERP_SYNC_JITTER_S),
         args=[tenants or []],
         id="auto_propose_signals",
         name="auto_propose_signals",

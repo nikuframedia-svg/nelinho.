@@ -280,7 +280,7 @@ def _one_candidate():
 
 
 @pytest.mark.asyncio
-async def test_job_dedup_skips_existing_proposed():
+async def test_job_blocked_skips_existing_target():
     job._rate_limiter._last_seen.clear()
     persisted = AsyncMock()
     with patch.object(job, "_resolve_tenants", AsyncMock(return_value=[TENANT])), \
@@ -291,11 +291,12 @@ async def test_job_dedup_skips_existing_proposed():
                       AsyncMock(return_value=[_one_candidate()])), \
          patch.object(job, "_expedition_candidates", AsyncMock(return_value=[])), \
          patch.object(job, "_otd_reschedule_candidates", AsyncMock(return_value=[])), \
-         patch.object(job, "_existing_proposed_targets",
+         patch.object(job, "_supersede_stale_adopt_plans", AsyncMock(return_value=0)), \
+         patch.object(job, "_blocked_targets",
                       AsyncMock(return_value={("ADOPT_PLAN", "draftsha-1")})), \
          patch.object(job, "propose_decision_row", persisted):
         await job._auto_propose_signals_job([TENANT])
-    persisted.assert_not_called()
+    persisted.assert_not_called()  # target já existe (qq status) → não re-propõe
 
 
 @pytest.mark.asyncio
@@ -311,7 +312,8 @@ async def test_job_creates_then_rate_limits_second_tick():
                      AsyncMock(return_value=[_one_candidate()])),
         patch.object(job, "_expedition_candidates", AsyncMock(return_value=[])),
         patch.object(job, "_otd_reschedule_candidates", AsyncMock(return_value=[])),
-        patch.object(job, "_existing_proposed_targets", AsyncMock(return_value=set())),
+        patch.object(job, "_supersede_stale_adopt_plans", AsyncMock(return_value=0)),
+        patch.object(job, "_blocked_targets", AsyncMock(return_value=set())),
         patch.object(job, "propose_decision_row", persisted),
     )
     for p in ps:
@@ -323,3 +325,92 @@ async def test_job_creates_then_rate_limits_second_tick():
         for p in ps:
             p.stop()
     assert persisted.await_count == 1
+
+
+# ───────────────────────── 6 — Supersede ADOPT_PLAN obsoletos ──────────────
+
+@pytest.mark.asyncio
+async def test_supersede_rejects_stale_adopt_plans_keeps_latest():
+    from src.core.models.audit import AuditLog
+
+    keep = SimpleNamespace(id=uuid4(), target="shaKEEP",
+                           status="PROPOSED", action_type="ADOPT_PLAN")
+    stale = SimpleNamespace(id=uuid4(), target="shaOLD",
+                            status="PROPOSED", action_type="ADOPT_PLAN")
+
+    class _Scalars:
+        def all(self):
+            return [keep, stale]
+
+    class _Result:
+        def scalars(self):
+            return _Scalars()
+
+    class _Sess:
+        def __init__(self):
+            self.added: List[Any] = []
+            self.committed = False
+
+        async def execute(self, stmt):
+            return _Result()
+
+        def add(self, o):
+            self.added.append(o)
+
+        async def flush(self):
+            for o in self.added:
+                if getattr(o, "id", None) is None:
+                    object.__setattr__(o, "id", uuid4())
+
+        async def commit(self):
+            self.committed = True
+
+    sess = _Sess()
+
+    @asynccontextmanager
+    async def _factory_one():
+        yield sess
+
+    n = await job._supersede_stale_adopt_plans(_factory_one, TENANT, "shaKEEP")
+    assert n == 1
+    assert keep.status == "PROPOSED"    # o plano mais recente fica
+    assert stale.status == "REJECTED"   # o antigo é superseded
+    assert sess.committed
+    assert any(isinstance(a, AuditLog) for a in sess.added), "audit do supersede"
+
+
+@pytest.mark.asyncio
+async def test_supersede_all_when_keep_sha_none():
+    a1 = SimpleNamespace(id=uuid4(), target="sha1", status="PROPOSED",
+                         action_type="ADOPT_PLAN")
+
+    class _Sess:
+        def __init__(self):
+            self.added: List[Any] = []
+
+        async def execute(self, stmt):
+            class _R:
+                def scalars(self_):
+                    class _S:
+                        def all(self__):
+                            return [a1]
+                    return _S()
+            return _R()
+
+        def add(self, o):
+            self.added.append(o)
+
+        async def flush(self):
+            pass
+
+        async def commit(self):
+            pass
+
+    @asynccontextmanager
+    async def _factory_one():
+        yield _Sess()
+
+    # keep_sha=None → não há DRAFT por adotar → supersede TODOS.
+    n = await job._supersede_stale_adopt_plans(_factory_one, TENANT, None)
+    assert n == 1
+    assert a1.status == "REJECTED"
