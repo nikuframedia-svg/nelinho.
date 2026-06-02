@@ -122,6 +122,20 @@ def test_quality_risk_dataset_empty_when_no_phases():
     assert build_quality_risk_dataset_sync(session) == []
 
 
+def test_quality_risk_dataset_surfaces_real_team_size():
+    """Q.156.D (BD-3): o dataset de qualidade também tira team_size de offp_eq."""
+    phase_rows = [
+        {"of_id": "O1", "fase_id": "36", "molde_id": "M1",
+         "data_inicio": T0, "product_type": "K1", "team_size": 2},
+        {"of_id": "O2", "fase_id": "36", "molde_id": None,
+         "data_inicio": T0 + timedelta(hours=1), "product_type": "K1",
+         "team_size": 1},
+    ]
+    rework_rows: list[Any] = []
+    rows = build_quality_risk_dataset_sync(_ScriptedSession([phase_rows, rework_rows]))
+    assert sorted(r["team_size"] for r in rows) == [1, 2]
+
+
 # ─── duration dataset ─────────────────────────────────────────────────────
 
 def test_duration_dataset_keeps_positive_hours_only():
@@ -145,6 +159,23 @@ def test_duration_dataset_keeps_positive_hours_only():
 def test_duration_dataset_empty_when_no_rows():
     session = _ScriptedSession([[]])
     assert build_duration_dataset_sync(session) == []
+
+
+def test_duration_dataset_surfaces_real_team_size():
+    """Q.156.D (BD-3): team_size vem de offp_eq (não hardcoded=1). A LEFT JOIN
+    devolve a coluna por linha; o builder tem de a propagar (COALESCE → 1)."""
+    phase_rows = [
+        {"of_id": "O1", "fase_id": "36", "fase_nome": "Laminagem",
+         "molde_id": "M1", "horas_reais": 7.5,
+         "data_inicio": T0, "product_type": "K1", "team_size": 3},
+        {"of_id": "O2", "fase_id": "40", "fase_nome": "Cura",
+         "molde_id": None, "horas_reais": 4.0,
+         "data_inicio": T0 + timedelta(hours=1), "product_type": "K2",
+         "team_size": 1},
+    ]
+    rows = build_duration_dataset_sync(_ScriptedSession([phase_rows]))
+    assert [r["team_size"] for r in rows] == [3, 1]
+    assert any(r["team_size"] != 1 for r in rows)  # BD-3: não é tudo 1
 
 
 # ─── phase-key normalisation ──────────────────────────────────────────────

@@ -88,10 +88,18 @@ async def build_duration_dataset(
               - CAST(NULLIF(op."OFFP_DATAINICIO", '') AS timestamp)
             )) / 3600.0         AS horas_reais,
             CAST(NULLIF(op."OFFP_DATAINICIO", '') AS timestamp) AS data_inicio,
-            ofb."OF_P_ID"       AS product_type
+            ofb."OF_P_ID"       AS product_type,
+            -- Q.156.D (BD-3) — team_size real por execução de fase, vindo de
+            -- factory_raw.offp_eq (crew records). Antes hardcoded=1. COALESCE
+            -- mantém o default neutro p/ fases sem equipa (ex.: Cura).
+            COALESCE(eqc.team_size, 1) AS team_size
         FROM factory_raw.of_fp op
         LEFT JOIN factory_raw.fases_producao fp ON fp."FP_ID" = op."OFFP_FP_ID"
         LEFT JOIN factory_raw.ordemfabrico  ofb ON ofb."OF_ID" = op."OFFP_OF_ID"
+        LEFT JOIN (
+            SELECT "OFFPEQ_OFFP_ID" AS offp_id, COUNT(*) AS team_size
+            FROM factory_raw.offp_eq GROUP BY "OFFPEQ_OFFP_ID"
+        ) eqc ON eqc.offp_id = op."OFFP_ID"
         WHERE NULLIF(op."OFFP_DATAINICIO", '') IS NOT NULL
           AND NULLIF(op."OFFP_DATAFIM", '')    IS NOT NULL
           AND CAST(NULLIF(op."OFFP_DATAFIM", '') AS timestamp)
@@ -138,7 +146,7 @@ async def build_duration_dataset(
             {
                 "modelo_id": str(r["product_type"] or "desconhecido"),
                 "fase_id": fase_id,
-                "team_size": 1,  # not tracked on order_phase — neutral default
+                "team_size": int(r.get("team_size") or 1),  # Q.156.D — real, de offp_eq
                 "mold_pocket_count": 1,  # order_phase has no pocket count — neutral default
                 "is_rework": 0,
                 "queue_depth": fase_counts.get(fase_id, 0),
@@ -188,9 +196,15 @@ async def build_quality_risk_dataset(
             op."OFFP_FP_ID"     AS fase_id,
             op."OFFP_OF_ID_MLD" AS molde_id,
             CAST(NULLIF(op."OFFP_DATAINICIO", '') AS timestamp) AS data_inicio,
-            ofb."OF_P_ID"       AS product_type
+            ofb."OF_P_ID"       AS product_type,
+            -- Q.156.D (BD-3) — team_size real de factory_raw.offp_eq.
+            COALESCE(eqc.team_size, 1) AS team_size
         FROM factory_raw.of_fp op
         LEFT JOIN factory_raw.ordemfabrico ofb ON ofb."OF_ID" = op."OFFP_OF_ID"
+        LEFT JOIN (
+            SELECT "OFFPEQ_OFFP_ID" AS offp_id, COUNT(*) AS team_size
+            FROM factory_raw.offp_eq GROUP BY "OFFPEQ_OFFP_ID"
+        ) eqc ON eqc.offp_id = op."OFFP_ID"
         WHERE NULLIF(op."OFFP_DATAINICIO", '') IS NOT NULL
         ORDER BY op."OFFP_FP_ID", data_inicio
         LIMIT :limit
@@ -267,7 +281,7 @@ async def build_quality_risk_dataset(
             {
                 "modelo_id": str(r["product_type"] or "desconhecido"),
                 "fase_id": fase_id,
-                "team_size": 1,
+                "team_size": int(r.get("team_size") or 1),  # Q.156.D — real, de offp_eq
                 "mold_pocket_count": 1,
                 "phase_error_rate": round(rate, 4),
                 "queue_depth": total,
