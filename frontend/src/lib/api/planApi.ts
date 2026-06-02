@@ -283,18 +283,21 @@ export const workerOperationsApi = {
       `/v1/plan/schedule/worker/${employeeId}/operations-today${qs}`,
     );
   },
-  /** Q.30.A — operador marca uma fase como iniciada (SCHEDULED→IN_PROGRESS). */
-  start: (scheduleId: string) =>
-    request<OperationState>(`/v1/plan/schedule/${scheduleId}/start`, {
-      method: 'POST',
-      body: JSON.stringify({}),
-    }),
-  /** Q.30.A — operador marca uma fase como concluída (IN_PROGRESS→COMPLETED). */
-  complete: (scheduleId: string, payload?: { actual_quantity?: number }) =>
-    request<OperationState>(`/v1/plan/schedule/${scheduleId}/complete`, {
-      method: 'POST',
-      body: JSON.stringify(payload ?? {}),
-    }),
+  /**
+   * Q.157.E — operador inicia uma operação do plano LIVE (SCHEDULED→IN_PROGRESS).
+   * `operationId` é o `id` da WorkerOperation (= operation_id do commit LIVE).
+   */
+  start: (operationId: string) =>
+    request<OperationState>(
+      `/v1/plan/schedule/operation/${operationId}/start`,
+      { method: 'POST', body: JSON.stringify({}) },
+    ),
+  /** Q.157.E — operador conclui uma operação do plano LIVE (IN_PROGRESS→COMPLETED). */
+  complete: (operationId: string, payload?: { actual_quantity?: number }) =>
+    request<OperationState>(
+      `/v1/plan/schedule/operation/${operationId}/complete`,
+      { method: 'POST', body: JSON.stringify(payload ?? {}) },
+    ),
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════

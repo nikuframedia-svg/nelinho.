@@ -37,6 +37,7 @@ campos optimizados a ``null`` — assim o frontend mostra o gap.
 from __future__ import annotations
 
 import logging
+from datetime import date, datetime
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Mapping, Optional
 
 from src.plan.models.order import ProductionOrder
@@ -52,7 +53,56 @@ __all__ = [
     "pick_operation_for_order",
     "is_boat_by_order_ids",
     "product_id_by_order_ids",
+    "operations_for_worker_day",
 ]
+
+
+def _op_date(value: Any) -> Optional[date]:
+    """Data (``date``) do ``start_time``/``end_time`` ISO de uma operação.
+
+    O decoder serializa ``start_time``/``end_time`` como ISO naive
+    (``2026-06-02T08:00:00``). ``None``/inválido → ``None``.
+    """
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value)).date()
+    except (ValueError, TypeError):
+        return None
+
+
+def operations_for_worker_day(
+    operations: Iterable[Mapping[str, Any]],
+    worker_code: str,
+    target_day: date,
+) -> List[Mapping[str, Any]]:
+    """Q.157.D — operações do plano LIVE atribuídas a ``worker_code`` activas
+    no dia ``target_day``, ordenadas por ``start_time``.
+
+    Filtra o ``operations[]`` de um ``ScheduleCommit``: o operador vive em
+    ``op["workers"]`` (lista de ``employee_code`` — Q.148, NÃO ``operator_id``).
+    "Activa no dia" = a janela ``[start_time, end_time]`` da operação cobre
+    ``target_day`` (mesma semântica de overlap da query antiga em
+    ``production_schedules``). Função PURA (sem I/O) → testável isolada.
+    """
+    code = str(worker_code).strip()
+    if not code:
+        return []
+    matched: List[Mapping[str, Any]] = []
+    for op in operations or []:
+        workers = op.get("workers") or []
+        if not isinstance(workers, (list, tuple)):
+            continue
+        if code not in {str(w).strip() for w in workers}:
+            continue
+        start_d = _op_date(op.get("start_time"))
+        if start_d is None:
+            continue
+        end_d = _op_date(op.get("end_time")) or start_d
+        if start_d <= target_day <= end_d:
+            matched.append(op)
+    matched.sort(key=_op_start)
+    return matched
 
 
 def _op_order_key(op: Mapping[str, Any]) -> str:

@@ -3,7 +3,7 @@ ProdPlan ONE - Schedule API
 ============================
 """
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -14,7 +14,11 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.shared.database import get_session
+from src.core.models.employee import Employee
+from src.plan.cpo.commits import CommitsService
 from src.plan.models.schedule import ProductionSchedule, ScheduleStatus
+from src.plan.services.cpo_commit_orders import operations_for_worker_day
+from src.plan.services.operation_execution_service import OperationExecutionService
 from src.plan.services.scheduling_service import (
     InvalidScheduleTransition,
     SchedulingService,
@@ -227,78 +231,112 @@ class WorkerOperationResponse(BaseModel):
     actual_end: Optional[str] = None
 
 
+async def _resolve_worker_code(
+    session: AsyncSession, tenant_id: UUID, employee_id: str,
+) -> Optional[str]:
+    """Resolve o identificador recebido para o ``employee_code`` que vive em
+    ``op["workers"]`` (Q.148/Q.157.D).
+
+    O frontend manda ``?worker=`` ou o ``user_id`` de ``auth/me``. Aceita:
+    - ``Employee.id`` (UUID) → devolve o ``employee_code`` desse colaborador;
+    - um ``employee_code`` directo (string não-UUID) → devolve-o tal e qual;
+    - UUID que não é um Employee (ex.: um ``user_id``) → ``None`` (fila vazia
+      honesta, nunca inventa operações).
+    """
+    raw = str(employee_id or "").strip()
+    if not raw:
+        return None
+    try:
+        uid = UUID(raw)
+    except (ValueError, AttributeError):
+        uid = None
+    if uid is not None:
+        emp = (
+            await session.execute(
+                select(Employee).where(
+                    Employee.tenant_id == tenant_id, Employee.id == uid,
+                )
+            )
+        ).scalar_one_or_none()
+        return emp.employee_code if emp is not None else None
+    return raw
+
+
+def _op_to_worker_response(
+    op: Dict[str, Any], exec_row: Optional[Any],
+) -> WorkerOperationResponse:
+    """Mapeia uma operação do commit LIVE → contrato do tablet, sobrepondo o
+    estado de execução real (overlay) quando existe."""
+    duration_min = op.get("duration_minutes")
+    machine = op.get("machine_id")
+    order_id = str(op.get("order_id") or "")
+    return WorkerOperationResponse(
+        id=str(op.get("operation_id") or ""),
+        order_id=order_id,
+        # A op do commit não traz sequence/product_id/quantity (o decoder não os
+        # serializa); defaults honestos — o tablet usa-os só como texto.
+        operation_sequence=0,
+        product_id=order_id,
+        quantity=1.0,
+        machine_id=str(machine) if machine else None,
+        scheduled_start=str(op.get("start_time") or ""),
+        scheduled_end=str(op.get("end_time") or ""),
+        scheduled_duration_hours=(
+            round(float(duration_min) / 60.0, 2) if duration_min is not None else None
+        ),
+        status=(exec_row.status if exec_row is not None else "SCHEDULED"),
+        actual_start=(
+            exec_row.actual_start.isoformat()
+            if exec_row is not None and exec_row.actual_start else None
+        ),
+        actual_end=(
+            exec_row.actual_end.isoformat()
+            if exec_row is not None and exec_row.actual_end else None
+        ),
+    )
+
+
 @router.get(
     "/worker/{employee_id}/operations-today",
     response_model=List[WorkerOperationResponse],
 )
 async def get_worker_operations_today(
-    employee_id: UUID,
+    employee_id: str,
     as_of: Optional[date] = None,
     tenant_id: UUID = Depends(get_tenant_id),
     session: AsyncSession = Depends(get_session),
 ):
-    """Sprint H.2 — return every ProductionSchedule assigned to
-    ``employee_id`` whose scheduled window overlaps the given day.
+    """Q.157.D — fila do operador a partir do plano LIVE do CPO.
 
-    Drives the tablet's "A minha fila de trabalho" view. Orders by
-    scheduled start so the operator sees "next up" at the top.
-    ``as_of`` defaults to today (server time); the frontend passes
-    the local date explicitly so the operator reliably sees the
-    same rows across midnight boundaries.
+    Antes lia de ``plan.production_schedules`` (só populada pelo ``/generate``
+    manual, desacoplada do CPO LIVE) → fila vazia ou stale. Agora lê do commit
+    LIVE mais recente (fallback DRAFT), filtra as operações onde o operador
+    (``employee_code``) aparece em ``op["workers"]`` e que estão activas no dia,
+    e sobrepõe o progresso real do overlay ``operation_execution`` (Q.157.E).
+    Sem commit, sem operador resolvido, ou sem ops → ``[]`` (vazio honesto).
     """
     target_day = as_of or date.today()
-    stmt = (
-        select(ProductionSchedule)
-        .where(
-            and_(
-                ProductionSchedule.tenant_id == tenant_id,
-                ProductionSchedule.assigned_employee_id == employee_id,
-                ProductionSchedule.scheduled_start_date <= target_day,
-                ProductionSchedule.scheduled_end_date >= target_day,
-            )
-        )
-        .order_by(
-            ProductionSchedule.scheduled_start_date.asc(),
-            ProductionSchedule.scheduled_start_time.asc().nullsfirst(),
-            ProductionSchedule.operation_sequence.asc(),
-        )
+    worker_code = await _resolve_worker_code(session, tenant_id, employee_id)
+    if not worker_code:
+        return []
+
+    commits = CommitsService(session, tenant_id)
+    commit = await commits.latest_live() or await commits.get_latest()
+    if commit is None:
+        return []
+
+    ops = operations_for_worker_day(commit.operations or [], worker_code, target_day)
+    if not ops:
+        return []
+
+    exec_svc = OperationExecutionService(session, tenant_id)
+    status_map = await exec_svc.status_map(
+        [str(op.get("operation_id") or "") for op in ops]
     )
-    rows = list((await session.execute(stmt)).scalars().all())
     return [
-        WorkerOperationResponse(
-            id=str(row.id),
-            order_id=row.order_id,
-            operation_sequence=row.operation_sequence,
-            product_id=str(row.product_id),
-            quantity=float(row.quantity),
-            machine_id=str(row.machine_id) if row.machine_id else None,
-            scheduled_start=_combine_date_time(
-                row.scheduled_start_date, row.scheduled_start_time,
-            ),
-            scheduled_end=_combine_date_time(
-                row.scheduled_end_date, row.scheduled_end_time,
-            ),
-            scheduled_duration_hours=(
-                float(row.scheduled_duration_hours)
-                if row.scheduled_duration_hours is not None else None
-            ),
-            status=(
-                row.status.value if isinstance(row.status, ScheduleStatus)
-                else str(row.status)
-            ),
-            actual_start=row.actual_start.isoformat() if row.actual_start else None,
-            actual_end=row.actual_end.isoformat() if row.actual_end else None,
-        )
-        for row in rows
+        _op_to_worker_response(op, status_map.get(str(op.get("operation_id") or "")))
+        for op in ops
     ]
-
-
-def _combine_date_time(d: date, t) -> str:
-    """Serialize a (date, time) pair into an ISO string the tablet UI
-    can parse with ``new Date(…)``. Time missing → day starts at 00:00."""
-    if t is None:
-        return datetime.combine(d, datetime.min.time()).isoformat()
-    return datetime.combine(d, t).isoformat()
 
 
 # ─── Q.30.A — Registar operação (iniciar / concluir) ─────────────────────
@@ -406,5 +444,103 @@ async def complete_operation(
     await session.commit()
     return _operation_state(row)
 
+
+# ─── Q.157.E — picagem das operações do plano LIVE (por operation_id) ─────
+
+def _exec_state(row: Any) -> OperationStateResponse:
+    """OperationExecution (overlay) → contrato OperationStateResponse do tablet."""
+    return OperationStateResponse(
+        id=str(row.operation_id),
+        order_id=str(row.order_id or ""),
+        operation_sequence=0,
+        status=str(row.status),
+        actual_start=row.actual_start.isoformat() if row.actual_start else None,
+        actual_end=row.actual_end.isoformat() if row.actual_end else None,
+        actual_quantity=(
+            float(row.actual_quantity) if row.actual_quantity is not None else None
+        ),
+    )
+
+
+async def _find_live_operation(
+    session: AsyncSession, tenant_id: UUID, operation_id: str,
+) -> Optional[Dict[str, Any]]:
+    """Localiza uma operação (por ``operation_id``) no commit LIVE/DRAFT mais
+    recente — para enriquecer o overlay com order_id/worker/commit_sha reais."""
+    commits = CommitsService(session, tenant_id)
+    commit = await commits.latest_live() or await commits.get_latest()
+    if commit is None:
+        return None
+    for op in commit.operations or []:
+        if str(op.get("operation_id") or "") == str(operation_id):
+            workers = op.get("workers") or []
+            first = str(workers[0]) if isinstance(workers, (list, tuple)) and workers else ""
+            return {
+                "order_id": str(op.get("order_id") or ""),
+                "worker_code": first,
+                "commit_sha": str(commit.commit_sha256 or ""),
+            }
+    return None
+
+
+@router.post("/operation/{operation_id}/start", response_model=OperationStateResponse)
+async def start_live_operation(
+    operation_id: str,
+    request: OperationStartRequest,
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Q.157.E — operador inicia uma operação do plano LIVE (SCHEDULED→IN_PROGRESS).
+
+    Escreve o progresso no overlay ``operation_execution`` (o commit é imutável),
+    com audit na mesma tx. 404 se a operação não existe no commit LIVE/DRAFT;
+    409 se a transição não é válida.
+    """
+    meta = await _find_live_operation(session, tenant_id, operation_id)
+    if meta is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Operação {operation_id} não está no plano LIVE",
+        )
+    svc = OperationExecutionService(session, tenant_id)
+    try:
+        row = await svc.start(
+            operation_id=operation_id,
+            order_id=meta["order_id"],
+            worker_code=meta["worker_code"],
+            commit_sha=meta["commit_sha"],
+            actual_start=request.actual_start or datetime.now(timezone.utc),
+        )
+    except InvalidScheduleTransition as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    await session.commit()
+    return _exec_state(row)
+
+
+@router.post(
+    "/operation/{operation_id}/complete", response_model=OperationStateResponse,
+)
+async def complete_live_operation(
+    operation_id: str,
+    request: OperationCompleteRequest,
+    tenant_id: UUID = Depends(get_tenant_id),
+    session: AsyncSession = Depends(get_session),
+):
+    """Q.157.E — operador conclui uma operação do plano LIVE (IN_PROGRESS→COMPLETED).
+
+    Grava ``actual_end``/``actual_quantity`` no overlay + audit na mesma tx.
+    409 se a operação não está IN_PROGRESS (precisa de ``/start`` antes).
+    """
+    svc = OperationExecutionService(session, tenant_id)
+    try:
+        row = await svc.complete(
+            operation_id=operation_id,
+            actual_end=request.actual_end or datetime.now(timezone.utc),
+            actual_quantity=request.actual_quantity,
+        )
+    except InvalidScheduleTransition as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    await session.commit()
+    return _exec_state(row)
 
 

@@ -109,6 +109,7 @@ from src.plan.models import phase_gap as _plan_phase_gap
 from src.plan.models import phase_config as _plan_phase_config  # Q.135.F3.1
 from src.plan.models import routing_template as _plan_routing_template
 from src.plan.models import schedule as _plan_schedule
+from src.plan.models import operation_execution as _plan_operation_execution  # Q.157.E
 from src.plan.models import transport as _plan_transport
 from src.plan.models import work_order_override as _plan_work_order_override  # Q.116.C
 
