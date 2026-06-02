@@ -125,6 +125,24 @@ def _last_day_of_month(year: int, month: int) -> _dt.date:
     return next_first - _dt.timedelta(days=1)
 
 
+def is_partial_current_month(
+    date_range: list[str] | None, today: _dt.date
+) -> bool:
+    """Q.156.B (LLM-4) — True sse `date_range` == [1º, último] do mês de
+    `today` E `today` ainda não chegou ao último dia (mês em curso → os
+    dados são parciais e o consumidor deve ser avisado)."""
+    if not date_range or len(date_range) != 2:
+        return False
+    try:
+        start = _dt.date.fromisoformat(str(date_range[0])[:10])
+        end = _dt.date.fromisoformat(str(date_range[1])[:10])
+    except (ValueError, TypeError):
+        return False
+    first = today.replace(day=1)
+    last = _last_day_of_month(today.year, today.month)
+    return start == first and end == last and today < last
+
+
 def _filter_value_to_daterange(value: object) -> tuple[str, str] | None:
     """Converte um valor de filtro "YYYY-MM" ou "YYYY-MM-DD" num dateRange
     inclusivo. Fallback quando a pergunta não dá período determinístico.

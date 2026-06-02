@@ -781,3 +781,86 @@ async def test_q93_d_bis_ambiguous_for_vague_question():
     if resp.status == "ambiguous":
         assert len(resp.data) <= 10, f"data devia estar truncado, got {len(resp.data)}"
         assert resp.warnings, "warnings tinha de estar presente"
+
+
+# ────────────────────── Q.156.B (LLM-1) — no_data para linha all-null ──────────────────────
+
+
+def test_all_rows_effectively_empty_single_null_measure_row():
+    """Q.156.B (LLM-1): [{measure: null}] é semanticamente no_data — o Cube
+    devolve uma linha de nulls para um rácio sobre slice vazio."""
+    from src.copilot.routers.ask_cube import _all_rows_effectively_empty
+
+    rows = [{"qualidade.taxa_defeitos": None}]
+    assert _all_rows_effectively_empty(rows, ["qualidade.taxa_defeitos"]) is True
+
+
+def test_all_rows_not_empty_when_one_value_present():
+    """Uma linha com valor real → NÃO é vazio (mesmo havendo nulls noutra)."""
+    from src.copilot.routers.ask_cube import _all_rows_effectively_empty
+
+    rows = [
+        {"qualidade.taxa_defeitos": None},
+        {"qualidade.taxa_defeitos": 0.062},
+    ]
+    assert _all_rows_effectively_empty(rows, ["qualidade.taxa_defeitos"]) is False
+
+
+def test_all_rows_zero_is_not_empty():
+    """Um `0.0` medido NÃO é vazio (é um zero real, não ausência de dados)."""
+    from src.copilot.routers.ask_cube import _all_rows_effectively_empty
+
+    rows = [{"ofs.fechadas_dia": 0.0}]
+    assert _all_rows_effectively_empty(rows, ["ofs.fechadas_dia"]) is False
+
+
+def test_all_rows_empty_for_empty_list():
+    from src.copilot.routers.ask_cube import _all_rows_effectively_empty
+
+    assert _all_rows_effectively_empty([], ["m"]) is True
+
+
+# ────────────────────── Q.156.B (LLM-4) — aviso de mês em curso ──────────────────────
+
+
+def test_partial_current_month_true_mid_month():
+    """Range == mês de `today` e ainda não chegou ao fim → parcial."""
+    import datetime as dt
+
+    from src.copilot.cube.interpret import is_partial_current_month
+
+    assert is_partial_current_month(
+        ["2026-06-01", "2026-06-30"], dt.date(2026, 6, 2)
+    ) is True
+
+
+def test_partial_current_month_false_on_last_day():
+    """No último dia do mês os dados já são completos (sem aviso)."""
+    import datetime as dt
+
+    from src.copilot.cube.interpret import is_partial_current_month
+
+    assert is_partial_current_month(
+        ["2026-06-01", "2026-06-30"], dt.date(2026, 6, 30)
+    ) is False
+
+
+def test_partial_current_month_false_for_past_month():
+    """Mês passado fechado → sem aviso de parcialidade."""
+    import datetime as dt
+
+    from src.copilot.cube.interpret import is_partial_current_month
+
+    assert is_partial_current_month(
+        ["2026-05-01", "2026-05-31"], dt.date(2026, 6, 2)
+    ) is False
+
+
+def test_partial_current_month_false_for_empty_or_malformed_range():
+    import datetime as dt
+
+    from src.copilot.cube.interpret import is_partial_current_month
+
+    assert is_partial_current_month([], dt.date(2026, 6, 2)) is False
+    assert is_partial_current_month(None, dt.date(2026, 6, 2)) is False
+    assert is_partial_current_month(["lixo"], dt.date(2026, 6, 2)) is False

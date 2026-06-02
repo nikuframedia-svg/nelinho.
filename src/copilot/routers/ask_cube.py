@@ -32,7 +32,7 @@ from src.copilot.cube.measure_contract import (
     measure_display_unit,
 )
 from src.copilot.routers._common import dev_only
-from src.copilot.cube.interpret import interpret
+from src.copilot.cube.interpret import interpret, is_partial_current_month
 from src.copilot.cube.material_retrieval import MaterialIndex
 from src.copilot.cube.measure_retrieval import MeasureIndex
 from src.copilot.cube.narrate import narrate_with_guard
@@ -51,6 +51,23 @@ router = APIRouter()
 # centenas de linhas sem inventar (Q.93.D: q18 — 385 rows, ensaio de 80 linhas).
 # Cortar aqui é determinístico e barato; o utilizador é convidado a refinar.
 MAX_NARRATION_ROWS = 20
+
+
+def _all_rows_effectively_empty(
+    rows: list[dict[str, Any]], measures: list[str]
+) -> bool:
+    """Q.156.B (LLM-1) — uma linha só de measures todas-null == sem dados.
+
+    O Cube devolve UMA linha de nulls (ex.: ``[{"qualidade.taxa_defeitos":
+    None}]``) para uma medida-rácio sobre um slice vazio. Sintaticamente a
+    lista é truthy (passa o ``if not result.data``), mas semanticamente é
+    `no_data`. Um ``0.0`` real **não** conta como vazio (é um zero medido)."""
+    if not rows:
+        return True
+    keys = measures or [k for r in rows for k in r]
+    if not keys:
+        return True
+    return all(r.get(m) is None for r in rows for m in keys)
 
 
 # ────────────────────────────── Schemas ──────────────────────────────
@@ -131,6 +148,18 @@ async def _process(
                 annotation=result.annotation,
             )
 
+        # 4.1. Q.156.B (LLM-1) — linha(s) só de measures todas-null também é
+        # `no_data` (o Cube devolve [{measure: null}] para um rácio sobre slice
+        # vazio). Sem isto, "OFs fechadas hoje" → status="ok" + narração de 0.
+        if _all_rows_effectively_empty(result.data, interp.query.measures):
+            return AskCubeResponse(
+                status="no_data",
+                narration="Não há dados para esses filtros.",
+                query=payload,
+                data=[],
+                annotation=result.annotation,
+            )
+
         # 4.5. Resultado vasto = pergunta vaga, não tentamos narrar.
         if len(result.data) > MAX_NARRATION_ROWS:
             return AskCubeResponse(
@@ -171,12 +200,21 @@ async def _process(
                 warnings=warnings,
             )
 
+        # Q.156.B (LLM-4) — se o período resolvido é o mês em curso e ainda
+        # não acabou, os dados são parciais: avisar honestamente.
+        warnings_out: list[str] = []
+        if interp.query.time_dimensions and is_partial_current_month(
+            interp.query.time_dimensions[0].date_range, date.today()
+        ):
+            warnings_out.append("Mês em curso — dados parciais até hoje.")
+
         return AskCubeResponse(
             status="ok",
             narration=narration.text,
             query=payload,
             data=result.data,
             annotation=result.annotation,
+            warnings=warnings_out,
         )
     finally:
         if owns_cube:
