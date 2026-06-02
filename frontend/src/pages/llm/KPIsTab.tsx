@@ -102,13 +102,43 @@ export function KPIsTab() {
     staleTime: Infinity,
     refetchOnWindowFocus: false,
   });
+  const catalog = catalogQuery.data?.measures ?? [];
+  const catalogByName = useMemo(
+    () => new Map(catalog.map((e) => [e.name, e])),
+    [catalog],
+  );
 
-  // Valores das measures escolhidas (ad-hoc, period agregado).
+  // Self-heal: quando o catálogo carrega, descarta indicadores guardados que já
+  // não existem no contrato — evita pedir uma measure desconhecida (que daria
+  // 422 no backend e rebentava o painel "Os meus indicadores" inteiro).
+  useEffect(() => {
+    if (catalog.length === 0) return;
+    setSelection((prev) => {
+      const valid = prev.filter((m) => catalogByName.has(m));
+      return valid.length === prev.length ? prev : valid;
+    });
+  }, [catalog.length, catalogByName]);
+
+  // Período por measure: temporais (têm dim `tempo`) → último mês completo;
+  // snapshot/total → agregado. Nunca mostrar o total-de-sempre como "agora".
+  const requestItems = useMemo(
+    () =>
+      selection
+        .filter((m) => catalogByName.has(m)) // nunca pedir measure fora do contrato (sem 422)
+        .map((m) => ({
+          measure: m,
+          period: (catalogByName.get(m)?.supports_period ? 'last_month' : 'none') as
+            | 'none'
+            | 'last_month',
+        })),
+    [selection, catalogByName],
+  );
+
+  // Valores das measures escolhidas (só depois do catálogo, p/ o self-heal correr).
   const myCardsQuery = useQuery({
-    queryKey: cubeKeys.measureCards(selection),
-    queryFn: () =>
-      cubeApi.measureCards(selection.map((m) => ({ measure: m, period: 'none' as const }))),
-    enabled: selection.length > 0,
+    queryKey: cubeKeys.measureCards(requestItems.map((i) => `${i.measure}:${i.period}`)),
+    queryFn: () => cubeApi.measureCards(requestItems),
+    enabled: selection.length > 0 && catalog.length > 0,
     refetchInterval: 60_000,
     refetchOnWindowFocus: false,
   });
@@ -116,7 +146,6 @@ export function KPIsTab() {
   const cards = dashQuery.data?.cards ?? [];
   const charts = dashQuery.data?.charts ?? [];
   const myCards = myCardsQuery.data?.cards ?? [];
-  const catalog = catalogQuery.data?.measures ?? [];
 
   const toggleMeasure = (name: string) =>
     setSelection((prev) =>
@@ -222,10 +251,30 @@ export function KPIsTab() {
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 mb-7">
           {selection.map((name) => {
             const card = myCards.find((c) => c.key === name);
+            const entry = catalogByName.get(name);
+            const periodLabel = entry?.supports_period ? 'mês passado' : undefined;
             if (!card) {
-              return <DarkCard key={name} className="h-[92px] animate-pulse" />;
+              // Enquanto carrega: skeleton. Já carregou mas não veio (erro do
+              // mart / acima do limite): card honesto, não "pulse" eterno.
+              if (myCardsQuery.isLoading || myCardsQuery.isFetching) {
+                return <DarkCard key={name} className="h-[92px] animate-pulse" />;
+              }
+              return (
+                <UnavailableKpiCard
+                  key={name}
+                  label={entry?.label ?? name}
+                  onRemove={() => removeMeasure(name)}
+                />
+              );
             }
-            return <MyKpiCard key={name} card={card} onRemove={() => removeMeasure(name)} />;
+            return (
+              <MyKpiCard
+                key={name}
+                card={card}
+                periodLabel={periodLabel}
+                onRemove={() => removeMeasure(name)}
+              />
+            );
           })}
         </div>
       )}
@@ -376,7 +425,15 @@ function MeasurePicker({
 
 // ── Card de KPI escolhido (com remover) ─────────────────────────────────────
 
-function MyKpiCard({ card, onRemove }: { card: CubeDashboardCard; onRemove: () => void }) {
+function MyKpiCard({
+  card,
+  periodLabel,
+  onRemove,
+}: {
+  card: CubeDashboardCard;
+  periodLabel?: string;
+  onRemove: () => void;
+}) {
   const hasData = card.status === 'ok' && card.value !== null;
 
   return (
@@ -396,8 +453,38 @@ function MyKpiCard({ card, onRemove }: { card: CubeDashboardCard; onRemove: () =
         {hasData ? (
           <span className="text-2xl font-bold text-fg-0 tabular-nums">{formatValue(card)}</span>
         ) : (
-          <DarkBadge variant="neutral">sem dados</DarkBadge>
+          <DarkBadge variant="neutral">
+            {card.status === 'error' ? 'indisponível' : 'sem dados'}
+          </DarkBadge>
         )}
+      </div>
+      {hasData && periodLabel && (
+        <span className="mt-1 block text-[10px] uppercase tracking-wide text-fg-3">
+          {periodLabel}
+        </span>
+      )}
+    </DarkCard>
+  );
+}
+
+// Indicador escolhido cujo valor não veio (mart inexistente / acima do limite):
+// estado honesto e removível, em vez de um skeleton que carrega para sempre.
+function UnavailableKpiCard({ label, onRemove }: { label: string; onRemove: () => void }) {
+  return (
+    <DarkCard className="relative">
+      <button
+        type="button"
+        title="Remover indicador"
+        onClick={onRemove}
+        className="absolute top-2 right-2 text-fg-3 hover:text-danger transition-colors"
+      >
+        <X size={13} />
+      </button>
+      <div className="flex items-start gap-2 mb-1 pr-5">
+        <span className="text-xs font-medium text-fg-2 leading-tight">{label}</span>
+      </div>
+      <div className="flex items-baseline gap-2 mt-1.5">
+        <DarkBadge variant="neutral">indisponível</DarkBadge>
       </div>
     </DarkCard>
   );

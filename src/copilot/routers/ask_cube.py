@@ -19,7 +19,7 @@ import asyncio
 import calendar
 import logging
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -283,11 +283,11 @@ _CARD_SPECS: tuple[_CardSpec, ...] = (
     _CardSpec("ofs_produzidas_hoje", "OFs produzidas hoje", "", "producao_ofs_fechadas_dia.total", "today"),
     _CardSpec("ofs_em_curso", "OFs em curso", "", "producao_ofs_em_curso.total", "none"),
     _CardSpec("taxa_defeitos", "Taxa de defeitos", "%", "qualidade.taxa_defeitos", "none"),
-    _CardSpec("facturacao_mes", "Faturação (mês)", "€", "comercial_facturacao.total", "month"),
-    _CardSpec("consumo_custo_mes", "Custo de consumo (mês)", "€", "consumo_material.custo", "month"),
+    _CardSpec("facturacao_mes", "Faturação (mês passado)", "€", "comercial_facturacao.total", "last_month"),
+    _CardSpec("consumo_custo_mes", "Custo de consumo (mês passado)", "€", "consumo_material.custo", "last_month"),
     _CardSpec("backlog", "Backlog", "", "planeamento_backlog.total", "none"),
     _CardSpec("lead_time_p50", "Lead time mediano (P50)", "", "producao_lead_time_of.lead_time_p50", "none"),
-    _CardSpec("ofs_expedidas_mes", "OFs expedidas (mês)", "", "logistica_ofs_expedidas.total", "month"),
+    _CardSpec("ofs_expedidas_mes", "OFs expedidas (mês passado)", "", "logistica_ofs_expedidas.total", "last_month"),
 )
 
 # Gráficos: séries temporais (mês) e por fase.
@@ -343,18 +343,34 @@ def _current_month_range(today: date) -> tuple[str, str]:
     return today.replace(day=1).isoformat(), today.replace(day=last).isoformat()
 
 
+def _last_complete_month_range(today: date) -> tuple[str, str]:
+    """Mês-calendário ANTERIOR (completo). Evita mostrar um mês a decorrer
+    quase vazio (ex: dia 2 do mês) como se fosse o indicador do período."""
+    first_this = today.replace(day=1)
+    last_prev = first_this - timedelta(days=1)
+    start = last_prev.replace(day=1)
+    return start.isoformat(), last_prev.isoformat()
+
+
 def _last_12_months_range(today: date) -> tuple[str, str]:
-    y, m = today.year, today.month - 11
+    # Termina no último mês COMPLETO: a série mensal não mostra um "buraco" no
+    # mês a decorrer (que mal começou) como se a produção/faturação tivesse caído.
+    end = today.replace(day=1) - timedelta(days=1)  # último dia do mês anterior
+    y, m = end.year, end.month - 11
     while m <= 0:
         m += 12
         y -= 1
-    return date(y, m, 1).isoformat(), today.isoformat()
+    return date(y, m, 1).isoformat(), end.isoformat()
 
 
 async def _run_card(cube: CubeClient, spec: _CardSpec, today: date) -> DashboardCard:
     payload: dict[str, Any] = {"measures": [spec.measure]}
-    if spec.period == "month":
-        start, end = _current_month_range(today)
+    if spec.period in ("month", "last_month"):
+        start, end = (
+            _last_complete_month_range(today)
+            if spec.period == "last_month"
+            else _current_month_range(today)
+        )
         dim = f"{spec.measure.split('.', 1)[0]}.data"
         payload["timeDimensions"] = [{"dimension": dim, "dateRange": [start, end]}]
     elif spec.period == "today":
@@ -462,7 +478,10 @@ class MeasureCatalogResponse(BaseModel):
 
 class MeasureCardRequestItem(BaseModel):
     measure: str
-    period: Literal["none", "month"] = "none"
+    # "none" = agregado (snapshot/total) · "month" = mês corrente ·
+    # "last_month" = mês-calendário anterior completo (o picker usa este para
+    # measures temporais, evitando mostrar o total-de-sempre como indicador).
+    period: Literal["none", "month", "last_month"] = "none"
 
 
 class MeasureCardsRequest(BaseModel):
@@ -514,7 +533,11 @@ def _coerce_card_specs(items: list[MeasureCardRequestItem]) -> list[_CardSpec]:
             continue
         seen.add(item.measure)
         supports_period = "tempo" in spec_def.dimensions_supported
-        period = "month" if (item.period == "month" and supports_period) else "none"
+        period = (
+            item.period
+            if (item.period in ("month", "last_month") and supports_period)
+            else "none"
+        )
         specs.append(
             _CardSpec(
                 key=item.measure,

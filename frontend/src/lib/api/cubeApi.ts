@@ -57,7 +57,10 @@ export interface CubeMeasureCatalog {
 
 export interface CubeMeasureCardItem {
   measure: string;
-  period: 'none' | 'month';
+  // 'none' = agregado (snapshot/total) · 'month' = mês corrente ·
+  // 'last_month' = mês-calendário anterior completo (usado para measures
+  // temporais, p/ não mostrar o total-de-sempre como indicador do momento).
+  period: 'none' | 'month' | 'last_month';
 }
 
 export interface CubeMeasureCards {

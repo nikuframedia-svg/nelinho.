@@ -126,6 +126,46 @@ def test_coerce_month_kept_when_tempo_supported():
     assert specs[0].period == "month"
 
 
+def test_coerce_last_month_kept_when_tempo_supported():
+    """period=last_month numa measure temporal mantém-se (mês anterior completo)."""
+    from src.copilot.routers.ask_cube import MeasureCardRequestItem, _coerce_card_specs
+
+    with_tempo = next(
+        name for name, spec in MEASURE_REGISTRY.items()
+        if "tempo" in spec.dimensions_supported
+    )
+    specs = _coerce_card_specs([MeasureCardRequestItem(measure=with_tempo, period="last_month")])
+    assert specs[0].period == "last_month"
+
+
+def test_coerce_last_month_coerced_to_none_when_no_tempo():
+    """period=last_month numa measure SEM `tempo` cai para none."""
+    from src.copilot.routers.ask_cube import MeasureCardRequestItem, _coerce_card_specs
+
+    no_tempo = next(
+        name for name, spec in MEASURE_REGISTRY.items()
+        if "tempo" not in spec.dimensions_supported
+    )
+    specs = _coerce_card_specs([MeasureCardRequestItem(measure=no_tempo, period="last_month")])
+    assert specs[0].period == "none"
+
+
+def test_last_complete_month_range_is_previous_full_month():
+    """O range 'mês passado' começa no dia 1 e acaba no último dia do mês anterior."""
+    from datetime import date
+
+    from src.copilot.routers.ask_cube import _last_complete_month_range
+
+    # dia 2 de Junho → Maio inteiro (não Junho a decorrer, quase vazio).
+    start, end = _last_complete_month_range(date(2026, 6, 2))
+    assert start == "2026-05-01"
+    assert end == "2026-05-31"
+    # vira-ano: Janeiro → Dezembro do ano anterior.
+    start, end = _last_complete_month_range(date(2026, 1, 15))
+    assert start == "2025-12-01"
+    assert end == "2025-12-31"
+
+
 def test_coerce_dedups_preserving_order():
     from src.copilot.routers.ask_cube import MeasureCardRequestItem, _coerce_card_specs
 
