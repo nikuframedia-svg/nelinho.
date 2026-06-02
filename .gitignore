@@ -64,6 +64,11 @@ Desktop.ini
 *.log
 logs/
 
+# _audit/ scratch (reports, probes, uvicorn/arq logs) — nao versionado
+_audit/
+# agent_docs scratch dumps
+agent_docs/_*.json
+
 # Run outputs (kept locally for diff'ing across runs, not version-controlled)
 scripts/last_*.json
 npm-debug.log*

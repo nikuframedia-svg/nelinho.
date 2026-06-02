@@ -38,7 +38,6 @@ aiokafka==0.10.0
 # Authentication
 # Sprint Q.7 Fase 4 — python-jose 3.3.0 → 3.4.0 (PYSEC-2024-232/233 algorithm-confusion + DoS)
 python-jose[cryptography]>=3.4.0,<4
-passlib[bcrypt]==1.7.4
 # Q.31.G — hashing de passwords. Usado directamente (bcrypt 4/5) porque o
 # passlib 1.7.4 não detecta o backend do bcrypt moderno.
 bcrypt>=4.0,<6
@@ -70,7 +69,6 @@ deap>=1.4.1  # Distributed Evolutionary Algorithms for Genetic Algorithm
 # Sprint Q.7 Fase 4 — python-dotenv 1.0.0 → 1.2.2 (CVE-2026-28684 .env injection)
 python-dotenv>=1.2.2,<2
 httpx==0.26.0
-tenacity==8.2.3
 structlog==24.1.0  # Already included - used for structured logging
 
 # Event-Driven (LACUNA 1)
@@ -109,7 +107,6 @@ isort==5.13.2
 mypy==1.8.0
 
 # COPILOT
-tiktoken==0.5.2  # Para token counting (opcional)
 pgvector>=0.2.5  # Vector similarity search for RAG
 
 # Background scheduling (Sprint C — alerts engine, daily feedback)
