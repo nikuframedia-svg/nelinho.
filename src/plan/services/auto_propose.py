@@ -181,77 +181,123 @@ class AutoProposeService:
         payload: Dict[str, Any],
         cpo_result: Dict[str, Any],
     ) -> Optional[SharedDecisionRun]:
-        """Cria SharedDecisionRun + audit_log na mesma transacção."""
-        now = datetime.now(timezone.utc)
-        title = _decision_title(topic, payload)
-        commit_sha = cpo_result.get("commit_sha") or ""
+        """Cria SharedDecisionRun + audit_log na mesma transacção.
 
-        decision = SharedDecisionRun(
+        Delega no helper partilhado ``propose_decision_row`` (Q.157.A) para não
+        duplicar o INSERT+audit+SSE entre este listener Kafka e o
+        ``auto_propose_signals_job`` in-process.
+        """
+        return await propose_decision_row(
+            self._session_factory,
             tenant_id=tenant_id,
-            title=title,
+            title=_decision_title(topic, payload),
             action_type="AUTO_PROPOSE_SCHEDULE",
             target=_decision_target(topic, payload),
-            status=DecisionStatus.PROPOSED.value,
             sandbox_result=cpo_result,
-            before_state={},
-            after_state={"commit_sha": commit_sha},
-            proposed_by=_SYSTEM_ACTOR,
-            proposed_at=now,
+            after_state={"commit_sha": cpo_result.get("commit_sha") or ""},
+            audit_reason=f"Q.115.D auto_propose tópico={topic}",
+            audit_extra={"source": "auto_propose", "trigger_topic": topic},
+            sse_extra={"source": "auto_propose", "trigger_topic": topic},
         )
 
-        async with self._session_factory() as session:
-            session.add(decision)
-            await session.flush()
 
-            await audit_change(
-                session,
+# ---------------------------------------------------------------------------
+# Q.157.A — helper partilhado de persistência de decisões propostas
+# ---------------------------------------------------------------------------
+
+async def propose_decision_row(
+    session_factory,
+    *,
+    tenant_id: UUID,
+    title: str,
+    action_type: str,
+    target: str,
+    sandbox_result: Dict[str, Any],
+    before_state: Optional[Dict[str, Any]] = None,
+    after_state: Optional[Dict[str, Any]] = None,
+    audit_reason: str = "",
+    audit_extra: Optional[Dict[str, Any]] = None,
+    sse_extra: Optional[Dict[str, Any]] = None,
+) -> SharedDecisionRun:
+    """INSERT ``SharedDecisionRun(status=PROPOSED)`` + ``audit_change`` na MESMA
+    tx + publish SSE ``DECISION_PROPOSED`` (best-effort).
+
+    Extraído de ``AutoProposeService._persist_decision`` (Q.157.A) para ser
+    reutilizado pelo ``auto_propose_signals_job``. Invariantes preservadas:
+    - **Q.17**: ``status`` sempre ``PROPOSED``, ``proposed_by=_SYSTEM_ACTOR``
+      (≠ aprovador humano → SoD passa). Nunca executa.
+    - **Audit trail (#7)**: o ``audit_change`` corre na mesma sessão/tx do INSERT.
+    """
+    now = datetime.now(timezone.utc)
+    decision = SharedDecisionRun(
+        tenant_id=tenant_id,
+        title=title,
+        action_type=action_type,
+        target=target,
+        status=DecisionStatus.PROPOSED.value,
+        sandbox_result=sandbox_result,
+        before_state=before_state or {},
+        after_state=after_state if after_state is not None else {},
+        proposed_by=_SYSTEM_ACTOR,
+        proposed_at=now,
+    )
+
+    async with session_factory() as session:
+        session.add(decision)
+        await session.flush()
+
+        await audit_change(
+            session,
+            tenant_id=tenant_id,
+            entity_type="decision_run",
+            entity_id=decision.id,
+            action="INSERT",
+            new_values={
+                "title": title,
+                "action_type": action_type,
+                "status": DecisionStatus.PROPOSED.value,
+                **(audit_extra or {}),
+            },
+            actor_id=_SYSTEM_ACTOR,
+            reason=audit_reason or f"auto_propose {action_type}",
+        )
+        await session.commit()
+
+    # Q.153 — publicar DECISION_PROPOSED no canal realtime (SSE) para a página
+    # /decisoes refletir a nova proposta sem esperar o poll de 5s. Best-effort:
+    # a decisão e o audit já estão committados; uma falha de publish não os desfaz.
+    await _publish_decision_proposed(tenant_id, decision, sse_extra)
+    return decision
+
+
+async def _publish_decision_proposed(
+    tenant_id: UUID,
+    decision: SharedDecisionRun,
+    sse_extra: Optional[Dict[str, Any]],
+) -> None:
+    """Publica DECISION_PROPOSED (best-effort; falha não desfaz a decisão)."""
+    try:
+        from src.shared.kafka_client import EventBase, Topics, publish_event
+
+        await publish_event(
+            Topics.DECISION_PROPOSED,
+            EventBase(
+                event_type="DECISION_PROPOSED",
                 tenant_id=tenant_id,
-                entity_type="decision_run",
-                entity_id=decision.id,
-                action="INSERT",
-                new_values={
-                    "title": title,
-                    "action_type": "AUTO_PROPOSE_SCHEDULE",
-                    "status": DecisionStatus.PROPOSED.value,
-                    "source": "auto_propose",
-                    "trigger_topic": topic,
+                source_module="plan.services.auto_propose",
+                payload={
+                    "decision_id": str(decision.id),
+                    "action_type": decision.action_type,
+                    "title": decision.title,
+                    **(sse_extra or {}),
                 },
-                actor_id=_SYSTEM_ACTOR,
-                reason=f"Q.115.D auto_propose tópico={topic}",
-            )
-            await session.commit()
-
-        # Q.153 — publicar DECISION_PROPOSED no canal realtime (SSE) para a
-        # página /decisoes refletir a nova proposta sem esperar o poll de 5s.
-        # Antes, o ledger shared nunca publicava este evento (só execute/rollback
-        # o faziam), por isso os listeners `useRealtimeType('DECISION_PROPOSED')`
-        # nunca disparavam. Best-effort: a decisão e o audit já estão committados;
-        # uma falha de publish não os desfaz.
-        try:
-            from src.shared.kafka_client import EventBase, Topics, publish_event
-
-            await publish_event(
-                Topics.DECISION_PROPOSED,
-                EventBase(
-                    event_type="DECISION_PROPOSED",
-                    tenant_id=tenant_id,
-                    source_module="plan.services.auto_propose",
-                    payload={
-                        "decision_id": str(decision.id),
-                        "action_type": decision.action_type,
-                        "title": decision.title,
-                        "source": "auto_propose",
-                        "trigger_topic": topic,
-                    },
-                ),
-            )
-        except Exception as exc:  # pragma: no cover - best-effort
-            logger.warning(
-                "DECISION_PROPOSED publish failed for %s: %s — decisão na mesma criada",
-                decision.id, exc,
-            )
-
-        return decision
+            ),
+        )
+    except Exception as exc:  # pragma: no cover - best-effort
+        logger.warning(
+            "DECISION_PROPOSED publish failed for %s: %s — decisão na mesma criada",
+            decision.id, exc,
+        )
 
 
 # ---------------------------------------------------------------------------

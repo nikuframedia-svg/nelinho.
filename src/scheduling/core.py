@@ -64,6 +64,7 @@ from src.scheduling.jobs.boat_potential_job import _boat_potential_job
 from src.scheduling.jobs.boat_complexity_job import _boat_complexity_job
 from src.scheduling.jobs.phase_operator_affinity import _phase_operator_affinity_job
 from src.scheduling.jobs.auto_cpo_replan_job import _auto_cpo_replan_global_job
+from src.scheduling.jobs.auto_propose_signals_job import _auto_propose_signals_job
 from src.scheduling.jobs.capture_plan_execution import (
     _capture_plan_execution_global_job,
 )
@@ -326,6 +327,20 @@ def start_scheduler(
         args=[tenants or []],
         id="auto_cpo_replan",
         name="auto_cpo_replan",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Q.157.A — auto-propose REAL: a cada 15 min gera decisões PROPOSED a partir
+    # de sinais do plano vivo (saúde de molde + risco OTD) → enchem a landing
+    # /decisoes com propostas reais (não o seed). In-process, sem Kafka/dev-gate.
+    # Q.17: nascem PROPOSED (nunca auto-LIVE). Dedup durável + rate-limit 5 min.
+    _scheduler.add_job(
+        _auto_propose_signals_job,
+        trigger=IntervalTrigger(minutes=15),
+        args=[tenants or []],
+        id="auto_propose_signals",
+        name="auto_propose_signals",
         replace_existing=True,
         coalesce=True,
         max_instances=1,
