@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from src.plan.cpo.state import FactoryState
+from src.plan.cpo.state import NON_PRODUCTION_PHASE_IDS, FactoryState
 from src.plan.engines.scheduling_adapter import SchedulingOperation
 from src.plan.services.phase_workcenters import station_ids_for
 
@@ -399,6 +399,10 @@ class RoutingResolver:
         rows: List[RoutingRow] = []
         for st in steps:
             fase_id = str(st.get("fase_id", ""))
+            # Defesa-em-profundidade (Slice E): fases terminais (FP_PRODUCAO=false)
+            # nunca entram no schedule mesmo que a SQL de carregamento as deixe passar.
+            if fase_id in NON_PRODUCTION_PHASE_IDS:
+                continue
             fase_nome = str(st.get("fase_nome") or fase_id)
             p50 = st.get("duration_p50_h")
             if p50 is not None and float(p50) > 0:

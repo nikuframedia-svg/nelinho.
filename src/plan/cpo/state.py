@@ -64,6 +64,48 @@ def curing_gap_pairs() -> Set[Tuple[str, str]]:
     return {(from_p, to_p) for from_p, to_p, *_ in NELO_CURING_GAPS_SEED}
 
 
+# ---------------------------------------------------------------------------
+# Fases NÃO-produção (FP_PRODUCAO=false no ERP da NELO) — Slice E
+# ---------------------------------------------------------------------------
+# Phase IDs que NÃO devem ser agendados: barcos já fora da linha de produção
+# (embalados, entregues, em armazém, etc.) ou fases auxiliares/administrativas.
+# Confirmado na BD read-only 2026-06-02 via SELECT FP_ID WHERE FP_PRODUCAO=false.
+# Defesa-em-profundidade: usado pelo resolver para garantir que nenhuma
+# fase terminal entra num schedule mesmo que a SQL de carregamento falhe.
+NON_PRODUCTION_PHASE_IDS: frozenset[str] = frozenset({
+    "7",   # Parque Acabamento
+    "9",   # Armazem
+    "10",  # Embalado
+    "12",  # Entregue
+    "13",  # Para reparar
+    "15",  # Em Uso
+    "16",  # Para Abate
+    "17",  # Abatido
+    "24",  # CAD
+    "25",  # CAM
+    "26",  # Preparação CNC
+    "27",  # Acabamento CNC
+    "29",  # Solda
+    "30",  # Montagem (auxiliar)
+    "31",  # Lacagem
+    "37",  # Logistica/Embalagem
+    "39",  # Exterior
+    "43",  # Serralharia
+    "44",  # Multitarefa
+    "49",  # Armazem 2ª escolha
+    "50",  # Lixo
+    "52",  # Escritorio
+    "57",  # OF Venda
+    "58",  # Avaliação
+    "59",
+    "60",
+    "61",
+    "62",
+    "72",  # Reutilizado
+    "73",  # Pintura-Verniz
+})
+
+
 def normalize_phase_code(name: Optional[str]) -> str:
     """Canonical phase code: strip accents, UPPERCASE, spaces/hyphens/
     dots → underscores. Used for curing gap lookups and
@@ -925,7 +967,10 @@ async def _load_route_templates_db(
         FROM plan.model_routing_assignment mra
         JOIN plan.routing_template_phase rtp
           ON rtp.template_id = mra.primary_template_id
+        JOIN factory_raw.fases_producao fp
+          ON fp."FP_ID"::text = rtp.phase_id::text
         WHERE mra.tenant_id = :tenant AND rtp.tenant_id = :tenant
+          AND fp."FP_PRODUCAO" = true
         ORDER BY mra.model_id, rtp.seq
         """
     )
