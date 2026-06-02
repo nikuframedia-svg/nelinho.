@@ -37,6 +37,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from src.plan.services.auto_propose import propose_decision_row
 from src.plan.services.rate_limiter import RateLimiter
 from src.scheduling.jobs.auto_cpo_replan_job import _resolve_tenants
+from src.shared.auth.tenant_context import tenant_scope
 from src.shared.models.governance import DecisionStatus, SharedDecisionRun
 
 logger = logging.getLogger(__name__)
@@ -239,38 +240,42 @@ async def _auto_propose_signals_job(tenant_ids: List[UUID]) -> None:
     tenants = await _resolve_tenants(tenant_ids)
     for tid in tenants:
         try:
-            async with get_session_context() as session:
-                if not await _enabled(session, tid):
-                    continue
-                candidates: List[Dict[str, Any]] = []
-                for gen in (_mold_maintenance_candidates, _otd_reschedule_candidates):
-                    try:
-                        candidates.extend(await gen(session, tid))
-                    except Exception as exc:  # best-effort por sinal
-                        logger.warning(
-                            "auto_propose_signals: gerador %s falhou tenant=%s: %s",
-                            getattr(gen, "__name__", gen), tid, exc,
-                        )
-                existing = await _existing_proposed_targets(session, tid)
+            # tenant_scope injecta SET LOCAL app.tenant_id em cada tx desta
+            # iteração → reads RLS-dependentes (ex.: OTD em plan.production_orders)
+            # e quaisquer policies futuras funcionam no contexto de background.
+            with tenant_scope(tid):
+                async with get_session_context() as session:
+                    if not await _enabled(session, tid):
+                        continue
+                    candidates: List[Dict[str, Any]] = []
+                    for gen in (_mold_maintenance_candidates, _otd_reschedule_candidates):
+                        try:
+                            candidates.extend(await gen(session, tid))
+                        except Exception as exc:  # best-effort por sinal
+                            logger.warning(
+                                "auto_propose_signals: gerador %s falhou tenant=%s: %s",
+                                getattr(gen, "__name__", gen), tid, exc,
+                            )
+                    existing = await _existing_proposed_targets(session, tid)
 
-            created = 0
-            for cand in candidates:
-                key = f"{tid}:{cand['action_type']}:{cand['target']}"
-                # Dedup durável: já existe uma PROPOSED igual ainda aberta.
-                if (cand["action_type"], cand["target"]) in existing:
-                    continue
-                # Rate-limit in-memory (5 min) para não repetir entre ticks.
-                if not _rate_limiter.is_allowed(key):
-                    continue
-                await propose_decision_row(async_session_factory, tenant_id=tid, **cand)
-                _rate_limiter.record(key)
-                created += 1
+                created = 0
+                for cand in candidates:
+                    key = f"{tid}:{cand['action_type']}:{cand['target']}"
+                    # Dedup durável: já existe uma PROPOSED igual ainda aberta.
+                    if (cand["action_type"], cand["target"]) in existing:
+                        continue
+                    # Rate-limit in-memory (5 min) para não repetir entre ticks.
+                    if not _rate_limiter.is_allowed(key):
+                        continue
+                    await propose_decision_row(async_session_factory, tenant_id=tid, **cand)
+                    _rate_limiter.record(key)
+                    created += 1
 
-            if created:
-                logger.info(
-                    "auto_propose_signals: %d decisão(ões) PROPOSED criada(s) tenant=%s",
-                    created, tid,
-                )
+                if created:
+                    logger.info(
+                        "auto_propose_signals: %d decisão(ões) PROPOSED criada(s) tenant=%s",
+                        created, tid,
+                    )
         except (SQLAlchemyError, OSError, RuntimeError, ValueError, ImportError) as exc:
             logger.error(
                 "auto_propose_signals tenant=%s falhou: %s", tid, exc, exc_info=True,
