@@ -145,3 +145,75 @@ async def test_async_endpoint_returns_202_and_job_id(monkeypatch):
     fake_pool.enqueue_job.assert_awaited_once()
     call_args = fake_pool.enqueue_job.await_args
     assert call_args.args[0] == "cpo_schedule_job"
+
+
+@pytest.mark.asyncio
+async def test_job_status_in_progress_jobdef_has_no_start_time(monkeypatch):
+    """Regressão (auditoria 2026-06-02): enquanto o job corre, o arq devolve um
+    `JobDef` que só tem `enqueue_time` — `start_time`/`finish_time` só existem no
+    `JobResult` (após completar). Aceder `.start_time` num `JobDef` levantava
+    AttributeError -> 500 a cada poll do progresso do replan. O endpoint tem de
+    devolver 200 com `started_at`/`completed_at` a None até completar.
+    """
+    from datetime import datetime, timezone
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from unittest.mock import AsyncMock
+    from uuid import UUID
+
+    from arq.jobs import JobStatus
+
+    from src.plan.api.cpo import router as cpo_router
+    from src.shared.auth.headers import require_tenant_header
+    from src.shared.config import settings
+
+    monkeypatch.setattr(settings, "environment", "development", raising=False)
+
+    fake_pool = AsyncMock()
+    fake_pool.close = AsyncMock(return_value=None)
+
+    async def _fake_create_pool(*_args, **_kwargs):
+        return fake_pool
+
+    monkeypatch.setattr("arq.connections.create_pool", _fake_create_pool)
+
+    class _FakeJobDef:
+        """Como o arq `JobDef` em curso: só `enqueue_time` (sem start/finish)."""
+
+        def __init__(self) -> None:
+            self.enqueue_time = datetime(2026, 6, 2, 0, 0, tzinfo=timezone.utc)
+        # start_time / finish_time omitidos de propósito (AttributeError)
+
+    class _FakeJob:
+        def __init__(self, job_id, redis=None):
+            self.job_id = job_id
+
+        async def status(self):
+            return JobStatus.in_progress
+
+        async def info(self):
+            return _FakeJobDef()
+
+        async def result(self, *_args, **_kwargs):  # pragma: no cover
+            raise AssertionError("result() nao deve ser chamado em in_progress")
+
+    monkeypatch.setattr("arq.jobs.Job", _FakeJob)
+
+    app = FastAPI()
+    app.include_router(cpo_router)
+    dev_tenant = UUID("00000000-0000-0000-0000-000000000001")
+    app.dependency_overrides[require_tenant_header] = lambda: dev_tenant
+
+    client = TestClient(app)
+    resp = client.get(
+        "/v1/plan/cpo/schedule/job/job-xyz-789",
+        headers={"X-Tenant-Id": str(dev_tenant)},
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["job_id"] == "job-xyz-789"
+    assert body["state"] == "in_progress"
+    assert body["enqueued_at"] is not None
+    assert body["started_at"] is None
+    assert body["completed_at"] is None

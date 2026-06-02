@@ -272,14 +272,23 @@ async def get_schedule_job_status(
                 # job completou mas com erro — `result()` re-raises.
                 error_str = str(exc)
 
+        # Arq devolve um `JobDef` enquanto o job está na fila/a correr (só tem
+        # `enqueue_time`) e um `JobResult` após terminar (tem `start_time` e
+        # `finish_time`). Aceder `.start_time`/`.finish_time` num `JobDef`
+        # levanta AttributeError -> 500 a cada poll do progresso. `getattr`
+        # degrada para None até o job completar (started/completed só aparecem
+        # quando o JobResult existe).
+        enq = getattr(info, "enqueue_time", None) if info else None
+        started = getattr(info, "start_time", None) if info else None
+        finished = getattr(info, "finish_time", None) if info else None
         return CPOJobStatusResponse(
             job_id=job_id,
             state=job_status.value if hasattr(job_status, "value") else str(job_status),
             result=result,
             error=error_str,
-            enqueued_at=(info.enqueue_time.isoformat() + "Z") if info and info.enqueue_time else None,
-            started_at=(info.start_time.isoformat() + "Z") if info and info.start_time else None,
-            completed_at=(info.finish_time.isoformat() + "Z") if info and info.finish_time else None,
+            enqueued_at=(enq.isoformat() + "Z") if enq else None,
+            started_at=(started.isoformat() + "Z") if started else None,
+            completed_at=(finished.isoformat() + "Z") if finished else None,
         )
     finally:
         await redis.close()
