@@ -118,6 +118,14 @@ def test_build_rework_detected_at_falls_back_to_end_at():
     assert rows[0]["detected_at"].year == 2025
 
 
+def test_build_rework_context_carries_product_type_name():
+    """Q.156.B (BD-1): a disciplina (TP_NOME) tem de chegar ao context —
+    é a chave que `marts.v_rework_por_disciplina_mes` agrupa. Sem ela a view
+    dava 0 linhas (sempre `product_type_name IS NULL`)."""
+    rows = build_rework([_op(is_return=True, product_type_name="Canoe Sprint")])
+    assert rows[0]["context"]["product_type_name"] == "Canoe Sprint"
+
+
 # ── end-to-end mirror ─────────────────────────────────────────────────────
 
 

@@ -137,6 +137,11 @@ def build_rework(ops: List[OperationRow]) -> List[Dict[str, Any]]:
                 "is_return": bool(op.is_return),
                 "severe_return": bool(op.severe_return),
                 "phase_name": op.phase_name,
+                # Q.156.C (BD-1) — restaura a chave que a view
+                # `marts.v_rework_por_disciplina_mes` espera (disciplina =
+                # TP_NOME). Estava no contrato desde Q.108.E.1 mas tinha sido
+                # largada → a view dava sempre 0 linhas.
+                "product_type_name": op.product_type_name,
                 "source": "erp_of_fp",
             },
         })
