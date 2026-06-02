@@ -7,7 +7,7 @@ The end-to-end ``mirror_skills`` runs against the recording fake session
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
@@ -81,6 +81,35 @@ def test_map_employee_skills_resolves_fks():
     assert mapped[0]["employee_id"] == emp_uuid
     assert mapped[0]["skill_id"] == skill_uuid
     assert mapped[0]["proficiency_level"] == 4
+    # Q.158.A — o gate declarado (EFP_QUALIFICADO/EFP_CHEFE/EFP_DATAINICIO) é gravado.
+    assert mapped[0]["is_certified"] is True       # qualified=True
+    assert mapped[0]["is_chefe"] is False          # is_supervisor=False
+    assert mapped[0]["certification_date"] == date(2018, 1, 1)  # start_date.date()
+
+
+def test_map_employee_skills_carries_qualification_gate():
+    """Q.158.A — `EFP_QUALIFICADO`/`EFP_CHEFE`/`EFP_DATAINICIO` preservados;
+    uma linha NÃO-qualificada importa-se com `is_certified=False` (o consumidor
+    é que faz o gate, não se perde a informação)."""
+    mapped, _ = _map_employee_skills(
+        [_ef(entity_id=101, phase_id=1, qualified=False, is_supervisor=True,
+             start_date=datetime(2020, 5, 6))],
+        emp_by_code={"101": uuid4()},
+        skill_by_code={"1": uuid4()},
+    )
+    assert mapped[0]["is_certified"] is False      # não qualificado
+    assert mapped[0]["is_chefe"] is True           # chefe da fase
+    assert mapped[0]["certification_date"] == date(2020, 5, 6)
+
+
+def test_map_employee_skills_null_start_date_ok():
+    """`EFP_DATAINICIO` nulo (4.2% das linhas) → certification_date None."""
+    mapped, _ = _map_employee_skills(
+        [_ef(entity_id=101, phase_id=1, start_date=None)],
+        emp_by_code={"101": uuid4()},
+        skill_by_code={"1": uuid4()},
+    )
+    assert mapped[0]["certification_date"] is None
 
 
 def test_map_employee_skills_skips_unknown_operator():
@@ -148,6 +177,8 @@ async def test_mirror_skills_builds_catalogue_and_matrix(monkeypatch, recording_
     assert {s.skill_code for s in skills} == {"1", "2"}
     assert len(emp_skills) == 2
     assert {es.proficiency_level for es in emp_skills} == {4, 2}
+    # Q.158.A — gate qualificado propagado pelo mirror end-to-end (_ef default qualified=True).
+    assert all(es.is_certified for es in emp_skills)
 
 
 async def test_mirror_skills_skips_rows_for_missing_employees(monkeypatch, recording_session):

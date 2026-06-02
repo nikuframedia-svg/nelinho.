@@ -95,6 +95,13 @@ def _map_employee_skills(
             "employee_id": emp_id,
             "skill_id": skill_id,
             "proficiency_level": _proficiency(r.proficiency),
+            # Q.158.A — o sinal REAL da polivalência (a frase do Nuno: "definida
+            # na Entidade_Fase"): QUALIFICADO = gate, CHEFE = lidera, DATAINICIO
+            # = antiguidade. Importa-se a matriz completa (incl. não-qualificados);
+            # o gate é o consumidor (CPO) que o faz, não se perde informação.
+            "is_certified": bool(r.qualified),
+            "is_chefe": bool(r.is_supervisor),
+            "certification_date": r.start_date.date() if r.start_date else None,
         })
     return mapped, skipped
 
@@ -129,7 +136,10 @@ async def mirror_skills(
         await run.upsert(
             EmployeeSkill, mapped,
             key_fields=["employee_id", "skill_id"],
-            update_fields=["proficiency_level"],
+            update_fields=[
+                "proficiency_level", "is_certified", "is_chefe",
+                "certification_date",
+            ],
         )
         logger.info(
             "skills mirror — %d skills, %d employee_skill rows (%d skipped)",

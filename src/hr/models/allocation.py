@@ -241,11 +241,17 @@ class EmployeeSkill(TenantBase):
     
     proficiency_level: Mapped[int] = mapped_column(Integer, default=1)
     
-    # Certification
+    # Certification — `is_certified` espelha `EFP_QUALIFICADO` (o gate declarado
+    # "pode fazer esta fase"); `certification_date` espelha `EFP_DATAINICIO`
+    # (antiguidade na função). Q.158.A.
     is_certified: Mapped[bool] = mapped_column(Boolean, default=False)
     certification_date: Mapped[Optional[date]] = mapped_column(Date)
     certification_expiry: Mapped[Optional[date]] = mapped_column(Date)
-    
+
+    # `is_chefe` espelha `EFP_CHEFE` — operador pode LIDERAR esta fase (o
+    # "Chefe" do barco×fase no software da NELO). Q.158.A.
+    is_chefe: Mapped[bool] = mapped_column(Boolean, default=False)
+
     # Notes
     notes: Mapped[Optional[str]] = mapped_column(Text)
     
