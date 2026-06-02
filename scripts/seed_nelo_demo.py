@@ -12,17 +12,22 @@ Run:
 Verifica:
     curl http://127.0.0.1:8001/v1/plan/orders/active | jq length        # 12
     curl http://127.0.0.1:8001/v1/plan/molds/health-report | jq length  # 4
-    curl http://127.0.0.1:8001/v1/decisions/?status_filter=PENDING_APPROVAL | jq .total  # 3
+
+Q.157.B — as 3 "suggestions" (decisões PROPOSED hardcoded) NÃO são semeadas por
+defeito: a landing /decisoes vive do auto_propose_signals_job (Q.157.A) com
+decisões reais de sinais do plano. Para a demo "bonita" com as 3 fixas:
+    $env:SEED_FAKE_SUGGESTIONS = "1"; ./.venv/Scripts/python.exe scripts/seed_nelo_demo.py
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.models.employee import Employee, EmploymentStatus, EmploymentType
@@ -396,6 +401,31 @@ async def upsert_shipments(session: AsyncSession) -> None:
             ))
 
 
+def fake_suggestions_enabled() -> bool:
+    """Q.157.B — True só se a flag de demo SEED_FAKE_SUGGESTIONS=1 estiver activa."""
+    return os.getenv("SEED_FAKE_SUGGESTIONS") == "1"
+
+
+async def purge_fake_suggestions(session: AsyncSession) -> int:
+    """Q.157.B — remove as decisões-seed antigas (bases já semeadas).
+
+    A landing /decisoes passa a viver das decisões reais do
+    ``auto_propose_signals_job`` (Q.157.A). Em bases que já correram o seed com
+    as 3 "suggestions", elas persistem como PROPOSED e mascaram as reais. Remove
+    SÓ pelas chaves exatas (título + tenant + status PROPOSED) — nunca toca
+    decisões reais. O FK de ``decision_approvals`` tem ``ondelete=CASCADE``.
+    """
+    titles = [s["title"] for s in SUGGESTIONS]
+    result = await session.execute(
+        delete(SharedDecisionRun).where(
+            SharedDecisionRun.tenant_id == DEV_TENANT_ID,
+            SharedDecisionRun.status == DecisionStatus.PROPOSED.value,
+            SharedDecisionRun.title.in_(titles),
+        )
+    )
+    return result.rowcount or 0
+
+
 async def upsert_suggestions(session: AsyncSession) -> None:
     """3 SharedDecisionRuns com payload estilo zip SUGGESTIONS."""
     seed_user = CPO_SYSTEM_USER  # proponente do sistema (≠ aprovador dev → SoD passa)
@@ -453,9 +483,21 @@ async def main() -> None:
             await upsert_shipments(session)
             print(f"{len(SHIPMENTS)} OK")
 
-            print("   [6/6] suggestions / decisions …", end=" ", flush=True)
-            await upsert_suggestions(session)
-            print(f"{len(SUGGESTIONS)} OK")
+            # Q.157.B — as 3 "suggestions" são decisões PROPOSED hardcoded que
+            # mascaravam a landing /decisoes (confiança/títulos inventados). Por
+            # defeito NÃO são semeadas: a landing vive do auto_propose_signals_job
+            # (Q.157.A), que gera decisões reais de sinais do plano (molde/OTD).
+            # Só sob flag explícita (demo "bonita") são inseridas.
+            if fake_suggestions_enabled():
+                print("   [6/6] suggestions / decisions (FAKE flag) …", end=" ", flush=True)
+                await upsert_suggestions(session)
+                print(f"{len(SUGGESTIONS)} OK")
+            else:
+                removed = await purge_fake_suggestions(session)
+                print(
+                    f"   [6/6] suggestions / decisions … skip (auto-propose real); "
+                    f"removidas {removed} seed antigas"
+                )
 
             await session.commit()
             print(">> commit ok. seed completo.")
