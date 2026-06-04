@@ -80,10 +80,11 @@ def test_unknown_scope_returns_400(fake_session_and_client):
     assert resp.status_code == 400
 
 
-def test_missing_tenant_header_returns_422(fake_session_and_client):
+def test_missing_tenant_header_returns_401(fake_session_and_client):
     _, client = fake_session_and_client
     resp = client.get("/v1/dqa/trust-index?scope=factory")
-    assert resp.status_code == 422
+    # require_tenant_header (canónico) → 401 sem tenant (auth), não 422 (validação)
+    assert resp.status_code == 401
 
 
 def test_trust_index_happy_path(fake_session_and_client):

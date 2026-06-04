@@ -14,12 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.shared.database import get_session
 from src.hr.services.productivity_service import ProductivityService
+from src.shared.auth.headers import require_tenant_header
 
 router = APIRouter(prefix="/productivity", tags=["Productivity"])
 
 
-def get_tenant_id(x_tenant_id: UUID = Header(...)) -> UUID:
-    return x_tenant_id
+get_tenant_id = require_tenant_header
 
 
 class ProductivityRecordRequest(BaseModel):

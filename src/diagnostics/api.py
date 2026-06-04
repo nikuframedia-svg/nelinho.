@@ -46,14 +46,14 @@ from .service import (
     collect_routes_by_module,
     collect_trust_index,
 )
+from src.shared.auth.headers import require_tenant_header
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/diagnostics", tags=["Diagnostics"])
 
 
-def get_tenant_id(x_tenant_id: UUID = Header(..., alias="X-Tenant-Id")) -> UUID:
-    return x_tenant_id
+get_tenant_id = require_tenant_header
 
 
 # ─────────────────────────────────────────────────────────────────────────────

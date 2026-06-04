@@ -55,8 +55,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/quality", tags=["Quality"])
 
 
-def get_tenant_id(x_tenant_id: UUID = Header(..., alias="X-Tenant-Id")) -> UUID:
-    return x_tenant_id
+get_tenant_id = require_tenant_header
 
 
 # ─── Schemas ──────────────────────────────────────────────────────────────

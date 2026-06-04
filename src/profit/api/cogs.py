@@ -16,12 +16,12 @@ from src.shared.database import get_session
 from src.profit.services.cost_service import CostService
 from src.plan.models.order import ProductionOrder
 from src.core.models.product import Product
+from src.shared.auth.headers import require_tenant_header
 
 router = APIRouter(prefix="/cogs", tags=["COGS"])
 
 
-def get_tenant_id(x_tenant_id: UUID = Header(...)) -> UUID:
-    return x_tenant_id
+get_tenant_id = require_tenant_header
 
 
 class COGSCalculateRequest(BaseModel):

@@ -83,7 +83,8 @@ def test_profiles_batch_requires_tenant_header(_stub_service):
         "/v1/workforce/employees/profiles",
         json={"employee_ids": [str(uuid4())]},
     )
-    assert resp.status_code == 422
+    # require_tenant_header (canónico) → 401 sem tenant (auth), não 422 (validação)
+    assert resp.status_code == 401
 
 
 def test_profiles_batch_empty_list_rejected(_stub_service):

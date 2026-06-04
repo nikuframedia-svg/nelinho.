@@ -83,7 +83,8 @@ _HEADERS = {"X-Tenant-Id": str(TEST_TENANT_ID)}
 def test_kpis_requires_tenant_header():
     s = FakeSession()
     resp = _client(s).get("/v1/factory-map/kpis")
-    assert resp.status_code == 422
+    # require_tenant_header (canónico) → 401 sem tenant (auth), não 422 (validação)
+    assert resp.status_code == 401
 
 
 def test_kpis_happy_path():

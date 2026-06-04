@@ -14,12 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.shared.database import get_session
 from src.profit.services.cost_service import CostService
 from src.profit.calculators.scenario_simulator import CostMultipliers
+from src.shared.auth.headers import require_tenant_header
 
 router = APIRouter(prefix="/scenarios", tags=["Scenarios"])
 
 
-def get_tenant_id(x_tenant_id: UUID = Header(...)) -> UUID:
-    return x_tenant_id
+get_tenant_id = require_tenant_header
 
 
 class ScenarioRequest(BaseModel):

@@ -12,12 +12,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.shared.database import get_session
 from src.plan.services.mrp_service import MRPService
+from src.shared.auth.headers import require_tenant_header
 
 router = APIRouter(prefix="/mrp", tags=["MRP"])
 
 
-def get_tenant_id(x_tenant_id: UUID = Header(...)) -> UUID:
-    return x_tenant_id
+get_tenant_id = require_tenant_header
 
 
 class MRPCalculateRequest(BaseModel):

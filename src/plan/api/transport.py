@@ -48,6 +48,7 @@ from src.plan.services.transport_suggestions import (
     TransportSuggestionsService,
 )
 from src.shared.database import get_session
+from src.shared.auth.headers import require_tenant_header
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +59,7 @@ _REFRESH_HORIZON_DEFAULT_DAYS = 45
 _REFRESH_HORIZON_MAX_DAYS = 180
 
 
-def get_tenant_id(x_tenant_id: UUID = Header(..., alias="X-Tenant-Id")) -> UUID:
-    return x_tenant_id
+get_tenant_id = require_tenant_header
 
 
 # ---------------------------------------------------------------------------

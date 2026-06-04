@@ -79,7 +79,8 @@ def test_invalid_date_is_422(_stub_service):
 
 def test_requires_tenant_header(_stub_service):
     r = _client().get("/v1/plan/timeline/actuals", params={"from": "2026-05-01", "to": "2026-05-07"})
-    assert r.status_code == 422
+    # require_tenant_header (canónico) → 401 sem tenant (auth), não 422 (validação)
+    assert r.status_code == 401
 
 
 def test_short_range_auto_is_raw(_stub_service):

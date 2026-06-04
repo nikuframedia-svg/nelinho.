@@ -31,14 +31,14 @@ from src.dqa.trust_v2 import (
 )
 from src.shared.database import get_session
 from src.shared.metrics import trust_index_score
+from src.shared.auth.headers import require_tenant_header
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/dqa", tags=["DQA"])
 
 
-def get_tenant_id(x_tenant_id: UUID = Header(..., alias="X-Tenant-Id")) -> UUID:
-    return x_tenant_id
+get_tenant_id = require_tenant_header
 
 
 class TrustIndexResponse(BaseModel):

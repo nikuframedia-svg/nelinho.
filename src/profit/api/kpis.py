@@ -16,15 +16,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_
 
 from src.shared.database import get_session
+from src.shared.auth.headers import require_tenant_header
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/kpis", tags=["KPIs"])
 
 
-def get_tenant_id(x_tenant_id: UUID = Header(...)) -> UUID:
-    """Extract tenant ID from header."""
-    return x_tenant_id
+get_tenant_id = require_tenant_header
 
 
 class Citation(BaseModel):

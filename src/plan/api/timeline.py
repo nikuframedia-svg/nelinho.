@@ -28,6 +28,7 @@ from src.plan.services.timeline_actuals_service import (
     aggregate_by_day,
 )
 from src.shared.database import get_session
+from src.shared.auth.headers import require_tenant_header
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +39,7 @@ _VALID_GROUP = {"barco", "fase", "operador"}
 _VALID_GRAN = {"raw", "day", "auto"}
 
 
-def get_tenant_id(x_tenant_id: UUID = Header(..., alias="X-Tenant-Id")) -> UUID:
-    return x_tenant_id
+get_tenant_id = require_tenant_header
 
 
 @router.get("/actuals")

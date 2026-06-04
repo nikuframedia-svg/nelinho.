@@ -30,14 +30,14 @@ from src.plan.services.preview_delta_service import (
     PreviewMutation,
 )
 from src.shared.database import get_session
+from src.shared.auth.headers import require_tenant_header
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/schedule", tags=["Schedule preview"])
 
 
-def get_tenant_id(x_tenant_id: UUID = Header(..., alias="X-Tenant-Id")) -> UUID:
-    return x_tenant_id
+get_tenant_id = require_tenant_header
 
 
 def get_user(x_user_id: Optional[str] = Header(None, alias="X-User-Id")) -> str:

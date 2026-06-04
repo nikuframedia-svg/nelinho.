@@ -24,12 +24,12 @@ from src.plan.services.scheduling_service import (
     SchedulingService,
 )
 from src.plan.engines.scheduling_adapter import SchedulerEngine, DispatchRule
+from src.shared.auth.headers import require_tenant_header
 
 router = APIRouter(prefix="/schedule", tags=["Scheduling"])
 
 
-def get_tenant_id(x_tenant_id: UUID = Header(...)) -> UUID:
-    return x_tenant_id
+get_tenant_id = require_tenant_header
 
 
 class ScheduleGenerateRequest(BaseModel):

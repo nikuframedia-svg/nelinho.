@@ -109,7 +109,8 @@ def test_ranking_empty_sector_is_200_not_500(_stub_service):
 
 def test_ranking_requires_tenant_header(_stub_service):
     r = _client().get("/v1/workforce/sectors/ranking", params={"area_group": "Laminagem"})
-    assert r.status_code == 422  # X-Tenant-Id em falta
+    # require_tenant_header (canónico) → 401 sem tenant (auth), não 422 (validação)
+    assert r.status_code == 401  # X-Tenant-Id em falta
 
 
 def test_sector_levels_returns_seven_groups(_stub_service):

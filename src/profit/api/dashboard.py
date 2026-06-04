@@ -35,13 +35,13 @@ from src.profit.services.dashboard_metrics_service import DashboardMetricsServic
 from src.profit.services.margin_calculator import MarginCalculator
 from src.profit.services.order_cost_service import OrderCostService
 from src.profit.services.throughput_service import ThroughputService
+from src.shared.auth.headers import require_tenant_header
 from src.shared.database import get_session
 
 router = APIRouter(tags=["Profit"])
 
 
-def get_tenant_id(x_tenant_id: UUID = Header(..., alias="X-Tenant-Id")) -> UUID:
-    return x_tenant_id
+get_tenant_id = require_tenant_header
 
 
 # ─── Pydantic schemas ─────────────────────────────────────────────────────
@@ -636,6 +636,7 @@ async def get_cost_ledger(
 # ─── /cost-reduction-suggestions (Q.54.H — sugestões accionáveis) ────────
 
 from src.profit.services.cost_reduction_service import CostReductionService
+from src.shared.auth.headers import require_tenant_header
 
 
 class CostReductionRequest(BaseModel):

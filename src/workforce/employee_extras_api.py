@@ -34,14 +34,14 @@ from src.workforce.employee_extras_service import (
     DEFAULT_HISTORY_LIMIT,
     MAX_HISTORY_LIMIT,
 )
+from src.shared.auth.headers import require_tenant_header
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/workforce/employees", tags=["Workforce employees"])
 
 
-def get_tenant_id(x_tenant_id: UUID = Header(..., alias="X-Tenant-Id")) -> UUID:
-    return x_tenant_id
+get_tenant_id = require_tenant_header
 
 
 # ---------------------------------------------------------------------------

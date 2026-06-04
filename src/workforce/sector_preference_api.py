@@ -21,12 +21,12 @@ from src.workforce.sector_preference_service import (
     LEVEL_SCALE,
     SectorPreferenceService,
 )
+from src.shared.auth.headers import require_tenant_header
 
 router = APIRouter(prefix="/v1/workforce/sectors", tags=["Workforce sectors"])
 
 
-def get_tenant_id(x_tenant_id: UUID = Header(..., alias="X-Tenant-Id")) -> UUID:
-    return x_tenant_id
+get_tenant_id = require_tenant_header
 
 
 @router.get("")

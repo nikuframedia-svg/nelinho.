@@ -26,12 +26,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.plan.cpo.commits import CommitsService
 from src.profit.models.pricing import OrderRevenue
 from src.shared.database import get_session
+from src.shared.auth.headers import require_tenant_header
 
 router = APIRouter(tags=["Plan"])
 
 
-def get_tenant_id(x_tenant_id: UUID = Header(..., alias="X-Tenant-Id")) -> UUID:
-    return x_tenant_id
+get_tenant_id = require_tenant_header
 
 
 @router.get("/priority-report")

@@ -12,11 +12,10 @@ from uuid import UUID
 from fastapi import Header, HTTPException, status
 
 from src.shared.config import settings
+from src.shared.auth.headers import require_tenant_header
 
 
-def get_tenant_id(x_tenant_id: UUID = Header(...)) -> UUID:
-    """Extract tenant ID from header."""
-    return x_tenant_id
+get_tenant_id = require_tenant_header
 
 
 def dev_only() -> None:
