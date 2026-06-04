@@ -1,22 +1,8 @@
+"""Workforce — sub-módulos VIVOS: sector_preference (CPO), operators_summary
+(/operador, /configuracoes), employee_extras. Cada um tem o seu router próprio.
+
+SANEAMENTO (chore/saneamento): a feature órfã de simulação/dependency-graph/
+cascade/scenarios/allocations (api.py + service.py com custos fabricados
+440/880/2000€ e spof=3) foi apagada — 0 callers vivos. Ver DELETION_LOG.md.
 """
-Workforce Operations System - Backend Module
-=============================================
-
-This module implements the Workforce Operations System:
-- Dependency graph generation
-- Cascade impact analysis
-- What-If simulation
-- Training recommendations
-- Scenario comparison
-
-All based on real data from:
-- FuncionariosFasesAptos (902 records)
-- Funcionarios (301 employees)
-- Fases (71 phases)
-- FasesOrdemFabrico (backlog data)
-"""
-
-from .api import router as workforce_router
-
-__all__ = ["workforce_router"]
 

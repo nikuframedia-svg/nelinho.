@@ -37,9 +37,9 @@ from src.shared.api import router as shared_router
 from src.shared.realtime.activity_api import router as activity_router
 from src.supply.api import router as supply_router
 from src.twin.api import router as twin_router
-from src.workforce.api import router as workforce_router
 from src.workforce.employee_extras_api import router as workforce_employees_router  # Sprint Q.3
 from src.workforce.sector_preference_api import router as workforce_sectors_router  # Q.140
+from src.workforce.operators_summary_api import router as workforce_operators_router  # Q.159
 
 
 def register_routers(app: FastAPI) -> None:
@@ -94,13 +94,15 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(
         learning_metrics_router
     )  # Sprint R.1 — learning visibility (pairs/rules/weights)
-    app.include_router(workforce_router)  # Workforce Operations API (NEW)
     app.include_router(
         workforce_employees_router
     )  # Sprint Q.3 — Employees extras (quality-score, skills, history)
     app.include_router(
         workforce_sectors_router
     )  # Q.140 — Sectores: lista + ranking por sector
+    app.include_router(
+        workforce_operators_router
+    )  # Q.159 — Operadores ativos: contagem + quebra por área
     app.include_router(copilot_alerts_router)  # Proactive alerts (Sprint C — Fase 5)
     app.include_router(plan_cpo_router)  # CPO v4 scheduler (Sprint E — DRCFFS-R)
 
