@@ -48,7 +48,9 @@ export const machinesApi = {
 
 // Employees
 export const employeesApi = {
-  list: (params?: { limit?: number; offset?: number; status?: string; department?: string }) =>
+  // Q.159 — `active_only=true` restringe à regra de "operador ativo" (E_ACTIVO +
+  // trabalho nos últimos 2 meses, ~107). Usar nos dropdowns de atribuição.
+  list: (params?: { limit?: number; offset?: number; status?: string; department?: string; active_only?: boolean }) =>
     request<any>(`/v1/core/employees?${new URLSearchParams(filterParams(params))}`),
   
   get: (id: string) =>

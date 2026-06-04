@@ -17,7 +17,7 @@ import { AlertTriangle, ChevronRight, Info } from 'lucide-react';
 import { DarkCard, DarkBadge, DarkSelect, EmptyState } from '../../../components/dark';
 import { SkeletonLoader } from '../../../components/ui/Skeleton';
 import { workforceApi, type SectorRankingRow } from '../../../lib/workforceApi';
-import { sectorKeys } from '../../../lib/api/keys';
+import { sectorKeys, operatorsKeys } from '../../../lib/api/keys';
 import { useToastContext } from '../../../components/ToastProvider';
 
 const LEVEL_LABELS: Record<string, string> = {
@@ -66,6 +66,14 @@ export function EquipaNiveisTab() {
     queryFn: () => workforceApi.listSectors(),
   });
 
+  // Q.159 — contagem canónica de "operadores ativos" (E_ACTIVO + últimos 2
+  // meses, ~107) + quebra por área. Read-only.
+  const operatorsQuery = useQuery({
+    queryKey: operatorsKeys.summary(),
+    queryFn: () => workforceApi.getOperatorsSummary(),
+    staleTime: 10 * 60_000,
+  });
+
   // Selecciona o 1º sector assim que a lista chega.
   const sectors = sectorsQuery.data?.sectors ?? [];
   const activeSector = sector ?? sectors[0] ?? null;
@@ -92,8 +100,41 @@ export function EquipaNiveisTab() {
     onError: () => toast.error('Não foi possível guardar o nível.'),
   });
 
+  const operators = operatorsQuery.data;
+  const topAreas = (operators?.by_area ?? []).slice(0, 6);
+
   return (
     <div className="space-y-5">
+      {/* Q.159 — contagem de operadores ativos (regra EXATA: E_ACTIVO + últimos
+          2 meses). É a definição que o CPO e os dropdowns de atribuição usam. */}
+      {operators && operators.count > 0 && (
+        <DarkCard
+          title={`${operators.count} operadores ativos`}
+          subtitle={`Trabalharam nos últimos ${Math.round(operators.window_days / 30)} meses · regra usada pelo planeador e pelos dropdowns`}
+        >
+          <div className="flex flex-wrap gap-2">
+            {topAreas.map((a) => (
+              <span
+                key={a.area}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800 text-xs text-slate-300"
+                title={`${a.ops} operadores ativos com trabalho recente em ${a.area}`}
+              >
+                <span className="font-semibold text-white">{a.ops}</span>
+                {a.area}
+              </span>
+            ))}
+            {(operators.by_area.length > topAreas.length) && (
+              <span className="inline-flex items-center px-2.5 py-1 rounded-lg bg-slate-800/50 text-xs text-slate-400">
+                +{operators.by_area.length - topAreas.length} áreas
+              </span>
+            )}
+          </div>
+          <p className="mt-2 text-[11px] text-text-dark-secondary">
+            Uma pessoa conta em várias áreas (polivalência) — a soma por área é maior que o total.
+          </p>
+        </DarkCard>
+      )}
+
       {/* Cabeçalho explicativo */}
       <div className="flex items-start gap-3 bg-slate-800/40 border border-slate-700/50 rounded-xl p-4">
         <Info size={16} className="text-accent flex-shrink-0 mt-0.5" />

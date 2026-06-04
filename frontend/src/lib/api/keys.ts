@@ -342,6 +342,13 @@ export const coreKeys = {
   employees: () => [...coreKeys.all, 'employees'] as const,
   employeesForPlanEditor: () =>
     [...coreKeys.employees(), 'for-plan-editor'] as const, // → ['core','employees','for-plan-editor']
+  // Q.159 — só operadores ATIVOS (active_only=true, ~107) para os DROPDOWNS de
+  // atribuição. Key SEPARADA da de cima de propósito: a resolução de nomes
+  // (useEmployeeNamesByCode, mapa de nomes do OverallPage) precisa da lista
+  // COMPLETA incl. terminados (ops históricas), por isso não pode partilhar
+  // cache com o subconjunto ativo.
+  employeesActiveForPlanEditor: () =>
+    [...coreKeys.employees(), 'active-for-plan-editor'] as const,
 } as const;
 
 // ─── Q.155 — melhores operadores por fase (curado manual) ─────────────────
@@ -357,6 +364,17 @@ export const boatComplexityKeys = {
   list: () => [...boatComplexityKeys.all, 'list'] as const,
 } as const;
 
+// ─── factory-map snapshot (Q.158) ────────────────────────────────────────
+//
+// Snapshot global da fábrica (GET /v1/factory-map/snapshot): "barcos em
+// produção" pela regra EXATA da NELO (boats_em_producao) + gargalos. Lido no
+// header do /overall (KPI ≈830).
+
+export const fabricaKeys = {
+  all: ['factory-map'] as const,
+  snapshot: () => [...fabricaKeys.all, 'snapshot'] as const,
+} as const;
+
 // ─── workforce sectors / níveis por sector (Q.140) ───────────────────────
 //
 // Níveis por (pessoa × sector) + ranking por sector. ranking(area) e
@@ -368,4 +386,15 @@ export const sectorKeys = {
   ranking: (areaGroup: string) => [...sectorKeys.all, 'ranking', areaGroup] as const,
   employeeLevels: (employeeId: string) =>
     [...sectorKeys.all, 'employee', employeeId] as const,
+} as const;
+
+// ─── Q.159 — operadores ativos (contagem + quebra por área) ──────────────
+//
+// GET /v1/workforce/operators/summary → {count, window_days, by_area}.
+// "operador ativo" = E_ACTIVO + trabalho nos últimos 2 meses (~107). Lido no
+// cabeçalho da aba Equipa·Níveis.
+
+export const operatorsKeys = {
+  all: ['workforce-operators'] as const,
+  summary: () => [...operatorsKeys.all, 'summary'] as const,
 } as const;

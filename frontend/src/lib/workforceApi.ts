@@ -83,6 +83,18 @@ export interface EmployeeSectorLevels {
   sectors: SectorLevel[];
 }
 
+// Q.159 — operadores ativos (E_ACTIVO + últimos 2 meses, ~107) + quebra por área.
+export interface OperatorsAreaCount {
+  area: string;
+  ops: number;
+}
+
+export interface OperatorsSummary {
+  count: number;
+  window_days: number;
+  by_area: OperatorsAreaCount[];
+}
+
 /**
  * Workforce API client
  */
@@ -189,6 +201,13 @@ export const workforceApi = {
         body: JSON.stringify({ area_group: areaGroup, nivel, reason }),
       },
     );
+  },
+
+  // ── Q.159 — Operadores ativos (contagem + quebra por área) ──────────────
+
+  /** Contagem de "operadores ativos" (E_ACTIVO + últimos 2 meses, ~107) + áreas. */
+  async getOperatorsSummary(): Promise<OperatorsSummary> {
+    return apiFetch<OperatorsSummary>('/v1/workforce/operators/summary');
   },
 };
 

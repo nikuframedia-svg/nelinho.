@@ -128,6 +128,14 @@ class SnapshotMixin:
         availability.molds = molds_summary["total"] > 0
         availability.schedule = load_preview["has_data"]
 
+        # Q.158 — contagem canónica de "barcos em produção" (regra EXATA da NELO,
+        # view factory_raw.v_of_em_producao). Best-effort e fora do gather (uma
+        # agregação barata). Só corre com uma AsyncSession real — os unit tests
+        # (FakeSession determinística) não pagam a query nem perturbam a fila.
+        boats_em_producao: Optional[dict[str, int]] = None
+        if isinstance(self.session, AsyncSession):
+            boats_em_producao = await self._boats_em_producao_summary()
+
         # Bottlenecks: prefer the semantic payload, but fall back to a
         # direct DB computation so the panel is never empty when there's
         # data (Q.54.E).
@@ -140,6 +148,10 @@ class SnapshotMixin:
             "availability": availability.as_dict(),
             "trust": trust_payload,
             "boats": orders_summary,
+            # Q.158 — bloco dedicado: "em produção" pela regra da NELO (≈830 =
+            # NOT is_fila) + breakdown fila/reparações/nova. `None` quando a view
+            # falta (dev sem mirror) → o card cai no número por-encomenda.
+            "boats_em_producao": boats_em_producao,
             "phases": {
                 "bottlenecks": bottleneck_list,
                 "skills_risk": (skills_risk or {}).get("at_risk_phases", []),
@@ -273,6 +285,46 @@ class SnapshotMixin:
             "in_progress": by_status.get(OrderStatus.IN_PROGRESS.value, 0),
             "completed": by_status.get(OrderStatus.COMPLETED.value, 0),
             "cancelled": by_status.get(OrderStatus.CANCELLED.value, 0),
+        }
+
+    async def _boats_em_producao_summary(self) -> Optional[dict[str, int]]:
+        """Q.158 — "barcos em produção" pela regra EXATA da NELO, via a view
+        `factory_raw.v_of_em_producao` (op aberta na fase atual). `em_producao`
+        = NOT is_fila (≈830, o que a fábrica mostra); `total` = tudo que o CPO
+        planeia (≈1209); `fila`/`reparacao`/`nova_producao` = breakdown.
+
+        Best-effort: a view pode faltar em dev sem mirror do ERP, ou a coluna/
+        tabela estar ausente → devolve `None` (o card cai no número por-encomenda,
+        também dado real). Nunca rebenta o snapshot."""
+        from sqlalchemy import text
+        from sqlalchemy.exc import SQLAlchemyError
+
+        try:
+            row = (
+                await self.session.execute(
+                    text(
+                        """
+                        SELECT count(*)                                 AS total,
+                               count(*) FILTER (WHERE NOT is_fila)      AS em_producao,
+                               count(*) FILTER (WHERE is_fila)          AS fila,
+                               count(*) FILTER (WHERE is_reparacao)     AS reparacao,
+                               count(*) FILTER (WHERE is_nova_producao) AS nova_producao
+                        FROM factory_raw.v_of_em_producao
+                        """
+                    )
+                )
+            ).mappings().first()
+        except SQLAlchemyError as exc:  # pragma: no cover — view ausente / outage
+            logger.debug("boats_em_producao summary skipped: %s", exc)
+            return None
+        if row is None:
+            return None
+        return {
+            "total": int(row["total"]),
+            "em_producao": int(row["em_producao"]),
+            "fila": int(row["fila"]),
+            "reparacao": int(row["reparacao"]),
+            "nova_producao": int(row["nova_producao"]),
         }
 
     async def _molds_summary(self) -> dict[str, Any]:

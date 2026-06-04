@@ -14,10 +14,11 @@ import { Link } from 'react-router-dom';
 import { addDays, startOfDay, format } from 'date-fns';
 import { pt } from 'date-fns/locale';
 import { Calendar, AlertTriangle, Ship, RotateCcw } from 'lucide-react';
-import { planKeys } from '../../lib/api/keys';
+import { planKeys, fabricaKeys, coreKeys } from '../../lib/api/keys';
 import { cpoCommitsApi, planOperationsApi, timelineActualsApi, copilotAlertsApi, planExclusionApi, schedulePreviewApi } from '../../lib/api';
 import type { CpoCommit, TimelineActualItem, CopilotAlertItem, ExcludedBoat } from '../../lib/api';
 import { MoveBoatConfirm } from '../producao/MoveBoatConfirm';
+import { fabricaApi } from '../producao/fabricaApi';
 import type { ActiveOrderCard } from '../producao/fabricaApi';
 import { PageHeader, DarkCard, DarkButton, EmptyState } from '../../components/dark';
 import { useToastContext } from '../../components/ToastProvider';
@@ -128,6 +129,19 @@ export default function OverallPage(): ReactNode {
   // Badge decisões pendentes
   const { decisions: pendingDecisions } = usePendingDecisions();
 
+  // Q.158 — "barcos em produção" pela regra EXATA da NELO (snapshot da fábrica,
+  // view factory_raw.v_of_em_producao). É a MESMA definição que o CPO planeia e
+  // que o robô vigia. `boats_em_producao=null` (view ausente em dev) → não se
+  // mostra KPI (zero-mocks, nunca inventa um número).
+  const { data: factorySnapshot } = useQuery({
+    queryKey: fabricaKeys.snapshot(),
+    queryFn: () => fabricaApi.snapshot(),
+    refetchInterval: 60_000,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+  const emProducao = factorySnapshot?.boats_em_producao ?? null;
+
   // ── Query ──────────────────────────────────────────────────────────────────
   const { data: commits, isLoading, isError, refetch } = useQuery({
     queryKey: planKeys.scheduleCurrent(),
@@ -171,9 +185,21 @@ export default function OverallPage(): ReactNode {
 
   // Q.147.C — operadores com NOMES reais (para o editor de operação). O plano
   // identifica operadores pelo `employee_code`, a mesma identidade do reorder.
+  // Lista COMPLETA (incl. terminados): só serve para resolver código→nome de
+  // ops históricas (empNameByCode); o dropdown usa a lista ATIVA abaixo.
   const employeesQuery = useQuery({
-    queryKey: ['core', 'employees', 'for-plan-editor'],
+    queryKey: coreKeys.employeesForPlanEditor(),
     queryFn: () => employeesApi.list({ limit: 1000 }),
+    staleTime: 10 * 60_000,
+    retry: 0,
+    refetchOnWindowFocus: false,
+  });
+
+  // Q.159 — só operadores ATIVOS (E_ACTIVO + últimos 2 meses, ~107) para o
+  // dropdown de atribuição. Key separada (não polui o mapa de nomes acima).
+  const activeEmployeesQuery = useQuery({
+    queryKey: coreKeys.employeesActiveForPlanEditor(),
+    queryFn: () => employeesApi.list({ limit: 1000, active_only: true }),
     staleTime: 10 * 60_000,
     retry: 0,
     refetchOnWindowFocus: false,
@@ -407,16 +433,19 @@ export default function OverallPage(): ReactNode {
     return [...actualOps, ...planFiltered];
   }, [commitDetail, localOverrides, actualsData, empNameByCode]);
 
-  // Q.147.C — opções do editor de operação.
+  // Q.147.C — opções do editor de operação. Q.159 — só operadores ATIVOS
+  // (a query já filtra via active_only; o `status === 'ACTIVE'` é defesa em
+  // profundidade — o enum serializa UPPERCASE, por isso `!== 'inactive'` nunca
+  // removia ninguém e mostrava os terminados).
   const operatorOptions = useMemo(() => {
-    const rows = (employeesQuery.data ?? []) as Array<{
+    const rows = (activeEmployeesQuery.data ?? []) as Array<{
       employee_code?: string; employee_name?: string; status?: string;
     }>;
     return rows
-      .filter((e) => e.employee_code && e.employee_name && e.status !== 'inactive')
+      .filter((e) => e.employee_code && e.employee_name && e.status === 'ACTIVE')
       .map((e) => ({ code: String(e.employee_code), name: String(e.employee_name) }))
       .sort((a, b) => a.name.localeCompare(b.name, 'pt'));
-  }, [employeesQuery.data]);
+  }, [activeEmployeesQuery.data]);
 
   const phaseOptions = useMemo(() => {
     const seen = new Map<string, string>();
@@ -689,6 +718,40 @@ export default function OverallPage(): ReactNode {
 
         {/* Faixa colapsável de riscos operacionais */}
         <RiskStrip />
+
+        {/* Q.158 — KPI "barcos em produção" pela regra EXATA da NELO (≈830 =
+            NOT fila). Mesma definição do CPO scope e do watermark do robô. Só
+            aparece quando a view existe (zero-mocks). */}
+        {emProducao && (
+          <div
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs flex-shrink-0"
+            style={{ background: 'var(--bg-3)', border: '1px solid var(--bd-2)' }}
+          >
+            <Ship size={13} style={{ color: 'var(--accent)' }} />
+            <span className="font-mono tabular-nums text-sm font-semibold" style={{ color: 'var(--fg-1)' }}>
+              {emProducao.em_producao.toLocaleString('pt-PT')}
+            </span>
+            <span style={{ color: 'var(--fg-2)' }}>barcos em produção</span>
+            <span style={{ color: 'var(--fg-3)' }}>
+              · fila{' '}
+              <span className="font-mono tabular-nums" style={{ color: 'var(--fg-2)' }}>
+                {emProducao.fila.toLocaleString('pt-PT')}
+              </span>
+            </span>
+            {emProducao.reparacao > 0 && (
+              <span style={{ color: 'var(--fg-3)' }}>
+                · reparações{' '}
+                <span className="font-mono tabular-nums" style={{ color: 'var(--fg-2)' }}>
+                  {emProducao.reparacao.toLocaleString('pt-PT')}
+                </span>
+              </span>
+            )}
+            <span className="ml-auto" style={{ color: 'var(--fg-3)' }}>
+              <span className="font-mono tabular-nums">{emProducao.total.toLocaleString('pt-PT')}</span>
+              {' '}no plano (inclui fila)
+            </span>
+          </div>
+        )}
 
         {/* Q.153.C2 — barcos excluídos do plano (repor no plano) */}
         {excludedBoats.length > 0 && (

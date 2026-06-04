@@ -230,7 +230,15 @@ async def _nelo_erp_raw_full_nightly_job() -> None:
     from scripts.q75_setup_raw_mirror import setup as raw_setup
 
     # Só as tabelas que o incremental NÃO cobre (sem PK+watermark single-col).
-    full_only = [t.nelo_name for t in RAW_TABLES if not t.supports_incremental]
+    # Q.158.F — inclui também as tabelas com `keep_open_col` (ex. ORDEMFABRICO):
+    # o incremental relê as abertas mas NÃO apanha fechos (OF_DATAACTUALIZACAO é
+    # 96.8% null → o watermark nunca dispara para uma OF que fechou). Uma cópia
+    # completa nocturna (TRUNCATE+COPY, ~20s/348k rows) corrige fechos + re-inclui
+    # barcos abertos antigos. O incremental de 5 min mantém os novos frescos.
+    full_only = [
+        t.nelo_name for t in RAW_TABLES
+        if not t.supports_incremental or t.keep_open_col
+    ]
     started = datetime.utcnow()
     try:
         results = await raw_setup(incremental=False, only=full_only)

@@ -60,9 +60,10 @@ export function MelhoresPorFaseTab() {
     enabled: Boolean(phaseId),
   });
 
+  // Q.159 — só operadores ATIVOS (~107) para curar "melhores por fase".
   const employeesQuery = useQuery({
-    queryKey: coreKeys.employeesForPlanEditor(),
-    queryFn: () => employeesApi.list({ limit: 1000 }),
+    queryKey: coreKeys.employeesActiveForPlanEditor(),
+    queryFn: () => employeesApi.list({ limit: 1000, active_only: true }),
     staleTime: 10 * 60_000,
   });
 
@@ -78,7 +79,7 @@ export function MelhoresPorFaseTab() {
       status?: string;
     }>;
     return rows
-      .filter((e) => e.employee_code && e.employee_name && e.status !== 'inactive')
+      .filter((e) => e.employee_code && e.employee_name && e.status === 'ACTIVE')
       .map((e) => ({
         employee_code: String(e.employee_code),
         employee_name: String(e.employee_name),

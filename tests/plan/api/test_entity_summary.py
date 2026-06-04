@@ -416,6 +416,9 @@ def test_fase_happy_path_with_all_data():
         _boat_score(boat_id="K4-Slim-S", score=0.30, sample_count=5),
         _boat_score(boat_id="C1-Vibe-L", score=0.42, sample_count=8),
     ])
+    # 5. Q.160 — fila inter-fase (mediana por fase) via _load_phase_queue_medians_db
+    #    → .mappings().all() (rows como dicts). Devolve a fila desta fase.
+    session.queue_scalars([{"fase_id": "laminagem", "median_h": 4.0, "n_obs": 50}])
 
     client = _minimal_app(session)
     # "LAMINAGEM" está em NELO_CURING_GAPS_SEED como from/to → vão aparecer.
@@ -424,6 +427,8 @@ def test_fase_happy_path_with_all_data():
     body = resp.json()
     assert body["phase_id"] == "laminagem"
     assert body["phase_name"] == "Laminagem"
+    # Q.160 — fila MEDIDA desta fase (mediana real), o mesmo nº que o CPO usa.
+    assert body["fila_mediana_h"] == 4.0
     assert len(body["top_operators"]) == 2
     # Order kept from queue (score DESC simulated).
     assert body["top_operators"][0]["operator_name"] == "João Silva"
@@ -469,6 +474,8 @@ def test_fase_only_curing_gap_no_404():
     assert len(body["curing_gaps_in"]) >= 1
     from_phases = [g["from_phase"] for g in body["curing_gaps_in"]]
     assert "LAMINAGEM" in from_phases
+    # Q.160 — sem histórico de fila para "cura" no mock → None (honesto).
+    assert body["fila_mediana_h"] is None
 
 
 # ─── CLIENTE ─────────────────────────────────────────────────────────────────

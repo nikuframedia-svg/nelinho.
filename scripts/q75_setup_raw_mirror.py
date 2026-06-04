@@ -54,6 +54,17 @@ class RawTable:
     pk_col: Optional[str] = None   # Q.125: PK single-col p/ upsert incremental
     inc_col: Optional[str] = None  # Q.125: coluna-watermark do incremental
                                    # (update-ts de preferência; fallback date_col)
+    keep_open_col: Optional[str] = None  # Q.158.F: coluna que, quando NULL,
+                                   # força incluir a linha FORA da janela temporal
+                                   # (ex. OF_DATAFIM null = OF aberta). Sem isto, um
+                                   # barco criado há >window_years mas ainda em
+                                   # produção caía do mirror (gap 907 vs 1121 live).
+    keep_open_via_sql: Optional[str] = None  # Q.158.I: condição SQL extra (OR) na
+                                   # cópia FULL p/ incluir linhas que importam mesmo
+                                   # fora da janela e já fechadas — ex. ORDEMFABRICO
+                                   # com REPARAÇÃO aberta (OF entregue que voltou:
+                                   # EXISTS of_fp com offp_datafim NULL). Só no full
+                                   # (nightly); o incremental de 5 min não a corre.
 
     @property
     def pg_name(self) -> str:
@@ -78,9 +89,21 @@ RAW_TABLES: list[RawTable] = [
     RawTable("PRODUTO_COMPONENTE", None),
     RawTable("OFFP_EQ", None),                           # 1.4M, PK composto → nightly
     RawTable("ORDEMFABRICO", "OF_DATA", 2,
-             pk_col="OF_ID", inc_col="OF_DATAACTUALIZACAO"),
+             pk_col="OF_ID", inc_col="OF_DATAACTUALIZACAO",
+             keep_open_col="OF_DATAFIM",
+             # Q.158.I — além das abertas (keep_open_col), trazer OFs JÁ FECHADAS
+             # que voltaram para REPARAÇÃO (têm op aberta em of_fp). 83 dos ~830
+             # "em produção" da NELO são OFs com OF_DATAFIM preenchido. Só no full.
+             keep_open_via_sql=(
+                 "EXISTS (SELECT 1 FROM OF_FP r "
+                 "WHERE r.OFFP_OF_ID = OF_ID AND r.OFFP_DATAFIM IS NULL)"
+             )),
     RawTable("OF_FP", "OFFP_DATAINICIO", 2,
-             pk_col="OFFP_ID", inc_col="OFFP_DATAINICIO"),
+             pk_col="OFFP_ID", inc_col="OFFP_DATAINICIO",
+             keep_open_col="OFFP_DATAFIM"),  # Q.158.H: nunca deixar cair uma
+             # operação ABERTA (datafim null), incl. não-iniciadas (datainicio
+             # null) — a janela por OFFP_DATAINICIO dropava-as e a regra
+             # "em produção" da NELO (CROSS APPLY) precisa delas.
     RawTable("OF_CHECKLIST", "OFCH_DATA_VERIFICACAO", 1,
              pk_col="OFCH_ID", inc_col="OFCH_DATA_ACTUALIZACAO"),
     RawTable("MOVIMENTO", "MOV_DATA", 2,
@@ -194,10 +217,21 @@ async def _mirror_table(
     select_cols = ", ".join(f"[{c}]" for c in col_names)
     where = ""
     if spec.date_col:
-        where = (
-            f" WHERE [{spec.date_col}] >= "
+        cond = (
+            f"[{spec.date_col}] >= "
             f"DATEADD(year, -{spec.window_years}, GETDATE())"
         )
+        # Q.158.F — nunca deixar cair uma OF aberta (em produção), por muito
+        # antiga que seja a sua criação: o critério "barco em produção" tem de
+        # ver TODAS as abertas, não só as criadas na janela.
+        if spec.keep_open_col:
+            cond = f"({cond} OR [{spec.keep_open_col}] IS NULL)"
+        # Q.158.I — condição SQL extra (OR) só no FULL: traz linhas que importam
+        # mesmo fora da janela e já fechadas (ex. ORDEMFABRICO com REPARAÇÃO
+        # aberta — OF entregue que voltou). O incremental de 5 min não a corre.
+        if spec.keep_open_via_sql:
+            cond = f"({cond} OR {spec.keep_open_via_sql})"
+        where = f" WHERE {cond}"
     select_sql = text(f"SELECT {select_cols} FROM [{spec.nelo_name}]{where}")
 
     # 3. TRUNCATE + bulk copy numa SÓ transação (DROP-free e atómico p/ as
@@ -277,10 +311,15 @@ async def _mirror_table_incremental(
     )
 
     # Lê do SQL Server só a janela recente por inc_col.
+    # Q.158.F — além da janela recente, relê SEMPRE as linhas abertas
+    # (keep_open_col IS NULL): apanha barcos abertos antigos cujo inc_col
+    # (ex. OF_DATAACTUALIZACAO, 96.8% null) nunca dispara o watermark.
     select_cols = ", ".join(f"[{c}]" for c in col_names)
+    inc_cond = f"[{inc_col}] >= DATEADD(day, -{window_days}, GETDATE())"
+    if spec.keep_open_col:
+        inc_cond = f"({inc_cond} OR [{spec.keep_open_col}] IS NULL)"
     select_sql = text(
-        f"SELECT {select_cols} FROM [{spec.nelo_name}] "
-        f"WHERE [{inc_col}] >= DATEADD(day, -{window_days}, GETDATE())"
+        f"SELECT {select_cols} FROM [{spec.nelo_name}] WHERE {inc_cond}"
     )
 
     # Temp table com a mesma forma (sem _synced_at) para o upsert.

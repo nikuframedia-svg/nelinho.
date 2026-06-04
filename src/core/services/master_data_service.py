@@ -5,13 +5,16 @@ ProdPlan ONE - Master Data Service
 Business logic for master data management (products, machines, employees, operations).
 """
 
+import logging
 from datetime import date
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, TypeVar, Generic, Type
 from uuid import UUID
 
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
 
 from src.core.models.audit import AuditLog
 from src.core.models.product import Product, ProductType, ProductStatus
@@ -343,18 +346,60 @@ class MasterDataService:
         department: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
+        active_only: bool = False,
     ) -> List[Employee]:
-        """List employees with filtering."""
+        """List employees with filtering.
+
+        Q.159 — ``active_only`` aplica a regra EXATA de "operador ativo": só
+        colaboradores em ``factory_raw.v_active_operators`` (E_ACTIVO + trabalho
+        nos últimos 2 meses, ~107). Se a view não existir (dev sem sync), cai
+        para ``status=ACTIVE`` em vez de devolver vazio — estado honesto, nunca
+        mock. Default False → back-compat para os consumidores existentes.
+        """
         query = select(Employee).where(Employee.tenant_id == self.tenant_id)
-        
+
+        if active_only:
+            active_codes = await self._active_operator_codes()
+            if active_codes is not None:
+                query = query.where(Employee.employee_code.in_(active_codes))
+            else:
+                # Fallback honesto: view ausente → estado ACTIVE da ERP.
+                query = query.where(Employee.status == EmploymentStatus.ACTIVE)
+
         if status:
             query = query.where(Employee.status == status)
         if department:
             query = query.where(Employee.department == department)
-        
+
         query = query.order_by(Employee.employee_name).limit(limit).offset(offset)
         result = await self.session.execute(query)
         return list(result.scalars().all())
+
+    async def _active_operator_codes(self) -> Optional[List[str]]:
+        """Q.159 — employee_codes em factory_raw.v_active_operators (~107).
+
+        Devolve ``None`` se a view não existir (dev/test sem sync), para o
+        chamador aplicar o fallback. Verifica a existência via information_schema
+        ANTES de ler a view, para não abortar a transação Postgres com um erro de
+        relação inexistente.
+        """
+        exists = await self.session.scalar(
+            text(
+                "SELECT 1 FROM information_schema.views "
+                "WHERE table_schema = 'factory_raw' "
+                "AND table_name = 'v_active_operators'"
+            )
+        )
+        if not exists:
+            logger.warning(
+                "Q.159 active_only: view factory_raw.v_active_operators ausente "
+                "— fallback para status=ACTIVE."
+            )
+            return None
+        rows = await self.session.execute(
+            text("SELECT e_id::text AS code FROM factory_raw.v_active_operators")
+        )
+        return [r.code for r in rows]
     
     # ═══════════════════════════════════════════════════════════════════════════════
     # OPERATIONS

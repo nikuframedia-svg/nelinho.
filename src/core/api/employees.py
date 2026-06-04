@@ -49,10 +49,16 @@ async def list_employees(
     department: str = None,
     limit: int = 100,
     offset: int = 0,
+    active_only: bool = False,
     tenant_id: UUID = Depends(get_tenant_id),
     session: AsyncSession = Depends(get_session),
 ):
-    """List employees with optional filtering."""
+    """List employees with optional filtering.
+
+    Q.159 — ``active_only=true`` restringe à regra EXATA de "operador ativo"
+    (E_ACTIVO + trabalho nos últimos 2 meses, ~107) via
+    ``factory_raw.v_active_operators``. Default False → devolve todos (back-compat).
+    """
     from src.shared.pagination import validate_pagination
     validate_pagination(limit, offset)
     try:
@@ -62,6 +68,7 @@ async def list_employees(
             department=department,
             limit=limit,
             offset=offset,
+            active_only=active_only,
         )
         return employees
     except (ConnectionRefusedError, Exception) as e:

@@ -32,18 +32,17 @@ _DEFAULT_MIN_GAP_MIN = 60
 # Reset no restart é aceitável — apenas re-planeia 1× após rearranque.
 _last_run: Dict[UUID, Tuple[datetime, Tuple[int, str]]] = {}
 
-# Watermark barato do WIP-barco: nº de ordens-barco abertas + max actualização.
-# Mesma definição de barco/abertura que `_load_open_orders_db` (state.py).
+# Watermark barato do WIP-barco: nº de barcos em produção + max actualização.
+# Q.158 — lê da MESMA view que o CPO scope (`_load_open_orders_db`) e o display:
+# `factory_raw.v_of_em_producao` (regra EXATA da NELO — op aberta na fase atual).
+# Substitui o critério antigo deck+casco + OF_DATAFIM IS NULL, que divergia do
+# que o CPO realmente planeia. `n` = ≈1209 (nova+fila+reparações).
 _WATERMARK_SQL = text(
     """
     SELECT count(*) AS n,
            COALESCE(max(ofb."OF_DATAACTUALIZACAO"), '') AS hw
-    FROM factory_raw.ordemfabrico ofb
-    JOIN factory_raw.fases_producao f
-      ON f."FP_ID" = ofb."OF_FP_ID" AND f."FP_PRODUCAO" = true
-    JOIN factory_raw.produto p ON p."P_ID" = ofb."OF_P_ID"
-    WHERE ofb."OF_DATAFIM" IS NULL
-      AND p."P_QTDDECK" > 0 AND p."P_QTDCASCO" > 0
+    FROM factory_raw.v_of_em_producao v
+    JOIN factory_raw.ordemfabrico ofb ON ofb."OF_ID" = v.of_id
     """
 )
 

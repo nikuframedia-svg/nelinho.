@@ -64,6 +64,19 @@ export interface FactorySnapshot {
     completed: number;
     [k: string]: number;
   };
+  /**
+   * Q.158 — "barcos em produção" pela regra EXATA da NELO (view
+   * factory_raw.v_of_em_producao). `em_producao` = NOT is_fila (≈830, o que a
+   * fábrica mostra); `total` = tudo que o CPO planeia (≈1209). `null` quando a
+   * view falta (dev sem mirror) → o card cai em `boats.in_progress`.
+   */
+  boats_em_producao: {
+    total: number;
+    em_producao: number;
+    fila: number;
+    reparacao: number;
+    nova_producao: number;
+  } | null;
   phases: {
     bottlenecks: FactoryBottleneck[];
     skills_risk: unknown[];

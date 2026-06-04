@@ -105,6 +105,17 @@ NON_PRODUCTION_PHASE_IDS: frozenset[str] = frozenset({
     "73",  # Pintura-Verniz
 })
 
+# Q.158 — fases de REPARAÇÃO (todas FP_PRODUCAO=true; a 13 "Para reparar" é
+# FP_PRODUCAO=false e está acima em NON_PRODUCTION_PHASE_IDS). Um barco com a
+# fase atual numa destas é um barco entregue/em-uso que voltou para reparação:
+# entra no scope (op aberta na fase atual) e marca-se `is_reparacao` para
+# lane/UI/prioridade. NÃO usar LIKE '%epar%' (apanharia "Pr-epar-ação").
+REPAIR_PHASE_IDS: frozenset[str] = frozenset({
+    "14",  # A Reparar
+    "76",  # Reparação Verniz
+    "77",  # Reparação
+})
+
 
 def normalize_phase_code(name: Optional[str]) -> str:
     """Canonical phase code: strip accents, UPPERCASE, spaces/hyphens/
@@ -428,6 +439,15 @@ class FactoryState:
                 state.skill_matrix, qualified,
             )
 
+        # Q.160 — restringe o pool a "operadores ativos" (E_ACTIVO + trabalho nos
+        # últimos 2 meses, ~107). Filtro input-only, mais restritivo, com guarda
+        # de não-vazio (Injeção mantém o histórico). Inerte se a view faltar.
+        active_ops = await _load_active_operators_db(session, tenant_id)
+        if active_ops:
+            state.skill_matrix = _apply_active_operator_filter(
+                state.skill_matrix, active_ops,
+            )
+
         # Q.140.F — preferência por sector → fase (override manual > derivado).
         # Best-effort; vazio = ranking por skill_count (back-compat). Só
         # REORDENA o pool apto no decoder, nunca o alarga (axioma 5).
@@ -450,8 +470,13 @@ class FactoryState:
 
         if not state.open_orders:
             # Q.136.A — `planning.scope` decide boats_only (default) vs all.
+            # Q.158 — o scope passa a usar a regra EXATA da NELO de "em produção"
+            # (op aberta na fase atual). O `planning.staleness_months` (Q.158.G)
+            # fica como guarda secundária OPCIONAL, default 0/OFF — superado pelo
+            # EXISTS (que já exclui zombies). Lê-se do mesmo TenantConfigService.
             from sqlalchemy.exc import SQLAlchemyError
             scope = "boats_only"
+            staleness_months: int | None = None
             try:
                 from src.core.services.tenant_config_service import (
                     TenantConfigService,
@@ -460,10 +485,20 @@ class FactoryState:
                     session, tenant_id
                 ).get_category("planning")
                 scope = str(_planning.get("scope") or "boats_only")
-            except (SQLAlchemyError, ImportError, ValueError, AttributeError) as exc:
-                logger.debug("planning.scope indisponível (%s); boats_only", exc)
+                _stale = _planning.get("staleness_months", 0)
+                staleness_months = (
+                    int(_stale) if _stale not in (None, "") else None
+                )
+            except (
+                SQLAlchemyError, ImportError, ValueError, AttributeError, TypeError,
+            ) as exc:
+                logger.debug(
+                    "planning config indisponível (%s); scope=boats_only "
+                    "staleness=off", exc,
+                )
             state.open_orders = await _load_open_orders_db(
-                session, tenant_id, scope=scope
+                session, tenant_id, scope=scope,
+                staleness_months=staleness_months,
             )
 
         # Curing/drying gaps (Sprint A D2): DB first, seed fallback
@@ -1297,6 +1332,64 @@ def _apply_qualification_gate(
     return merged
 
 
+async def _load_active_operators_db(
+    session: Any,
+    tenant_id: UUID,
+) -> Set[str]:
+    """Q.160 — set canónico de "operador ativo" (employee_code = E_ID::text).
+
+    Lê `factory_raw.v_active_operators` (E_ACTIVO + trabalho nos últimos 2 meses,
+    ~107). Verifica a existência da view via information_schema ANTES de a ler,
+    para não abortar a transação se ela faltar (dev/test sem sync) → devolve
+    ``set()`` nesse caso. Set vazio = filtro inerte (back-compat exacto)."""
+    if session is None:
+        return set()
+    from sqlalchemy import text
+    from sqlalchemy.exc import SQLAlchemyError
+    try:
+        exists = (
+            await session.execute(
+                text(
+                    "SELECT 1 FROM information_schema.views "
+                    "WHERE table_schema = 'factory_raw' "
+                    "AND table_name = 'v_active_operators'"
+                )
+            )
+        ).scalar()
+        if not exists:
+            return set()
+        rows = (
+            await session.execute(
+                text("SELECT e_id::text AS code FROM factory_raw.v_active_operators")
+            )
+        ).mappings().all()
+    except SQLAlchemyError as exc:  # pragma: no cover — outage / missing table
+        logger.debug("Q.160 active operators load skipped: %s", exc)
+        return set()
+    return {str(r["code"]) for r in rows if r["code"]}
+
+
+def _apply_active_operator_filter(
+    matrix: Dict[str, Set[str]],
+    active: Set[str],
+) -> Dict[str, Set[str]]:
+    """Q.160 — restringe cada pool de fase aos operadores ATIVOS (últimos 2 meses).
+
+    Filtro **input-only**, estritamente mais restritivo (axioma 5 — nunca alarga
+    o pool). Guarda de não-vazio: se a interseção esvaziar uma fase que TINHA
+    operadores, mantém o pool original (ex.: Injeção, sem trabalho em 60d) — e
+    mesmo que esvaziasse, o decoder agenda a fase como manual, nunca inviável.
+    ``active`` vazio → devolve a matriz intacta (back-compat exacto). Função pura.
+    """
+    if not active:
+        return matrix
+    filtered: Dict[str, Set[str]] = {}
+    for fase_id, pool in matrix.items():
+        narrowed = pool & active
+        filtered[fase_id] = narrowed if narrowed else set(pool)
+    return filtered
+
+
 async def _load_sector_preferences_db(
     session: Any,
     tenant_id: UUID,
@@ -1388,6 +1481,7 @@ async def _load_open_orders_db(
     session: Any,
     tenant_id: UUID,
     scope: str = "boats_only",
+    staleness_months: int | None = None,
 ) -> List[Dict[str, Any]]:
     """Q.126.B — real WIP from `factory_raw.ordemfabrico`: open orders
     (`OF_DATAFIM` NULL) whose current phase (`OF_FP_ID`) is a production phase
@@ -1414,7 +1508,27 @@ async def _load_open_orders_db(
     811/811 barcos reais + exclui pagaias TP331 (OF_ID≥10M).
 
     Q.136.B — devolve `current_fase_id` (= `OF_FP_ID`) para o RoutingResolver
-    truncar a rota à fase atual (não re-planear fases já feitas)."""
+    truncar a rota à fase atual (não re-planear fases já feitas).
+
+    Q.158 — regra EXATA da NELO de "em produção" (query real do `/OrdemFabrico`,
+    verificada na BD MAR-KAYAKS): a OF só entra se a **fase atual** (`OF_FP_ID`)
+    tiver uma operação POR TERMINAR em `of_fp` (`OFFP_DATAFIM` NULL) E a OF tiver
+    cliente de encomenda (`OF_E_ID_ENC` → `entidade`). Substitui a heurística de
+    staleness por meses (Q.158.G): o EXISTS é o gate canónico — exclui zombies
+    (open sem op aberta na fase atual) e inclui reparações em OFs já fechadas
+    (sem depender de `OF_DATAFIM`). Scope ≈ 1209 (= origem NELO: nova+fila+
+    reparações). Input-only e estritamente alinhado com a fábrica (axioma Spelke
+    5: só muda o pool de entrada, não decoder/fitness/safety_net).
+
+    Q.158 — `is_reparacao` (`OF_FP_ID IN {14,76,77}`) viaja em cada ordem para
+    lane/UI/prioridade. O decoder trunca a rota à fase atual (`current_fase_id`/
+    `completed_fase_ids`), pelo que uma reparação (sem rota forward) agenda só a
+    op aberta dessa fase.
+
+    Q.158.G — `staleness_months` fica como guarda secundária OPCIONAL (config,
+    default 0/OFF — superado pelo EXISTS). Quando truthy, adiciona o predicado de
+    vida recente (atividade em `of_fp` OU criação) — só reduz o pool, nunca
+    alarga. `0`/`None` ⇒ ausente (o caso normal pós-Q.158)."""
     if session is None:
         return []
     from sqlalchemy import text
@@ -1431,6 +1545,25 @@ async def _load_open_orders_db(
         )
     else:
         boats_join = ""
+
+    # Q.158.G — predicado de WIP ACTIVO (só quando staleness_months truthy):
+    # actividade recente em of_fp OU criação recente. GREATEST(...,'epoch') p/ datas
+    # vazias/sentinela não rebentarem o ::timestamp; NULLIF tira ''→NULL.
+    staleness_pred = ""
+    if staleness_months:
+        staleness_pred = """
+            AND (
+              EXISTS (
+                SELECT 1 FROM factory_raw.of_fp op
+                WHERE op."OFFP_OF_ID" = ofb."OF_ID"
+                  AND GREATEST(
+                        COALESCE(NULLIF(op."OFFP_DATAINICIO", '')::timestamp, 'epoch'::timestamp),
+                        COALESCE(NULLIF(op."OFFP_DATAFIM", '')::timestamp, 'epoch'::timestamp)
+                      ) >= now() - make_interval(months => :staleness_months)
+              )
+              OR NULLIF(ofb."OF_DATA", '')::timestamp
+                   >= now() - make_interval(months => :staleness_months)
+            )"""
     sql = text(
         f"""
         -- Q.158 — inclui done_fase_ids: array de OFFP_FP_ID::text com
@@ -1457,10 +1590,22 @@ async def _load_open_orders_db(
                  NULLIF(ofb."OF_DATA", '') AS of_data_sort
           FROM factory_raw.ordemfabrico ofb
           JOIN factory_raw.fases_producao f ON f."FP_ID" = ofb."OF_FP_ID"
+          -- Q.158 — INNER JOIN: a OF tem de ter cliente de encomenda (a regra
+          -- da NELO exige-o; barcos de stock sem cliente caem fora).
+          JOIN factory_raw.entidade cli ON cli."E_ID" = ofb."OF_E_ID_ENC"
           {boats_join}
-          WHERE ofb."OF_DATAFIM" IS NULL
-            AND ofb."OF_P_ID" IS NOT NULL
+          WHERE ofb."OF_P_ID" IS NOT NULL
             AND f."FP_PRODUCAO" = true
+            -- Q.158 — regra EXATA NELO (CROSS APPLY do /OrdemFabrico): operação
+            -- POR TERMINAR na FASE ATUAL. Gate canónico — sem OF_DATAFIM, sem
+            -- staleness. Exclui zombies (open sem op na fase atual); inclui
+            -- reparações em OFs já fechadas (que voltaram).
+            AND EXISTS (
+              SELECT 1 FROM factory_raw.of_fp op
+              WHERE op."OFFP_OF_ID" = ofb."OF_ID"
+                AND op."OFFP_FP_ID" = ofb."OF_FP_ID"
+                AND NULLIF(op."OFFP_DATAFIM", '') IS NULL
+            ){staleness_pred}
         ) q
         LEFT JOIN done ON done.of_id = q.of_id
         ORDER BY
@@ -1478,18 +1623,22 @@ async def _load_open_orders_db(
         LIMIT :plan_cap
         """
     )
+    params: Dict[str, Any] = {"plan_cap": _OPEN_ORDERS_PLAN_CAP}
+    if staleness_months:
+        params["staleness_months"] = int(staleness_months)
     try:
-        rows = (await session.execute(
-            sql, {"plan_cap": _OPEN_ORDERS_PLAN_CAP}
-        )).mappings().all()
+        rows = (await session.execute(sql, params)).mappings().all()
     except SQLAlchemyError as exc:  # pragma: no cover — DB outage / missing table
         logger.debug("Q.126.B open_orders DB load skipped: %s", exc)
         return []
     # Q.136.A — visibilidade: scope=boats_only exclui acessórios/componentes (e
     # barcos sem match em `produto`, ex. catálogo incompleto) — não é silencioso.
+    # Q.158 — gate canónico = regra em-produção (EXISTS); staleness é guarda
+    # opcional (off por defeito) e também aparece aqui quando ligada.
     logger.info(
-        "open_orders DB: scope=%s → %d ordens (cap %d)",
-        scope, len(rows), _OPEN_ORDERS_PLAN_CAP,
+        "open_orders DB: scope=%s staleness=%s → %d ordens (cap %d)",
+        scope, f"{staleness_months}m" if staleness_months else "off",
+        len(rows), _OPEN_ORDERS_PLAN_CAP,
     )
     return [
         {
@@ -1498,6 +1647,14 @@ async def _load_open_orders_db(
             "modelo_id": str(r["modelo_id"]),
             "current_fase_id": (
                 str(r["current_fase_id"]) if r["current_fase_id"] is not None else None
+            ),
+            # Q.158 — reparação = fase atual em {14,76,77} (barco entregue/em-uso
+            # que voltou). Lane/UI/prioridade; o decoder agenda a op aberta da
+            # fase atual (rota truncada).
+            "is_reparacao": (
+                str(r["current_fase_id"]) in REPAIR_PHASE_IDS
+                if r["current_fase_id"] is not None
+                else False
             ),
             "data_entrega_prevista": r["data_entrega_prevista"],
             # Q.158 — fases já concluídas (OFFP_DATAFIM preenchido); lista de
