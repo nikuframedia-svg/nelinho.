@@ -48,7 +48,12 @@ _WATERMARK_SQL = text(
 
 
 async def _resolve_tenants(tenant_ids: List[UUID]) -> List[UUID]:
-    """Lista passada ou, se vazia, tenants activos da BD (fallback dev)."""
+    """Lista passada ou, se vazia, tenants activos da BD.
+
+    Cai no tenant de DEV como ÚLTIMO recurso (descoberta falhou ou 0 activos).
+    Em produção isto é um ERRO (job a correr sem tenant real), por isso fica
+    logado a ERROR — nunca silencioso.
+    """
     if tenant_ids:
         return list(tenant_ids)
     try:
@@ -62,8 +67,17 @@ async def _resolve_tenants(tenant_ids: List[UUID]) -> List[UUID]:
             ids = [t.id for t in active]
         if ids:
             return ids
+        logger.error(
+            "auto_cpo_replan: 0 tenants activos na BD — fallback para o tenant "
+            "de DEV (%s). Em produção isto NÃO devia acontecer.",
+            _DEV_TENANT,
+        )
     except (SQLAlchemyError, ImportError, AttributeError) as exc:
-        logger.warning("auto_cpo_replan: tenant discovery falhou (%s) — dev", exc)
+        logger.error(
+            "auto_cpo_replan: descoberta de tenants falhou (%s) — fallback para o "
+            "tenant de DEV (%s). Em produção isto NÃO devia acontecer.",
+            exc, _DEV_TENANT,
+        )
     return [_DEV_TENANT]
 
 
