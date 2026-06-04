@@ -84,8 +84,11 @@ async def _blocked_targets(session, tenant_id: UUID) -> set[tuple[str, str]]:
     return {(str(a), str(t)) for a, t in rows}
 
 
-async def _publish_decision_rejected(tenant_id: UUID, decision) -> None:
-    """Publica DECISION_REJECTED no SSE (best-effort)."""
+async def _publish_decision_rejected(
+    tenant_id: UUID, decision, reason: str = "superseded",
+) -> None:
+    """Publica DECISION_REJECTED no SSE (best-effort). `reason` viaja para o
+    frontend invalidar o cartão e explicar porque desapareceu."""
     try:
         from src.shared.kafka_client import EventBase, Topics, publish_event
 
@@ -98,7 +101,7 @@ async def _publish_decision_rejected(tenant_id: UUID, decision) -> None:
                 payload={
                     "decision_id": str(decision.id),
                     "action_type": decision.action_type,
-                    "reason": "superseded",
+                    "reason": reason,
                 },
             ),
         )
@@ -151,6 +154,152 @@ async def _supersede_stale_adopt_plans(
     for d in superseded:
         await _publish_decision_rejected(tenant_id, d)
     return len(superseded)
+
+
+# ---------------------------------------------------------------------------
+# Q.161.C — decisões "vivem no momento": auto-rejeitar as PROPOSED obsoletas
+# ---------------------------------------------------------------------------
+
+# TTL default das PROPOSED (horas). Uma decisão proposta há mais de N horas sem
+# ser decidida deixou de refletir o momento → desaparece (REJECTED, não morre na
+# tabela). Override em config `planning.decision_ttl_hours`.
+_DECISION_TTL_HOURS_DEFAULT = 48
+
+
+def _to_aware(dt):
+    """datetime → tz-aware (assume UTC se naïve)."""
+    from datetime import timezone
+
+    if dt is None:
+        return None
+    if getattr(dt, "tzinfo", None) is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _decision_obsolete_reason(
+    decision, batches: Dict[str, Any], expedition_actions: set, ttl_hours, now,
+):
+    """Razão (PT) pela qual uma decisão PROPOSED já não reflete o momento, ou
+    None se ainda é válida. Puro (sem BD) → fácil de testar.
+
+    (a) Expedição (`target = "{batch_code}:{type}"`): o camião foi DESPACHADO, a
+        data já passou, ou o camião desapareceu.
+    (b) TTL: qualquer PROPOSED proposta há > `ttl_hours` (contexto do momento
+        mudou — o robô já gerou sinais novos entretanto)."""
+    action = getattr(decision, "action_type", "")
+    target = str(getattr(decision, "target", "") or "")
+    # (a) expedição
+    if action in expedition_actions and ":" in target:
+        code = target.rsplit(":", 1)[0]
+        batch = batches.get(code)
+        if batch is None:
+            return "expedição desapareceu (camião removido)"
+        if str(getattr(batch, "status", "") or "") == "DISPATCHED":
+            return "expedição já saiu (camião despachado)"
+        tdate = getattr(batch, "transport_date", None)
+        if tdate is not None and tdate < now.date():
+            return "expedição já passou (data no passado)"
+    # (b) TTL geral
+    proposed_at = _to_aware(getattr(decision, "proposed_at", None))
+    if ttl_hours and proposed_at is not None:
+        age_h = (now - proposed_at).total_seconds() / 3600.0
+        if age_h > ttl_hours:
+            return (
+                f"expirada (>{int(ttl_hours)}h sem decisão; contexto do momento mudou)"
+            )
+    return None
+
+
+async def _revalidate_stale_decisions(
+    session_factory, tenant_id: UUID, ttl_hours, now=None,
+) -> int:
+    """Q.161.C — auto-rejeita as decisões PROPOSED (exceto ADOPT_PLAN, tratado por
+    `_supersede_stale_adopt_plans`) que já não refletem o momento: expedição com
+    camião despachado/data passada, ou qualquer PROPOSED para lá do TTL. Espelha o
+    supersede: audit na mesma tx + SSE `DECISION_REJECTED` com a razão. Devolve nº.
+
+    Filosofia (Luis): "as decisões têm de ser feitas com saber no que está a
+    acontecer naquele momento; quando já não fizer sentido têm de desaparecer."""
+    from datetime import datetime, timezone
+
+    from src.governance.audit_service import audit_change
+    from src.plan.models.transport import TransportBatch
+
+    now = now or datetime.now(timezone.utc)
+    expedition_actions = set(_EXPEDITION_TYPE_MAP.values())
+    rejected: List[Any] = []
+    async with session_factory() as session:
+        rows = (
+            await session.execute(
+                select(SharedDecisionRun).where(
+                    SharedDecisionRun.tenant_id == tenant_id,
+                    SharedDecisionRun.status == DecisionStatus.PROPOSED.value,
+                    SharedDecisionRun.action_type != "ADOPT_PLAN",
+                )
+            )
+        ).scalars().all()
+        if not rows:
+            return 0
+        # Batches referidos pelas decisões de expedição (target = "code:type"),
+        # carregados de uma vez (não N queries).
+        codes = {
+            str(d.target).rsplit(":", 1)[0]
+            for d in rows
+            if d.action_type in expedition_actions and ":" in str(d.target)
+        }
+        batches: Dict[str, Any] = {}
+        if codes:
+            brows = (
+                await session.execute(
+                    select(TransportBatch).where(
+                        TransportBatch.tenant_id == tenant_id,
+                        TransportBatch.code.in_(codes),
+                    )
+                )
+            ).scalars().all()
+            batches = {str(b.code): b for b in brows}
+        for d in rows:
+            reason = _decision_obsolete_reason(
+                d, batches, expedition_actions, ttl_hours, now,
+            )
+            if reason is None:
+                continue
+            d.status = DecisionStatus.REJECTED.value
+            await audit_change(
+                session,
+                tenant_id=tenant_id,
+                entity_type="decision_run",
+                entity_id=d.id,
+                action="UPDATE",
+                old_values={"status": DecisionStatus.PROPOSED.value},
+                new_values={
+                    "status": DecisionStatus.REJECTED.value, "reason": reason,
+                },
+                actor_id=_SYSTEM_ACTOR,
+                reason=f"Q.161.C auto-reject decisão obsoleta: {reason}",
+            )
+            rejected.append((d, reason))
+        if rejected:
+            await session.commit()
+
+    for d, reason in rejected:
+        await _publish_decision_rejected(tenant_id, d, reason=reason)
+    return len(rejected)
+
+
+async def _decision_ttl_hours(session, tenant_id: UUID) -> int:
+    """`planning.decision_ttl_hours` (default 48); best-effort."""
+    try:
+        from src.core.services.tenant_config_service import TenantConfigService
+
+        planning = await TenantConfigService(session, tenant_id).get_category(
+            "planning",
+        )
+        raw = planning.get("decision_ttl_hours", _DECISION_TTL_HOURS_DEFAULT)
+        return max(0, int(raw)) if raw not in (None, "") else _DECISION_TTL_HOURS_DEFAULT
+    except (SQLAlchemyError, ImportError, AttributeError, TypeError, ValueError):
+        return _DECISION_TTL_HOURS_DEFAULT
 
 
 # ---------------------------------------------------------------------------
@@ -423,6 +572,7 @@ async def _auto_propose_signals_job(tenant_ids: List[UUID]) -> None:
                 async with get_session_context() as session:
                     if not await _enabled(session, tid):
                         continue
+                    ttl_hours = await _decision_ttl_hours(session, tid)
                     candidates: List[Dict[str, Any]] = []
                     for gen in (
                         _planning_candidates,
@@ -453,9 +603,22 @@ async def _auto_propose_signals_job(tenant_ids: List[UUID]) -> None:
                         superseded, tid,
                     )
 
+                # Q.161.C — re-validar as PROPOSED obsoletas (expedição com camião
+                # despachado / data passada, ou TTL): desaparecem (REJECTED) para a
+                # aba "Decidir" refletir só o que faz sentido NESTE momento.
+                revalidated = await _revalidate_stale_decisions(
+                    async_session_factory, tid, ttl_hours,
+                )
+                if revalidated:
+                    logger.info(
+                        "auto_propose_signals: %d decisão(ões) obsoleta(s) "
+                        "auto-rejeitada(s) tenant=%s", revalidated, tid,
+                    )
+
                 # Bloqueados = qualquer target já existente (Q.157.G.2): não
                 # duplica abertos, não re-propõe rejeitados/decididos. Lido DEPOIS
-                # do supersede para refletir os que acabaram de ser rejeitados.
+                # do supersede + revalidação para refletir os que acabaram de ser
+                # rejeitados.
                 async with get_session_context() as session2:
                     blocked = await _blocked_targets(session2, tid)
 

@@ -292,6 +292,7 @@ async def test_job_blocked_skips_existing_target():
          patch.object(job, "_expedition_candidates", AsyncMock(return_value=[])), \
          patch.object(job, "_otd_reschedule_candidates", AsyncMock(return_value=[])), \
          patch.object(job, "_supersede_stale_adopt_plans", AsyncMock(return_value=0)), \
+         patch.object(job, "_revalidate_stale_decisions", AsyncMock(return_value=0)), \
          patch.object(job, "_blocked_targets",
                       AsyncMock(return_value={("ADOPT_PLAN", "draftsha-1")})), \
          patch.object(job, "propose_decision_row", persisted):
@@ -313,6 +314,7 @@ async def test_job_creates_then_rate_limits_second_tick():
         patch.object(job, "_expedition_candidates", AsyncMock(return_value=[])),
         patch.object(job, "_otd_reschedule_candidates", AsyncMock(return_value=[])),
         patch.object(job, "_supersede_stale_adopt_plans", AsyncMock(return_value=0)),
+        patch.object(job, "_revalidate_stale_decisions", AsyncMock(return_value=0)),
         patch.object(job, "_blocked_targets", AsyncMock(return_value=set())),
         patch.object(job, "propose_decision_row", persisted),
     )
@@ -414,3 +416,141 @@ async def test_supersede_all_when_keep_sha_none():
     n = await job._supersede_stale_adopt_plans(_factory_one, TENANT, None)
     assert n == 1
     assert a1.status == "REJECTED"
+
+
+# ──────────── 7 — Q.161.C decisões "vivem no momento" (auto-reject) ──────────
+
+from datetime import date, datetime, timedelta, timezone  # noqa: E402
+
+_NOW = datetime(2026, 6, 4, 12, 0, tzinfo=timezone.utc)
+_EXP = set(job._EXPEDITION_TYPE_MAP.values())
+
+
+def _dec(action, target, proposed_at=_NOW):
+    return SimpleNamespace(
+        id=uuid4(), action_type=action, target=target,
+        status="PROPOSED", proposed_at=proposed_at,
+    )
+
+
+def _batch(code, status="OPEN", tdate=date(2026, 6, 10)):
+    return SimpleNamespace(code=code, status=status, transport_date=tdate)
+
+
+def test_obsolete_reason_dispatched_batch():
+    d = _dec("SHIPMENT_DELAY", "SHP-1:delay_boat")
+    r = job._decision_obsolete_reason(
+        d, {"SHP-1": _batch("SHP-1", status="DISPATCHED")}, _EXP, 48, _NOW,
+    )
+    assert r and "despachado" in r
+
+
+def test_obsolete_reason_past_date_batch():
+    d = _dec("SHIPMENT_DELAY", "SHP-2:delay_boat")
+    r = job._decision_obsolete_reason(
+        d, {"SHP-2": _batch("SHP-2", tdate=date(2026, 6, 2))}, _EXP, 48, _NOW,
+    )
+    assert r and "passou" in r
+
+
+def test_obsolete_reason_missing_batch():
+    d = _dec("SHIPMENT_DELAY", "SHP-3:delay_boat")
+    r = job._decision_obsolete_reason(d, {}, _EXP, 48, _NOW)
+    assert r and "removido" in r
+
+
+def test_valid_future_batch_is_kept():
+    d = _dec("SHIPMENT_DELAY", "SHP-4:delay_boat")
+    r = job._decision_obsolete_reason(
+        d, {"SHP-4": _batch("SHP-4", status="OPEN", tdate=date(2026, 6, 10))},
+        _EXP, 48, _NOW,
+    )
+    assert r is None
+
+
+def test_ttl_expires_old_proposed():
+    d = _dec("OTD_RESCHEDULE", "OF-9", proposed_at=_NOW - timedelta(hours=72))
+    r = job._decision_obsolete_reason(d, {}, _EXP, 48, _NOW)
+    assert r and "expirada" in r
+
+
+def test_recent_otd_within_ttl_is_kept():
+    d = _dec("OTD_RESCHEDULE", "OF-9", proposed_at=_NOW - timedelta(hours=2))
+    assert job._decision_obsolete_reason(d, {}, _EXP, 48, _NOW) is None
+
+
+def test_ttl_zero_disables_age_check():
+    """TTL 0/off → a idade não rejeita (só o contexto de expedição)."""
+    d = _dec("OTD_RESCHEDULE", "OF-9", proposed_at=_NOW - timedelta(hours=999))
+    assert job._decision_obsolete_reason(d, {}, _EXP, 0, _NOW) is None
+
+
+@pytest.mark.asyncio
+async def test_revalidate_rejects_dispatched_keeps_valid():
+    from src.core.models.audit import AuditLog
+
+    d_bad = _dec("SHIPMENT_DELAY", "SHP-OLD:delay_boat")
+    d_ok = _dec("SHIPMENT_DELAY", "SHP-NEW:delay_boat")
+    b_bad = _batch("SHP-OLD", status="DISPATCHED")
+    b_ok = _batch("SHP-NEW", status="OPEN", tdate=date(2026, 6, 10))
+
+    class _Sess:
+        def __init__(self):
+            self.added: List[Any] = []
+            self.committed = False
+            self.calls = 0
+
+        async def execute(self, stmt):
+            self.calls += 1
+            data = [d_bad, d_ok] if self.calls == 1 else [b_bad, b_ok]
+
+            class _R:
+                def scalars(self_):
+                    class _S:
+                        def all(self__):
+                            return data
+                    return _S()
+            return _R()
+
+        def add(self, o):
+            self.added.append(o)
+
+        async def flush(self):
+            for o in self.added:
+                if getattr(o, "id", None) is None:
+                    object.__setattr__(o, "id", uuid4())
+
+        async def commit(self):
+            self.committed = True
+
+    sess = _Sess()
+
+    @asynccontextmanager
+    async def _factory_one():
+        yield sess
+
+    n = await job._revalidate_stale_decisions(_factory_one, TENANT, 48, now=_NOW)
+    assert n == 1
+    assert d_bad.status == "REJECTED"   # camião despachado → desaparece
+    assert d_ok.status == "PROPOSED"    # futuro válido → fica
+    assert sess.committed
+    assert any(isinstance(a, AuditLog) for a in sess.added), "audit do auto-reject"
+
+
+@pytest.mark.asyncio
+async def test_revalidate_empty_when_no_proposed():
+    class _Sess:
+        async def execute(self, stmt):
+            class _R:
+                def scalars(self_):
+                    class _S:
+                        def all(self__):
+                            return []
+                    return _S()
+            return _R()
+
+    @asynccontextmanager
+    async def _factory_one():
+        yield _Sess()
+
+    assert await job._revalidate_stale_decisions(_factory_one, TENANT, 48, now=_NOW) == 0
