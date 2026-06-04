@@ -513,7 +513,11 @@ async def _load_skills_db(
         JOIN factory_raw.of_fp o ON o."OFFP_ID" = eq."OFFPEQ_OFFP_ID"
         LEFT JOIN core.employees e
                ON e.employee_code = eq."OFFPEQ_E_ID"::text
-              AND e.tenant_id = :tenant_id
+              -- Q.161.B BUGFIX — CAST explícito: `.bindparams(tenant_id=str(...))`
+              -- força o tipo VARCHAR no protocolo asyncpg, e `uuid = varchar` é
+              -- inválido em PG → a query rebenta e ABORTA a tx do load inteiro
+              -- (open_orders=0). O cast resolve sem depender da inferência.
+              AND e.tenant_id = CAST(:tenant_id AS uuid)
         WHERE eq."OFFPEQ_E_ID" IS NOT NULL
           AND o."OFFP_FP_ID" IS NOT NULL
           AND (e.employee_code IS NULL OR e.status = 'ACTIVE')
@@ -558,7 +562,9 @@ async def _load_qualified_db(
         FROM hr.employee_skills es
         JOIN hr.skills s        ON s.id = es.skill_id
         JOIN core.employees e   ON e.id = es.employee_id
-        WHERE es.tenant_id = :t
+        -- Q.161.B BUGFIX — CAST explícito (ver _load_skills_db): bindparams
+        -- str força VARCHAR → `uuid = varchar` aborta a tx do load.
+        WHERE es.tenant_id = CAST(:t AS uuid)
           AND es.is_certified = true
           AND e.status = 'ACTIVE'
           AND s.skill_code IS NOT NULL
