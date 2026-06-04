@@ -18,6 +18,9 @@ TanStack Query + Tailwind + Ollama. Native deploy (sem Docker) + systemd. LAN ac
 6. **Sub-sprint Q.X.Y format** — 1 sub-sprint = 1 commit lógico, pytest verde + demo.
 7. **Audit trail intact** — cada mudança de estado escreve `audit_log` na mesma tx
    (Q.61.18 `governance/audit_service.audit_change`).
+8. **DADOS HONESTOS — zero fabricado no backend** — uma feature ou está ligada a dados reais ou não
+   existe. Estado-vazio honesto (`503`/empty/"sem dados"), NUNCA números inventados (custos hardcoded,
+   `spof=3` fallback, `_get_mock_*`). Espelha o #1 no backend. Saneamento: ver `DELETION_LOG.md`.
 
 ## How to verify
 
