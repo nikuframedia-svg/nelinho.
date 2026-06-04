@@ -174,6 +174,16 @@ class FactoryState:
     # no DB history loaded (keeps the legacy 2x behaviour).
     historical_durations_by_fase: Dict[str, float] = field(default_factory=dict)
 
+    # Q.160 — mediana REAL da fila inter-fase por fase de DESTINO (horas), de
+    # factory_raw.of_fp (gap fim(fase anterior)→início(fase) do mesmo barco).
+    # Substitui a constante global 5.2h: cada fase tem a SUA fila medida. É também
+    # o mapa de gargalos (que fase acumula WIP). Keyed por phase_id (= OFFP_FP_ID).
+    # Vazio = sem histórico → cai no fallback (mediana global → _QUEUE_FALLBACK_MIN).
+    queue_median_by_phase: Dict[str, float] = field(default_factory=dict)
+    # Mediana global de TODAS as gaps (horas) — fallback quando a fase não tem
+    # ≥5 observações. None = sem histórico → cai em _QUEUE_FALLBACK_MIN.
+    queue_global_median_h: Optional[float] = None
+
     # Q.133.A2 — p50 CALIBRADO por (fase_id, modelo) em HORAS + n_obs, do job
     # phase_calibration (plan.phase_duration_calibration). `median_duration_h`
     # prefere-o sobre a mediana crua de of_fp quando n_obs >= _CALIBRATION_MIN_OBS.
@@ -371,6 +381,15 @@ class FactoryState:
         if routes_db:
             state.historical_routes_by_model = routes_db
 
+        # Q.160 — mediana REAL da fila inter-fase por fase (substitui o 5.2h
+        # global hardcoded). Best-effort; vazio → o decoder cai no fallback
+        # global (back-compat exacto). Também é o mapa de gargalos de WIP.
+        q_by_phase, q_global = await _load_phase_queue_medians_db(session, tenant_id)
+        if q_by_phase:
+            state.queue_median_by_phase = q_by_phase
+        if q_global is not None:
+            state.queue_global_median_h = q_global
+
         # Q.131.G — routing master do ERP (PRODUTO_FASE). Fallback-de-fallback:
         # carregado sempre (modelos diferentes caem em camadas diferentes do
         # resolver). Best-effort; tenant-scoped (≠ factory_raw.*).
@@ -514,6 +533,7 @@ class FactoryState:
             f"{len(state.historical_durations)} duration medians, "
             f"{len(state.historical_routes_by_model)} model routes, "
             f"{len(state.phase_transition_gaps)} curing gaps, "
+            f"{len(state.queue_median_by_phase)} phase queue medians, "
             f"{len(state.preference_rules)} confirmed rules"
         )
         return state
@@ -534,6 +554,25 @@ class FactoryState:
         if not a or not b:
             return 0.0
         return float(self.phase_transition_gaps.get((a, b), 0.0))
+
+    def queue_minutes_for(self, fase_id: Optional[str]) -> float:
+        """Q.160 — fila inter-fase (minutos) ANTES de entrar nesta fase.
+
+        Mediana REAL por fase de destino (factory_raw.of_fp), em vez do 5.2h
+        global. Hierarquia de fallback:
+          1. mediana da fase (`queue_median_by_phase`, n_obs >= 5),
+          2. mediana global de todas as gaps (`queue_global_median_h`),
+          3. `_QUEUE_FALLBACK_MIN` (5.2h — seed planning.queue_time.median_h).
+        Keyed por phase_id (= OFFP_FP_ID), NUNCA por nome. Mediana, nunca média
+        (a distribuição é assimétrica: ~5.2h vs p90 ~69h).
+        """
+        if fase_id is not None:
+            h = self.queue_median_by_phase.get(str(fase_id))
+            if h is not None:
+                return float(h) * 60.0
+        if self.queue_global_median_h is not None:
+            return float(self.queue_global_median_h) * 60.0
+        return _QUEUE_FALLBACK_MIN
 
     def can_perform(self, fase_id: str, funcionario_id: str) -> bool:
         # Q.135.F3 — respeita whitelist se existir; NUNCA alarga além do skill_matrix
@@ -845,6 +884,13 @@ _CALIBRATION_MIN_OBS = 5
 # rolling horizon. O Luis pediu ~200; é o nº onde a GA optimiza em segundos.
 _OPEN_ORDERS_PLAN_CAP = 200
 
+# Q.160 — fallback global da fila inter-fase (minutos), usado só quando NÃO há
+# histórico suficiente em of_fp (tabela vazia, testes legacy). Igual ao seed
+# `planning.queue_time.median_h` (5.2h). ANTES era a constante hardcoded ÚNICA
+# (engine._DECODER_QUEUE_TIME_MIN, igual para todas as fases); agora a fila vem
+# da mediana REAL por fase (queue_median_by_phase) e isto é só a rede final.
+_QUEUE_FALLBACK_MIN = 5.2 * 60.0
+
 
 async def _load_historical_durations_routes_db(
     session: Any,
@@ -931,6 +977,77 @@ async def _load_historical_durations_routes_db(
         if r["median_h"] and float(r["median_h"]) > 0
     }
     return routes, by_pair, by_fase
+
+
+async def _load_phase_queue_medians_db(
+    session: Any,
+    tenant_id: UUID,
+) -> Tuple[Dict[str, float], Optional[float]]:
+    """Q.160 — mediana REAL da fila inter-fase por fase de DESTINO, de
+    `factory_raw.of_fp`.
+
+    A "fila" é o gap entre o FIM da fase anterior e o INÍCIO da fase seguinte do
+    MESMO barco (`OFFP_OF_ID`), via `LAG`. Substitui a constante global 5.2h por
+    uma mediana MEDIDA por fase — e é também o mapa de gargalos (que fase acumula
+    WIP). Distingue-se da cura (`min_gap_hours`, física): isto é desperdício
+    observado, calibrável.
+
+    Devolve ``(by_phase_h, global_h)``:
+      * ``by_phase_h[str(OFFP_FP_ID)]`` = mediana de horas de fila (n_obs >= 5).
+      * ``global_h`` = mediana global de todas as gaps (fallback) ou ``None``.
+
+    Mediana (`percentile_cont(0.5)`), NUNCA média — a distribuição é assimétrica
+    (mediana ~5.2h vs p90 ~69h); a média seria arrastada pela cauda. Limpeza:
+    descarta gaps negativos (ops sobrepostas/ruído) e > 1 semana (barco parado,
+    não fila). Best-effort: session None / tabela ausente → ``({}, None)``.
+    """
+    if session is None:
+        return {}, None
+    from sqlalchemy import text
+    from sqlalchemy.exc import SQLAlchemyError
+
+    # gaps por barco via LAG; GROUPING SETS dá num só passe a mediana POR FASE
+    # (dest_fase não-nulo) E a mediana GLOBAL (grouping () → dest_fase NULL).
+    sql = text(
+        """
+        WITH gaps AS (
+            SELECT op."OFFP_FP_ID" AS dest_fase,
+                   EXTRACT(EPOCH FROM (
+                       CAST(NULLIF(op."OFFP_DATAINICIO", '') AS timestamp)
+                       - LAG(CAST(NULLIF(op."OFFP_DATAFIM", '') AS timestamp))
+                           OVER (PARTITION BY op."OFFP_OF_ID"
+                                 ORDER BY CAST(NULLIF(op."OFFP_DATAINICIO", '') AS timestamp))
+                   )) / 3600.0 AS gap_h
+            FROM factory_raw.of_fp op
+            WHERE NULLIF(op."OFFP_DATAINICIO", '') IS NOT NULL
+        )
+        SELECT dest_fase::text AS fase_id,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY gap_h) AS median_h,
+               count(*) AS n_obs
+        FROM gaps
+        WHERE gap_h IS NOT NULL AND gap_h >= 0 AND gap_h <= 24 * 7  -- ceil 1 semana
+        GROUP BY GROUPING SETS ((dest_fase), ())
+        HAVING count(*) >= 5
+        """
+    )
+    try:
+        rows = (await session.execute(sql)).mappings().all()
+    except SQLAlchemyError as exc:  # pragma: no cover — DB outage / missing table
+        logger.debug("Q.160 queue medians DB load skipped: %s", exc)
+        return {}, None
+
+    by_phase: Dict[str, float] = {}
+    global_h: Optional[float] = None
+    for r in rows:
+        median_h = r["median_h"]
+        if median_h is None or float(median_h) < 0:
+            continue
+        fase_id = r["fase_id"]
+        if fase_id is None:  # grouping set () → mediana global
+            global_h = float(median_h)
+        else:
+            by_phase[str(fase_id)] = float(median_h)
+    return by_phase, global_h
 
 
 async def _load_route_templates_db(

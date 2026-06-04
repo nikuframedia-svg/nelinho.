@@ -37,7 +37,11 @@ from src.core.models.employee import Employee
 from src.core.models.partner import Customer
 from src.governance.models.boat_phase_score import BoatPhaseScore
 from src.governance.models.phase_operator_affinity import PhaseOperatorAffinity
-from src.plan.cpo.state import NELO_CURING_GAPS_SEED, normalize_phase_code
+from src.plan.cpo.state import (
+    NELO_CURING_GAPS_SEED,
+    _load_phase_queue_medians_db,
+    normalize_phase_code,
+)
 from src.plan.models.order import OrderStatus, ProductionOrder
 from src.plan.models.routing_template import RoutingTemplatePhase
 from src.plan.services.phase_classification import is_completed_phase
@@ -149,6 +153,10 @@ class FaseSummary(BaseModel):
     difficult_boats: List[BoatScore]
     curing_gaps_in: List[CuringGap]
     curing_gaps_out: List[CuringGap]
+    # Q.160 — mediana REAL da fila inter-fase ANTES desta fase (horas), de
+    # factory_raw.of_fp. Diagnóstico de WIP/gargalo (qual fase acumula espera).
+    # None quando a fase não tem >=5 observações (honesto, zero-mocks).
+    fila_mediana_h: Optional[float] = None
 
 
 class OrderInList(BaseModel):
@@ -984,6 +992,15 @@ async def get_fase_summary(
             detail=f"Fase {phase_id} sem registos no tenant",
         )
 
+    # 6. Q.160 — fila inter-fase MEDIDA desta fase (mediana real de of_fp). É o
+    # MESMO valor que o CPO usa no decoder (reusa o loader), por isso o número
+    # do sheet bate com o do planeador. None se a fase não tem >=5 obs.
+    q_by_phase, _q_global = await _load_phase_queue_medians_db(session, tenant_id)
+    fila_mediana_h = (
+        round(float(q_by_phase[str(phase_id)]), 2)
+        if str(phase_id) in q_by_phase else None
+    )
+
     return FaseSummary(
         phase_id=phase_id,
         phase_name=phase_name,
@@ -991,6 +1008,7 @@ async def get_fase_summary(
         difficult_boats=difficult_boats,
         curing_gaps_in=curing_gaps_in,
         curing_gaps_out=curing_gaps_out,
+        fila_mediana_h=fila_mediana_h,
     )
 
 

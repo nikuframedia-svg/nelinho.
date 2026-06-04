@@ -177,10 +177,16 @@ class _FakeResult:
     def scalars(self) -> "_FakeScalars":
         return _FakeScalars(self._scalars)
 
+    def mappings(self) -> "_FakeResult":
+        # SQLAlchemy's Result.mappings() → RowMapping iterable. For raw-SQL
+        # endpoints doing `(await execute(sql)).mappings().all()`, the queued
+        # `scalars` list IS the rows (dicts). `.all()` below returns them.
+        return self
+
     def all(self) -> List[Any]:
         # Multi-column selects (e.g. `SELECT a, b`) return Row tuples via
         # `.all()`. Tests using queue_scalars([(a1, b1), (a2, b2)]) can rely
-        # on this.
+        # on this. Also serves `.mappings().all()` (rows as dicts).
         return list(self._scalars)
 
 

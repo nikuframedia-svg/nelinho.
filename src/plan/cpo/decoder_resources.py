@@ -116,8 +116,19 @@ def _earliest_start(
         if state is not None and pred_op is not None:
             curing_h = state.min_gap_hours(_phase_of(pred_op), curr_phase)
         curing_gap = timedelta(hours=curing_h) if curing_h > 0 else timedelta()
+        # Q.160 — fila inter-fase POR FASE (mediana real de of_fp) em vez do 5.2h
+        # global. `q_gap` (vindo do engine) é o sinal on/off + fallback legacy:
+        # quando a fila está ON (>0) e há `state`, usa a mediana da fase de
+        # DESTINO (`op.phase_id`), que já traz o seu próprio fallback global →
+        # _QUEUE_FALLBACK_MIN. Cura (física) continua a ser o piso (max abaixo).
+        if q_gap > timedelta() and state is not None:
+            q_eff = timedelta(
+                minutes=state.queue_minutes_for(getattr(op, "phase_id", None))
+            )
+        else:
+            q_eff = q_gap
         # Curing gap (physical) dominates queue gap (soft queue) — take max
-        base_gap = q_gap if q_gap >= curing_gap else curing_gap
+        base_gap = q_eff if q_eff >= curing_gap else curing_gap
         shifted = end + base_gap
         if pred_op is not None and _is_desmolde(pred_op):
             shifted += pd_extra

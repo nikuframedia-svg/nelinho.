@@ -469,6 +469,15 @@ class CPOv4Engine:
         cpo_meta["quality_risk_predictor_used"] = (
             self.fitness_config.quality_risk_predictor is not None
         )
+        # Q.160 — fila inter-fase MEDIDA por fase (diagnóstico: que fase acumula
+        # WIP / parte o one-piece-flow). Não entra no hash do commit (cpo_meta
+        # é excluído). Vazio quando o state não trouxe histórico de of_fp.
+        cpo_meta["queue_median_by_phase"] = dict(
+            getattr(self.state, "queue_median_by_phase", {}) or {}
+        )
+        cpo_meta["queue_global_median_h"] = getattr(
+            self.state, "queue_global_median_h", None
+        )
         best_final["cpo_meta"] = cpo_meta
         return best_final
 
