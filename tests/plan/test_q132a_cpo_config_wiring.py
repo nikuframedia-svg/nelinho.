@@ -64,6 +64,37 @@ async def test_explicit_request_override_wins_over_config(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_robot_time_limit_bumps_ga_and_total_budget(monkeypatch):
+    """Q.161.B — um caller (robô de fundo) que pede `time_limit_sec` maior que o
+    `ga_budget` alarga ga_budget E total_budget para o acomodar. Senão o
+    `CPOConfig.__post_init__` cortava o time_limit de volta para o ga_budget
+    (120s) e o robô nunca usaria os 600s pedidos para planear os ~1200 barcos."""
+    async def fake(self, category):
+        return {}  # sem overrides → ga_budget=120, total=150 (defaults Blueprint)
+
+    monkeypatch.setattr(_CFG_PATH, fake)
+    cfg = await scheduler_run._build_cpo_config(
+        object(), uuid4(), _req(tlim=600.0),
+    )
+    assert cfg.time_limit_sec == 600.0                 # NÃO foi cortado para 120
+    assert cfg.ga_budget_s == 600.0                    # alargado para caber
+    assert cfg.total_budget_s == 150.0 + (600.0 - 120.0)  # 630 (delta somado)
+
+
+@pytest.mark.asyncio
+async def test_interactive_default_does_not_bump_budget(monkeypatch):
+    """Q.161.B — o caso interativo (tlim=default) NÃO alarga nada: fica nos
+    budgets da config/defaults (back-compat exacto com o botão Replanear)."""
+    async def fake(self, category):
+        return {"cpo.ga_budget_s": 120.0, "cpo.total_budget_s": 150.0}
+
+    monkeypatch.setattr(_CFG_PATH, fake)
+    cfg = await scheduler_run._build_cpo_config(object(), uuid4(), _req())
+    assert cfg.ga_budget_s == 120.0
+    assert cfg.total_budget_s == 150.0
+
+
+@pytest.mark.asyncio
 async def test_falls_back_to_canonical_defaults_without_config(monkeypatch):
     from sqlalchemy.exc import SQLAlchemyError
 

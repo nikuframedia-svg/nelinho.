@@ -27,6 +27,12 @@ logger = logging.getLogger(__name__)
 
 _DEV_TENANT = UUID("00000000-0000-0000-0000-000000000001")
 _DEFAULT_MIN_GAP_MIN = 60
+# Q.161.B — o robô é um job de FUNDO (não-interativo): planeia TODOS os barcos em
+# produção (plan_cap=0) com um time_limit generoso, ao contrário do botão
+# "Replanear" interativo (200 ordens, <90s). Overrides em
+# `planning.auto_replan_plan_cap` / `planning.auto_replan_time_limit_s`.
+_DEFAULT_ROBOT_PLAN_CAP = 0          # 0 = todos os em-produção
+_DEFAULT_ROBOT_TIME_LIMIT_S = 600.0  # 10 min (tecto do CPOScheduleRequest)
 
 # Estado in-memory por tenant: (último enqueue, watermark do WIP nesse momento).
 # Reset no restart é aceitável — apenas re-planeia 1× após rearranque.
@@ -93,8 +99,9 @@ async def _wip_watermark(session) -> Optional[Tuple[int, str]]:
     return (int(row.n), str(row.hw))
 
 
-async def _read_config(session, tenant_id: UUID) -> Tuple[bool, int]:
-    """`(enabled, min_gap_min)` de `planning.*`; defaults se indisponível."""
+async def _read_config(session, tenant_id: UUID) -> Tuple[bool, int, int, float]:
+    """`(enabled, min_gap_min, plan_cap, time_limit_s)` de `planning.*`; defaults
+    se indisponível. Q.161.B — plan_cap/time_limit do robô (job de fundo)."""
     try:
         from src.core.services.tenant_config_service import TenantConfigService
 
@@ -103,12 +110,23 @@ async def _read_config(session, tenant_id: UUID) -> Tuple[bool, int]:
             "false", "0", "no",
         )
         gap = int(planning.get("auto_replan_min_gap_min", _DEFAULT_MIN_GAP_MIN))
-        return enabled, max(1, gap)
+        plan_cap = int(planning.get("auto_replan_plan_cap", _DEFAULT_ROBOT_PLAN_CAP))
+        time_limit = float(
+            planning.get("auto_replan_time_limit_s", _DEFAULT_ROBOT_TIME_LIMIT_S)
+        )
+        return enabled, max(1, gap), max(0, plan_cap), max(1.0, time_limit)
     except (SQLAlchemyError, ImportError, ValueError, AttributeError, TypeError):
-        return True, _DEFAULT_MIN_GAP_MIN
+        return (
+            True, _DEFAULT_MIN_GAP_MIN,
+            _DEFAULT_ROBOT_PLAN_CAP, _DEFAULT_ROBOT_TIME_LIMIT_S,
+        )
 
 
-async def _enqueue_cpo(tenant_id: UUID, watermark: Tuple[int, str]) -> bool:
+async def _enqueue_cpo(
+    tenant_id: UUID, watermark: Tuple[int, str],
+    plan_cap: int = _DEFAULT_ROBOT_PLAN_CAP,
+    time_limit_s: float = _DEFAULT_ROBOT_TIME_LIMIT_S,
+) -> bool:
     """Enfileira `cpo_schedule_job` no Arq. Best-effort: Redis/arq down → False.
 
     Q.142.A — dedup determinístico via `_job_id`. Sob `uvicorn --workers 2` há 2
@@ -138,9 +156,14 @@ async def _enqueue_cpo(tenant_id: UUID, watermark: Tuple[int, str]) -> bool:
             f"{watermark[0]}|{watermark[1]}".encode("utf-8")
         ).hexdigest()[:16]
         job_id = f"auto_cpo:{tenant_id}:{wm_sig}"
+        # Q.161.B — robô planeia TODOS os em-produção (plan_cap=0) com time_limit
+        # de fundo (não-interativo). O grid /overall passa a mostrar a produção
+        # real, não só as 200 mais urgentes.
         await redis.enqueue_job(
             "cpo_schedule_job",
-            CPOScheduleRequest().model_dump(mode="json"),
+            CPOScheduleRequest(
+                plan_cap=plan_cap, time_limit_sec=time_limit_s,
+            ).model_dump(mode="json"),
             str(tenant_id),
             "system",
             _job_id=job_id,
@@ -161,7 +184,9 @@ async def _auto_cpo_replan_global_job(tenant_ids: List[UUID]) -> None:
     for tid in tenants:
         try:
             async with get_session_context() as session:
-                enabled, gap_min = await _read_config(session, tid)
+                enabled, gap_min, plan_cap, time_limit = await _read_config(
+                    session, tid,
+                )
                 if not enabled:
                     continue
                 last = _last_run.get(tid)
@@ -172,11 +197,12 @@ async def _auto_cpo_replan_global_job(tenant_ids: List[UUID]) -> None:
                 continue  # sem barcos / sem dados → nada a planear
             if last is not None and wm == last[1]:
                 continue  # WIP inalterado desde o último plano → não repetir
-            if await _enqueue_cpo(tid, wm):
+            if await _enqueue_cpo(tid, wm, plan_cap, time_limit):
                 _last_run[tid] = (now, wm)
                 logger.info(
-                    "auto_cpo_replan: CPO enfileirado tenant=%s wip_barcos=%s",
-                    tid, wm[0],
+                    "auto_cpo_replan: CPO enfileirado tenant=%s wip_barcos=%s "
+                    "plan_cap=%s time_limit=%.0fs",
+                    tid, wm[0], plan_cap, time_limit,
                 )
         except (SQLAlchemyError, OSError, RuntimeError, ValueError, ImportError) as exc:
             logger.error(

@@ -37,15 +37,17 @@ def _clean_state(monkeypatch):
 
 
 def _patch(monkeypatch, *, enabled=True, gap=60, watermark=(777, "2026-05-31")):
+    # Q.161.B — _read_config devolve agora (enabled, gap, plan_cap, time_limit).
     async def fake_config(_s, _t):
-        return enabled, gap
+        return enabled, gap, job._DEFAULT_ROBOT_PLAN_CAP, job._DEFAULT_ROBOT_TIME_LIMIT_S
 
     async def fake_wm(_s):
         return watermark
 
     calls: list = []
 
-    async def fake_enqueue(tid, _wm):
+    # Q.161.B — _enqueue_cpo recebe agora (tid, wm, plan_cap, time_limit).
+    async def fake_enqueue(tid, _wm, *_args):
         calls.append(tid)
         return True
 
@@ -122,7 +124,7 @@ async def test_enqueue_redis_down_is_best_effort(monkeypatch):
     """Redis em baixo → _enqueue_cpo devolve False; o job não crasha nem grava."""
     _patch(monkeypatch)  # config/watermark ok
 
-    async def enqueue_fail(_tid, _wm):
+    async def enqueue_fail(_tid, _wm, *_args):
         return False  # Redis/arq indisponível
 
     monkeypatch.setattr(job, "_enqueue_cpo", enqueue_fail)

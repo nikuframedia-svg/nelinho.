@@ -186,13 +186,23 @@ async def _build_cpo_config(
         if request.time_limit_sec != _REQ_DEFAULT_TIME_LIMIT_S
         else _num("cpo.ga_budget_s", base.time_limit_sec)
     )
+    ga_budget = _num("cpo.ga_budget_s", base.ga_budget_s)
+    total_budget = _num("cpo.total_budget_s", base.total_budget_s)
+    # Q.161.B — caller pede mais tempo que o ga_budget (ex. robô de fundo a pedir
+    # 600s para planear os ~1200 em-produção, não-interativo): alarga ga_budget E
+    # total_budget para o acomodar. Senão o CPOConfig.__post_init__ corta o
+    # time_limit_sec de volta para o ga_budget (120s) e o pedido não tem efeito.
+    # Interativo (tlim=120 default ≤ ga 120) fica intacto — só alarga quando >.
+    if tlim > ga_budget:
+        total_budget += tlim - ga_budget
+        ga_budget = tlim
     return CPOConfig(
         population_size=pop,
         generations=gens,
         time_limit_sec=tlim,
-        total_budget_s=_num("cpo.total_budget_s", base.total_budget_s),
+        total_budget_s=total_budget,
         greedy_budget_s=_num("cpo.greedy_budget_s", base.greedy_budget_s),
-        ga_budget_s=_num("cpo.ga_budget_s", base.ga_budget_s),
+        ga_budget_s=ga_budget,
         mapelites_budget_s=_num("cpo.mapelites_budget_s", base.mapelites_budget_s),
         cpsat_budget_s=_num("cpo.cpsat_budget_s", base.cpsat_budget_s),
         workforce_budget_s=_num("cpo.workforce_budget_s", base.workforce_budget_s),
