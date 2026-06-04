@@ -11,6 +11,8 @@ ao anterior. Corre às 03:45 UTC, depois do phase_operator_affinity (03:30).
 from __future__ import annotations
 
 import logging
+
+from src.shared.coerce import clamp as _clamp
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Tuple
 from uuid import UUID
@@ -28,10 +30,6 @@ _NEUTRAL_SCORE = 0.5
 _MAX_DELTA = 0.1
 # Peso do defeito na fórmula de score
 _DEFECT_WEIGHT = 0.3
-
-
-def _clamp(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
-    return max(lo, min(hi, value))
 
 
 def _apply_cap(new_score: float, previous_score: Optional[float]) -> float:

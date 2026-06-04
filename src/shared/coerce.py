@@ -17,3 +17,12 @@ def safe_float(value: Any) -> Optional[float]:
         return float(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def clamp(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
+    """Limita `value` ao intervalo `[lo, hi]` (default `[0, 1]`).
+
+    Estava duplicado em 4 jobs do scheduler + dqa/trust_v2 (este como caso
+    especial sem `lo`/`hi`, equivalente ao default).
+    """
+    return max(lo, min(hi, value))

@@ -16,6 +16,8 @@ Corre às 04:15 UTC, entre improve_adoption_signal (04:00) e audit_retention_pur
 from __future__ import annotations
 
 import logging
+
+from src.shared.coerce import clamp as _clamp
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Dict, List, Tuple
@@ -29,10 +31,6 @@ from src.shared.database import get_session_context
 logger = logging.getLogger(__name__)
 
 _HISTORY_DAYS = 365
-
-
-def _clamp(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
-    return max(lo, min(hi, value))
 
 
 def _percentile_90(values: List[float]) -> float:

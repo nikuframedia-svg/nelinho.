@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import bisect
 import logging
+
+from src.shared.coerce import clamp as _clamp
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List
 from uuid import UUID
@@ -40,10 +42,6 @@ _W_PHASES = 0.30
 # Prepreg: sem tinta molhada → redistribui o peso da tinta p/ peças+fases.
 _W_PREPREG_COMPONENTS = 0.55
 _W_PREPREG_PHASES = 0.45
-
-
-def _clamp(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
-    return max(lo, min(hi, value))
 
 
 def _pctile_ranker(values: List[float]) -> Callable[[float], float]:
