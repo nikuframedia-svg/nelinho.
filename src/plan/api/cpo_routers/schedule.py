@@ -56,6 +56,12 @@ class CPOScheduleRequest(BaseModel):
     population_size: int = Field(default=100, ge=10, le=500)
     # Q.138.D — via _REQ_DEFAULT_GENERATIONS_V2 / _MAX_GENERATIONS (constantes).
     generations: int = Field(default=_REQ_DEFAULT_GENERATIONS_V2, ge=1, le=_MAX_GENERATIONS)
+    # Q.161.A — horizonte de ordens a planear. None (default) = horizonte
+    # interativo de 200 (botão responsivo). 0 = TODOS os em-produção (robô de
+    # fundo, com time_limit maior). >0 = esse cap. O clamp efetivo ao pool
+    # em-produção vive em state_loaders._OPEN_ORDERS_HARD_CAP. Só afeta
+    # state.open_orders (ignorado quando `orders` vem explícito no request).
+    plan_cap: Optional[int] = Field(default=None, ge=0)
 
     # Sprint K — optional commit metadata
     author: str = Field(default="system")

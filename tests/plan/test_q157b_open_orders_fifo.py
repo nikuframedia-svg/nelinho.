@@ -31,13 +31,15 @@ class _CaptureResult:
 
 
 class _CaptureSession:
-    """Captura o SQL gerado por `_load_open_orders_db` (sem BD)."""
+    """Captura o SQL (e os params) gerados por `_load_open_orders_db` (sem BD)."""
 
     def __init__(self) -> None:
         self.sql_text = ""
+        self.params: dict = {}
 
     async def execute(self, stmt, params=None):
         self.sql_text = str(stmt)
+        self.params = params or {}
         return _CaptureResult()
 
 
@@ -47,6 +49,15 @@ async def _captured_sql(scope: str = "boats_only") -> str:
     sess = _CaptureSession()
     await _load_open_orders_db(sess, TENANT, scope=scope)
     return sess.sql_text
+
+
+async def _captured(plan_cap=None, scope: str = "boats_only") -> _CaptureSession:
+    """Devolve a sessão capturada (sql_text + params), para testar o cap."""
+    from src.plan.cpo.state import _load_open_orders_db
+
+    sess = _CaptureSession()
+    await _load_open_orders_db(sess, TENANT, scope=scope, plan_cap=plan_cap)
+    return sess
 
 
 @pytest.mark.asyncio
@@ -115,3 +126,60 @@ async def test_staleness_off_by_default_no_predicate() -> None:
     sql = await _captured_sql()
     # O predicado de staleness usa make_interval(months => :staleness_months).
     assert "make_interval" not in sql, "staleness off por defeito → sem predicado"
+
+
+# =============================================================================
+# Q.161.A — reparações no horizonte + cap por contexto
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_repairs_prioritised_before_limit_q161() -> None:
+    """Q.161.A — reparações (fase {14,76,77}) entram no ORDER BY ANTES do LIMIT,
+    como PRIMEIRA chave (`repair_rank`). Sem isto, as reparações — prazo passado/
+    ausente, criação antiga — caíam sempre abaixo do cap e nunca eram planeadas."""
+    sql = await _captured_sql()
+    # rindex: a cláusula ORDER BY real (a 1ª ocorrência "ORDER BY" está num
+    # comentário do inner SELECT — "...o ::timestamp do ORDER BY rebenta").
+    order_by = sql[sql.rindex("ORDER BY"):]
+    assert "repair_rank" in order_by, "a prioridade de reparação entra no ORDER BY"
+    # repair_rank vem ANTES da prioridade de prazo futuro (é a 1ª chave).
+    assert order_by.index("repair_rank") < order_by.index("data_entrega_prevista"), (
+        "reparação tem de ordenar ANTES do prazo (senão cai abaixo do LIMIT)"
+    )
+    # Os ids de fase de reparação (DRY com REPAIR_PHASE_IDS) estão no CASE.
+    from src.plan.cpo.state import REPAIR_PHASE_IDS
+    for fid in REPAIR_PHASE_IDS:
+        assert fid in sql, f"id de fase de reparação {fid} no CASE repair_rank"
+
+
+@pytest.mark.asyncio
+async def test_plan_cap_default_is_interactive_horizon_q161() -> None:
+    """Q.161.A — sem `plan_cap`, o horizonte é o interativo (200)."""
+    from src.plan.cpo.state_loaders import _OPEN_ORDERS_PLAN_CAP
+
+    sess = await _captured(plan_cap=None)
+    assert _OPEN_ORDERS_PLAN_CAP == 200
+    assert sess.params["plan_cap"] == _OPEN_ORDERS_PLAN_CAP
+
+
+@pytest.mark.asyncio
+async def test_plan_cap_zero_means_all_in_production_q161() -> None:
+    """Q.161.A — `plan_cap <= 0` = TODOS os em-produção (tecto de segurança da GA)
+    — o que o robô de fundo usa para planear os ~825/1209, não só 200."""
+    from src.plan.cpo.state_loaders import _OPEN_ORDERS_HARD_CAP
+
+    sess = await _captured(plan_cap=0)
+    assert sess.params["plan_cap"] == _OPEN_ORDERS_HARD_CAP
+    assert _OPEN_ORDERS_HARD_CAP >= 1209, "o tecto cobre o pool em-produção real"
+
+
+@pytest.mark.asyncio
+async def test_plan_cap_explicit_value_clamped_q161() -> None:
+    """Q.161.A — `plan_cap > 0` é respeitado e fica abaixo do tecto."""
+    from src.plan.cpo.state_loaders import _OPEN_ORDERS_HARD_CAP
+
+    sess = await _captured(plan_cap=900)
+    assert sess.params["plan_cap"] == 900
+    sess2 = await _captured(plan_cap=999999)
+    assert sess2.params["plan_cap"] == _OPEN_ORDERS_HARD_CAP, "clamp ao tecto"

@@ -168,12 +168,19 @@ _DUR_CEIL_H = 24.0 * 7
 # sobre a mediana crua de of_fp (alinhado com o HAVING count>=5 do job).
 _CALIBRATION_MIN_OBS = 5
 
-# Q.131.F — horizonte de planeamento interactivo. O WIP real tem ~5300 OFs
-# abertas; planear todas (~11k operações) esgota o orçamento da GA logo na
-# geração 1 (sem optimização real) e demora demasiado para um "Replanear"
-# interactivo. Planeamos as N ordens MAIS URGENTES (menor data de entrega) —
-# rolling horizon. O Luis pediu ~200; é o nº onde a GA optimiza em segundos.
+# Q.131.F — horizonte de planeamento INTERATIVO (botão "Replanear"). O WIP real
+# tem ~5300 OFs abertas; planear todas esgota o orçamento da GA logo na geração 1
+# (sem optimização real) e demora demasiado para um clique. Planeamos as N ordens
+# MAIS URGENTES (menor data de entrega) — rolling horizon. O Luis pediu ~200; é o
+# nº onde a GA optimiza em segundos. Q.161.A — passou a ser só o DEFAULT (quando
+# `plan_cap` não é passado); o robô de fundo passa um cap maior (não-interativo).
 _OPEN_ORDERS_PLAN_CAP = 200
+
+# Q.161.A — tecto de segurança quando se pede "planear todos os em-produção"
+# (`plan_cap <= 0`): cobre os ~1209 em produção (nova+fila+reparações) com folga,
+# mas impede um runaway caso a regra de scope alargue (a GA não deve afogar). O
+# robô (job de fundo) corre com tempo maior, por isso pode planear o pool todo.
+_OPEN_ORDERS_HARD_CAP = 5000
 
 # Q.160 — fallback global da fila inter-fase (minutos), usado só quando NÃO há
 # histórico suficiente em of_fp (tabela vazia, testes legacy). Igual ao seed
@@ -740,6 +747,7 @@ async def _load_open_orders_db(
     tenant_id: UUID,
     scope: str = "boats_only",
     staleness_months: int | None = None,
+    plan_cap: int | None = None,
 ) -> List[Dict[str, Any]]:
     """Q.126.B — real WIP from `factory_raw.ordemfabrico`: open orders
     (`OF_DATAFIM` NULL) whose current phase (`OF_FP_ID`) is a production phase
@@ -786,8 +794,22 @@ async def _load_open_orders_db(
     Q.158.G — `staleness_months` fica como guarda secundária OPCIONAL (config,
     default 0/OFF — superado pelo EXISTS). Quando truthy, adiciona o predicado de
     vida recente (atividade em `of_fp` OU criação) — só reduz o pool, nunca
-    alarga. `0`/`None` ⇒ ausente (o caso normal pós-Q.158)."""
+    alarga. `0`/`None` ⇒ ausente (o caso normal pós-Q.158).
+
+    Q.161.A — `plan_cap` separa o horizonte por contexto: `None` (default) ⇒ o
+    horizonte interativo de 200 (botão "Replanear", responsivo); `<= 0` ⇒ TODOS os
+    em-produção (tecto `_OPEN_ORDERS_HARD_CAP` para a GA não afogar) — usado pelo
+    robô de fundo, que corre com `time_limit` maior; `> 0` ⇒ esse valor (clamp ao
+    tecto). Não muda o predicado (input-only, Spelke 5) — só quantas ordens entram.
+
+    Q.161.A — REPARAÇÕES primeiro: a prioridade `is_reparacao` (fase em {14,76,77})
+    entra no `ORDER BY` ANTES do `LIMIT` (`repair_rank`), senão as reparações —
+    prazo passado/ausente, criação antiga — caíam sempre abaixo do cap e nunca eram
+    planeadas. Barco de cliente que volta para reparação fica no topo do horizonte."""
     from src.plan.cpo.state import REPAIR_PHASE_IDS
+
+    # Q.161.A — fragmento SQL dos ids de fase de reparação (DRY com REPAIR_PHASE_IDS).
+    _repair_ids_sql = ", ".join(str(int(x)) for x in sorted(REPAIR_PHASE_IDS, key=int))
 
     if session is None:
         return []
@@ -843,6 +865,11 @@ async def _load_open_orders_db(
           SELECT ofb."OF_ID"::text   AS of_id,
                  ofb."OF_P_ID"::text AS modelo_id,
                  ofb."OF_FP_ID"::text AS current_fase_id,
+                 -- Q.161.A — reparação (fase {14,76,77}) = prioridade 0 no ORDER
+                 -- BY, ANTES do LIMIT: garante que barcos de cliente que voltam
+                 -- para reparação entram no horizonte (senão caíam abaixo do cap).
+                 CASE WHEN ofb."OF_FP_ID" IN ({_repair_ids_sql}) THEN 0 ELSE 1 END
+                   AS repair_rank,
                  -- NULLIF: '' (vazio) → NULL, senão o ::timestamp do ORDER BY rebenta.
                  COALESCE(NULLIF(ofb."OF_DATAENTREGA", ''),
                           NULLIF(ofb."OF_TR_DATA_PREVISTA", ''),
@@ -869,6 +896,9 @@ async def _load_open_orders_db(
         ) q
         LEFT JOIN done ON done.of_id = q.of_id
         ORDER BY
+          -- Q.161.A — REPARAÇÕES primeiro (repair_rank 0), antes de qualquer prazo:
+          -- barco de cliente de volta para reparação não pode cair abaixo do cap.
+          q.repair_rank ASC,
           -- Q.157.B (corrigido): a data-alvo NÃO é 99.5% nula nos BARCOS — é 95%
           -- preenchida, 53% futura (medi antes na população errada: todas as OFs,
           -- 99% acessórios). Por isso: barcos com PRAZO PLANEADO FUTURO primeiro
@@ -883,7 +913,17 @@ async def _load_open_orders_db(
         LIMIT :plan_cap
         """
     )
-    params: Dict[str, Any] = {"plan_cap": _OPEN_ORDERS_PLAN_CAP}
+    # Q.161.A — cap efetivo por contexto (ver docstring):
+    #   None       → 200 (horizonte interativo, default)
+    #   <= 0       → todos os em-produção (tecto de segurança da GA)
+    #   > 0        → esse valor (clamp ao tecto)
+    if plan_cap is None:
+        effective_cap = _OPEN_ORDERS_PLAN_CAP
+    elif plan_cap <= 0:
+        effective_cap = _OPEN_ORDERS_HARD_CAP
+    else:
+        effective_cap = min(int(plan_cap), _OPEN_ORDERS_HARD_CAP)
+    params: Dict[str, Any] = {"plan_cap": effective_cap}
     if staleness_months:
         params["staleness_months"] = int(staleness_months)
     try:
@@ -896,9 +936,9 @@ async def _load_open_orders_db(
     # Q.158 — gate canónico = regra em-produção (EXISTS); staleness é guarda
     # opcional (off por defeito) e também aparece aqui quando ligada.
     logger.info(
-        "open_orders DB: scope=%s staleness=%s → %d ordens (cap %d)",
+        "open_orders DB: scope=%s staleness=%s cap=%d → %d ordens",
         scope, f"{staleness_months}m" if staleness_months else "off",
-        len(rows), _OPEN_ORDERS_PLAN_CAP,
+        effective_cap, len(rows),
     )
     return [
         {

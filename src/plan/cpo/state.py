@@ -314,6 +314,7 @@ class FactoryState:
         session,
         tenant_id: UUID,
         semantic_queries: Optional[Any] = None,
+        plan_cap: Optional[int] = None,
     ) -> "FactoryState":
         """
         Load a FactoryState from the curated layer.
@@ -477,6 +478,9 @@ class FactoryState:
             from sqlalchemy.exc import SQLAlchemyError
             scope = "boats_only"
             staleness_months: int | None = None
+            # Q.161.A — precedência do cap: arg explícito (request) > config
+            # `planning.plan_cap` > None (⇒ default 200 em _load_open_orders_db).
+            eff_plan_cap: int | None = plan_cap
             try:
                 from src.core.services.tenant_config_service import (
                     TenantConfigService,
@@ -489,6 +493,11 @@ class FactoryState:
                 staleness_months = (
                     int(_stale) if _stale not in (None, "") else None
                 )
+                if eff_plan_cap is None:
+                    _cfg_cap = _planning.get("plan_cap")
+                    eff_plan_cap = (
+                        int(_cfg_cap) if _cfg_cap not in (None, "") else None
+                    )
             except (
                 SQLAlchemyError, ImportError, ValueError, AttributeError, TypeError,
             ) as exc:
@@ -499,6 +508,7 @@ class FactoryState:
             state.open_orders = await _load_open_orders_db(
                 session, tenant_id, scope=scope,
                 staleness_months=staleness_months,
+                plan_cap=eff_plan_cap,
             )
 
         # Curing/drying gaps (Sprint A D2): DB first, seed fallback

@@ -217,7 +217,11 @@ async def run_cpo_schedule(
     horizon_start = datetime.utcnow()
     horizon_end = horizon_start + timedelta(days=request.horizon_days)
 
-    state = await FactoryState.load(session, tenant_id)
+    # Q.161.A — o request decide o horizonte: None (interativo)=200, 0=todos os
+    # em-produção (robô de fundo). `getattr` p/ back-compat com requests antigos.
+    state = await FactoryState.load(
+        session, tenant_id, plan_cap=getattr(request, "plan_cap", None),
+    )
     if not state.loaded_ok:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
