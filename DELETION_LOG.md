@@ -17,6 +17,9 @@ motores/legacy = SALTADO. **Não reescrever.**
 | 2026-06-04 | F1/B | Feature órfã workforce: `api.py`(512)+`service.py`(839) — dependency-graph, cascade-impact, simulate, training-recommendations, **scenarios/compare (custos fabricados 440/880/2000€)**, `spof=3` fallback, `_get_mock_*`, allocations · + 3 testes | 0 callers backend (`grep`); 0 páginas vivas (só `EquipaNiveisTab` importa `workforceApi` e usa só sectors/operadores/níveis — reais); `risks/spof`/`simulate`/etc. nunca chamados | nenhum (sem callers); `models.py` mantido (model_registry); sub-routers sector/operators/employees intactos | d6937ce |
 | 2026-06-04 | F2 | Dedup `_safe_float` (5 cópias ml→`src/shared/coerce.py`) | comportamento idêntico (import as `_safe_float`); pytest ml verde | — | 37b3a82 |
 | 2026-06-04 | F2 | Dedup `_clamp` (4 jobs scheduler→`src/shared/coerce.clamp`) | idêntico; `dqa/trust_v2._clamp` deixado (ficheiro delicado) | — | 405715a |
+| 2026-06-04 | F1 | `_DEV_TENANT` fallback no auto_cpo_replan → log ERROR (não silencioso) | comportamento idêntico, só severidade; pytest scheduling 66 verdes | — | b066034 |
+| 2026-06-04 | F2 | Dedup `get_tenant_id` (23 routers → `require_tenant_header`) | 23 importam, 1678+ testes, 5 testes 422→401 (auth correto) | `require_tenant_header` (canónico) | a19b418 |
+| 2026-06-04 | B | `painel/painelApi.ts` (7k, órfão real) + funções mortas de `painelHelpers` (só `fmtEuro` vivo) | grep: painelApi só importado por painelHelpers; painelHelpers só por MoveBoatConfirm (usa `fmtEuro`); página /painel sem rota | `fmtEuro` mantido em painelHelpers | (próximo) |
 
 ## Follow-ups (registar para não esquecer)
 
