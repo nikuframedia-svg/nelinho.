@@ -172,44 +172,63 @@ class RoutingResolver:
             })
             return []
 
-        # 1. Try history for this specific order
-        rows = self._history_for_order(order_id)
-        if not rows:
-            # 2. Fall back to any historical order of the same model
-            rows = self._history_for_model(modelo_id)
-        if not rows:
-            # 2.5 Q.126.B — real route reconstructed from factory_raw.of_fp
-            # (ERP vivo), pre-loaded into FactoryState. This is the path that
-            # fires in production, where the in-memory curated layer is empty.
-            rows = self._history_for_model_db(modelo_id)
-        if not rows:
-            # 2.7 Q.131.G — routing master do ERP (PRODUTO_FASE) com duração
-            # p50 minerada de of_fp. Recupera modelos sem ≥2 obs por fase no
-            # histórico per-order, ainda com dados REAIS (não o buffer 2×).
-            rows = self._template_for_model_db(modelo_id)
-        if not rows:
-            # 3. Fall back to standard template
-            rows = self._standard_template(modelo_id)
+        # Q.161.E — REPARAÇÃO: a fase atual (14/76/77) é uma fase de reparação. A
+        # rota normal já está feita (o barco voltou) e a fase de reparação não está
+        # nela → bypassa a resolução de rota normal e planeia a ÚNICA operação
+        # aberta da fase de reparação (espelha o /OrdemFabrico/ReparacoesBarcos da
+        # NELO; sem rota forward — não existe). Duração REAL de
+        # `historical_durations_by_fase` (mediana de of_fp); sem duração real →
+        # honesto: fica unplanned (nunca um número fabricado, invariante #8).
+        if order.get("is_reparacao") and order.get("current_fase_id"):
+            repair_row = self._repair_row(str(order.get("current_fase_id")))
+            if repair_row is None:
+                self.unplanned.append({
+                    "order_id": order_id,
+                    "modelo_id": modelo_id,
+                    "reason": "repair_no_real_duration",
+                })
+                return []
+            rows = [repair_row]
+        else:
+            # 1. Try history for this specific order
+            rows = self._history_for_order(order_id)
+            if not rows:
+                # 2. Fall back to any historical order of the same model
+                rows = self._history_for_model(modelo_id)
+            if not rows:
+                # 2.5 Q.126.B — real route reconstructed from factory_raw.of_fp
+                # (ERP vivo), pre-loaded into FactoryState. This is the path that
+                # fires in production, where the in-memory curated layer is empty.
+                rows = self._history_for_model_db(modelo_id)
+            if not rows:
+                # 2.7 Q.131.G — routing master do ERP (PRODUTO_FASE) com duração
+                # p50 minerada de of_fp. Recupera modelos sem ≥2 obs por fase no
+                # histórico per-order, ainda com dados REAIS (não o buffer 2×).
+                rows = self._template_for_model_db(modelo_id)
+            if not rows:
+                # 3. Fall back to standard template
+                rows = self._standard_template(modelo_id)
 
-        if not rows:
-            logger.info(
-                f"RoutingResolver: no route found for order={order_id} model={modelo_id}"
+            if not rows:
+                logger.info(
+                    f"RoutingResolver: no route found for order={order_id} model={modelo_id}"
+                )
+                # Q.131.H — não saltar em silêncio: registar a ordem sem rota.
+                self.unplanned.append({
+                    "order_id": order_id,
+                    "modelo_id": modelo_id,
+                    "reason": "no_route",
+                })
+                return []
+
+            # Q.136.B / Q.158 — planear a partir da FASE ATUAL: o barco está a
+            # meio, descarta fases já feitas. Usa completed_fase_ids
+            # (OFFP_DATAFIM reais) como verdade primária; current_fase_id como
+            # piso secundário.
+            completed_fase_ids: set = set(order.get("completed_fase_ids") or [])
+            rows = _truncate_route_to_current(
+                rows, order.get("current_fase_id"), completed_fase_ids
             )
-            # Q.131.H — não saltar em silêncio: registar a ordem sem rota.
-            self.unplanned.append({
-                "order_id": order_id,
-                "modelo_id": modelo_id,
-                "reason": "no_route",
-            })
-            return []
-
-        # Q.136.B / Q.158 — planear a partir da FASE ATUAL: o barco está a meio,
-        # descarta fases já feitas. Usa completed_fase_ids (OFFP_DATAFIM reais)
-        # como fonte primária de verdade; current_fase_id como piso secundário.
-        completed_fase_ids: set = set(order.get("completed_fase_ids") or [])
-        rows = _truncate_route_to_current(
-            rows, order.get("current_fase_id"), completed_fase_ids
-        )
 
         # Q.131.H — ordem efectivamente planeada (≥1 operação).
         self.planned_order_ids.add(order_id)
@@ -257,6 +276,23 @@ class RoutingResolver:
             ops.append(op)
 
         return ops
+
+    def _repair_row(self, fase_id: str) -> Optional["RoutingRow"]:
+        """Q.161.E — uma RoutingRow para a operação de reparação aberta (fase
+        14/76/77). Duração = mediana REAL da fase em `historical_durations_by_fase`
+        (de factory_raw.of_fp); reparações não usam molde. Devolve None se não há
+        duração real para a fase (não fabricar — invariante #8)."""
+        dur = self.state.historical_durations_by_fase.get(str(fase_id))
+        if not dur or dur <= 0:
+            return None
+        return RoutingRow(
+            fase_id=str(fase_id),
+            fase_nome=f"Reparação (fase {fase_id})",
+            sequence=0,
+            duration_hours=float(dur),
+            source="repair_db",   # fonte REAL (não conta como fallback "standard")
+            mold_required=False,
+        )
 
     def resolve_many(
         self,

@@ -109,6 +109,46 @@ def test_resolve_current_phase_not_in_route_keeps_full(monkeypatch):
     assert [o.phase_id for o in ops] == ["CORTE", "LAM"]
 
 
+# ---------------------------------------------------------- Q.161.E reparações
+
+def test_resolve_repair_plans_single_repair_op():
+    """Q.161.E — barco em reparação (fase 77): a rota normal já está toda feita e
+    a fase de reparação não está nela → bypassa a rota normal e planeia SÓ a op
+    aberta da fase de reparação, com duração REAL de historical_durations_by_fase
+    (mediana de of_fp). Sem isto a reparação dava 0 ops (drop silencioso)."""
+    state = FactoryState(tenant_id=TENANT)
+    state.skill_matrix = {}
+    state.historical_durations_by_fase = {"77": 47.2}
+    r = RoutingResolver(state)
+    ops = r.resolve({
+        "of_id": "REP-1", "modelo_id": "K1",
+        "is_reparacao": True, "current_fase_id": "77",
+        "completed_fase_ids": ["1", "4", "9"],  # rota normal toda feita
+    })
+    assert len(ops) == 1
+    assert ops[0].phase_id == "77"
+    assert ops[0].duration_minutes == 47.2 * 60.0   # duração REAL, não fabricada
+    assert "REP-1" not in {u["order_id"] for u in r.unplanned}
+
+
+def test_resolve_repair_without_real_duration_is_unplanned():
+    """Q.161.E — sem duração real para a fase de reparação → honesto: unplanned
+    (nunca um número fabricado, invariante #8)."""
+    state = FactoryState(tenant_id=TENANT)
+    state.skill_matrix = {}
+    state.historical_durations_by_fase = {}  # sem duração da fase 77
+    r = RoutingResolver(state)
+    ops = r.resolve({
+        "of_id": "REP-2", "modelo_id": "K1",
+        "is_reparacao": True, "current_fase_id": "77",
+    })
+    assert ops == []
+    assert any(
+        u["order_id"] == "REP-2" and u["reason"] == "repair_no_real_duration"
+        for u in r.unplanned
+    )
+
+
 # ---------------------------------------------------------- Q.136.A boats-only
 
 class _CaptureResult:
