@@ -18,6 +18,8 @@ statistically stable.
 from __future__ import annotations
 
 import logging
+
+from src.shared.coerce import safe_float as _safe_float
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 from uuid import UUID
@@ -329,10 +331,3 @@ def _safe_metric(fn, y_true, y_score) -> float:
     except Exception as e:
         logger.warning(f"Metric {fn.__name__} failed: {e}")
         return 0.0
-
-
-def _safe_float(value: Any) -> Optional[float]:
-    try:
-        return float(value) if value is not None else None
-    except (TypeError, ValueError):
-        return None

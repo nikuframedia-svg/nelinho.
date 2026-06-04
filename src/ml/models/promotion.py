@@ -12,6 +12,8 @@ active. This module wraps that flow so a `RetrainJob` can simply call
 from __future__ import annotations
 
 import logging
+
+from src.shared.coerce import safe_float as _safe_float
 from typing import Any, Dict, Optional
 from uuid import UUID
 
@@ -93,13 +95,6 @@ async def propose_promotion(
     except Exception as exc:  # pragma: no cover — defensive
         logger.debug("ml_promotion_decisions_total emit failed: %s", exc)
     return decision
-
-
-def _safe_float(value: Any) -> Optional[float]:
-    try:
-        return float(value) if value is not None else None
-    except (TypeError, ValueError):
-        return None
 
 
 def _classify_risk(wmape_delta: Optional[float], max_delta: float) -> str:

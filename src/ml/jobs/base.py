@@ -21,6 +21,8 @@ Jobs register their `schedule_cron` with APScheduler in `start_scheduler`.
 from __future__ import annotations
 
 import logging
+
+from src.shared.coerce import safe_float as _safe_float
 import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Tuple
@@ -214,10 +216,3 @@ class RetrainJob(ABC):
             "training_duration_sec": duration_sec,
             "training_samples": n_samples,
         }
-
-
-def _safe_float(value: Any) -> Optional[float]:
-    try:
-        return float(value) if value is not None else None
-    except (TypeError, ValueError):
-        return None

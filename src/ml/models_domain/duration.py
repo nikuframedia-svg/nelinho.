@@ -14,6 +14,8 @@ than the in-memory median aggregates. RetrainJob schedule: daily at
 from __future__ import annotations
 
 import logging
+
+from src.shared.coerce import safe_float as _safe_float
 from dataclasses import dataclass, field
 from statistics import median
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
@@ -449,10 +451,3 @@ def build_training_dataset(
         })
 
     return rows
-
-
-def _safe_float(value: Any) -> Optional[float]:
-    try:
-        return float(value) if value is not None else None
-    except (TypeError, ValueError):
-        return None
