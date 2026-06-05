@@ -329,7 +329,7 @@ def test_get_job_status_not_found(monkeypatch):
 
 
 def test_list_commits_empty(monkeypatch):
-    async def _fake_list(self, limit=50):
+    async def _fake_list(self, limit=50, *, healthy_only=False):
         return []
 
     monkeypatch.setattr(
@@ -349,7 +349,7 @@ def test_list_commits_empty(monkeypatch):
 def test_list_commits_returns_array_of_commit_shapes(monkeypatch):
     commit = _make_commit()
 
-    async def _fake_list(self, limit=50):
+    async def _fake_list(self, limit=50, *, healthy_only=False):
         return [commit]
 
     monkeypatch.setattr(

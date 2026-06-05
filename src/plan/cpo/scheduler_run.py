@@ -42,6 +42,27 @@ logger = logging.getLogger(__name__)
 # still returned). Conservative default; the operator decides.
 _DURATION_FALLBACK_ALERT_THRESHOLD = 0.20
 
+# Q.162.B — guarda anti-plano-degenerado. Um plano minúsculo face ao scope (ex.:
+# falha transitória do solver, regressão de dados) NUNCA deve virar o "plano
+# atual" no grid só por ser o mais recente. Marca-se `cpo_meta.degenerate=true`
+# (jsonb, NÃO entra no hash) e o /overall salta-o (mostra o último SAUDÁVEL). Só
+# dispara quando o scope é GRANDE (planos pequenos intencionais — request com
+# `orders` explícito — não são degenerados) E a cobertura é baixa. Honesto
+# (invariante #8): se TODOS forem degenerados → empty-state, nunca um plano falso.
+_DEGENERATE_MIN_SCOPE = 50         # só guarda quando havia muitas ordens a planear
+_DEGENERATE_COVERAGE_FLOOR = 0.50  # < 50% das ordens planeadas = suspeito
+
+
+def _is_degenerate_plan(scope_size: int, orders_coverage: float) -> bool:
+    """Q.162.B — plano degenerado: scope GRANDE (≥ _DEGENERATE_MIN_SCOPE) mas a
+    cobertura colapsou (< _DEGENERATE_COVERAGE_FLOOR). Pura → testável isolada.
+    Planos pequenos intencionais (request com `orders` explícito, scope < mínimo)
+    nunca são degenerados."""
+    return (
+        scope_size >= _DEGENERATE_MIN_SCOPE
+        and orders_coverage < _DEGENERATE_COVERAGE_FLOOR
+    )
+
 
 async def _upsert_cpo_alert(
     session: AsyncSession,
@@ -453,6 +474,48 @@ async def run_cpo_schedule(
             "orders": unplanned_ids[:50],
             "coverage": round(resolver.orders_coverage, 4),
         }
+
+    # Q.162.B — guarda anti-plano-degenerado. Quando o scope era grande mas a
+    # cobertura colapsou (falha transitória do solver / regressão de dados), marca
+    # o commit `cpo_meta.degenerate=true` para o /overall NÃO o mostrar como plano
+    # atual (mantém o último saudável). Persiste na mesma (auditoria); cpo_meta
+    # não entra no hash. Não levanta erro — soft-flag, honesto (invariante #8).
+    _scope_size = len(orders)
+    _planned_orders = len(resolver.planned_order_ids)
+    _is_degenerate = _is_degenerate_plan(_scope_size, resolver.orders_coverage)
+    result.setdefault("cpo_meta", {}).update(
+        {
+            "degenerate": bool(_is_degenerate),
+            "orders_coverage": round(resolver.orders_coverage, 4),
+            "planned_orders": _planned_orders,
+            "scope_size": _scope_size,
+        }
+    )
+    if _is_degenerate:
+        cov_pct = round(resolver.orders_coverage * 100.0, 1)
+        msg = (
+            f"Plano DEGENERADO: só {_planned_orders}/{_scope_size} ordens planeadas "
+            f"(cobertura {cov_pct}%, mínimo {int(_DEGENERATE_COVERAGE_FLOOR * 100)}%). "
+            "Não será mostrado como plano atual — mantém-se o último plano saudável."
+        )
+        result.setdefault("warnings", []).append(msg)
+        logger.warning("CPO schedule: %s (tenant=%s)", msg, tenant_id)
+        try:
+            from src.copilot.alerts.models import CODE_PLAN_DEGENERATE
+            await _upsert_cpo_alert(
+                session, tenant_id,
+                code=CODE_PLAN_DEGENERATE,
+                title=f"Plano degenerado — só {_planned_orders}/{_scope_size} ordens",
+                message_pt=msg,
+                context={
+                    "planned_orders": _planned_orders,
+                    "scope_size": _scope_size,
+                    "orders_coverage": round(resolver.orders_coverage, 4),
+                },
+            )
+            await session.flush()
+        except (SQLAlchemyError, ImportError, TypeError, ValueError) as alert_exc:
+            logger.warning("CPO schedule: failed to emit degenerate alert: %s", alert_exc)
 
     # Yaml policy hook (best-effort; 409 if block fired).
     try:

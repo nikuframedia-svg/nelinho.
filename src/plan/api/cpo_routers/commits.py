@@ -78,12 +78,19 @@ class DiffResponse(BaseModel):
 @router.get("/commits", response_model=List[CommitResponse])
 async def list_commits(
     limit: int = Query(default=50, ge=1, le=500),
+    exclude_degenerate: bool = Query(
+        default=False,
+        description=(
+            "Q.162.B — salta planos degenerados (cobertura colapsada). O /overall "
+            "usa-o (limit=1) para mostrar sempre o último plano SAUDÁVEL."
+        ),
+    ),
     tenant_id: UUID = Depends(_tenant_id),
     db: AsyncSession = Depends(get_session),
 ):
     """List the most recent schedule commits for the tenant."""
     service = CommitsService(db, tenant_id)
-    rows = await service.list_commits(limit=limit)
+    rows = await service.list_commits(limit=limit, healthy_only=exclude_degenerate)
     return [CommitResponse(**CommitsService.to_dict(r)) for r in rows]
 
 

@@ -145,7 +145,10 @@ export default function OverallPage(): ReactNode {
   // ── Query ──────────────────────────────────────────────────────────────────
   const { data: commits, isLoading, isError, refetch } = useQuery({
     queryKey: planKeys.scheduleCurrent(),
-    queryFn: () => cpoCommitsApi.list({ limit: 1 }),
+    // Q.162.B — o "plano atual" é o último commit SAUDÁVEL. Um plano degenerado
+    // (cobertura colapsada, ex.: falha transitória) nunca vira o atual só por ser
+    // o mais recente — o grid continua a mostrar o último plano válido.
+    queryFn: () => cpoCommitsApi.list({ limit: 1, excludeDegenerate: true }),
     refetchInterval: 30_000,
     // Q.144.D — voltar ao separador re-tenta (em vez de ficar preso no erro do
     // breaker quando o backend já recuperou).

@@ -32,7 +32,14 @@ _DEFAULT_MIN_GAP_MIN = 60
 # "Replanear" interativo (200 ordens, <90s). Overrides em
 # `planning.auto_replan_plan_cap` / `planning.auto_replan_time_limit_s`.
 _DEFAULT_ROBOT_PLAN_CAP = 0          # 0 = todos os em-produção
-_DEFAULT_ROBOT_TIME_LIMIT_S = 600.0  # 10 min (tecto do CPOScheduleRequest)
+# Q.162.A — budget do SOLVER (não wall-clock do job). TEM de ser << job_timeout do
+# Arq (1200s, ver worker.py) para sobrar tempo a load + serialização de ~8k ops +
+# trust_index + boost + reapply. Antes era 600 = tecto _MAX_TIME_LIMIT_S = job_timeout
+# → o solve comia tudo e o Arq matava o job antes de gravar (j_failed=22, 0 commits).
+# 300s chega para ~8000 ops (os planos saudáveis usavam 2–13 gerações; o ganho da GA
+# por geração é marginal — o baseline greedy já é bom). Override:
+# planning.auto_replan_time_limit_s.
+_DEFAULT_ROBOT_TIME_LIMIT_S = 300.0  # 5 min de SOLVER — << job_timeout=1200s (folga p/ persist)
 
 # Estado in-memory por tenant: (último enqueue, watermark do WIP nesse momento).
 # Reset no restart é aceitável — apenas re-planeia 1× após rearranque.
@@ -97,6 +104,32 @@ async def _wip_watermark(session) -> Optional[Tuple[int, str]]:
     if row is None:
         return None
     return (int(row.n), str(row.hw))
+
+
+async def _healthy_commit_since(session, tenant_id: UUID, since_ts: datetime) -> bool:
+    """Q.162.C — True se existe um commit SAUDÁVEL (não-degenerado) criado DEPOIS
+    de `since_ts` — i.e. o último enqueue produziu mesmo um plano válido.
+
+    Serve para o robô NÃO marcar o watermark como "feito" quando o job estourou o
+    timeout (e não gravou nada): antes, o watermark avançava no enqueue e um job
+    falhado deixava o grid preso. Agora, se o WIP não mudou MAS não há commit
+    saudável desde o último enqueue, re-planeamos. Best-effort: erro → False
+    (tende a re-tentar; o dedup `_job_id` + rate-limit evitam martelar)."""
+    try:
+        from src.plan.cpo.commits import CommitsService
+
+        rows = await CommitsService(session, tenant_id).list_commits(
+            limit=1, healthy_only=True,
+        )
+        if not rows or rows[0].created_at is None:
+            return False
+        created = rows[0].created_at
+        # created_at é naive-UTC; since_ts vem tz-aware → comparar em naive-UTC.
+        since_naive = since_ts.replace(tzinfo=None) if since_ts.tzinfo else since_ts
+        return created > since_naive
+    except (SQLAlchemyError, ImportError, AttributeError, TypeError) as exc:
+        logger.debug("auto_cpo_replan: healthy-commit check skipped (%s)", exc)
+        return False
 
 
 async def _read_config(session, tenant_id: UUID) -> Tuple[bool, int, int, float]:
@@ -193,10 +226,21 @@ async def _auto_cpo_replan_global_job(tenant_ids: List[UUID]) -> None:
                 if last is not None and (now - last[0]).total_seconds() < gap_min * 60:
                     continue  # rate-limit: ainda dentro do gap
                 wm = await _wip_watermark(session)
+                # Q.162.C — re-planear quando: 1ª corrida, OU o WIP mudou, OU o
+                # último enqueue NÃO produziu um commit saudável (job falhou/
+                # degenerou). Antes bastava o WIP inalterado para saltar — um job
+                # que estourava o timeout deixava o grid preso no commit anterior.
+                if wm is not None and wm[0] > 0:
+                    wip_unchanged = last is not None and wm == last[1]
+                    last_succeeded = wip_unchanged and await _healthy_commit_since(
+                        session, tid, last[0],
+                    )
+                else:
+                    wip_unchanged = last_succeeded = False
             if wm is None or wm[0] == 0:
                 continue  # sem barcos / sem dados → nada a planear
-            if last is not None and wm == last[1]:
-                continue  # WIP inalterado desde o último plano → não repetir
+            if wip_unchanged and last_succeeded:
+                continue  # WIP inalterado E último plano saudável → não repetir
             if await _enqueue_cpo(tid, wm, plan_cap, time_limit):
                 _last_run[tid] = (now, wm)
                 logger.info(

@@ -36,13 +36,21 @@ def _clean_state(monkeypatch):
     yield
 
 
-def _patch(monkeypatch, *, enabled=True, gap=60, watermark=(777, "2026-05-31")):
+def _patch(
+    monkeypatch, *, enabled=True, gap=60, watermark=(777, "2026-05-31"),
+    healthy_since=True,
+):
     # Q.161.B — _read_config devolve agora (enabled, gap, plan_cap, time_limit).
     async def fake_config(_s, _t):
         return enabled, gap, job._DEFAULT_ROBOT_PLAN_CAP, job._DEFAULT_ROBOT_TIME_LIMIT_S
 
     async def fake_wm(_s):
         return watermark
+
+    # Q.162.C — o robô só salta WIP-inalterado se o último plano vingou (commit
+    # saudável). Mockamos a confirmação; default True = último plano saudável.
+    async def fake_healthy(_s, _t, _ts):
+        return healthy_since
 
     calls: list = []
 
@@ -53,6 +61,7 @@ def _patch(monkeypatch, *, enabled=True, gap=60, watermark=(777, "2026-05-31")):
 
     monkeypatch.setattr(job, "_read_config", fake_config)
     monkeypatch.setattr(job, "_wip_watermark", fake_wm)
+    monkeypatch.setattr(job, "_healthy_commit_since", fake_healthy)
     monkeypatch.setattr(job, "_enqueue_cpo", fake_enqueue)
     return calls
 
@@ -81,15 +90,30 @@ async def test_rate_limit_skips_within_gap(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_unchanged_watermark_skips(monkeypatch):
-    """Passado o gap mas WIP inalterado → não re-planeia input idêntico."""
+    """Passado o gap, WIP inalterado E último plano SAUDÁVEL → não re-planeia."""
     wm = (777, "2026-05-31")
-    calls = _patch(monkeypatch, gap=60, watermark=wm)
+    calls = _patch(monkeypatch, gap=60, watermark=wm, healthy_since=True)
     job._last_run[TENANT] = (
         datetime.now(timezone.utc) - timedelta(minutes=90),  # fora do gap
         wm,  # watermark IGUAL
     )
     await job._auto_cpo_replan_global_job([])
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_unchanged_watermark_but_last_failed_reenqueues(monkeypatch):
+    """Q.162.C — WIP inalterado MAS o último job NÃO produziu commit saudável
+    (estourou o timeout / degenerou) → re-enfileira. Antes ficava preso no
+    commit anterior (o watermark avançava no enqueue, não na conclusão)."""
+    wm = (777, "2026-05-31")
+    calls = _patch(monkeypatch, gap=60, watermark=wm, healthy_since=False)
+    job._last_run[TENANT] = (
+        datetime.now(timezone.utc) - timedelta(minutes=90),  # fora do gap
+        wm,  # watermark IGUAL
+    )
+    await job._auto_cpo_replan_global_job([])
+    assert calls == [TENANT]  # re-tentou porque o último plano não vingou
 
 
 @pytest.mark.asyncio

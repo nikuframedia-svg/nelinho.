@@ -53,6 +53,13 @@ CODE_DURATION_FALLBACK_HIGH = "DURATION_FALLBACK_HIGH"            # WARN
 # operator knows exactly which orders (and why) were left out.
 CODE_ORDERS_WITHOUT_ROUTING = "ORDERS_WITHOUT_ROUTING"           # WARN
 
+# Q.162.B — emitted when a completed schedule covered far too few of the orders
+# it was asked to plan (big scope, tiny coverage) — a transient solver failure or
+# a data regression. The plan is persisted for audit but flagged
+# `cpo_meta.degenerate=true` so /overall skips it and keeps showing the last
+# healthy plan (never a frozen 2-op plan masquerading as "current").
+CODE_PLAN_DEGENERATE = "PLAN_DEGENERATE"                          # WARN
+
 
 class CopilotAlert(TenantBase):
     """A proactive alert surfaced by the Copilot AlertsEngine."""

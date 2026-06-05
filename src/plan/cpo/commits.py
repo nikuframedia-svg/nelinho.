@@ -28,7 +28,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import Index, Integer, String, Text, desc, select
+from sqlalchemy import Index, Integer, String, Text, desc, or_, select
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
@@ -372,12 +372,25 @@ class CommitsService:
         rows.reverse()  # ASC → _reduce_overrides faz o last-wins corretamente
         return _reduce_overrides(rows)
 
-    async def list_commits(self, limit: int = 50) -> List[ScheduleCommit]:
-        stmt = (
-            select(ScheduleCommit)
-            .where(ScheduleCommit.tenant_id == self.tenant_id)
-            .order_by(desc(ScheduleCommit.created_at))
-            .limit(max(1, min(limit, 500)))
+    async def list_commits(
+        self, limit: int = 50, *, healthy_only: bool = False
+    ) -> List[ScheduleCommit]:
+        """Lista commits (mais recentes primeiro).
+
+        Q.162.B — `healthy_only=True` salta os planos marcados
+        `cpo_meta.degenerate=true` (cobertura colapsou face ao scope). É o que o
+        /overall usa para escolher o plano a MOSTRAR: um plano degenerado nunca
+        vira o "plano atual" só por ser o mais recente — mostra-se o último
+        saudável. O default (False) preserva a listagem completa (histórico).
+        """
+        stmt = select(ScheduleCommit).where(
+            ScheduleCommit.tenant_id == self.tenant_id
+        )
+        if healthy_only:
+            _degen = ScheduleCommit.cpo_meta["degenerate"].astext
+            stmt = stmt.where(or_(_degen.is_(None), _degen != "true"))
+        stmt = stmt.order_by(desc(ScheduleCommit.created_at)).limit(
+            max(1, min(limit, 500))
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())

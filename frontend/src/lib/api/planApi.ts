@@ -380,8 +380,12 @@ export interface CpoWorkerPairsResponse {
 }
 
 export const cpoCommitsApi = {
-  list: (params?: { limit?: number }) => {
-    const qs = params?.limit ? `?limit=${params.limit}` : '';
+  list: (params?: { limit?: number; excludeDegenerate?: boolean }) => {
+    const sp = new URLSearchParams();
+    if (params?.limit) sp.set('limit', String(params.limit));
+    // Q.162.B — salta planos degenerados; o /overall pede o último SAUDÁVEL.
+    if (params?.excludeDegenerate) sp.set('exclude_degenerate', 'true');
+    const qs = sp.toString() ? `?${sp.toString()}` : '';
     return request<CpoCommit[]>(`/v1/plan/cpo/commits${qs}`);
   },
 

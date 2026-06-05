@@ -37,6 +37,16 @@ from src.shared.config import settings
 
 logger = logging.getLogger(__name__)
 
+# Q.162.A — wall-clock máximo do job Arq. INVARIANTE: >> budget do solver do robô
+# (_DEFAULT_ROBOT_TIME_LIMIT_S=300, em auto_cpo_replan_job) + overhead de load
+# (~4s) + serialização de ~8k ops + trust_index + boost + reapply de overrides.
+# Antes era 600 = o tecto _MAX_TIME_LIMIT_S = o time_limit do robô (Q.161.B) → o
+# solver comia os 600s e o Arq matava o job ANTES de gravar o commit
+# (CancelledError no asyncpg; _arq.err j_complete=0 j_failed=22), deixando o grid
+# preso num plano degenerado. Medido live: 8209 ops carregam+resolvem+resolvem+
+# gravam em ~168s → 1200s dá folga enorme. Coberto por test_q162_*.
+_CPO_JOB_TIMEOUT_S = 1200
+
 
 # ─── Job callable ────────────────────────────────────────────────────
 
@@ -142,9 +152,9 @@ class WorkerSettings:
 
     redis_settings = _RS.from_dsn(settings.redis_url)
 
-    # Q.62.D — CPO é heavy (~30s default, max 300s); permitimos jobs
-    # longos com timeout generoso.
-    job_timeout = 600  # 10 min hard cap (acima do time_limit_sec max=300)
+    # Q.162.A — 20 min hard cap (folga sobre o solver do robô + persist). Ver a
+    # constante _CPO_JOB_TIMEOUT_S acima para o invariante e a medição.
+    job_timeout = _CPO_JOB_TIMEOUT_S
     keep_result = 3600  # mantem o resultado em Redis por 1h (polling)
     max_jobs = 4  # paralelismo modesto — CPO usa cpu+memory pesado
 
