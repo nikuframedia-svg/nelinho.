@@ -28,7 +28,7 @@ from __future__ import annotations
 import logging
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
-from uuid import NAMESPACE_OID, UUID, uuid5
+from uuid import UUID
 
 from sqlalchemy import Integer, bindparam, text
 from sqlalchemy.dialects.postgresql import ARRAY
@@ -206,11 +206,6 @@ def _duration_min(start: Any, end: Any) -> Optional[float]:
     return round(delta, 1) if delta >= 0 else None
 
 
-def worker_uuid(e_id: str) -> UUID:
-    """UUID determinístico do operador a partir do E_ID do ERP (uuid5)."""
-    return uuid5(NAMESPACE_OID, f"operator:{e_id}")
-
-
 # ── Shaping puro (testável sem BD) ───────────────────────────────────────────
 
 def shape_actuals_items(
@@ -268,8 +263,14 @@ def attach_workers(
 
     A equipa (1+ operadores) é agregada num item só (espelha o /overall, que faz
     `workers[0]` + nomes juntos): `worker_nome` = nomes juntos por " + " (chefe
-    primeiro), `worker_id` = uuid5 do E_ID do chefe (ou do 1.º). Fases sem
-    operador (ex. Cura) ficam com worker_* None — enriquecimento, nunca filtro.
+    primeiro), `worker_id` = E_ID cru do chefe (ou do 1.º). Fases sem operador
+    (ex. Cura) ficam com worker_* None — enriquecimento, nunca filtro.
+
+    Q.164.B — `worker_id` é o `E_ID` CRU (= `employee_code`), a MESMA identidade
+    que o plano CPO usa nos `workers[]`. Antes embrulhava-se em `uuid5(E_ID)`, que
+    nunca casava com o `employee_code` do plano → a mesma pessoa contava DUAS vezes
+    no `pessoaCount` do /overall (uma no plano, outra no realizado). Com o E_ID
+    cru, passado e futuro da mesma pessoa fundem-se numa só identidade/lane.
     """
     by_offp: Dict[str, List[Dict[str, Any]]] = {}
     for w in worker_rows:
@@ -285,7 +286,8 @@ def attach_workers(
         crew_sorted = sorted(crew, key=lambda w: (not bool(w.get("is_chefe")), str(w.get("e_id"))))
         nomes = [str(w.get("nome") or w.get("e_id")) for w in crew_sorted]
         it["worker_nome"] = " + ".join(nomes)
-        it["worker_id"] = str(worker_uuid(str(crew_sorted[0]["e_id"])))
+        # Q.164.B — E_ID cru (= employee_code), casa com os workers[] do plano.
+        it["worker_id"] = str(crew_sorted[0]["e_id"])
     return items
 
 

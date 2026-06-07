@@ -17,7 +17,6 @@ from src.plan.services.timeline_actuals_service import (
     attach_workers,
     shape_actuals_items,
     shape_expeditions,
-    worker_uuid,
 )
 
 _TENANT = UUID("11111111-1111-1111-1111-111111111111")
@@ -249,7 +248,8 @@ def test_attach_workers_single_operator():
         [{"offp_id": "P1", "e_id": "20363", "is_chefe": True, "nome": "Carlos"}],
     )
     assert out[0]["worker_nome"] == "Carlos"
-    assert out[0]["worker_id"] == str(worker_uuid("20363"))
+    # Q.164.B — worker_id é o E_ID cru (= employee_code do plano), não uuid5.
+    assert out[0]["worker_id"] == "20363"
 
 
 def test_attach_workers_crew_chefe_first():
@@ -261,7 +261,8 @@ def test_attach_workers_crew_chefe_first():
         ],
     )
     assert out[0]["worker_nome"] == "Ana + Bruno"  # chefe primeiro
-    assert out[0]["worker_id"] == str(worker_uuid("1"))
+    # Q.164.B — E_ID cru do chefe (= employee_code), não uuid5.
+    assert out[0]["worker_id"] == "1"
 
 
 def test_attach_workers_phase_without_crew_stays_none():
@@ -277,9 +278,13 @@ def test_attach_workers_no_name_falls_back_to_eid():
     assert out[0]["worker_nome"] == "999"
 
 
-def test_worker_uuid_is_deterministic_and_distinct():
-    assert worker_uuid("20363") == worker_uuid("20363")
-    assert worker_uuid("1") != worker_uuid("2")
+def test_worker_id_equals_employee_code_identity_q164b():
+    # Q.164.B — o worker_id do realizado tem de ser exatamente o E_ID (=
+    # employee_code do plano CPO), para a mesma pessoa não contar 2× no /overall.
+    out = attach_workers(
+        [_it("P1")], [{"offp_id": "P1", "e_id": "20363", "is_chefe": True, "nome": "X"}],
+    )
+    assert out[0]["worker_id"] == "20363"  # cru, sem uuid5
 
 
 @pytest.mark.asyncio
