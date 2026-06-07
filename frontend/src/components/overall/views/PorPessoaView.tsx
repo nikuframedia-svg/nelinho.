@@ -30,6 +30,7 @@ import { opMatchesSelection } from '../selection';
 import { OpCard } from './OpCard';
 import { DensityCell, DENSITY_THRESHOLD } from './DensityCell';
 import { useCellExpand } from '../cellExpand';
+import { sortOpsChrono } from './sortOps';
 
 // ─── Tipos ──────────────────────────────────────────────────────────────────
 
@@ -224,6 +225,8 @@ export const PorPessoaView = memo(function PorPessoaView({
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(op);
     }
+    // Q.164.D — dentro de cada célula, ordem cronológica (= sequência de fases).
+    for (const list of map.values()) sortOpsChrono(list);
     return map;
   }, [operations, slots, startDate, scale]);
 

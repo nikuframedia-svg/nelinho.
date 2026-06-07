@@ -28,6 +28,7 @@ import { OpCard } from './OpCard';
 import { DensityCell, DENSITY_THRESHOLD } from './DensityCell';
 import { useCellExpand } from '../cellExpand';
 import { RemoveZone, REMOVE_ZONE_ID } from './RemoveZone';
+import { sortOpsChrono } from './sortOps';
 
 // ─── Tipos internos ────────────────────────────────────────────────────────
 
@@ -193,6 +194,8 @@ export const PorBarcoView = memo(function PorBarcoView({
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(op);
     }
+    // Q.164.D — dentro de cada célula, ordem cronológica (= sequência de fases).
+    for (const list of map.values()) sortOpsChrono(list);
     return map;
   }, [operations, slots, startDate, scale]);
 
