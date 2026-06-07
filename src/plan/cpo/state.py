@@ -225,6 +225,15 @@ class FactoryState:
     # team_size_default}. Empty = sem templates carregados.
     template_routes_by_model: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
 
+    # Q.164.C — catálogo canónico de fases de produção (FP_PRODUCAO=true), ordenado
+    # por FP_SEQUENCIA. Cada item: {fase_id, sequence, fase_nome}. É o ÚLTIMO
+    # fallback de rota no RoutingResolver: quando um modelo não tem rota nenhuma
+    # (sem histórico of_fp >=2 obs, sem template ERP, sem curada Excel), assume-se
+    # a sequência-padrão de produção da NELO com durações medianas REAIS por fase
+    # (historical_durations_by_fase). Planeia o barco em vez de o deixar invisível.
+    # Vazio = sem catálogo carregado (back-compat: cai em no_route como antes).
+    phase_catalog: List[Dict[str, Any]] = field(default_factory=list)
+
     # historical error rate per fase_id (0.0-1.0)
     historical_error_rates: Dict[str, float] = field(default_factory=dict)
 
@@ -392,6 +401,13 @@ class FactoryState:
             state.historical_durations_by_fase = dur_fase_db
         if routes_db:
             state.historical_routes_by_model = routes_db
+
+        # Q.164.C — catálogo canónico de fases (sequência-padrão de produção). É o
+        # último fallback de rota: modelo sem rota nenhuma → assume esta sequência
+        # com durações medianas reais por fase (em vez de ficar unplanned).
+        catalog_db = await _load_phase_catalog_db(session, tenant_id)
+        if catalog_db:
+            state.phase_catalog = catalog_db
 
         # Q.160 — mediana REAL da fila inter-fase por fase (substitui o 5.2h
         # global hardcoded). Best-effort; vazio → o decoder cai no fallback
@@ -804,6 +820,7 @@ from src.plan.cpo.state_loaders import (
     _load_molds_db,
     _load_open_orders_db,
     _load_phase_calibration_db,
+    _load_phase_catalog_db,
     _load_phase_config_db,
     _load_phase_preferred_operators_db,
     _load_phase_queue_medians_db,

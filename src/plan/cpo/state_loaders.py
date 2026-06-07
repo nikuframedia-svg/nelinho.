@@ -277,6 +277,49 @@ async def _load_historical_durations_routes_db(
     return routes, by_pair, by_fase
 
 
+async def _load_phase_catalog_db(
+    session: Any,
+    tenant_id: UUID,
+) -> List[Dict[str, Any]]:
+    """Q.164.C — catálogo canónico de fases de PRODUÇÃO de `factory_raw.fases_producao`
+    (`FP_PRODUCAO=true`), ordenado por `FP_SEQUENCIA`.
+
+    Devolve ``[{fase_id, sequence, fase_nome}]``. É o ÚLTIMO fallback de rota do
+    RoutingResolver: um modelo sem QUALQUER rota (sem histórico of_fp >=2 obs, sem
+    template ERP, sem curada Excel) passa a assumir esta sequência-padrão com
+    durações medianas REAIS por fase (`historical_durations_by_fase`) em vez de
+    ficar `no_route` (barco invisível no plano). `factory_raw` é tenant-agnóstico
+    (espelho ERP partilhado) → sem filtro de tenant. Best-effort → ``[]``."""
+    if session is None:
+        return []
+    from sqlalchemy import text
+    from sqlalchemy.exc import SQLAlchemyError
+
+    sql = text(
+        """
+        SELECT "FP_ID"::text AS fase_id,
+               "FP_SEQUENCIA" AS seq,
+               "FP_NOME"      AS fase_nome
+        FROM factory_raw.fases_producao
+        WHERE "FP_PRODUCAO" = true
+        ORDER BY "FP_SEQUENCIA", "FP_ID"
+        """
+    )
+    try:
+        rows = (await session.execute(sql)).mappings().all()
+    except SQLAlchemyError as exc:  # pragma: no cover — DB outage / missing table
+        logger.debug("Q.164.C phase_catalog DB load skipped: %s", exc)
+        return []
+    return [
+        {
+            "fase_id": str(r["fase_id"]),
+            "sequence": int(r["seq"] or 0),
+            "fase_nome": str(r["fase_nome"] or r["fase_id"]),
+        }
+        for r in rows
+    ]
+
+
 async def _load_phase_queue_medians_db(
     session: Any,
     tenant_id: UUID,

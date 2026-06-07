@@ -190,3 +190,47 @@ class TestResolveMany:
         ])
         assert len(ops) == 2
         assert {o.order_id for o in ops} == {"O-A", "O-B"}
+
+
+# ---------------------------------------------------------------------------
+# Q.164.C — fallback de rota canónica (modelos sem rota nenhuma)
+# ---------------------------------------------------------------------------
+
+class TestCanonicalRouteFallbackQ164C:
+    def test_canonical_route_when_no_other_route(self, monkeypatch):
+        # Modelo raro/novo sem histórico/template/curada. Com phase_catalog +
+        # durações medianas por fase, o resolver usa a sequência-padrão da NELO
+        # (Q.164.C) em vez de deixar o barco unplanned (no_route).
+        state = FactoryState(tenant_id=TENANT)
+        state.skill_matrix = {"1": {"W1"}, "18": {"W2"}}
+        state.phase_catalog = [
+            {"fase_id": "1", "sequence": 10, "fase_nome": "Laminagem"},
+            {"fase_id": "18", "sequence": 9, "fase_nome": "Pintura"},
+            {"fase_id": "99", "sequence": 30, "fase_nome": "SemMediana"},
+        ]
+        # fase 99 SEM mediana real → tem de ser saltada (invariante #8).
+        state.historical_durations_by_fase = {"1": 4.0, "18": 0.2}
+        stub = _stub_semantic_queries()  # vazio → sem histórico nem standards
+        resolver = RoutingResolver(state)
+        monkeypatch.setattr(resolver, "_semantic_engine", lambda: stub.engine)
+
+        ops = resolver.resolve({"of_id": "OF-NOVO", "modelo_id": "MODELO-RARO"})
+
+        assert len(ops) == 2  # fase 99 saltada (sem duração real)
+        # ordenadas por sequência: Pintura (seq 9) antes de Laminagem (seq 10)
+        assert [o.phase_id for o in ops] == ["18", "1"]
+        assert ops[0].duration_minutes == pytest.approx(0.2 * 60.0)
+        assert "OF-NOVO" in resolver.planned_order_ids
+        assert resolver.unplanned == []
+
+    def test_no_catalog_still_unplanned(self, monkeypatch):
+        # Sem catálogo (back-compat exacto): modelo sem rota continua no_route.
+        state = FactoryState(tenant_id=TENANT)
+        state.skill_matrix = {"1": {"W1"}}
+        stub = _stub_semantic_queries()
+        resolver = RoutingResolver(state)
+        monkeypatch.setattr(resolver, "_semantic_engine", lambda: stub.engine)
+
+        ops = resolver.resolve({"of_id": "OF-X", "modelo_id": "MODELO-RARO"})
+        assert ops == []
+        assert resolver.unplanned[0]["reason"] == "no_route"

@@ -210,6 +210,14 @@ class RoutingResolver:
                 rows = self._standard_template(modelo_id)
 
             if not rows:
+                # 3.5 Q.164.C — último fallback REAL: a sequência canónica de
+                # produção (factory_raw.fases_producao) com durações medianas por
+                # fase (historical_durations_by_fase). Planeia o barco com a
+                # rota-padrão da NELO em vez de o deixar invisível (no_route). É o
+                # caso de modelos novos/raros sem >=2 obs por fase em of_fp.
+                rows = self._canonical_route()
+
+            if not rows:
                 logger.info(
                     f"RoutingResolver: no route found for order={order_id} model={modelo_id}"
                 )
@@ -293,6 +301,38 @@ class RoutingResolver:
             source="repair_db",   # fonte REAL (não conta como fallback "standard")
             mold_required=False,
         )
+
+    def _canonical_route(self) -> List["RoutingRow"]:
+        """Q.164.C — rota-padrão da NELO: catálogo canónico de fases de produção
+        (`state.phase_catalog`, ordenado por FP_SEQUENCIA) com duração mediana REAL
+        por fase (`state.historical_durations_by_fase`). Último fallback p/ modelos
+        sem rota nenhuma — planeia o barco em vez de o deixar invisível.
+
+        Fases sem mediana real são SALTADAS (invariante #8: não fabricar duração).
+        Devolve [] se não há catálogo nem medianas (back-compat → no_route)."""
+        catalog = getattr(self.state, "phase_catalog", None) or []
+        if not catalog:
+            return []
+        dur_by_fase = getattr(self.state, "historical_durations_by_fase", {}) or {}
+        rows: List[RoutingRow] = []
+        for item in catalog:
+            fase_id = str(item.get("fase_id") or "")
+            if not fase_id:
+                continue
+            dur = dur_by_fase.get(fase_id)
+            if not dur or dur <= 0:
+                continue  # sem duração real → não inventar (invariante #8)
+            fase_nome = str(item.get("fase_nome") or fase_id)
+            rows.append(RoutingRow(
+                fase_id=fase_id,
+                fase_nome=fase_nome,
+                sequence=int(item.get("sequence") or 0),
+                duration_hours=float(dur),
+                source="canonical_catalog",  # fonte REAL (não conta como "standard")
+                mold_required=_phase_uses_mold(fase_nome),
+            ))
+        rows.sort(key=lambda r: r.sequence)  # defensivo: por FP_SEQUENCIA
+        return rows
 
     def resolve_many(
         self,
