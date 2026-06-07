@@ -204,6 +204,16 @@ _MIN_POOL_FOR_MATCHING = 6
 # domina nos barcos difíceis — senão empatava com qualquer max-skill e o
 # desempate por id roubava-lhe o lugar. Barco simples (complexity~0) → sem bónus.
 _CURATED_COMPLEXITY_BONUS = 1.0
+# Q.164.A — penalização de carga acumulada (load-balancing). Subtraída do
+# `combined` (NÃO via availability, que pesa só 1-qw e desaparecia em qw alto):
+# proporcional à fração de carga [0,1] do operador no pool. Dimensionada para
+# DOMINAR a dispersão típica de skill no regime degenerado (qw≈0.3 → skill
+# contribui ≤0.3), espalhando o trabalho; deixa intacto o boost de curado
+# (Q.155.D, até 1.0) nos barcos difíceis. Sem `worker_load_h` (chamadas legacy)
+# → load_frac=0 → penalização nula → `combined` byte-idêntico. Medido: sem isto
+# o makespan fica ~39000h (1 operador com ~9000h); o decoder concentrava porque
+# `availability` colapsa a 1.0 quando a op é no futuro e o skill ganhava sempre.
+_LOAD_BALANCE_PENALTY = 0.6
 
 
 def _pick_workers(
@@ -216,6 +226,7 @@ def _pick_workers(
     quality_weight: float = 0.0,
     fase_id: Optional[str] = None,
     op_complexity: float = 0.0,
+    worker_load_h: Optional[Dict[str, float]] = None,
 ) -> List[str]:
     """Pick N workers from the pool by blending availability and experience.
 
@@ -240,11 +251,28 @@ def _pick_workers(
     intacto); sem preferência cai no `skill_count` (back-compat exacto). É um
     [0,1] de nível/qualidade, NUNCA € (CoeficienteX).
 
+    Q.164.A — load-balancing (axioma-safe). O `combined` leva uma penalização
+    proporcional à FRAÇÃO de carga cumulativa do operador no pool
+    (``_LOAD_BALANCE_PENALTY * load_frac``). Tem de ser no `combined` (e NÃO via
+    `availability`, que pesa 1-qw e some em qw alto) porque o problema é: quando o
+    `earliest` da op é no futuro, TODOS os operadores já estão livres →
+    `availability` colapsa a 1.0 para todos → o `combined` fica decidido pelo
+    SKILL → os mesmos poucos de topo levam tudo (medido: 1 operador com ~9000h;
+    makespan ~4,6 anos). A penalização empurra o trabalho para os menos
+    carregados, espalhando-o pelo pool JÁ apto (não expande — axioma 5 intacto).
+    Deixa o boost de curado (Q.155.D) ganhar nos barcos difíceis (penalização <
+    bónus). `worker_load_h=None` → load_frac=0 → `combined` byte-idêntico
+    (back-compat exacto p/ chamadas unitárias e qw=0 legacy).
+
     Ties are broken deterministically by worker id so schedules are
     reproducible across runs.
     """
     if not pool:
         return []
+    # Q.164.A — mapa de carga cumulativa (horas) + máximo do pool para normalizar
+    # a fração [0,1]. None/vazio → load_frac=0 (penalização inerte, legacy).
+    wload = worker_load_h or {}
+    _max_load = max(wload.values(), default=0.0)
 
     qw = max(0.0, min(1.0, float(quality_weight)))
     # Q.155.D — barco mais complexo → maior peso da preferência (puxa os
@@ -286,9 +314,14 @@ def _pick_workers(
         # complexidade (garante que ganha o empate; barco simples → sem efeito).
         if rank_score is not None:
             combined += float(op_complexity) * _CURATED_COMPLEXITY_BONUS
+        # Q.164.A — load-balancing: penaliza o `combined` pela fração de carga
+        # cumulativa do operador (0 = menos carregado do pool, 1 = mais). Domina a
+        # dispersão de skill no regime degenerado → espalha o trabalho; inerte sem
+        # worker_load_h (legacy). Mantém-se ABAIXO do boost de curado (Q.155.D).
+        if _max_load > 0.0:
+            combined -= _LOAD_BALANCE_PENALTY * (wload.get(worker, 0.0) / _max_load)
         # Return negative because `sorted(..., reverse=False)` + negation
-        # gives us "highest combined first" with worker-id as a stable
-        # tie-break.
+        # gives us "highest combined first" with worker-id as a stable tie-break.
         return (-combined, worker)
 
     candidates = sorted(pool, key=_score)
@@ -397,6 +430,7 @@ def _select_workers(
     worker_free_at: Dict[str, datetime],
     earliest_pred_end: datetime,
     warnings: List[str],
+    worker_load_h: Optional[Dict[str, float]] = None,
 ) -> Optional[Tuple[List[List[str]], int]]:
     """Pick workers for the batch. Returns `(batch_workers, team_size)` or
     `None` if the batch can't be staffed.
@@ -442,6 +476,7 @@ def _select_workers(
         quality_weight=float(getattr(chromosome, "quality_weight", 0.0) or 0.0),
         fase_id=str(op.phase_id) if op.phase_id else None,
         op_complexity=op_complexity,
+        worker_load_h=worker_load_h,  # Q.164.A — load-balancing tiebreak
     )
     if len(picked) < total_workers_needed:
         # Sprint Q.8 — pair-preferred phases accept a solo downgrade.
@@ -511,6 +546,9 @@ def _run_scheduling_loop(
     """
     machine_free_at: Dict[str, datetime] = {mid: horizon_start for mid in machine_ids}
     worker_free_at: Dict[str, datetime] = {}
+    # Q.164.A — carga cumulativa (horas) por operador, alimenta o tiebreak de
+    # load-balancing do `_pick_workers` para o trabalho espalhar pelo pool apto.
+    worker_load_h: Dict[str, float] = {}
     mold_free_at: Dict[str, datetime] = {}
     op_end_at: Dict[str, datetime] = {}
     scheduled: List[ScheduledOp] = []
@@ -576,6 +614,7 @@ def _run_scheduling_loop(
             staffing = _select_workers(
                 op, batch_peers, state, chromosome,
                 worker_free_at, earliest_pred_end, warnings,
+                worker_load_h=worker_load_h,  # Q.164.A
             )
             if staffing is None:
                 for p in batch_peers:
@@ -656,6 +695,10 @@ def _run_scheduling_loop(
                     setup_family=getattr(peer, "setup_family", "") or "",
                 ))
                 op_end_at[peer.operation_id] = peer_end
+                # Q.164.A — debita a CADA operador a duração da SUA op (não o
+                # batch_end), para o tiebreak de load-balancing usar horas reais.
+                for w in slot_workers:
+                    worker_load_h[w] = worker_load_h.get(w, 0.0) + peer_dur / 60.0
 
             # Setup detection — counted once per batch.
             if _last_on_machine_has_different_family(
