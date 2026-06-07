@@ -220,6 +220,8 @@ export const planKeys = {
   timeline: () => [...planKeys.all, 'timeline'] as const,
   actuals: (from: string, to: string) =>
     [...planKeys.timeline(), 'actuals', from, to] as const,
+  // Q.163 — catálogo canónico de fases (ordem FP_SEQUENCIA) para o /overall.
+  phaseCatalog: () => [...planKeys.all, 'phase-catalog'] as const,
   // Q.149.C.3 — alertas de override manual que o reapply do robô já não
   // conseguiu re-aplicar (a pessoa escolhida deixou de ser viável com o WIP).
   manualOverrideAlerts: () => [...planKeys.all, 'manual-override-alerts'] as const,

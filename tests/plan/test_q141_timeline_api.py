@@ -35,7 +35,7 @@ def _stub_service(monkeypatch):
          "start": "2026-05-01T08:00", "duration_min": 60, "worker_id": None, "worker_nome": None},
     ]
 
-    async def _actuals(self, from_d, to_d, *, cap=5000):
+    async def _actuals(self, from_d, to_d, *, cap=5000, boats_only=True):
         return sample_items, False
 
     async def _exps(self, from_d, to_d, *, cap=5000):

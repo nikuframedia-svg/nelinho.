@@ -23,6 +23,7 @@ import { Timeline, buildSlots, dateToSlotIndex } from '../Timeline';
 import type { TimelineScale } from '../Timeline';
 import type { TimelineLane, TimelineItem } from '../../dark';
 import type { ScheduledOp } from '../types';
+import type { PhaseCatalogItem } from '../../../lib/api';
 import type { PlanSelection } from '../selection';
 import { opMatchesSelection } from '../selection';
 import { OpCard } from './OpCard';
@@ -35,6 +36,8 @@ import { RemoveZone, REMOVE_ZONE_ID } from './RemoveZone';
 
 interface PorFaseViewProps {
   operations: ScheduledOp[];
+  /** Q.163 — catálogo canónico de fases (FP_SEQUENCIA) para ordem real + nomes. */
+  phaseCatalog?: PhaseCatalogItem[];
   editable: boolean;
   startDate: Date;
   endDate: Date;
@@ -138,6 +141,7 @@ function renderOpItem(
 
 export const PorFaseView = memo(function PorFaseView({
   operations,
+  phaseCatalog,
   editable,
   startDate,
   endDate,
@@ -153,13 +157,32 @@ export const PorFaseView = memo(function PorFaseView({
 
   const slots = buildSlots(scale, startDate, endDate);
 
+  // Q.163 — ordenar pela ORDEM REAL de produção (FP_SEQUENCIA do catálogo) e
+  // rotular com o nome canónico, em vez de alfabético por phase_id (que punha
+  // "18" antes de "2" e baralhava a sequência). Fases sem catálogo caem no fim,
+  // alfabético (fallback determinístico). Resolve o duplo "Corte" e a ordem caótica.
   const phases = useMemo(() => {
+    const seqById = new Map<string, number>();
+    const nameById = new Map<string, string>();
+    for (const p of phaseCatalog ?? []) {
+      seqById.set(p.phase_id, p.sequence);
+      nameById.set(p.phase_id, p.phase_name);
+    }
     const seen = new Map<string, string>();
     for (const op of operations) {
-      if (!seen.has(op.phase_id)) seen.set(op.phase_id, op.phase_name ?? op.phase_id);
+      if (!seen.has(op.phase_id)) {
+        seen.set(op.phase_id, nameById.get(op.phase_id) ?? op.phase_name ?? op.phase_id);
+      }
     }
-    return Array.from(seen.entries()).sort(([a], [b]) => a.localeCompare(b));
-  }, [operations]);
+    return Array.from(seen.entries()).sort(([a], [b]) => {
+      const sa = seqById.get(a);
+      const sb = seqById.get(b);
+      if (sa !== undefined && sb !== undefined) return sa - sb || a.localeCompare(b);
+      if (sa !== undefined) return -1;
+      if (sb !== undefined) return 1;
+      return a.localeCompare(b);
+    });
+  }, [operations, phaseCatalog]);
 
   const lanes: TimelineLane[] = phases.map(([id, label]) => ({
     id,

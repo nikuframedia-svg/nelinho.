@@ -15,7 +15,7 @@ import { addDays, startOfDay, format } from 'date-fns';
 import { pt } from 'date-fns/locale';
 import { Calendar, AlertTriangle, Ship, RotateCcw } from 'lucide-react';
 import { planKeys, fabricaKeys, coreKeys } from '../../lib/api/keys';
-import { cpoCommitsApi, planOperationsApi, timelineActualsApi, copilotAlertsApi, planExclusionApi, schedulePreviewApi } from '../../lib/api';
+import { cpoCommitsApi, planOperationsApi, timelineActualsApi, phasesCatalogApi, copilotAlertsApi, planExclusionApi, schedulePreviewApi } from '../../lib/api';
 import type { CpoCommit, TimelineActualItem, CopilotAlertItem, ExcludedBoat } from '../../lib/api';
 import { MoveBoatConfirm } from '../producao/MoveBoatConfirm';
 import { fabricaApi } from '../producao/fabricaApi';
@@ -175,13 +175,26 @@ export default function OverallPage(): ReactNode {
   // generoso nas escalas grossas (mês cheio ~17k fases) e leve no dia.
   const actualsLimit = scale === 'dia' ? 5000 : 20000;
   const { data: actualsData } = useQuery({
-    queryKey: [...planKeys.actuals(actualsFrom, actualsTo), actualsLimit],
+    // Q.163 — boatsOnly na key: alternar "Mostrar acessórios" refaz o fetch.
+    queryKey: [...planKeys.actuals(actualsFrom, actualsTo), actualsLimit, boatsOnly],
     queryFn: () =>
       timelineActualsApi.list({
         from: actualsFrom, to: actualsTo, granularity: 'raw', limit: actualsLimit,
+        boats_only: boatsOnly,
       }),
     // Só vale a pena quando a janela inclui passado/hoje.
     enabled: windowStart <= today,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+
+  // Q.163 — catálogo canónico de fases (factory_raw.fases_producao), para a vista
+  // "Por Fase" ordenar pela ordem REAL de produção (FP_SEQUENCIA) e rotular com o
+  // nome canónico. Raramente muda → cache longa.
+  const { data: phaseCatalog } = useQuery({
+    queryKey: planKeys.phaseCatalog(),
+    queryFn: () => phasesCatalogApi.list(),
+    staleTime: 60 * 60 * 1000,
     retry: false,
     refetchOnWindowFocus: false,
   });
@@ -587,6 +600,13 @@ export default function OverallPage(): ReactNode {
     return s.size;
   }, [filteredOperations]);
 
+  // Q.163 — nº de FASES distintas (não o total de ops). O chip "Fase" mostrava
+  // `filteredOperations.length` (ex.: 1003 ops) e parecia "1003 fases" — confuso.
+  const faseCount = useMemo(
+    () => new Set(filteredOperations.map((o) => o.phase_id)).size,
+    [filteredOperations],
+  );
+
   // Q.153.C3 — product_id (modelo) da selecção, p/ abrir o editor de sequência
   // do modelo na tab Fases. Clicar numa op emite kind='op'; resolvemos o modelo
   // dessa op (ou de uma op do barco, se a selecção for um barco).
@@ -965,7 +985,7 @@ export default function OverallPage(): ReactNode {
               {GROUP_TABS.map((g) => {
                 const active = groupBy === g.id;
                 const cnt =
-                  g.id === 'fase' ? filteredOperations.length
+                  g.id === 'fase' ? faseCount
                   : g.id === 'barco' ? boatCount
                   : g.id === 'pessoa' ? pessoaCount
                   : null;
@@ -1039,7 +1059,7 @@ export default function OverallPage(): ReactNode {
               <ViewPanel
                 title={`Por ${groupBy === 'expedicao' ? 'expedição' : groupBy}`}
                 count={
-                  groupBy === 'fase' ? filteredOperations.length
+                  groupBy === 'fase' ? faseCount
                   : groupBy === 'barco' ? boatCount
                   : groupBy === 'pessoa' ? pessoaCount
                   : undefined
@@ -1062,6 +1082,7 @@ export default function OverallPage(): ReactNode {
                 ) : groupBy === 'fase' ? (
                   <PorFaseView
                     operations={filteredOperations}
+                    phaseCatalog={phaseCatalog}
                     editable={mode === 'editar'}
                     startDate={windowStart}
                     endDate={windowEnd}

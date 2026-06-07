@@ -49,6 +49,13 @@ async def get_actuals(
     group_by: Optional[str] = Query(None, description="barco | fase | operador (p/ day)."),
     granularity: str = Query("auto", description="raw | day | auto."),
     limit: int = Query(DEFAULT_CAP, ge=1, le=50_000, description="Cap de fases raw."),
+    boats_only: bool = Query(
+        True,
+        description=(
+            "Q.163 — SÓ barcos (critério canónico v_of_is_boat) no realizado. "
+            "Default true; false inclui acessórios/componentes."
+        ),
+    ),
     tenant_id: UUID = Depends(get_tenant_id),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
@@ -68,7 +75,7 @@ async def get_actuals(
         gran = "day" if span > 31 else "raw"
 
     svc = TimelineActualsService(session, tenant_id)
-    items, items_trunc = await svc.actuals_items(from_, to, cap=limit)
+    items, items_trunc = await svc.actuals_items(from_, to, cap=limit, boats_only=boats_only)
     expeditions, exp_trunc = await svc.expeditions(from_, to, cap=limit)
 
     resp: dict = {

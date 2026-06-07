@@ -224,7 +224,10 @@ async def test_actuals_items_smoke_with_fake_session():
     ])
 
     svc = TimelineActualsService(session, _TENANT)  # type: ignore[arg-type]
-    items, truncated = await svc.actuals_items(date(2026, 5, 1), date(2026, 5, 7), cap=100)
+    # Q.163 — boats_only=False: caminho simples (1 query), como antes do filtro.
+    items, truncated = await svc.actuals_items(
+        date(2026, 5, 1), date(2026, 5, 7), cap=100, boats_only=False,
+    )
 
     assert truncated is False
     assert len(items) == 1
@@ -285,6 +288,8 @@ async def test_actuals_items_truncated_flag():
     # cap=2 → service pede cap+1=3, recebe 3 → truncated=True, devolve 2.
     session = _MapSession([rows, [], []])
     svc = TimelineActualsService(session, _TENANT)  # type: ignore[arg-type]
-    items, truncated = await svc.actuals_items(date(2026, 5, 1), date(2026, 5, 7), cap=2)
+    items, truncated = await svc.actuals_items(
+        date(2026, 5, 1), date(2026, 5, 7), cap=2, boats_only=False,
+    )
     assert truncated is True
     assert len(items) == 2

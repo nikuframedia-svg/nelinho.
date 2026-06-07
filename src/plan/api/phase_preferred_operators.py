@@ -20,6 +20,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel, Field
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.governance.audit_service import audit_change
@@ -54,6 +55,54 @@ def _phase_entity_id(phase_id: str) -> UUID:
 
 def _shrink(score: float, n: int) -> float:
     return (score * n + _SHRINK_PRIOR * _SHRINK_K) / (n + _SHRINK_K)
+
+
+# ─── Q.163 — Catálogo canónico de fases (ordem FP_SEQUENCIA) ──────────────────
+
+class PhaseCatalogItem(BaseModel):
+    """Uma fase de produção do ERP (`factory_raw.fases_producao`)."""
+    phase_id: str
+    phase_name: str
+    sequence: int
+    is_production: bool
+
+
+_PHASE_CATALOG_SQL = text(
+    """
+    SELECT "FP_ID"::text     AS phase_id,
+           "FP_NOME"         AS phase_name,
+           "FP_SEQUENCIA"    AS sequence,
+           "FP_PRODUCAO"     AS is_production
+    FROM factory_raw.fases_producao
+    ORDER BY "FP_SEQUENCIA", "FP_ID"
+    """
+)
+
+
+@router.get("/catalog", response_model=List[PhaseCatalogItem])
+async def list_phase_catalog(
+    _tenant_id: UUID = Depends(require_tenant_header),
+    session: AsyncSession = Depends(get_session),
+) -> List[PhaseCatalogItem]:
+    """Q.163 — catálogo canónico de fases (`factory_raw.fases_producao`) ordenado
+    por `FP_SEQUENCIA`. O /overall usa-o para mostrar a vista "Por Fase" pela ORDEM
+    REAL de produção (em vez de alfabético por id) e rotular com o nome canónico.
+    `factory_raw` é partilhado → sem filtro de tenant. Best-effort → [] se falhar.
+    """
+    try:
+        rows = (await session.execute(_PHASE_CATALOG_SQL)).mappings().all()
+    except SQLAlchemyError as exc:  # pragma: no cover — tabela ausente/dev
+        logger.warning("phase catalog query failed: %s", exc)
+        return []
+    return [
+        PhaseCatalogItem(
+            phase_id=str(r["phase_id"]),
+            phase_name=str(r["phase_name"] or r["phase_id"]),
+            sequence=int(r["sequence"]) if r["sequence"] is not None else 0,
+            is_production=bool(r["is_production"]),
+        )
+        for r in rows
+    ]
 
 
 # ─── Schemas ─────────────────────────────────────────────────────────────────

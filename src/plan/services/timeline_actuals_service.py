@@ -30,7 +30,8 @@ from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import NAMESPACE_OID, UUID, uuid5
 
-from sqlalchemy import text
+from sqlalchemy import Integer, bindparam, text
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -66,18 +67,53 @@ _FASES_BY_RANGE_SQL = text(
     """
 )
 
+# Q.163 — ids dos barcos pelo critério CANÓNICO `v_of_is_boat` (raiz=Kayak; Q.157.H).
+# A view é recursiva (walk da hierarquia de tipos) mas SOZINHA é rápida (~0.07s,
+# ~77k ids). NÃO se faz JOIN directo a ela na query de fases: com ORDER BY DESC +
+# LIMIT o planner escolhe um nested-loop semi-join sobre a recursiva → timeout
+# (>60s, medido). Em vez disso buscam-se os ids primeiro e filtra-se of_fp com
+# `= ANY(:boat_ids)` (hash) → ~0.24s total.
+_BOAT_IDS_SQL = text(
+    "SELECT of_id FROM factory_raw.v_of_is_boat WHERE is_boat = true"
+)
+
+# Q.163 — variante SÓ-BARCOS: filtra of_fp pelos ids de barco (hash via ANY) ANTES
+# do LIMIT, por isso o cap é gasto em história de BARCOS (não nos ~76% de
+# acessórios que inundavam o grid). O /overall por defeito pede isto; "Mostrar
+# acessórios" usa a query acima (sem filtro).
+_FASES_BY_RANGE_BOATS_SQL = text(
+    """
+    SELECT o."OFFP_ID"::text             AS offp_id,
+           o."OFFP_OF_ID"::text          AS of_id,
+           o."OFFP_FP_ID"::text          AS phase_id,
+           o."OFFP_DATAINICIO"           AS fase_inicio,
+           NULLIF(o."OFFP_DATAFIM", '')  AS fase_fim
+    FROM factory_raw.of_fp o
+    WHERE o."OFFP_OF_ID" IS NOT NULL
+      AND o."OFFP_FP_ID" IS NOT NULL
+      AND o."OFFP_DATAINICIO" IS NOT NULL
+      AND o."OFFP_DATAINICIO" >= :lower
+      AND o."OFFP_DATAINICIO" < :upper
+      AND o."OFFP_OF_ID" = ANY(:boat_ids)
+    ORDER BY o."OFFP_DATAINICIO" DESC
+    LIMIT :cap
+    """
+).bindparams(bindparam("boat_ids", type_=ARRAY(Integer())))
+
 # OF_ID → (OF_P_ID modelo, P_NOME barco, is_boat). LEFT JOIN: of sem produto →
-# barco None / is_boat False. Q.153.C0 — is_boat = predicado boats-only Q.136
-# (P_QTDDECK>0 AND P_QTDCASCO>0), o MESMO que o CPO aplica na geração do plano,
-# para o /overall poder focar barcos vs acessórios/straps nos realizados.
+# barco None. Q.163 — `is_boat` vem agora do critério CANÓNICO `v_of_is_boat`
+# (raiz=Kayak, OF_ID<10M; Q.157.H), o MESMO que o CPO usa no scope do plano, em vez
+# do legacy `P_QTDDECK>0 AND P_QTDCASCO>0` que perdia C1/Nacra/Prepreg. of sem
+# match em v_of_is_boat → is_boat=false (acessório/órfão).
 _NOMES_OF_SQL = text(
     """
     SELECT o."OF_ID"::text   AS of_id,
            o."OF_P_ID"::text AS modelo_id,
            p."P_NOME"        AS barco_nome,
-           (p."P_QTDDECK" > 0 AND p."P_QTDCASCO" > 0) AS is_boat
+           COALESCE(vb.is_boat, false) AS is_boat
     FROM factory_raw.ordemfabrico o
     LEFT JOIN factory_raw.produto p ON p."P_ID" = o."OF_P_ID"
+    LEFT JOIN factory_raw.v_of_is_boat vb ON vb.of_id = o."OF_ID"
     WHERE o."OF_ID"::text = ANY(:of_ids)
     """
 )
@@ -331,18 +367,32 @@ class TimelineActualsService:
         self.tenant_id = tenant_id
 
     async def _fetch_phase_rows(
-        self, from_d: date, to_d: date, cap: int,
+        self, from_d: date, to_d: date, cap: int, *, boats_only: bool = True,
     ) -> Tuple[List[Dict[str, Any]], bool]:
-        """Linhas de fases_of_history no intervalo + flag `truncated`."""
+        """Linhas de fases_of_history no intervalo + flag `truncated`.
+
+        Q.163 — `boats_only` (default True) filtra a barcos (critério canónico
+        v_of_is_boat) ANTES do cap, para a janela não ser comida por acessórios.
+        `False` traz tudo (toggle "Mostrar acessórios"). Best-effort: erro → []."""
         if self.session is None:
             return [], False
         lower, upper = _day_bounds(from_d, to_d)
+        params: Dict[str, Any] = {"lower": lower, "upper": upper, "cap": cap + 1}
         try:
+            if boats_only:
+                # Q.163 — ids de barco primeiro (rápido), depois filtra of_fp com
+                # ANY(:boat_ids) (hash). Evita o nested-loop sobre a view recursiva.
+                boat_ids = [
+                    int(r["of_id"])
+                    for r in (await self.session.execute(_BOAT_IDS_SQL)).mappings().all()
+                    if r["of_id"] is not None
+                ]
+                params["boat_ids"] = boat_ids
+                sql = _FASES_BY_RANGE_BOATS_SQL
+            else:
+                sql = _FASES_BY_RANGE_SQL
             rows = (
-                await self.session.execute(
-                    _FASES_BY_RANGE_SQL,
-                    {"lower": lower, "upper": upper, "cap": cap + 1},
-                )
+                await self.session.execute(sql, params)
             ).mappings().all()
         except SQLAlchemyError as exc:  # pragma: no cover — tabela ausente/dev
             logger.warning("timeline actuals: fases query failed: %s", exc)
@@ -393,13 +443,17 @@ class TimelineActualsService:
 
     async def actuals_items(
         self, from_d: date, to_d: date, *, cap: int = DEFAULT_CAP,
+        boats_only: bool = True,
     ) -> Tuple[List[Dict[str, Any]], bool]:
         """Items canónicos das fases realizadas no intervalo + `truncated`.
 
         Q.141.A — só fases/barcos; operadores (Q.141.B) e expedições (Q.141.C)
         entram a seguir. Best-effort → ([], False) quando não há dados.
+        Q.163 — `boats_only` (default True) filtra a barcos no SQL.
         """
-        rows, truncated = await self._fetch_phase_rows(from_d, to_d, cap)
+        rows, truncated = await self._fetch_phase_rows(
+            from_d, to_d, cap, boats_only=boats_only,
+        )
         if not rows:
             return [], truncated
         of_ids = sorted({str(r["of_id"]) for r in rows if r.get("of_id")})

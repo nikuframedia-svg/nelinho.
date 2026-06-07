@@ -687,18 +687,34 @@ export interface TimelineActualsResponse {
 }
 
 export const timelineActualsApi = {
-  /** O que aconteceu no intervalo (fases reais + expedições). Datas YYYY-MM-DD. */
+  /** O que aconteceu no intervalo (fases reais + expedições). Datas YYYY-MM-DD.
+   * Q.163 — `boats_only` (default true no backend) filtra a barcos no SQL. */
   list: (params: {
     from: string;
     to: string;
     group_by?: string;
     granularity?: 'raw' | 'day' | 'auto';
     limit?: number;
+    boats_only?: boolean;
   }) =>
     request<TimelineActualsResponse>(
       `/v1/plan/timeline/actuals?${new URLSearchParams(
         filterParams({ ...params, limit: params.limit?.toString() }),
       )}`,
     ),
+};
+
+// Q.163 — catálogo canónico de fases (factory_raw.fases_producao), ordenado por
+// FP_SEQUENCIA. O /overall usa-o para ordenar a vista "Por Fase" pela ordem real
+// de produção e rotular com o nome canónico.
+export interface PhaseCatalogItem {
+  phase_id: string;
+  phase_name: string;
+  sequence: number;
+  is_production: boolean;
+}
+
+export const phasesCatalogApi = {
+  list: () => request<PhaseCatalogItem[]>(`/v1/plan/phases/catalog`),
 };
 
