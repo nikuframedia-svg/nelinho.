@@ -1,0 +1,59 @@
+cubes:
+  - name: capacidade_fase
+    description: >
+      Q.167.C — capacidade de produção por fase e o impacto das ausências.
+      Fórmula canónica de dbo.Report_ProducaoCapacidade_Sub_Capacidade: por
+      entidade ACTIVA cuja fase principal (entidade.E_FP_ID) = a fase,
+      capacidade teórica = E_PRODUTIVIDADE (barcos/pessoa/dia); a entidade
+      perde-a num dia de falta (ent_mov × ent_mov_tipo MET_MET_ID=2 = grupo
+      Faltas: injustificada/justificada/baixas/férias). Fonte:
+      marts.v_capacidade_fase_mes, agregado (mês, fase). Anchor live
+      2026-06-08: Laminagem 9 barcos/dia (9 ops); 62 486 faltas met_met_id=2;
+      38 455 barcos-dia perdidos no histórico. Granularidade mensal.
+    sql_table: marts.v_capacidade_fase_mes
+
+    measures:
+      - name: capacidade_perdida
+        description: >
+          Barcos-dia perdidos a faltas (Σ E_PRODUTIVIDADE × dias-ausente).
+          CONTAGEM aditiva — SUM cross-row é trivial (soma por fase e por mês
+          dá o total de capacidade perdida). É o sinal honesto de absentismo.
+        sql: capacidade_perdida
+        type: sum
+        format: number
+      - name: dias_ausencia
+        description: >
+          Dias-pessoa de falta (MET_MET_ID=2) nesse mês/fase. CONTAGEM
+          aditiva. SUM sempre OK.
+        sql: dias_ausencia
+        type: sum
+        format: number
+      - name: capacidade_dia
+        description: >
+          Capacidade teórica da fase em barcos/dia a 100% de presença
+          (Σ E_PRODUTIVIDADE dos operadores activos da fase). É um RÁCIO por
+          dia, constante ao longo dos meses — usa-se MAX (NUNCA SUM ao longo
+          do tempo, que multiplicaria). Filtrar por fase para ler a fase certa.
+        sql: capacidade_dia_teorica
+        type: max
+        format: number
+
+    dimensions:
+      - name: data
+        description: >
+          Mês (primeiro dia, DATE_TRUNC('month')). Permite timeDimensions +
+          dateRange. Granularidade mensal.
+        sql: data
+        type: time
+      - name: fase
+        description: >
+          Nome da fase principal (FP_NOME). Filtro `contains` para "Laminagem"
+          / "Pintura". É a fase onde o operador tem a sua produtividade base.
+        sql: fase
+        type: string
+      - name: fase_id
+        description: >
+          ID numérico da fase (FP_ID). Útil para JOIN com outras medidas de
+          produção/qualidade que partilham `fase_id`.
+        sql: fase_id
+        type: number

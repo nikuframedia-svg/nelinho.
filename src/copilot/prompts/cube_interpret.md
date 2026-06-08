@@ -13,7 +13,7 @@ da pergunta (ex.: NÃO uses `quimica_consumo_catalisador.total`,
 `producao_pecas_laminadas`, `producao_ofs_por_fase`,
 `comercial_facturacao`, `comercial_top_clientes`,
 `comercial_facturacao_disciplina`, `logistica_ofs_expedidas`,
-`logistica_atrasos_culpa`, `ambiental_cura_horas`.
+`logistica_atrasos_culpa`, `ambiental_cura_horas`, `capacidade_fase`.
 
 **Regra-mãe de selecção do cube**:
 - Pergunta sobre CONSUMO/CUSTO/N_MOVIMENTOS de materiais (resina,
@@ -25,8 +25,10 @@ da pergunta (ex.: NÃO uses `quimica_consumo_catalisador.total`,
 - Pergunta sobre EXPEDIÇÃO/TRANSPORTE → `logistica_ofs_expedidas`.
 - Pergunta sobre ATRASOS LOGÍSTICOS → `logistica_atrasos_culpa`.
 - Pergunta sobre CURA/ESTUFA → `ambiental_cura_horas`.
+- Pergunta sobre CAPACIDADE de uma fase / ABSENTISMO / FALTAS / barcos-dia
+  perdidos a faltas → `capacidade_fase`.
 
-Se não cabe em NENHUM destes 10 cubes → abstain.
+Se não cabe em NENHUM destes cubes → abstain.
 
 
 
@@ -368,6 +370,31 @@ ranking individual permitido.
   [colaborador]` + `order=[[workforce_horas_extra.total, desc]]` + `limit`.
 - "Acumulado / histórico" → omitir timeDimensions (FIX A acumulado).
 - "Porquê tantas horas extra?" → abstain (causal).
+
+### Cube: `capacidade_fase`
+Q.167.C — capacidade de produção por fase e impacto das ausências.
+Fórmula canónica (Report_ProducaoCapacidade_Sub_Capacidade): por entidade
+ACTIVA cuja fase principal (E_FP_ID) = a fase, capacidade teórica =
+E_PRODUTIVIDADE (barcos/pessoa/dia); perde-a num dia de falta (ent_mov ×
+ent_mov_tipo MET_MET_ID=2). Anchor live: Laminagem 9 barcos/dia (9 ops);
+62 486 faltas; 38 455 barcos-dia perdidos no histórico. Granularidade mensal.
+
+**Measures**
+- `capacidade_fase.capacidade_dia` — `max` — capacidade teórica barcos/dia da
+  fase (RÁCIO/dia, NUNCA somar ao longo do tempo). "Quanto produz a Laminagem
+  por dia?" → measure `.capacidade_dia` + filtro `fase contains 'Laminagem'`.
+- `capacidade_fase.capacidade_perdida` — `sum` — barcos-dia perdidos a faltas.
+- `capacidade_fase.dias_ausencia` — `sum` — dias-pessoa de falta.
+
+**Dimensions**
+- `capacidade_fase.data` — `time` — primeiro dia do mês.
+- `capacidade_fase.fase` — `string` — nome da fase. Filtro `contains`.
+- `capacidade_fase.fase_id` — `number` — `FP_ID`.
+
+**Restrições**:
+- `capacidade_dia` é rácio/dia → MAX (não SUM no tempo). `capacidade_perdida`
+  e `dias_ausencia` são aditivas (SUM).
+- "Porque há tantas faltas?" → abstain (causal).
 
 ## Operators permitidos (filters)
 `equals`, `notEquals`, `contains`, `notContains`, `gt`, `gte`, `lt`, `lte`,

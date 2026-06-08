@@ -246,6 +246,56 @@ class MeasureSpec(BaseModel):
 
 
 MEASURE_REGISTRY: dict[str, MeasureSpec] = {
+    "capacidade_fase.capacidade_perdida": MeasureSpec(
+        name="capacidade_fase.capacidade_perdida",
+        unit=CanonicalUnit.CONTAGEM,
+        dimensions_supported=frozenset({"tempo", "fase"}),
+        business_decision=(
+            "Q.167.C: SUM(E_PRODUTIVIDADE × dias-ausente) = barcos-dia perdidos "
+            "a faltas, sobre marts.v_capacidade_fase_mes. Ausência = ent_mov × "
+            "ent_mov_tipo MET_MET_ID=2 (Faltas: injustificada/justificada/baixas/"
+            "férias). Fórmula canónica de Report_ProducaoCapacidade_Sub_Capacidade. "
+            "Aditiva (soma por fase e mês). Anchor: 38 455 barcos-dia no histórico."
+        ),
+        description="Capacidade perdida a faltas, em barcos-dia, por fase e mês",
+        synonyms=(
+            "capacidade perdida", "perda de capacidade", "absentismo",
+            "faltas", "ausências", "ausencias", "baixas", "férias", "ferias",
+            "barcos-dia perdidos", "impacto das faltas", "absenteísmo",
+        ),
+    ),
+    "capacidade_fase.dias_ausencia": MeasureSpec(
+        name="capacidade_fase.dias_ausencia",
+        unit=CanonicalUnit.CONTAGEM,
+        dimensions_supported=frozenset({"tempo", "fase"}),
+        business_decision=(
+            "Q.167.C: SUM(dias de falta MET_MET_ID=2) por (mês, fase) sobre "
+            "marts.v_capacidade_fase_mes. Dias-pessoa. Aditiva."
+        ),
+        description="Dias-pessoa de falta (ausências) por fase e mês",
+        synonyms=(
+            "dias de falta", "dias ausente", "faltas", "ausências", "ausencias",
+            "dias perdidos", "absentismo", "baixas", "férias", "ferias",
+        ),
+    ),
+    "capacidade_fase.capacidade_dia": MeasureSpec(
+        name="capacidade_fase.capacidade_dia",
+        unit=CanonicalUnit.CONTAGEM,
+        dimensions_supported=frozenset({"tempo", "fase"}),
+        business_decision=(
+            "Q.167.C: capacidade teórica da fase em barcos/dia a 100% de "
+            "presença = Σ(E_PRODUTIVIDADE) dos operadores activos cuja fase "
+            "principal (E_FP_ID) = a fase. RÁCIO/dia — MAX, NUNCA SUM ao longo "
+            "do tempo (multiplicaria). Anchor: Laminagem = 9 barcos/dia (9 ops)."
+        ),
+        description="Capacidade teórica da fase em barcos/dia (a 100% de presença)",
+        synonyms=(
+            "capacidade", "capacidade teórica", "capacidade por dia",
+            "barcos por dia", "quanto produz", "produtividade da fase",
+            "capacidade da fase", "quantos barcos por dia",
+        ),
+        aggregation="MAX",
+    ),
     "consumo_material.consumo": MeasureSpec(
         name="consumo_material.consumo",
         unit=CanonicalUnit.QUANTIDADE_FISICA,
