@@ -116,6 +116,14 @@ RAW_TABLES: list[RawTable] = [
     # Se schema divergir, sanity checks dos marts falham loud — corrigir
     # então. Destrava KPIs 8.2/8.5 (horas trabalhadas, custo labor).
     RawTable("APONTAMENTO_TRABALHO", "AT_DATA", 2),
+    # Q.167.C.1 — movimentos de pessoal (ausências/horas-extra). Desbloqueia a
+    # capacidade-disponível (Report_ProducaoCapacidade: E_PRODUTIVIDADE − faltas
+    # MET_MET_ID=2) e conserta a marts.v_workforce_horas_extra_mes (que referencia
+    # factory_raw.ent_mov, ausente em dev → latente-partida). Full copy (166k, ~2s)
+    # para manter o histórico completo (o anchor de 60k eventos MET=1 da horas-extra
+    # exige-o); pk+inc → o incremental de 5 min mantém os recentes frescos.
+    RawTable("ENT_MOV", None, pk_col="MOVENT_ID", inc_col="MOVENT_DATA_I"),
+    RawTable("ENT_MOV_TIPO", None),  # lookup (15 linhas: MET_MET_ID=2 = Faltas)
 ]
 
 
