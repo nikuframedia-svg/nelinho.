@@ -47,6 +47,7 @@ from .schemas import (
     ChecklistIncidentRow,
     EntityPhaseRow,
     EntityRow,
+    ErpVariableRow,
     FasesOfHistoryRow,
     HealthCheckResult,
     MoldRow,
@@ -701,6 +702,22 @@ async def list_entity_phases() -> list[EntityPhaseRow]:
     return [EntityPhaseRow(**r) for r in rows]
 
 
+async def list_variables() -> list[ErpVariableRow]:
+    """ERP config variables (`dbo.VARIAVEIS`, ~poucas linhas). `VAR_VALOR` é
+    `nvarchar` (texto) — ex.: VAR_ID=2 = '1.065' (factor de correcção das mãos
+    de obra, Q.167.F). Read-only, NOLOCK."""
+    sql = """
+    SELECT
+        v.VAR_ID        AS var_id,
+        v.VAR_VALOR     AS var_value,
+        v.VAR_DESCRICAO AS var_description
+    FROM dbo.VARIAVEIS v WITH (NOLOCK)
+    ORDER BY v.VAR_ID
+    """
+    rows = await _fetch_all(sql)
+    return [ErpVariableRow(**r) for r in rows]
+
+
 async def list_molds() -> list[MoldRow]:
     """ERP-side mold catalogue (`MOLDES`, ~91 rows). The full ~510 molds
     live in Excel; this is used for reconciliation + pocket enrichment."""
@@ -883,6 +900,7 @@ __all__: Sequence[str] = (
     "list_current_schedule",
     "list_entities",
     "list_entity_phases",
+    "list_variables",
     "list_molds",
     "list_open_orders",
     "list_operations",

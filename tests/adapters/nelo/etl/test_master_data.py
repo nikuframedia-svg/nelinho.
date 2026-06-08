@@ -29,7 +29,13 @@ from src.adapters.nelo.etl.master_data import (
     group_routing_patterns,
     mirror_master_data,
 )
-from src.adapters.nelo.schemas import BomRow, EntityRow, ProductRow, RoutingRow
+from src.adapters.nelo.schemas import (
+    BomRow,
+    EntityRow,
+    ErpVariableRow,
+    ProductRow,
+    RoutingRow,
+)
 from src.core.models.bom import BOMItem
 from src.core.models.employee import Employee, EmploymentStatus
 from src.core.models.product import Product, ProductStatus, ProductType
@@ -62,6 +68,12 @@ def test_map_product_uses_erp_id_as_business_key():
     assert mapped["product_name"] == "K1 Vanquish"
     assert mapped["product_type"] == ProductType.FINISHED_GOOD
     assert mapped["status"] == ProductStatus.ACTIVE
+
+
+def test_map_product_carries_erp_product_type_id():
+    """Q.167.F — o P_TP_ID cru chega ao core.products (gate do factor de M.O.)."""
+    assert _map_product(_product(product_type_id=90))["erp_product_type_id"] == 90
+    assert _map_product(_product(product_type_id=1))["erp_product_type_id"] == 1
 
 
 def test_map_product_discontinued_status():
@@ -309,6 +321,13 @@ def _fake_adapter(monkeypatch):
             _routing(2, 10, 1, "Laminagem"), _routing(2, 11, 2, "Acabamento"),
         ]),
     )
+    monkeypatch.setattr(
+        master_data.services, "list_variables",
+        AsyncMock(return_value=[
+            ErpVariableRow(var_id=2, var_value="1.065",
+                           var_description="Factor de correccao das MAOS DE OBRA"),
+        ]),
+    )
 
 
 async def test_mirror_master_data_runs_and_audits(_fake_adapter, recording_session):
@@ -318,8 +337,9 @@ async def test_mirror_master_data_runs_and_audits(_fake_adapter, recording_sessi
     result = await mirror_master_data(session=session, tenant_id=TENANT, since=None)
 
     assert result.status == "ok"
-    # 2 products + 2 entities + 2 labor rates + 1 bom + 4 routing rows read.
-    assert result.rows_read == 11
+    # 2 products + 1 variable (Q.167.F) + 2 entities + 2 labor rates + 1 bom
+    # + 4 routing rows read.
+    assert result.rows_read == 12
 
     products = [o for o in session.added if isinstance(o, Product)]
     employees = [o for o in session.added if isinstance(o, Employee)]

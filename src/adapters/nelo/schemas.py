@@ -371,6 +371,21 @@ class EntityPhaseRow(_Frozen):
     end_date: Optional[datetime] = None
 
 
+# ─── ERP config variables (dbo.VARIAVEIS) ───────────────────────────────
+
+
+class ErpVariableRow(_Frozen):
+    """One `dbo.VARIAVEIS` row — variável de configuração do ERP.
+
+    `var_value` é `nvarchar` no ERP (texto), por isso fica `str` aqui — o
+    consumidor converte (ex.: VAR_ID=2 = '1.065' = factor de M.O., Q.167.F).
+    """
+
+    var_id: int
+    var_value: Optional[str] = None
+    var_description: Optional[str] = None
+
+
 # ─── Molds (vw_pp1_molds) ──────────────────────────────────────────────
 
 

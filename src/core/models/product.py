@@ -93,7 +93,12 @@ class Product(TenantBase):
     
     # Costing
     standard_cost: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 8))
-    
+    # Q.167.F — ERP `P_TP_ID` (raw product-type id). Necessário para o COGS
+    # aplicar o factor de correcção de mão-de-obra do ERP (VAR_ID=2) aos
+    # componentes P_TP_ID=90. Nullable: produtos não-ERP / sincronizados antes
+    # desta coluna ficam NULL e nunca recebem o factor (= `else 1` do ERP).
+    erp_product_type_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
     # Units
     base_unit: Mapped[str] = mapped_column(String(10), default="UN")
     weight_kg: Mapped[Optional[Decimal]] = mapped_column(Numeric(18, 6))

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Optional, Sequence
 from uuid import UUID
 
@@ -26,10 +26,22 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.models.bom import BOMItem
+from src.core.models.erp_variable import ErpVariable
 from src.core.models.product import Product
 
 _ZERO = Decimal("0")
 _ONE = Decimal("1")
+
+# Q.167.F — factor de correcção das mãos-de-obra do ERP. Fórmula canónica
+# (Ordemfabrico_Compara_Custo_com_Standard / PrecoCusto_OF_Inflacionado):
+#   COMP_QUANTIDADE * (case when P_TP_ID = 90 then @fInflacao else 1 end)
+# @fInflacao = VARIAVEIS.VAR_VALOR onde VAR_ID = 2 (= '1.065'). Aplica-se só
+# ao nível directo da BOM (os níveis recursivos têm o factor comentado no
+# ERP), o que coincide exactamente com este serviço, que é single-level.
+# São identificadores do ERP (constantes do CASE), não números fabricados;
+# o VALOR (1.065) vem sempre do espelho core.erp_variables, nunca de literal.
+_ERP_LABOR_FACTOR_VAR_ID = 2
+_ERP_LABOR_FACTOR_TYPE_ID = 90
 
 
 @dataclass(frozen=True)
@@ -117,6 +129,7 @@ class MaterialCostService:
                 Product.product_code,
                 Product.product_name,
                 Product.standard_cost,
+                Product.erp_product_type_id,   # Q.167.F — gate do factor de M.O.
             )
             .join(Product, Product.id == BOMItem.component_product_id)
             .where(
@@ -126,21 +139,48 @@ class MaterialCostService:
                 or_(BOMItem.effective_to.is_(None), BOMItem.effective_to >= as_of),
             )
         )
+        # Q.167.F — carrega o factor uma vez (do espelho, não literal).
+        labor_factor = await self._load_labor_factor()
         rows = (await self.session.execute(stmt)).all()
         return MaterialCostResult.from_lines(
-            product_id, [_row_to_line(r) for r in rows]
+            product_id, [_row_to_line(r, labor_factor) for r in rows]
         )
 
+    async def _load_labor_factor(self) -> Decimal:
+        """Q.167.F — factor de correcção das mãos-de-obra (VARIAVEIS VAR_ID=2),
+        lido do espelho ``core.erp_variables``. Ausente / não-numérico →
+        ``Decimal("1")`` (fallback honesto = o ``else 1`` do ERP; nunca fabrica
+        o 1.065)."""
+        stmt = select(ErpVariable.var_value).where(
+            ErpVariable.tenant_id == self.tenant_id,
+            ErpVariable.var_id == _ERP_LABOR_FACTOR_VAR_ID,
+        )
+        raw = (await self.session.execute(stmt)).scalar_one_or_none()
+        if raw is None:
+            return _ONE
+        try:
+            return Decimal(str(raw))
+        except (InvalidOperation, ValueError):
+            return _ONE
 
-def _row_to_line(row) -> MaterialCostLine:
-    """Linha do SELECT (quantity_per, scrap_factor, code, name, cost) -> linha."""
-    quantity_per, scrap_factor, code, name, std_cost = row
+
+def _row_to_line(row, labor_factor: Decimal = _ONE) -> MaterialCostLine:
+    """Linha do SELECT (quantity_per, scrap_factor, code, name, cost,
+    erp_type_id) -> linha. Q.167.F: componentes ``P_TP_ID = 90`` levam o factor
+    de correcção das mãos-de-obra (paridade ERP). Como ``line_cost`` é um
+    produto puro, multiplicar ``unit_cost`` por 1.065 ≡ multiplicar a
+    quantidade (como o ERP faz). O factor só se aplica quando há custo (não
+    inflaciona um 0 ausente — preserva ``missing_cost_count``)."""
+    quantity_per, scrap_factor, code, name, std_cost, erp_type_id = row
     has_cost = std_cost is not None and std_cost > _ZERO
+    unit_cost = std_cost if has_cost else _ZERO
+    if has_cost and erp_type_id == _ERP_LABOR_FACTOR_TYPE_ID:
+        unit_cost = unit_cost * labor_factor
     return MaterialCostLine(
         component_code=str(code),
         component_name=str(name or code),
         quantity_per=quantity_per if quantity_per is not None else _ZERO,
         scrap_factor=scrap_factor if scrap_factor is not None else _ONE,
-        unit_cost=std_cost if has_cost else _ZERO,
+        unit_cost=unit_cost,
         has_cost=has_cost,
     )

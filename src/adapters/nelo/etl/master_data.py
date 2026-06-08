@@ -36,6 +36,7 @@ from src.adapters.nelo import services
 from src.adapters.nelo.schemas import BomRow, EntityRow, ProductRow, RoutingRow
 from src.core.models.bom import BOMItem
 from src.core.models.employee import Employee, EmploymentStatus
+from src.core.models.erp_variable import ErpVariable
 from src.core.models.product import Product, ProductStatus, ProductType
 from src.core.models.rates import LaborRate
 from src.plan.models.routing_template import (
@@ -93,6 +94,10 @@ def _map_product(row: ProductRow) -> Optional[Dict[str, Any]]:
         # COGS. Faithful: mapeia tal e qual o ERP (incl. 0 e negativos —
         # dado sujo a tratar a jusante, nao silenciar aqui).
         "standard_cost": _to_decimal(row.cost_price, default=Decimal("0")),
+        # Q.167.F — P_TP_ID cru. O COGS usa-o para aplicar o factor de M.O.
+        # (VAR_ID=2) aos componentes P_TP_ID=90. `_classify_product_type` (o
+        # ENUM) é concern à parte e fica intacto.
+        "erp_product_type_id": row.product_type_id,
     }
 
 
@@ -147,11 +152,33 @@ async def mirror_master_data(
     """Run the master-data mirror under a single ``core.etl_run`` row."""
     async with EtlRunner(session, tenant_id, source="master") as run:
         await _mirror_products(run)
+        await _mirror_variables(run)
         await _mirror_employees(run)
         await _mirror_labor_rates(run, session, tenant_id)
         await _mirror_bom(run, session, tenant_id)
         await _mirror_routing(run, session, tenant_id)
     return run.result
+
+
+async def _mirror_variables(run: EtlRunner) -> None:
+    """Q.167.F — espelha dbo.VARIAVEIS (factor de M.O. VAR_ID=2 etc.)."""
+    rows = await services.list_variables()
+    run.count_read(len(rows))
+    mapped = [
+        {
+            "var_id": r.var_id,
+            "var_value": r.var_value,
+            "var_description": r.var_description,
+        }
+        for r in rows
+        if r.var_id is not None
+    ]
+    run.count_skipped(len(rows) - len(mapped))
+    await run.upsert(
+        ErpVariable, mapped,
+        key_fields=["var_id"],
+        update_fields=["var_value", "var_description"],
+    )
 
 
 async def _mirror_products(run: EtlRunner) -> None:
@@ -162,7 +189,10 @@ async def _mirror_products(run: EtlRunner) -> None:
     await run.upsert(
         Product, mapped,
         key_fields=["product_code"],
-        update_fields=["product_name", "product_type", "status", "standard_cost"],
+        update_fields=[
+            "product_name", "product_type", "status", "standard_cost",
+            "erp_product_type_id",
+        ],
     )
 
 

@@ -38,6 +38,7 @@ from src.core.models import (
     daily_revenue_target,   # Q.115.A.02
     employee,
     encomenda_cancelled,    # Q.115.X5
+    erp_variable,           # Q.167.F — espelho dbo.VARIAVEIS (factor M.O.)
     etl_run,
     machine,
     operation,
