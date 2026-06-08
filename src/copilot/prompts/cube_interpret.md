@@ -13,7 +13,8 @@ da pergunta (ex.: NÃO uses `quimica_consumo_catalisador.total`,
 `producao_pecas_laminadas`, `producao_ofs_por_fase`,
 `comercial_facturacao`, `comercial_top_clientes`,
 `comercial_facturacao_disciplina`, `logistica_ofs_expedidas`,
-`logistica_atrasos_culpa`, `ambiental_cura_horas`, `capacidade_fase`.
+`logistica_atrasos_culpa`, `ambiental_cura_horas`, `capacidade_fase`,
+`producao_disciplina_mes`.
 
 **Regra-mãe de selecção do cube**:
 - Pergunta sobre CONSUMO/CUSTO/N_MOVIMENTOS de materiais (resina,
@@ -27,6 +28,9 @@ da pergunta (ex.: NÃO uses `quimica_consumo_catalisador.total`,
 - Pergunta sobre CURA/ESTUFA → `ambiental_cura_horas`.
 - Pergunta sobre CAPACIDADE de uma fase / ABSENTISMO / FALTAS / barcos-dia
   perdidos a faltas → `capacidade_fase`.
+- Pergunta sobre PRODUÇÃO/OFs concluídas POR DISCIPLINA ao longo do tempo,
+  granularidade MENSAL ("produção por disciplina este ano, por mês") →
+  `producao_disciplina_mes`.
 
 Se não cabe em NENHUM destes cubes → abstain.
 
@@ -112,6 +116,29 @@ concluídas" ≈ "OFs fechadas" ≈ "barcos produzidos" ≈ "produção do dia".
 HOJE/ontem/num dia" → esta (diária). "em curso/activas/a ser feitas" →
 `producao_ofs_em_curso`. "fechadas/produzidas NO MÊS" → `producao_lead_time_of`
 (mensal). NUNCA somar com `producao_ofs_em_curso` (conceitos opostos).
+
+### Cube: `producao_disciplina_mes`
+Produção MENSAL de OFs concluídas POR DISCIPLINA. Q.167.H. Fonte:
+`OF_DATAFIM` (fecho da OF) × `produto_tipo` (TP_NOME). O slice
+mensal×disciplina que faltava. Anchor factory_raw: Canoe Sprint Ep. lidera.
+
+**Measures**
+- `producao_disciplina_mes.total` — contagem de OFs concluídas por
+  (mês, disciplina). CONTAGEM adimensional, aditiva entre disciplinas/meses.
+
+**Dimensions**
+- `producao_disciplina_mes.data` — `time` — mês de fecho (`OF_DATAFIM`),
+  granularidade MENSAL (`date_trunc('month', …)`).
+- `producao_disciplina_mes.disciplina` — `string` — TP_NOME ('Canoe Sprint
+  Ep.', 'Ocean', 'Canoe Marathon', 'Fitness Ep.', 'Fitness Pl.', …).
+- `producao_disciplina_mes.disciplina_id` — `number` — TP_ID (6=Canoe
+  Sprint, 243=Ocean, 244=Marathon, 245/246=Fitness).
+
+**Quando escolher esta vs as outras**: "produção POR DISCIPLINA por mês / ao
+longo do ano" → esta (mensal×disciplina). "produzidas HOJE/num dia (sem
+disciplina)" → `producao_ofs_fechadas_dia` (diária). "throughput por
+modelo/semana" → `producao_throughput_modelo` (semanal×modelo). É CONTAGEM de
+OFs, NÃO faturação € (isso é `comercial_facturacao_disciplina`).
 
 ### Cube: `producao_pecas_laminadas`
 Contagem mensal de fases de laminagem TERMINADAS (`OFFP_DATAFIM` não-NULL,
@@ -944,6 +971,26 @@ disciplina-centric; agrupar por disciplina, ordenar desc):
       {"dimension": "comercial_facturacao_disciplina.data", "dateRange": ["2024-01-01", "2024-12-31"]}
     ],
     "order": [["comercial_facturacao_disciplina.total", "desc"]],
+    "limit": null
+  }
+}
+```
+
+**Pergunta:** "Produção por disciplina em 2024 (por mês)?"
+**Saída** (Q.167.H: CONTAGEM de OFs concluídas — `producao_disciplina_mes`,
+NÃO faturação €; dim disciplina + timeDimension mensal com granularity):
+```json
+{
+  "abstain": false,
+  "reason": "",
+  "query": {
+    "measures": ["producao_disciplina_mes.total"],
+    "dimensions": ["producao_disciplina_mes.disciplina"],
+    "filters": [],
+    "timeDimensions": [
+      {"dimension": "producao_disciplina_mes.data", "dateRange": ["2024-01-01", "2024-12-31"], "granularity": "month"}
+    ],
+    "order": [["producao_disciplina_mes.total", "desc"]],
     "limit": null
   }
 }

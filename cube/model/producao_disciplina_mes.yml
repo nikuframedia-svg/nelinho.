@@ -1,0 +1,29 @@
+cubes:
+  - name: producao_disciplina_mes
+    description: >
+      Q.167.H — Produção MENSAL de OFs concluídas por disciplina. Source:
+      marts.v_producao_disciplina_mes (JOIN ordemfabrico → produto →
+      produto_tipo). OF_DATAFIM canónico do fecho. O slice mensal×disciplina
+      que faltava (havia semanal×disciplina e diário-sem-disciplina).
+    sql_table: marts.v_producao_disciplina_mes
+
+    measures:
+      - name: total
+        description: COUNT OFs concluídas por (mês, disciplina). CONTAGEM aditiva.
+        sql: n_ofs_concluidas
+        type: sum
+        format: number
+
+    dimensions:
+      - name: data
+        description: Mês de fechamento (date_trunc('month', OF_DATAFIM)).
+        sql: data
+        type: time
+      - name: disciplina
+        description: TP_NOME (Canoe Sprint Ep., Ocean, Canoe Marathon, Fitness, …).
+        sql: disciplina
+        type: string
+      - name: disciplina_id
+        description: TP_ID (6=Canoe Sprint, 243=Ocean, 244=Marathon, 245/246=Fitness).
+        sql: disciplina_id
+        type: number

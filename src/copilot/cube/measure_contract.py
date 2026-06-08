@@ -2262,6 +2262,30 @@ MEASURE_REGISTRY: dict[str, MeasureSpec] = {
             "ordens de fabrico produzidas",
         ),
     ),
+    # ── Q.167.H: produção MENSAL de OFs concluídas por disciplina ──
+    "producao_disciplina_mes.total": MeasureSpec(
+        name="producao_disciplina_mes.total",
+        unit=CanonicalUnit.CONTAGEM,
+        dimensions_supported=frozenset({"tempo", "disciplina"}),
+        business_decision=(
+            "Q.167.H: COUNT(*) de OFs concluídas (OF_DATAFIM preenchida) por "
+            "MÊS × disciplina sobre marts.v_producao_disciplina_mes (JOIN "
+            "ordemfabrico → produto → produto_tipo, este último mirror Q.102.A). "
+            "MESMA definição canónica de fecho (OF_DATAFIM) que "
+            "producao_ofs_fechadas_dia (diária) e producao_throughput_modelo "
+            "(semanal × modelo). CONTAGEM aditiva. NÃO é faturação € — isso é "
+            "comercial_facturacao_disciplina.total (fonte e base diferentes)."
+        ),
+        description="OFs concluídas por mês × disciplina (Canoe Sprint, Ocean, …)",
+        synonyms=(
+            "produção por disciplina", "producao por disciplina",
+            "OFs por disciplina", "barcos por disciplina",
+            "produção por modalidade", "produção mensal por disciplina",
+            "quantos barcos por disciplina", "produção Canoe Sprint",
+            "produção Ocean", "produção Marathon", "produção Fitness",
+            "produzidas por disciplina", "OFs concluídas por disciplina",
+        ),
+    ),
     # ── Q.106 Medida 1: colaboradores NELO activos ──
     "workforce.colaboradores_activos.total": MeasureSpec(
         name="workforce.colaboradores_activos.total",
