@@ -110,6 +110,14 @@ class CPOConfig:
     use_cpsat_lrho: bool = True
     #: Treat chromosome.routing_choices as an A/B selector per op.
     use_routing_variants: bool = True
+    #: Q.166 — otimizador GLOBAL CP-SAT (makespan) substitui a GA. Default False
+    #: (opt-in até validado em prod); o robô liga-o via tenant config. Sem ortools
+    #: → fallback ao greedy. Budget = `cpsat_budget_s` (ou maior, do robô).
+    use_cpsat_global: bool = False
+    #: nº de threads de pesquisa do CP-SAT global.
+    cpsat_num_workers: int = 8
+    #: determinismo do CP-SAT (max_deterministic_time) — para testes reproduzíveis.
+    cpsat_deterministic: bool = False
 
     # -------------------- Sprint P.12 phase budgets ------------------ #
     #: Total cascade budget (seconds). Sub-budgets MUST sum to ≤ this value.
@@ -200,6 +208,53 @@ class CPOv4Engine:
             else CPOSurrogateLayer(enabled=self.config.use_surrogate)
         )
 
+    def _try_cpsat_global(
+        self,
+        baseline: Dict[str, Any],
+        operations: List[SchedulingOperation],
+        machines: List[SchedulingMachine],
+        horizon_start: datetime,
+        horizon_end: datetime,
+        product_price_eur: Optional[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """Q.166.F — corre o CP-SAT global; devolve o result se DOMINAR o baseline
+        no makespan (axioma 7), senão None (cai na GA). Best-effort: qualquer
+        falha → None (fallback). O greedy `baseline` dá o warm-start (hint)."""
+        try:
+            from src.plan.engines.cpsat_global import (
+                greedy_hint_minutes,
+                run_cpsat_global,
+            )
+            from src.plan.engines.cpsat_scheduler import CPSATConfig
+
+            cfg = CPSATConfig(
+                budget_s=float(self.config.cpsat_budget_s),
+                num_workers=int(self.config.cpsat_num_workers),
+                deterministic=bool(self.config.cpsat_deterministic),
+            )
+            hint = greedy_hint_minutes(baseline, horizon_start)
+            result = run_cpsat_global(
+                self.state, operations, machines, horizon_start, horizon_end,
+                config=cfg, greedy_hint=hint, product_price_eur=product_price_eur,
+            )
+        except Exception as exc:  # pragma: no cover — fallback robusto
+            logger.warning("CP-SAT global falhou (%s) — fallback ao greedy/GA", exc)
+            return None
+        if result is None:
+            return None
+        # Axioma 7: só substitui o baseline se o makespan for melhor.
+        cm = float(result.get("makespan_hours", 1e18) or 1e18)
+        bm = float(baseline.get("makespan_hours", 1e18) or 1e18)
+        if cm >= bm:
+            logger.info(
+                "CP-SAT global (%.1fh) não melhora o baseline (%.1fh) — mantém greedy/GA",
+                cm, bm,
+            )
+            return None
+        result["safety_net_triggered"] = False
+        logger.info("CP-SAT global ACEITE: makespan %.1fh (baseline %.1fh)", cm, bm)
+        return result
+
     def schedule(
         self,
         operations: List[SchedulingOperation],
@@ -269,6 +324,18 @@ class CPOv4Engine:
             f"newly_late={baseline.get('num_newly_late', 0)}, "
             f"fitness={baseline_fit:.2f}"
         )
+
+        # Q.166.F — otimizador GLOBAL CP-SAT (makespan) substitui a GA quando ON.
+        # O greedy baseline acima serve de WARM-START (hint) + comparação de
+        # segurança (axioma 7: nunca pior que o baseline). Sem ortools / sem solução
+        # / makespan não-melhor → cai na GA abaixo (fallback gracioso).
+        if self.config.use_cpsat_global:
+            cpsat_result = self._try_cpsat_global(
+                baseline, operations, machines, horizon_start, horizon_end,
+                product_price_eur,
+            )
+            if cpsat_result is not None:
+                return cpsat_result
 
         # Surrogate context (static across the run, cheap to precompute).
         total_duration = sum(float(op.duration_minutes) for op in operations)

@@ -239,3 +239,76 @@ def _compute_otd_delivery(
     if n_with_due == 0:
         return 1.0
     return 1.0 - (late_orders / n_with_due)
+
+
+def build_result_dict(
+    scheduled: List[ScheduledOp],
+    operations: List[SchedulingOperation],
+    machines: List[object],
+    horizon_start: datetime,
+    horizon_end: datetime,
+    *,
+    product_price_eur: Optional[Mapping[str, Union[float, Decimal]]] = None,
+    setups: int = 0,
+    warnings: Optional[List[str]] = None,
+    infeasible_op_ids: Optional[List[str]] = None,
+    routing_variants_applied: int = 0,
+    backwards_shifts: int = 0,
+    engine_used: str = "cpo_v4",
+) -> Dict[str, object]:
+    """Q.166.F — monta o result-dict canónico a partir de uma lista de ScheduledOp.
+
+    Extraído da Phase 9-10 do `decoder.decode` (comportamento idêntico) para ser
+    REUSADO pelo caminho CP-SAT (`cpsat_scheduler`+`cpsat_postpass`), garantindo que
+    ambos emitem EXACTAMENTE o mesmo contrato (operations[], makespan_hours, otd,
+    idle, lam_utilization, throughput, etc.) que commits/safety_net/API esperam.
+    """
+    from src.plan.cpo.decoder_helpers import _estimate_utilization, _scheduled_to_dict
+
+    warnings = warnings or []
+    infeasible_op_ids = infeasible_op_ids or []
+
+    makespan_hours = _compute_makespan_hours(scheduled, horizon_start)
+    tard = _compute_tardiness(scheduled, operations, horizon_start)
+    tardy_hours = tard["tardy_hours"]
+    late_orders = tard["late_orders"]
+    due_by_order = tard["due_by_order"]
+    total_idle_hours, idle_ratio = _compute_idle_metrics(
+        scheduled, horizon_start, horizon_end,
+    )
+    lam_utilization, tardiness_transport_d, idle_pct = _compute_mapelites_axes(
+        scheduled, tardy_hours, idle_ratio,
+    )
+    throughput_total_eur, throughput_eur_day = _compute_throughput(
+        scheduled, operations, horizon_start, horizon_end, product_price_eur,
+    )
+    otd_delivery = _compute_otd_delivery(due_by_order, late_orders)
+
+    return {
+        "success": not infeasible_op_ids,
+        "engine_used": engine_used,
+        "operations": [_scheduled_to_dict(s) for s in scheduled],
+        "makespan_hours": round(makespan_hours, 2),
+        "total_tardiness_hours": round(tardy_hours, 2),
+        "num_late_orders": late_orders,
+        "num_already_overdue": tard["num_already_overdue"],
+        "num_newly_late": tard["num_newly_late"],
+        "tardiness_beyond_today_h": round(tard["tardiness_beyond_today_h"], 2),
+        "otd_delivery": round(otd_delivery, 4),
+        "setups": setups,
+        "routing_variants_applied": routing_variants_applied,
+        "backwards_shifts": backwards_shifts,
+        "total_idle_hours": round(total_idle_hours, 2),
+        "idle_ratio": round(idle_ratio, 4),
+        "num_machines": len(machines),
+        "lam_utilization": round(lam_utilization, 2),
+        "idle_pct": round(idle_pct, 2),
+        "tardiness_transport_d": round(tardiness_transport_d, 2),
+        "throughput_eur_total": round(throughput_total_eur, 2),
+        "throughput_eur_day": round(throughput_eur_day, 2),
+        "avg_utilization": _estimate_utilization(
+            scheduled, machines, horizon_start, horizon_end,
+        ),
+        "warnings": warnings,
+        "infeasible_op_ids": infeasible_op_ids,
+    }

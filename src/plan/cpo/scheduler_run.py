@@ -192,6 +192,14 @@ async def _build_cpo_config(
         except (TypeError, ValueError):
             return float(fallback)
 
+    def _bool(key: str, fallback: bool) -> bool:
+        if key not in planning:
+            return bool(fallback)
+        v = planning[key]
+        if isinstance(v, str):
+            return v.strip().lower() in ("1", "true", "yes", "on")
+        return bool(v)
+
     pop = (
         request.population_size
         if request.population_size != _REQ_DEFAULT_POP_SIZE
@@ -217,6 +225,13 @@ async def _build_cpo_config(
     if tlim > ga_budget:
         total_budget += tlim - ga_budget
         ga_budget = tlim
+    # Q.166.F — otimizador global CP-SAT. Quando ON, o CP-SAT usa o orçamento de
+    # tempo PRINCIPAL (tlim, ex. robô 300-600s) porque SUBSTITUI a GA — o
+    # cpsat_budget_s de 15s era só para o L-RHO refiner (não-usado).
+    use_cpsat_global = _bool("cpo.use_cpsat_global", base.use_cpsat_global)
+    cpsat_budget = (
+        tlim if use_cpsat_global else _num("cpo.cpsat_budget_s", base.cpsat_budget_s)
+    )
     return CPOConfig(
         population_size=pop,
         generations=gens,
@@ -225,8 +240,11 @@ async def _build_cpo_config(
         greedy_budget_s=_num("cpo.greedy_budget_s", base.greedy_budget_s),
         ga_budget_s=ga_budget,
         mapelites_budget_s=_num("cpo.mapelites_budget_s", base.mapelites_budget_s),
-        cpsat_budget_s=_num("cpo.cpsat_budget_s", base.cpsat_budget_s),
+        cpsat_budget_s=cpsat_budget,
         workforce_budget_s=_num("cpo.workforce_budget_s", base.workforce_budget_s),
+        use_cpsat_global=use_cpsat_global,
+        cpsat_num_workers=int(_num("cpo.cpsat_num_workers", base.cpsat_num_workers)),
+        cpsat_deterministic=_bool("cpo.cpsat_deterministic", base.cpsat_deterministic),
     )
 
 

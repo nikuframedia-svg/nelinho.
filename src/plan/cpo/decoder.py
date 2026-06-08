@@ -41,14 +41,7 @@ from src.plan.cpo.decoder_helpers import (
     classify_rework_phase,
     compute_mold_batches,
 )
-from src.plan.cpo.decoder_kpis import (
-    _compute_idle_metrics,
-    _compute_makespan_hours,
-    _compute_mapelites_axes,
-    _compute_otd_delivery,
-    _compute_tardiness,
-    _compute_throughput,
-)
+from src.plan.cpo.decoder_kpis import build_result_dict
 from src.plan.cpo.decoder_resources import (
     _earliest_start,
     _pick_workers,
@@ -159,53 +152,16 @@ def decode(
         target_starts=target_starts,
     )
 
-    # Phase 9 — KPI accumulation.
-    makespan_hours = _compute_makespan_hours(loop.scheduled, horizon_start)
-    tard = _compute_tardiness(loop.scheduled, operations, horizon_start)
-    tardy_hours = tard["tardy_hours"]
-    late_orders = tard["late_orders"]
-    due_by_order = tard["due_by_order"]
-    total_idle_hours, idle_ratio = _compute_idle_metrics(
-        loop.scheduled, horizon_start, horizon_end,
+    # Phase 9-10 — KPI accumulation + result dict. Q.166.F: extraído para
+    # decoder_kpis.build_result_dict (reusado pelo caminho CP-SAT; comportamento
+    # idêntico — mesmas chaves e arredondamentos).
+    return build_result_dict(
+        loop.scheduled, operations, machines, horizon_start, horizon_end,
+        product_price_eur=product_price_eur,
+        setups=loop.setups,
+        warnings=loop.warnings,
+        infeasible_op_ids=loop.infeasible,
+        routing_variants_applied=loop.routing_variants_applied,
+        backwards_shifts=loop.backwards_shifts,
+        engine_used="cpo_v4",
     )
-    lam_utilization, tardiness_transport_d, idle_pct = _compute_mapelites_axes(
-        loop.scheduled, tardy_hours, idle_ratio,
-    )
-    throughput_total_eur, throughput_eur_day = _compute_throughput(
-        loop.scheduled, operations, horizon_start, horizon_end, product_price_eur,
-    )
-    otd_delivery = _compute_otd_delivery(due_by_order, late_orders)
-
-    # Phase 10 — soft-horizon coherence: success only if every op fit.
-    return {
-        "success": not loop.infeasible,
-        "engine_used": "cpo_v4",
-        "operations": [_scheduled_to_dict(s) for s in loop.scheduled],
-        "makespan_hours": round(makespan_hours, 2),
-        "total_tardiness_hours": round(tardy_hours, 2),
-        "num_late_orders": late_orders,
-        # Q.153.A2 — dívida herdada vs atraso novo/evitável.
-        "num_already_overdue": tard["num_already_overdue"],
-        "num_newly_late": tard["num_newly_late"],
-        "tardiness_beyond_today_h": round(tard["tardiness_beyond_today_h"], 2),
-        "otd_delivery": round(otd_delivery, 4),
-        "setups": loop.setups,
-        "routing_variants_applied": loop.routing_variants_applied,
-        "backwards_shifts": loop.backwards_shifts,
-        "total_idle_hours": round(total_idle_hours, 2),
-        "idle_ratio": round(idle_ratio, 4),
-        # Q.134.I — capacidade exposta p/ observabilidade do idle (o idle é
-        # worker-based; num_machines é o nº de estações/centros do plano).
-        "num_machines": len(machines),
-        # Sprint A ME1 — Blueprint v2.0 MAP-Elites axes
-        "lam_utilization": round(lam_utilization, 2),
-        "idle_pct": round(idle_pct, 2),
-        "tardiness_transport_d": round(tardiness_transport_d, 2),
-        "throughput_eur_total": round(throughput_total_eur, 2),
-        "throughput_eur_day": round(throughput_eur_day, 2),
-        "avg_utilization": _estimate_utilization(
-            loop.scheduled, machines, horizon_start, horizon_end,
-        ),
-        "warnings": loop.warnings,
-        "infeasible_op_ids": loop.infeasible,
-    }

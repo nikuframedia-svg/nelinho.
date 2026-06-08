@@ -1,0 +1,104 @@
+"""ProdPlan ONE — CP-SAT Global orchestrator (Q.166.F).
+
+Cola as 3 peças do otimizador global de makespan e devolve o result-dict CANÓNICO
+(o mesmo contrato do decoder, via `build_result_dict`):
+
+    1. excluir fases de reparação (fluxo separado — decisão do dono);
+    2. `CPSATScheduler.solve_timing` — TIMING global 24/7 (cumulative + makespan);
+    3. `assign_concrete` — recursos concretos + calendário (Seg-Sáb);
+    4. `build_result_dict` — KPIs idênticos ao decoder.
+
+Best-effort: sem ortools / sem solução / sem ops → devolve None (o caller mantém o
+greedy — fallback). NUNCA crasha o scheduler.
+"""
+
+from __future__ import annotations
+
+import logging
+from datetime import datetime
+from typing import Any, Dict, List, Mapping, Optional, Union
+
+from src.plan.cpo.decoder_kpis import build_result_dict
+from src.plan.cpo.state import REPAIR_PHASE_IDS
+from src.plan.engines.cpsat_postpass import assign_concrete
+from src.plan.engines.cpsat_scheduler import (
+    HAS_ORTOOLS,
+    CPSATConfig,
+    CPSATScheduler,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def greedy_hint_minutes(
+    baseline: Dict[str, Any],
+    horizon_start: datetime,
+) -> Dict[str, int]:
+    """Converte os starts do schedule greedy (baseline) em minutos desde
+    horizon_start, para warm-start (`AddHint`) do CP-SAT. Best-effort → {}."""
+    out: Dict[str, int] = {}
+    for op in baseline.get("operations", []) or []:
+        oid = op.get("operation_id")
+        st = op.get("start_time") or op.get("start")
+        if not oid or not st:
+            continue
+        try:
+            dt = datetime.fromisoformat(str(st).replace("Z", "+00:00"))
+            if dt.tzinfo is not None:
+                dt = dt.replace(tzinfo=None)
+            m = int((dt - horizon_start).total_seconds() / 60.0)
+            if m >= 0:
+                out[str(oid)] = m
+        except (ValueError, TypeError):  # pragma: no cover — defensivo
+            continue
+    return out
+
+
+def run_cpsat_global(
+    state: Any,
+    operations: List[Any],
+    machines: List[Any],
+    horizon_start: datetime,
+    horizon_end: datetime,
+    *,
+    config: Optional[CPSATConfig] = None,
+    greedy_hint: Optional[Dict[str, int]] = None,
+    product_price_eur: Optional[Mapping[str, Union[float, Any]]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Corre o pipeline CP-SAT global e devolve o result-dict, ou None (fallback)."""
+    if not HAS_ORTOOLS:
+        return None
+    # 1) excluir fases de reparação (14/76/77) — fluxo separado off-line.
+    main_ops = [o for o in operations if str(o.phase_id) not in REPAIR_PHASE_IDS]
+    repair_excluded = len(operations) - len(main_ops)
+    if not main_ops:
+        return None
+
+    # 2) TIMING global (24/7, cumulative, makespan).
+    timing = CPSATScheduler(config or CPSATConfig()).solve_timing(
+        main_ops, state, horizon_start, hint_starts_min=greedy_hint,
+    )
+    if not timing.available:
+        logger.info("CP-SAT global indisponível (%s) — fallback ao greedy", timing.reason)
+        return None
+
+    # 3) recursos concretos + calendário.
+    scheduled = assign_concrete(main_ops, state, horizon_start, timing.starts_min)
+
+    # 4) result-dict canónico (mesmo contrato do decoder).
+    result = build_result_dict(
+        scheduled, main_ops, machines, horizon_start, horizon_end,
+        product_price_eur=product_price_eur,
+        engine_used="cpsat_global",
+    )
+    n_boats = len({s.order_id for s in scheduled})
+    result["cpo_meta"] = {
+        "engine": "cpsat_global",
+        "cpsat_status": timing.status,
+        "cpsat_solve_time_s": round(timing.solve_time_s, 1),
+        "makespan_hours_24x7": round(timing.makespan_min / 60.0, 2),
+        "cpsat_objective_bound_min": round(timing.objective_bound, 1),
+        "repair_ops_excluded": repair_excluded,
+        "boats_in_main_plan": n_boats,
+    }
+    return result
