@@ -99,9 +99,13 @@ def _map_employee_skills(
             # na Entidade_Fase"): QUALIFICADO = gate, CHEFE = lidera, DATAINICIO
             # = antiguidade. Importa-se a matriz completa (incl. não-qualificados);
             # o gate é o consumidor (CPO) que o faz, não se perde informação.
+            # Q.167.G — EFP_DATAFIM = expiração da qualificação (associação
+            # entidade↔fase terminada). O gate do CPO exclui qualificações
+            # expiradas (uma pessoa que já não faz a fase não pode entrar no pool).
             "is_certified": bool(r.qualified),
             "is_chefe": bool(r.is_supervisor),
             "certification_date": r.start_date.date() if r.start_date else None,
+            "certification_expiry": r.end_date.date() if r.end_date else None,
         })
     return mapped, skipped
 
@@ -138,7 +142,7 @@ async def mirror_skills(
             key_fields=["employee_id", "skill_id"],
             update_fields=[
                 "proficiency_level", "is_certified", "is_chefe",
-                "certification_date",
+                "certification_date", "certification_expiry",
             ],
         )
         logger.info(

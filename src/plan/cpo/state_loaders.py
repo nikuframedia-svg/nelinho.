@@ -747,7 +747,11 @@ async def _load_qualified_db(
     Inerte enquanto o mirror Q.158.A não correr (``is_certified`` default False
     → {} → o gate não se aplica, back-compat exacto). Quando a matriz declarada
     existe, É a verdade (axioma 5: competência real declarada, não inventada).
-    O histórico ``of_fp`` deixa de ser o gate e alimenta só o ranking."""
+    O histórico ``of_fp`` deixa de ser o gate e alimenta só o ranking.
+
+    Q.167.G — exclui qualificações EXPIRADAS (``certification_expiry`` =
+    ``EFP_DATAFIM`` no passado): a associação entidade↔fase terminou, logo a
+    pessoa já não pode fazer a fase. ``NULL`` = qualificação ainda activa."""
     if session is None:
         return {}
     from sqlalchemy import text
@@ -766,6 +770,10 @@ async def _load_qualified_db(
           AND e.status = 'ACTIVE'
           AND s.skill_code IS NOT NULL
           AND e.employee_code IS NOT NULL
+          -- Q.167.G — qualificação EXPIRADA (EFP_DATAFIM no passado) não gateia:
+          -- quem já não faz a fase não pode entrar no pool (axioma 5 — competência
+          -- real, não histórica). NULL = ainda activa.
+          AND (es.certification_expiry IS NULL OR es.certification_expiry >= CURRENT_DATE)
         """
     ).bindparams(t=str(tenant_id))
     try:

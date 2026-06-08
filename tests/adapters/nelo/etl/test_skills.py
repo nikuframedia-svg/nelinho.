@@ -112,6 +112,28 @@ def test_map_employee_skills_null_start_date_ok():
     assert mapped[0]["certification_date"] is None
 
 
+def test_map_employee_skills_carries_expiry():
+    """Q.167.G — `EFP_DATAFIM` mapeia para `certification_expiry` (a data em que
+    a qualificação termina). O gate do CPO usa-a para excluir expiradas."""
+    mapped, _ = _map_employee_skills(
+        [_ef(entity_id=101, phase_id=1, end_date=datetime(2022, 9, 30))],
+        emp_by_code={"101": uuid4()},
+        skill_by_code={"1": uuid4()},
+    )
+    assert mapped[0]["certification_expiry"] == date(2022, 9, 30)
+
+
+def test_map_employee_skills_null_expiry_ok():
+    """Q.167.G — `EFP_DATAFIM` nulo (qualificação ainda activa) →
+    certification_expiry None (o gate trata NULL como não-expirado)."""
+    mapped, _ = _map_employee_skills(
+        [_ef(entity_id=101, phase_id=1, end_date=None)],
+        emp_by_code={"101": uuid4()},
+        skill_by_code={"1": uuid4()},
+    )
+    assert mapped[0]["certification_expiry"] is None
+
+
 def test_map_employee_skills_skips_unknown_operator():
     """A row referencing an operator the master mirror never imported is
     skipped, not crashed."""
