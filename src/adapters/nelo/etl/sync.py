@@ -54,10 +54,12 @@ def _load_mirror_modules() -> None:
         "molds",             # Q.20.C
         "skills",            # Q.20.D
         "quality",           # Q.20.E — só `error_catalog` (vocabulário); já NÃO rework
-        # Q.167.E — `checklist` é agora a FONTE ÚNICA de defeitos (RCA canónico
-        # OF_CHECKLIST: causer≠detector em 78,5% das linhas). O `quality` (OF_FP)
-        # deixou de escrever `rework_entry`, por isso já não há dupla contagem. Os
-        # leitores filtram `context->>'source' = 'erp_of_checklist'` (Q.167.E.3).
+        # Q.167.E — `checklist` é agora a FONTE ÚNICA de defeitos do ERP (RCA
+        # canónico OF_CHECKLIST: causer≠detector em 78,5% das linhas). O `quality`
+        # (OF_FP) deixou de escrever `rework_entry` e a migração q167e apagou as
+        # linhas stale erp_of_fp → a tabela fica single-source POR CONSTRUÇÃO
+        # (checklist + retrabalho humano via POST /rework). Os leitores não
+        # precisam de filtrar por source — não há stale a dupla-contar.
         "checklist",         # Q.167.E
         "time_mining",       # Q.20.F
         "stock",             # Q.52.K

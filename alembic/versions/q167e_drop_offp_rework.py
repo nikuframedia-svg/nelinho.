@@ -5,9 +5,10 @@ A fonte canónica de defeitos passou a ser ``OF_CHECKLIST`` (mirror
 DETECTOU (RCA real). O antigo mirror ``OF_FP`` (:mod:`...etl.quality`) deixou
 de escrever ``rework_entry`` — mas as ~100k linhas que ele já tinha escrito
 (``context->>'source' = 'erp_of_fp'``) ficam stale: colapsam causer=detector
-e não têm operador/chefe. Os leitores já as ignoram (Q.167.E.3 filtra por
-``source = 'erp_of_checklist'``), por isso esta limpeza não é uma dependência
-de correção — é a arrumação física que faz a tabela refletir a fonte única.
+e não têm operador/chefe. Com o writer OF_FP removido (mirror_quality já não
+escreve rework), apagá-las torna a tabela single-source POR CONSTRUÇÃO
+(checklist + retrabalho humano via POST /rework, NUNCA stale OF_FP) — os
+leitores deixam de poder dupla-contar sem precisarem de filtrar por source.
 
 As linhas são ERP-reproduzíveis (derivadas de OF_FP), logo apagá-las é seguro
 e o ``downgrade`` é um no-op documentado: não ressuscitamos a dupla contagem.

@@ -39,13 +39,11 @@ WITH workers_per_op AS (
       AND COALESCE(e."OFFPEQ_CHEFE", FALSE) = FALSE
 ),
 defeitos_per_of AS (
-    -- COUNT defeitos por OF (de quality.rework_entry). Q.167.E — fonte única
-    -- = OF_CHECKLIST (RCA canónico); ignora stale do antigo mirror OF_FP.
+    -- COUNT defeitos por OF (de quality.rework_entry).
     SELECT
         of_id,
         COUNT(*)                          AS n_defeitos
     FROM quality.rework_entry
-    WHERE (context->>'source') = 'erp_of_checklist'
     GROUP BY 1
 )
 SELECT

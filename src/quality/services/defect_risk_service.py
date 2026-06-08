@@ -115,9 +115,6 @@ class DefectRiskService:
                     SELECT phase_id_causer AS phase, COUNT(*) AS n
                     FROM quality.rework_entry
                     WHERE tenant_id = :t AND phase_id_causer IS NOT NULL
-                      -- Q.167.E — fonte única OF_CHECKLIST (RCA: phase_id_causer
-                      -- é agora o causer REAL, ≠ detector). Ignora stale OF_FP.
-                      AND context->>'source' = 'erp_of_checklist'
                     GROUP BY phase_id_causer
                     """
                 ),
@@ -326,8 +323,7 @@ class DefectRiskService:
         # Tenta contar na tabela quality.rework_entry.
         # Se a tabela não existir (migration 018 deferred), devolve zeros.
         try:
-            # Q.167.E — fonte única OF_CHECKLIST (ignora stale OF_FP).
-            filters: list[str] = ["tenant_id = :t", "context->>'source' = 'erp_of_checklist'"]
+            filters: list[str] = ["tenant_id = :t"]
             params: dict[str, Any] = {"t": str(self.tenant_id)}
             if operator_id:
                 filters.append("causer_employee_id::text = :op")
@@ -360,7 +356,6 @@ class DefectRiskService:
                             ) AS unresolved
                         FROM quality.rework_entry
                         WHERE tenant_id = :t
-                          AND context->>'source' = 'erp_of_checklist'  -- Q.167.E
                         GROUP BY causer_employee_id, phase_id_causer
                         ORDER BY total DESC
                         LIMIT 3

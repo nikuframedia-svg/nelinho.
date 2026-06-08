@@ -216,7 +216,6 @@ async def build_quality_risk_dataset(
         FROM quality.rework_entry
         WHERE tenant_id = :tenant_id
           AND phase_id_causer IS NOT NULL
-          AND context->>'source' = 'erp_of_checklist'  -- Q.167.E (fonte única)
         GROUP BY phase_id_causer
         """
     )
@@ -369,7 +368,6 @@ async def build_otd_risk_dataset(
         FROM quality.rework_entry
         WHERE tenant_id = :tenant_id
           AND phase_id_causer IS NOT NULL
-          AND context->>'source' = 'erp_of_checklist'  -- Q.167.E (fonte única)
         GROUP BY phase_id_causer
         """
     )
@@ -549,7 +547,6 @@ async def load_defects(
         FROM quality.rework_entry
         WHERE tenant_id = :tenant_id
           AND of_id IS NOT NULL
-          AND context->>'source' = 'erp_of_checklist'  -- Q.167.E (fonte única)
         """
     )
     try:
