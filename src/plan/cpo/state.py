@@ -116,6 +116,15 @@ REPAIR_PHASE_IDS: frozenset[str] = frozenset({
     "77",  # Reparação
 })
 
+# Q.166.D — fases de ESTADO/espera (NÃO são trabalho de mão-de-obra): o barco está
+# parado à espera de entrar em produção. Têm duração ~0 no planeamento (senão o
+# flow-time delas — dias parado — inflava o makespan). São o ponto de ENTRADA, não
+# uma tarefa. Confirmado: "Não Laminado"/"Pendente" não consomem operador.
+STATUS_PHASE_IDS: frozenset[str] = frozenset({
+    "11",  # Não Laminado (estado inicial, à espera de laminar)
+    "32",  # Pendente
+})
+
 
 def normalize_phase_code(name: Optional[str]) -> str:
     """Canonical phase code: strip accents, UPPERCASE, spaces/hyphens/
@@ -233,6 +242,21 @@ class FactoryState:
     # (historical_durations_by_fase). Planeia o barco em vez de o deixar invisível.
     # Vazio = sem catálogo carregado (back-compat: cai em no_route como antes).
     phase_catalog: List[Dict[str, Any]] = field(default_factory=list)
+
+    # Q.165.D — TEMPO-PADRÃO de mão-de-obra (TOUCH-TIME) por fase×classe-de-kayak,
+    # de fases_producao.FP_VALOR_REF_K1/K2/K4 (horas). É o tier de TOPO de
+    # median_duration_h: a mediana de of_fp é FLOW-TIME (fase aberta, inclui
+    # secagem) e infla o makespan; o tempo-padrão do ERP é o trabalho real.
+    # `phase_std_ref_hours[fase_id] = {"K1": h, "K2": h, "K4": h}` (só fases/classes
+    # com valor). `model_kayak_class[model_id] = "K1"|"K2"|"K4"` (prefixo P_NOME).
+    # Vazios = back-compat exacto (cai no cascade histórico).
+    phase_std_ref_hours: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    model_kayak_class: Dict[str, str] = field(default_factory=dict)
+
+    # Q.166.D — touch-time fallback por fase = p25 do flow-time de of_fp (horas).
+    # Tier ABAIXO do FP_VALOR_REF e ACIMA dos tiers de flow-time (mediana/calibrado):
+    # de-infla as fases/modelos sem tempo-padrão do ERP. Vazio = sem fallback.
+    phase_p25_hours: Dict[str, float] = field(default_factory=dict)
 
     # historical error rate per fase_id (0.0-1.0)
     historical_error_rates: Dict[str, float] = field(default_factory=dict)
@@ -408,6 +432,20 @@ class FactoryState:
         catalog_db = await _load_phase_catalog_db(session, tenant_id)
         if catalog_db:
             state.phase_catalog = catalog_db
+
+        # Q.165.D — tempo-padrão (touch-time) do ERP por fase×classe + mapa
+        # modelo→classe. Tier de topo de median_duration_h (de-infla o flow-time).
+        std_ref_db = await _load_phase_std_ref_db(session, tenant_id)
+        if std_ref_db:
+            state.phase_std_ref_hours = std_ref_db
+        model_class_db = await _load_model_kayak_class_db(session, tenant_id)
+        if model_class_db:
+            state.model_kayak_class = model_class_db
+        # Q.166.D — touch-time fallback p25-flow por fase (de-infla fases/modelos
+        # sem FP_VALOR_REF). Best-effort; vazio = só std_ref + tiers de flow.
+        p25_db = await _load_phase_p25_durations_db(session, tenant_id)
+        if p25_db:
+            state.phase_p25_hours = p25_db
 
         # Q.160 — mediana REAL da fila inter-fase por fase (substitui o 5.2h
         # global hardcoded). Best-effort; vazio → o decoder cai no fallback
@@ -711,6 +749,45 @@ class FactoryState:
             return None
         return max(0.5, 1.0 - 0.05 * idx)
 
+    def std_ref_duration_h(
+        self,
+        fase_id: str,
+        modelo_id: str,
+    ) -> Optional[float]:
+        """Q.165.D — tempo-padrão de mão-de-obra (touch-time) do ERP em horas para
+        (fase, modelo), via classe-de-kayak (FP_VALOR_REF_K1/K2/K4). É a VERDADE do
+        trabalho real — substitui o flow-time da mediana de of_fp. `None` quando o
+        modelo não é K1/K2/K4 ou a fase não tem valor de referência (cai no cascade
+        histórico). Mapas vazios → None (back-compat exacto)."""
+        cls = self.model_kayak_class.get(str(modelo_id))
+        if not cls:
+            return None
+        ref = self.phase_std_ref_hours.get(str(fase_id), {}).get(cls)
+        return float(ref) if ref and ref > 0 else None
+
+    def planning_duration_h(
+        self,
+        fase_id: str,
+        modelo_id: str,
+        fallback_flow_h: float,
+    ) -> float:
+        """Q.166.D — duração de PLANEAMENTO (touch-time) em horas, consolidada:
+          1. fase de ESTADO (Não Laminado/Pendente) → ~0 (1 min, é espera não trabalho);
+          2. tempo-padrão do ERP FP_VALOR_REF por classe (`std_ref_duration_h`);
+          3. p25-flow por fase (`phase_p25_hours`, aproxima touch-time);
+          4. fallback (a duração de flow-time da rota — last resort).
+        Degrau, não blend → determinístico. Mapas vazios → cai no fallback
+        (back-compat exacto). É o trabalho REAL, não o flow-time (fase aberta)."""
+        if str(fase_id) in STATUS_PHASE_IDS:
+            return 1.0 / 60.0  # 1 minuto: estado/entrada, não consome capacidade
+        std = self.std_ref_duration_h(fase_id, modelo_id)
+        if std is not None:
+            return std
+        p25 = self.phase_p25_hours.get(str(fase_id))
+        if p25 is not None and p25 > 0:
+            return float(p25)
+        return float(fallback_flow_h)
+
     def median_duration_h(
         self,
         fase_id: str,
@@ -718,6 +795,10 @@ class FactoryState:
         fallback_hours: float,
     ) -> float:
         key = (str(fase_id), str(modelo_id))
+        # Q.165.D — TIER DE TOPO: tempo-padrão de mão-de-obra do ERP (touch-time).
+        std = self.std_ref_duration_h(fase_id, modelo_id)
+        if std is not None:
+            return std
         # Q.133.A2 — preferir o p50 CALIBRADO (job phase_calibration) quando há
         # amostra suficiente. É histórico real agregado + (Q.133.A3) o desvio
         # plano-vs-real. Degrau, não blend → determinístico; dict vazio =
@@ -785,12 +866,22 @@ class FactoryState:
         return self.phase_stations.get(fase_id, 1)
 
     def mold_for(self, modelo_id: str) -> Optional[MoldInfo]:
-        candidates = self.molds_by_model.get(modelo_id, [])
-        # First non-maintenance mold, largest pocket count first
-        candidates_ok = [m for m in candidates if not m.em_manutencao]
-        if not candidates_ok:
+        candidates = self.molds_for_model(modelo_id)
+        if not candidates:
             return None
-        return max(candidates_ok, key=lambda m: m.pocket_count)
+        # First non-maintenance mold, largest pocket count first (legacy: 1 molde).
+        return max(candidates, key=lambda m: m.pocket_count)
+
+    def molds_for_model(self, modelo_id: str) -> List["MoldInfo"]:
+        """Q.165.C — TODOS os moldes não-em-manutenção compatíveis com o modelo
+        (ordem determinística por molde_id). O decoder escolhe o earliest-free
+        entre estes (paralelismo real) em vez de serializar tudo num só molde.
+        Vazio = sem moldes (op manual). Lista, não um só (era o gargalo)."""
+        candidates = self.molds_by_model.get(str(modelo_id), [])
+        return sorted(
+            (m for m in candidates if not m.em_manutencao),
+            key=lambda m: str(m.molde_id),
+        )
 
 
 
@@ -818,10 +909,13 @@ from src.plan.cpo.state_loaders import (
     _load_confirmed_preference_rules,
     _load_historical_durations_routes_db,
     _load_molds_db,
+    _load_model_kayak_class_db,
     _load_open_orders_db,
     _load_phase_calibration_db,
     _load_phase_catalog_db,
     _load_phase_config_db,
+    _load_phase_p25_durations_db,
+    _load_phase_std_ref_db,
     _load_phase_preferred_operators_db,
     _load_phase_queue_medians_db,
     _load_phase_transition_gaps,

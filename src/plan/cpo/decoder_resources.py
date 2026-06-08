@@ -507,15 +507,32 @@ def _select_workers(
 def _select_mold(
     op: SchedulingOperation,
     state: FactoryState,
+    mold_free_at: Optional[Dict[str, datetime]] = None,
+    earliest: Optional[datetime] = None,
 ) -> Optional[str]:
     """Return the chosen mould id (or None when not required / unavailable).
 
-    Caller treats `op.mold_required and result is None` as infeasible.
+    Q.165.C — escolhe o molde LIVRE MAIS CEDO entre TODOS os moldes do modelo
+    (`molds_for_model`), em vez de serializar tudo num só (o gargalo: 1 molde por
+    modelo → todos os barcos do modelo em fila). Cada molde físico continua
+    serializado (axioma 3 — exclusividade por molde). Sem `mold_free_at` (chamada
+    legacy) → cai no `mold_for` de sempre (back-compat exacto). Tie-break por id
+    (determinismo). Caller trata `op.mold_required and result is None` como infeasible.
     """
     mold_chosen: Optional[str] = op.mold_id
-    if op.mold_required and not mold_chosen:
-        mold_info = state.mold_for(op.model_id) if op.model_id else None
-        mold_chosen = mold_info.molde_id if mold_info else None
+    if op.mold_required and not mold_chosen and op.model_id:
+        if mold_free_at is not None:
+            molds = state.molds_for_model(op.model_id)
+            if molds:
+                ref = earliest or datetime.min
+                best = min(
+                    molds,
+                    key=lambda m: (mold_free_at.get(str(m.molde_id), ref), str(m.molde_id)),
+                )
+                mold_chosen = best.molde_id
+        else:
+            mold_info = state.mold_for(op.model_id)
+            mold_chosen = mold_info.molde_id if mold_info else None
     return mold_chosen
 
 
@@ -622,7 +639,9 @@ def _run_scheduling_loop(
                 continue
             batch_workers, _team_size = staffing
 
-            mold_chosen = _select_mold(op, state)
+            mold_chosen = _select_mold(
+                op, state, mold_free_at=mold_free_at, earliest=earliest_pred_end,
+            )
             if op.mold_required and not mold_chosen:
                 for p in batch_peers:
                     infeasible.append(p.operation_id)
@@ -666,7 +685,6 @@ def _run_scheduling_loop(
             else:
                 batch_end = start + timedelta(minutes=max(peer_duration_min))
 
-            flat_worker_list: List[str] = [w for slot in batch_workers for w in slot]
             for peer, slot_workers, peer_dur in zip(
                 batch_peers, batch_workers, peer_duration_min
             ):
@@ -697,8 +715,15 @@ def _run_scheduling_loop(
                 op_end_at[peer.operation_id] = peer_end
                 # Q.164.A — debita a CADA operador a duração da SUA op (não o
                 # batch_end), para o tiebreak de load-balancing usar horas reais.
+                # Q.165.A — o operador liberta-se no FIM DA SUA op (peer_end), não
+                # no batch_end (peer mais longo do lote). Para ops single (a maioria)
+                # peer_end == batch_end; em mold-batches multi-pocket o operador do
+                # barco mais curto fica livre mais cedo. A estação/molde continuam
+                # ocupados até batch_end (ocupação física); precedência/cura referem
+                # op_end_at (intactas). Capacidade≥0, monótono, sem double-booking.
                 for w in slot_workers:
                     worker_load_h[w] = worker_load_h.get(w, 0.0) + peer_dur / 60.0
+                    worker_free_at[w] = peer_end
 
             # Setup detection — counted once per batch.
             if _last_on_machine_has_different_family(
@@ -707,8 +732,8 @@ def _run_scheduling_loop(
                 setups += 1
 
             machine_free_at[best_machine] = batch_end
-            for w in flat_worker_list:
-                worker_free_at[w] = batch_end
+            # Q.165.A — worker_free_at já foi posto por peer (peer_end) no loop
+            # acima; a estação e o molde ocupam a janela física (batch_end).
             if mold_chosen:
                 mold_free_at[mold_chosen] = batch_end
             progress = True

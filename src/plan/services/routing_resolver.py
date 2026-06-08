@@ -252,6 +252,12 @@ class RoutingResolver:
         # Vazio → machine_id=None (decoder usa o pool "MANUAL", back-compat).
         phase_stations = getattr(self.state, "phase_stations", {}) or {}
 
+        # Q.165.D/Q.166.D — duração de PLANEAMENTO (touch-time): tempo-padrão ERP
+        # (FP_VALOR_REF) → p25-flow → fallback flow; fases de estado → ~0. SUBSTITUI a
+        # duração da rota (mediana de of_fp = FLOW-TIME, inclui secagem → inflava o
+        # makespan ~5×). É o trabalho REAL. `planning_duration_h` consolida o cascade.
+        plan_dur = getattr(self.state, "planning_duration_h", None)
+
         for row in rows:
             phase_name = row.fase_nome or row.fase_id
             team_size = self.state.team_size_for(row.fase_id, phase_name)
@@ -260,6 +266,11 @@ class RoutingResolver:
                 station_ids_for(row.fase_id, phase_stations[row.fase_id])
                 if row.fase_id in phase_stations else []
             )
+            # Q.166.D — duração de planeamento (touch-time) com precedência sobre o
+            # flow-time da rota; fallback = flow-time da própria rota.
+            dur_h = row.duration_hours
+            if plan_dur is not None:
+                dur_h = plan_dur(row.fase_id, modelo_id, row.duration_hours)
 
             op = SchedulingOperation(
                 operation_id=f"{order_id}::{row.fase_id}",
@@ -267,7 +278,7 @@ class RoutingResolver:
                 product_id=product_id,
                 sequence=row.sequence,
                 operation_code=phase_name,
-                duration_minutes=max(1.0, row.duration_hours * 60.0),
+                duration_minutes=max(1.0, dur_h * 60.0),
                 machine_id=stations[0] if stations else None,  # estação da fase
                 setup_family=phase_name,
                 due_date=due_date,
@@ -302,11 +313,18 @@ class RoutingResolver:
             mold_required=False,
         )
 
+    # Q.166.D — limiar de frequência: a rota canónica só inclui fases por onde uma
+    # fração mínima de barcos REALMENTE passou (de of_fp). Sem isto, fases raras/
+    # especiais (ex. Acabamento 3: só ~36 barcos de sempre) eram metidas em CENTENAS
+    # de barcos sem rota → gargalo fantasma. 0.15 = >=15% dos barcos.
+    _CANONICAL_MIN_BOAT_FRACTION = 0.15
+
     def _canonical_route(self) -> List["RoutingRow"]:
-        """Q.164.C — rota-padrão da NELO: catálogo canónico de fases de produção
-        (`state.phase_catalog`, ordenado por FP_SEQUENCIA) com duração mediana REAL
-        por fase (`state.historical_durations_by_fase`). Último fallback p/ modelos
-        sem rota nenhuma — planeia o barco em vez de o deixar invisível.
+        """Q.164.C/Q.166.D — rota-padrão da NELO: catálogo canónico de fases COMUNS
+        (`state.phase_catalog` filtrado por `boat_fraction` >= limiar, ordenado por
+        FP_SEQUENCIA) com duração mediana REAL por fase. Último fallback p/ modelos
+        sem rota nenhuma — planeia o barco em vez de o deixar invisível, mas SÓ pelas
+        fases que a maioria dos barcos faz (não as raras/especiais).
 
         Fases sem mediana real são SALTADAS (invariante #8: não fabricar duração).
         Devolve [] se não há catálogo nem medianas (back-compat → no_route)."""
@@ -318,6 +336,11 @@ class RoutingResolver:
         for item in catalog:
             fase_id = str(item.get("fase_id") or "")
             if not fase_id:
+                continue
+            # Q.166.D — só fases COMUNS (a maioria dos barcos passa). boat_fraction
+            # ausente (catálogo legacy sem a coluna) → não filtra (back-compat).
+            frac = item.get("boat_fraction")
+            if frac is not None and float(frac) < self._CANONICAL_MIN_BOAT_FRACTION:
                 continue
             dur = dur_by_fase.get(fase_id)
             if not dur or dur <= 0:

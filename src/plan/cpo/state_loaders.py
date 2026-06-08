@@ -277,12 +277,151 @@ async def _load_historical_durations_routes_db(
     return routes, by_pair, by_fase
 
 
+async def _load_phase_std_ref_db(
+    session: Any,
+    tenant_id: UUID,
+) -> Dict[str, Dict[str, float]]:
+    """Q.165.D — TEMPO-PADRÃO de mão-de-obra por fase×classe-de-kayak, de
+    `factory_raw.fases_producao.FP_VALOR_REF_K1/K2/K4` (horas, confirmado pelo
+    dono). É o TOUCH-TIME real do ERP — ao contrário da mediana de of_fp
+    (OFFP_DATAFIM-OFFP_DATAINICIO) que é FLOW-TIME (fase aberta, inclui secagem).
+    Prova: 1 operador creditado 863 of_fp-h num dia; o rácio flow/ref isola as
+    fases de secagem (Acabamento-Preparação 36×, Acabamento-Pintura 12×).
+
+    Devolve ``{fase_id: {"K1": h, "K2": h, "K4": h}}`` só para fases de produção
+    com algum valor > 0 (12 das 41). NUNCA usa FP_HORA_COEF nem os COEFICIENTE_X
+    (sistema de €, CoeficienteX — invariante CLAUDE.md). `factory_raw` é
+    tenant-agnóstico. Best-effort → ``{}``."""
+    if session is None:
+        return {}
+    from sqlalchemy import text
+    from sqlalchemy.exc import SQLAlchemyError
+
+    sql = text(
+        """
+        SELECT "FP_ID"::text AS fase_id,
+               "FP_VALOR_REF_K1" AS k1,
+               "FP_VALOR_REF_K2" AS k2,
+               "FP_VALOR_REF_K4" AS k4
+        FROM factory_raw.fases_producao
+        WHERE "FP_PRODUCAO" = true
+          AND (COALESCE("FP_VALOR_REF_K1",0) > 0
+            OR COALESCE("FP_VALOR_REF_K2",0) > 0
+            OR COALESCE("FP_VALOR_REF_K4",0) > 0)
+        """
+    )
+    try:
+        rows = (await session.execute(sql)).mappings().all()
+    except SQLAlchemyError as exc:  # pragma: no cover — DB outage / missing table
+        logger.debug("Q.165.D phase_std_ref DB load skipped: %s", exc)
+        return {}
+    out: Dict[str, Dict[str, float]] = {}
+    for r in rows:
+        cls_map: Dict[str, float] = {}
+        for col, cls in (("k1", "K1"), ("k2", "K2"), ("k4", "K4")):
+            v = r[col]
+            if v is not None and float(v) > 0:
+                cls_map[cls] = float(v)
+        if cls_map:
+            out[str(r["fase_id"])] = cls_map
+    return out
+
+
+# Q.166.D — canoa/va'a → classe-K EQUIVALENTE (mesma contagem de lugares). O
+# FP_VALOR_REF só tem colunas K1/K2/K4, mas o trabalho de um C1 (canoa 1 lugar) ≈ K1,
+# C2≈K2, C4≈K4, V1 (va'a 1)≈K1, K5≈K4. Aproximação assumida (decisão do dono: derivar
+# touch-time de dados reais; o tempo-padrão por lugar é o melhor proxy disponível).
+_CANOE_CLASS_MAP: Dict[str, str] = {
+    "K1": "K1", "K2": "K2", "K4": "K4",
+    "C1": "K1", "C2": "K2", "C4": "K4", "V1": "K1", "K5": "K4",
+}
+
+
+async def _load_model_kayak_class_db(
+    session: Any,
+    tenant_id: UUID,
+) -> Dict[str, str]:
+    """Q.165.D/Q.166.D — mapa modelo (P_ID = OF_P_ID) → classe de kayak {K1,K2,K4},
+    derivado do prefixo de `produto.P_NOME` (ex.: "K1 Vanquish L WWR" → K1).
+
+    Q.166.D — inclui canoas/va'a (C1/C2/C4/V1/K5) mapeadas à classe-K equivalente
+    por contagem de lugares (`_CANOE_CLASS_MAP`), para o touch-time FP_VALOR_REF
+    cobrir ~70% dos modelos (era ~45% só com K1/K2/K4). Modelos sem prefixo caem
+    no fallback p25-flow. `factory_raw` tenant-agnóstico. Best-effort → ``{}``."""
+    if session is None:
+        return {}
+    from sqlalchemy import text
+    from sqlalchemy.exc import SQLAlchemyError
+
+    sql = text(
+        """
+        SELECT "P_ID"::text AS model_id,
+               upper(substring(trim("P_NOME") from '^(K1|K2|K4|C1|C2|C4|V1|K5)')) AS prefix
+        FROM factory_raw.produto
+        WHERE substring(trim("P_NOME") from '^(K1|K2|K4|C1|C2|C4|V1|K5)') IS NOT NULL
+        """
+    )
+    try:
+        rows = (await session.execute(sql)).mappings().all()
+    except SQLAlchemyError as exc:  # pragma: no cover — DB outage / missing table
+        logger.debug("Q.165.D model_kayak_class DB load skipped: %s", exc)
+        return {}
+    out: Dict[str, str] = {}
+    for r in rows:
+        cls = _CANOE_CLASS_MAP.get(str(r["prefix"]))
+        if cls:
+            out[str(r["model_id"])] = cls
+    return out
+
+
+async def _load_phase_p25_durations_db(
+    session: Any,
+    tenant_id: UUID,
+) -> Dict[str, float]:
+    """Q.166.D — touch-time fallback por fase = p25 do flow-time de `factory_raw.of_fp`
+    (horas). O p50/mediana é flow-time (fase aberta, inclui secagem/espera); o p25
+    (conclusões rápidas, sem o barco "sentar-se") aproxima o TRABALHO real. É o tier
+    abaixo do FP_VALOR_REF para fases/modelos sem tempo-padrão do ERP. count>=5 por
+    fase. `factory_raw` tenant-agnóstico. Best-effort → ``{}``."""
+    if session is None:
+        return {}
+    from sqlalchemy import text
+    from sqlalchemy.exc import SQLAlchemyError
+
+    sql = text(
+        f"""
+        SELECT op."OFFP_FP_ID"::text AS fase_id,
+               percentile_cont(0.25) WITHIN GROUP (ORDER BY {_OFFP_DUR_H}) AS p25_h
+        FROM factory_raw.of_fp op
+        WHERE {_OFFP_DUR_OK}
+          AND {_OFFP_DUR_H} > {_DUR_FLOOR_H} AND {_OFFP_DUR_H} <= {_DUR_CEIL_H}
+        GROUP BY op."OFFP_FP_ID"
+        HAVING count(*) >= 5
+        """
+    )
+    try:
+        rows = (await session.execute(sql)).mappings().all()
+    except SQLAlchemyError as exc:  # pragma: no cover — DB outage / missing table
+        logger.debug("Q.166.D phase_p25 DB load skipped: %s", exc)
+        return {}
+    return {
+        str(r["fase_id"]): float(r["p25_h"])
+        for r in rows if r["p25_h"] and float(r["p25_h"]) > 0
+    }
+
+
 async def _load_phase_catalog_db(
     session: Any,
     tenant_id: UUID,
 ) -> List[Dict[str, Any]]:
     """Q.164.C — catálogo canónico de fases de PRODUÇÃO de `factory_raw.fases_producao`
     (`FP_PRODUCAO=true`), ordenado por `FP_SEQUENCIA`.
+
+    Q.166.D — cada item leva `boat_fraction` = fração de barcos (de `v_of_is_boat`)
+    que historicamente passou pela fase (de `of_fp`). O `_canonical_route` usa-a para
+    incluir só fases COMUNS (>= limiar), não as raras/especiais (ex. Acabamento 3,
+    só ~36 barcos de sempre) — senão a rota-fallback over-inclui fases que quase
+    nenhum barco faz e cria gargalos fantasma.
 
     Devolve ``[{fase_id, sequence, fase_nome}]``. É o ÚLTIMO fallback de rota do
     RoutingResolver: um modelo sem QUALQUER rota (sem histórico of_fp >=2 obs, sem
@@ -295,14 +434,28 @@ async def _load_phase_catalog_db(
     from sqlalchemy import text
     from sqlalchemy.exc import SQLAlchemyError
 
+    # Q.166.D — boat_fraction: nº de barcos (v_of_is_boat) que passaram por cada fase
+    # em of_fp / total de barcos. Identifica fases COMUNS vs raras p/ a rota canónica.
     sql = text(
         """
-        SELECT "FP_ID"::text AS fase_id,
-               "FP_SEQUENCIA" AS seq,
-               "FP_NOME"      AS fase_nome
-        FROM factory_raw.fases_producao
-        WHERE "FP_PRODUCAO" = true
-        ORDER BY "FP_SEQUENCIA", "FP_ID"
+        WITH total AS (
+            SELECT count(*)::float AS n FROM factory_raw.v_of_is_boat WHERE is_boat = true
+        ),
+        per_phase AS (
+            SELECT op."OFFP_FP_ID"::text AS fase_id,
+                   count(DISTINCT op."OFFP_OF_ID") AS n_boats
+            FROM factory_raw.of_fp op
+            JOIN factory_raw.v_of_is_boat vb ON vb.of_id = op."OFFP_OF_ID" AND vb.is_boat = true
+            GROUP BY op."OFFP_FP_ID"
+        )
+        SELECT f."FP_ID"::text AS fase_id,
+               f."FP_SEQUENCIA" AS seq,
+               f."FP_NOME"      AS fase_nome,
+               COALESCE(pp.n_boats, 0) / NULLIF((SELECT n FROM total), 0) AS boat_fraction
+        FROM factory_raw.fases_producao f
+        LEFT JOIN per_phase pp ON pp.fase_id = f."FP_ID"::text
+        WHERE f."FP_PRODUCAO" = true
+        ORDER BY f."FP_SEQUENCIA", f."FP_ID"
         """
     )
     try:
@@ -315,6 +468,7 @@ async def _load_phase_catalog_db(
             "fase_id": str(r["fase_id"]),
             "sequence": int(r["seq"] or 0),
             "fase_nome": str(r["fase_nome"] or r["fase_id"]),
+            "boat_fraction": float(r["boat_fraction"] or 0.0),
         }
         for r in rows
     ]
