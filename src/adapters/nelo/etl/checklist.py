@@ -115,6 +115,13 @@ def build_rework_from_checklist(
                 "erp_ofch_id": str(inc.checklist_id),
                 "gravidade_raw": int(inc.gravidade),
                 "severity_hint": _severity(inc.gravidade),
+                # Q.167.E — `severe_return` é a chave que as marts de
+                # molde/disciplina lêem para o "rework grave"
+                # (`(context->>'severe_return')::boolean`). O OF_FP punha-a de
+                # OFFP_RETORNO_GRAVE; o checklist deriva-a da gravidade máxima
+                # (3 = high/grave). Sem isto, as measures `.graves` zeravam ao
+                # trocar a fonte para OF_CHECKLIST.
+                "severe_return": int(inc.gravidade) >= 3,
                 "estado": inc.estado,
                 "culpa_chefe": bool(inc.culpa_chefe),
                 "molde_reparar": bool(inc.molde_reparar),

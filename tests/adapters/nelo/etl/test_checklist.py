@@ -101,6 +101,16 @@ def test_context_carries_gravidade_and_source():
     assert row["context"]["source"] == "erp_of_checklist"
 
 
+def test_severe_return_true_only_for_gravidade_3():
+    """Q.167.E — `severe_return` (a chave que as marts lêem para "rework grave")
+    é True só na gravidade máxima (3 = high). 1/2 → False."""
+    grave = build_rework_from_checklist([_inc(gravidade=3)], BY_CODE)[0]
+    assert grave["context"]["severe_return"] is True
+    for g in (1, 2):
+        row = build_rework_from_checklist([_inc(gravidade=g)], BY_CODE)[0]
+        assert row["context"]["severe_return"] is False
+
+
 def test_skips_incident_with_no_detected_at():
     assert build_rework_from_checklist([_inc(detected_at=None)], BY_CODE) == []
 
