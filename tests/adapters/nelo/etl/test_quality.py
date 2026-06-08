@@ -1,22 +1,24 @@
 """Q.20.E — quality mirror tests.
 
-``_problem_codes`` / ``_is_incident`` / ``build_catalog`` / ``build_rework``
-are pure. The end-to-end ``mirror_quality`` runs against the recording
-fake session (conftest) with the adapter mocked.
+``_problem_codes`` / ``_is_incident`` / ``build_catalog`` are pure. The
+end-to-end ``mirror_quality`` runs against the recording fake session
+(conftest) with the adapter mocked.
+
+Q.167.E — o mirror já NÃO escreve ``rework_entry`` (a fonte única de defeitos
+é o checklist). Os testes garantem que só o ``error_catalog`` é escrito.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
 from unittest.mock import AsyncMock
-from uuid import NAMESPACE_DNS, UUID, uuid5
+from uuid import UUID
 
 from src.adapters.nelo.etl import quality as quality_mod
 from src.adapters.nelo.etl.quality import (
     _is_incident,
     _problem_codes,
     build_catalog,
-    build_rework,
     mirror_quality,
 )
 from src.adapters.nelo.schemas import OperationRow
@@ -91,45 +93,12 @@ def test_build_catalog_severe_return_lifts_severity():
     assert catalog[0]["mold_related"] is True
 
 
-# ── pure: rework rows ─────────────────────────────────────────────────────
+# ── end-to-end mirror (Q.167.E: catálogo SÓ, zero rework) ─────────────────
 
 
-def test_build_rework_id_is_deterministic():
-    """Same operation id → same uuid5 → idempotent re-import."""
-    op = _op(operation_id=12345, is_return=True)
-    rows = build_rework([op])
-    assert rows[0]["id"] == uuid5(NAMESPACE_DNS, "nelo-erp-offp-12345")
-
-
-def test_build_rework_plain_return_uses_return_code():
-    """A rework with no categorised problem still produces a row."""
-    rows = build_rework([_op(is_return=True)])
-    assert len(rows) == 1
-    assert rows[0]["error_code"] == "RETURN"
-
-
-def test_build_rework_skips_clean_operations():
-    assert build_rework([_op()]) == []
-
-
-def test_build_rework_detected_at_falls_back_to_end_at():
-    """No problem_logged_at → use end_at for detected_at."""
-    rows = build_rework([_op(is_return=True, problem_logged_at=None)])
-    assert rows[0]["detected_at"].year == 2025
-
-
-def test_build_rework_context_carries_product_type_name():
-    """Q.156.B (BD-1): a disciplina (TP_NOME) tem de chegar ao context —
-    é a chave que `marts.v_rework_por_disciplina_mes` agrupa. Sem ela a view
-    dava 0 linhas (sempre `product_type_name IS NULL`)."""
-    rows = build_rework([_op(is_return=True, product_type_name="Canoe Sprint")])
-    assert rows[0]["context"]["product_type_name"] == "Canoe Sprint"
-
-
-# ── end-to-end mirror ─────────────────────────────────────────────────────
-
-
-async def test_mirror_quality_imports_incidents(monkeypatch, recording_session):
+async def test_mirror_quality_writes_catalogue_not_rework(monkeypatch, recording_session):
+    """Q.167.E — o mirror escreve o vocabulário (`error_catalog`) mas NUNCA
+    `rework_entry` (a fonte única de defeitos é o checklist)."""
     monkeypatch.setattr(
         quality_mod.services, "list_operations",
         AsyncMock(return_value=[
@@ -146,7 +115,7 @@ async def test_mirror_quality_imports_incidents(monkeypatch, recording_session):
     catalog = [o for o in recording_session.added if isinstance(o, ErrorCatalog)]
     rework = [o for o in recording_session.added if isinstance(o, ReworkEntry)]
     assert {c.error_code for c in catalog} == {"PAINT-7", "MOLD-3"}
-    assert len(rework) == 2
+    assert rework == []                                # Q.167.E — zero dupla contagem
 
 
 async def test_mirror_quality_clean_window_is_noop(monkeypatch, recording_session):

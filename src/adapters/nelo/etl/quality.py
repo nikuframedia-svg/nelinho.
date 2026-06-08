@@ -1,4 +1,4 @@
-"""Q.20.E — quality mirror (ERP OF_FP → quality.error_catalog + rework_entry).
+"""Q.20.E — quality mirror (ERP OF_FP → quality.error_catalog).
 
 NELO records quality **inline** on the operation row: ``OF_FP`` carries
 ``OFFP_RETURN`` (the rework bit), ``OFFP_RETORNO_GRAVE`` (severe rework)
@@ -6,16 +6,16 @@ and a set of ``OFFP_PROBS_*`` problem-category columns. The child
 ``OFFP_PROBLEMA`` table is empty in MAR-KAYAKS — these columns are the
 live data. The adapter surfaces all of them on :class:`OperationRow`.
 
-This mirror imports, over a bounded ``[since, today]`` window:
+This mirror imports, over a bounded ``[since, today]`` window, the
+**distinct problem categories → ``quality.error_catalog``** (the error
+vocabulary consumed by the copilot ontology, rework/roi services, search).
 
-* distinct problem categories → ``quality.error_catalog`` (the vocabulary)
-* every operation flagged as rework / carrying a problem
-  → ``quality.rework_entry`` (one row per incident)
-
-Each rework row's ``id`` is a deterministic ``uuid5`` of the ERP
-operation id, so re-importing an overlapping window upserts instead of
-duplicating. ``severity_hint`` is ``high`` for a severe return
-(``OFFP_RETORNO_GRAVE``), else ``medium``.
+**Q.167.E — já NÃO escreve ``quality.rework_entry``.** A fonte canónica de
+defeitos passou a ser ``OF_CHECKLIST`` (mirror :mod:`.checklist`), que separa
+quem **causou** de quem **detectou** (RCA real, 78,5 % das linhas divergem).
+Os dois escreviam ``rework_entry`` com namespaces ``uuid5`` distintos → cada
+defeito contava 2×. Só o checklist escreve agora; o catálogo (vocabulário,
+não-rework) continua aqui.
 
 Heavy table — ``OF_FP`` has 2.6 M rows; always pass ``since`` to bound
 the window. The mirror runs incrementally.
@@ -24,13 +24,13 @@ the window. The mirror runs incrementally.
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, time, timezone, timedelta
+from datetime import date, timedelta
 from typing import Any, Dict, List, Optional
-from uuid import NAMESPACE_DNS, UUID, uuid5
+from uuid import UUID
 
 from src.adapters.nelo import services
 from src.adapters.nelo.schemas import OperationRow
-from src.quality.models.rework import ErrorCatalog, ReworkEntry
+from src.quality.models.rework import ErrorCatalog
 
 from .runner import EtlRunner, EtlRunResult
 from .sync import register_mirror
@@ -40,19 +40,6 @@ logger = logging.getLogger(__name__)
 # Default look-back when the caller passes no ``since`` — one year of
 # operations, enough for the quality dashboards without scanning 18 years.
 _DEFAULT_LOOKBACK_DAYS = 365
-
-
-def _as_utc(value: Any) -> Optional[datetime]:
-    """Coerce an ERP timestamp to a tz-aware (UTC) datetime —
-    ``rework_entry.detected_at`` is ``timestamptz``."""
-    dt: Optional[datetime] = None
-    if isinstance(value, datetime):
-        dt = value
-    elif isinstance(value, date):
-        dt = datetime.combine(value, time.min)
-    if dt is not None and dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt
 
 
 def _problem_codes(op: OperationRow) -> List[tuple[str, str]]:
@@ -106,48 +93,6 @@ def build_catalog(ops: List[OperationRow]) -> List[Dict[str, Any]]:
     return list(seen.values())
 
 
-def build_rework(ops: List[OperationRow]) -> List[Dict[str, Any]]:
-    """One ``rework_entry`` row per quality incident.
-
-    ``id`` is ``uuid5`` of the ERP operation id so a re-imported window
-    upserts rather than duplicates. ``error_code`` is the first problem
-    category; a plain rework with no categorised problem uses ``RETURN``.
-    """
-    rows: List[Dict[str, Any]] = []
-    for op in ops:
-        if not _is_incident(op):
-            continue
-        detected = _as_utc(op.problem_logged_at) or _as_utc(op.end_at) or _as_utc(op.start_at)
-        if detected is None:
-            continue
-        codes = _problem_codes(op)
-        error_code = codes[0][0] if codes else "RETURN"
-        error_desc = codes[0][1] if codes else "Retrabalho sem problema categorizado"
-        rows.append({
-            "id": uuid5(NAMESPACE_DNS, f"nelo-erp-offp-{op.operation_id}"),
-            "of_id": str(op.work_order_id),
-            "model_id": str(op.product_id) if op.product_id else None,
-            "phase_id_causer": str(op.phase_id),
-            "phase_id_rework": str(op.phase_id),
-            "error_code": error_code,
-            "error_description": error_desc,
-            "detected_at": detected,
-            "context": {
-                "erp_offp_id": str(op.operation_id),
-                "is_return": bool(op.is_return),
-                "severe_return": bool(op.severe_return),
-                "phase_name": op.phase_name,
-                # Q.156.C (BD-1) — restaura a chave que a view
-                # `marts.v_rework_por_disciplina_mes` espera (disciplina =
-                # TP_NOME). Estava no contrato desde Q.108.E.1 mas tinha sido
-                # largada → a view dava sempre 0 linhas.
-                "product_type_name": op.product_type_name,
-                "source": "erp_of_fp",
-            },
-        })
-    return rows
-
-
 async def mirror_quality(
     *,
     session,
@@ -164,23 +109,13 @@ async def mirror_quality(
         incidents = [op for op in ops if _is_incident(op)]
         run.count_skipped(len(ops) - len(incidents))
 
-        # 1. Error catalogue — distinct problem vocabulary.
+        # Error catalogue — distinct problem vocabulary. Q.167.E: o rework_entry
+        # foi removido (o checklist é a fonte única); só o catálogo fica.
         catalog = build_catalog(incidents)
         await run.upsert(
             ErrorCatalog, catalog,
             key_fields=["error_code"],
             update_fields=["name", "severity_hint", "typical_phase", "mold_related"],
-        )
-
-        # 2. Rework entries — one deterministically-keyed row per incident.
-        rework = build_rework(incidents)
-        await run.upsert(
-            ReworkEntry, rework,
-            key_fields=["id"],
-            update_fields=[
-                "of_id", "model_id", "phase_id_causer", "phase_id_rework",
-                "error_code", "error_description", "detected_at", "context",
-            ],
         )
         logger.info(
             "quality mirror — window=%s..%s incidents=%d catalogue=%d",

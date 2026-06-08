@@ -116,8 +116,9 @@ async def test_incremental_job_noop_when_sqlserver_disabled(monkeypatch):
 
 def test_incremental_mirrors_are_operational_only():
     """Q.54.A — só mirrors operacionais leves; nada de master/molds/
-    skills/time_mining no incremental, nem inventados."""
-    assert scheduler._INCREMENTAL_MIRRORS == ["stock", "calendar", "quality"]
+    skills/time_mining no incremental, nem inventados. Q.167.E adicionou
+    `checklist` (defeitos RCA, fonte única) ao incremental."""
+    assert scheduler._INCREMENTAL_MIRRORS == ["stock", "calendar", "quality", "checklist"]
     # Nunca inventar purchase_orders / suppliers (não existem).
     assert "purchase_orders" not in scheduler._INCREMENTAL_MIRRORS
     assert "suppliers" not in scheduler._INCREMENTAL_MIRRORS

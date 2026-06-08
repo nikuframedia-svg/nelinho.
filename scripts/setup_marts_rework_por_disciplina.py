@@ -29,6 +29,9 @@ SELECT
     )                                          AS rework_grave
 FROM quality.rework_entry
 WHERE (context->>'product_type_name') IS NOT NULL
+  -- Q.167.E — fonte única de defeitos = OF_CHECKLIST (RCA canónico). Ignora
+  -- linhas stale do antigo mirror OF_FP (evita dupla contagem antes do DELETE).
+  AND (context->>'source') = 'erp_of_checklist'
 GROUP BY 1, 2
 """
 

@@ -45,11 +45,14 @@ async def _nelo_erp_sync_job() -> None:
 
 #: Mirrors operacionais leves que o sync incremental Q.54.A corre de
 #: 5/5 min. Master/molds/skills mudam devagar (cadência nocturna chega);
-#: time_mining é pesado (cadência semanal). Estes três espelham dados
-#: que mudam ao longo do dia — stock, calendário, qualidade.
+#: time_mining é pesado (cadência semanal). Estes espelham dados que mudam
+#: ao longo do dia — stock, calendário, qualidade (catálogo) e checklist
+#: (defeitos RCA — fonte única Q.167.E). Cada um tem watermark próprio
+#: (EtlRun.source), por isso só busca o delta — sem colisão entre quality
+#: e checklist.
 #: Q.115.T: phase_history e worker_assignment adicionados ao incremental
 #: (15 min em vez de 5 — tabelas de alta cardinalidade).
-_INCREMENTAL_MIRRORS = ["stock", "calendar", "quality"]
+_INCREMENTAL_MIRRORS = ["stock", "calendar", "quality", "checklist"]
 _INCREMENTAL_MIRRORS_PHASE = ["phase_history", "worker_assignment"]
 
 

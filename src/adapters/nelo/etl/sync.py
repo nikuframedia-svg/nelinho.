@@ -53,16 +53,12 @@ def _load_mirror_modules() -> None:
         "master_data",       # Q.20.B
         "molds",             # Q.20.C
         "skills",            # Q.20.D
-        "quality",           # Q.20.E
-        # Q.167.A.1 — `checklist` (RCA canónico OF_CHECKLIST, causer≠detector) está
-        # ESTACIONADO fora do auto-sync de propósito: corre em paralelo com `quality`
-        # (OF_FP) e AMBOS escrevem `quality.rework_entry` → as marts (COUNT(*))
-        # dupla-contariam o mesmo defeito. NÃO está aqui (não é importado → não é
-        # registado → o nightly/incremental NUNCA o corre). Activar = migração de
-        # fonte: (1) decidir se OF_CHECKLIST é a fonte única de defeitos (vs manter
-        # OFFP_RETURN); (2) marts/measures filtram `context->>'source'`; (3) limpar as
-        # linhas `erp_of_fp` stale. Até lá corre-se à mão importando o módulo:
-        # `import src.adapters.nelo.etl.checklist; await mirror_checklist(...)`.
+        "quality",           # Q.20.E — só `error_catalog` (vocabulário); já NÃO rework
+        # Q.167.E — `checklist` é agora a FONTE ÚNICA de defeitos (RCA canónico
+        # OF_CHECKLIST: causer≠detector em 78,5% das linhas). O `quality` (OF_FP)
+        # deixou de escrever `rework_entry`, por isso já não há dupla contagem. Os
+        # leitores filtram `context->>'source' = 'erp_of_checklist'` (Q.167.E.3).
+        "checklist",         # Q.167.E
         "time_mining",       # Q.20.F
         "stock",             # Q.52.K
         "calendar",          # Q.53.B

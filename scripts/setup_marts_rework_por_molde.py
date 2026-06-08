@@ -33,6 +33,8 @@ SELECT
     )                                                 AS rework_grave
 FROM quality.rework_entry
 WHERE mold_id IS NOT NULL
+  -- Q.167.E — fonte única de defeitos = OF_CHECKLIST (RCA canónico).
+  AND (context->>'source') = 'erp_of_checklist'
 GROUP BY 1, 2
 """
 
