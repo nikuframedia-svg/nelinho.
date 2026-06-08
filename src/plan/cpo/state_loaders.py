@@ -1023,13 +1023,51 @@ async def _load_open_orders_db(
     # Substitui o critério deck+casco que perdia C1/Nacra/Prepreg e incluía pagaias.
     # scope="boats_only": JOIN INNER a v_of_is_boat filtrando is_boat=true.
     # scope="all": sem join extra → back-compat exacto (não dropa órfãos).
-    if scope == "boats_only":
+    # Q.157.H / Q.167.D — scope:
+    #   "boats_only"      → só barcos (INNER v_of_is_boat).
+    #   "boats_and_molds" → barcos UNION moldes-em-reparação (opt-in). O ramo dos
+    #                       barcos é BYTE-IDÊNTICO ao boats_only → zero regressão.
+    #   "all"             → sem join extra (back-compat).
+    if scope in ("boats_only", "boats_and_molds"):
         boats_join = (
             "JOIN factory_raw.v_of_is_boat vb"
             ' ON vb.of_id = ofb."OF_ID" AND vb.is_boat = true'
         )
     else:
         boats_join = ""
+
+    # Q.167.D — moldes em reparação entram como ramo UNION separado (decisão Luís:
+    # moldes no scope). Molde = P_TP_ID=82 (v_of_is_mold); em reparação = fase atual
+    # em {13,14} com op aberta (= getMoldesAReparar, 23 live). São route-truncated
+    # single-op (como as reparações de barco); operadores de molde existem na
+    # skill-matrix (fase 14 = 23 activos) → o axioma skill-match atribui o reparador
+    # certo. NÃO exige cliente de encomenda (moldes não são encomendas). `is_mold`
+    # viaja para lane/UI; `repair_rank=0` (prioridade de reparação).
+    molds_union = ""
+    if scope == "boats_and_molds":
+        molds_union = """
+          UNION ALL
+          SELECT ofb."OF_ID"::text   AS of_id,
+                 ofb."OF_P_ID"::text AS modelo_id,
+                 ofb."OF_FP_ID"::text AS current_fase_id,
+                 0 AS repair_rank,
+                 COALESCE(NULLIF(ofb."OF_DATAENTREGA", ''),
+                          NULLIF(ofb."OF_TR_DATA_PREVISTA", ''),
+                          NULLIF(ofb."OF_PLANO_DATA_PREVISTA", '')) AS data_entrega_prevista,
+                 NULLIF(ofb."OF_DATA", '') AS of_data_sort,
+                 true AS is_mold
+          FROM factory_raw.ordemfabrico ofb
+          JOIN factory_raw.fases_producao f ON f."FP_ID" = ofb."OF_FP_ID"
+          JOIN factory_raw.v_of_is_mold vm ON vm.of_id = ofb."OF_ID" AND vm.is_mold = true
+          WHERE ofb."OF_P_ID" IS NOT NULL
+            AND f."FP_PRODUCAO" = true
+            AND ofb."OF_FP_ID" IN (13, 14)
+            AND EXISTS (
+              SELECT 1 FROM factory_raw.of_fp op
+              WHERE op."OFFP_OF_ID" = ofb."OF_ID"
+                AND op."OFFP_FP_ID" = ofb."OF_FP_ID"
+                AND NULLIF(op."OFFP_DATAFIM", '') IS NULL
+            )"""
 
     # Q.158.G — predicado de WIP ACTIVO (só quando staleness_months truthy):
     # actividade recente em of_fp OU criação recente. GREATEST(...,'epoch') p/ datas
@@ -1062,7 +1100,7 @@ async def _load_open_orders_db(
           GROUP BY op."OFFP_OF_ID"
         )
         SELECT q.of_id, q.modelo_id, q.current_fase_id,
-               q.data_entrega_prevista,
+               q.data_entrega_prevista, q.is_mold,
                COALESCE(done.done_fase_ids, ARRAY[]::text[]) AS done_fase_ids
         FROM (
           SELECT ofb."OF_ID"::text   AS of_id,
@@ -1077,7 +1115,8 @@ async def _load_open_orders_db(
                  COALESCE(NULLIF(ofb."OF_DATAENTREGA", ''),
                           NULLIF(ofb."OF_TR_DATA_PREVISTA", ''),
                           NULLIF(ofb."OF_PLANO_DATA_PREVISTA", '')) AS data_entrega_prevista,
-                 NULLIF(ofb."OF_DATA", '') AS of_data_sort
+                 NULLIF(ofb."OF_DATA", '') AS of_data_sort,
+                 false AS is_mold
           FROM factory_raw.ordemfabrico ofb
           JOIN factory_raw.fases_producao f ON f."FP_ID" = ofb."OF_FP_ID"
           -- Q.158 — INNER JOIN: a OF tem de ter cliente de encomenda (a regra
@@ -1095,7 +1134,7 @@ async def _load_open_orders_db(
               WHERE op."OFFP_OF_ID" = ofb."OF_ID"
                 AND op."OFFP_FP_ID" = ofb."OF_FP_ID"
                 AND NULLIF(op."OFFP_DATAFIM", '') IS NULL
-            ){staleness_pred}
+            ){staleness_pred}{molds_union}
         ) q
         LEFT JOIN done ON done.of_id = q.of_id
         ORDER BY
@@ -1159,7 +1198,9 @@ async def _load_open_orders_db(
                 if r["current_fase_id"] is not None
                 else False
             ),
-            "data_entrega_prevista": r["data_entrega_prevista"],
+            # Q.167.D — molde em reparação (scope=boats_and_molds). Default false
+            # (barcos). Lane/UI + permite ao decoder/UI distinguir molde de barco.
+            "is_mold": bool(r["is_mold"]),
             # Q.158 — fases já concluídas (OFFP_DATAFIM preenchido); lista de
             # fase_id (texto). O RoutingResolver usa-as para nunca re-planear
             # trabalho já feito. Pode ser None quando PostgreSQL devolve NULL
