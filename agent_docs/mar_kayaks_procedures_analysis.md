@@ -15,6 +15,11 @@
 3. **O trabalho real é estreito.** Duas passagens de análise (larga: 106 deltas; profunda: 17
    confirmados / 8 corrigidos / **7 refutados**). Metade do que parecia mudança ou já está feito, ou é
    melhor manter.
+4. **Correção (verificada na BD real 2026-06-08):** a fase 14 "A Reparar" é **DUAL** — tem 55 OFs
+   abertas: 23 moldes (`OF_ID` 70000-79999, `P_TP_ID=82`) **+ 32 barcos** (ex. "K2 Vanquish",
+   "Ocean Ski"). Em `boats_only` o `v_of_is_boat` já exclui os moldes, logo os barcos em fase 14 estão
+   **correctamente** marcados como reparação — **não há bug de dados** (o "P0 fase-14" estava
+   sobreavaliado). Pôr moldes no scope é trabalho **aditivo**, não uma correção.
 
 ## O motor de planeamento (corpos lidos ao vivo)
 
@@ -39,8 +44,11 @@ vs `produto_Classes(1)` = 811 barcos).
 
 ## Mudanças verificadas que valem a pena (P0)
 
-1. **Fase 14 confla barco↔molde** no `REPAIR_PHASE_IDS` (state.py:113). `of_EmReparacao`(barco)={76,77}+
-   colagem(53) aberta; `getMoldesAReparar`(molde)=fase 14. → discriminar por `is_boat`.
+1. ~~Fase 14 confla barco↔molde~~ **(REVISTO — não é bug).** A fase 14 é dual (23 moldes + 32 barcos),
+   mas `boats_only` já exclui moldes via `v_of_is_boat`, logo os barcos em fase 14 estão correctamente
+   em reparação. `of_EmReparacao`(barco-lista)={76,77}+colagem(53); `getMoldesAReparar`(molde)=fase 14.
+   O trabalho real aqui é **aditivo**: pôr moldes no scope do CPO (decisão do Luis) — exige
+   `v_of_is_mold` + routing de reparação de molde + skills. Não é uma correção de dados.
 2. **`phase_id_causer == phase_id_rework`** na ETL de qualidade (quality.py:130-131). O ERP separa
    `OFCH_FP_ID` (causou) de `OFCH_FP_ID_CHK` (detectou). Colapsá-los invalida o Root-Cause.
 3. **Cadeia de culpa não populada** (`causer_employee_id`/`chefe_employee_id`/`original_op_id`) — o ERP
