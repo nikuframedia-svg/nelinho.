@@ -44,6 +44,7 @@ from datetime import date
 
 from .schemas import (
     BomRow,
+    ChecklistIncidentRow,
     EntityPhaseRow,
     EntityRow,
     FasesOfHistoryRow,
@@ -389,6 +390,43 @@ FROM dbo.MOLDES mld WITH (NOLOCK)
 """
 
 
+# Q.167.A — canonical root-cause source. `OF_CHECKLIST` is the only place
+# the ERP separates the phase that CAUSED a defect (`OFCH_FP_ID`) from the
+# phase that DETECTED it (`OFCH_FP_ID_CHK`) — distinct in 78.5% of rows —
+# and names the culprit operation (`OFCH_OFFP_ID_CULPA`), from which the
+# responsible operator + chefe come via `OFFP_EQ`. Only real defects
+# (`OFCH_GRAVIDADE >= 1`) are surfaced; gravidade 0 is an "Ok" tick.
+# Heavy table (3 M rows) — always window on `OFCH_DATA_ACTUALIZACAO`.
+_VW_CHECKLIST_SQL = """
+SELECT
+    ch.OFCH_ID            AS checklist_id,
+    ch.OFCH_OF_ID         AS work_order_id,
+    ch.OFCH_FP_ID         AS phase_id_causer,
+    ch.OFCH_FP_ID_CHK     AS phase_id_detector,
+    ch.OFCH_GRAVIDADE     AS gravidade,
+    ch.OFCH_ESTADO        AS estado,
+    ch.OFCH_CULPA_CHEFE   AS culpa_chefe,
+    ch.OFCH_MOLDE_REPARAR AS molde_reparar,
+    ch.OFCH_OFFP_ID       AS detector_op_id,
+    ch.OFCH_OFFP_ID_CULPA AS causer_op_id,
+    ch.OFCH_DESCR         AS description,
+    COALESCE(ch.OFCH_DATA_VERIFICACAO, ch.OFCH_DATA_ACTUALIZACAO) AS detected_at,
+    of_.OF_P_ID           AS product_id,
+    pt.TP_NOME            AS product_type_name,
+    chefe.OFFPEQ_E_ID     AS causer_chefe_eid,
+    oper.OFFPEQ_E_ID      AS causer_operator_eid
+FROM        dbo.OF_CHECKLIST ch  WITH (NOLOCK)
+INNER JOIN  dbo.ORDEMFABRICO of_ WITH (NOLOCK) ON of_.OF_ID = ch.OFCH_OF_ID
+INNER JOIN  dbo.PRODUTO      p   WITH (NOLOCK) ON p.P_ID = of_.OF_P_ID
+LEFT JOIN   dbo.PRODUTO_TIPO pt  WITH (NOLOCK) ON pt.TP_ID = p.P_TP_ID
+OUTER APPLY (SELECT TOP 1 eq.OFFPEQ_E_ID FROM dbo.OFFP_EQ eq WITH (NOLOCK)
+             WHERE eq.OFFPEQ_OFFP_ID = ch.OFCH_OFFP_ID_CULPA AND eq.OFFPEQ_CHEFE = 1) chefe
+OUTER APPLY (SELECT TOP 1 eq.OFFPEQ_E_ID FROM dbo.OFFP_EQ eq WITH (NOLOCK)
+             WHERE eq.OFFPEQ_OFFP_ID = ch.OFCH_OFFP_ID_CULPA AND eq.OFFPEQ_CHEFE = 0) oper
+WHERE ch.OFCH_GRAVIDADE >= 1
+"""
+
+
 async def _fetch_all(sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Run a SELECT and return list of row dicts (column → value)."""
     engine = get_engine()
@@ -519,6 +557,34 @@ async def list_operations(
     }
     rows = await _fetch_all(sql, params)
     return [OperationRow(**r) for r in rows]
+
+
+async def list_checklist_incidents(
+    date_from: date,
+    date_to: date,
+    limit: int = 200_000,
+) -> list[ChecklistIncidentRow]:
+    """Quality-checklist defects (`OF_CHECKLIST`) updated within the window.
+
+    The canonical root-cause source — see `_VW_CHECKLIST_SQL`. Window on
+    `OFCH_DATA_ACTUALIZACAO` (the table is 3 M rows; the 12-month window is
+    ~99 k of which `OFCH_GRAVIDADE >= 1` is a subset).
+    """
+    sql = f"""
+    SELECT TOP {int(limit)} v.* FROM (
+        {_VW_CHECKLIST_SQL}
+          AND ch.OFCH_DATA_ACTUALIZACAO >= :date_from
+          AND ch.OFCH_DATA_ACTUALIZACAO <  :date_to_plus_one
+    ) v
+    ORDER BY v.detected_at DESC
+    """
+    from datetime import datetime, timedelta
+    params = {
+        "date_from": datetime.combine(date_from, datetime.min.time()),
+        "date_to_plus_one": datetime.combine(date_to + timedelta(days=1), datetime.min.time()),
+    }
+    rows = await _fetch_all(sql, params)
+    return [ChecklistIncidentRow(**r) for r in rows]
 
 
 async def list_order_labor(work_order_id: int) -> list[OrderLaborRow]:

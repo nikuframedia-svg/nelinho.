@@ -212,6 +212,41 @@ class OrderLaborRow(_Frozen):
     is_chefe: bool  # OFFPEQ_CHEFE
 
 
+# ─── Checklist defects (OF_CHECKLIST) — canonical root-cause source ─────
+
+
+class ChecklistIncidentRow(_Frozen):
+    """One defect logged on the ERP quality checklist (`OF_CHECKLIST`).
+
+    Unlike `OF_FP` (which only knows the phase a rework *happened* in),
+    `OF_CHECKLIST` is the canonical root-cause source: it separates the
+    phase that **caused** the defect (`OFCH_FP_ID`) from the phase that
+    **detected** it (`OFCH_FP_ID_CHK`) — distinct in 78.5% of rows — and
+    points at the culprit operation (`OFCH_OFFP_ID_CULPA`), from which the
+    responsible operator/chefe is resolved via `OFFP_EQ`.
+
+    Only real defects are surfaced (`OFCH_GRAVIDADE >= 1`); gravidade 0 is
+    an "Ok" checklist tick, not a defect.
+    """
+
+    checklist_id: int  # OFCH_ID
+    work_order_id: int  # OFCH_OF_ID
+    phase_id_causer: int  # OFCH_FP_ID — fase que CAUSOU
+    phase_id_detector: Optional[int] = None  # OFCH_FP_ID_CHK — fase que DETECTOU
+    gravidade: int  # OFCH_GRAVIDADE (1/2/3)
+    estado: Optional[int] = None  # OFCH_ESTADO
+    culpa_chefe: bool = False  # OFCH_CULPA_CHEFE — culpa atribuída ao chefe
+    molde_reparar: bool = False  # OFCH_MOLDE_REPARAR
+    detector_op_id: Optional[int] = None  # OFCH_OFFP_ID — operação onde detectado
+    causer_op_id: Optional[int] = None  # OFCH_OFFP_ID_CULPA — operação culpada
+    description: Optional[str] = None  # OFCH_DESCR
+    detected_at: Optional[datetime] = None
+    product_id: Optional[int] = None  # OF_P_ID
+    product_type_name: Optional[str] = None  # TP_NOME (disciplina)
+    causer_chefe_eid: Optional[int] = None  # OFFPEQ_E_ID (chefe da op culpada)
+    causer_operator_eid: Optional[int] = None  # OFFPEQ_E_ID (operário da op culpada)
+
+
 # ─── Phases (vw_pp1_phases) — master of work centres ───────────────────
 
 

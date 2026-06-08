@@ -54,6 +54,7 @@ def _load_mirror_modules() -> None:
         "molds",             # Q.20.C
         "skills",            # Q.20.D
         "quality",           # Q.20.E
+        "checklist",         # Q.167.A — RCA canónico (OF_CHECKLIST, causer≠detector)
         "time_mining",       # Q.20.F
         "stock",             # Q.52.K
         "calendar",          # Q.53.B
