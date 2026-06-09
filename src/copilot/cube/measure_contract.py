@@ -2908,6 +2908,35 @@ _MATERIAL_STOP_WORDS = {
     "hoje", "ontem", "para", "que", "porque",
 }
 
+# Q.167.I — termos GENÉRICOS de domínio que NÃO discriminam um material.
+# O material "Gel generico, só para efeitos de custos de produção" exportava o
+# token "produção" pela estratégia 2 (retrieval) → falso-match em QUALQUER
+# pergunta com a palavra "produção" → abstenção indevida. Estes tokens são
+# ignorados na detecção: um material só é "mencionado" se um token DISTINTIVO
+# (gel, resina, fibra…) aparecer.
+_MATERIAL_GENERIC_TOKENS = {
+    "producao", "produçao", "produção", "custos", "custo",
+    "efeitos", "efeito", "geral", "generico", "genérico",
+    "fase", "fases", "qualidade", "material", "materiais",
+    "total", "mensal", "consumo", "disciplina",
+}
+
+
+def _discriminative_material_tokens(name: str) -> list[str]:
+    """Tokens (≥4 chars) do nome do material que servem para o IDENTIFICAR.
+
+    Exclui stop-words PT-PT e termos de domínio genéricos (Q.167.I), para que
+    um material só seja considerado "mencionado" quando um token DISTINTIVO
+    aparece na pergunta — nunca uma palavra comum como "produção".
+    """
+    out: list[str] = []
+    for raw in re.findall(r"[A-Za-zÀ-ÿ0-9]{4,}", name):
+        tok = raw.lower()
+        if tok in _MATERIAL_STOP_WORDS or tok in _MATERIAL_GENERIC_TOKENS:
+            continue
+        out.append(tok)
+    return out
+
 
 def extract_mentioned_material(
     question: str,
@@ -2955,11 +2984,13 @@ def extract_mentioned_material(
     name, score = top_materials[0]
     if score < _MATERIAL_MENTION_SCORE_THRESHOLD:
         return None
-    tokens = [t.lower() for t in re.findall(r"[A-Za-zÀ-ÿ0-9]{4,}", name)]
+    tokens = _discriminative_material_tokens(name)
     if not tokens:
         return None
     q_low = question.lower()
-    if any(tok in q_low for tok in tokens):
+    # Q.167.I — word-boundary: evita substring (escola⊃cola) e palavras genéricas
+    # já filtradas em `_discriminative_material_tokens`.
+    if any(re.search(rf"\b{re.escape(tok)}\b", q_low) for tok in tokens):
         return name
     return None
 
