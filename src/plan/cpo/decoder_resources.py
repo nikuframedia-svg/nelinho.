@@ -28,7 +28,7 @@ from src.plan.cpo.decoder_helpers import (
     _last_on_machine_has_different_family,
 )
 from src.plan.cpo.pair_assignment import prefers_pair, requires_pair
-from src.plan.cpo.state import FactoryState
+from src.plan.cpo.state import NO_LABOR_PHASE_IDS, FactoryState
 from src.plan.engines.scheduling_adapter import SchedulingOperation
 
 logger = logging.getLogger(__name__)
@@ -451,7 +451,10 @@ def _select_workers(
         # perform it. If the tenant has a skill_matrix and this phase_id
         # simply isn't mapped, that's a config bug.
         skill_matrix = getattr(state, "skill_matrix", None)
-        if skill_matrix and op.phase_id:
+        # Q.167.I — fases sem mão-de-obra (estado/espera + Cura) têm pool vazio
+        # por DESIGN; não é gap de skill-seed → não poluir com avisos.
+        is_no_labor = op.phase_id is not None and str(op.phase_id) in NO_LABOR_PHASE_IDS
+        if skill_matrix and op.phase_id and not is_no_labor:
             warnings.append(
                 f"No workers in skill_matrix for phase {op.phase_id!r} "
                 f"(op {op.operation_id}); scheduled as manual."

@@ -215,6 +215,29 @@ def test_new2_quiet_when_skill_matrix_is_empty():
     assert not any("skill_matrix" in w.lower() for w in result["warnings"])
 
 
+def test_no_warn_for_no_labor_phase_q167i():
+    """Q.167.I — fases SEM mão-de-obra (Cura '2', estado '11') têm pool vazio
+    por design; o decoder agenda como manual mas NÃO emite o aviso 'verify
+    skill seed' (era falso-alarme). Confirmado live: 0 crew em offp_eq p/ 2 e 11.
+    """
+    state = FactoryState(tenant_id=uuid4())
+    # Matrix populada para OUTRA fase — a nossa (Cura '2') fica sem pool.
+    state.skill_matrix = {"OTHER_PHASE": {"w1", "w2"}}
+    ops = [_op("A", "OF1", 1, phase_id="2")]
+
+    horizon_start = datetime(2026, 4, 22, 8, 0)
+    horizon_end = horizon_start + timedelta(days=2)
+    result = decode(
+        Chromosome(permutation=[0]), ops, [_machine()], state,
+        horizon_start, horizon_end,
+    )
+    # Op na mesma agendada (manual), mas SEM aviso de skill_matrix.
+    assert result["operations"], "op should still be scheduled as manual"
+    assert not any(
+        "skill_matrix" in w.lower() for w in result["warnings"]
+    ), f"no-labor phase should not warn, got: {result['warnings']}"
+
+
 # ---------------------------------------------------------------------------
 # Sprint Q.8 — Pair-preferred phases downgrade to solo when pool is thin
 # ---------------------------------------------------------------------------

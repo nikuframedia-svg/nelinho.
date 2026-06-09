@@ -125,6 +125,15 @@ STATUS_PHASE_IDS: frozenset[str] = frozenset({
     "32",  # Pendente
 })
 
+# Q.167.I — fases SEM mão-de-obra: pool de operadores vazio é ESPERADO, não um
+# gap de skill-seed. Não emitir o aviso "verify skill seed" para estas. Inclui as
+# fases de estado/espera + a Cura (secagem química, não trabalho — ver
+# NELO_CURING_GAPS_SEED). Confirmado live 2026-06-09: 0 crew em
+# factory_raw.offp_eq para 2 ("Cura") e 11 ("Não Laminado").
+NO_LABOR_PHASE_IDS: frozenset[str] = STATUS_PHASE_IDS | frozenset({
+    "2",  # Cura — secagem química, sem operador
+})
+
 
 def normalize_phase_code(name: Optional[str]) -> str:
     """Canonical phase code: strip accents, UPPERCASE, spaces/hyphens/
