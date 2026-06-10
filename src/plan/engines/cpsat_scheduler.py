@@ -26,6 +26,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import defaultdict
+from itertools import pairwise
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -120,7 +121,7 @@ class CPSATScheduler:
         for op in operations:
             oid = str(op.operation_id)
             op_by_id[oid] = op
-            d = max(1, int(round(float(op.duration_minutes))))
+            d = max(1, round(float(op.duration_minutes)))
             dur_min[oid] = d
             team[oid] = max(1, int(getattr(op, "team_size", 1) or 1))
             s = model.NewIntVar(0, H, f"s_{oid}")
@@ -143,7 +144,7 @@ class CPSATScheduler:
                     str(o.operation_id),
                 ),
             )
-            for prev, cur in zip(so, so[1:]):
+            for prev, cur in pairwise(so):
                 gap_h = 0.0
                 mg = getattr(state, "min_gap_hours", None)
                 if mg is not None:
@@ -151,7 +152,7 @@ class CPSATScheduler:
                         gap_h = float(mg(prev.phase_id, cur.phase_id))
                     except Exception:  # pragma: no cover — defensivo
                         gap_h = 0.0
-                gap = max(0, int(round(gap_h * 60)))
+                gap = max(0, round(gap_h * 60))
                 model.Add(starts[str(cur.operation_id)]
                           >= ends[str(prev.operation_id)] + gap)
 

@@ -36,7 +36,6 @@ def assign_concrete(
     starts_min: Dict[str, int],     # op_id → start (min desde horizon_start) do CP-SAT
 ) -> List[ScheduledOp]:
     """Atribui recursos concretos aos tempos do CP-SAT (start como piso). 24/7."""
-    op_by_id = {str(o.operation_id): o for o in operations}
     # ordem = start do CP-SAT, depois OF e sequência (determinístico).
     ordered = sorted(
         operations,
