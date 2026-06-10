@@ -39,6 +39,7 @@ async def _run_copilot_action(
     request: CopilotActionRequest,
     tenant_id: UUID,
     session: AsyncSession,
+    actor_id: Optional[UUID] = None,
 ) -> Dict[str, Any]:
     """Núcleo da execução de uma acção do copiloto.
 
@@ -77,6 +78,9 @@ async def _run_copilot_action(
             entity_type="copilot_decision_pr",
             entity_id=pr.id,
             action="INSERT",
+            # Q.171.B — o ator real (era omisso: o audit registava a criação
+            # do PR sem QUEM a fez; o /action-dev fica None honesto).
+            actor_id=actor_id,
             new_values={
                 "suggestion_id": str(request.suggestion_id),
                 "title": pr.title,
@@ -191,7 +195,9 @@ async def execute_action(
     - OPEN_ENTITY: Hint para frontend navegar
     - RUN_RUNBOOK: Executar runbook
     """
-    return await _run_copilot_action(request, tenant_id, session)
+    return await _run_copilot_action(
+        request, tenant_id, session, actor_id=user.user_id,
+    )
 
 
 @router.post(

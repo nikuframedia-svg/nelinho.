@@ -16,7 +16,13 @@ from sqlalchemy import select, and_, or_, desc, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.governance.audit_service import audit_change
-from src.shared.auth.headers import require_tenant_header, require_user_uuid
+from src.shared.auth.headers import (
+    get_current_user_or_dev_header,
+    require_tenant_header,
+    require_user_uuid,
+)
+from src.shared.auth.jwt_handler import UserContext
+from src.shared.auth.rbac import Role, check_sod
 from src.shared.database import get_session
 from src.shared.models.governance import SharedDecisionRun, DecisionApproval, DecisionStatus, ApprovalStatus
 from src.shared.time import utc_now
@@ -27,6 +33,19 @@ router = APIRouter(prefix="/decisions", tags=["Decisions"])
 
 get_tenant_id = require_tenant_header
 get_user_id = require_user_uuid
+
+
+def _role_from_string(raw: str) -> Role:
+    """Q.171.B — papel REAL do contexto auth (era hardcoded
+    MANAGER_OPERATIONS para QUALQUER aprovador — bypass de SoD). Aliases
+    de admin normalizados a montante (headers.py); desconhecido → 403."""
+    try:
+        return Role(str(raw or "").strip().lower())
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Papel '{raw}' desconhecido — sem autorização para aprovar.",
+        )
 
 
 # ============================================================================
@@ -168,7 +187,7 @@ async def propose_decision(
             reason="decision proposed",
         )
 
-    from src.shared.auth.rbac import SOD_POLICIES, Role
+    from src.shared.auth.rbac import SOD_POLICIES
 
     required_approver_roles = SOD_POLICIES.get(
         request.action_type,
@@ -317,7 +336,9 @@ async def approve_decision(
     decision_id: UUID,
     request: DecisionApprovalRequest,
     tenant_id: UUID = Depends(get_tenant_id),
-    user_id: UUID = Depends(get_user_id),
+    # Q.171.B — contexto COMPLETO (id + papel real) em vez de só o UUID:
+    # o papel do aprovador era hardcoded MANAGER_OPERATIONS → bypass SoD.
+    user: UserContext = Depends(get_current_user_or_dev_header),
     session: AsyncSession = Depends(get_session),
 ):
     """
@@ -325,7 +346,6 @@ async def approve_decision(
     
     Verifies approver ≠ proposer, creates approval record, updates decision status.
     """
-    from src.shared.auth.rbac import check_sod, Role
     
     decision = await session.get(SharedDecisionRun, decision_id)
     
@@ -342,9 +362,11 @@ async def approve_decision(
             detail=f"Decision cannot be approved. Current status: {decision.status}",
         )
     
-    # Check SoD policy (simplified for development without full auth)
-    proposer_role = Role.OPERATOR  # Default fallback
-    approver_role = Role.MANAGER_OPERATIONS  # Default approver role
+    user_id = user.user_id
+    # Q.171.B — papel REAL do aprovador (check_sod ignora proposer_role;
+    # OPERATOR fica como placeholder documentado).
+    proposer_role = Role.OPERATOR
+    approver_role = _role_from_string(user.role)
     
     is_valid, error_message = check_sod(
         action_type=decision.action_type,
@@ -484,7 +506,8 @@ async def approve_decision(
 async def bulk_act_decisions(
     request: BulkActRequest,
     tenant_id: UUID = Depends(get_tenant_id),
-    user_id: UUID = Depends(get_user_id),
+    # Q.171.B — ver approve_decision: papel real, não hardcoded.
+    user: UserContext = Depends(get_current_user_or_dev_header),
     session: AsyncSession = Depends(get_session),
 ):
     """Q.130.I — bulk approve/reject de decisões `shared.decision_runs`.
@@ -494,7 +517,9 @@ async def bulk_act_decisions(
     levantam 500. Cada transição escreve `audit_change` na MESMA tx
     (invariante 7, Q.61.18).
     """
-    from src.shared.auth.rbac import check_sod, Role
+
+    user_id = user.user_id
+    approver_role = _role_from_string(user.role)  # Q.171.B — papel real
 
     is_reject = (request.action or "approve").lower() == "reject"
     approval_status = (
@@ -531,9 +556,9 @@ async def bulk_act_decisions(
         is_valid, error_message = check_sod(
             action_type=decision.action_type,
             proposer_id=decision.proposed_by,
-            proposer_role=Role.OPERATOR,
+            proposer_role=Role.OPERATOR,  # check_sod ignora (Q.171.B)
             approver_id=user_id,
-            approver_role=Role.MANAGER_OPERATIONS,
+            approver_role=approver_role,
         )
         if not is_valid:
             results.append({

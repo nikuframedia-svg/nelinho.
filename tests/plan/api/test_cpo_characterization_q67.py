@@ -58,6 +58,15 @@ def _build_app() -> FastAPI:
     app = FastAPI()
     app.include_router(cpo_router)
     app.dependency_overrides[require_tenant_header] = lambda: DEV_TENANT
+    # Q.171.B — os endpoints async/decide passaram a exigir o contexto de
+    # utilizador real (ator de auditoria); override no harness.
+    from src.shared.auth.headers import get_current_user_or_dev_header as _gu
+    from src.shared.auth.jwt_handler import UserContext as _UC
+    from uuid import UUID as _UUID
+    app.dependency_overrides[_gu] = lambda: _UC(
+        user_id=_UUID("22222222-2222-2222-2222-222222222222"),
+        tenant_id=DEV_TENANT, role="manager_operations",
+    )
 
     async def _fake_session():
         # Endpoint tests never touch the real session — every collaborator

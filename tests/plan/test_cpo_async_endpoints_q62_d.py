@@ -127,6 +127,15 @@ async def test_async_endpoint_returns_202_and_job_id(monkeypatch):
     app.include_router(cpo_router)
     dev_tenant = UUID("00000000-0000-0000-0000-000000000001")
     app.dependency_overrides[require_tenant_header] = lambda: dev_tenant
+    # Q.171.B — os endpoints async/decide passaram a exigir o contexto de
+    # utilizador real (ator de auditoria); override no harness.
+    from src.shared.auth.headers import get_current_user_or_dev_header as _gu
+    from src.shared.auth.jwt_handler import UserContext as _UC
+    from uuid import UUID as _UUID
+    app.dependency_overrides[_gu] = lambda: _UC(
+        user_id=_UUID("22222222-2222-2222-2222-222222222222"),
+        tenant_id=dev_tenant, role="manager_operations",
+    )
 
     client = TestClient(app)
     resp = client.post(
@@ -203,6 +212,15 @@ async def test_job_status_in_progress_jobdef_has_no_start_time(monkeypatch):
     app.include_router(cpo_router)
     dev_tenant = UUID("00000000-0000-0000-0000-000000000001")
     app.dependency_overrides[require_tenant_header] = lambda: dev_tenant
+    # Q.171.B — os endpoints async/decide passaram a exigir o contexto de
+    # utilizador real (ator de auditoria); override no harness.
+    from src.shared.auth.headers import get_current_user_or_dev_header as _gu
+    from src.shared.auth.jwt_handler import UserContext as _UC
+    from uuid import UUID as _UUID
+    app.dependency_overrides[_gu] = lambda: _UC(
+        user_id=_UUID("22222222-2222-2222-2222-222222222222"),
+        tenant_id=dev_tenant, role="manager_operations",
+    )
 
     client = TestClient(app)
     resp = client.get(

@@ -201,7 +201,8 @@ def test_q4_apply_move_endpoint_requires_reason_min_10():
     from src.main import app
 
     client = TestClient(app)
-    headers = {"X-Tenant-Id": str(uuid4())}
+    # Q.171.B — o decide passou a exigir o utilizador real (ator).
+    headers = {"X-Tenant-Id": str(uuid4()), "X-User-Id": str(uuid4())}
     r = client.post(
         "/v1/plan/schedule/apply-move",
         json={"operation_id": "op1", "reason": "short"},
@@ -228,7 +229,8 @@ def test_q5_cpo_decide_rejects_without_category():
     from src.main import app
 
     client = TestClient(app)
-    headers = {"X-Tenant-Id": str(uuid4())}
+    # Q.171.B — o decide passou a exigir o utilizador real (ator).
+    headers = {"X-Tenant-Id": str(uuid4()), "X-User-Id": str(uuid4())}
     r = client.post(
         "/v1/plan/cpo/commits/abcdef1234567890/decide",
         json={
@@ -267,7 +269,8 @@ def test_r2_cpo_decide_rejects_without_reason_or_short_reason():
     from src.main import app
 
     client = TestClient(app)
-    headers = {"X-Tenant-Id": str(uuid4())}
+    # Q.171.B — o decide passou a exigir o utilizador real (ator).
+    headers = {"X-Tenant-Id": str(uuid4()), "X-User-Id": str(uuid4())}
 
     # No reason at all → 400.
     r = client.post(

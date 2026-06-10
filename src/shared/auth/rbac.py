@@ -369,7 +369,13 @@ def check_sod(
     if proposer_id == approver_id:
         return False, "Segregation of Duties violation: Cannot approve own decision"
     
-    # Rule 2: Approver must have required role for this action type
+    # Rule 2: Approver must have required role for this action type.
+    # Q.171.B — admin_platform aprova qualquer action_type (papel de
+    # plataforma; nenhum SOD_POLICIES o lista um a um). A regra 1
+    # (proposer != approver) continua a aplicar-se a admins.
+    if approver_role == Role.ADMIN_PLATFORM:
+        return True, None
+
     required_roles = SOD_POLICIES.get(action_type, SOD_POLICIES.get("GENERIC_ACTION", []))
     
     if not required_roles:

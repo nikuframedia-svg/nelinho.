@@ -403,6 +403,9 @@ async def decide_on_commit(
     sha: str,
     body: CommitDecisionRequest,
     tenant_id: UUID = Depends(_tenant_id),
+    # Q.171.B — quem decidiu vem do CONTEXTO auth; o body.decided_by
+    # (default "unknown") passa a ser só um override explícito opcional.
+    user: UserContext = Depends(get_current_user_or_dev_header),
     db: AsyncSession = Depends(get_session),
 ):
     """Record the operator's accept/reject choice on a commit's alternatives.
@@ -474,7 +477,11 @@ async def decide_on_commit(
             commit_id=commit.id,
             chosen_alt_idx=body.chosen_alt_idx,
             rejected_alt_idxs=body.rejected_alt_idxs,
-            decided_by=body.decided_by,
+            decided_by=(
+                body.decided_by
+                if body.decided_by and body.decided_by != "unknown"
+                else str(user.user_id)
+            ),
             reason=decision_reason,
         )
     except ValueError as exc:

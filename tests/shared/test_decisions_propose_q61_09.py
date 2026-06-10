@@ -313,6 +313,8 @@ def test_approve_creates_one_approval_for_authenticated_user():
         headers={
             "x-tenant-id": str(TENANT),
             "x-user-id": str(APPROVER),
+            # Q.171.B — SoD usa o papel REAL (sem header → viewer → 403).
+            "x-user-role": "manager_operations",
         },
         json={"comment": "OK"},
     )
@@ -354,6 +356,8 @@ def test_approve_updates_existing_row_when_present():
         headers={
             "x-tenant-id": str(TENANT),
             "x-user-id": str(APPROVER),
+            # Q.171.B — SoD usa o papel REAL (sem header → viewer → 403).
+            "x-user-role": "manager_operations",
         },
         json={"comment": "updated"},
     )
@@ -514,7 +518,7 @@ def test_approve_publishes_decision_approved_event(monkeypatch):
 
     resp = client.post(
         f"/v1/shared/decisions/{decision.id}/approve",
-        headers={"x-tenant-id": str(TENANT), "x-user-id": str(APPROVER)},
+        headers={"x-tenant-id": str(TENANT), "x-user-id": str(APPROVER), "x-user-role": "manager_operations"},
         json={"status": "APPROVED"},
     )
     assert resp.status_code == 200, resp.text
@@ -542,7 +546,7 @@ def test_reject_publishes_decision_rejected_event(monkeypatch):
 
     resp = client.post(
         f"/v1/shared/decisions/{decision.id}/approve",
-        headers={"x-tenant-id": str(TENANT), "x-user-id": str(APPROVER)},
+        headers={"x-tenant-id": str(TENANT), "x-user-id": str(APPROVER), "x-user-role": "manager_operations"},
         json={"status": "REJECTED"},
     )
     assert resp.status_code == 200, resp.text
@@ -550,3 +554,62 @@ def test_reject_publishes_decision_rejected_event(monkeypatch):
     assert published[0][1] == "DECISION_REJECTED"
     assert published[0][0] == kc.Topics.DECISION_REJECTED
     assert decision.status == DecisionStatus.REJECTED.value
+
+
+# ─── Q.171.B — SoD com papel REAL (era hardcoded MANAGER_OPERATIONS) ─────────
+
+
+def _proposed_decision():
+    return SimpleNamespace(
+        id=uuid4(),
+        tenant_id=TENANT,
+        action_type="GENERIC_ACTION",
+        status=DecisionStatus.PROPOSED.value,
+        proposed_by=PROPOSER,
+    )
+
+
+def _approve_with_role(role_header: dict) -> int:
+    decision = _proposed_decision()
+    session = _ApproveSession(decision, existing_approval=None)
+    client = TestClient(_approve_app(session))
+    resp = client.post(
+        f"/v1/shared/decisions/{decision.id}/approve",
+        headers={
+            "x-tenant-id": str(TENANT),
+            "x-user-id": str(APPROVER),
+            **role_header,
+        },
+        json={"comment": "OK"},
+    )
+    return resp.status_code
+
+
+def test_q171b_sem_role_e_viewer_403():
+    """Sem X-User-Role o contexto cai em viewer — SEM autorização. Antes o
+    papel era hardcoded MANAGER_OPERATIONS: QUALQUER chamada aprovava."""
+    assert _approve_with_role({}) == 403
+
+
+def test_q171b_viewer_explicito_403():
+    assert _approve_with_role({"x-user-role": "viewer"}) == 403
+
+
+def test_q171b_operator_403_para_generic_action():
+    """GENERIC_ACTION exige manager_operations/finance_controller."""
+    assert _approve_with_role({"x-user-role": "operator"}) == 403
+
+
+def test_q171b_manager_operations_200():
+    assert _approve_with_role({"x-user-role": "manager_operations"}) == 200
+
+
+def test_q171b_admin_alias_200():
+    """'admin' (alias FE) normaliza para admin_platform, que aprova qualquer
+    action_type (bypass da regra 2; a regra 1 — não aprovar o próprio —
+    continua a valer)."""
+    assert _approve_with_role({"x-user-role": "admin"}) == 200
+
+
+def test_q171b_role_invalido_403():
+    assert _approve_with_role({"x-user-role": "hacker"}) == 403

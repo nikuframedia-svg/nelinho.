@@ -181,7 +181,10 @@ async def schedule_cpo(
 async def schedule_cpo_async(
     request: CPOScheduleRequest,
     tenant_id: UUID = Depends(_tenant_id),
-    user_id: UUID = Depends(_tenant_id),  # placeholder — same gate
+    # Q.171.B — era user_id=Depends(_tenant_id) (placeholder): o AUTOR dos
+    # commits do worker ficava o UUID do TENANT — auditoria sem ator real
+    # e SoD do approve inoperante para planos async.
+    user: UserContext = Depends(get_current_user_or_dev_header),
 ):
     """Q.62.D.2 — enfileira o CPO scheduler num Arq worker.
 
@@ -225,7 +228,7 @@ async def schedule_cpo_async(
             "cpo_schedule_job",
             payload,
             str(tenant_id),
-            str(user_id),
+            str(user.user_id),
             _job_id=job_key,
         )
     finally:
