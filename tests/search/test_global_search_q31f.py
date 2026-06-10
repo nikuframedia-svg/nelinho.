@@ -94,3 +94,41 @@ async def test_numeric_query_still_runs_all_four_lookups():
     out = await global_search(q="5103", limit=5, tenant_id=TENANT, session=session)  # type: ignore[arg-type]
     assert session.calls == 4  # barcos + operadores + moldes + erros
     assert out["results"][0]["label"] == "K1 #5103"
+
+
+# ─── Q.170.H — ranking de relevância ─────────────────────────────────────
+
+
+def test_q170h_exact_beats_prefix_beats_substring():
+    from src.search.api import _ranked
+
+    hits = [
+        {"type": "barco", "id": "3", "label": "Super Vanquish XL", "sublabel": ""},
+        {"type": "barco", "id": "1", "label": "vanquish", "sublabel": ""},
+        {"type": "barco", "id": "2", "label": "Vanquish L", "sublabel": ""},
+    ]
+    out = _ranked(hits, "Vanquish", limit=3)
+    assert [h["id"] for h in out] == ["1", "2", "3"], (
+        "exato > prefixo > substring"
+    )
+
+
+def test_q170h_sublabel_prefix_ranks_above_plain_substring():
+    from src.search.api import _ranked
+
+    hits = [
+        {"type": "operador", "id": "a", "label": "Maria Operadora", "sublabel": "OP-99"},
+        {"type": "operador", "id": "b", "label": "Joaquim OP", "sublabel": "OP-12"},
+    ]
+    out = _ranked(hits, "OP-1", limit=2)
+    assert out[0]["id"] == "b", "prefixo no sublabel (código) ganha à substring"
+
+
+def test_q170h_limit_applied_after_ranking():
+    from src.search.api import _ranked
+
+    hits = [{"type": "x", "id": str(i), "label": f"zzz {i}", "sublabel": ""} for i in range(5)]
+    hits.append({"type": "x", "id": "win", "label": "alvo", "sublabel": ""})
+    out = _ranked(hits, "alvo", limit=2)
+    assert out[0]["id"] == "win", "o melhor não pode ser cortado pelo limit"
+    assert len(out) == 2

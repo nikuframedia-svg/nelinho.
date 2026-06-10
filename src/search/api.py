@@ -65,6 +65,30 @@ def _error_hit(c: ErrorCatalog) -> dict[str, Any]:
     }
 
 
+def _rank(hit: dict[str, Any], term: str) -> tuple[int, str]:
+    """Q.170.H — relevância: exato < prefixo < prefixo-no-sublabel < substring.
+
+    O ILIKE %q% devolvia em ordem arbitrária da BD (e sem ORDER BY o LIMIT
+    nem era determinístico): procurar "Vanq" podia enterrar o "Vanquish"
+    exato debaixo de matches de substring quaisquer."""
+    t = term.lower()
+    label = str(hit.get("label") or "").lower()
+    sub = str(hit.get("sublabel") or "").lower()
+    if label == t:
+        rank = 0
+    elif label.startswith(t):
+        rank = 1
+    elif sub.startswith(t):
+        rank = 2
+    else:
+        rank = 3
+    return (rank, label)
+
+
+def _ranked(hits: list[dict[str, Any]], term: str, limit: int) -> list[dict[str, Any]]:
+    return sorted(hits, key=lambda h: _rank(h, term))[:limit]
+
+
 @router.get("")
 async def global_search(
     q: str = Query(..., description="Texto a procurar (mínimo 2 caracteres)."),
@@ -72,11 +96,16 @@ async def global_search(
     tenant_id: UUID = Depends(require_tenant_header),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    """Pesquisa barcos / operadores / moldes / erros num só pedido."""
+    """Pesquisa barcos / operadores / moldes / erros num só pedido.
+
+    Q.170.H — cada tipo busca `limit*3` candidatos (ordenados na BD p/
+    determinismo) e devolve os `limit` mais relevantes (exato > prefixo >
+    substring)."""
     term = (q or "").strip()
     if len(term) < _MIN_Q:
         return {"query": term, "results": []}
     pat = f"%{term}%"
+    fetch = limit * 3
     results: list[dict[str, Any]] = []
 
     # Barcos — nome/tipo do produto; nº de casco (legacy_id) quando q é dígito.
@@ -90,10 +119,11 @@ async def global_search(
         await session.execute(
             select(ProductionOrder)
             .where(ProductionOrder.tenant_id == tenant_id, or_(*order_conds))
-            .limit(limit)
+            .order_by(ProductionOrder.product_name, ProductionOrder.legacy_id)
+            .limit(fetch)
         )
     ).scalars().all()
-    results += [_order_hit(o) for o in orders]
+    results += _ranked([_order_hit(o) for o in orders], term, limit)
 
     # Operadores — nome ou código.
     emps = (
@@ -106,10 +136,11 @@ async def global_search(
                     Employee.employee_code.ilike(pat),
                 ),
             )
-            .limit(limit)
+            .order_by(Employee.employee_name)
+            .limit(fetch)
         )
     ).scalars().all()
-    results += [_employee_hit(e) for e in emps]
+    results += _ranked([_employee_hit(e) for e in emps], term, limit)
 
     # Moldes — código, nome ou modelo.
     molds = (
@@ -123,10 +154,11 @@ async def global_search(
                     Mold.model_id.ilike(pat),
                 ),
             )
-            .limit(limit)
+            .order_by(Mold.mold_code)
+            .limit(fetch)
         )
     ).scalars().all()
-    results += [_mold_hit(m) for m in molds]
+    results += _ranked([_mold_hit(m) for m in molds], term, limit)
 
     # Erros — catálogo: código ou nome.
     errs = (
@@ -139,9 +171,10 @@ async def global_search(
                     ErrorCatalog.name.ilike(pat),
                 ),
             )
-            .limit(limit)
+            .order_by(ErrorCatalog.error_code)
+            .limit(fetch)
         )
     ).scalars().all()
-    results += [_error_hit(c) for c in errs]
+    results += _ranked([_error_hit(c) for c in errs], term, limit)
 
     return {"query": term, "results": results}
