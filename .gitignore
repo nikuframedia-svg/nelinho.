@@ -218,3 +218,8 @@ cube/data/*.q93dbis_backup
 # Cache de embeddings das rotas (artefacto de runtime)
 routes/.embeddings_cache_real.npz
 routes/*.npz
+
+# Artefactos de auditoria/debug locais (não-versionados)
+_dbprof/
+_*.out
+_*.err
