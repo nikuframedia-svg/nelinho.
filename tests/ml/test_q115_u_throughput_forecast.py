@@ -115,48 +115,9 @@ class TestThroughputForecastModel:
 
 
 # ------------------------------------------------------------------
-# Endpoint tests
+# Q.170.F — os testes de ENDPOINT foram removidos com os endpoints:
+# /sequence-risk e /throughput-forecast eram 404 permanente (globals
+# nunca atribuídos, treino deitado fora, fonte vazia, zero
+# consumidores). Os testes de MODELO acima ficam — são a fundação
+# para religar via factory_raw + registry (campanha própria).
 # ------------------------------------------------------------------
-
-@pytest.fixture()
-def ml_client():
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
-    from src.ml.api import router
-
-    app = FastAPI()
-    app.include_router(router)
-    return TestClient(app, headers={"X-Tenant-Id": "00000000-0000-0000-0000-000000000001"})
-
-
-def test_throughput_forecast_endpoint_404_sem_modelo(ml_client):
-    """404 quando modelo não treinado."""
-    import src.ml.api as ml_api
-    ml_api._throughput_model = None
-    resp = ml_client.get("/v1/ml/throughput-forecast?days=14&boat_id=KAYAK-X")
-    assert resp.status_code == 404
-
-
-def test_throughput_forecast_endpoint_200_com_modelo():
-    """200 quando barco está treinado — usa app com estado partilhado."""
-    from src.ml.models_domain.throughput_forecast import ThroughputForecastModel
-    import src.ml.api as ml_api
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
-
-    model = ThroughputForecastModel()
-    ts = _make_ts(90, boat_id="KAYAK-Z")
-    model.fit(ts)
-    ml_api._throughput_model = model
-
-    app = FastAPI()
-    app.include_router(ml_api.router)
-    client = TestClient(app, headers={"X-Tenant-Id": "00000000-0000-0000-0000-000000000001"})
-
-    resp = client.get("/v1/ml/throughput-forecast?days=7&boat_id=KAYAK-Z")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["boat_id"] == "KAYAK-Z"
-    assert len(data["predictions"]) == 7
-    # cleanup
-    ml_api._throughput_model = None

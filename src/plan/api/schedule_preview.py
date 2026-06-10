@@ -133,7 +133,12 @@ async def apply_move(
 
     return {
         "commit_sha": commit.commit_sha256,
-        "parent_sha": None if commit.parent_id is None else "see /v1/plan/cpo/commits",
+        # Q.170.F — devolvia a STRING LITERAL "see /v1/plan/cpo/commits" como
+        # sha (achado da auditoria). O sha do parent não está nesta linha do
+        # ORM (parent_id é UUID interno) — None honesto + o campo parent_id
+        # para quem precisar de resolver via /commits.
+        "parent_sha": None,
+        "parent_id": str(commit.parent_id) if commit.parent_id else None,
         "operation_id": mutation.operation_id,
         "applied_by": user,
         "reason": body.reason,
