@@ -324,7 +324,7 @@ export function OperadorTabletPage(): ReactNode {
               >
                 Operação {currentOp.operation_sequence}
               </span>
-              {((currentOp as WorkerOperation & { effective_boost?: number }).effective_boost ?? 0) > 50 && (
+              {currentOp.effective_boost > 50 && (
                 <span
                   style={{
                     fontSize: 13,
@@ -335,7 +335,7 @@ export function OperadorTabletPage(): ReactNode {
                     color: '#fbbf24',
                     fontWeight: 600,
                   }}
-                  title={`Acelerada (boost ${(currentOp as WorkerOperation & { effective_boost?: number }).effective_boost})`}
+                  title={`Acelerada (boost ${currentOp.effective_boost})`}
                 >
                   ⚡ Acelerada
                 </span>

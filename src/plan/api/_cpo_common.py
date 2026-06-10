@@ -266,7 +266,7 @@ async def _collect_boost_inputs(
             continue
     legacy_ids = list(set(legacy_ids))
     if not legacy_ids:
-        return
+        return {}
 
     # 2. Carrega ProductionOrders (legacy_id → row) para obter
     # product_name + customer_name.

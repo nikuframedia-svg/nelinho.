@@ -263,6 +263,8 @@ export interface WorkerOperation {
   status: string;
   actual_start: string | null;
   actual_end: string | null;
+  /** Q.170.C — boost combinado (cliente+ordem+barco); badge "Acelerada" > 50. */
+  effective_boost: number;
 }
 
 /** Estado de uma fase após iniciar/concluir — Q.30.A. */

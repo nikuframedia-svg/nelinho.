@@ -3,6 +3,7 @@ ProdPlan ONE - Schedule API
 ============================
 """
 
+import logging
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
@@ -27,6 +28,8 @@ from src.plan.engines.scheduling_adapter import SchedulerEngine, DispatchRule
 from src.shared.auth.headers import require_tenant_header
 from src.shared.time import local_today
 
+
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/schedule", tags=["Scheduling"])
 
 
@@ -230,6 +233,10 @@ class WorkerOperationResponse(BaseModel):
     status: str
     actual_start: Optional[str] = None
     actual_end: Optional[str] = None
+    # Q.170.C — boost combinado (cliente+ordem+barco) calculado à leitura
+    # via _collect_boost_inputs (Q.168.C). O tablet mostra a badge
+    # "Acelerada" quando > 50; o campo NUNCA era devolvido (badge morta).
+    effective_boost: int = 0
 
 
 async def _resolve_worker_code(
@@ -264,7 +271,7 @@ async def _resolve_worker_code(
 
 
 def _op_to_worker_response(
-    op: Dict[str, Any], exec_row: Optional[Any],
+    op: Dict[str, Any], exec_row: Optional[Any], effective_boost: int = 0,
 ) -> WorkerOperationResponse:
     """Mapeia uma operação do commit LIVE → contrato do tablet, sobrepondo o
     estado de execução real (overlay) quando existe."""
@@ -294,6 +301,7 @@ def _op_to_worker_response(
             exec_row.actual_end.isoformat()
             if exec_row is not None and exec_row.actual_end else None
         ),
+        effective_boost=effective_boost,
     )
 
 
@@ -334,8 +342,35 @@ async def get_worker_operations_today(
     status_map = await exec_svc.status_map(
         [str(op.get("operation_id") or "") for op in ops]
     )
+
+    # Q.170.C — boost real por ordem (cliente+ordem+barco), em batch, com o
+    # mesmo helper que alimenta o hash do commit (Q.168.C). Best-effort: sem
+    # tabelas de boost → {} → badge não aparece (honesto).
+    boost_by_order: Dict[str, Dict[str, int]] = {}
+    try:
+        from src.plan.api._cpo_common import _collect_boost_inputs
+
+        boost_by_order = await _collect_boost_inputs(
+            session, tenant_id,
+            [{"order_id": op.get("order_id")} for op in ops],
+        )
+    except Exception as exc:  # pragma: no cover — defensivo
+        logger.debug("worker ops: boost lookup falhou (%s)", exc)
+
+    def _boost_for(op: Dict[str, Any]) -> int:
+        raw = op.get("order_id")
+        try:
+            key = str(int(raw)) if raw is not None else ""
+        except (TypeError, ValueError):
+            key = str(raw or "")
+        return int((boost_by_order.get(key) or {}).get("effective", 0))
+
     return [
-        _op_to_worker_response(op, status_map.get(str(op.get("operation_id") or "")))
+        _op_to_worker_response(
+            op,
+            status_map.get(str(op.get("operation_id") or "")),
+            effective_boost=_boost_for(op),
+        )
         for op in ops
     ]
 
