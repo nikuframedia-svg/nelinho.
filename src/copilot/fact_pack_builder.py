@@ -279,7 +279,19 @@ async def build_fast_path_kpi_response(
                     summary_parts.append(fact_text)
                 elif reason:
                     fact_text = f"{kpi_label_pt}: Não disponível ({reason})"
-                    facts.append({"text": fact_text, "citations": []})
+                    # Q.170.G — o schema Fact exige >=1 citation (min_items=1);
+                    # citations=[] rebentava a validação no fast-path. A
+                    # ausência de dados É um facto citável: aponta a fonte
+                    # consultada e a razão.
+                    facts.append({"text": fact_text, "citations": [
+                        create_system_data_citation(
+                            data_source="kpi_snapshot",
+                            data_id=kpi_key,
+                            label=f"Sem dados na origem ({reason})",
+                            confidence=1.0,
+                            trust_index=1.0,
+                        )
+                    ]})
                     summary_parts.append(fact_text)
 
         if not facts:
@@ -307,6 +319,12 @@ async def build_fast_path_kpi_response(
         )
 
         audit_data = {
+            # Q.170.G — o audit do fast-path não levava suggestion_id: o bug
+            # das citations vazias rebentava a validação e empurrava tudo
+            # para o caminho LLM (que o levava) — ao curar as citations, o
+            # fast-path passou a servir e o buraco ficou visível no golden
+            # trace 02_kpi_history.
+            "suggestion_id": suggestion_id,
             "latency_ms": latency_ms,
             "fast_path": True,
             "intent": "kpi_current",

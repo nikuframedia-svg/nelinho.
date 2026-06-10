@@ -129,6 +129,17 @@ async def ask_copilot(
             exc_info=True,
         )
 
+        # Q.170.G — DECISÃO documentada: o envelope 200 + type=ERROR é o
+        # contrato do chat (o FE mostra a badge de erro e o utilizador pode
+        # retentar; um 5xx alimentaria o circuit-breaker global e bloqueava
+        # o copiloto inteiro por um erro pontual). O custo era observabilidade
+        # (falhas invisíveis nas métricas) — a métrica abaixo fecha isso.
+        try:
+            from src.shared.metrics import bump_silent_fallback
+            bump_silent_fallback("copilot_ask", "unhandled_exception")
+        except Exception:  # pragma: no cover — métrica é best-effort
+            pass
+
         # Retornar resposta de erro normalizada
         return CopilotResponse(
             suggestion_id=uuid4(),

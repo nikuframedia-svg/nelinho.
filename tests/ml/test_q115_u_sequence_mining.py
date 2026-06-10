@@ -6,7 +6,7 @@ Q.115.U — testes SequenceMiningModel
 1. fit + predict happy path com fixture sintética
 2. Lift > 1 para sequência conhecida tóxica
 3. Sample insuficiente (<10 OFs) → ValueError
-4. Endpoint GET /v1/ml/sequence-risk 200 + 404
+4. (testes de endpoint removidos com os endpoints — Q.170.F)
 5. AUC ≥0.7 em fixture controlada
 """
 
