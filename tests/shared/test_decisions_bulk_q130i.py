@@ -111,7 +111,7 @@ def _app(session) -> FastAPI:
     return app
 
 
-_HDRS = {"X-Tenant-Id": str(TENANT), "X-User-Id": str(APPROVER)}
+_HDRS = {"X-Tenant-Id": str(TENANT), "X-User-Id": str(APPROVER), "X-User-Role": "manager_operations"}  # Q.171.B — SoD usa o papel real
 
 
 # ── bulk approve ─────────────────────────────────────────────────────────

@@ -294,7 +294,7 @@ def _build_app_for_approve(decision, monkeypatch):
     return app
 
 
-_HDRS = {"X-Tenant-Id": str(TENANT), "X-User-Id": str(uuid4())}
+_HDRS = {"X-Tenant-Id": str(TENANT), "X-User-Id": str(uuid4()), "X-User-Role": "manager_operations"}  # Q.171.B — SoD usa o papel real
 
 
 def test_approve_marks_approved(monkeypatch):
