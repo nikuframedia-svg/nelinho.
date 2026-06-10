@@ -18,18 +18,7 @@ from src.shared.auth.headers import require_tenant_header
 get_tenant_id = require_tenant_header
 
 
-def dev_only() -> None:
-    """Dependency that 404s when ``settings.environment == "production"``.
-
-    Sprint Q.12 Onda 0.5 — the ``/*-dev`` endpoints (no auth, hardcoded
-    tenant) used to be reachable in any environment, leaking tenant-zero
-    data to anyone who knew the URL. Now they're hidden in prod. The
-    long-term answer is to remove them outright once each surface has a
-    proper auth path; until then this guard makes "shipped to prod by
-    accident" loud instead of quiet.
-    """
-    if settings.environment == "production":
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Not Found",
-        )
+# Q.168.D — dev_only promovido para src/shared/auth/headers.py (o gate é
+# transversal: profit/copilot/...). Re-export mantém todos os imports
+# existentes (`_common.dev_only` / `_api.dev_only`) a funcionar.
+from src.shared.auth.headers import dev_only

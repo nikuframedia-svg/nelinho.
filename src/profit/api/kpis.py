@@ -316,7 +316,17 @@ async def get_kpi_snapshot(
     )
 
 
-@router.get("/snapshot-dev", response_model=KPISnapshotResponse)
+# Q.168.D — guard dev_only como DEPENDÊNCIA: o check inline de
+# settings.debug mantém-se (defesa em profundidade), mas a dependência
+# torna o gate visível ao teste de cobertura de rotas (route-coverage).
+from src.shared.auth.headers import dev_only as _dev_only
+
+
+@router.get(
+    "/snapshot-dev",
+    response_model=KPISnapshotResponse,
+    dependencies=[Depends(_dev_only)],
+)
 async def get_kpi_snapshot_dev(
     session: AsyncSession = Depends(get_session),
 ):

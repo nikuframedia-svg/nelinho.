@@ -63,6 +63,12 @@ def _client(session) -> TestClient:
     app = FastAPI()
     app.include_router(activity_router)
     app.dependency_overrides[get_session] = _override
+    # Q.168.D — o feed passou a exigir X-Tenant-Id (lia o outbox/audit de
+    # TODOS os tenants — fuga cross-tenant fechada). Override no teste.
+    from src.shared.auth.headers import require_tenant_header
+    from tests.conftest import TEST_TENANT_ID
+
+    app.dependency_overrides[require_tenant_header] = lambda: TEST_TENANT_ID
     return TestClient(app)
 
 

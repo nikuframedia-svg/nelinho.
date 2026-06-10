@@ -34,9 +34,10 @@ Decomposed in Q.66.D.4b, pinned by 42 characterization tests in
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from src.factory_data_product.api.routers._deps import get_engine, get_semantic
+from src.shared.auth.headers import require_tenant_header
 from src.factory_data_product.api.routers.ingest import router as ingest_router
 from src.factory_data_product.api.routers.lifecycle import router as lifecycle_router
 from src.factory_data_product.api.routers.meta import router as meta_router
@@ -48,7 +49,15 @@ from src.factory_data_product.api.routers.watcher import router as watcher_route
 __all__ = ["router", "get_engine", "get_semantic"]
 
 
-router = APIRouter(prefix="/v1/factory", tags=["factory"])
+# Q.168.D — gate de tenant no router-pai: a auditoria 2026-06-10 apanhou
+# TODOS os sub-routers (semantic/meta/quality/quarantine/ingest/lifecycle/
+# watcher) expostos SEM require_tenant_header — o único módulo da app fora
+# do contrato X-Tenant-Id (Q.12 Onda 0.1). Uma dependência aqui cobre os 6.
+router = APIRouter(
+    prefix="/v1/factory",
+    tags=["factory"],
+    dependencies=[Depends(require_tenant_header)],
+)
 
 router.include_router(meta_router)
 router.include_router(semantic_router)

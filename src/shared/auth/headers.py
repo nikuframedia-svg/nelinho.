@@ -308,3 +308,19 @@ def require_admin(
     return AdminContext(
         user_id=x_user_id.strip(), role=x_user_role.lower(), source="legacy_header",
     )
+
+
+def dev_only() -> None:
+    """Dependency que dá 404 quando ``settings.environment == "production"``.
+
+    Sprint Q.12 Onda 0.5 — os endpoints ``/*-dev`` (sem auth, tenant fixo)
+    eram alcançáveis em qualquer ambiente. Q.168.D — promovido de
+    ``src/copilot/routers/_common.py`` para shared: o gate é transversal
+    (profit/copilot/...) e o teste de cobertura de rotas
+    (test_tenant_route_coverage_q168d) reconhece-o pelo nome.
+    """
+    if settings.environment == "production":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Not Found",
+        )

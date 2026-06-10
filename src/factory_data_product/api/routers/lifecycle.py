@@ -13,11 +13,12 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from src.factory_data_product.api.routers._deps import get_engine
 from src.factory_data_product.ingest import IngestEngine
+from src.shared.auth.headers import require_tenant_header
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,9 @@ class RollbackRequest(BaseModel):
 async def activate_ingestion(
     ingestion_id: str,
     request: ActivateRequest,
-    x_tenant_id: Optional[UUID] = Header(None, alias="X-Tenant-Id"),
+    # Q.168.D — activação é ESCRITA: o tenant deixa de ser opcional (era
+    # Header(None) e o alerta de drift era saltado em silêncio sem header).
+    tenant_id: UUID = Depends(require_tenant_header),
     engine: IngestEngine = Depends(get_engine),
 ):
     """Activate an ingestion (+ emit drift alert if schema changed)."""
@@ -66,7 +69,7 @@ async def activate_ingestion(
 
         alert_id: Optional[str] = None
         if success:
-            alert_id = await _emit_drift_alert_safe(engine, uid, x_tenant_id)
+            alert_id = await _emit_drift_alert_safe(engine, uid, tenant_id)
 
         return {
             "success": success,

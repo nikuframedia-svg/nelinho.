@@ -27,6 +27,7 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import ProgrammingError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.shared.auth.headers import require_tenant_header
 from src.shared.database import get_session
 
 logger = logging.getLogger(__name__)
@@ -187,7 +188,7 @@ _AUDIT_ACTION_LABEL: Dict[str, str] = {
 
 
 async def _from_audit_log(
-    session: AsyncSession, limit: int,
+    session: AsyncSession, limit: int, tenant_id: UUID,
 ) -> List[ActivityItem]:
     """Fallback feed built from `core.audit_log`.
 
@@ -201,12 +202,17 @@ async def _from_audit_log(
         SELECT id, entity_type, entity_id, action, reason,
                actor_role, created_at
         FROM core.audit_log
+        WHERE tenant_id = :tenant_id
         ORDER BY created_at DESC
         LIMIT :limit
         """
     )
     try:
-        rows = (await session.execute(stmt, {"limit": limit})).fetchall()
+        rows = (
+            await session.execute(
+                stmt, {"limit": limit, "tenant_id": str(tenant_id)},
+            )
+        ).fetchall()
     except (ProgrammingError, OperationalError) as exc:
         logger.info(
             "activity/recent: core.audit_log unavailable (%s)",
@@ -246,6 +252,7 @@ async def _from_audit_log(
 @router.get("/recent", response_model=ActivityResponse)
 async def recent_activity(
     limit: int = Query(20, ge=1, le=100),
+    tenant_id: UUID = Depends(require_tenant_header),
     session: AsyncSession = Depends(get_session),
 ) -> ActivityResponse:
     """Return the most recent events for the LiveActivityFeed.
@@ -254,17 +261,24 @@ async def recent_activity(
     (dev, or after the dispatcher drained it) we fall back to
     `core.audit_log`, which records every state change. Only a genuinely
     quiet factory with zero audit history returns `{"items": []}`.
+
+    Q.168.D — o feed lia o outbox/audit SEM filtro de tenant (fuga
+    cross-tenant apanhada pelo teste de cobertura de rotas). Agora exige
+    X-Tenant-Id e filtra ambas as fontes.
     """
     stmt = text(
         """
         SELECT id, tenant_id, event_type, payload, created_at
         FROM event_outbox
+        WHERE tenant_id = :tenant_id
         ORDER BY created_at DESC
         LIMIT :limit
         """
     )
     try:
-        result = await session.execute(stmt, {"limit": limit})
+        result = await session.execute(
+            stmt, {"limit": limit, "tenant_id": str(tenant_id)},
+        )
         rows = result.fetchall()
     except (ProgrammingError, OperationalError) as exc:
         # Table missing (UndefinedTable from postgres) or transient DB
@@ -277,7 +291,7 @@ async def recent_activity(
         # every subsequent query raises InFailedSQLTransactionError until
         # we roll back. Do that before the fallback so it actually runs.
         await session.rollback()
-        return ActivityResponse(items=await _from_audit_log(session, limit))
+        return ActivityResponse(items=await _from_audit_log(session, limit, tenant_id))
 
     items: List[ActivityItem] = []
     for row in rows:
@@ -307,6 +321,6 @@ async def recent_activity(
     # Q.54.E — outbox present but empty → fall back to the audit log so
     # the feed reflects real factory activity instead of a blank panel.
     if not items:
-        items = await _from_audit_log(session, limit)
+        items = await _from_audit_log(session, limit, tenant_id)
 
     return ActivityResponse(items=items)

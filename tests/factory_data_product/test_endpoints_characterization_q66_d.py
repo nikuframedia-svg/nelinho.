@@ -144,11 +144,44 @@ def stub_semantic() -> _StubSemantic:
 
 
 @pytest.fixture
-def client(stub_engine: _StubEngine, stub_semantic: _StubSemantic) -> TestClient:
+def fake_db() -> "FakeSession":
+    from tests.conftest import FakeSession
+
+    return FakeSession()
+
+
+@pytest.fixture
+def client(
+    stub_engine: _StubEngine, stub_semantic: _StubSemantic, fake_db,
+) -> TestClient:
+    # Q.168.D — /v1/factory ganhou o gate de tenant (require_tenant_header no
+    # router-pai) + a quarentena passou a ler a BD real (get_session) com
+    # utilizador autenticado (get_current_user_or_dev_header).
+    from uuid import UUID as _UUID
+
+    from src.shared.auth.headers import (
+        get_current_user_or_dev_header,
+        require_tenant_header,
+    )
+    from src.shared.auth.jwt_handler import UserContext
+    from src.shared.database import get_session
+    from tests.conftest import TEST_TENANT_ID
+
     app = FastAPI()
     app.include_router(factory_router)
     app.dependency_overrides[get_engine] = lambda: stub_engine
     app.dependency_overrides[get_semantic] = lambda: stub_semantic
+    app.dependency_overrides[require_tenant_header] = lambda: TEST_TENANT_ID
+
+    async def _db():
+        yield fake_db
+
+    app.dependency_overrides[get_session] = _db
+    app.dependency_overrides[get_current_user_or_dev_header] = lambda: UserContext(
+        user_id=_UUID("22222222-2222-2222-2222-222222222222"),
+        tenant_id=TEST_TENANT_ID,
+        role="ADMIN",
+    )
     return TestClient(app)
 
 
@@ -528,28 +561,31 @@ def test_trust_heatmap_shape(client: TestClient):
 # ---------------------------------------------------------------------------
 
 
-def test_quarantine_list_default(client: TestClient):
+def test_quarantine_list_default_empty_is_honest(client: TestClient):
+    """Q.168.D — o mock (2 rows hardcoded) foi substituído pela fonte REAL
+    (tabelas curadas com QuarantineMixin). Camada curada vazia → lista vazia
+    HONESTA, nunca dados de exemplo (invariantes #1/#8)."""
     resp = client.get("/v1/factory/quarantine")
     assert resp.status_code == 200
     body = resp.json()
     assert set(body) >= {
         "rows", "total", "page", "page_size", "by_code", "by_table",
     }
-    # The router currently returns hardcoded mock rows (acknowledged tech
-    # debt). We pin the count so the refactor doesn't silently lose them.
-    assert body["total"] == 2
+    assert body["total"] == 0
+    assert body["rows"] == []
+    assert body["capped_tables"] == []
 
 
-def test_quarantine_list_filter_by_table(client: TestClient):
+def test_quarantine_list_unknown_table_is_400(client: TestClient):
     resp = client.get("/v1/factory/quarantine?table=Funcionarios")
-    assert resp.status_code == 200
-    assert resp.json()["total"] == 1
+    assert resp.status_code == 400
+    assert "tabela desconhecida" in resp.json()["detail"]
 
 
-def test_quarantine_list_filter_by_code(client: TestClient):
+def test_quarantine_list_filter_by_code_empty(client: TestClient):
     resp = client.get("/v1/factory/quarantine?code=INVALID_TIMING")
     assert resp.status_code == 200
-    assert resp.json()["total"] == 1
+    assert resp.json()["total"] == 0
 
 
 def test_quarantine_resolve_requires_action(client: TestClient):
@@ -569,18 +605,11 @@ def test_quarantine_resolve_short_reason_returns_422(client: TestClient):
     assert resp.status_code == 422
 
 
-def test_quarantine_resolve_happy_path(client: TestClient):
+def test_quarantine_resolve_unknown_row_is_404(client: TestClient):
+    """Q.168.D — o resolve era um 200 fake sem persistência; agora procura a
+    row a sério e 404 quando não existe (id não-UUID incluído)."""
     resp = client.post(
         "/v1/factory/quarantine/q-001/resolve",
-        params={
-            "action": "repair",
-            "reason": "Fixed manually in source system",
-            "user": "tester",
-        },
+        params={"action": "repair", "reason": "Fixed manually in source system"},
     )
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["success"] is True
-    assert body["row_id"] == "q-001"
-    assert body["action"] == "repair"
-    assert body["resolved_by"] == "tester"
+    assert resp.status_code == 404
