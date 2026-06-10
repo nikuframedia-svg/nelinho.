@@ -242,44 +242,12 @@ def _gather_violations(
     return violations
 
 
-def check_revenue_alignment_warning(
-    schedule: Dict[str, Any],
-    target_eur: Optional[float],
-) -> Optional[Dict[str, str]]:
-    """Q.115.X7 — guardrail de alinhamento com target de faturação diária.
-
-    NÃO é hard fail — não inviabiliza o schedule. Devolve um dict com
-    `metric` e `detail` se algum dia desvia >50% do target, None caso contrário.
-    Se target_eur is None → skip (sem target configurado).
-
-    Trabalha sobre `throughput_by_day` (dict data→€) ou `throughput_eur_day`
-    como fallback. NÃO lê CoeficienteX directamente.
-    """
-    if target_eur is None or float(target_eur) <= 0:
-        return None
-
-    target = float(target_eur)
-    by_day: Dict[str, float] = schedule.get("throughput_by_day") or {}
-    if not by_day:
-        avg = float(schedule.get("throughput_eur_day") or 0)
-        if avg <= 0:
-            return None
-        by_day = {"_avg": avg}
-
-    worst_dev = max(
-        abs(float(v) - target) / target
-        for v in by_day.values()
-    )
-    if worst_dev > 0.50:
-        return {
-            "metric": "revenue_alignment",
-            "detail": (
-                f"desvio máximo={worst_dev:.1%} do target €{target:.0f}/dia "
-                f"em {len(by_day)} dia(s) — verifique capacidade vs. objetivo"
-            ),
-        }
-    return None
-
+# Q.171.D — check_revenue_alignment_warning (guardrail Q.115.X7 de
+# desvio >50% da faturação diária) foi REMOVIDO: nunca foi chamado em
+# lado nenhum (dead code confirmado pela auditoria 2026-06-10) e os
+# dados de revenue-target não fluem para os schedules. Religar = trazer
+# o daily_revenue_target ao result-dict e chamar em apply_safety_net
+# (histórico no git: Q.115.X7).
 
 def is_worse_than_baseline(candidate: Dict[str, Any], baseline: Dict[str, Any]) -> bool:
     """True if the candidate fails any of the nine safety-net

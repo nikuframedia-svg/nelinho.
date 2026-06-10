@@ -138,24 +138,10 @@ def test_x7_weight_zero_comportamento_inalterado():
     assert fit_sem == pytest.approx(fit_com, abs=1e-9)
 
 
-def test_x7_safety_net_flag_desvio_alto():
-    """Teste 8 — safety_net_check_revenue_alignment detecta desvio >50%."""
-    from src.plan.cpo.safety_net import check_revenue_alignment_warning
-
-    # 60% abaixo do target → warning
-    schedule = _schedule_with_throughput_by_day({"2026-06-01": 1600.0})
-    warning = check_revenue_alignment_warning(schedule, target_eur=4000.0)
-    assert warning is not None
-    assert "revenue_alignment" in warning["metric"]
-
-
-def test_x7_safety_net_sem_target_skip():
-    """Safety_net sem target → sem warning."""
-    from src.plan.cpo.safety_net import check_revenue_alignment_warning
-
-    schedule = _schedule_with_throughput_by_day({"2026-06-01": 100.0})
-    warning = check_revenue_alignment_warning(schedule, target_eur=None)
-    assert warning is None
+# Q.171.D — testes 8/9 removidos com a função `check_revenue_alignment_warning`:
+# era dead code (zero callsites em produção desde Q.115.X7; só estes testes a
+# invocavam). O alinhamento ao target vive na fitness (testes acima) e o
+# enforcement € fica fora do CPO (CoeficienteX é dinheiro — invariante #5).
 
 
 def test_x7_cpo_schedule_response_tem_campo():

@@ -80,6 +80,10 @@ class CapableToPromiseService:
 
         # Stock by product_code for the materials gate.
         stock_by_product = await self._stock_by_product()
+        # Q.171.D — sem snapshot de stock o gate devolvia "OK" em SILÊNCIO
+        # (o consumidor via verde sem saber que era "sem dados"). A base
+        # fica explícita na resposta — honesto, não bloqueante.
+        materials_basis = "stock_real" if stock_by_product else "sem_snapshot"
 
         evaluated: List[Dict[str, Any]] = []
         for order in orders:
@@ -89,7 +93,9 @@ class CapableToPromiseService:
                 datetime.fromisoformat(suggested) if suggested else None
             )
             date_ok = ship_dt is not None and ship_dt <= truck_dt
-            materials_ok, missing = self._materials_gate(order, stock_by_product)
+            materials_ok, missing, materials_known = self._materials_gate(
+                order, stock_by_product,
+            )
             evaluated.append({
                 "order_id": str(order.id),
                 "hull": (
@@ -101,6 +107,7 @@ class CapableToPromiseService:
                 "lead_time": ship.get("lead_time"),
                 "date_feasible": date_ok,
                 "materials_ok": materials_ok,
+                "materials_known": materials_known,
                 "missing_materials": missing,
                 "_ship_dt": ship_dt,
             })
@@ -130,6 +137,7 @@ class CapableToPromiseService:
         return {
             "truck_date": truck_date.isoformat(),
             "truck_capacity": truck_capacity,
+            "materials_basis": materials_basis,
             "slots_used": len(committable),
             "slots_free": max(0, truck_capacity - len(committable)),
             "committable": committable,
@@ -166,7 +174,7 @@ class CapableToPromiseService:
 
     def _materials_gate(
         self, order, stock_by_product: Dict[str, float],
-    ) -> tuple[bool, List[str]]:
+    ) -> tuple[bool, List[str], bool]:
         """Check the order's product is itself in stock as a proxy.
 
         v1 keeps the materials gate simple: we don't expand the full BOM
@@ -174,13 +182,18 @@ class CapableToPromiseService:
         own stock figure — when the catalogue carries no stock row at all
         we treat materials as "unknown OK" rather than blocking, because
         a missing snapshot is not evidence of a shortage.
+
+        Q.171.D — devolve também ``known``: False quando o OK veio da
+        AUSÊNCIA de dados (sem snapshot / produto sem row), para o
+        consumidor distinguir "verificado" de "não bloqueado por falta
+        de evidência".
         """
         key = str(order.product_id or "")
         if not key or not stock_by_product:
-            return True, []  # no stock data — don't block on absence
+            return True, [], False  # no stock data — don't block on absence
         available = stock_by_product.get(key)
         if available is None:
-            return True, []
+            return True, [], False
         if available <= 0:
-            return False, [key]
-        return True, []
+            return False, [key], True
+        return True, [], True

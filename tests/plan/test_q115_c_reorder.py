@@ -387,7 +387,12 @@ def test_axiom_skill_match_ok():
 # ---------------------------------------------------------------------------
 
 def test_axiom_curing_gap():
-    """Gap de cura < 16h -> SafetyNetViolation."""
+    """Gap de cura abaixo do piso do seed -> SafetyNetViolation.
+
+    Q.171.D — o piso deixou de ser 16.0 hardcoded e passou a derivar de
+    NELO_CURING_GAPS_SEED (min das 16 transições químicas)."""
+    from src.plan.services.manual_reorder import _CURING_GAP_HOURS
+
     t0 = _BASE_TS
     curing_end = t0 + timedelta(hours=2)
     ops = [
@@ -399,18 +404,18 @@ def test_axiom_curing_gap():
             "curing_end_ts": curing_end.isoformat(),
         }
     ]
-    # Tentar mover para 10h depois do curing_end (mas < 16h)
-    bad_ts = curing_end + timedelta(hours=10)
+    # Mover para 1h ABAIXO do piso químico
+    bad_ts = curing_end + timedelta(hours=_CURING_GAP_HOURS - 1)
 
     with pytest.raises(SafetyNetViolation) as exc_info:
         _check_curing_gap(ops, "op-1", bad_ts)
 
     assert exc_info.value.axiom_name == "curing_gap"
-    assert "16" in exc_info.value.reason_pt
+    assert str(_CURING_GAP_HOURS) in exc_info.value.reason_pt
 
 
 def test_axiom_curing_gap_ok():
-    """Gap de cura >= 16h nao levanta excep."""
+    """Gap de cura >= piso do seed nao levanta excep."""
     t0 = _BASE_TS
     curing_end = t0 + timedelta(hours=2)
     ops = [

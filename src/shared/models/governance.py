@@ -10,7 +10,7 @@ from enum import Enum
 from typing import Optional, Dict, Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import String, ForeignKey, JSON, DateTime, Text
+from sqlalchemy import Index, String, ForeignKey, JSON, DateTime, Text
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -53,7 +53,15 @@ class SharedDecisionRun(TenantBase):
     # The DB never had `shared_decision_runs`; the old name silently broke every
     # ORM query against this model.
     __tablename__ = "decision_runs"
-    __table_args__ = {"schema": "shared"}
+    # Q.171.D — _blocked_targets (auto_propose, tick 15 min) varre todas as
+    # decisões do tenant; índice composto evita seq-scan crescente.
+    __table_args__ = (
+        Index(
+            "ix_decision_runs_tenant_action_target",
+            "tenant_id", "action_type", "target",
+        ),
+        {"schema": "shared"},
+    )
     
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     action_type: Mapped[str] = mapped_column(String(50), nullable=False)  # "INCREASE_SS", "ADJUST_PRICE", etc.

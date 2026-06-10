@@ -38,6 +38,29 @@ class MRPService:
         self._mrp_adapter = MRPAdapter()
         self._bom_adapter = BOMAdapter()
     
+    async def _inventory_from_warehouse(self) -> Dict[str, Dict[str, Any]]:
+        """Snapshot real de stock por product_code (Q.171.D). Best-effort:
+        sem mirror → {} e o resultado declara inventory_source honesto."""
+        try:
+            from sqlalchemy import select
+
+            from src.supply.models import WarehouseStock
+
+            stmt = select(WarehouseStock).where(
+                WarehouseStock.tenant_id == self.tenant_id,
+            )
+            rows = (await self.session.execute(stmt)).scalars().all()
+        except Exception as exc:  # pragma: no cover — defensivo
+            logger.warning(
+                "MRP: warehouse_stock indisponível (%s) — inventário vazio", exc,
+            )
+            return {}
+        agg: Dict[str, float] = {}
+        for r in rows:
+            code = str(r.product_code)
+            agg[code] = agg.get(code, 0.0) + float(r.stock or 0)
+        return {code: {"on_hand": qty} for code, qty in agg.items()}
+
     async def run_mrp(
         self,
         orders: List[Dict[str, Any]],
@@ -60,7 +83,16 @@ class MRPService:
             MRP results with purchase and production suggestions
         """
         mrp_run_id = f"mrp-{uuid4().hex[:8]}"
-        inventory = inventory or {}
+        # Q.171.D — o MRP corria SEMPRE com inventário {} (netting cego:
+        # sugeria compras como se a fábrica não tivesse stock nenhum). Sem
+        # inventário do caller, lê o snapshot REAL supply.warehouse_stock
+        # (mirror ERP Q.52.K) agregado por product_code.
+        inventory_source = "caller"
+        if not inventory:
+            inventory = await self._inventory_from_warehouse()
+            inventory_source = (
+                "warehouse_stock" if inventory else "vazio_sem_snapshot"
+            )
         
         # Configure MRP adapter
         self._mrp_adapter.planning_horizon_days = planning_horizon_weeks * 7
@@ -151,20 +183,24 @@ class MRPService:
 
         await self.session.flush()
 
-        # Publish event
-        await publish_event(
-            Topics.MRP_CALCULATED,
-            MRPCalculatedEvent(
-                tenant_id=self.tenant_id,
-                payload={
-                    "mrp_run_id": mrp_run_id,
-                    "materials_analyzed": result.items_analyzed,
-                    "purchase_orders_created": result.purchase_orders_created,
-                    "total_po_value": float(result.total_po_value),
-                    "currency": result.currency,
-                },
-            ),
-        )
+        # Publish event — best-effort: Kafka em baixo não pode falhar o MRP
+        # (Q.171.D; o bloco MATERIAL_REQUIREMENT_PLANNED abaixo já era assim).
+        try:
+            await publish_event(
+                Topics.MRP_CALCULATED,
+                MRPCalculatedEvent(
+                    tenant_id=self.tenant_id,
+                    payload={
+                        "mrp_run_id": mrp_run_id,
+                        "materials_analyzed": result.items_analyzed,
+                        "purchase_orders_created": result.purchase_orders_created,
+                        "total_po_value": float(result.total_po_value),
+                        "currency": result.currency,
+                    },
+                ),
+            )
+        except Exception as exc:
+            logger.warning("MRP_CALCULATED publish failed: %s", exc)
 
         # Per-material drill-down. Consumers filtering on MRP_CALCULATED get
         # the aggregate; UIs that want to show a list (shortage feed,
@@ -203,6 +239,9 @@ class MRPService:
         return {
             "mrp_run_id": mrp_run_id,
             "status": "completed",
+            # Q.171.D — base de inventário honesta: "caller" (fornecido),
+            # "warehouse_stock" (snapshot ERP) ou "vazio_sem_snapshot".
+            "inventory_source": inventory_source,
             "items_analyzed": result.items_analyzed,
             "purchase_orders": result.purchase_orders_created,
             "production_orders": result.production_orders_created,

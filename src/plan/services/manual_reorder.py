@@ -45,7 +45,46 @@ class SafetyNetViolation(Exception):
 # Axiomas Spelke — validacoes antes do safety_net KPI generico
 # ---------------------------------------------------------------------------
 
-_CURING_GAP_HOURS = 16.0  # NELO_CURING_GAPS_SEED minimo quimico
+# Q.171.D — piso de cura derivado do SEED (era 16.0 hardcoded, que nem
+# correspondia ao mínimo real da tabela química). Este check é um piso
+# rápido para o caminho manual; a química EXATA por-transição corre no
+# gate do validador universal (`_load_validation_state` + delta-aware,
+# em `apply_manual_reorder`).
+from src.plan.cpo.state import NELO_CURING_GAPS_SEED as _GAPS_SEED
+
+_CURING_GAP_HOURS = min(h for (_a, _b, h, _r, _n) in _GAPS_SEED)
+
+
+async def _load_validation_state(session: AsyncSession, tenant_id: UUID):
+    """Estado MÍNIMO para o `validate_schedule` no caminho manual (Q.171.D):
+    gaps de cura (DB→seed, keyed também por fase_id via alias) + catálogo
+    de fases. Não carrega o FactoryState completo (caro para um drag);
+    skills continuam no `_check_skill_match` com `state_skills`.
+
+    NOTA: importa loaders INTERNOS de `state_loaders` (prefixo `_`) de
+    propósito — são a fonte única destes dados; um refactor de nomes lá
+    tem de actualizar este callsite."""
+    from types import SimpleNamespace
+
+    from src.plan.cpo.state import alias_gaps_by_phase_id
+    from src.plan.cpo.state_loaders import (
+        _load_phase_catalog_db,
+        _load_phase_transition_gaps,
+    )
+
+    try:
+        gaps = await _load_phase_transition_gaps(session, tenant_id)
+        catalog = await _load_phase_catalog_db(session, tenant_id)
+        return SimpleNamespace(
+            phase_transition_gaps=alias_gaps_by_phase_id(gaps, catalog),
+            phase_catalog=catalog,
+        )
+    except Exception as exc:
+        logger.warning(
+            "manual_reorder: estado de validação indisponível (%s) — "
+            "validador corre stateless (estrutura na mesma)", exc,
+        )
+        return None
 
 
 def _to_aware(value: Any) -> Optional[datetime]:
@@ -286,6 +325,35 @@ async def apply_manual_reorder(
     _check_precedence(modified_ops, operation_id, new_start_ts)
     _check_skill_match(modified_ops, operation_id, new_operator_id, state_skills)
     _check_curing_gap(modified_ops, operation_id, new_start_ts)
+
+    # ── Validador universal, delta-aware (Q.171.D) ─────────────────────
+    # O caminho manual construía o ScheduleCommit DIRETO (sem
+    # create_from_schedule), por isso fugia ao validate_schedule — e o
+    # check de cura acima nunca dispara em ops live (curing_end_ts=None).
+    # Gate monótono: um drag não pode INTRODUZIR violações estruturais
+    # (sobreposição de ordem, molde, double-booking, cura química exata);
+    # violações pré-existentes do plano-pai não bloqueiam moves alheios.
+    from src.plan.cpo.schedule_validator import validate_schedule
+
+    _gate_state = await _load_validation_state(session, tenant_id)
+    _parent_errors = set(
+        validate_schedule({"operations": ops}, _gate_state).errors
+    )
+    _novas = [
+        e
+        for e in validate_schedule({"operations": modified_ops}, _gate_state).errors
+        if e not in _parent_errors
+    ]
+    if _novas:
+        raise SafetyNetViolation(
+            axiom_name="validador_universal",
+            operation_id=operation_id,
+            reason_pt=(
+                "O movimento introduz violações estruturais: "
+                + "; ".join(_novas[:3])
+                + (f" (+{len(_novas) - 3})" if len(_novas) > 3 else "")
+            ),
+        )
 
     # ── Safety net KPI (axioma 7 — nao degradar baseline) ─────────────
     # Para drag-drop manual usamos os KPIs do commit pai como baseline.

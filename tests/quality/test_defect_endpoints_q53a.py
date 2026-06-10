@@ -21,7 +21,7 @@ from src.quality.services.defect_zone_service import (
 from src.quality.services.defect_risk_service import _risk_band
 from src.quality.services.roi_service import (
     DEFAULT_ACTION_COST_EUR,
-    LABOUR_RATE_EUR_PER_HOUR,
+    DEFAULT_LABOUR_RATE_EUR_PER_HOUR,
     ROIService,
 )
 
@@ -125,14 +125,14 @@ async def test_roi_actions_computes_net_and_ratio():
         ("laminagem-deslaminado", 10, 0.0, 20.0, 8.0),
     ]
     catalog_rows = []  # no catalog hint → action cost = reaction effort
-    session = _ScriptedSession([rework_rows, catalog_rows])
+    session = _ScriptedSession([[], rework_rows, catalog_rows])
     out = await ROIService(session, TENANT).roi_by_action(since=T0, until=NOW)
 
     action = out["actions"][0]
     # saved = 0 explicit + 20h × rate
-    assert action["saved_eur"] == round(20.0 * LABOUR_RATE_EUR_PER_HOUR, 2)
+    assert action["saved_eur"] == round(20.0 * DEFAULT_LABOUR_RATE_EUR_PER_HOUR, 2)
     # invested = 8 resolved hours × rate (no catalog hint)
-    assert action["invested_eur"] == round(8.0 * LABOUR_RATE_EUR_PER_HOUR, 2)
+    assert action["invested_eur"] == round(8.0 * DEFAULT_LABOUR_RATE_EUR_PER_HOUR, 2)
     assert action["action_basis"] == "reaction_effort"
     assert action["net_eur"] == round(
         action["saved_eur"] - action["invested_eur"], 2
@@ -145,7 +145,7 @@ async def test_roi_actions_computes_net_and_ratio():
 async def test_roi_actions_uses_fixed_cost_when_catalog_hint_present():
     rework_rows = [("pintura-fios", 5, 100.0, 10.0, 0.0)]
     catalog_rows = [("pintura-fios", "Recalibrar pistola de pintura")]
-    session = _ScriptedSession([rework_rows, catalog_rows])
+    session = _ScriptedSession([[], rework_rows, catalog_rows])
     out = await ROIService(session, TENANT).roi_by_action(since=T0, until=NOW)
 
     action = out["actions"][0]
@@ -162,13 +162,13 @@ async def test_roi_actions_ranks_by_net_eur():
         ("effort-only", 50, 0.0, 100.0, 0.0),
         ("winner", 1, 800.0, 0.0, 0.0),
     ]
-    session = _ScriptedSession([rework_rows, []])
+    session = _ScriptedSession([[], rework_rows, []])
     out = await ROIService(session, TENANT).roi_by_action(since=T0, until=NOW)
     assert out["actions"][0]["error_code"] == "winner"
 
 
 async def test_roi_actions_empty_when_no_rework():
-    session = _ScriptedSession([[], []])
+    session = _ScriptedSession([[], [], []])
     out = await ROIService(session, TENANT).roi_by_action(since=T0, until=NOW)
     assert out["actions"] == []
     assert out["total_saved_eur"] == 0.0
@@ -183,13 +183,13 @@ async def test_roi_actions_uses_total_hours_when_nothing_resolved():
     # (error_code, events, cost_sum, hours_sum, resolved_hours)
     rework_rows = [("BOLHA", 3, 0.0, 6.0, 0.0)]
     catalog_rows = []  # no hint
-    session = _ScriptedSession([rework_rows, catalog_rows])
+    session = _ScriptedSession([[], rework_rows, catalog_rows])
     out = await ROIService(session, TENANT).roi_by_action(since=T0, until=NOW)
 
     action = out["actions"][0]
     assert action["action_basis"] == "total_reaction_effort"
     # invested = total 6h × rate (nothing resolved → use all hours)
-    assert action["invested_eur"] == round(6.0 * LABOUR_RATE_EUR_PER_HOUR, 2)
+    assert action["invested_eur"] == round(6.0 * DEFAULT_LABOUR_RATE_EUR_PER_HOUR, 2)
     assert action["roi_ratio"] == round(
         action["saved_eur"] / action["invested_eur"], 2
     )
@@ -200,7 +200,7 @@ async def test_roi_ratio_stays_null_when_no_hours_recorded():
     """When a code has no catalog hint and no hours_lost recorded at all,
     there is no honest basis to price prevention — roi_ratio stays None."""
     rework_rows = [("barco-com-lixo", 2, 0.0, 0.0, 0.0)]
-    session = _ScriptedSession([rework_rows, []])
+    session = _ScriptedSession([[], rework_rows, []])
     out = await ROIService(session, TENANT).roi_by_action(since=T0, until=NOW)
 
     action = out["actions"][0]

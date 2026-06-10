@@ -40,6 +40,7 @@ returns an empty list, never a placeholder.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from uuid import UUID
@@ -49,13 +50,39 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.quality.models.rework import ErrorCatalog, ReworkEntry
 
-# Loaded labour cost used to convert hours_lost into euros when a rework
-# row has no explicit cost_estimate_eur. NELO loaded rate, plan v4 §6.
-LABOUR_RATE_EUR_PER_HOUR = 28.0
+logger = logging.getLogger(__name__)
 
-# Fixed cost of a one-off corrective action (tooling fix, SOP rewrite,
-# operator retraining) when the error catalog flags a preventive action.
-DEFAULT_ACTION_COST_EUR = 450.0
+# Q.171.D — eram constantes HARDCODED (28€/h e 450€) a entrar em contas de
+# € sem caminho de configuração (invariante #8: custos não se inventam no
+# código). Passam a defaults DOCUMENTADOS sobrepostos pela Configuração do
+# tenant (categoria "quality": labour_rate_eur_per_hour /
+# default_action_cost_eur) — o gestor ajusta sem deploy, e a resposta
+# expõe a taxa usada (já expunha) para o número ser auditável.
+DEFAULT_LABOUR_RATE_EUR_PER_HOUR = 28.0   # NELO loaded rate, plan v4 §6
+DEFAULT_ACTION_COST_EUR = 450.0           # ação corretiva one-off típica
+
+
+async def _quality_cost_config(session, tenant_id) -> tuple[float, float]:
+    """(labour_rate, action_cost) da Configuração, com defaults documentados."""
+    try:
+        from src.core.services.tenant_config_service import TenantConfigService
+
+        cfg = TenantConfigService(session, tenant_id)
+        rate = float(await cfg.get(
+            "quality", "labour_rate_eur_per_hour",
+            default=DEFAULT_LABOUR_RATE_EUR_PER_HOUR,
+        ))
+        action = float(await cfg.get(
+            "quality", "default_action_cost_eur",
+            default=DEFAULT_ACTION_COST_EUR,
+        ))
+        return rate, action
+    except Exception as exc:
+        logger.warning(
+            "quality config indisponível (%s) — a usar defaults documentados",
+            exc,
+        )
+        return DEFAULT_LABOUR_RATE_EUR_PER_HOUR, DEFAULT_ACTION_COST_EUR
 
 
 class ROIService:
@@ -94,6 +121,9 @@ class ROIService:
             )
         ).group_by(ReworkEntry.error_code)
 
+        labour_rate, action_cost = await _quality_cost_config(
+            self.session, self.tenant_id,
+        )
         rows = (await self.session.execute(stmt)).all()
 
         # Catalog hints: which error codes have a documented corrective action.
@@ -111,22 +141,22 @@ class ROIService:
             explicit_cost = float(cost_sum or 0)
             hours = float(hours_sum or 0)
             # saved_eur: explicit costs plus labour value of every lost hour.
-            saved_eur = round(explicit_cost + hours * LABOUR_RATE_EUR_PER_HOUR, 2)
+            saved_eur = round(explicit_cost + hours * labour_rate, 2)
 
             hint = catalog.get(error_code)
             resolved_h = float(resolved_hours or 0)
             if hint:
-                invested_eur = DEFAULT_ACTION_COST_EUR
+                invested_eur = action_cost
                 action_basis = "fixed_corrective_action"
             elif resolved_h > 0:
-                invested_eur = round(resolved_h * LABOUR_RATE_EUR_PER_HOUR, 2)
+                invested_eur = round(resolved_h * labour_rate, 2)
                 action_basis = "reaction_effort"
             else:
                 # No catalog hint and nothing resolved yet: fall back to the
                 # cumulative lost-hours of every event of this code. That
                 # effort is already spent reacting — preventing the defect
                 # costs at most that, so it is an honest floor for ROI.
-                invested_eur = round(hours * LABOUR_RATE_EUR_PER_HOUR, 2)
+                invested_eur = round(hours * labour_rate, 2)
                 action_basis = "total_reaction_effort"
 
             net_eur = round(saved_eur - invested_eur, 2)
@@ -150,7 +180,7 @@ class ROIService:
 
         return {
             "window": {"from": since.isoformat(), "to": until.isoformat()},
-            "labour_rate_eur_per_hour": LABOUR_RATE_EUR_PER_HOUR,
+            "labour_rate_eur_per_hour": labour_rate,
             "total_saved_eur": round(sum(a["saved_eur"] for a in actions), 2),
             "total_invested_eur": round(sum(a["invested_eur"] for a in actions), 2),
             "actions": actions[:top_n],
