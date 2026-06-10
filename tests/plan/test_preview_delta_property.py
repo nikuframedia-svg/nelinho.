@@ -143,7 +143,9 @@ def test_pair_rule_iff_laminagem_with_lt_2_workers(phase, workers_count):
     mutation = PreviewMutation(operation_id="op1", new_worker_ids=workers)
     warnings = _detect_warnings(schedule, mutation)
 
-    is_pair_phase = any(p in phase for p in PAIR_REQUIRED_PHASES)
+    # Q.170.A — espelho EXATO do service (substring apanharia
+    # LAMINAGEM_INFUSAO, que é solo por política — Q.169.C).
+    is_pair_phase = phase in PAIR_REQUIRED_PHASES
     expected_pair_warning = is_pair_phase and workers_count < 2
 
     pair_warnings = [w for w in warnings if w.type == "pair_rule"]

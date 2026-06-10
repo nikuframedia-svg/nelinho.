@@ -138,6 +138,8 @@ class PreviewDeltaService:
     def __init__(self, session: AsyncSession, tenant_id: UUID) -> None:
         self.session = session
         self.tenant_id = tenant_id
+        # Q.170.A — cache por instância (1 request): fases_producao é estática.
+        self._phase_names_cache: Optional[dict[str, str]] = None
 
     # ─────────────────────────────────────────────────────────────────────
     # Public surface
@@ -160,8 +162,12 @@ class PreviewDeltaService:
         thr_before = float(schedule_before.get("throughput_eur_day", 0) or 0)
         thr_after = float(schedule_after.get("throughput_eur_day", 0) or 0)
 
+        # Q.170.A — id→nome das fases: os detetores de pares/precedência/cura
+        # comparam códigos por NOME normalizado; as ops trazem id numérico.
+        phase_names = await self._phase_names_map()
+
         conflicts = _detect_conflicts(schedule_after, mutation)
-        warnings = _detect_warnings(schedule_after, mutation)
+        warnings = _detect_warnings(schedule_after, mutation, phase_names)
 
         # Q.132.C — precedência (axioma 2) + cura/secagem (axioma 6) no preview.
         # O drag só mudava phase_id; antes só molde+operador eram validados. Um
@@ -169,7 +175,7 @@ class PreviewDeltaService:
         # passava em silêncio. Agora é surfaçado como conflito/aviso explícito.
         phase_rank = await self._phase_rank_map()
         for issue in _detect_sequence_issues(
-            schedule_after, mutation, phase_rank, _CURING_GAPS,
+            schedule_after, mutation, phase_rank, _CURING_GAPS, phase_names,
         ):
             (conflicts if issue.severity == "conflict" else warnings).append(issue)
 
@@ -202,6 +208,29 @@ class PreviewDeltaService:
             ).phase_order_map()
         except (SQLAlchemyError, ImportError):  # sem routing = sem precedência
             return {}
+
+    async def _phase_names_map(self) -> dict[str, str]:
+        """Q.170.A — fase_id → nome real (factory_raw.fases_producao).
+
+        Best-effort: sem mirror → {} e os detetores caem no phase_name da
+        própria op (nunca rebenta o preview)."""
+        if self._phase_names_cache is not None:
+            return self._phase_names_cache
+        try:
+            from sqlalchemy import text as _text
+
+            rows = (
+                await self.session.execute(_text(
+                    'SELECT "FP_ID"::text, "FP_NOME" '
+                    "FROM factory_raw.fases_producao"
+                ))
+            ).all()
+            self._phase_names_cache = {
+                str(r[0]): str(r[1]) for r in rows if r[0] is not None and r[1]
+            }
+        except SQLAlchemyError:
+            self._phase_names_cache = {}
+        return self._phase_names_cache
 
     async def apply(
         self,
@@ -486,8 +515,8 @@ def _detect_conflicts(
     # Worker double-booking: any other op overlapping this op's time window
     # that shares a worker_id.
     if mutation.new_worker_ids:
-        start = _ts(op.get("start"))
-        end = _ts(op.get("end"))
+        start = _op_start(op)
+        end = _op_end(op)
         if start is not None and end is not None:
             for other in schedule.get("operations") or []:
                 if other is op:
@@ -496,8 +525,8 @@ def _detect_conflicts(
                 clash = other_workers.intersection(mutation.new_worker_ids)
                 if not clash:
                     continue
-                o_start = _ts(other.get("start"))
-                o_end = _ts(other.get("end"))
+                o_start = _op_start(other)
+                o_end = _op_end(other)
                 if o_start is None or o_end is None:
                     continue
                 if start < o_end and end > o_start:
@@ -526,8 +555,8 @@ def _detect_conflicts(
     # another op's window on the same mold still trips it.
     mold_id = op.get("mold_id")
     if mold_id:
-        start = _ts(op.get("start"))
-        end = _ts(op.get("end"))
+        start = _op_start(op)
+        end = _op_end(op)
         op_id = op.get("id") or op.get("operation_id")
         # Multi-pocket moulds: ops sharing a `mold_batch_id` share the
         # mould slot by design, so they DON'T conflict (decoder.py:51).
@@ -545,8 +574,8 @@ def _detect_conflicts(
                 other_batch = other.get("mold_batch_id")
                 if op_batch and other_batch and op_batch == other_batch:
                     continue
-                o_start = _ts(other.get("start"))
-                o_end = _ts(other.get("end"))
+                o_start = _op_start(other)
+                o_end = _op_end(other)
                 if o_start is None or o_end is None:
                     continue
                 if start < o_end and end > o_start:
@@ -570,6 +599,7 @@ def _detect_conflicts(
 def _detect_warnings(
     schedule: dict[str, Any],
     mutation: PreviewMutation,
+    phase_names: Optional[dict[str, str]] = None,
 ) -> list[PreviewIssue]:
     """Soft issues — operator can override after seeing the consequence."""
     out: list[PreviewIssue] = []
@@ -577,13 +607,13 @@ def _detect_warnings(
     if op is None:
         return out
 
-    phase = normalize_phase_code(
-        op.get("phase_id") or op.get("phase_name") or ""
-    )
+    phase = _phase_code(op, phase_names or {})
 
-    # Pair preference (Plan v4 §3.4 + Sprint Q.8): 88.5% of Laminagem ops
-    # historically use 2 workers; solo is allowed but flagged.
-    if any(p in phase for p in PAIR_PREFERRED_PHASES):
+    # Pair preference (Plan v4 §3.4 + Sprint Q.8): a maioria das ops de
+    # Laminagem corre com 2 workers; solo é permitido mas sinalizado.
+    # Q.170.A — match EXATO (como pair_assignment/Q.169.C): substring
+    # apanharia LAMINAGEM_INFUSAO, que é solo por política (98.8% real).
+    if phase in PAIR_PREFERRED_PHASES:
         worker_count = len(op.get("workers") or [])
         if worker_count < 2:
             out.append(
@@ -620,6 +650,7 @@ def _detect_sequence_issues(
     mutation: PreviewMutation,
     phase_rank: dict[str, int],
     curing_gaps: dict[tuple[str, str], float],
+    phase_names: Optional[dict[str, str]] = None,
 ) -> list[PreviewIssue]:
     """Q.132.C — Spelke axioma 2 (precedência) + axioma 6 (cura/secagem) no
     drag-drop. O preview só validava molde+operador; um movimento que pusesse
@@ -639,10 +670,11 @@ def _detect_sequence_issues(
     if op is None or not phase_rank:
         return out
     order_id = str(op.get("order_id") or "")
-    new_code = normalize_phase_code(op.get("phase_id") or op.get("phase_name") or "")
+    names = phase_names or {}
+    new_code = _phase_code(op, names)
     new_rank = phase_rank.get(new_code)
-    start = _ts(op.get("start"))
-    end = _ts(op.get("end"))
+    start = _op_start(op)
+    end = _op_end(op)
     if not order_id or new_rank is None or start is None or end is None:
         return out
 
@@ -653,11 +685,9 @@ def _detect_sequence_issues(
             continue
         if str(other.get("order_id") or "") != order_id:
             continue
-        oc = normalize_phase_code(
-            other.get("phase_id") or other.get("phase_name") or ""
-        )
+        oc = _phase_code(other, names)
         orank = phase_rank.get(oc)
-        os_, oe = _ts(other.get("start")), _ts(other.get("end"))
+        os_, oe = _op_start(other), _op_end(other)
         if orank is None or os_ is None or oe is None:
             continue
         siblings.append((orank, os_, oe, oc))
@@ -719,6 +749,27 @@ def _detect_sequence_issues(
                 ))
 
     return out
+
+
+def _op_start(op: dict[str, Any]) -> Optional[datetime]:
+    """Q.170.A — as ops do commit usam `start_time` (decoder); o preview lia
+    `start` → None → NENHUM detetor disparava (double-booking, molde,
+    precedência, cura — tudo morto em runtime, apanhado pela auditoria).
+    Fallbacks mantêm fixtures/payloads legacy vivos."""
+    return _ts(op.get("start_time") or op.get("start") or op.get("start_ts"))
+
+
+def _op_end(op: dict[str, Any]) -> Optional[datetime]:
+    return _ts(op.get("end_time") or op.get("end") or op.get("end_ts"))
+
+
+def _phase_code(op: dict[str, Any], names: dict[str, str]) -> str:
+    """Q.170.A — código canónico da fase da op: as ops trazem phase_id
+    NUMÉRICO do ERP mas phase_rank/_CURING_GAPS/pares são keyed por NOME
+    normalizado (a mesma doença id-vs-nome do Q.169.F)."""
+    pid = str(op.get("phase_id") or "")
+    nome = names.get(pid) or op.get("phase_name") or pid
+    return normalize_phase_code(nome)
 
 
 def _ts(value: Any) -> Optional[datetime]:
