@@ -177,11 +177,26 @@ async def cpo_schedule_job(
 # ─── Worker settings ─────────────────────────────────────────────────
 
 
+async def _worker_startup(ctx: dict) -> None:
+    """Q.169.E — o processo arq nasce com root=WARNING e sem handler para os
+    loggers da app: nem o "cpo_schedule_job started" nem o heartbeat "vivo"
+    chegavam ao log (verificado live: 0 linhas INFO em _arq.err). basicConfig
+    só instala handler se o root não tiver — idempotente."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    logging.getLogger().setLevel(logging.INFO)
+
+
 class WorkerSettings:
     """Arq worker settings — invocado via `arq src.plan.cpo.worker.WorkerSettings`."""
 
     # Lista de jobs que o worker aceita.
     functions = [cpo_schedule_job]
+
+    # Q.169.E — logging INFO da app visível no processo do worker.
+    on_startup = _worker_startup
 
     # Conexao Redis — reusa a URL configurada via env (settings.redis_url).
     # Arq aceita `RedisSettings(host, port, ...)` ou uma string url.
