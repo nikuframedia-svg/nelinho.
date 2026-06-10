@@ -86,9 +86,12 @@ Laminagem Infusão    → Cura:                  24.0h
 CPO nunca devolve um schedule pior que o baseline (heurístico simples). É o último guarda.
 
 - **Where:** `src/plan/cpo/safety_net.py`
-- **Status:** 🟡 INCOMPLETO — só compara 4 KPIs (num_late_orders, total_tardiness_hours,
-  otd_delivery, makespan 1.5× cap). Falta throughput €/dia, quality_risk_score, setup_time,
-  idle_operators. Sprint A.4 fechou parcialmente (Q.18 plan).
+- **Status:** 🟢 9 guardrails desde Q.54.G (3 hard: num_late_orders, total_tardiness_hours,
+  otd_delivery; 6 soft com tolerância: makespan 1.5×, throughput −5%, quality_risk +10%,
+  setups +15%, idle +20%, lam_utilization −5pp, idle_ratio +5pp). Q.169.A: o que falta NÃO
+  é mais KPIs — é o gate aplicar-se também ao caminho CP-SAT (Q.169.D) e a validação
+  ESTRUTURAL dos axiomas 1-6 no caminho de escrita (`validate_schedule`, Q.169.B).
+  Mapa completo por caminho de execução: [axiom_parity_matrix.md](axiom_parity_matrix.md).
 
 ## How to verify before merging CPO/decoder/fitness change
 
