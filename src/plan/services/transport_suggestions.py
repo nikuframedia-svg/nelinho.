@@ -124,7 +124,10 @@ class TransportSuggestionsService:
         suggestions.extend(self._detect_delay(batch, orders))
         suggestions.extend(self._detect_swap(batch, peer_batches, len(orders)))
         suggestions.extend(self._detect_complete_truck(batch, len(orders), unassigned))
-        suggestions.extend(self._detect_regroup_by_client(orders, peer_batches))
+        peer_clients = await self._fetch_peer_batch_clients(
+            [b.id for b in peer_batches]
+        )
+        suggestions.extend(self._detect_regroup_by_client(orders, peer_clients))
         return suggestions
 
     # ------------------------------------------------------------------
@@ -308,22 +311,77 @@ class TransportSuggestionsService:
     def _detect_regroup_by_client(
         self,
         orders: List[ProductionOrder],
-        peer_batches: List[TransportBatch],
+        peer_clients: Dict[UUID, set],
     ) -> List[TransportSuggestion]:
-        # We don't have a `customer_id` in the legacy ProductionOrder model;
-        # use product_type as a coarse proxy until C5 customer wiring lands.
-        if not orders:
+        """Q.170.E — REAL: o mesmo cliente espalhado por este camião +
+        ≥CLIENT_SPREAD_BATCHES camiões vizinhos → sugerir reagrupar.
+
+        Era um "teaser" documentado que devolvia SEMPRE [] (o rastreio
+        funcional marcou a feature ASPIRACIONAL). O pretexto ("não há
+        customer no ProductionOrder") morreu: `customer_name` existe e
+        alimenta o boost/encomendas desde Q.116."""
+        if not orders or not peer_clients:
             return []
-        # Spread = same product_type appearing in this batch + ≥CLIENT_SPREAD_BATCHES
-        # peer batches.
-        types_in_self = {o.product_type for o in orders if o.product_type}
-        if not types_in_self:
-            return []
-        # We'd need to know what's in peer batches to detect spread; this
-        # detector is a teaser — returns empty until peer-batch order lookup
-        # is wired by Q.5 (CEO Dashboard backlog-by-client). Documented so
-        # the UI surface stays consistent.
-        return []
+        clients_in_self = {
+            str(o.customer_name) for o in orders if getattr(o, "customer_name", None)
+        }
+        out: List[TransportSuggestion] = []
+        for client in sorted(clients_in_self):
+            spread = [
+                bid for bid, names in peer_clients.items() if client in names
+            ]
+            if len(spread) >= CLIENT_SPREAD_BATCHES:
+                affected = [
+                    str(o.legacy_id) for o in orders
+                    if str(getattr(o, "customer_name", "")) == client
+                ]
+                out.append(TransportSuggestion(
+                    type="regroup_by_client",
+                    what=(
+                        f"Cliente {client} está espalhado por este camião e "
+                        f"mais {len(spread)} camiões na mesma janela."
+                    ),
+                    why=(
+                        "Agrupar as encomendas do mesmo cliente reduz "
+                        "entregas parciais e custos de transporte."
+                    ),
+                    if_accept=(
+                        f"Reagrupar os barcos de {client} num único camião "
+                        "(mover entre lotes na aba Camiões)."
+                    ),
+                    if_reject="As entregas seguem repartidas como estão.",
+                    affected_order_ids=affected,
+                ))
+        return out
+
+    async def _fetch_peer_batch_clients(
+        self, peer_ids: List[UUID],
+    ) -> Dict[UUID, set]:
+        """{batch_id: {customer_name,…}} dos camiões vizinhos (1 query)."""
+        if not peer_ids:
+            return {}
+        stmt = (
+            select(
+                TransportBatchAssignment.batch_id,
+                ProductionOrder.customer_name,
+            )
+            .join(
+                ProductionOrder,
+                ProductionOrder.id == TransportBatchAssignment.order_id,
+            )
+            .where(
+                and_(
+                    TransportBatchAssignment.tenant_id == self.tenant_id,
+                    TransportBatchAssignment.batch_id.in_(peer_ids),
+                    ProductionOrder.customer_name.isnot(None),
+                )
+            )
+        )
+        rows = (await self.session.execute(stmt)).all()
+        out: Dict[UUID, set] = {}
+        for batch_id, name in rows:
+            out.setdefault(batch_id, set()).add(str(name))
+        return out
 
     # ------------------------------------------------------------------
     # DB helpers

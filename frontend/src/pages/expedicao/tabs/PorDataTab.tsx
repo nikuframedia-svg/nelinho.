@@ -61,7 +61,7 @@ export function PorDataTab({ initialDate }: { initialDate?: string }): ReactNode
           type="date"
           value={date}
           onChange={(e) => setDate(e.target.value)}
-          className="bg-white text-slate-900 placeholder:text-slate-400 rounded-md px-2.5 py-1.5 text-sm border border-white/10"
+          className="bg-bg-2 text-fg-0 placeholder:text-fg-3 rounded-md px-2.5 py-1.5 text-sm border border-bd-2"
         />
         {query.data && (
           <div className="flex items-center gap-2 text-xs">

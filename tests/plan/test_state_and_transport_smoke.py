@@ -275,3 +275,45 @@ def test_real_db_loaders_have_no_coeficiente_x_in_sql():
                 f"Campo de € (CoeficienteX) em código activo de state.py: "
                 f"{line!r} — viola Spelke CX1"
             )
+
+
+# ─── Q.170.E — regroup_by_client REAL (era teaser que devolvia sempre []) ───
+
+
+def test_q170e_regroup_by_client_fires_on_spread():
+    """Cliente em ≥3 camiões vizinhos + este → sugestão de reagrupar."""
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from src.plan.services.transport_suggestions import (
+        TransportSuggestionsService,
+    )
+
+    svc = TransportSuggestionsService.__new__(TransportSuggestionsService)
+    orders = [
+        SimpleNamespace(customer_name="Acme Naval", legacy_id=101),
+        SimpleNamespace(customer_name="Outro Cliente", legacy_id=102),
+    ]
+    peers = {uuid4(): {"Acme Naval"} for _ in range(3)}
+    out = svc._detect_regroup_by_client(orders, peers)
+
+    assert len(out) == 1
+    s = out[0]
+    assert s.type == "regroup_by_client"
+    assert "Acme Naval" in s.what
+    assert s.affected_order_ids == ["101"]
+
+
+def test_q170e_regroup_quiet_below_threshold():
+    """Spread < CLIENT_SPREAD_BATCHES → sem sugestão (sem ruído)."""
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from src.plan.services.transport_suggestions import (
+        TransportSuggestionsService,
+    )
+
+    svc = TransportSuggestionsService.__new__(TransportSuggestionsService)
+    orders = [SimpleNamespace(customer_name="Acme Naval", legacy_id=101)]
+    peers = {uuid4(): {"Acme Naval"}, uuid4(): {"Sem Relacao"}}
+    assert svc._detect_regroup_by_client(orders, peers) == []

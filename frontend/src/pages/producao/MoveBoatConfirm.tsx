@@ -188,7 +188,7 @@ export function MoveBoatConfirm({
         onChange={(e) => setReason(e.target.value)}
         rows={3}
         placeholder="Ex: barco #4271 atrasado, antecipar para libertar molde K1 7ML"
-        className="bg-white text-slate-900 placeholder:text-slate-400"
+        className="bg-bg-2 text-fg-0 placeholder:text-fg-3"
         style={{
           width: '100%',
           padding: '8px 10px',
