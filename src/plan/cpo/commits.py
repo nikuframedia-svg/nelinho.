@@ -199,6 +199,28 @@ class CommitsService:
         self.session = session
         self.tenant_id = tenant_id
 
+    # -------------------- Locking ------------------------------------ #
+
+    async def lock_by_id(self, commit_id) -> Optional[ScheduleCommit]:
+        """Q.171.A — SELECT ... FOR UPDATE para a aprovação DRAFT→LIVE.
+
+        A aprovação era read-check-write SEM lock (TOCTOU): dois
+        aprovadores em paralelo passavam ambos o check "already LIVE" e
+        promoviam os dois (auditoria 2026-06-10). O lock de linha segura
+        até ao commit da transacção — o segundo aprovador bloqueia no
+        SELECT e revê o estado já LIVE → 409 honesto."""
+        from sqlalchemy import select as _select
+
+        stmt = (
+            _select(ScheduleCommit)
+            .where(
+                ScheduleCommit.tenant_id == self.tenant_id,
+                ScheduleCommit.id == commit_id,
+            )
+            .with_for_update()
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
     # -------------------- Create ------------------------------------- #
 
     async def create_from_schedule(

@@ -137,8 +137,8 @@ async def ask_copilot(
         try:
             from src.shared.metrics import bump_silent_fallback
             bump_silent_fallback("copilot_ask", "unhandled_exception")
-        except Exception:  # pragma: no cover — métrica é best-effort
-            pass
+        except Exception as metric_exc:  # pragma: no cover — best-effort
+            logger.debug("métrica copilot_ask falhou: %s", metric_exc)
 
         # Retornar resposta de erro normalizada
         return CopilotResponse(

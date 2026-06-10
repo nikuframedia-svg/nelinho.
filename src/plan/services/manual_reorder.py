@@ -361,8 +361,32 @@ async def apply_manual_reorder(
         },
         status="DRAFT",
     )
-    session.add(commit)  # noqa: audit_coverage — auditado em audit_change() L339 (mesma tx; janela ±5 não alcança por causa do emit Kafka intermédio)
+    session.add(commit)  # noqa: audit_coverage — auditado em audit_change() abaixo (mesma tx)
     await session.flush()
+
+    # ── Audit log ─────────────────────────────────────────────────────
+    await audit_change(
+        session,
+        tenant_id=tenant_id,
+        entity_type="schedule_commit",
+        entity_id=commit.id,
+        action="manual_reorder",
+        old_values={"phase_id": from_phase, "start_ts": str(from_ts)},
+        new_values={
+            "phase_id": new_phase,
+            "start_ts": new_start_ts.isoformat(),
+            "operator_id": new_operator_id,
+            "commit_sha": sha,
+            "reason": reason,
+        },
+        reason=reason or f"Q.115.C drag-drop manual op={operation_id}",
+    )
+
+    # Q.171.A — ordem correta: audit na MESMA tx do commit (invariante 7),
+    # persistir, e SÓ DEPOIS publicar — o evento saía após o flush mas antes
+    # do commit da tx: um rollback deixava o grid SSE a ver um plano que
+    # nunca existiu (e o audit ficava em risco de tx separada).
+    await session.commit()
 
     # ── Kafka emit ─────────────────────────────────────────────────────
     try:
@@ -384,24 +408,6 @@ async def apply_manual_reorder(
         )
     except Exception as exc:  # Kafka down nao bloqueia o commit
         logger.warning("Kafka emit falhou (nao critico): %s", exc)
-
-    # ── Audit log ─────────────────────────────────────────────────────
-    await audit_change(
-        session,
-        tenant_id=tenant_id,
-        entity_type="schedule_commit",
-        entity_id=commit.id,
-        action="manual_reorder",
-        old_values={"phase_id": from_phase, "start_ts": str(from_ts)},
-        new_values={
-            "phase_id": new_phase,
-            "start_ts": new_start_ts.isoformat(),
-            "operator_id": new_operator_id,
-            "commit_sha": sha,
-            "reason": reason,
-        },
-        reason=reason or f"Q.115.C drag-drop manual op={operation_id}",
-    )
 
     delta_summary: Dict[str, Any] = {
         "moved_from": {"phase": from_phase, "start_ts": str(from_ts)},
@@ -496,7 +502,9 @@ async def reapply_manual_overrides(
                 author="system",  # author=system → excluído da próxima coleta
                 state_skills=state_skills,
             )
-            await session.commit()  # tx distinta → created_at distinto → encadeia
+            # Q.171.A — o apply_manual_reorder já persiste por dentro (audit
+            # na mesma tx + commit antes do emit); cada override segue em tx
+            # própria na mesma (created_at distinto → encadeia).
             stats["reapplied"] += 1
             logger.info("reapply: override op=%s re-aplicado em %s", op_id, ov.get("to_phase"))
         except SafetyNetViolation as exc:

@@ -9,6 +9,7 @@ Endpoints:
 
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from uuid import UUID
@@ -207,12 +208,25 @@ async def schedule_cpo_async(
             detail=f"Arq queue unavailable (Redis): {exc}",
         )
 
+    # Q.171.A — dedup do caminho INTERATIVO (o robô já usa _job_id próprio):
+    # sem _job_id o Arq gera id aleatório e o branch "job is None" era morto —
+    # duplo-clique no "Replanear" enfileirava 2 solves. O bucket por minuto
+    # dedupa cliques rápidos sem bloquear re-runs legítimos (keep_result=1h
+    # bloquearia o mesmo payload durante 1 hora).
+    payload = request.model_dump(mode="json")
+    _digest = hashlib.sha256(
+        repr(sorted(payload.items())).encode()
+    ).hexdigest()[:16]
+    _bucket = utc_now().strftime("%Y%m%d%H%M")
+    job_key = f"cpo:{tenant_id}:{_digest}:{_bucket}"
+
     try:
         job = await redis.enqueue_job(
             "cpo_schedule_job",
-            request.model_dump(mode="json"),
+            payload,
             str(tenant_id),
             str(user_id),
+            _job_id=job_key,
         )
     finally:
         await redis.close()
@@ -356,6 +370,12 @@ async def approve_schedule_job(
     # 2. Toggle ScheduleCommit.status DRAFT → LIVE.
     commits = CommitsService(db, tenant_id)
     commit = await _resolve_commit_or_404(commits, commit_sha)
+    # Q.171.A — re-lê com FOR UPDATE: sem lock, 2 aprovadores em paralelo
+    # passavam ambos o check e promoviam os dois (TOCTOU).
+    locked = await commits.lock_by_id(commit.id)
+    if locked is None:
+        raise HTTPException(404, f"Commit {commit_sha[:8]} desapareceu")
+    commit = locked
 
     prev_status = getattr(commit, "status", "DRAFT") or "DRAFT"
     if prev_status == "LIVE":

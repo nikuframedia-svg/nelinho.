@@ -120,6 +120,10 @@ class _FakeSession:
             if not hasattr(obj, "created_at") or obj.created_at is None:
                 object.__setattr__(obj, "created_at", _BASE_TS)
 
+    async def commit(self) -> None:
+        # Q.171.A — o serviço persiste ANTES do Kafka emit.
+        self.commit_calls = getattr(self, "commit_calls", 0) + 1
+
 
 # ---------------------------------------------------------------------------
 # Helpers de patch

@@ -154,7 +154,10 @@ async def test_reapply_orchestration_mixed(monkeypatch):
     stats = await reapply_manual_overrides(session, TENANT)
 
     assert stats == {"reapplied": 1, "skipped": 1, "rejected": 1}
-    assert session.committed == 1      # só o OK::1
+    # Q.171.A — a persistência passou para DENTRO do apply_manual_reorder
+    # (audit na mesma tx + commit ANTES do Kafka emit); o loop de reapply já
+    # não comita por fora. Com o apply stubado, zero commits do loop.
+    assert session.committed == 0
     assert session.rolledback == 2     # GONE::2 + BAD::3
     assert alerts == ["BAD::3"]        # só o axioma violado gera alerta
 

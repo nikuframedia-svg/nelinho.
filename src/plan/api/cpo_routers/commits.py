@@ -528,6 +528,11 @@ async def approve_commit(
     """
     service = CommitsService(db, tenant_id)
     commit = await _resolve_commit_or_404(service, sha)
+    # Q.171.A — FOR UPDATE contra o TOCTOU de aprovação dupla (ver schedule.py).
+    locked = await service.lock_by_id(commit.id)
+    if locked is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Commit {sha[:8]} desapareceu")
+    commit = locked
 
     prev_status = str(getattr(commit, "status", "DRAFT") or "DRAFT")
     if prev_status == "LIVE":

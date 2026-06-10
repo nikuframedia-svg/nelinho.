@@ -43,6 +43,15 @@ def _make_app(monkeypatch, commit, approver_id="alice"):
     monkeypatch.setattr(commits_mod, "_resolve_commit_or_404", _resolve)
     monkeypatch.setattr(commits_mod, "audit_change", audit_spy)
 
+    # Q.171.A — o endpoint re-lê com FOR UPDATE (lock TOCTOU); aqui devolve o
+    # mesmo objeto (o lock real é testado no service com FakeSession).
+    from src.plan.cpo.commits import CommitsService as _CS
+
+    async def _lock(self, _commit_id):
+        return commit
+
+    monkeypatch.setattr(_CS, "lock_by_id", _lock)
+
     app = FastAPI()
     app.include_router(cpo_router)
     app.dependency_overrides[_tenant_id] = lambda: DEV_TENANT
