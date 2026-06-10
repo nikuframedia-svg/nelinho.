@@ -41,7 +41,10 @@ export function usePendingDecisions(
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: decisionKeys.lists() });
-    queryClient.invalidateQueries({ queryKey: planKeys.scheduleCurrent() });
+    // Q.170.D — aprovar uma decisão de planeamento promove um commit do CPO:
+    // invalidar SÓ scheduleCurrent deixava o resto do plano stale (commits,
+    // timeline, fases, barcos excluídos…). planKeys.all cobre a árvore toda.
+    queryClient.invalidateQueries({ queryKey: planKeys.all });
   };
 
   const approveMutation = useMutation<DecisionRun, Error, string>({
