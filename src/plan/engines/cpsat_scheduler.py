@@ -213,7 +213,38 @@ class CPSATScheduler:
         makespan = model.NewIntVar(0, H, "makespan")
         for oid in ends:
             model.Add(makespan >= ends[oid])
-        model.Minimize(makespan)
+
+        # Q.169.D — tardiness EVITÁVEL no objetivo. O solve minimizava SÓ
+        # makespan: as due dates (79% das ordens desde Q.168.A) não
+        # constrangiam nada. effective_due = max(due, horizonte) — mesmo
+        # racional do decoder_kpis (Q.153.A2): ordens já vencidas ganham o
+        # gradiente "acabar quanto antes" SEM a dívida histórica dominar.
+        # Pesos 1:1 em minutos: 1 min de atraso de uma ordem vale 1 min de
+        # makespan — trade-off económico simples e auditável.
+        tard_vars: List[Any] = []
+        for order_id, order_ops in by_order.items():
+            dues = [
+                d for d in (getattr(o, "due_date", None) for o in order_ops)
+                if d is not None
+            ]
+            if not dues:
+                continue
+            due_min = int(max(
+                0.0, (min(dues) - horizon_start).total_seconds() / 60.0,
+            ))
+            due_min = min(due_min, H)
+            o_end = model.NewIntVar(0, H, f"oend_{order_id}")
+            model.AddMaxEquality(
+                o_end, [ends[str(o.operation_id)] for o in order_ops],
+            )
+            t = model.NewIntVar(0, H, f"tard_{order_id}")
+            model.Add(t >= o_end - due_min)
+            tard_vars.append(t)
+
+        if tard_vars:
+            model.Minimize(makespan + sum(tard_vars))
+        else:
+            model.Minimize(makespan)
 
         # ── Warm-start (hint) do greedy ─────────────────────────────────────────
         if hint_starts_min:

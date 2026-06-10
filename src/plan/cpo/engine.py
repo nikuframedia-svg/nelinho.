@@ -36,7 +36,7 @@ from src.plan.cpo.fitness import (
 from src.plan.cpo.frrmab import FRRMAB
 from src.plan.cpo.greedy_pipeline import GreedyPipeline, PHASE_BUDGETS_S
 from src.plan.cpo.mapelites import MAPElites3D
-from src.plan.cpo.safety_net import apply_safety_net
+from src.plan.cpo.safety_net import _gather_violations, apply_safety_net
 from src.plan.cpo.state import FactoryState
 from src.plan.cpo.surrogate import CPOSurrogateLayer
 from src.plan.engines.scheduling_adapter import SchedulingMachine, SchedulingOperation
@@ -153,6 +153,53 @@ class CPOConfig:
         )
 
 
+def _cpsat_gate_decision(
+    candidate: Dict[str, Any], baseline: Dict[str, Any],
+) -> Tuple[bool, Dict[str, Any]]:
+    """Q.169.D — gate COMPLETO do axioma 7 para o caminho CP-SAT.
+
+    O gate antigo só comparava makespan e forçava safety_net_triggered=False:
+    um candidato CP-SAT que melhorasse makespan mas degradasse tardiness/
+    qualidade/idle/lam_utilization substituía o baseline sem ninguém ver
+    (gap confirmado pela matriz de paridade Q.169.A). Agora:
+
+      aceita ⟺ ZERO violações nas 9 dimensões do safety_net
+               E melhoria ESTRITA em makespan OU tardiness
+               (com o objetivo tardiness+makespan do Q.169.D, um candidato
+               pode trocar makespan por menos atraso — ambos contam).
+
+    Pura → testável isolada. Devolve (aceite, meta) — meta vai para
+    cpo_meta.cpsat_gate (auditoria; fora do hash)."""
+    cm = float(candidate.get("makespan_hours", 1e18) or 1e18)
+    bm = float(baseline.get("makespan_hours", 1e18) or 1e18)
+    ct = float(candidate.get("total_tardiness_hours", 0.0) or 0.0)
+    bt = float(baseline.get("total_tardiness_hours", 0.0) or 0.0)
+    violations = _gather_violations(candidate, baseline)
+    improves = cm < bm or ct < bt
+
+    reason = "ok"
+    if violations:
+        reason = f"{len(violations)} violações: " + "; ".join(
+            f"{metric}({msg})" for metric, msg in violations[:3]
+        )
+    elif not improves:
+        reason = (
+            f"sem melhoria estrita (makespan {cm:.1f}h vs {bm:.1f}h, "
+            f"tardiness {ct:.1f}h vs {bt:.1f}h)"
+        )
+
+    meta = {
+        "accepted": not violations and improves,
+        "reason": reason,
+        "makespan_h": round(cm, 1),
+        "baseline_makespan_h": round(bm, 1),
+        "tardiness_h": round(ct, 1),
+        "baseline_tardiness_h": round(bt, 1),
+        "violations": [f"{metric}: {msg}" for metric, msg in violations],
+    }
+    return meta["accepted"], meta
+
+
 class CPOv4Engine:
     """Hyper-heuristic scheduler for DRCFFS-R (NELO production)."""
 
@@ -218,9 +265,10 @@ class CPOv4Engine:
         horizon_end: datetime,
         product_price_eur: Optional[Dict[str, Any]],
     ) -> Optional[Dict[str, Any]]:
-        """Q.166.F — corre o CP-SAT global; devolve o result se DOMINAR o baseline
-        no makespan (axioma 7), senão None (cai na GA). Best-effort: qualquer
-        falha → None (fallback). O greedy `baseline` dá o warm-start (hint)."""
+        """Q.166.F — corre o CP-SAT global; devolve o result se passar o gate
+        COMPLETO do axioma 7 (Q.169.D: as 9 dimensões do safety_net + melhoria
+        estrita em makespan OU tardiness), senão None (cai na GA). Best-effort:
+        qualquer falha → None (fallback). O greedy `baseline` dá o warm-start."""
         try:
             from src.plan.engines.cpsat_global import (
                 greedy_hint_minutes,
@@ -243,17 +291,21 @@ class CPOv4Engine:
             return None
         if result is None:
             return None
-        # Axioma 7: só substitui o baseline se o makespan for melhor.
-        cm = float(result.get("makespan_hours", 1e18) or 1e18)
-        bm = float(baseline.get("makespan_hours", 1e18) or 1e18)
-        if cm >= bm:
+        accepted, gate_meta = _cpsat_gate_decision(result, baseline)
+        result.setdefault("cpo_meta", {})["cpsat_gate"] = gate_meta
+        if not accepted:
             logger.info(
-                "CP-SAT global (%.1fh) não melhora o baseline (%.1fh) — mantém greedy/GA",
-                cm, bm,
+                "CP-SAT global REJEITADO pelo gate axioma-7: %s — mantém greedy/GA",
+                gate_meta.get("reason"),
             )
             return None
         result["safety_net_triggered"] = False
-        logger.info("CP-SAT global ACEITE: makespan %.1fh (baseline %.1fh)", cm, bm)
+        logger.info(
+            "CP-SAT global ACEITE: makespan %.1fh (baseline %.1fh), "
+            "tardiness %.1fh (baseline %.1fh), 0 violações axioma-7",
+            gate_meta["makespan_h"], gate_meta["baseline_makespan_h"],
+            gate_meta["tardiness_h"], gate_meta["baseline_tardiness_h"],
+        )
         return result
 
     def schedule(

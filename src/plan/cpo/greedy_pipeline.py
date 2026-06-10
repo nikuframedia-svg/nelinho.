@@ -290,7 +290,11 @@ class GreedyPipeline:
                 order_id = op.get("order_id")
                 if not order_id:
                     continue
-                end = op.get("end")
+                # Q.169.D — as ops serializadas usam "end_time" (decoder
+                # _scheduled_to_dict); op.get("end") era sempre None →
+                # tardiness_transport_d ficou 0 desde sempre (KPI morto,
+                # o mesmo padrão start/start_time do preview).
+                end = op.get("end_time") or op.get("end")
                 end_dt = _as_datetime(end) if end else None
                 if end_dt is None:
                     continue
