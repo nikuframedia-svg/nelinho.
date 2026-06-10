@@ -648,6 +648,10 @@ async def run_cpo_schedule(
             message=request.message,
             trust_index=trust_index_value,
             boost_inputs_snapshot=boost_snapshot,
+            # Q.169.B — validação ESTRUTURAL completa (cura/skills/pares
+            # precisam do state). Erros = sem commit (o /overall mantém o
+            # último plano saudável — padrão Q.162.B).
+            validation_state=state,
         )
         commit_sha = commit.commit_sha256
         parent_sha = await _parent_sha(commits, commit)

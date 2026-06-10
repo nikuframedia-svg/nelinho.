@@ -211,11 +211,29 @@ class CommitsService:
         message: str = "",
         trust_index: float = 0.0,
         boost_inputs_snapshot: Optional[Dict[str, Any]] = None,
+        validation_state: Any = None,
     ) -> ScheduleCommit:
-        """Persist a commit from the output of `CPOv4Engine.schedule()`."""
+        """Persist a commit from the output of `CPOv4Engine.schedule()`.
+
+        Q.169.B — NENHUM schedule estruturalmente inválido é persistido:
+        `validate_schedule` corre SEMPRE (stateless; com `validation_state`
+        = FactoryState liga também cura/skills/pares) e erros levantam
+        `ScheduleValidationError` — o caller decide (o robô mantém o último
+        plano saudável; o endpoint devolve o erro honesto). O relatório vai
+        para `cpo_meta.validation` (não entra no hash)."""
+        from src.plan.cpo.schedule_validator import (
+            ScheduleValidationError,
+            validate_schedule,
+        )
+
         operations = list(schedule_result.get("operations") or [])
         kpis = _extract_kpis(schedule_result)
         cpo_meta = dict(schedule_result.get("cpo_meta") or {})
+
+        report = validate_schedule(schedule_result, state=validation_state)
+        cpo_meta["validation"] = report.as_meta()
+        if not report.ok:
+            raise ScheduleValidationError(report)
         # Q.133.A.2 — preservar o sinal de plano degradado (safety_net) no commit
         # para o grid o poder rotular. NAO entra no hash determinístico
         # (compute_commit_hash usa só parent/kpis/operations/delta).
