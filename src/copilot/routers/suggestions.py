@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.copilot import api as _api  # late attribute access — vê monkey-patches
 from src.copilot.models import CopilotSuggestion, CopilotUserFeedback
 from src.copilot.schemas import CopilotResponse
+from src.shared.auth.headers import get_current_user_or_dev_header
 from src.shared.auth.jwt_handler import UserContext, get_current_user
 from src.shared.database import get_session
 
@@ -43,7 +44,7 @@ async def get_suggestion(
             detail="Suggestion não encontrada",
         )
 
-    return suggestion.response_json
+    return CopilotResponse(**suggestion.response_json)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -62,6 +63,7 @@ class UserFeedbackRequest(BaseModel):
 @router.post("/feedback/user", status_code=status.HTTP_200_OK)
 async def submit_user_feedback(
     payload: UserFeedbackRequest,
+    user: UserContext = Depends(get_current_user_or_dev_header),
     tenant_id: UUID = Depends(_api.get_tenant_id),
     session: AsyncSession = Depends(get_session),
 ):
@@ -81,6 +83,7 @@ async def submit_user_feedback(
     row = CopilotUserFeedback(
         id=uuid4(),
         tenant_id=tenant_id,
+        user_id=user.user_id,
         thumb=thumb,
         text=text or None,
         context=context if isinstance(context, dict) else None,

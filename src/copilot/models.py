@@ -265,3 +265,5 @@ class CopilotUserFeedback(TenantBase):
     thumb: Mapped[str] = mapped_column(String(8), nullable=False)  # up | down
     text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     context: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    # Q.F4.E — user_id para rastrear o actor do feedback (nullable por retrocompatibilidade)
+    user_id: Mapped[Optional[UUID]] = mapped_column(PG_UUID(as_uuid=True), nullable=True, index=True)

@@ -21,8 +21,14 @@ from fastapi import HTTPException
 from src.copilot.api import submit_user_feedback
 from src.copilot.routers.suggestions import UserFeedbackRequest
 from src.copilot.models import CopilotUserFeedback
+from src.shared.auth.jwt_handler import UserContext
 
 _TENANT = UUID("11111111-1111-1111-1111-111111111111")
+_USER = UserContext(
+    user_id=UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+    tenant_id=_TENANT,
+    role="OPERATOR",
+)
 
 
 class _FakeSession:
@@ -44,6 +50,7 @@ async def test_feedback_up_is_persisted():
     session = _FakeSession()
     result = await submit_user_feedback(
         payload=UserFeedbackRequest(thumb="up", text="Resposta clara", context={"source": "x"}),
+        user=_USER,
         tenant_id=_TENANT,
         session=session,  # type: ignore[arg-type]
     )
@@ -55,6 +62,7 @@ async def test_feedback_up_is_persisted():
     assert row.thumb == "up"
     assert row.text == "Resposta clara"
     assert row.context == {"source": "x"}
+    assert row.user_id == _USER.user_id  # Q.F4.E — user_id gravado
     assert session.committed is True
 
 
@@ -63,6 +71,7 @@ async def test_feedback_down_with_empty_text_stores_none():
     session = _FakeSession()
     await submit_user_feedback(
         payload=UserFeedbackRequest(thumb="down", text="   "),
+        user=_USER,
         tenant_id=_TENANT,
         session=session,  # type: ignore[arg-type]
     )

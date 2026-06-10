@@ -13,11 +13,11 @@ from typing import Any, Dict, Optional
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
-from fastapi import APIRouter, Body, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.copilot import api as _api  # late attribute access — vê monkey-patches
-from src.copilot.actions import ActionHandlerNotImplementedError, ActionMode
+from src.copilot.actions import ActionHandlerNotImplementedError, ActionMode, list_available_action_types
 from src.copilot.schemas import SandboxRequest, SandboxResponse
 from src.shared.auth.jwt_handler import UserContext, get_current_user
 from src.shared.auth.rbac import Permission, PermissionDependency
@@ -102,11 +102,13 @@ async def reset_circuit_breaker():
 
 
 @router.get("/health")
-async def copilot_health():
+async def copilot_health(response: Response):
     """
     Health check do COPILOT.
 
     Verifica: Ollama, DB, embeddings, rate limit.
+    Retorna 503 quando Ollama está offline (degraded) para que probes de
+    orquestração detectem a degradação via HTTP status code.
     """
     try:
         ollama_client = _api.get_ollama_client()
@@ -134,7 +136,7 @@ async def copilot_health():
                 f"Failure count: {getattr(ollama_client, '_failure_count', 0)}"
             )
 
-        return {
+        body = {
             "status": "healthy" if ollama_online else "degraded",
             "ollama": "online" if ollama_online else "offline",
             "embeddings_model": getattr(settings, "copilot_embeddings_model", "all-minilm"),
@@ -145,12 +147,16 @@ async def copilot_health():
                 "per_day": settings.copilot_rate_limit_per_day,
             },
         }
+        if not ollama_online:
+            response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return body
     except Exception as e:
         logger.error(f"Erro no health check do COPILOT: {e}", exc_info=True)
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         return {
             "status": "error",
             "ollama": "offline",
-            "error": str(e),
+            "error": "Erro interno no health check.",
             "embeddings_model": getattr(settings, "copilot_embeddings_model", "all-minilm"),
         }
 
@@ -158,6 +164,17 @@ async def copilot_health():
 # ──────────────────────────────────────────────────────────────────────────
 # POST /sandbox
 # ──────────────────────────────────────────────────────────────────────────
+
+
+@router.get("/sandbox/actions")
+async def list_sandbox_actions(
+    # Mesmos guards do POST /sandbox — a lista de handlers é discovery
+    # interno, não conteúdo público (gate Q.168.D de cobertura tenant).
+    user: UserContext = Depends(get_current_user),
+    tenant_id: UUID = Depends(_api.get_tenant_id),
+):
+    """Lista os action_types com handler registado (útil para discovery pela UI)."""
+    return {"available_types": list_available_action_types()}
 
 
 @router.post("/sandbox", response_model=SandboxResponse, status_code=status.HTTP_200_OK)
@@ -311,9 +328,10 @@ async def post_causal_audit(
     try:
         conversation_id = UUID(str(conversation_id_raw))
     except (ValueError, TypeError) as exc:
+        logger.debug("UUID parse error para conversation_id: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid conversation_id: {exc}",
+            detail="Invalid conversation_id: must be UUID format",
         )
 
     kernel_delta_raw = payload.get("kernel_delta")

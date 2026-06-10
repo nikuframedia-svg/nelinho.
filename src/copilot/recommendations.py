@@ -81,7 +81,7 @@ async def generate_recommendations(
         
     except Exception as e:
         logger.error(f"Erro ao gerar recomendações: {e}", exc_info=True)
-        return []
+        raise
 
 
 async def _analyze_rework_rate(

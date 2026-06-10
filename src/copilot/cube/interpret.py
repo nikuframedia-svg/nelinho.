@@ -11,7 +11,10 @@ retries baseados em validation errors (já existente, reutilizado).
 from __future__ import annotations
 
 import datetime as _dt
+import logging
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -568,6 +571,11 @@ async def interpret(
         # Índice ainda não construído. Degrade Q.104 (todas as medidas).
         candidate_cubes = set()
         candidate_measure_names = None
+    except Exception:
+        # Índice corrompido, Ollama offline, shape mismatch — degrade Q.104.
+        log.exception("measure index falhou; degrade para todas as medidas")
+        candidate_cubes = set()
+        candidate_measure_names = None
 
     system_prompt = _build_system_prompt(
         top_materials,
@@ -750,6 +758,7 @@ async def interpret(
         # canónico que o retrieval resolveu — "Resina Lavesan EN 720".)
         canonical_filtered = any(
             f.member.endswith(".material")
+            and f.operator == "contains"
             and material_mencionado in (f.values or [])
             for f in result.query.filters
         )

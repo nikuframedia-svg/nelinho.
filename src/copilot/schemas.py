@@ -35,9 +35,16 @@ class CopilotActionRequest(BaseModel):
     payload: Dict[str, Any] = Field(default_factory=dict)
 
 
+class ExplainRecommendationsRequest(BaseModel):
+    """Request para pedir ao LLM que explique recomendações."""
+
+    recommendations: List[Dict[str, Any]] = Field(default_factory=list)
+    user_query: Optional[str] = Field(None, max_length=2000)
+
+
 class SandboxRequest(BaseModel):
     """Request para executar ação em sandbox."""
-    
+
     action_type: str = Field(..., min_length=1, max_length=50)  # "INCREASE_SS", "ADJUST_PRICE", etc.
     target: str = Field(..., min_length=1, max_length=255)  # SKU ID, product ID, etc.
     params: Dict[str, Any] = Field(default_factory=dict)

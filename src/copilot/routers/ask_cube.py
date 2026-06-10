@@ -219,9 +219,15 @@ async def _process(
         )
     finally:
         if owns_cube:
-            await cube.close()
+            try:
+                await cube.close()
+            except Exception:
+                logger.exception("cube.close() falhou")
         if owns_ollama:
-            await ollama.close()
+            try:
+                await ollama.close()
+            except Exception:
+                logger.exception("ollama.close() falhou")
 
 
 # ────────────────────────────── Endpoints ──────────────────────────────
@@ -381,7 +387,7 @@ async def _run_card(cube: CubeClient, spec: _CardSpec, today: date) -> Dashboard
         ]
     try:
         result = await cube.load(payload)
-        if not result.data:
+        if not result.data or _all_rows_effectively_empty(result.data, [spec.measure]):
             return DashboardCard(key=spec.key, label=spec.label, unit=spec.unit,
                                  value=None, status="no_data")
         value = _safe_float(result.data[0].get(spec.measure))
@@ -445,7 +451,10 @@ async def cube_dashboard_dev() -> DashboardResponse:
             *[_run_chart(cube, s, today) for s in _CHART_SPECS],
         )
     finally:
-        await cube.close()
+        try:
+            await cube.close()
+        except Exception:
+            logger.exception("cube.close() falhou no dashboard")
     n_cards = len(_CARD_SPECS)
     return DashboardResponse(
         cards=list(results[:n_cards]),
@@ -573,5 +582,8 @@ async def cube_measure_cards_dev(request: MeasureCardsRequest) -> MeasureCardsRe
     try:
         cards = await asyncio.gather(*[_run_card(cube, s, today) for s in specs])
     finally:
-        await cube.close()
+        try:
+            await cube.close()
+        except Exception:
+            logger.exception("cube.close() falhou no measure-cards")
     return MeasureCardsResponse(cards=list(cards))

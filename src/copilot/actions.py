@@ -94,6 +94,11 @@ def clear_action_handlers() -> None:
     _ACTION_HANDLERS.clear()
 
 
+def list_available_action_types() -> list[str]:
+    """Devolve os action_types que têm handler registado."""
+    return list(_ACTION_HANDLERS.keys())
+
+
 class ActionMode(Enum):
     """Execution modes for actions."""
     PREVIEW = "preview"

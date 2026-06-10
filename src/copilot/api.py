@@ -96,6 +96,7 @@ from src.copilot.routers.health import (
     copilot_health,
     execute_sandbox,
     ingest_rag_document,
+    list_sandbox_actions,
     post_causal_audit,
     reset_circuit_breaker,
 )
@@ -168,6 +169,7 @@ __all__ = [
     "copilot_health",
     "execute_sandbox",
     "ingest_rag_document",
+    "list_sandbox_actions",
     "post_causal_audit",
     "reset_circuit_breaker",
 ]

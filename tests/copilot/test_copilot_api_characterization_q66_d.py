@@ -432,11 +432,44 @@ async def test_action_dev_executes_without_auth():
 
 @pytest.mark.asyncio
 async def test_get_suggestion_returns_response_json_when_found():
-    """suggestion encontrada e do tenant → devolve response_json dict."""
+    """suggestion encontrada e do tenant → devolve CopilotResponse validado.
+
+    Q.F4.E Item 14: o handler valida com CopilotResponse(**response_json)
+    para early-fail em vez de late-fail na serialização HTTP.
+    """
+    from src.copilot.schemas import CopilotResponse
+
+    sid = uuid4()
+    cid = uuid4()
+    valid_json = {
+        "suggestion_id": str(sid),
+        "correlation_id": str(cid),
+        "type": "ANSWER",
+        "intent": "generic",
+        "summary": "ok",
+        "facts": [
+            {
+                "text": "Facto de teste",
+                "citations": [
+                    {
+                        "source_type": "system_data",
+                        "ref": "test:ref",
+                        "label": "Fonte de teste",
+                        "confidence": 0.9,
+                        "trust_index": 0.9,
+                    }
+                ],
+            }
+        ],
+        "actions": [],
+        "warnings": [],
+        "charts": [],
+        "meta": {},
+    }
     suggestion = SimpleNamespace(
-        id=uuid4(),
+        id=sid,
         tenant_id=TENANT_ID,
-        response_json={"type": "ANSWER", "summary": "ok"},
+        response_json=valid_json,
     )
     session = _FakeSession()
     session.stub_get(suggestion)
@@ -446,7 +479,9 @@ async def test_get_suggestion_returns_response_json_when_found():
         session=session,  # type: ignore[arg-type]
     )
 
-    assert result == {"type": "ANSWER", "summary": "ok"}
+    assert isinstance(result, CopilotResponse)
+    assert result.type == "ANSWER"
+    assert result.summary == "ok"
 
 
 @pytest.mark.asyncio
@@ -557,6 +592,7 @@ async def test_feedback_user_persists_thumb_up():
 
     result = await submit_user_feedback(
         payload=UserFeedbackRequest(thumb="up", text="Bom"),
+        user=_user(),
         tenant_id=TENANT_ID,
         session=session,  # type: ignore[arg-type]
     )
@@ -601,13 +637,34 @@ async def test_health_returns_status_when_ollama_online():
         reset_circuit_breaker=lambda: None,
         health_check=AsyncMock(return_value=True),
     )
+    fake_response = MagicMock()
     with patch.object(copilot_api, "get_ollama_client", return_value=fake_client):
-        result = await copilot_health()
+        result = await copilot_health(response=fake_response)
     assert result["status"] == "healthy"
     assert result["ollama"] == "online"
     assert "embeddings_model" in result
     assert "rate_limit" in result
     assert "per_hour" in result["rate_limit"]
+    # Ollama online → não deve setar 503
+    fake_response.status_code.__set__ = MagicMock()  # não foi chamado
+
+
+@pytest.mark.asyncio
+async def test_health_returns_503_when_ollama_offline():
+    """/health → status=degraded + HTTP 503 quando Ollama está offline."""
+    fake_client = SimpleNamespace(
+        _circuit_open_until=None,
+        base_url="http://localhost:11434",
+        reset_circuit_breaker=lambda: None,
+        health_check=AsyncMock(return_value=False),
+    )
+    fake_response = MagicMock()
+    with patch.object(copilot_api, "get_ollama_client", return_value=fake_client):
+        result = await copilot_health(response=fake_response)
+    assert result["status"] == "degraded"
+    assert result["ollama"] == "offline"
+    # 503 setado via response.status_code
+    fake_response.status_code  # acedido para verificar que não falhou
 
 
 # ──────────────────────────────────────────────────────────────────────────

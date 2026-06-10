@@ -101,7 +101,9 @@ async def get_conversation_messages(
     offset: int = 0,
 ):
     """Obter mensagens de uma conversa."""
-    # Verificar que a conversa pertence ao utilizador
+    # Verificar que a conversa pertence ao utilizador.
+    # Conversas são single-actor: um utilizador por conversa (actor_id==user.user_id).
+    # Multi-actor não é suportado; acesso cruzado retorna 404 para não expor existência.
     conversation = await session.get(CopilotConversation, conversation_id)
     if not conversation or conversation.tenant_id != tenant_id or conversation.actor_id != user.user_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversa não encontrada")
@@ -137,7 +139,9 @@ async def send_message(
     session: AsyncSession = Depends(get_session),
 ):
     """Enviar mensagem numa conversa e obter resposta do COPILOT."""
-    # Verificar que a conversa pertence ao utilizador
+    # Verificar que a conversa pertence ao utilizador.
+    # Conversas são single-actor: um utilizador por conversa (actor_id==user.user_id).
+    # Multi-actor não é suportado; acesso cruzado retorna 404 para não expor existência.
     conversation = await session.get(CopilotConversation, conversation_id)
     if not conversation or conversation.tenant_id != tenant_id or conversation.actor_id != user.user_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversa não encontrada")

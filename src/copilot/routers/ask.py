@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Body, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.copilot import api as _api  # late attribute access — vê monkey-patches
@@ -27,6 +27,7 @@ from src.copilot.schemas import (
     CopilotAskRequest,
     CopilotResponse,
     DailyFeedbackResponse,
+    ExplainRecommendationsRequest,
 )
 from src.shared.auth.jwt_handler import UserContext, get_current_user
 from src.shared.database import get_session
@@ -48,6 +49,9 @@ router = APIRouter()
 
 _IDEMPOTENCY_TTL_SECONDS = 300
 _IDEMPOTENCY_CACHE: Dict[tuple, tuple] = {}  # {(tenant, user, key): (response, expires_epoch)}
+# AVISO: este cache é single-process. Em produção com --workers 2 (deploy/systemd/prodplan-api.service:26)
+# dois workers têm espaço de memória independente → idempotência não é garantida entre workers.
+# Fix correcto: trocar por Redis (padrão rate_limiter.py). Aceite como risco conhecido até lá.
 
 
 def _idempotency_get(tenant_id: UUID, user_id: str, key: str) -> Optional[CopilotResponse]:
@@ -256,7 +260,14 @@ async def get_recommendations(
     """
     Obter recomendações geradas automaticamente baseadas em análise de dados.
     """
-    recommendations = await _api.generate_recommendations(session, tenant_id)
+    try:
+        recommendations = await _api.generate_recommendations(session, tenant_id)
+    except Exception as e:
+        logger.error("Erro ao gerar recomendações: %s", e, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Erro interno ao gerar recomendações.",
+        ) from e
     return recommendations
 
 
@@ -276,7 +287,14 @@ async def get_recommendations_dev(
     Sprint Q.12 Onda 0.5: gated to non-production via ``dev_only``.
     """
     dev_tenant_id = UUID("00000000-0000-0000-0000-000000000001")
-    recommendations = await _api.generate_recommendations(session, dev_tenant_id)
+    try:
+        recommendations = await _api.generate_recommendations(session, dev_tenant_id)
+    except Exception as e:
+        logger.error("Erro ao gerar recomendações (dev): %s", e, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Erro interno ao gerar recomendações.",
+        ) from e
     return recommendations
 
 
@@ -287,7 +305,7 @@ async def get_recommendations_dev(
 
 @router.post("/recommendations/explain", response_model=CopilotResponse, tags=["COPILOT"])
 async def explain_recommendations(
-    request: Dict[str, Any] = Body(...),
+    request: ExplainRecommendationsRequest,
     user: UserContext = Depends(get_current_user),
     tenant_id: UUID = Depends(_api.get_tenant_id),
     session: AsyncSession = Depends(get_session),
@@ -301,8 +319,8 @@ async def explain_recommendations(
         "user_query": "Explica-me estas recomendações"  # Opcional
     }
     """
-    recommendations = request.get("recommendations", [])
-    user_query = request.get("user_query", "Explica-me estas recomendações e como implementá-las.")
+    recommendations = request.recommendations
+    user_query = request.user_query or "Explica-me estas recomendações e como implementá-las."
 
     # Construir prompt com recomendações (incluindo origins, confidence, limitations)
     recommendations_text = "\n\n".join([
@@ -344,7 +362,7 @@ async def explain_recommendations(
     dependencies=[Depends(_api.dev_only)],
 )
 async def explain_recommendations_dev(
-    request: Dict[str, Any] = Body(...),
+    request: ExplainRecommendationsRequest,
     session: AsyncSession = Depends(get_session),
 ):
     """
@@ -356,8 +374,8 @@ async def explain_recommendations_dev(
     dev_user_id = UUID("00000000-0000-0000-0000-000000000001")
     dev_role = "ADMIN"
 
-    recommendations = request.get("recommendations", [])
-    user_query = request.get("user_query", "Explica-me estas recomendações e como implementá-las.")
+    recommendations = request.recommendations
+    user_query = request.user_query or "Explica-me estas recomendações e como implementá-las."
 
     recommendations_text = "\n\n".join([
         f"**{i+1}. {rec.get('title', 'Recomendação')}** ({rec.get('category', 'GENERAL')})\n"
