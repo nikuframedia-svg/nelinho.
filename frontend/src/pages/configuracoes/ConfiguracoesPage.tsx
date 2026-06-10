@@ -132,13 +132,13 @@ function TabCustos() {
 
   // Edição inline de prioridade
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState<{ prioridade: number; razao: string }>({ prioridade: 1, razao: '' });
+  const [editForm, setEditForm] = useState<{ priority: number; reason: string }>({ priority: 1, reason: '' });
   const [prioritySearch, setPrioritySearch] = useState('');
   const [priorityFilter, setPriorityFilter] = useState<number | null>(null);
 
   const updatePriorityMutation = useMutation({
-    mutationFn: ({ clienteId, prioridade, razao }: { clienteId: string; prioridade: number; razao: string }) =>
-      clientPriorityApi.update(clienteId, { prioridade, razao }),
+    mutationFn: ({ clienteId, priority, reason }: { clienteId: string; priority: number; reason: string }) =>
+      clientPriorityApi.update(clienteId, { priority, reason }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: clientPriorityKeys.all });
       toast.success('Prioridade actualizada');
@@ -151,8 +151,8 @@ function TabCustos() {
 
   const priorities = priorityQuery.data ?? [];
   const filteredPriorities = priorities.filter((p) => {
-    const matchSearch = prioritySearch === '' || p.cliente_id.toLowerCase().includes(prioritySearch.toLowerCase());
-    const matchFilter = priorityFilter === null || p.prioridade === priorityFilter;
+    const matchSearch = prioritySearch === '' || p.client_id.toLowerCase().includes(prioritySearch.toLowerCase());
+    const matchFilter = priorityFilter === null || p.priority === priorityFilter;
     return matchSearch && matchFilter;
   });
 
@@ -332,49 +332,49 @@ function TabCustos() {
               </thead>
               <tbody>
                 {filteredPriorities.map((p: ClientPriority) => (
-                  <tr key={p.id} className="border-b border-white/5 hover:bg-white/5">
-                    <td className="py-2 font-mono text-text-dark-secondary">{p.cliente_id}</td>
+                  <tr key={p.client_id} className="border-b border-white/5 hover:bg-white/5">
+                    <td className="py-2 font-mono text-text-dark-secondary">{p.client_id}</td>
                     <td className="py-2 text-center">
-                      {editingId === p.id ? (
+                      {editingId === p.client_id ? (
                         <select
                           className="bg-bg-2 text-fg-0 border border-bd-2 rounded px-1 py-0.5 text-xs"
-                          value={editForm.prioridade}
-                          onChange={(e) => setEditForm((f) => ({ ...f, prioridade: Number(e.target.value) }))}
+                          value={editForm.priority}
+                          onChange={(e) => setEditForm((f) => ({ ...f, priority: Number(e.target.value) }))}
                         >
                           {[1, 2, 3, 4, 5].map((v) => <option key={v} value={v}>{v}</option>)}
                         </select>
                       ) : (
-                        <DarkBadge variant={PRIORITY_VARIANT[p.prioridade] ?? 'neutral'}>
-                          {p.prioridade}
+                        <DarkBadge variant={PRIORITY_VARIANT[p.priority] ?? 'neutral'}>
+                          {p.priority}
                         </DarkBadge>
                       )}
                     </td>
                     <td className="py-2 pl-4 text-text-dark-tertiary">
-                      {editingId === p.id ? (
+                      {editingId === p.client_id ? (
                         <textarea
                           className="bg-bg-2 text-fg-0 placeholder:text-fg-3 border border-bd-2 rounded px-2 py-1 text-xs w-full resize-none"
                           rows={2}
-                          value={editForm.razao}
-                          onChange={(e) => setEditForm((f) => ({ ...f, razao: e.target.value }))}
+                          value={editForm.reason}
+                          onChange={(e) => setEditForm((f) => ({ ...f, reason: e.target.value }))}
                         />
                       ) : (
-                        p.razao ?? <span className="italic">—</span>
+                        p.reason ?? <span className="italic">—</span>
                       )}
                     </td>
                     <td className="py-2 text-right text-text-dark-tertiary">
                       {new Date(p.updated_at).toLocaleDateString('pt-PT')}
                     </td>
                     <td className="py-2 text-right">
-                      {editingId === p.id ? (
+                      {editingId === p.client_id ? (
                         <div className="flex gap-1 justify-end">
                           <DarkButton
                             size="sm"
                             disabled={updatePriorityMutation.isPending}
                             onClick={() =>
                               updatePriorityMutation.mutate({
-                                clienteId: p.cliente_id,
-                                prioridade: editForm.prioridade,
-                                razao: editForm.razao,
+                                clienteId: p.client_id,
+                                priority: editForm.priority,
+                                reason: editForm.reason,
                               })
                             }
                           >
@@ -393,8 +393,8 @@ function TabCustos() {
                           size="sm"
                           variant="ghost"
                           onClick={() => {
-                            setEditingId(p.id);
-                            setEditForm({ prioridade: p.prioridade, razao: p.razao ?? '' });
+                            setEditingId(p.client_id);
+                            setEditForm({ priority: p.priority, reason: p.reason ?? '' });
                           }}
                         >
                           Editar

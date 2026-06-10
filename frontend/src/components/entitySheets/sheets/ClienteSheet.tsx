@@ -110,8 +110,8 @@ function TabPrioridade({
   const mutation = useMutation({
     mutationFn: () =>
       clientPriorityApi.update(customerId, {
-        prioridade: sliderValue,
-        razao: reason || undefined,
+        priority: sliderValue,
+        reason: reason || undefined,
       }),
     onSuccess: () => {
       toast.success('Prioridade aplicada.');

@@ -589,17 +589,22 @@ export const revenueTargetApi = {
 // Q.115.B — Client Priority (/v1/config/client-priority)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+// Q.170.B — contrato REAL do backend (ClientPriorityOut em q115_config.py):
+// o tipo antigo declarava cliente_id/prioridade/razao/id — campos que o BE
+// NUNCA devolveu (render undefined) e o PUT com {prioridade} dava 422
+// sempre (o BE exige `priority`). Feature estava 100% partida.
 export interface ClientPriority {
-  id: string;
-  cliente_id: string;
-  prioridade: number;
-  razao: string | null;
+  client_id: string;
+  tenant_id: string;
+  priority: number;
+  reason: string | null;
   updated_at: string;
+  updated_by: string;
 }
 
 export interface ClientPriorityUpdate {
-  prioridade: number;
-  razao?: string;
+  priority: number;
+  reason?: string;
 }
 
 export const clientPriorityApi = {
