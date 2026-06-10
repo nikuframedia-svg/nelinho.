@@ -91,19 +91,32 @@ def assign_concrete(
         # piso de precedência+cura (defesa: o CP-SAT já o garante, mas reafirma).
         siblings = by_order[str(op.order_id)]
         for prev in siblings:
-            if int(getattr(prev, "sequence", 0) or 0) < int(getattr(op, "sequence", 0) or 0):
-                pe = op_end_at.get(str(prev.operation_id))
-                if pe is not None:
-                    gap_h = 0.0
-                    mg = getattr(state, "min_gap_hours", None)
-                    if mg is not None:
-                        try:
-                            gap_h = float(mg(prev.phase_id, op.phase_id))
-                        except Exception:  # pragma: no cover
-                            gap_h = 0.0
-                    cand = pe + timedelta(hours=gap_h)
-                    if cand > floor:
-                        floor = cand
+            prev_oid = str(prev.operation_id)
+            if prev_oid == oid:
+                continue
+            pe = op_end_at.get(prev_oid)
+            if pe is None:
+                continue
+            p_seq = int(getattr(prev, "sequence", 0) or 0)
+            o_seq = int(getattr(op, "sequence", 0) or 0)
+            if p_seq < o_seq:
+                gap_h = 0.0
+                mg = getattr(state, "min_gap_hours", None)
+                if mg is not None:
+                    try:
+                        gap_h = float(mg(prev.phase_id, op.phase_id))
+                    except Exception:  # pragma: no cover
+                        gap_h = 0.0
+                cand = pe + timedelta(hours=gap_h)
+            elif p_seq == o_seq and prev_oid < oid:
+                # Q.169.G — sequências empatadas serializam (um barco não está
+                # em 2 fases): o solver chaina empates, mas o empurrão por
+                # recursos aqui podia re-sobrepô-los.
+                cand = pe
+            else:
+                continue
+            if cand > floor:
+                floor = cand
 
         # estação: a livre mais cedo entre as da fase.
         stations = _stations_for(fase)

@@ -70,7 +70,18 @@ def _precedences_met(
     # Intra-order precedence
     siblings = order_to_ops[op.order_id]
     for prev in siblings:
-        if prev.sequence < op.sequence and prev.operation_id not in op_end_at:
+        if prev.operation_id == op.operation_id:
+            continue
+        # Q.169.G — sequências EMPATADAS serializam por operation_id (um
+        # barco não está em 2 fases ao mesmo tempo): a rota real dá à
+        # Laminagem (1) e à Infusão (67) a MESMA sequência e às reparações
+        # sequence=0 → o decoder tratava-as como paralelas. Apanhado live
+        # pelo validate_schedule (fases sobrepostas na mesma OF).
+        before = prev.sequence < op.sequence or (
+            prev.sequence == op.sequence
+            and str(prev.operation_id) < str(op.operation_id)
+        )
+        if before and prev.operation_id not in op_end_at:
             return False
     # Explicit predecessors
     for pid in op.predecessor_ops:
@@ -183,6 +194,15 @@ def _earliest_start(
             candidate = _with_gaps(end, prev)
             if candidate > earliest:
                 earliest = candidate
+        elif (
+            prev.sequence == op.sequence
+            and str(prev.operation_id) < str(op.operation_id)
+        ):
+            # Q.169.G — empate de sequência: serializa sem gaps (é o mesmo
+            # barco a mudar de mãos, não uma transição química da rota).
+            end = op_end_at.get(prev.operation_id)
+            if end is not None and end > earliest:
+                earliest = end
     for pid in op.predecessor_ops:
         end = op_end_at.get(pid)
         if end is None:

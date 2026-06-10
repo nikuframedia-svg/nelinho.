@@ -133,7 +133,16 @@ class CPSATScheduler:
         for op in operations:
             by_order[str(op.order_id)].append(op)
         for order_ops in by_order.values():
-            so = sorted(order_ops, key=lambda o: int(getattr(o, "sequence", 0) or 0))
+            # Q.169.G — tiebreak determinístico por operation_id: empates de
+            # sequência (Laminagem/Infusão na mesma posição; reparações a 0)
+            # ficam chainados numa ordem estável (o zip já os serializa).
+            so = sorted(
+                order_ops,
+                key=lambda o: (
+                    int(getattr(o, "sequence", 0) or 0),
+                    str(o.operation_id),
+                ),
+            )
             for prev, cur in zip(so, so[1:]):
                 gap_h = 0.0
                 mg = getattr(state, "min_gap_hours", None)
