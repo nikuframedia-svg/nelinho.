@@ -18,6 +18,7 @@ trata.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
@@ -481,7 +482,14 @@ async def run_cpo_schedule(
 
     product_price_eur = await _load_product_prices(session, tenant_id)
 
-    result = engine.schedule(
+    # Q.169.E — o solve é CPU-bound e SÍNCRONO (greedy+GA em Python; CP-SAT
+    # em C++ que LIBERTA o GIL): corrê-lo inline bloqueava o event loop até
+    # 600s — /health não respondia e o SSE morria durante cada replan. Em
+    # thread, o loop fica livre (totalmente durante o CP-SAT; nos troços
+    # Python do GA o GIL alterna). engine.schedule é auto-contido (estado
+    # em memória, zero sessões/loop por dentro) → thread-safe aqui.
+    result = await asyncio.to_thread(
+        engine.schedule,
         operations, machines, horizon_start, horizon_end,
         product_price_eur=product_price_eur,
     )

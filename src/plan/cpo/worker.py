@@ -29,13 +29,20 @@ introduzir `ScheduleCommit.status DRAFT|LIVE`.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from typing import Any
 from uuid import UUID
 
 from src.shared.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Q.169.E — intervalo do heartbeat de progresso do job. Sem heartbeat, um
+# job pendurado (deadlock no load, solver preso) só era detetável quando o
+# wall-clock de 1200s o matava — 20 min de silêncio total nos logs.
+_HEARTBEAT_INTERVAL_S = 60.0
 
 # Q.162.A — wall-clock máximo do job Arq. INVARIANTE: >> budget do solver do robô
 # (_DEFAULT_ROBOT_TIME_LIMIT_S=300, em auto_cpo_replan_job) + overhead de load
@@ -98,33 +105,63 @@ async def cpo_schedule_job(
         request.time_limit_sec,
     )
 
-    with tenant_scope(tenant_id):
-        async with get_session_context() as session:
-            result = await run_cpo_schedule(session, tenant_id, request)
+    # Q.169.E — heartbeat de progresso: com o solve em to_thread (Q.169.E em
+    # scheduler_run) o event loop fica livre para isto correr DURANTE o
+    # solve. Um job pendurado passa a ser visível nos logs minuto a minuto
+    # em vez de 20 min de silêncio até ao wall-clock timeout.
+    _hb_stop = asyncio.Event()
+    _t0 = time.monotonic()
 
-            # Q.142.D — re-aplicar os ajustes manuais (drag-drop) por cima do
-            # DRAFT fresco para que "se aguentem" ao replan automático. O robô
-            # planeia sozinho MAS respeita os moves do humano (revalidados pelos
-            # axiomas Spelke; move inviável → alerta, nunca forçado). Best-effort:
-            # falha aqui nunca derruba o job — o DRAFT do robô fica de pé.
-            from sqlalchemy.exc import SQLAlchemyError
-
+    async def _heartbeat() -> None:
+        while not _hb_stop.is_set():
             try:
-                from src.plan.services.manual_reorder import reapply_manual_overrides
-
-                stats = await reapply_manual_overrides(session, tenant_id)
-                if stats.get("reapplied") or stats.get("rejected"):
-                    logger.info(
-                        "cpo_schedule_job: overrides manuais reaplicados=%d "
-                        "rejeitados=%d skipped=%d",
-                        stats.get("reapplied", 0),
-                        stats.get("rejected", 0),
-                        stats.get("skipped", 0),
-                    )
-            except (SQLAlchemyError, RuntimeError, ValueError, OSError, ImportError) as exc:
-                logger.warning(
-                    "cpo_schedule_job: reapply de overrides manuais falhou (%s)", exc,
+                await asyncio.wait_for(
+                    _hb_stop.wait(), timeout=_HEARTBEAT_INTERVAL_S,
                 )
+            except asyncio.TimeoutError:
+                logger.info(
+                    "cpo_schedule_job vivo: job_id=%s %.0fs decorridos",
+                    ctx.get("job_id"), time.monotonic() - _t0,
+                )
+
+    _hb_task = asyncio.create_task(_heartbeat())
+
+    try:
+        with tenant_scope(tenant_id):
+            async with get_session_context() as session:
+                result = await run_cpo_schedule(session, tenant_id, request)
+
+                # Q.142.D — re-aplicar os ajustes manuais (drag-drop) por
+                # cima do DRAFT fresco para que "se aguentem" ao replan
+                # automático. O robô planeia sozinho MAS respeita os moves do
+                # humano (revalidados pelos axiomas Spelke; move inviável →
+                # alerta, nunca forçado). Best-effort: falha aqui nunca
+                # derruba o job — o DRAFT do robô fica de pé.
+                from sqlalchemy.exc import SQLAlchemyError
+
+                try:
+                    from src.plan.services.manual_reorder import (
+                        reapply_manual_overrides,
+                    )
+
+                    stats = await reapply_manual_overrides(session, tenant_id)
+                    if stats.get("reapplied") or stats.get("rejected"):
+                        logger.info(
+                            "cpo_schedule_job: overrides manuais reaplicados=%d "
+                            "rejeitados=%d skipped=%d",
+                            stats.get("reapplied", 0),
+                            stats.get("rejected", 0),
+                            stats.get("skipped", 0),
+                        )
+                except (SQLAlchemyError, RuntimeError, ValueError, OSError, ImportError) as exc:
+                    logger.warning(
+                        "cpo_schedule_job: reapply de overrides manuais falhou (%s)", exc,
+                    )
+    finally:
+        _hb_stop.set()
+        # Parachoque (ressalva do reviewer): se algum dia o Arq fizer cancel
+        # múltiplo, o await do heartbeat nunca pendura o teardown do job.
+        await asyncio.wait_for(_hb_task, timeout=5.0)
 
     logger.info(
         "cpo_schedule_job complete: job_id=%s commit_sha=%s status=%s "
