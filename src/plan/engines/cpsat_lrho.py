@@ -336,7 +336,7 @@ class CPSATLRHO:
 
         for order_ops in by_order.values():
             order_ops.sort(
-                key=lambda o: _parse_dt(o.get("start")) or datetime.max,
+                key=lambda o: _parse_dt(o.get("start")) or datetime.max,  # noqa: DTZ901 — sort key naive
             )
             for i in range(len(order_ops) - 1):
                 pred = order_ops[i]

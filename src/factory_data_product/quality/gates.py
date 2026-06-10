@@ -427,7 +427,7 @@ def check_date_parseable(
                 parsed = False
                 for fmt in ["%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"]:
                     try:
-                        datetime.strptime(str(value), fmt)
+                        datetime.strptime(str(value), fmt)  # noqa: DTZ007 — valida formato ERP naive
                         parsed = True
                         break
                     except ValueError:

@@ -49,7 +49,7 @@ from src.plan.services.transport_suggestions import (
 )
 from src.shared.database import get_session
 from src.shared.auth.headers import require_tenant_header
-from src.shared.time import local_today
+from src.shared.time import local_today, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -424,7 +424,7 @@ async def batch_manifest(
         },
         "boats": boats,
         "boat_count": len(boats),
-        "generated_at": datetime.now().isoformat(),
+        "generated_at": utc_now().isoformat(),
     }
 
 

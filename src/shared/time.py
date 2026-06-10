@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
-__all__ = ["utc_now", "utc_now_naive", "local_today"]
+__all__ = ["utc_now", "utc_now_naive", "local_today", "local_now_naive"]
 
 
 def utc_now() -> datetime:
@@ -27,6 +27,17 @@ def utc_now() -> datetime:
 def utc_now_naive() -> datetime:
     """Agora, em UTC, naive — SÓ colunas legacy sem tz e domínio CPO (F2)."""
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def local_now_naive() -> datetime:
+    """Agora, em hora LOCAL da fábrica, naive (Q.171.E).
+
+    Para comparar/anexar a timestamps do ERP, que são local-naive
+    ('2024-09-19T08:16:00' em `factory_raw`): janelas de recência,
+    feasibility vs calendário fabril, horizontes de planeamento. Usar
+    `utc_now_naive()` aqui erraria 1h no verão (DST Lisboa). O servidor
+    corre on-prem na NELO — hora local do processo É a hora da fábrica."""
+    return datetime.now()  # noqa: DTZ005 — hora local É a intenção (vs ERP)
 
 
 def local_today() -> date:

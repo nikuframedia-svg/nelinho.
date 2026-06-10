@@ -115,7 +115,7 @@ class CapableToPromiseService:
         # Greedy fill: soonest-shippable date-feasible orders first.
         feasible = sorted(
             [e for e in evaluated if e["date_feasible"]],
-            key=lambda e: e["_ship_dt"] or datetime.max,
+            key=lambda e: e["_ship_dt"] or datetime.max,  # noqa: DTZ901 — sort key naive
         )
         committable: List[Dict[str, Any]] = []
         at_risk: List[Dict[str, Any]] = []

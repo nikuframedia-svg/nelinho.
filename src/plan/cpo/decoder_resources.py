@@ -547,7 +547,7 @@ def _select_mold(
         if mold_free_at is not None:
             molds = state.molds_for_model(op.model_id)
             if molds:
-                ref = earliest or datetime.min
+                ref = earliest or datetime.min  # noqa: DTZ901 — piso p/ tempos CPO naive
                 best = min(
                     molds,
                     key=lambda m: (mold_free_at.get(str(m.molde_id), ref), str(m.molde_id)),

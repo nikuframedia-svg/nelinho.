@@ -36,7 +36,7 @@ from typing import List, Optional, Sequence, Tuple
 from uuid import UUID
 
 from src.plan.cpo.state import normalize_phase_code
-from src.shared.time import local_today
+from src.shared.time import local_now_naive, local_today
 from src.plan.services.factory_calendar import (
     DEFAULT_SHIFT_START,
     FactoryCalendar,
@@ -278,7 +278,7 @@ class BackwardSchedulerService:
             }
 
         start_dt, breakdown = start_by(target_dt, phases, gap_lookup, calendar)
-        now = datetime.now()
+        now = local_now_naive()  # calendário fabril é local-naive
         feasible = start_dt >= now
         return {
             "order_id": str(order.id),

@@ -7,6 +7,8 @@ Adapter for the legacy MRP engine from base-.
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+
+from src.shared.time import local_now_naive
 from decimal import Decimal
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
@@ -193,7 +195,7 @@ class MRPAdapter:
         start_date: datetime = None,
     ) -> MRPItemResult:
         """Run MRP for a single item."""
-        start_date = start_date or datetime.now()
+        start_date = start_date or local_now_naive()
         periods = self._generate_periods(start_date)
         n_periods = len(periods)
         
@@ -284,7 +286,7 @@ class MRPAdapter:
         """Run MRP for multiple items."""
         from uuid import uuid4
         
-        start_date = start_date or datetime.now()
+        start_date = start_date or local_now_naive()
         mrp_run_id = f"mrp-{uuid4().hex[:8]}"
         
         item_results = []

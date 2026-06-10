@@ -12,6 +12,8 @@ Supports multiple scheduling algorithms:
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+
+from src.shared.time import local_now_naive
 from decimal import Decimal
 from enum import Enum
 from typing import Any, Dict, List, Optional
@@ -231,7 +233,7 @@ class SchedulingAdapter:
         Returns:
             SchedulingResult with scheduled operations and KPIs
         """
-        horizon_start = horizon_start or datetime.now()
+        horizon_start = horizon_start or local_now_naive()
         horizon_end = horizon_end or (horizon_start + timedelta(weeks=4))
         
         # Dispatch to appropriate engine
@@ -396,7 +398,7 @@ class SchedulingAdapter:
         if self._rule == DispatchRule.EDD:
             sorted_ops = sorted(
                 operations,
-                key=lambda op: (op.due_date or datetime.max, -op.priority),
+                key=lambda op: (op.due_date or datetime.max, -op.priority),  # noqa: DTZ901 — sort key naive
             )
         elif self._rule == DispatchRule.SPT:
             sorted_ops = sorted(

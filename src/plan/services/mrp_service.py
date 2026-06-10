@@ -262,7 +262,7 @@ class MRPService:
         po_sequence = 1
         
         for suggestion in suggestions:
-            po_number = f"PO-{datetime.now().strftime('%Y%m%d')}-{po_sequence:04d}"
+            po_number = f"PO-{local_today().strftime('%Y%m%d')}-{po_sequence:04d}"
             
             po = PurchaseOrder(
                 id=uuid4(),

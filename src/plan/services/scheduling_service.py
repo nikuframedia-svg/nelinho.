@@ -26,7 +26,7 @@ import logging
 
 from src.shared.kafka_client import EventBase, publish_event, Topics
 from src.shared.events import ScheduleCreatedEvent
-from src.shared.time import utc_now_naive
+from src.shared.time import local_now_naive, utc_now_naive
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ class SchedulingService:
         Returns:
             Scheduling result with operations and KPIs
         """
-        horizon_start = horizon_start or datetime.now()
+        horizon_start = horizon_start or local_now_naive()
         horizon_end = horizon_start + timedelta(weeks=planning_weeks)
         planning_run_id = f"plan-{uuid4().hex[:8]}"
 

@@ -563,7 +563,7 @@ class RawToCuratedTransformer:
             s = str(value).strip()
             for fmt in ["%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d"]:
                 try:
-                    return datetime.strptime(s, fmt).date()
+                    return datetime.strptime(s, fmt).date()  # noqa: DTZ007 — datas ERP são naive
                 except ValueError:
                     continue
         except Exception as exc:

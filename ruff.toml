@@ -45,11 +45,17 @@ select = [
     # bugs Q.130.U (auditoria 2026-06-10: ~25 sites confirmados). Usar
     # src/shared/time.py: utc_now() (aware, default), utc_now_naive()
     # (SÓ colunas legacy sem tz + domínio CPO naive-consistente até F2) ou
-    # local_today() (data de NEGÓCIO da fábrica). DTZ001/005/007/901 (27
-    # sites com semântica local-vs-UTC fina) entram na passada F4.
+    # local_today() (data de NEGÓCIO da fábrica) / local_now_naive() (hora
+    # local p/ comparar com timestamps ERP local-naive — Q.171.E).
     "DTZ003",  # datetime.utcnow() — a classe de bugs varrida no Q.168.B
     "DTZ004",  # datetime.utcfromtimestamp() — mesma família
     "DTZ011",  # date.today() direto — usar local_today() (intenção explícita)
+    # Q.171.E — restantes 27 sites varridos (local vs UTC decidido site a
+    # site); naive-intencional leva noqa com razão (sort keys, dims Cube).
+    "DTZ001",  # datetime() sem tzinfo
+    "DTZ005",  # datetime.now() sem tz — usar utc_now()/local_now_naive()
+    "DTZ007",  # strptime sem %z
+    "DTZ901",  # datetime.min/max sem tz
 ]
 
 # Allow common patterns that aren't real bugs in this codebase
@@ -73,6 +79,10 @@ ignore = [
 ]
 
 [lint.per-file-ignores]
+# Q.171.E — periods.py resolve períodos PT ("este mês", "março") para
+# janelas do Cube, cujas dims de data são naive LOCAIS (espelho ERP).
+# Todo o ficheiro trabalha naive de propósito; aware aqui estaria errado.
+"src/copilot/cube/periods.py" = ["DTZ001", "DTZ005"]
 # Test code is DAMP and full of throwaway bindings — relax the
 # "unused/style" detectors that fire on fixtures and assertions.
 # S110 (try-except-pass): tests usam para verificar side-effects
@@ -84,7 +94,7 @@ ignore = [
     "S110",
     # Q.168.B — datas fixas/naive em fixtures de teste são inofensivas;
     # o ban DTZ aplica-se ao código de produção (src/).
-    "DTZ003", "DTZ004", "DTZ011",
+    "DTZ001", "DTZ003", "DTZ004", "DTZ005", "DTZ007", "DTZ011", "DTZ901",
 ]
 "alembic/versions/*.py" = ["E402", "F401"]  # migrations are special
 # Ad-hoc one-off scripts — not production code; relax unused/style noise.

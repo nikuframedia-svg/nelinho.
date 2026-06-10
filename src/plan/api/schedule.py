@@ -26,7 +26,7 @@ from src.plan.services.scheduling_service import (
 )
 from src.plan.engines.scheduling_adapter import SchedulerEngine, DispatchRule
 from src.shared.auth.headers import require_tenant_header
-from src.shared.time import local_today
+from src.shared.time import local_today, utc_now_naive
 
 
 logger = logging.getLogger(__name__)
@@ -436,7 +436,9 @@ async def start_operation(
         row = await service.update_status(
             schedule_id,
             status=ScheduleStatus.IN_PROGRESS,
-            actual_start=request.actual_start or datetime.now(),
+            # utc-naive como os planned_* do CPO (mesma tabela, mesma
+            # convenção — senão plan-vs-real erra 1h no verão).
+            actual_start=request.actual_start or utc_now_naive(),
         )
     except InvalidScheduleTransition as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
@@ -467,7 +469,7 @@ async def complete_operation(
         row = await service.update_status(
             schedule_id,
             status=ScheduleStatus.COMPLETED,
-            actual_end=request.actual_end or datetime.now(),
+            actual_end=request.actual_end or utc_now_naive(),
             actual_quantity=request.actual_quantity,
         )
     except InvalidScheduleTransition as exc:

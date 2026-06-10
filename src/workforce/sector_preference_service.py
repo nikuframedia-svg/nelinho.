@@ -26,6 +26,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime
+
+from src.shared.time import local_today
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
@@ -108,7 +110,7 @@ def _recency_days(last_fim: Any, today: Optional[date] = None) -> Optional[int]:
     (no factory_raw, OFFP_DATAFIM é TEXT tipo '2024-09-19T08:16:00')."""
     if not last_fim:
         return None
-    ref = today or datetime.now().date()
+    ref = today or local_today()
     if isinstance(last_fim, str):
         try:
             d = datetime.fromisoformat(last_fim.strip()).date()

@@ -2674,7 +2674,8 @@ def resolve_question_period(
     except ImportError:
         return None
 
-    now_dt = _dt.datetime(today.year, today.month, today.day)
+    # Datas do Cube são naive locais (dim ERP) — âncora naive de propósito.
+    now_dt = _dt.datetime(today.year, today.month, today.day)  # noqa: DTZ001
     resolved = resolve_periodo(question, now=now_dt)
     if resolved is None:
         return None
@@ -2728,7 +2729,8 @@ def is_period_mismatch(
 
     if today is None:
         today = local_today()
-    now_dt = _dt.datetime(today.year, today.month, today.day)
+    # Datas do Cube são naive locais (dim ERP) — âncora naive de propósito.
+    now_dt = _dt.datetime(today.year, today.month, today.day)  # noqa: DTZ001
 
     resolved = resolve_periodo(question, now=now_dt)
     if resolved is None:

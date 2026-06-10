@@ -24,6 +24,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime
+
+from src.shared.time import local_now_naive
 from typing import Any, Optional
 from uuid import UUID
 
@@ -510,7 +512,7 @@ class EmployeeExtrasService:
         )
 
         # Recência: menor nº de dias desde a última operação no escopo.
-        today = datetime.now()
+        today = local_now_naive()  # OFFP_* do ERP é local-naive
         recency_days: Optional[int] = None
         for r in scoped:
             if r.last_used_at is None:

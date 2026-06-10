@@ -59,7 +59,7 @@ def _as_utc(value: Any) -> Optional[datetime]:
     if isinstance(value, datetime):
         dt = value
     elif isinstance(value, date):
-        dt = datetime(value.year, value.month, value.day, 0, 0, 0)
+        dt = datetime(value.year, value.month, value.day, tzinfo=timezone.utc)
     else:
         return None
     if dt.tzinfo is None:
