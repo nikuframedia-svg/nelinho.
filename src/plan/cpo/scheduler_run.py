@@ -53,6 +53,26 @@ _DEGENERATE_MIN_SCOPE = 50         # só guarda quando havia muitas ordens a pla
 _DEGENERATE_COVERAGE_FLOOR = 0.50  # < 50% das ordens planeadas = suspeito
 
 
+def _due_date_coverage(operations) -> Dict[str, Any]:
+    """Q.168.A — cobertura de due dates REAIS no scope planeado.
+
+    Conta ORDENS (não ops): uma ordem tem due se ≥1 op transporta due_date.
+    Observabilidade/auditoria no cpo_meta (não entra no hash) — é o medidor
+    de quantas ordens o backward-scheduling/tardiness consegue honrar. A
+    auditoria 2026-06-10 apanhou o loader a deixar cair o campo; este medidor
+    torna uma regressão futura visível num relance."""
+    orders = {op.order_id for op in operations}
+    with_due = {
+        op.order_id for op in operations if getattr(op, "due_date", None)
+    }
+    total = len(orders)
+    return {
+        "orders_with_due": len(with_due),
+        "orders_total": total,
+        "pct": round(100.0 * len(with_due) / total, 1) if total else 0.0,
+    }
+
+
 def _is_degenerate_plan(scope_size: int, orders_coverage: float) -> bool:
     """Q.162.B — plano degenerado: scope GRANDE (≥ _DEGENERATE_MIN_SCOPE) mas a
     cobertura colapsou (< _DEGENERATE_COVERAGE_FLOOR). Pura → testável isolada.
@@ -492,6 +512,12 @@ async def run_cpo_schedule(
             "orders": unplanned_ids[:50],
             "coverage": round(resolver.orders_coverage, 4),
         }
+
+    # Q.168.A — observabilidade dos due dates: quantas ordens do scope têm
+    # data-alvo real (só essas o backward-scheduling/tardiness honram).
+    result.setdefault("cpo_meta", {})["due_date_coverage"] = (
+        _due_date_coverage(operations)
+    )
 
     # Q.162.B — guarda anti-plano-degenerado. Quando o scope era grande mas a
     # cobertura colapsou (falha transitória do solver / regressão de dados), marca

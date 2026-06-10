@@ -1108,7 +1108,13 @@ async def _load_open_orders_db(
           GROUP BY op."OFFP_OF_ID"
         )
         SELECT q.of_id, q.modelo_id, q.current_fase_id,
-               q.data_entrega_prevista, q.is_mold,
+               -- Q.168.A — sentinela SQL-Server (1900-01-01 = zero-date) NÃO é
+               -- um prazo: anula-se aqui para o due_date a jusante ser honesto.
+               -- (Range real do mirror: min=1900-01-01; o ORDER BY não muda —
+               -- a sentinela já caía no bucket "sem prazo futuro".)
+               CASE WHEN q.data_entrega_prevista::timestamp >= '1901-01-01'
+                    THEN q.data_entrega_prevista END AS data_entrega_prevista,
+               q.is_mold,
                COALESCE(done.done_fase_ids, ARRAY[]::text[]) AS done_fase_ids
         FROM (
           SELECT ofb."OF_ID"::text   AS of_id,
@@ -1209,6 +1215,12 @@ async def _load_open_orders_db(
             # Q.167.D — molde em reparação (scope=boats_and_molds). Default false
             # (barcos). Lane/UI + permite ao decoder/UI distinguir molde de barco.
             "is_mold": bool(r["is_mold"]),
+            # Q.168.A — a data-alvo REAL (COALESCE OF_DATAENTREGA→TR→PLANO;
+            # sentinela 1900 anulada no SQL) viaja até ao RoutingResolver como
+            # due_date do backward-scheduling e da tardiness/OTD. A auditoria
+            # 2026-06-10 apanhou o elo partido: o SELECT trazia o campo mas o
+            # dict deixava-o cair → due_date=None em TODAS as ordens.
+            "data_entrega_prevista": r["data_entrega_prevista"],
             # Q.158 — fases já concluídas (OFFP_DATAFIM preenchido); lista de
             # fase_id (texto). O RoutingResolver usa-as para nunca re-planear
             # trabalho já feito. Pode ser None quando PostgreSQL devolve NULL

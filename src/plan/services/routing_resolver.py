@@ -688,13 +688,21 @@ def _phase_uses_mold(phase_name: str) -> bool:
 
 
 def _parse_datetime(value: Any) -> Optional[datetime]:
+    """Parse tolerante das datas-texto do mirror ERP.
+
+    Q.168.A — devolve SEMPRE naive (UTC implícito): o domínio de planeamento
+    (horizon_start, decoder_kpis, backward-scheduling) é naive-consistente; um
+    valor com 'Z'/offset que escapasse tornaria `due < horizon_start` num
+    TypeError. Normaliza-se aqui (ressalva do reviewer) até à migração
+    tz-aware coordenada (F1.B)."""
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value
+        return value.replace(tzinfo=None) if value.tzinfo else value
     if isinstance(value, str):
         try:
-            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
         except ValueError:
             return None
+        return dt.replace(tzinfo=None) if dt.tzinfo else dt
     return None
