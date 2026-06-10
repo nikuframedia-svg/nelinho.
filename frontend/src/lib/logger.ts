@@ -6,7 +6,9 @@
  * If unavailable, logs automatically fall back to localStorage.
  */
 
-const DEBUG_ENDPOINT = 'http://127.0.0.1:7242/ingest/b36927af-6ca5-4f4b-8938-4f4afe8aa116';
+const DEBUG_ENDPOINT =
+  import.meta.env.VITE_DEBUG_ENDPOINT ||
+  'http://127.0.0.1:7242/ingest/b36927af-6ca5-4f4b-8938-4f4afe8aa116';
 
 // Check if debug logging is enabled (can be disabled via env var)
 // Default to false to avoid errors - only enable if explicitly configured

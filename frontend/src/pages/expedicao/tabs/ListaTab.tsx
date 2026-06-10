@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Truck, Check, DownloadCloud, Loader2 } from 'lucide-react';
 import { KPIBig, EmptyState } from '../../../components/dark';
 import { transportApi, ceoDashboardApi, type TransportBatch, type TransportManifest, type TransportManifestBoat } from '../../../lib/api';
+import { transportKeys } from '../../../lib/api/keys';
 import { shortDate, type BatchCounts, countManifest } from '../expedicaoShared';
 import { ShipmentRow, ShipmentDetail, MoveBoatConfirm } from './listaComponents';
 
@@ -91,7 +92,7 @@ export function ListaTab({
       await transportApi.assignOrder(move.toId, move.boatOrderId);
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['expedicao'] });
+      queryClient.invalidateQueries({ queryKey: transportKeys.all });
     },
   });
 

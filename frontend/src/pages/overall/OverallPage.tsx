@@ -909,7 +909,7 @@ export default function OverallPage(): ReactNode {
                     className="font-mono text-[11px] px-1 py-0.5 rounded"
                     style={{ background: 'var(--bg-4)', color: 'var(--fg-2)' }}
                   >
-                    {latestCommit?.commit_sha256?.slice(0, 8) ?? latestCommit?.commit_sha256?.slice(0, 8) ?? '—'}
+                    {latestCommit?.commit_sha256?.slice(0, 8) ?? '—'}
                   </code>
                 </span>
                 {/* Q.133.A.3 — rotular honestamente um plano não-aprovado/degradado:

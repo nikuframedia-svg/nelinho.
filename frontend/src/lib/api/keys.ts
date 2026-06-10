@@ -400,3 +400,28 @@ export const operatorsKeys = {
   all: ['workforce-operators'] as const,
   summary: () => [...operatorsKeys.all, 'summary'] as const,
 } as const;
+
+// ─── copilot alerts (AlertasTab) ─────────────────────────────────────────────
+//
+// GET /v1/copilot/alerts — lista de alertas do copiloto (Q.61.27 factory).
+
+export const copilotAlertsKeys = {
+  all: ['copilot', 'alerts'] as const,
+  list: (filter?: string) =>
+    filter
+      ? ([...copilotAlertsKeys.all, filter] as const)
+      : (copilotAlertsKeys.all as readonly string[]),
+} as const;
+
+// ─── transporte / expedição (ExpedicaoPage, listaComponents) ─────────────────
+//
+// GET /v1/transport/batches + /manifest/{id} + /otd.
+
+export const transportKeys = {
+  all: ['expedicao'] as const,
+  batches: (fromDate?: string) =>
+    [...transportKeys.all, 'batches', fromDate ?? ''] as const,
+  manifest: (batchId: string) =>
+    [...transportKeys.all, 'manifest', batchId] as const,
+  otd: () => [...transportKeys.all, 'otd'] as const,
+} as const;

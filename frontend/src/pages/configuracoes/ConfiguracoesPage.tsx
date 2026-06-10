@@ -378,7 +378,7 @@ function TabCustos() {
                               })
                             }
                           >
-                            Guardar
+                            {updatePriorityMutation.isPending ? 'A guardar…' : 'Guardar'}
                           </DarkButton>
                           <DarkButton
                             size="sm"
@@ -1033,7 +1033,7 @@ function TabAprendizagem() {
                         onClick={() => confirmRuleMutation.mutate(r.id)}
                         disabled={confirmRuleMutation.isPending}
                       >
-                        Confirmar
+                        {confirmRuleMutation.isPending ? 'A confirmar…' : 'Confirmar'}
                       </DarkButton>
                       <DarkButton
                         size="sm"
@@ -1041,7 +1041,7 @@ function TabAprendizagem() {
                         onClick={() => rejectRuleMutation.mutate(r.id)}
                         disabled={rejectRuleMutation.isPending}
                       >
-                        Rejeitar
+                        {rejectRuleMutation.isPending ? 'A rejeitar…' : 'Rejeitar'}
                       </DarkButton>
                     </>
                   ) : null}

@@ -14,7 +14,7 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { Sheet, DarkButton } from '../../components/dark';
-import { fmtEuro } from '../painel/painelHelpers';
+import { fmtEuro } from '../../lib/fmt';
 import type { PreviewDeltaResult } from '../../lib/api';
 import type { ActiveOrderCard } from './fabricaApi';
 

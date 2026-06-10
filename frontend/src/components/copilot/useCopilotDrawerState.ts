@@ -4,10 +4,12 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { copilotApi } from '../../lib/api';
 import type { CopilotResponse } from '../../lib/api';
 import type { CopilotDrawerProps, Message } from './copilotDrawerTypes';
+import { useToastContext } from '../../components/ToastProvider';
 
 export function useCopilotDrawerState({
   isOpen, initialQuery, openedViaFab = false, initialEntityType, initialEntityId,
 }: CopilotDrawerProps) {
+  const toast = useToastContext();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [modelStatus, setModelStatus] = useState<'ONLINE' | 'OFFLINE'>('ONLINE');
@@ -63,11 +65,7 @@ export function useCopilotDrawerState({
   // Handle conversations error (React Query v5 pattern)
   useEffect(() => {
     if (conversationsError) {
-      // Silenciar erros de autenticação - não são críticos para o chat
-      const error = conversationsError as any;
-      if (error?.status !== 401 && error?.status !== 403) {
-        console.error('Erro ao carregar conversas:', conversationsError);
-      }
+      console.error('Erro ao carregar conversas:', conversationsError);
     }
   }, [conversationsError]);
 
@@ -187,13 +185,14 @@ export function useCopilotDrawerState({
           })
           .catch(e => {
             console.error("Failed to load conversation messages:", e);
+            toast.error('Erro ao carregar mensagens. Tenta novamente.');
             // Se falhar, limpar localStorage e começar do zero
             localStorage.removeItem('copilot_current_conversation_id');
             setCurrentConversationId(null);
           });
       }
     }
-  }, [isOpen, currentConversationId]);
+  }, [isOpen, currentConversationId, toast]);
 
   // Mensagem inicial quando aberto via FAB (apenas se não há conversa e não há mensagens)
   useEffect(() => {

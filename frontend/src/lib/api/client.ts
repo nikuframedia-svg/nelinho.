@@ -224,7 +224,6 @@ export async function request<T>(
         const errorObj = new Error(errorMessage);
         (errorObj as any).status = 404;
         (errorObj as any).response = errorData;
-        (errorObj as any).isFeatureNotAvailable = true; // Flag para identificar
         throw errorObj;
       }
       

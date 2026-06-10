@@ -5,6 +5,7 @@ import { Truck, GripVertical, Check, X, Snowflake, Send } from 'lucide-react';
 import { useDraggable, useDropZone } from '../../../components/dark';
 import { TruckGrid } from '../../../components/expedicao/TruckGrid';
 import { transportApi, type TransportBatch, type TransportManifestBoat } from '../../../lib/api';
+import { transportKeys } from '../../../lib/api/keys';
 import { dayLabel, shortDate, daysUntil, classifyBoat, type BatchCounts, countManifest } from '../expedicaoShared';
 
 export interface BoatDragData {
@@ -194,7 +195,7 @@ export function RowTag({
 export function ShipmentDetail({ batch }: { batch: TransportBatch }) {
   const queryClient = useQueryClient();
   const manifestQuery = useQuery({
-    queryKey: ['expedicao', 'manifest', batch.id],
+    queryKey: transportKeys.manifest(batch.id),
     queryFn: () => transportApi.manifest(batch.id),
     retry: 0,
   });
@@ -205,11 +206,11 @@ export function ShipmentDetail({ batch }: { batch: TransportBatch }) {
 
   const freezeMutation = useMutation({
     mutationFn: () => transportApi.freeze(batch.id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['expedicao'] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: transportKeys.all }),
   });
   const dispatchMutation = useMutation({
     mutationFn: () => transportApi.dispatch(batch.id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['expedicao'] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: transportKeys.all }),
   });
 
   return (

@@ -15,6 +15,7 @@ import { BellRing, AlertTriangle, RefreshCw, Check, Eye } from 'lucide-react';
 import { DarkPageLayout } from '../../layouts';
 import { DarkCard, DarkBadge, DarkButton, EmptyState, Segmented } from '../../components/dark';
 import { copilotAlertsApi } from '../../lib/api';
+import { copilotAlertsKeys } from '../../lib/api/keys';
 
 type AlertFilter = 'open' | 'all';
 
@@ -29,13 +30,15 @@ export function AlertasTab() {
   const [filter, setFilter] = useState<AlertFilter>('open');
 
   const query = useQuery({
-    queryKey: ['copilot', 'alerts', filter],
+    queryKey: copilotAlertsKeys.list(filter),
     queryFn: () => copilotAlertsApi.list(filter === 'open' ? { status: 'active' } : {}),
     refetchInterval: 30_000,
     refetchOnWindowFocus: false,
+    staleTime: 10_000,
+    gcTime: 60_000,
   });
 
-  const invalidate = () => qc.invalidateQueries({ queryKey: ['copilot', 'alerts'] });
+  const invalidate = () => qc.invalidateQueries({ queryKey: copilotAlertsKeys.all });
 
   const ackM = useMutation({
     mutationFn: (id: string) => copilotAlertsApi.acknowledge(id),

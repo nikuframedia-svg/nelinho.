@@ -57,7 +57,7 @@ export function ApprovalButtons({
     if (loading) return;
     setError(null);
     if (reasonAlwaysVisible && reason.trim().length === 0) {
-      setError('Indica brevemente porquê para o sistema aprender.');
+      setError('Indica a razão — é como o sistema aprende.');
       return;
     }
     await onAccept(reason.trim() || undefined);

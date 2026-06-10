@@ -27,7 +27,7 @@ export function Button({
     secondary: 'btn-secondary',
     ghost: 'btn-ghost',
     danger: 'bg-red-500 text-white hover:bg-red-600',
-    accent: 'bg-white text-slate-900 hover:bg-slate-50',
+    accent: 'bg-bg-0 text-fg-0 hover:bg-bg-1 border border-bd-1',
   };
 
   const sizes = {

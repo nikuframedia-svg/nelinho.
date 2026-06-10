@@ -177,7 +177,7 @@ export function MelhoresPorFaseTab() {
             setLoadedPhase(null);
             setSearch('');
           }}
-          className="bg-white text-slate-900 placeholder:text-slate-400 rounded-md px-3 py-2 text-sm w-full max-w-md border border-white/10"
+          className="bg-bg-2 text-fg-0 placeholder:text-fg-3 rounded-md px-3 py-2 text-sm w-full max-w-md border border-bd-2"
         >
           <option value="">— escolhe uma fase —</option>
           {phases.map((p) => (

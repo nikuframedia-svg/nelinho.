@@ -4,10 +4,12 @@ import type { CopilotResponse } from '../../lib/api';
 import { CopilotMessage } from './CopilotMessage';
 import type { CopilotDrawerProps, Message } from './copilotDrawerTypes';
 import { useCopilotDrawerState } from './useCopilotDrawerState';
+import { useToastContext } from '../../components/ToastProvider';
 
 export function CopilotDrawer({
   isOpen, onClose, initialQuery, openedViaFab = false, initialEntityType, initialEntityId,
 }: CopilotDrawerProps) {
+  const toast = useToastContext();
   const {
     messages, setMessages, input, setInput, modelStatus, currentConversationId, setCurrentConversationId, showConversationsList, setShowConversationsList, showArchived, setShowArchived, inputRef, health, conversations, refetchConversations, conversationsError, archiveConversationMutation, createConversationMutation, askMutation, handleSend, handleKeyPress, messagesEndRef,
   } = useCopilotDrawerState({
@@ -221,6 +223,7 @@ export function CopilotDrawer({
                             })
                             .catch(e => {
                               console.error("Failed to load conversation messages:", e);
+                              toast.error('Erro ao carregar mensagens. Tenta novamente.');
                               setMessages([]);
                             });
                           setShowConversationsList(false);

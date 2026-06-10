@@ -17,7 +17,8 @@ export function PillBarChart({
   onSelect,
   showTooltip = true,
 }: PillBarChartProps) {
-  const max = maxValue || Math.max(...data.map(d => d.value));
+  if (data.length === 0) return null;
+  const max = maxValue || Math.max(...data.map(d => d.value), 0);
   
   const formatValue = (value: number) => {
     if (value >= 1000) {

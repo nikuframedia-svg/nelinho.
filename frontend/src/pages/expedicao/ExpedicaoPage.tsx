@@ -11,6 +11,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Truck, Target, Flag, RefreshCw, CalendarDays, PackageCheck, DownloadCloud, Loader2 } from 'lucide-react';
 import { PageHeader, Tabs } from '../../components/dark';
 import { transportApi } from '../../lib/api';
+import { transportKeys } from '../../lib/api/keys';
 import { ListaTab } from './tabs/ListaTab';
 import { CTPTab } from './tabs/CTPTab';
 import { ActivasTab } from './tabs/ActivasTab';
@@ -34,7 +35,7 @@ export default function ExpedicaoPage() {
   }, []);
 
   const batchesQuery = useQuery({
-    queryKey: ['expedicao', 'batches', fromDate],
+    queryKey: transportKeys.batches(fromDate),
     queryFn: () => transportApi.listBatches({ from_date: fromDate }),
     staleTime: 60_000,
     retry: 0,
@@ -44,7 +45,7 @@ export default function ExpedicaoPage() {
   // Q.143.B — derivar camiões reais das ordens (idempotente, preserva manual).
   const syncMutation = useMutation({
     mutationFn: () => transportApi.refreshFromOrders(),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['expedicao'] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: transportKeys.all }),
   });
 
   const tabs = [
