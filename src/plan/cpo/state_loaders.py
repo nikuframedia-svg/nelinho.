@@ -35,6 +35,11 @@ def _safe_call(sq: Any, method: str, **kwargs) -> Optional[Dict[str, Any]]:
             return None
         return result
     except Exception as e:
+        # Q.168.C — DEBUG é deliberado: a camada semântica curada estar
+        # AUSENTE é o estado NORMAL em produção (o CPO carrega de
+        # factory_raw — Q.126.B); warning aqui seria ruído em cada load.
+        # A visibilidade do que carregou vem do log-resumo do state.load()
+        # e do cpo_meta (due_date_coverage, unplanned, ml wiring).
         logger.debug(f"Semantic call {method} failed: {e}")
         return None
 
@@ -59,7 +64,11 @@ def _extract_skill_matrix(engine: Any) -> Dict[str, Set[str]]:
                 matrix.setdefault(fase_id, set()).add(func_id)
         return matrix
     except Exception as e:
-        logger.debug(f"skill matrix extraction failed: {e}")
+        # Q.168.C — WARNING (não debug): shape-mismatch aqui significa que a
+        # skill matrix CURADA existia mas foi ignorada — o axioma 5 (skill
+        # match) ficaria mais fraco em silêncio. Ausência normal não passa
+        # por aqui (rows=[] não lança); só divergência real de schema.
+        logger.warning(f"skill matrix curada ignorada (shape mismatch): {e}")
         return {}
 
 

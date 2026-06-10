@@ -78,7 +78,8 @@ class EncomendasItem(BaseModel):
     """Encomenda comercial — alinhada com frontend EncomendasItem.
 
     Por agora deriva de ProductionOrder (não há tabela Encomenda
-    separada). `total_eur` fica 0.0 até Q.66.X separar.
+    separada). `total_eur` é None até Q.66.X separar — None honesto, nunca
+    0,00 € fabricado no ecrã (invariante #8).
 
     Q.116.E (fix pós-reviewer): `cliente_id` exposto para Clickable.
     """
@@ -87,7 +88,7 @@ class EncomendasItem(BaseModel):
     cliente: str
     cliente_id: Optional[str]
     data: str
-    total_eur: float
+    total_eur: Optional[float]
 
 
 class BoatItem(BaseModel):
@@ -261,7 +262,10 @@ async def list_encomendas(
                 if r.created_date is not None
                 else ""
             ),
-            total_eur=0.0,  # TODO Q.66.X: ler de Encomenda.total_eur quando existir.
+            # Q.168.C — None honesto (era 0.0 fabricado a pintar '0,00 €'
+            # no MasterDataTab). Q.66.X liga o valor real quando a tabela
+            # Encomenda separada existir.
+            total_eur=None,
         )
         for r in rows
     ]

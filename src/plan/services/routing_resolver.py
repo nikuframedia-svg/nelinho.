@@ -239,6 +239,18 @@ class RoutingResolver:
                 rows, order.get("current_fase_id"), completed_fase_ids
             )
 
+        if not rows:
+            # Q.168.C — a rota truncou a ZERO fases por fazer (tudo concluído
+            # no ERP). Não é "planeada" (0 ops) nem desaparece em silêncio
+            # (Q.131.H): regista com razão própria. O bug era marcar planeada
+            # ANTES do truncate — fantasmas inflavam orders_coverage.
+            self.unplanned.append({
+                "order_id": order_id,
+                "modelo_id": modelo_id,
+                "reason": "rota_concluida",
+            })
+            return []
+
         # Q.131.H — ordem efectivamente planeada (≥1 operação).
         self.planned_order_ids.add(order_id)
         due_date = _parse_datetime(order.get("data_entrega_prevista"))

@@ -184,7 +184,7 @@ export interface EncomendasItem {
   modelo?: string;
   modelo_id?: string | null;
   data: string;
-  total_eur: number;
+  total_eur: number | null;
 }
 
 export interface BoatItem {

@@ -199,8 +199,9 @@ def test_list_encomendas_active_returns_non_cancelled():
     assert item["cliente"] == "Cliente Alfa"
     assert item["cliente_id"] is None  # sem Customer queued
     assert item["data"] == "2026-03-15"
-    # TODO Q.66.X — total_eur fica 0 até Encomenda separada existir.
-    assert item["total_eur"] == 0.0
+    # Q.168.C — None honesto até Q.66.X ligar o valor real da Encomenda
+    # (0.0 fabricado pintava "0,00 €" no MasterDataTab — invariante #8).
+    assert item["total_eur"] is None
 
 
 # ─── 3. GET /v1/master-data/boats ────────────────────────────────────────────

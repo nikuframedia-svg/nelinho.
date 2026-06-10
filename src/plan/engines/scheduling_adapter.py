@@ -472,7 +472,7 @@ class SchedulingAdapter:
         
         # Calculate utilization
         total_work_minutes = sum(op.duration_minutes for op in operations)
-        total_available_minutes = len(machines) * makespan * 60 if makespan > 0 else 1
+        total_available_minutes = sum(max(1, m.capacity) for m in machines) * makespan * 60 if makespan > 0 else 1  # Q.168.C — respeita capacity>1 (slots)
         utilization = min(100, (total_work_minutes / total_available_minutes) * 100) if total_available_minutes > 0 else 0
         
         solve_time = time.time() - start_time

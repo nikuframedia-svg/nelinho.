@@ -226,26 +226,26 @@ def _build_narrative(vs_primary: Dict[str, Optional[str]]) -> str:
     return "Trade-offs principais — " + "; ".join(p[1] for p in parts[:3]) + "."
 
 
-async def _attach_effective_boost(
+async def _collect_boost_inputs(
     db: AsyncSession,
     tenant_id: UUID,
     operations: List[Dict[str, Any]],
-) -> None:
-    """Q.116.G — enriquece cada op com `effective_boost` (in-place).
+) -> Dict[str, Dict[str, int]]:
+    """Q.116.D/Q.168.C — inputs de boost por work order (legacy_id).
 
-    Cada op no payload do schedule tem `order_id` (string do `of_id` =
-    `ProductionOrder.legacy_id`). Calculamos batch:
+    Devolve `{"<legacy_id>": {"client": int, "order": int, "boat": int,
+    "effective": int}}` SÓ para ordens com algum componente ≠ 0 — snapshot
+    vazio quando não há boosts (mantém o hash back-compat dos commits
+    históricos). É calculado UMA vez ANTES do commit (entra no sha e na
+    coluna `boost_inputs_snapshot`) e reutilizado pelo attach pós-commit.
+
+    Fontes batch (cada uma com try/except — tabela ausente contribui 0):
       * OrderBoost por legacy_id
       * BoatBoost por product_name (lookup ProductionOrder)
       * ClientPriority por customer_name → Customer → priority
-
-    Defesa em profundidade: cada lookup tem try/except — se uma tabela
-    ainda não existe (DB sem migrar) o campo cai para 0 sem derrubar
-    o schedule. Performance: TODO Q.117 caso schedules >500 ops causem
-    latência preocupante (3 batch queries + N para production_order).
     """
     if not operations:
-        return
+        return {}
 
     from sqlalchemy import and_, select
 
@@ -350,28 +350,56 @@ async def _attach_effective_boost(
         except Exception as exc:  # pragma: no cover — defensive
             logger.debug("ClientPriority batch skipped (%s)", exc)
 
-    # 6. Constrói boost por legacy_id e injecta em cada op.
-    boost_by_lid: Dict[int, int] = {}
+    # 6. Constrói o snapshot por legacy_id (só entradas com boost ≠ 0 —
+    # snapshot vazio = sem boosts = hash inalterado, back-compat Q.116.D).
+    snapshot: Dict[str, Dict[str, int]] = {}
     for lid, order in order_by_lid.items():
         ob = order_boost_map.get(lid, 0)
         bb = boat_boost_map.get(getattr(order, "product_name", ""), 0)
         customer = getattr(order, "customer_name", None)
         priority = priority_by_customer.get(customer) if customer else None
-        boost_by_lid[lid] = int(
+        eff = int(
             compute_effective_boost(
                 client_priority=priority,
                 order_boost=ob,
                 boat_boost=bb,
             )
         )
+        if ob or bb or (priority or 0) or eff:
+            snapshot[str(lid)] = {
+                "client": int(priority or 0),
+                "order": int(ob),
+                "boat": int(bb),
+                "effective": eff,
+            }
+    return snapshot
 
+
+async def _attach_effective_boost(
+    db: AsyncSession,
+    tenant_id: UUID,
+    operations: List[Dict[str, Any]],
+    snapshot: Optional[Dict[str, Dict[str, int]]] = None,
+) -> None:
+    """Q.116.G — enriquece cada op com `effective_boost` (in-place).
+
+    Q.168.C — quando o scheduler já calculou o snapshot (entrou no hash do
+    commit), passa-o aqui e NÃO se repete nenhuma query. `snapshot=None`
+    mantém o comportamento autónomo (calcula na hora)."""
+    if not operations:
+        return
+    if snapshot is None:
+        snapshot = await _collect_boost_inputs(db, tenant_id, operations)
     for op in operations:
         raw = op.get("order_id")
+        if raw is None:
+            op["effective_boost"] = 0
+            continue
         try:
-            lid = int(raw) if raw is not None else None
+            key = str(int(raw))  # normaliza como as chaves do snapshot
         except (TypeError, ValueError):
-            lid = None
-        op["effective_boost"] = boost_by_lid.get(lid, 0) if lid is not None else 0
+            key = str(raw)
+        op["effective_boost"] = int((snapshot.get(key) or {}).get("effective", 0))
 
 
 __all__ = [
@@ -383,5 +411,6 @@ __all__ = [
     "_relative_delta",
     "_format_delta_pct",
     "_build_narrative",
+    "_collect_boost_inputs",
     "_attach_effective_boost",
 ]

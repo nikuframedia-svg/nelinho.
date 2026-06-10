@@ -399,16 +399,27 @@ async def run_cpo_schedule(
             from src.copilot.alerts.models import CODE_ORDERS_WITHOUT_ROUTING
             preview = ", ".join(unplanned_ids[:5])
             more = f" (+{len(unplanned_ids) - 5})" if len(unplanned_ids) > 5 else ""
+            # Q.168.C (ressalva do reviewer) — "rota_concluida" NÃO é falta de
+            # rota: a ordem tem a rota toda feita no ERP. Misturá-las na mesma
+            # frase enganava o operador.
+            n_done = sum(
+                1 for u in resolver.unplanned if u["reason"] == "rota_concluida"
+            )
+            n_no_route = len(unplanned_ids) - n_done
+            done_part = (
+                f" e {n_done} já têm a rota concluída no ERP (nada a planear)"
+                if n_done else ""
+            )
             await _upsert_cpo_alert(
                 session, tenant_id,
                 code=CODE_ORDERS_WITHOUT_ROUTING,
-                title=f"{len(unplanned_ids)} ordens sem rota — não planeadas",
+                title=f"{len(unplanned_ids)} ordens fora do plano",
                 message_pt=(
-                    f"{len(unplanned_ids)} ordens não têm rota conhecida (sem "
-                    "histórico real nem template de routing no ERP) e ficaram "
-                    f"FORA do plano: {preview}{more}. Cobertura do plano: "
-                    f"{coverage_pct}%. Para as planear é preciso histórico de "
-                    "produção ou um template de routing para esses modelos."
+                    f"{n_no_route} ordens não têm rota conhecida (sem "
+                    "histórico real nem template de routing no ERP)"
+                    f"{done_part}. Fora do plano: {preview}{more}. Cobertura: "
+                    f"{coverage_pct}%. Para planear as sem-rota é preciso "
+                    "histórico de produção ou um template para esses modelos."
                 ),
                 context={
                     "unplanned_count": len(unplanned_ids),
@@ -610,6 +621,20 @@ async def run_cpo_schedule(
 
     trust_index_value = await _compute_trust_index_for_schedule(session, tenant_id)
 
+    # Q.168.C — snapshot dos inputs de boost ANTES do commit: entra no sha
+    # (Q.116.D, reprodutibilidade do replay) e na coluna boost_inputs_snapshot.
+    # Reutilizado pelo attach pós-commit (zero queries duplicadas). Defensivo:
+    # falha de leitura → {} (sem boosts no hash, nunca derruba o schedule).
+    boost_snapshot: Dict[str, Any] = {}
+    try:
+        from src.plan.api._cpo_common import _collect_boost_inputs
+
+        boost_snapshot = await _collect_boost_inputs(
+            session, tenant_id, list(result.get("operations") or []),
+        )
+    except Exception as snap_exc:  # pragma: no cover — defensive
+        logger.warning(f"boost snapshot failed: {snap_exc}", exc_info=True)
+
     commit_sha: Optional[str] = None
     parent_sha: Optional[str] = None
     try:
@@ -622,6 +647,7 @@ async def run_cpo_schedule(
             author=request.author,
             message=request.message,
             trust_index=trust_index_value,
+            boost_inputs_snapshot=boost_snapshot,
         )
         commit_sha = commit.commit_sha256
         parent_sha = await _parent_sha(commits, commit)
@@ -637,7 +663,11 @@ async def run_cpo_schedule(
     try:
         from src.plan.api._cpo_common import _attach_effective_boost
 
-        await _attach_effective_boost(session, tenant_id, operations_out)
+        # Q.168.C — reutiliza o snapshot que entrou no hash do commit; {}→None
+        # recalcula (resiliência se a recolha falhou transitoriamente).
+        await _attach_effective_boost(
+            session, tenant_id, operations_out, snapshot=boost_snapshot or None,
+        )
     except Exception as boost_exc:  # pragma: no cover — defensive
         logger.warning(
             f"effective_boost attach failed: {boost_exc}", exc_info=True

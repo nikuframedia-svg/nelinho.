@@ -383,7 +383,7 @@ class GeneticScheduler:
         
         # Calculate utilization
         total_work = sum(op.duration_minutes for op in self._operations)
-        total_available = len(self._machines) * makespan_hours * 60 if makespan_hours > 0 else 1
+        total_available = sum(max(1, m.capacity) for m in self._machines) * makespan_hours * 60 if makespan_hours > 0 else 1  # Q.168.C — respeita capacity>1 (slots)
         utilization = min(100, (total_work / total_available) * 100) if total_available > 0 else 0
         
         return {

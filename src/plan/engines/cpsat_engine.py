@@ -261,7 +261,7 @@ class CPSATScheduler:
         # Calculate KPIs
         makespan_hours = max_end_minutes / 60.0
         total_work_minutes = sum(op.duration_minutes for op in [v[3] for v in op_vars.values()])
-        total_available_minutes = len(machines) * makespan_hours * 60 if makespan_hours > 0 else 1
+        total_available_minutes = sum(max(1, m.capacity) for m in machines) * makespan_hours * 60 if makespan_hours > 0 else 1  # Q.168.C — respeita capacity>1 (slots)
         utilization = min(100, (total_work_minutes / total_available_minutes) * 100) if total_available_minutes > 0 else 0
         
         status_name = "optimal" if status == cp_model.OPTIMAL else "feasible"

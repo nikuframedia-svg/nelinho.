@@ -309,7 +309,7 @@ function SeccaoEncomendas() {
                     {new Date(e.data).toLocaleDateString('pt-PT')}
                   </td>
                   <td className="py-2 text-right font-mono text-text-dark-primary">
-                    {e.total_eur.toLocaleString('pt-PT', { style: 'currency', currency: 'EUR' })}
+                    {e.total_eur != null ? e.total_eur.toLocaleString('pt-PT', { style: 'currency', currency: 'EUR' }) : '—'}
                   </td>
                   <td className="py-2 text-right">
                     <button

@@ -210,6 +210,7 @@ class CommitsService:
         author: str = "system",
         message: str = "",
         trust_index: float = 0.0,
+        boost_inputs_snapshot: Optional[Dict[str, Any]] = None,
     ) -> ScheduleCommit:
         """Persist a commit from the output of `CPOv4Engine.schedule()`."""
         operations = list(schedule_result.get("operations") or [])
@@ -227,11 +228,16 @@ class CommitsService:
         parent_sha = parent.commit_sha256 if parent else None
         parent_id = parent.id if parent else None
 
+        # Q.168.C — fecha o gap Q.116.D apanhado pela auditoria 2026-06-10:
+        # o snapshot existia no schema do hash e na coluna mas NENHUM caller
+        # o passava — a coluna ficava {} e dois commits com boosts manuais
+        # diferentes davam o MESMO sha (replay sem reprodutibilidade).
         sha = compute_commit_hash(
             parent_sha256=parent_sha,
             kpis=kpis,
             operations=operations,
             delta=delta,
+            boost_inputs_snapshot=boost_inputs_snapshot,
         )
 
         commit = ScheduleCommit(
@@ -248,6 +254,7 @@ class CommitsService:
             cpo_meta=cpo_meta,
             trust_index=float(trust_index),
             operations_count=len(operations),
+            boost_inputs_snapshot=dict(boost_inputs_snapshot or {}),
         )
         self.session.add(commit)
         await self.session.flush()
