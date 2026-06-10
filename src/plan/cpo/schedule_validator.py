@@ -302,12 +302,16 @@ def _check_pairs(ops: List[_Op], report: ValidationReport, state: Any) -> None:
     report.checks_run.append("par_laminagem")
     names = _phase_name_map(state)
     from src.plan.cpo.state import normalize_phase_code
+
+    # Q.169.C — match EXATO (como pair_assignment.prefers_pair): substring
+    # apanharia LAMINAGEM_INFUSAO, que é solo por política (58% histórico).
+    preferred = {normalize_phase_code(p) for p in pair_phases}
     solo = 0
     for op in ops:
         if len(op.workers) != 1:
             continue
         nome = normalize_phase_code(names.get(op.phase_id, op.phase_id)) or ""
-        if any(p in nome for p in pair_phases):
+        if nome in preferred:
             solo += 1
     if solo:
         report.warnings.append(

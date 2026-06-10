@@ -844,10 +844,20 @@ class FactoryState:
 
         Q.135.F3: usa team_size_override se definido, respeitando o mínimo
         da fase (Laminagem ≥ 2 quando PAIR_PREFERRED).
+
+        Q.169.C — match EXATO do código canónico (como pair_assignment.
+        prefers_pair), não substring: "LAMINAGEM" in "LAMINAGEM_INFUSAO"
+        dava team_size=2 à Infusão enquanto prefers_pair dizia False —
+        inconsistência que podia tornar ops de Infusão infeasible (sem
+        downgrade soft) apesar do histórico 58% solo (docstring acima:
+        "never required at all").
         """
-        normalized = phase_name.upper().replace(" ", "_")
-        pair_phases = tuple(self.PAIR_REQUIRED_PHASES) + tuple(self.PAIR_PREFERRED_PHASES)
-        pair_required = any(p in normalized for p in pair_phases)
+        normalized = normalize_phase_code(phase_name) or ""
+        pair_phases = {
+            normalize_phase_code(p)
+            for p in tuple(self.PAIR_REQUIRED_PHASES) + tuple(self.PAIR_PREFERRED_PHASES)
+        }
+        pair_required = normalized in pair_phases
         # mínimo obrigatório da fase
         min_size = 2 if pair_required else 1
 

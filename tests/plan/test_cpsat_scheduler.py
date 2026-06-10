@@ -121,3 +121,28 @@ def test_empty_ops_ok():
     state = FactoryState(tenant_id=uuid4())
     res = CPSATScheduler().solve_timing([], state, _H0)
     assert res.available and res.makespan_min == 0
+
+
+@pytest.mark.skipif(not cs.HAS_ORTOOLS, reason="ortools não instalado")
+def test_q169c_moldless_model_ops_not_falsely_serialized():
+    """Q.169.C — ops com mold_required mas SEM model_id iam todas para a
+    chave '' com capacidade 1: barcos não-relacionados ficavam serializados
+    num molde fantasma. Agora agrupam por barco — 2 barcos sem modelo
+    conhecido correm em paralelo."""
+    state = FactoryState(tenant_id=uuid4())
+    state.phase_stations = {"A": 2}
+    state.skill_matrix = {"A": {"w1", "w2"}}
+
+    ops = [
+        _op("O1A", "OF1", "A", 1, 120, team=1, mold=True, model=""),
+        _op("O2A", "OF2", "A", 1, 120, team=1, mold=True, model=""),
+    ]
+    res = CPSATScheduler(CPSATConfig(budget_s=10, deterministic=True)).solve_timing(
+        ops, state, _H0,
+    )
+    assert res.available and res.status in ("OPTIMAL", "FEASIBLE")
+    iv = [(res.starts_min[o], res.ends_min[o], 1) for o in ("O1A", "O2A")]
+    assert _max_concurrency(iv, lambda d: d) == 2, (
+        "barcos distintos sem modelo NÃO partilham molde fantasma"
+    )
+    assert max(res.ends_min.values()) == 120, "paralelo => makespan = 1 duração"

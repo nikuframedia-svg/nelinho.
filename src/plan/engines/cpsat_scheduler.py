@@ -186,14 +186,22 @@ class CPSATScheduler:
         model.AddCumulative(all_ivs, all_dem, cap_global)
 
         # ── Cumulative de moldes por modelo ─────────────────────────────────────
+        # Q.169.C — ops com mold_required mas SEM model_id iam TODAS para a
+        # chave '' com capacidade 1: barcos não-relacionados ficavam
+        # serializados num molde fantasma (sobre-restrição apanhada pela
+        # matriz de paridade Q.169.A). Sem modelo não se conhece o molde —
+        # agrupa-se por BARCO (a precedência intra-OF já serializa as fases
+        # do próprio barco; barcos distintos não partilham molde conhecido).
         by_model_mold: Dict[str, List[Any]] = defaultdict(list)
         for op in operations:
             if bool(getattr(op, "mold_required", False)):
-                by_model_mold[str(getattr(op, "model_id", "") or "")].append(op)
+                mid = str(getattr(op, "model_id", "") or "")
+                key = mid if mid else f"order::{op.order_id}"
+                by_model_mold[key].append(op)
         mfm = getattr(state, "molds_for_model", None)
         for model_id, mops in by_model_mold.items():
             n_molds = 1
-            if mfm is not None and model_id:
+            if mfm is not None and not model_id.startswith("order::"):
                 try:
                     n_molds = max(1, len(mfm(model_id)))
                 except Exception:  # pragma: no cover

@@ -230,13 +230,27 @@ def test_team_size_override_respected():
 
 
 def test_team_size_laminagem_override_minimum():
-    """Laminagem com team_size_override < 2 → forçado a 2 (axioma 4)."""
+    """Laminagem com team_size_override < 2 → forçado a 2 (axioma 4).
+
+    Q.169.C — match EXATO do nome canónico (era substring): "Laminagem
+    Standard" não é uma fase real da NELO (fases reais: Laminagem=1,
+    peças=36, Double Dutch=54, Infusão=67 — medidas live no offp_eq:
+    só a fase 1 tem par maioritário; 36/54/67 são 64-99% solo)."""
     state = _make_state(
         phase_config={"f1": {"team_size_override": 1, "num_stations_override": None, "allowed_worker_ids": None}},
     )
-    # phase_name contém LAMINAGEM
-    result = state.team_size_for("f1", "Laminagem Standard")
+    result = state.team_size_for("f1", "Laminagem")
     assert result >= 2
+
+
+def test_team_size_variantes_solo_nao_herdam_par_q169c():
+    """Variantes de laminagem maioritariamente SOLO no histórico real
+    (offp_eq live 2026-06-10: peças 63.9%, Double Dutch 99.4%, Infusão
+    98.8% solo) NÃO herdam o mínimo de par por substring."""
+    state = _make_state(phase_config={})
+    assert state.team_size_for("36", "Laminagem peças") == 1
+    assert state.team_size_for("54", "Laminagem Double Dutch") == 1
+    assert state.team_size_for("67", "Laminagem Infusão") == 1
 
 
 def test_num_stations_override_respected():
