@@ -161,6 +161,61 @@ def normalize_phase_code(name: Optional[str]) -> str:
     return s.strip("_")
 
 
+# Q.169.F — sinónimos seed→catálogo (drift de nomenclatura do ERP): o seed
+# minou "ACABAMENTO_ENVERNIZ" do histórico antigo; a fase real chama-se
+# "Acabamento - Envernizamento" (FP_ID=66). Só entradas comprovadas na BD.
+_GAP_NAME_SYNONYMS: Dict[str, str] = {
+    "ACABAMENTO_ENVERNIZ": "ACABAMENTO_ENVERNIZAMENTO",
+}
+
+
+def alias_gaps_by_phase_id(
+    gaps: Dict[Tuple[str, str], float],
+    phase_catalog: List[Dict[str, Any]],
+) -> Dict[Tuple[str, str], float]:
+    """Q.169.F — acrescenta chaves (from_id, to_id) ao mapa de gaps de cura.
+
+    O mapa vem keyed por NOME normalizado (seed NELO_CURING_GAPS_SEED /
+    tabela plan.phase_transition_gap) mas TODOS os caminhos de produção
+    (decoder `_earliest_start`, CP-SAT `solve_timing`, postpass
+    `assign_concrete`) fazem o lookup com o phase_id NUMÉRICO do ERP
+    ("1"→"2") → `min_gap_hours` devolvia 0.0 e a CURA QUÍMICA ESTAVA
+    MORTA EM PRODUÇÃO. Descoberto pelo validate_schedule (Q.169.B) no
+    primeiro dia em serviço: 330 violações LAMINAGEM→CURA (gap real 0.4h
+    = fila mediana Q.160, em vez de 15h) num plano live do robô — o
+    commit foi recusado. Os testes nunca apanharam porque usam tokens
+    consistentes dos dois lados.
+
+    O alias (nome→id via phase_catalog) fecha o buraco para todos os
+    callers sem tocar em nenhum. Transições sem fase correspondente no
+    catálogo ficam só por nome (honesto; logado)."""
+    id_by_name: Dict[str, str] = {}
+    for step in phase_catalog or []:
+        nome = normalize_phase_code(step.get("fase_nome"))
+        fid = str(step.get("fase_id") or "")
+        if nome and fid:
+            id_by_name.setdefault(nome, fid)
+
+    def _resolve(name: str) -> Optional[str]:
+        return id_by_name.get(name) or id_by_name.get(
+            _GAP_NAME_SYNONYMS.get(name, ""),
+        )
+
+    out = dict(gaps)
+    aliased = 0
+    for (a, b), hours in gaps.items():
+        ia, ib = _resolve(a), _resolve(b)
+        if ia and ib:
+            out.setdefault((ia, ib), hours)
+            aliased += 1
+    if gaps:
+        logger.info(
+            "curing gaps: %d/%d transições com alias por phase_id",
+            aliased, len(gaps),
+        )
+    return out
+
+
 @dataclass
 class MoldInfo:
     molde_id: str
@@ -577,6 +632,11 @@ class FactoryState:
         # Curing/drying gaps (Sprint A D2): DB first, seed fallback
         state.phase_transition_gaps = await _load_phase_transition_gaps(
             session, tenant_id,
+        )
+        # Q.169.F — alias (from_id, to_id): sem isto a cura química era 0.0
+        # em produção (lookups por phase_id contra mapa keyed por nome).
+        state.phase_transition_gaps = alias_gaps_by_phase_id(
+            state.phase_transition_gaps, state.phase_catalog,
         )
 
         # Sprint E.4 — confirmed preference rules (Camada 1). Best-effort:
