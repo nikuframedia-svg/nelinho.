@@ -30,6 +30,7 @@ from sqlalchemy import and_, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.profit.models.pricing import OrderRevenue
+from src.shared.time import local_today
 
 logger = logging.getLogger(__name__)
 
@@ -79,21 +80,21 @@ class ThroughputService:
     # ─── Public methods ────────────────────────────────────────────────────
 
     async def throughput_today(self, *, as_of: Optional[date] = None) -> Decimal:
-        as_of = as_of or date.today()
+        as_of = as_of or local_today()
         return await self._sum_revenue(as_of, as_of)
 
     async def throughput_mtd(self, *, as_of: Optional[date] = None) -> Decimal:
-        as_of = as_of or date.today()
+        as_of = as_of or local_today()
         return await self._sum_revenue(as_of.replace(day=1), as_of)
 
     async def throughput_ytd(self, *, as_of: Optional[date] = None) -> Decimal:
-        as_of = as_of or date.today()
+        as_of = as_of or local_today()
         return await self._sum_revenue(as_of.replace(month=1, day=1), as_of)
 
     async def throughput_trend(
         self, *, days_back: int = 14, until: Optional[date] = None,
     ) -> list[dict[str, Any]]:
-        until = until or date.today()
+        until = until or local_today()
         start = until - timedelta(days=max(1, days_back) - 1)
         rows = await self._daily_buckets(start, until)
         # Densify: emit zero-rows for days that had no revenue at all.
@@ -150,7 +151,7 @@ class ThroughputService:
 
     async def dashboard(self, *, as_of: Optional[date] = None) -> dict[str, Any]:
         """Compose the full dashboard response (Q.5)."""
-        as_of = as_of or date.today()
+        as_of = as_of or local_today()
         targets = await self.load_targets()
 
         today = await self.throughput_today(as_of=as_of)

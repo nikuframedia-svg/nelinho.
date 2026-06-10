@@ -35,6 +35,7 @@ from src.plan.services.factory_calendar import DEFAULT_SHIFT_HOURS
 
 from .runner import EtlRunner, EtlRunResult
 from .sync import register_mirror
+from src.shared.time import local_today
 
 logger = logging.getLogger(__name__)
 
@@ -154,7 +155,7 @@ async def mirror_calendar(
     Window: `[since or today-30d, today + horizon_days]`. Idempotent —
     upsert by `(tenant_id, day)`.
     """
-    today = date.today()
+    today = local_today()
     start = since or (today - timedelta(days=_LOOKBACK_DAYS))
     end = today + timedelta(days=horizon_days)
 

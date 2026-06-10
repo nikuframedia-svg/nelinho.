@@ -17,6 +17,7 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.factory_data_product.services.factory_map.risk_flags import RiskFlag
+from src.shared.time import local_today
 
 
 class TrajectoryMixin:
@@ -86,7 +87,7 @@ class TrajectoryMixin:
         # Risk flags
         flags: list[RiskFlag] = []
         if order_row.transport_date and order_row.completed_date is None:
-            days_to_transport = (order_row.transport_date - date.today()).days
+            days_to_transport = (order_row.transport_date - local_today()).days
             if days_to_transport < 0:
                 flags.append(RiskFlag(
                     code="LATE_VS_TRANSPORT",
@@ -165,7 +166,7 @@ class TrajectoryMixin:
         )
 
         # Build heatmap: phase × day → projected load hours
-        today = date.today()
+        today = local_today()
         heatmap: dict[tuple[str, str], float] = {}
         for order in open_orders:
             current_phase = order.current_phase_name or "?"

@@ -41,6 +41,7 @@ from src.copilot.alerts.models import (
 )
 from src.plan.models.order import OrderStatus, ProductionOrder
 from src.shared.decorators import record_rule_firing
+from src.shared.time import local_today
 
 logger = logging.getLogger(__name__)
 
@@ -264,7 +265,7 @@ class AlertsEngine:
         dentro da janela). Um barco por concluir cuja expedição é amanhã é
         risco de entrega.
         """
-        today = date.today()
+        today = local_today()
         horizon = today + timedelta(days=DELIVERY_RISK_WINDOW_DAYS)
         stmt = select(ProductionOrder).where(
             and_(

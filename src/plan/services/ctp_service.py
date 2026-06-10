@@ -30,6 +30,7 @@ from uuid import UUID
 
 from src.plan.services.backward_scheduler import BackwardSchedulerService
 from src.plan.services.factory_calendar import DEFAULT_SHIFT_START
+from src.shared.time import local_today
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,7 @@ class CapableToPromiseService:
 
         truck_dt = datetime.combine(truck_date, DEFAULT_SHIFT_START)
         start_dt = datetime.combine(
-            start_from or date.today(), DEFAULT_SHIFT_START,
+            start_from or local_today(), DEFAULT_SHIFT_START,
         )
 
         stmt = select(ProductionOrder).where(

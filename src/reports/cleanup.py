@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.models.audit import AuditLog
 from src.reports.models import ReportRun, ReportSchedule
+from src.shared.time import utc_now_naive
 
 logger = logging.getLogger("reports.cleanup")
 
@@ -37,7 +38,7 @@ async def cleanup_expired_runs(
     runs apagados. Cada run apagado escreve um ``core.audit_log`` DELETE
     na mesma transacção.
     """
-    now = datetime.utcnow()
+    now = utc_now_naive()
 
     schedules = (
         await session.execute(

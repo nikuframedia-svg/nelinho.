@@ -49,6 +49,7 @@ from src.plan.services.transport_suggestions import (
 )
 from src.shared.database import get_session
 from src.shared.auth.headers import require_tenant_header
+from src.shared.time import local_today
 
 logger = logging.getLogger(__name__)
 
@@ -676,7 +677,7 @@ def _days_since(raw: Optional[str]) -> Optional[int]:
         d = _date.fromisoformat(str(raw)[:10])
     except ValueError:
         return None
-    return max(0, (_date.today() - d).days)
+    return max(0, (local_today() - d).days)
 
 
 @router.get("/ready", response_model=ReadyResponse)

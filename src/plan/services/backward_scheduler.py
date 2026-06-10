@@ -2,6 +2,7 @@
 ProdPlan ONE — Backward scheduler (Q.53.B)
 ============================================
 
+
 The CPO optimises makespan and penalises tardiness *retrospectively* —
 it never asks "to ship on the customer's date, when must this boat
 *start*?". `WorkOrder` carries `delivery_date` (`OF_DATAENTREGA`) and
@@ -35,6 +36,7 @@ from typing import List, Optional, Sequence, Tuple
 from uuid import UUID
 
 from src.plan.cpo.state import normalize_phase_code
+from src.shared.time import local_today
 from src.plan.services.factory_calendar import (
     DEFAULT_SHIFT_START,
     FactoryCalendar,
@@ -313,7 +315,7 @@ class BackwardSchedulerService:
         gap_lookup = await self._gap_lookup()
         calendar = await FactoryCalendar.load(self.session, self.tenant_id)
 
-        start_dt = start or datetime.combine(date.today(), DEFAULT_SHIFT_START)
+        start_dt = start or datetime.combine(local_today(), DEFAULT_SHIFT_START)
 
         if not phases:
             return {

@@ -15,6 +15,7 @@ from sqlalchemy import select, func, and_, or_, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.plan.models.schedule import ProductionSchedule, ScheduleStatus
+from src.shared.time import local_today, utc_now_naive
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,7 @@ class ExplanationEngine:
             }
         """
         if end_date is None:
-            end_date = date.today()
+            end_date = local_today()
         if start_date is None:
             start_date = end_date - timedelta(days=30)
         
@@ -360,7 +361,7 @@ class ExplanationEngine:
         surfaced the ratio.
         """
         if start_date is None:
-            end_date = end_date or datetime.utcnow().date()
+            end_date = end_date or utc_now_naive().date()
             start_date = end_date - timedelta(days=30)
 
         stmt = select(
@@ -370,7 +371,7 @@ class ExplanationEngine:
             and_(
                 ProductionSchedule.tenant_id == self.tenant_id,
                 ProductionSchedule.scheduled_start_date >= start_date,
-                ProductionSchedule.scheduled_start_date <= (end_date or datetime.utcnow().date()),
+                ProductionSchedule.scheduled_start_date <= (end_date or utc_now_naive().date()),
                 ProductionSchedule.status != ScheduleStatus.COMPLETED,
             )
         ).group_by(ProductionSchedule.machine_id)

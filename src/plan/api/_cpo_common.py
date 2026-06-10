@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.plan.cpo.commits import CommitsService, ScheduleCommit
 from src.plan.cpo.engine import CPOv4Engine
 from src.shared.auth.headers import require_tenant_header
+from src.shared.time import local_today
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +143,7 @@ async def _load_product_prices(
     from src.core.models.product import Product
     from src.profit.models.pricing import ProductPricing
 
-    today = _date.today()
+    today = local_today()
     # Q.138.H: JOIN com core.products para obter product_code = str(P_ID)
     # que é o mesmo identificador usado em plan.production_orders.product_id.
     stmt = (

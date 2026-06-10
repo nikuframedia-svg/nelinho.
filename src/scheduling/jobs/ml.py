@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from uuid import UUID
+from src.shared.time import utc_now_naive
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +18,7 @@ async def _mold_health_scan_job(tenant_id: UUID) -> None:
     from src.plan.services.mold_service import MoldService
     from src.shared.database import get_session_context
 
-    started = datetime.utcnow()
+    started = utc_now_naive()
     try:
         async with get_session_context() as session:
             svc = MoldService(session, tenant_id)
@@ -28,7 +29,7 @@ async def _mold_health_scan_job(tenant_id: UUID) -> None:
                 scored += 1
             alerts = await svc.emit_maintenance_alerts()
             await session.commit()
-        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        elapsed_ms = int((utc_now_naive() - started).total_seconds() * 1000)
         logger.info(
             "mold_health_scan tenant=%s scored=%s alerts=%s elapsed_ms=%s",
             tenant_id, scored, alerts, elapsed_ms,
@@ -52,13 +53,13 @@ async def _quality_risk_scoring_job(tenant_id: UUID) -> None:
     from src.quality.services.defect_risk_service import DefectRiskService
     from src.shared.database import get_session_context
 
-    started = datetime.utcnow()
+    started = utc_now_naive()
     try:
         async with get_session_context() as session:
             svc = DefectRiskService(session, tenant_id)
             result = await svc.defect_risk(top_n=50)
             await session.commit()
-        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        elapsed_ms = int((utc_now_naive() - started).total_seconds() * 1000)
         logger.info(
             "quality_risk_scoring tenant=%s model_available=%s total=%s "
             "high_risk=%s elapsed_ms=%s",
@@ -101,7 +102,7 @@ async def _multivariate_drift_job(tenant_id: UUID) -> None:
         )
         return
 
-    started = datetime.utcnow()
+    started = utc_now_naive()
     try:
         async with get_session_context() as session:
             cfg_svc = TenantConfigService(session, tenant_id)
@@ -120,7 +121,7 @@ async def _multivariate_drift_job(tenant_id: UUID) -> None:
                 # Common, healthy case — log and exit. No detector run,
                 # no audit row.
                 elapsed_ms = int(
-                    (datetime.utcnow() - started).total_seconds() * 1000
+                    (utc_now_naive() - started).total_seconds() * 1000
                 )
                 logger.debug(
                     "multivariate_drift tenant=%s drifting=0 elapsed_ms=%d",
@@ -155,7 +156,7 @@ async def _multivariate_drift_job(tenant_id: UUID) -> None:
             )
             await session.commit()
             elapsed_ms = int(
-                (datetime.utcnow() - started).total_seconds() * 1000
+                (utc_now_naive() - started).total_seconds() * 1000
             )
             logger.info(
                 "multivariate_drift tenant=%s drifting=%d verdict=%s "

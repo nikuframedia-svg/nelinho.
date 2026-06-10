@@ -19,6 +19,7 @@ from sqlalchemy import DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.shared.database import TenantBase
+from src.shared.time import utc_now
 
 
 class EtlRun(TenantBase):
@@ -38,7 +39,7 @@ class EtlRun(TenantBase):
         String(16), nullable=False, default="running",
     )
     started_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=datetime.utcnow,
+        DateTime(timezone=True), nullable=False, default=utc_now,
     )
     finished_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True,

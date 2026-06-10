@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from uuid import UUID
+from src.shared.time import utc_now_naive
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,7 @@ async def _improve_adoption_signal_job(tenant_id: UUID) -> None:
 
     from src.shared.database import get_session_context
 
-    started = datetime.utcnow()
+    started = utc_now_naive()
     cutoff = started - timedelta(days=1)
     accepted_statuses = {
         DecisionStatus.EXECUTED.value,
@@ -109,7 +110,7 @@ async def _improve_adoption_signal_job(tenant_id: UUID) -> None:
                 else:
                     rejected_signals += 1
             await session.commit()
-        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        elapsed_ms = int((utc_now_naive() - started).total_seconds() * 1000)
         logger.info(
             "improve_adoption_signal tenant=%s accepted=%d rejected=%d "
             "suggestions_updated=%d failed=%d elapsed_ms=%d",
@@ -146,14 +147,14 @@ async def _abl_feedback_job(tenant_id: UUID) -> None:
         )
         return
 
-    target = (datetime.utcnow() - timedelta(days=1)).date()
-    started = datetime.utcnow()
+    target = (utc_now_naive() - timedelta(days=1)).date()
+    started = utc_now_naive()
     try:
         pairs = await _load_chain_pairs_from_db(tenant_id, target)
         report = run_abl_feedback(
             pairs, tenant_id=tenant_id, today=target,
         )
-        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        elapsed_ms = int((utc_now_naive() - started).total_seconds() * 1000)
         logger.info(
             "abl_feedback tenant=%s date=%s chains=%d divergences=%d "
             "written=%d elapsed_ms=%s",

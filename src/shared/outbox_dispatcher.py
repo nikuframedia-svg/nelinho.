@@ -24,6 +24,7 @@ from .outbox_models import EventOutbox, EventDLQ
 from .kafka_client import KafkaProducerClient, EventBase
 from .event_schemas import validate_event_payload
 from .event_contracts import resolve_topic
+from src.shared.time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +143,7 @@ class OutboxDispatcher:
                 
                 # Mark as published
                 event.status = "published"
-                event.published_at = datetime.utcnow()
+                event.published_at = utc_now()
                 
                 logger.info(
                     f"Event dispatched: id={event.id}, type={event.event_type}, "

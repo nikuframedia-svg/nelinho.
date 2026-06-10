@@ -19,6 +19,7 @@ from src.governance.audit_service import audit_change
 from src.shared.auth.headers import require_tenant_header, require_user_uuid
 from src.shared.database import get_session
 from src.shared.models.governance import SharedDecisionRun, DecisionApproval, DecisionStatus, ApprovalStatus
+from src.shared.time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +141,7 @@ async def propose_decision(
         before_state=request.before_state,
         after_state=request.after_state,
         proposed_by=user_id,
-        proposed_at=datetime.utcnow(),
+        proposed_at=utc_now(),
     )
 
     async with session.begin_nested():
@@ -381,14 +382,14 @@ async def approve_decision(
     if existing is not None:
         existing.status = approval_status
         existing.comment = request.comment
-        existing.approved_at = datetime.utcnow()
+        existing.approved_at = utc_now()
     else:
         approval = DecisionApproval(
             decision_id=decision_id,
             approver_id=user_id,
             status=approval_status,
             comment=request.comment,
-            approved_at=datetime.utcnow(),
+            approved_at=utc_now(),
         )
         session.add(approval)
 
@@ -551,14 +552,14 @@ async def bulk_act_decisions(
             if existing is not None:
                 existing.status = approval_status
                 existing.comment = request.reason
-                existing.approved_at = datetime.utcnow()
+                existing.approved_at = utc_now()
             else:
                 session.add(DecisionApproval(
                     decision_id=decision_id,
                     approver_id=user_id,
                     status=approval_status,
                     comment=request.reason,
-                    approved_at=datetime.utcnow(),
+                    approved_at=utc_now(),
                 ))
 
             old_status = decision.status
@@ -687,7 +688,7 @@ async def execute_decision(
     # `governance.action_executor` for the registry that takes over once
     # Sprint G lands.
     decision.status = DecisionStatus.EXECUTED.value
-    decision.executed_at = datetime.utcnow()
+    decision.executed_at = utc_now()
 
     await session.commit()
 

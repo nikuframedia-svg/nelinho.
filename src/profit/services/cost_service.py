@@ -22,6 +22,7 @@ from src.profit.services.labor_cost_service import LaborCostResult, LaborCostSer
 from src.profit.services.material_cost_service import MaterialCostResult, MaterialCostService
 from src.shared.kafka_client import publish_event, Topics
 from src.shared.events import COGSCalculatedEvent
+from src.shared.time import utc_now_naive
 
 _logger = logging.getLogger(__name__)
 
@@ -244,7 +245,7 @@ class CostService:
             breakdown_details=result.breakdown.to_dict(),
             status=CalculationStatus.CALCULATED,
             currency_code=result.currency,
-            calculated_at=datetime.utcnow(),
+            calculated_at=utc_now_naive(),
             assumptions=result.assumptions,
         )
         

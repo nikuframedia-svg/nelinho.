@@ -10,6 +10,7 @@ from datetime import datetime
 from uuid import UUID
 
 from src.scheduling.scheduler_lock import with_advisory_lock
+from src.shared.time import utc_now_naive
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,7 @@ async def _causal_discovery_job(tenant_id: UUID) -> None:
     from src.shared.config import settings as _settings
     from src.shared.database import get_session_context
 
-    started = datetime.utcnow()
+    started = utc_now_naive()
     try:
         async with get_session_context() as session:
             cfg_svc = TenantConfigService(session, tenant_id)
@@ -80,7 +81,7 @@ async def _causal_discovery_job(tenant_id: UUID) -> None:
                 session=session, tenant_id=tenant_id, report=report,
             )
             await session.commit()
-        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        elapsed_ms = int((utc_now_naive() - started).total_seconds() * 1000)
         logger.info(
             "causal_discovery tenant=%s status=%s sample_size=%d "
             "candidates=%d elapsed_ms=%d",

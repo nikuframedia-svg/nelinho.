@@ -34,6 +34,7 @@ from src.plan.cpo.fitness import FitnessConfig
 from src.plan.cpo.state import FactoryState
 from src.plan.engines.scheduling_adapter import SchedulingMachine
 from src.plan.services.routing_resolver import RoutingResolver
+from src.shared.time import utc_now_naive
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +105,7 @@ async def _upsert_cpo_alert(
     from sqlalchemy.dialects.postgresql import insert as pg_insert
     from src.copilot.alerts.models import CopilotAlert
 
-    now = datetime.utcnow()
+    now = utc_now_naive()
     stmt = (
         pg_insert(CopilotAlert)
         .values(
@@ -283,7 +284,7 @@ async def run_cpo_schedule(
         HTTPException 400: sem orders OR resolver retornou 0 ops.
         HTTPException 409: yaml_policy block disparou.
     """
-    horizon_start = datetime.utcnow()
+    horizon_start = utc_now_naive()
     horizon_end = horizon_start + timedelta(days=request.horizon_days)
 
     # Q.161.A — o request decide o horizonte: None (interativo)=200, 0=todos os

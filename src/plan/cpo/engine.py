@@ -40,6 +40,7 @@ from src.plan.cpo.safety_net import apply_safety_net
 from src.plan.cpo.state import FactoryState
 from src.plan.cpo.surrogate import CPOSurrogateLayer
 from src.plan.engines.scheduling_adapter import SchedulingMachine, SchedulingOperation
+from src.shared.time import utc_now_naive
 
 logger = logging.getLogger(__name__)
 
@@ -265,7 +266,7 @@ class CPOv4Engine:
         product_price_eur: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         started = time.time()
-        horizon_start = horizon_start or datetime.utcnow()
+        horizon_start = horizon_start or utc_now_naive()
         horizon_end = horizon_end or (horizon_start + timedelta(weeks=4))
 
         if not operations:

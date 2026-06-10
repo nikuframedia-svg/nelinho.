@@ -34,6 +34,7 @@ from src.plan.services.phase_classification import (
 )
 from src.shared.kafka_client import publish_event, Topics
 from src.shared.events import EmployeeAllocatedEvent, LaborCostCommittedEvent
+from src.shared.time import local_today
 
 
 class AllocationError(Exception):
@@ -98,7 +99,7 @@ class AllocationService:
                         and_(
                             HRAllocation.tenant_id == self.tenant_id,
                             HRAllocation.employee_id.in_(emp_uuids),
-                            HRAllocation.allocation_date == date.today(),
+                            HRAllocation.allocation_date == local_today(),
                         )
                     )
                     .with_for_update()
@@ -187,7 +188,7 @@ class AllocationService:
                 employee_id=emp_uuid,
                 order_id=result.order_id,
                 operation_id=op_uuid,
-                allocation_date=date.today(),
+                allocation_date=local_today(),
                 allocated_hours=result.allocated_hours,
                 hourly_rate=result.hourly_rate,
                 estimated_cost=result.estimated_cost,
@@ -465,7 +466,7 @@ class AllocationService:
         weekly_capacity_hours: Decimal = Decimal("40"),
     ) -> Dict[str, Any]:
         """Get employee availability considering existing allocations."""
-        from_date = from_date or date.today()
+        from_date = from_date or local_today()
         to_date = to_date or from_date + timedelta(weeks=4)
 
         # Get existing allocations

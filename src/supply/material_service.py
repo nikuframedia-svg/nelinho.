@@ -21,6 +21,7 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .inventory_ledger import InventoryLedger
+from src.shared.time import local_today
 from .models import (
     InventoryLedgerEntry,
     MaterialInTransit,
@@ -162,7 +163,7 @@ class MaterialService:
 
         on_hand = await self.ledger.get_current_on_hand(sku_id)
 
-        today = date.today()
+        today = local_today()
         until = today + timedelta(days=horizon_days)
 
         in_transit_stmt = select(MaterialInTransit).where(

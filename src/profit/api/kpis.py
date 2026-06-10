@@ -17,6 +17,7 @@ from sqlalchemy import select, func, and_, or_
 
 from src.shared.database import get_session
 from src.shared.auth.headers import require_tenant_header
+from src.shared.time import local_today, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -103,21 +104,21 @@ async def calculate_kpis(
         
         kpis["orders_total"] = KPIMetric(
             value=float(orders_total) if orders_total > 0 else None,
-            updated_at=datetime.utcnow(),
+            updated_at=utc_now(),
             citations=[create_db_citation("plan.production_orders", query_hash, f"Total de ordens: {orders_total}")] if orders_total > 0 else [],
             reason="NO_SOURCE_DATA" if orders_total == 0 else None,
         )
         
         kpis["orders_in_progress"] = KPIMetric(
             value=float(orders_in_progress) if orders_in_progress > 0 else None,
-            updated_at=datetime.utcnow(),
+            updated_at=utc_now(),
             citations=[create_db_citation("plan.production_orders", query_hash, f"Ordens em progresso: {orders_in_progress}")] if orders_in_progress > 0 else [],
             reason="NO_SOURCE_DATA" if orders_in_progress == 0 else None,
         )
         
         kpis["orders_completed"] = KPIMetric(
             value=float(orders_completed) if orders_completed > 0 else None,
-            updated_at=datetime.utcnow(),
+            updated_at=utc_now(),
             citations=[create_db_citation("plan.production_orders", query_hash, f"Ordens completadas: {orders_completed}")] if orders_completed > 0 else [],
             reason="NO_SOURCE_DATA" if orders_completed == 0 else None,
         )
@@ -152,7 +153,7 @@ async def calculate_kpis(
         
         kpis["availability"] = KPIMetric(
             value=round(availability, 1) if availability is not None else None,
-            updated_at=datetime.utcnow(),
+            updated_at=utc_now(),
             citations=[create_calculation_citation(
                 "availability",
                 {"phases_started": phases_started, "phases_total": phases_total},
@@ -199,7 +200,7 @@ async def calculate_kpis(
         
         kpis["performance"] = KPIMetric(
             value=round(performance, 1) if performance is not None else None,
-            updated_at=datetime.utcnow(),
+            updated_at=utc_now(),
             citations=[create_calculation_citation(
                 "performance",
                 {"avg_standard": float(perf_row.avg_standard), "avg_actual": float(perf_row.avg_actual)},
@@ -233,7 +234,7 @@ async def calculate_kpis(
 
         kpis["quality_fpy"] = KPIMetric(
             value=round(quality_fpy, 1) if quality_fpy is not None else None,
-            updated_at=datetime.utcnow(),
+            updated_at=utc_now(),
             citations=[create_calculation_citation(
                 "quality_fpy",
                 {"product_defect_rate": float(product_dr_decimal) if product_dr_decimal is not None else None, "window_days": 90},
@@ -250,7 +251,7 @@ async def calculate_kpis(
 
         kpis["rework_rate"] = KPIMetric(
             value=round(rework_rate, 1) if rework_rate is not None else None,
-            updated_at=datetime.utcnow(),
+            updated_at=utc_now(),
             citations=[create_calculation_citation(
                 "rework_rate",
                 {"product_defect_rate": float(product_dr_decimal) if product_dr_decimal is not None else None, "window_days": 90},
@@ -266,7 +267,7 @@ async def calculate_kpis(
         
         kpis["oee"] = KPIMetric(
             value=round(oee, 1) if oee is not None else None,
-            updated_at=datetime.utcnow(),
+            updated_at=utc_now(),
             citations=[create_calculation_citation(
                 "oee",
                 {"availability": availability, "performance": performance, "quality": quality_fpy},
@@ -311,7 +312,7 @@ async def get_kpi_snapshot(
         orders_total=kpis.get("orders_total", KPIMetric(value=None, reason="NO_SOURCE_DATA")),
         orders_in_progress=kpis.get("orders_in_progress", KPIMetric(value=None, reason="NO_SOURCE_DATA")),
         orders_completed=kpis.get("orders_completed", KPIMetric(value=None, reason="NO_SOURCE_DATA")),
-        updated_at=datetime.utcnow(),
+        updated_at=utc_now(),
     )
 
 
@@ -347,7 +348,7 @@ async def get_kpi_snapshot_dev(
         orders_total=kpis.get("orders_total", KPIMetric(value=None, reason="NO_SOURCE_DATA")),
         orders_in_progress=kpis.get("orders_in_progress", KPIMetric(value=None, reason="NO_SOURCE_DATA")),
         orders_completed=kpis.get("orders_completed", KPIMetric(value=None, reason="NO_SOURCE_DATA")),
-        updated_at=datetime.utcnow(),
+        updated_at=utc_now(),
     )
 
 
@@ -381,7 +382,7 @@ async def get_kpi_snapshot_explained(
         orders_total=kpis.get("orders_total", KPIMetric(value=None, reason="NO_SOURCE_DATA")),
         orders_in_progress=kpis.get("orders_in_progress", KPIMetric(value=None, reason="NO_SOURCE_DATA")),
         orders_completed=kpis.get("orders_completed", KPIMetric(value=None, reason="NO_SOURCE_DATA")),
-        updated_at=datetime.utcnow(),
+        updated_at=utc_now(),
     )
     
     # Generate explanations for relevant KPIs
@@ -403,7 +404,7 @@ async def get_kpi_snapshot_explained(
     return KPISnapshotExplainedResponse(
         snapshot=snapshot,
         explanations=explanations,
-        timestamp=datetime.utcnow(),
+        timestamp=utc_now(),
     )
 
 
@@ -426,7 +427,7 @@ async def get_otd_heatmap(
     from src.core.models.product import Product
     
     # Calculate date range
-    end_date = date.today()
+    end_date = local_today()
     start_date = end_date - timedelta(weeks=weeks)
     
     # Extract product type from product_code (first 2 chars, e.g., "K1", "C2")

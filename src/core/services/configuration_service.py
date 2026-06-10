@@ -17,6 +17,7 @@ from src.core.models.rates import LaborRate, MachineRate, OverheadRate
 from src.shared.redis_client import get_redis
 from src.shared.kafka_client import publish_event, Topics
 from src.shared.events import ConfigUpdatedEvent
+from src.shared.time import local_today
 
 
 class ConfigurationService:
@@ -44,7 +45,7 @@ class ConfigurationService:
         currency_code: str = "EUR",
     ) -> LaborRate:
         """Set labor rate for an employee."""
-        effective_date = effective_date or date.today()
+        effective_date = effective_date or local_today()
         loaded_rate = LaborRate.calculate_loaded_rate(base_hourly_rate, burden_rate)
         
         labor_rate = LaborRate(
@@ -88,7 +89,7 @@ class ConfigurationService:
         as_of_date: date = None,
     ) -> Optional[LaborRate]:
         """Get effective labor rate for an employee."""
-        as_of_date = as_of_date or date.today()
+        as_of_date = as_of_date or local_today()
         
         result = await self.session.execute(
             select(LaborRate).where(
@@ -157,7 +158,7 @@ class ConfigurationService:
         currency_code: str = "EUR",
     ) -> MachineRate:
         """Set machine rate."""
-        effective_date = effective_date or date.today()
+        effective_date = effective_date or local_today()
         total_rate = MachineRate.calculate_total_rate(
             depreciation_rate,
             energy_cost_per_hour,
@@ -204,7 +205,7 @@ class ConfigurationService:
         as_of_date: date = None,
     ) -> Optional[MachineRate]:
         """Get effective machine rate."""
-        as_of_date = as_of_date or date.today()
+        as_of_date = as_of_date or local_today()
         
         result = await self.session.execute(
             select(MachineRate).where(
@@ -313,7 +314,7 @@ class ConfigurationService:
         year_month: date = None,
     ) -> Optional[OverheadRate]:
         """Get overhead rate for a month."""
-        year_month = year_month or date.today()
+        year_month = year_month or local_today()
         year_month = year_month.replace(day=1)  # Normalize
         
         result = await self.session.execute(

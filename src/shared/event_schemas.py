@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 from uuid import UUID
 from pydantic import BaseModel, Field
+from src.shared.time import utc_now
 
 
 class EventPayload(BaseModel):
@@ -64,7 +65,7 @@ class Event(BaseModel):
     aggregate_id: str = Field(..., description="Aggregate ID for partitioning (ensures ordering)")
     tenant_id: str = Field(..., description="Tenant identifier")
     payload: Dict[str, Any] = Field(..., description="Event payload")
-    timestamp: datetime = Field(default_factory=datetime.utcnow, description="Event timestamp")
+    timestamp: datetime = Field(default_factory=utc_now, description="Event timestamp")
     
     class Config:
         json_schema_extra = {

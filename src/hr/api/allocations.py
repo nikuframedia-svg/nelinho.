@@ -20,6 +20,8 @@ from src.hr.services.allocation_service import (
     PhaseNotStartedError,
 )
 
+from src.shared.time import local_today
+
 router = APIRouter(prefix="/allocations", tags=["Allocations"])
 
 
@@ -131,7 +133,7 @@ async def create_daily_allocation(
         allocation = await service.create_single_allocation(
             employee_id=request.employee_id,
             order_id=request.order_id,
-            allocation_date=request.allocation_date or date.today(),
+            allocation_date=request.allocation_date or local_today(),
             allocated_hours=Decimal(str(request.allocated_hours)),
         )
     except OrderNotAllocatableError as exc:

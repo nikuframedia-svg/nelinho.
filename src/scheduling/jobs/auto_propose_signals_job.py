@@ -42,6 +42,7 @@ from src.plan.services.rate_limiter import RateLimiter
 from src.scheduling.jobs.auto_cpo_replan_job import _resolve_tenants
 from src.shared.auth.tenant_context import tenant_scope
 from src.shared.models.governance import DecisionStatus, SharedDecisionRun
+from src.shared.time import local_today
 
 logger = logging.getLogger(__name__)
 
@@ -433,7 +434,7 @@ async def _expedition_candidates(
     from src.plan.models.transport import TransportBatch
     from src.plan.services.transport_suggestions import TransportSuggestionsService
 
-    today = date.today()
+    today = local_today()
     horizon = today + timedelta(days=7)
     batches = list(
         (

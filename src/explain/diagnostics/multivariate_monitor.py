@@ -36,6 +36,7 @@ from uuid import UUID
 
 from src.dqa.distribution_drift_detector import DriftDetector
 from src.explain.diagnostics.repository import DiagnosticsRepository
+from src.shared.time import local_today
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +92,7 @@ class MultivariatePhaseMonitor:
             recent_days: window for "now" samples.
             historical_days: window for the baseline.
         """
-        end = date.today()
+        end = local_today()
         recent_start = end - timedelta(days=recent_days)
         historical_start = end - timedelta(days=historical_days)
 

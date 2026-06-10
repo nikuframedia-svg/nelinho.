@@ -10,6 +10,7 @@ from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Dict, List, Optional
 from uuid import UUID
+from src.shared.time import local_today
 
 
 @dataclass
@@ -152,8 +153,8 @@ class ProductivityAdapter:
         if not records:
             return ProductivitySummary(
                 employee_id=employee_id,
-                period_start=from_date or date.today(),
-                period_end=to_date or date.today(),
+                period_start=from_date or local_today(),
+                period_end=to_date or local_today(),
                 total_standard_hours=Decimal("0"),
                 total_actual_hours=Decimal("0"),
                 total_standard_quantity=Decimal("0"),

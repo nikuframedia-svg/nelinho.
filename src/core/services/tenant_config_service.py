@@ -30,6 +30,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.shared.time import utc_now, utc_now_naive
 from src.core.models.tenant_configuration import (
     ALLOWED_CATEGORIES,
     ALLOWED_DATA_TYPES,
@@ -238,7 +239,7 @@ class TenantConfigService:
         _validate_data_type(data_type)
         _validate_source(source)
 
-        now = datetime.utcnow()
+        now = utc_now_naive()
         current = await self._current_row(category, key)
         if current is not None:
             current.valid_to = now
@@ -405,7 +406,7 @@ class TenantConfigService:
                         "config_type": f"tenant_configuration.{category}",
                         "affected_entities": keys,
                         "data_type": data_type,
-                        "effective_from": datetime.utcnow().isoformat(),
+                        "effective_from": utc_now().isoformat(),
                     },
                 ),
             )

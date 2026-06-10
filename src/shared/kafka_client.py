@@ -27,6 +27,7 @@ from aiokafka.errors import KafkaError
 from pydantic import BaseModel, Field
 
 from .config import settings
+from src.shared.time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +104,7 @@ class EventBase(BaseModel):
     event_id: UUID = Field(default_factory=uuid4)
     event_type: str
     tenant_id: UUID
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=utc_now)
     correlation_id: Optional[UUID] = None
     source_module: str
     payload: Dict[str, Any] = Field(default_factory=dict)
@@ -192,7 +193,7 @@ class CircuitBreaker:
                 self.state = CircuitBreakerState.HALF_OPEN
                 logger.info("Circuit breaker transitioning to HALF_OPEN")
             else:
-                elapsed = (datetime.utcnow() - self.last_failure_time).total_seconds()
+                elapsed = (utc_now() - self.last_failure_time).total_seconds()
                 raise Exception(
                     f"Circuit breaker OPEN. Retry after {self.timeout_seconds - int(elapsed)}s"
                 )
@@ -213,7 +214,7 @@ class CircuitBreaker:
                 logger.info("Circuit breaker transitioning to HALF_OPEN")
             else:
                 if self.last_failure_time:
-                    elapsed = (datetime.utcnow() - self.last_failure_time).total_seconds()
+                    elapsed = (utc_now() - self.last_failure_time).total_seconds()
                     raise Exception(
                         f"Circuit breaker OPEN. Retry after {self.timeout_seconds - int(elapsed)}s"
                     )
@@ -234,7 +235,7 @@ class CircuitBreaker:
         """Check if enough time has passed to attempt reset."""
         if not self.last_failure_time:
             return False
-        elapsed = (datetime.utcnow() - self.last_failure_time).total_seconds()
+        elapsed = (utc_now() - self.last_failure_time).total_seconds()
         return elapsed >= self.timeout_seconds
     
     def _on_success(self):
@@ -247,7 +248,7 @@ class CircuitBreaker:
     def _on_failure(self):
         """Increment failure count and open circuit if threshold reached."""
         self.failure_count += 1
-        self.last_failure_time = datetime.utcnow()
+        self.last_failure_time = utc_now()
         
         if self.failure_count >= self.failure_threshold:
             if self.state != CircuitBreakerState.OPEN:
@@ -370,7 +371,7 @@ class KafkaProducerClient:
                     "kafka_offset": record_metadata.offset,
                     "partition": record_metadata.partition,
                     "topic": topic,
-                    "timestamp": datetime.utcnow().isoformat(),
+                    "timestamp": utc_now().isoformat(),
                 }
             
             except (KafkaError, Exception) as e:
@@ -551,7 +552,7 @@ class KafkaConsumerClient:
                 value={
                     "original_message": message,
                     "error": error,
-                    "dlq_timestamp": datetime.utcnow().isoformat(),
+                    "dlq_timestamp": utc_now().isoformat(),
                 },
             )
             logger.error(

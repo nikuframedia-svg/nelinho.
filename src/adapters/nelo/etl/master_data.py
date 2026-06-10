@@ -47,6 +47,7 @@ from src.plan.models.routing_template import (
 
 from .runner import EtlRunner, EtlRunResult
 from .sync import register_mirror
+from src.shared.time import local_today
 
 logger = logging.getLogger(__name__)
 
@@ -251,7 +252,7 @@ async def _mirror_labor_rates(run: EtlRunner, session, tenant_id: UUID) -> None:
     rows = await services.list_entities(internal_only=True)
     run.count_read(len(rows))
     by_code = await _employee_id_by_code(session, tenant_id)
-    as_of = date.today()
+    as_of = local_today()
     mapped = [
         m for m in (_map_labor_rate(r, by_code, as_of) for r in rows)
         if m is not None

@@ -25,6 +25,7 @@ from src.plan.services.scheduling_service import (
 )
 from src.plan.engines.scheduling_adapter import SchedulerEngine, DispatchRule
 from src.shared.auth.headers import require_tenant_header
+from src.shared.time import local_today
 
 router = APIRouter(prefix="/schedule", tags=["Scheduling"])
 
@@ -315,7 +316,7 @@ async def get_worker_operations_today(
     e sobrepõe o progresso real do overlay ``operation_execution`` (Q.157.E).
     Sem commit, sem operador resolvido, ou sem ops → ``[]`` (vazio honesto).
     """
-    target_day = as_of or date.today()
+    target_day = as_of or local_today()
     worker_code = await _resolve_worker_code(session, tenant_id, employee_id)
     if not worker_code:
         return []

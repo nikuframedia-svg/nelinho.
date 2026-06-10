@@ -20,6 +20,7 @@ from uuid import UUID
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from src.shared.time import local_today
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +165,7 @@ class RiskFlagsMixin:
         """
         from src.plan.models.schedule import ProductionSchedule
 
-        today = date.today()
+        today = local_today()
         until = today + timedelta(days=horizon_days)
 
         stmt = (

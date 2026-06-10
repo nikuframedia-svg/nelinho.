@@ -17,6 +17,7 @@ from src.factory_data_product.models.curated import CuratedPhaseCapacity
 from src.plan.models.schedule import ProductionSchedule, ScheduleStatus
 from src.shared.kafka_client import publish_event, Topics
 from src.shared.events import CapacityConstraintEvent
+from src.shared.time import local_today
 
 
 class CapacityAnalysis:
@@ -102,7 +103,7 @@ class CapacityService:
         Returns:
             Capacity analysis results
         """
-        from_date = from_date or date.today()
+        from_date = from_date or local_today()
         to_date = to_date or from_date + timedelta(weeks=4)
         
         results: List[CapacityAnalysis] = []
@@ -209,7 +210,7 @@ class CapacityService:
         available_hours_per_day: float = 8.0,
     ) -> Dict[str, Any]:
         """Get availability for a single machine."""
-        from_date = from_date or date.today()
+        from_date = from_date or local_today()
         to_date = to_date or from_date + timedelta(weeks=4)
         
         # Query all scheduled operations

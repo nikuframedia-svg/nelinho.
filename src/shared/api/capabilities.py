@@ -23,6 +23,7 @@ from uuid import UUID
 
 from src.shared.auth.headers import require_tenant_header
 from src.shared.database import get_session
+from src.shared.time import utc_now
 from src.factory_data_product.config import (
     BLOCKED_METRICS,
     ALLOWED_METRICS,
@@ -186,7 +187,7 @@ class CapabilityEvaluator:
             active_ingestion_id=str(self._active_run.ingestion_id) if self._active_run else None,
             blocked_metrics=list(BLOCKED_METRICS.keys()),
             allowed_metrics=ALLOWED_METRICS,
-            evaluated_at=datetime.utcnow().isoformat(),
+            evaluated_at=utc_now().isoformat(),
         )
     
     async def _get_active_run(self):

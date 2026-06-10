@@ -33,6 +33,7 @@ from src.adapters.nelo import services
 from src.adapters.nelo.schemas import OrderLaborRow
 from src.core.models.employee import Employee
 from src.core.models.rates import LaborRate
+from src.shared.time import local_today
 
 _ZERO = Decimal("0")
 _SECONDS_PER_HOUR = Decimal("3600")
@@ -170,7 +171,7 @@ class LaborCostService:
         Lê as execuções de fase × operadores do ERP vivo (read-only) e
         preça-as com as taxas efectivas em `as_of` (hoje por omissão).
         """
-        as_of = as_of or date.today()
+        as_of = as_of or local_today()
         rows = await services.list_order_labor(work_order_id)
         codes = {str(r.operator_id) for r in rows}
         rate_by_code = await self._rates_by_code(codes, as_of)

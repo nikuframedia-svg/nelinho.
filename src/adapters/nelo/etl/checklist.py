@@ -33,6 +33,7 @@ from src.quality.models.rework import ReworkEntry
 
 from .runner import EtlRunner, EtlRunResult
 from .sync import register_mirror
+from src.shared.time import local_today
 
 logger = logging.getLogger(__name__)
 
@@ -148,8 +149,8 @@ async def mirror_checklist(
 ) -> EtlRunResult:
     """Mirror ERP checklist defects into ``quality.rework_entry`` with real RCA."""
     async with EtlRunner(session, tenant_id, source="checklist") as run:
-        date_from = since or (date.today() - timedelta(days=_DEFAULT_LOOKBACK_DAYS))
-        date_to = date.today()
+        date_from = since or (local_today() - timedelta(days=_DEFAULT_LOOKBACK_DAYS))
+        date_to = local_today()
         incidents = await services.list_checklist_incidents(date_from=date_from, date_to=date_to)
         run.count_read(len(incidents))
 

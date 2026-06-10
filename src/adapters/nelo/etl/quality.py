@@ -34,6 +34,7 @@ from src.quality.models.rework import ErrorCatalog
 
 from .runner import EtlRunner, EtlRunResult
 from .sync import register_mirror
+from src.shared.time import local_today
 
 logger = logging.getLogger(__name__)
 
@@ -101,8 +102,8 @@ async def mirror_quality(
 ) -> EtlRunResult:
     """Mirror quality incidents into the error catalogue + rework log."""
     async with EtlRunner(session, tenant_id, source="quality") as run:
-        date_from = since or (date.today() - timedelta(days=_DEFAULT_LOOKBACK_DAYS))
-        date_to = date.today()
+        date_from = since or (local_today() - timedelta(days=_DEFAULT_LOOKBACK_DAYS))
+        date_to = local_today()
         ops = await services.list_operations(date_from=date_from, date_to=date_to)
         run.count_read(len(ops))
 

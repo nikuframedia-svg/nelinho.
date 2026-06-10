@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.profit.services.bonus_payout_service import BonusPayoutService
 from src.shared.database import get_session
 from src.shared.auth.headers import require_tenant_header
+from src.shared.time import local_today
 
 router = APIRouter(prefix="/bonus-payouts", tags=["Phase Bonus Payouts"])
 
@@ -73,7 +74,7 @@ async def lookup_bonus(
 ):
     """Bonus € paid for this (product, phase) effective on `on_date`."""
     service = BonusPayoutService(session, tenant_id)
-    ref = on_date or date.today()
+    ref = on_date or local_today()
     bonus = await service.get_bonus(product_id, phase_id, ref)
     return BonusLookupResponse(
         product_id=product_id,

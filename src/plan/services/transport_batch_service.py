@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.governance.audit_service import audit_change
 from src.plan.models.order import OrderStatus, ProductionOrder
 from src.plan.models.transport import TransportBatch, TransportBatchAssignment
+from src.shared.time import local_today
 
 
 class TransportBatchNotFoundError(Exception):
@@ -230,7 +231,7 @@ class TransportBatchService:
         Idempotente: uma 2ª corrida não cria camiões nem atribui nada novo.
         Devolve `{batches_created, batches_touched, orders_assigned, overflow}`.
         """
-        ref_today = today or date.today()
+        ref_today = today or local_today()
         until = ref_today + timedelta(days=horizon_days)
 
         # 1. Ordens elegíveis (futuras, não canceladas) agrupadas por data.

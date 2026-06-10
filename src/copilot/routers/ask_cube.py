@@ -38,6 +38,7 @@ from src.copilot.cube.measure_retrieval import MeasureIndex
 from src.copilot.cube.narrate import narrate_with_guard
 from src.copilot.ollama_client import OllamaClient
 from src.shared.auth.jwt_handler import UserContext, get_current_user
+from src.shared.time import local_today
 
 
 logger = logging.getLogger(__name__)
@@ -204,7 +205,7 @@ async def _process(
         # não acabou, os dados são parciais: avisar honestamente.
         warnings_out: list[str] = []
         if interp.query.time_dimensions and is_partial_current_month(
-            interp.query.time_dimensions[0].date_range, date.today()
+            interp.query.time_dimensions[0].date_range, local_today()
         ):
             warnings_out.append("Mês em curso — dados parciais até hoje.")
 
@@ -436,7 +437,7 @@ async def cube_dashboard_dev() -> DashboardResponse:
     `CubeClient` (queries determinísticas). Degrada por item quando um mart
     ainda não está populado.
     """
-    today = date.today()
+    today = local_today()
     cube = CubeClient()
     try:
         results = await asyncio.gather(
@@ -567,7 +568,7 @@ async def cube_measure_cards_dev(request: MeasureCardsRequest) -> MeasureCardsRe
     specs = _coerce_card_specs(request.items[:MAX_MEASURE_CARDS])
     if not specs:
         return MeasureCardsResponse(cards=[])
-    today = date.today()
+    today = local_today()
     cube = CubeClient()
     try:
         cards = await asyncio.gather(*[_run_card(cube, s, today) for s in specs])

@@ -10,6 +10,7 @@ from datetime import datetime
 from uuid import UUID
 
 from src.scheduling.scheduler_lock import with_advisory_lock
+from src.shared.time import utc_now_naive
 
 logger = logging.getLogger(__name__)
 
@@ -37,13 +38,13 @@ async def _preference_rule_detector_job(tenant_id: UUID) -> None:
 
     from src.shared.database import get_session_context
 
-    started = datetime.utcnow()
+    started = utc_now_naive()
     try:
         async with get_session_context() as session:
             detector = PreferenceRuleDetector(session, tenant_id)
             rules = await detector.scan(window_days=30)
             await session.commit()
-        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        elapsed_ms = int((utc_now_naive() - started).total_seconds() * 1000)
         logger.info(
             "preference_rule_detector tenant=%s rules_detected=%s elapsed_ms=%s",
             tenant_id, len(rules), elapsed_ms,
@@ -78,13 +79,13 @@ async def _preference_weights_retrain_job(tenant_id: UUID) -> None:
 
     from src.shared.database import get_session_context
 
-    started = datetime.utcnow()
+    started = utc_now_naive()
     try:
         async with get_session_context() as session:
             retainer = AdaptiveFitnessWeights(session, tenant_id)
             result = await retainer.retrain(window_days=30)
             await session.commit()
-        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        elapsed_ms = int((utc_now_naive() - started).total_seconds() * 1000)
         logger.info(
             "preference_weights_retrain tenant=%s status=%s pairs=%s commits=%s elapsed_ms=%s",
             tenant_id, result.status, result.pairs_used,
@@ -149,7 +150,7 @@ async def _dpo_finetune_job(tenant_id: UUID) -> None:
     from src.core.services.tenant_config_service import TenantConfigService
     from src.shared.database import get_session_context
 
-    started = datetime.utcnow()
+    started = utc_now_naive()
     today = started.date()
     try:
         async with get_session_context() as session:
@@ -188,7 +189,7 @@ async def _dpo_finetune_job(tenant_id: UUID) -> None:
             config={},
             smoke=True,  # never auto-train on prod box without explicit opt-in
         )
-        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        elapsed_ms = int((utc_now_naive() - started).total_seconds() * 1000)
         logger.info(
             "dpo_finetune tenant=%s status=%s pairs=%d adapter=%s elapsed_ms=%s",
             tenant_id, report.status, manifest.triplets_total,

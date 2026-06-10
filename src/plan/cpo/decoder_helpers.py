@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional
 
 from src.plan.cpo.state import FactoryState
 from src.plan.engines.scheduling_adapter import SchedulingMachine, SchedulingOperation
+from src.shared.time import utc_now_naive
 
 
 @dataclass
@@ -157,7 +158,7 @@ def compute_mold_batches(
             # Use the op's own start hint if it's attached (greedy
             # pipeline sets it); otherwise fall back to "now" semantics
             # via datetime.utcnow() which matches the decoder's default.
-            now = datetime.utcnow()
+            now = utc_now_naive()
             urgency_window = timedelta(days=_MOLD_BATCH_URGENCY_DAYS)
             if due - now > urgency_window:
                 continue

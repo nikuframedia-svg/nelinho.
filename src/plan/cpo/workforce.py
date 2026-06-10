@@ -39,6 +39,7 @@ import math
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
+from src.shared.time import utc_now_naive
 
 try:
     import numpy as np
@@ -106,7 +107,7 @@ def assign_workers_hungarian(
         return _first_fit_fallback(requests, worker_free_at, horizon_start)
 
     # Cost matrix rows = slots, cols = workers
-    ref = horizon_start or datetime.utcnow()
+    ref = horizon_start or utc_now_naive()
     cost = np.full((len(slots), len(workers)), INFEASIBLE_COST, dtype=np.float64)
 
     for row, (_op_idx, _slot_idx, req) in enumerate(slots):
@@ -164,7 +165,7 @@ def _first_fit_fallback(
     worker_free_at: Dict[str, datetime],
     horizon_start: Optional[datetime],
 ) -> Dict[str, List[str]]:
-    ref = horizon_start or datetime.utcnow()
+    ref = horizon_start or utc_now_naive()
     result: Dict[str, List[str]] = {}
     for req in requests:
         pool = list(req.eligible_workers)

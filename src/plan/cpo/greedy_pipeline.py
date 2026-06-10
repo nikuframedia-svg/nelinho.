@@ -39,6 +39,7 @@ from src.plan.cpo.chromosome import Chromosome
 from src.plan.cpo.decoder import decode
 from src.plan.cpo.state import FactoryState
 from src.plan.engines.scheduling_adapter import SchedulingMachine, SchedulingOperation
+from src.shared.time import utc_now_naive
 
 logger = logging.getLogger(__name__)
 
@@ -352,7 +353,7 @@ def _as_datetime(value: Any) -> datetime:
             return datetime.fromisoformat(value)
         except ValueError:
             pass
-    return datetime.utcnow()
+    return utc_now_naive()
 
 
 def _is_laminagem_phase(op_dict: Dict[str, Any]) -> bool:

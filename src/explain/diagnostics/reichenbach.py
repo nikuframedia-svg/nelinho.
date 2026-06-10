@@ -48,6 +48,7 @@ from src.explain.diagnostics.erro_tree import ErroTreeDetector
 from src.explain.diagnostics.repository import DiagnosticsRepository
 from src.explain.diagnostics.types import Hypothesis, TriggerType
 from src.shared.decorators import record_rule_firing
+from src.shared.time import local_today
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +112,7 @@ class SharedMoldCheck:
         if len(deviating_phases) < 2:
             return None
 
-        end = date.today()
+        end = local_today()
         start = end - timedelta(days=period_days)
         start_baseline = end - timedelta(days=period_days * 6)
 
@@ -190,7 +191,7 @@ class SharedWorkersCheck:
         if len(deviating_phases) < 2:
             return None
 
-        end = date.today()
+        end = local_today()
         start = end - timedelta(days=period_days)
 
         # Set per phase, then intersection.
@@ -259,7 +260,7 @@ class CascadeCheck:
         if len(deviating_phases) < 2:
             return None
 
-        end = date.today()
+        end = local_today()
         start = end - timedelta(days=period_days)
 
         # For each ordered pair (A, B), check if A precedes B AND

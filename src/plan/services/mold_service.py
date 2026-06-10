@@ -40,6 +40,7 @@ from src.plan.models.mold import (
     MoldUsageCounter,
 )
 from src.plan.services.mold_health_calculator import MoldHealthCalculator
+from src.shared.time import local_today
 
 logger = logging.getLogger(__name__)
 
@@ -509,7 +510,7 @@ class MoldService:
         no future event already exists within the horizon."""
         molds = await self.list_molds()
         created: list[MoldMaintenanceEvent] = []
-        today = date.today()
+        today = local_today()
         horizon = today + timedelta(days=horizon_days)
         for mold in molds:
             health = await self.latest_health(mold.id)

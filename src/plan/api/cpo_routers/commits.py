@@ -31,6 +31,7 @@ from src.plan.cpo.commits import CommitsService
 from src.shared.auth.headers import get_current_user_or_dev_header
 from src.shared.auth.jwt_handler import UserContext
 from src.shared.database import get_session
+from src.shared.time import utc_now
 
 router = APIRouter()
 
@@ -563,5 +564,5 @@ async def approve_commit(
         commit_sha256=commit.commit_sha256,
         previous_status=prev_status,
         new_status="LIVE",
-        approved_at=datetime.utcnow().isoformat() + "Z",
+        approved_at=utc_now().isoformat(),
     )

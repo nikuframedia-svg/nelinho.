@@ -22,6 +22,7 @@ from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from src.shared.time import local_today
 
 logger = logging.getLogger("reports.generators")
 
@@ -39,7 +40,7 @@ def _resolve_period(
     since: date | None, until: date | None
 ) -> tuple[date, date]:
     """Default to the trailing 30 days when no period is supplied."""
-    end = until or date.today()
+    end = until or local_today()
     start = since or (end - timedelta(days=30))
     return start, end
 

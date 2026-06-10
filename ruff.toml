@@ -40,6 +40,16 @@ select = [
     # separado em scripts/lint_drift_gate.py. Estas duas sao manageable:
     "S110",  # try-except-pass — 10 sites, todos marcados # noqa com razao
     "T201",  # print() em src/ — 1 site (CLI tool), marcado # noqa
+    # Q.168.B — datetime naive banido. datetime.utcnow() escrito em colunas
+    # DateTime(timezone=True) / comparado com datetimes aware era a classe de
+    # bugs Q.130.U (auditoria 2026-06-10: ~25 sites confirmados). Usar
+    # src/shared/time.py: utc_now() (aware, default), utc_now_naive()
+    # (SÓ colunas legacy sem tz + domínio CPO naive-consistente até F2) ou
+    # local_today() (data de NEGÓCIO da fábrica). DTZ001/005/007/901 (27
+    # sites com semântica local-vs-UTC fina) entram na passada F4.
+    "DTZ003",  # datetime.utcnow() — a classe de bugs varrida no Q.168.B
+    "DTZ004",  # datetime.utcfromtimestamp() — mesma família
+    "DTZ011",  # date.today() direto — usar local_today() (intenção explícita)
 ]
 
 # Allow common patterns that aren't real bugs in this codebase
@@ -72,6 +82,9 @@ ignore = [
     "F841", "B011", "B017", "B018",
     "RUF059", "B007", "RUF005", "RUF007", "RUF009", "RUF015",
     "S110",
+    # Q.168.B — datas fixas/naive em fixtures de teste são inofensivas;
+    # o ban DTZ aplica-se ao código de produção (src/).
+    "DTZ003", "DTZ004", "DTZ011",
 ]
 "alembic/versions/*.py" = ["E402", "F401"]  # migrations are special
 # Ad-hoc one-off scripts — not production code; relax unused/style noise.

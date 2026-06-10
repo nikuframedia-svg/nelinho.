@@ -29,6 +29,7 @@ from src.plan.models.mold import Mold, MoldHealth, MoldMaintenanceEvent
 from src.plan.services.mold_service import MoldNotFoundError, MoldService
 from src.shared.database import get_session
 from src.shared.auth.headers import require_tenant_header
+from src.shared.time import local_today
 
 router = APIRouter(tags=["Molds"])
 
@@ -128,7 +129,7 @@ async def mold_calendar(
     session: AsyncSession = Depends(get_session),
 ):
     from datetime import timedelta
-    since = since or date.today()
+    since = since or local_today()
     until = until or (since + timedelta(days=30))
     svc = MoldService(session, tenant_id)
     events = await svc.calendar(since=since, until=until)

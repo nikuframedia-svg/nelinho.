@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.shared.database import get_session
 
 from ._dependencies import get_current_user, get_tenant_id
+from src.shared.time import utc_now
 
 router = APIRouter(tags=["Governance"])
 
@@ -170,7 +171,7 @@ async def update_rule_firing_outcome(
             detail=f"rule firing {firing_id} not found in this tenant",
         )
 
-    now = datetime.utcnow()
+    now = utc_now()
     user_uuid: Optional[UUID] = None
     try:
         user_uuid = UUID(str(user))

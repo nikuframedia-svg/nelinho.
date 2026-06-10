@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.shared.auth.headers import AdminContext, require_admin, require_tenant_header
 from src.shared.database import get_session
 from src.hr.services.payroll_service import PayrollService
+from src.shared.time import local_today
 
 router = APIRouter(prefix="/payroll", tags=["Payroll"])
 
@@ -32,7 +33,7 @@ class PayrollCalculateRequest(BaseModel):
     @classmethod
     def _validate_year_month(cls, v: date) -> date:
         # Sprint Q.12 — rejeitar futuro e anos absurdos.
-        if v.year < 2020 or v > date.today():
+        if v.year < 2020 or v > local_today():
             raise ValueError(
                 "year_month deve estar entre 2020 e hoje"
             )

@@ -27,6 +27,7 @@ from src.core.models.daily_revenue_target import DailyRevenueTarget
 from src.plan.cpo.commits import ScheduleCommit
 from src.plan.models.routing_template import RoutingTemplatePhase
 from src.profit.models.phase_bonus import PhaseBonusPayout
+from src.shared.time import local_today
 
 log = logging.getLogger(__name__)
 
@@ -64,7 +65,7 @@ async def compute_margin_preview(
 
     operations: List[Dict[str, Any]] = list(commit.operations or [])
     sample_size = len(operations)
-    today = date.today()
+    today = local_today()
 
     # 2. Calcula margem prevista somando por operação
     predicted_total = Decimal("0")
@@ -273,7 +274,7 @@ async def _compute_baseline(
 
     Devolve None se não existe target definido.
     """
-    today = date.today()
+    today = local_today()
     stmt = (
         select(DailyRevenueTarget)
         .where(

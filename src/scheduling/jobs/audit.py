@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from src.shared.time import utc_now_naive
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ async def _audit_retention_purge_job() -> None:
 
     from src.shared.database import get_session_context
 
-    started = datetime.utcnow()
+    started = utc_now_naive()
     retention_days = 90  # safe default if config lookup fails
     try:
         from src.core.services.tenant_config_service import TenantConfigService
@@ -146,7 +147,7 @@ async def _audit_retention_purge_job() -> None:
             "audit_retention_purge: cpo_meta clear failed: %s", exc,
         )
 
-    elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+    elapsed_ms = int((utc_now_naive() - started).total_seconds() * 1000)
     logger.info(
         "audit_retention_purge: action_logs=%d approvals=%d "
         "cpo_meta_cleared=%d elapsed_ms=%d",

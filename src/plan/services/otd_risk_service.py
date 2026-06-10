@@ -41,6 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.ml.registry_loader import load_active_otd_risk_predictor
 from src.ml.training_service import ensure_otd_risk_model
+from src.shared.time import local_today
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +130,7 @@ class OTDRiskService:
             return {"model_available": True, "orders": []}
 
         aggregates = await self._order_phase_aggregates()
-        today = date.today()
+        today = local_today()
 
         feature_rows: list[dict[str, Any]] = []
         for o in orders:

@@ -16,6 +16,7 @@ from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import InventoryLedgerEntry
+from src.shared.time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +114,7 @@ class InventoryLedger:
             entry = InventoryLedgerEntry(
                 tenant_id=self.tenant_id,
                 sku_id=sku_id,
-                date=datetime.utcnow(),
+                date=utc_now(),
                 qty_opening=on_hand_before,
                 qty_in=qty_in,
                 qty_out=qty_out,

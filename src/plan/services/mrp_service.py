@@ -20,6 +20,7 @@ from src.plan.engines.mrp_adapter import MRPAdapter, GrossRequirement, Inventory
 from src.plan.engines.bom_adapter import BOMAdapter
 from src.shared.kafka_client import publish_event, Topics
 from src.shared.events import MRPCalculatedEvent, PurchaseOrderCreatedEvent
+from src.shared.time import local_today
 
 logger = logging.getLogger(__name__)
 
@@ -126,8 +127,8 @@ class MRPService:
                 net_requirement=Decimal(str(suggestion.get("quantity", 0))),
                 order_quantity=Decimal(str(suggestion.get("quantity", 0))),
                 lead_time_days=int(suggestion.get("lead_time_days", 0)),
-                order_date=date.fromisoformat(suggestion["start_date"][:10]) if suggestion.get("start_date") else date.today(),
-                due_date=date.fromisoformat(suggestion["due_date"][:10]) if suggestion.get("due_date") else date.today(),
+                order_date=date.fromisoformat(suggestion["start_date"][:10]) if suggestion.get("start_date") else local_today(),
+                due_date=date.fromisoformat(suggestion["due_date"][:10]) if suggestion.get("due_date") else local_today(),
                 is_purchased=True,
             )
             self.session.add(requirement)
@@ -233,8 +234,8 @@ class MRPService:
                 order_quantity=Decimal(str(suggestion.get("quantity", 0))),
                 unit_cost=Decimal(str(suggestion.get("unit_cost", 0))),
                 total_cost=Decimal(str(suggestion.get("line_total", 0))),
-                order_date=date.fromisoformat(suggestion["start_date"][:10]) if suggestion.get("start_date") else date.today(),
-                due_date=date.fromisoformat(suggestion["due_date"][:10]) if suggestion.get("due_date") else date.today(),
+                order_date=date.fromisoformat(suggestion["start_date"][:10]) if suggestion.get("start_date") else local_today(),
+                due_date=date.fromisoformat(suggestion["due_date"][:10]) if suggestion.get("due_date") else local_today(),
                 status=POStatus.DRAFT,
                 mrp_run_id=mrp_run_id,
             )

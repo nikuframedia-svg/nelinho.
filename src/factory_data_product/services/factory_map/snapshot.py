@@ -1,6 +1,7 @@
 """Snapshot composition + in-memory cache for `FactoryMapService`.
 
 Holds:
+
 * The module-level snapshot cache (TTL keyed by tenant) — its module-level
   identity matters: tests import `_snapshot_cache` directly and rewrite
   entries to force expiry.
@@ -20,6 +21,7 @@ from uuid import UUID
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from src.shared.time import local_today
 
 from src.factory_data_product.services.factory_map.risk_flags import (
     Availability,
@@ -346,7 +348,7 @@ class SnapshotMixin:
     async def _completed_count_today(self) -> int:
         from src.plan.models.order import ProductionOrder
 
-        today = date.today()
+        today = local_today()
         stmt = select(func.count(ProductionOrder.id)).where(
             and_(
                 ProductionOrder.tenant_id == self.tenant_id,

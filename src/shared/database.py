@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from .config import settings
+from src.shared.time import utc_now_naive
 
 logger = logging.getLogger(__name__)
 
@@ -64,12 +65,12 @@ class TenantBase(Base):
         index=True,
     )
     created_at: Mapped[datetime] = mapped_column(
-        default=datetime.utcnow,
+        default=utc_now_naive,
         nullable=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utc_now_naive,
+        onupdate=utc_now_naive,
         nullable=False,
     )
 
@@ -89,12 +90,12 @@ class GlobalBase(Base):
         default=uuid4,
     )
     created_at: Mapped[datetime] = mapped_column(
-        default=datetime.utcnow,
+        default=utc_now_naive,
         nullable=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow,
+        default=utc_now_naive,
+        onupdate=utc_now_naive,
         nullable=False,
     )
 

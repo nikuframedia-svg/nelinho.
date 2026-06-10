@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from uuid import UUID
+from src.shared.time import utc_now_naive
 
 logger = logging.getLogger(__name__)
 
@@ -30,10 +31,10 @@ async def _nelo_erp_sync_job() -> None:
 
     from src.adapters.nelo.etl.sync import run_nelo_sync
 
-    started = datetime.utcnow()
+    started = utc_now_naive()
     try:
         results = await run_nelo_sync(exclude=["time_mining"])
-        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        elapsed_ms = int((utc_now_naive() - started).total_seconds() * 1000)
         failed = [r.source for r in results if r.status != "ok"]
         logger.info(
             "nelo_erp_sync mirrors=%s failed=%s elapsed_ms=%s",
@@ -96,7 +97,7 @@ async def _nelo_erp_incremental_sync_job() -> None:
         return
 
     tenant_id = UUID("00000000-0000-0000-0000-000000000001")  # dev tenant
-    started = datetime.utcnow()
+    started = utc_now_naive()
     try:
         async with get_session_context() as session:
             watermarks = await last_sync_watermarks(
@@ -105,7 +106,7 @@ async def _nelo_erp_incremental_sync_job() -> None:
         results = await run_nelo_sync(
             only=selected, tenant_id=tenant_id, since=watermarks,
         )
-        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        elapsed_ms = int((utc_now_naive() - started).total_seconds() * 1000)
         failed = [r.source for r in results if r.status != "ok"]
         logger.info(
             "nelo_erp_incremental_sync mirrors=%s watermarks=%s "
@@ -154,14 +155,14 @@ async def _nelo_erp_phase_history_incremental_job() -> None:
         return
 
     tenant_id = UUID("00000000-0000-0000-0000-000000000001")  # dev tenant
-    started = datetime.utcnow()
+    started = utc_now_naive()
     try:
         async with get_session_context() as session:
             watermarks = await last_sync_watermarks(session, tenant_id, selected)
         results = await run_nelo_sync(
             only=selected, tenant_id=tenant_id, since=watermarks,
         )
-        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        elapsed_ms = int((utc_now_naive() - started).total_seconds() * 1000)
         failed = [r.source for r in results if r.status not in ("ok", "skipped")]
         logger.info(
             "nelo_erp_phase_history_incremental mirrors=%s watermarks=%s "
@@ -193,10 +194,10 @@ async def _nelo_erp_raw_incremental_job() -> None:
 
     from scripts.q75_setup_raw_mirror import setup as raw_setup
 
-    started = datetime.utcnow()
+    started = utc_now_naive()
     try:
         results = await raw_setup(incremental=True)
-        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        elapsed_ms = int((utc_now_naive() - started).total_seconds() * 1000)
         failed = [r["table"] for r in results if r.get("status") != "ok"]
         new = sum(r.get("rows_inserted", 0) for r in results)
         logger.info(
@@ -242,10 +243,10 @@ async def _nelo_erp_raw_full_nightly_job() -> None:
         t.nelo_name for t in RAW_TABLES
         if not t.supports_incremental or t.keep_open_col
     ]
-    started = datetime.utcnow()
+    started = utc_now_naive()
     try:
         results = await raw_setup(incremental=False, only=full_only)
-        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        elapsed_ms = int((utc_now_naive() - started).total_seconds() * 1000)
         failed = [r["table"] for r in results if r.get("status") != "ok"]
         copied = sum(r.get("rows", 0) for r in results)
         logger.info(
@@ -270,10 +271,10 @@ async def _nelo_erp_comercial_job() -> None:
 
     from scripts.q102_setup_comercial_mirror import setup as comercial_setup
 
-    started = datetime.utcnow()
+    started = utc_now_naive()
     try:
         report = await comercial_setup()
-        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        elapsed_ms = int((utc_now_naive() - started).total_seconds() * 1000)
         mirror = report.get("mirror", [])
         failed = [r["table"] for r in mirror if r.get("status") != "ok"]
         logger.info(
@@ -297,10 +298,10 @@ async def _nelo_erp_logistica_job() -> None:
 
     from scripts.q104_setup_logistica_mirror import setup as logistica_setup
 
-    started = datetime.utcnow()
+    started = utc_now_naive()
     try:
         report = await logistica_setup()
-        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        elapsed_ms = int((utc_now_naive() - started).total_seconds() * 1000)
         mirror = report.get("mirror", report) if isinstance(report, dict) else report
         failed = [r["table"] for r in mirror if r.get("status") != "ok"]
         logger.info(
@@ -325,10 +326,10 @@ async def _nelo_erp_customers_job() -> None:
 
     from scripts.setup_customers_from_entidade import setup as customers_setup
 
-    started = datetime.utcnow()
+    started = utc_now_naive()
     try:
         report = await customers_setup()
-        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        elapsed_ms = int((utc_now_naive() - started).total_seconds() * 1000)
         logger.info(
             "nelo_erp_customers total=%s new=%s elapsed_ms=%s",
             report.get("customers_after"), report.get("customers_new"), elapsed_ms,
@@ -346,10 +347,10 @@ async def _nelo_erp_production_orders_job() -> None:
     """
     from scripts.q131_setup_production_orders_mirror import setup as po_setup
 
-    started = datetime.utcnow()
+    started = utc_now_naive()
     try:
         report = await po_setup()
-        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        elapsed_ms = int((utc_now_naive() - started).total_seconds() * 1000)
         logger.info(
             "nelo_erp_production_orders wip=%s orders=%s->%s pruned=%s elapsed_ms=%s",
             report.get("wip_real"), report.get("orders_before"),
@@ -365,13 +366,13 @@ async def _nelo_erp_production_orders_job() -> None:
     from src.plan.services.transport_batch_service import TransportBatchService
 
     tenant_id = UUID("00000000-0000-0000-0000-000000000001")  # dev tenant
-    tb_started = datetime.utcnow()
+    tb_started = utc_now_naive()
     try:
         async with get_session_context() as session:
             svc = TransportBatchService(session, tenant_id)
             summary = await svc.refresh_from_orders()
             await session.commit()
-        tb_elapsed_ms = int((datetime.utcnow() - tb_started).total_seconds() * 1000)
+        tb_elapsed_ms = int((utc_now_naive() - tb_started).total_seconds() * 1000)
         logger.info(
             "transport_batch_refresh created=%s touched=%s assigned=%s "
             "overflow=%s elapsed_ms=%s",
@@ -397,10 +398,10 @@ async def _nelo_erp_time_mining_job() -> None:
 
     from src.adapters.nelo.etl.sync import run_nelo_sync
 
-    started = datetime.utcnow()
+    started = utc_now_naive()
     try:
         results = await run_nelo_sync(only=["time_mining"])
-        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        elapsed_ms = int((utc_now_naive() - started).total_seconds() * 1000)
         for r in results:
             logger.info(
                 "nelo_erp_time_mining status=%s read=%s upd=%s skip=%s elapsed_ms=%s",

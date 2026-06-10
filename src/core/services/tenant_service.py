@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.models.tenant import Tenant, TenantStatus, SubscriptionLevel
 from src.shared.kafka_client import publish_event, Topics
 from src.shared.events import TenantConfiguredEvent
+from src.shared.time import utc_now_naive
 
 
 class TenantService:
@@ -103,7 +104,7 @@ class TenantService:
             return None
         
         tenant.status = TenantStatus.ACTIVE
-        tenant.activated_at = datetime.utcnow()
+        tenant.activated_at = utc_now_naive()
         
         await self.session.flush()
         return tenant
@@ -115,7 +116,7 @@ class TenantService:
             return None
         
         tenant.status = TenantStatus.SUSPENDED
-        tenant.suspended_at = datetime.utcnow()
+        tenant.suspended_at = utc_now_naive()
         if reason:
             tenant.notes = f"Suspended: {reason}"
         

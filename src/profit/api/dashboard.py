@@ -37,6 +37,7 @@ from src.profit.services.order_cost_service import OrderCostService
 from src.profit.services.throughput_service import ThroughputService
 from src.shared.auth.headers import require_tenant_header
 from src.shared.database import get_session
+from src.shared.time import local_today
 
 router = APIRouter(tags=["Profit"])
 
@@ -119,7 +120,7 @@ async def get_oee(
     the adapter reads the single MAR-KAYAKS DB. The header presence is
     enforced for consistency with the rest of the API.
     """
-    today = date.today()
+    today = local_today()
     df = date_from or (today - timedelta(days=30))
     dt = date_to or today
     gb = (group_by or "none").lower()
@@ -329,7 +330,7 @@ async def sku_profitability(
     session: AsyncSession = Depends(get_session),
 ):
     svc = ThroughputService(session, tenant_id)
-    date_to = date_to or date.today()
+    date_to = date_to or local_today()
     date_from = date_from or date_to.replace(day=1)
     items = await svc.top_skus(date_from=date_from, date_to=date_to, top_n=top_n)
     return {
@@ -462,7 +463,7 @@ async def order_margin_summary(
     Só conta ordens com margem calculável (têm `CostCalculation` e
     receita). `order_count` é esse universo, não o total de ordens.
     """
-    date_from = date.today() - timedelta(days=days)
+    date_from = local_today() - timedelta(days=days)
     rows = await _collect_margin_rows(session, tenant_id, date_from, None, 2000)
     margins = [
         r["margin_eur"] for r in rows
@@ -545,7 +546,7 @@ async def set_product_pricing(
         product_id=product_id,
         sale_value_default_eur=Decimal(str(req.sale_value_default_eur)),
         currency_code=req.currency_code,
-        valid_from=req.valid_from or date.today(),
+        valid_from=req.valid_from or local_today(),
         active=True,
         notes=req.notes,
     )

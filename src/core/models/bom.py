@@ -15,6 +15,7 @@ from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.shared.database import TenantBase
+from src.shared.time import local_today
 
 
 class BOMItem(TenantBase):
@@ -97,7 +98,7 @@ class BOMItem(TenantBase):
     
     def is_effective(self, as_of_date: date = None) -> bool:
         """Check if BOM item is effective on given date."""
-        as_of_date = as_of_date or date.today()
+        as_of_date = as_of_date or local_today()
         
         if self.effective_from and as_of_date < self.effective_from:
             return False

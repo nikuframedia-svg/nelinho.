@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from uuid import UUID
+from src.shared.time import utc_now_naive
 
 logger = logging.getLogger(__name__)
 
@@ -17,13 +18,13 @@ async def _shortage_scan_job(tenant_id: UUID) -> None:
     from src.shared.database import get_session_context
     from src.supply.shortage_detector import ShortageDetector
 
-    started = datetime.utcnow()
+    started = utc_now_naive()
     try:
         async with get_session_context() as session:
             detector = ShortageDetector(session=session, tenant_id=tenant_id)
             summary = await detector.scan()
             await session.commit()
-        elapsed_ms = int((datetime.utcnow() - started).total_seconds() * 1000)
+        elapsed_ms = int((utc_now_naive() - started).total_seconds() * 1000)
         logger.info(
             "shortage_scan tenant=%s warn=%s critical=%s skipped=%s elapsed_ms=%s",
             tenant_id, summary.get("warn_created"),

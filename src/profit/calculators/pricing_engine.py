@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_HALF_UP
 from enum import Enum
 from typing import Any, Dict, List, Optional
+from src.shared.time import utc_now
 
 
 class PricingStrategy(str, Enum):
@@ -185,7 +186,7 @@ class PricingEngine:
         # Find recommended option
         recommended = next((o for o in options if o.is_recommended), options[0])
         
-        valid_until = (datetime.utcnow() + timedelta(days=validity_days)).isoformat()
+        valid_until = (utc_now() + timedelta(days=validity_days)).isoformat()
         
         return PricingResult(
             order_id=order_id,

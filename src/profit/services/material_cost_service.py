@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.models.bom import BOMItem
 from src.core.models.erp_variable import ErpVariable
 from src.core.models.product import Product
+from src.shared.time import local_today
 
 _ZERO = Decimal("0")
 _ONE = Decimal("1")
@@ -121,7 +122,7 @@ class MaterialCostService:
         omissao). Componentes sem `standard_cost` entram com custo 0 e sao
         contados em `missing_cost_count` — o custo nunca e inventado.
         """
-        as_of = as_of or date.today()
+        as_of = as_of or local_today()
         stmt = (
             select(
                 BOMItem.quantity_per,

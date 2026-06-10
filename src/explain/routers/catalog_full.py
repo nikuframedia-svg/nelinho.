@@ -23,6 +23,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
+from src.shared.time import utc_now
 from src.explain.catalog import (
     METRIC_CATALOG as FULL_CATALOG,
     MetricDomain,
@@ -199,5 +200,5 @@ async def get_catalog_as_markdown():
     return {
         "format": "markdown",
         "content": markdown,
-        "generated_at": datetime.utcnow().isoformat(),
+        "generated_at": utc_now().isoformat(),
     }

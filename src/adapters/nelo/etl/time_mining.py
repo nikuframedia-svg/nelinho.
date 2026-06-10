@@ -41,6 +41,7 @@ from src.plan.models.routing_template import ModelRoutingAssignment, RoutingTemp
 
 from .runner import EtlRunner, EtlRunResult
 from .sync import register_mirror
+from src.shared.time import local_today
 
 logger = logging.getLogger(__name__)
 
@@ -146,8 +147,8 @@ async def mirror_time_mining(
             )
             return run.result
 
-        date_from = since or (date.today() - timedelta(days=_DEFAULT_LOOKBACK_DAYS))
-        date_to = date.today()
+        date_from = since or (local_today() - timedelta(days=_DEFAULT_LOOKBACK_DAYS))
+        date_to = local_today()
 
         samples: Dict[Tuple[UUID, str], List[float]] = defaultdict(list)
         skipped = 0

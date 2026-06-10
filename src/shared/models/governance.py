@@ -15,6 +15,7 @@ from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.shared.database import TenantBase, Base
+from src.shared.time import utc_now
 
 
 class DecisionStatus(str, Enum):
@@ -68,7 +69,7 @@ class SharedDecisionRun(TenantBase):
     
     # Workflow tracking
     proposed_by: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
-    proposed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    proposed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
     
     executed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     rolled_back_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.shared.database import TenantBase
+from src.shared.time import utc_now_naive
 
 logger = logging.getLogger(__name__)
 
@@ -494,7 +495,7 @@ class CommitsService:
                 f"chosen_alt_idx={chosen_alt_idx} cannot appear in rejected_alt_idxs",
             )
 
-        decided_at = decided_at or datetime.utcnow()
+        decided_at = decided_at or utc_now_naive()
         chosen = alternatives[chosen_alt_idx] if chosen_alt_idx is not None else None
 
         rejected_records = [

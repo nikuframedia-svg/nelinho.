@@ -52,6 +52,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict
+from src.shared.time import local_today
 
 if TYPE_CHECKING:
     from .query import CubeQuery
@@ -2662,7 +2663,7 @@ def resolve_question_period(
     aplicadas em `is_period_mismatch`.
     """
     if today is None:
-        today = _dt.date.today()
+        today = local_today()
 
     # 1. Intervalo aberto → LLM decide.
     if _OPEN_INTERVAL_PATTERNS.search(question):
@@ -2726,7 +2727,7 @@ def is_period_mismatch(
         return None  # graceful degrade se rotearmos para outros usos
 
     if today is None:
-        today = _dt.date.today()
+        today = local_today()
     now_dt = _dt.datetime(today.year, today.month, today.day)
 
     resolved = resolve_periodo(question, now=now_dt)

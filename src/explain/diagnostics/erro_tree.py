@@ -54,6 +54,7 @@ from src.explain.diagnostics.types import (
     TriggerType,
 )
 from src.shared.decorators import record_rule_firing
+from src.shared.time import local_today
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +115,7 @@ class MoldDetector:
     async def check(
         self, *, trigger, period_days, phase_id,
     ) -> Optional[Hypothesis]:
-        end = date.today()
+        end = local_today()
         start_recent = end - timedelta(days=period_days)
         # Historical baseline: 6× the recent window (180d default), so
         # a real shift stands out from noise.
@@ -207,7 +208,7 @@ class WorkerDetector:
     async def check(
         self, *, trigger, period_days, phase_id,
     ) -> Optional[Hypothesis]:
-        end = date.today()
+        end = local_today()
         start = end - timedelta(days=period_days)
 
         # Without phase_id we'd have to scan every phase. To keep this
@@ -279,7 +280,7 @@ class OverloadDetector:
     ) -> Optional[Hypothesis]:
         # phase_id is irrelevant for overload — it's a global signal.
         # We compare current WIP vs the 90-day rolling average.
-        end = date.today()
+        end = local_today()
         start = end - timedelta(days=period_days)
         start_baseline = end - timedelta(days=90)
 

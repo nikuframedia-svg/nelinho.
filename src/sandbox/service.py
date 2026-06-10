@@ -21,6 +21,7 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.sandbox.models import SandboxScenario, SandboxScenarioStatus
+from src.shared.time import utc_now, utc_now_naive
 
 logger = logging.getLogger(__name__)
 
@@ -116,9 +117,9 @@ class SandboxService:
         scenario.suggestion_id = suggestion.get("id")
         scenario.after_state = {
             "estimated_impact": suggestion.get("estimated_impact", {}),
-            "applied_at": datetime.utcnow().isoformat(),
+            "applied_at": utc_now().isoformat(),
         }
-        scenario.updated_at = datetime.utcnow()
+        scenario.updated_at = utc_now_naive()
         await self.session.commit()
         await self.session.refresh(scenario)
         return scenario
@@ -172,7 +173,7 @@ class SandboxService:
             .values(
                 status=SandboxScenarioStatus.SIMULATING.value,
                 version=expected_version + 1,
-                updated_at=datetime.utcnow(),
+                updated_at=utc_now_naive(),
             )
         )
         result = await self.session.execute(cas_stmt)
@@ -221,7 +222,7 @@ class SandboxService:
                 impact=summary,
                 status=SandboxScenarioStatus.SIMULATED.value,
                 version=expected_version + 2,
-                updated_at=datetime.utcnow(),
+                updated_at=utc_now_naive(),
             )
         )
         result = await self.session.execute(finalize_stmt)
@@ -235,7 +236,7 @@ class SandboxService:
         scenario.impact = summary
         scenario.status = SandboxScenarioStatus.SIMULATED.value
         scenario.version = expected_version + 2
-        scenario.updated_at = datetime.utcnow()
+        scenario.updated_at = utc_now_naive()
         await self.session.refresh(scenario)
         return scenario
 
@@ -292,9 +293,9 @@ class SandboxService:
         )
 
         scenario.status = SandboxScenarioStatus.PUBLISHED.value
-        scenario.published_at = datetime.utcnow()
+        scenario.published_at = utc_now()
         scenario.decision_id = UUID(decision["id"]) if isinstance(decision.get("id"), str) else decision.get("id")
-        scenario.updated_at = datetime.utcnow()
+        scenario.updated_at = utc_now_naive()
         await self.session.commit()
         await self.session.refresh(scenario)
 

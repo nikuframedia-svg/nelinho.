@@ -23,6 +23,7 @@ from src.plan.cpo.commits import CommitsService
 from src.shared.auth.headers import get_current_user_or_dev_header
 from src.shared.auth.jwt_handler import UserContext
 from src.shared.database import get_session
+from src.shared.time import utc_now
 
 router = APIRouter()
 
@@ -226,7 +227,7 @@ async def schedule_cpo_async(
     return CPOScheduleEnqueueResponse(
         job_id=job.job_id,
         status_url=f"/v1/plan/cpo/schedule/job/{job.job_id}",
-        enqueued_at=datetime.utcnow().isoformat() + "Z",
+        enqueued_at=utc_now().isoformat(),
     )
 
 
@@ -394,5 +395,5 @@ async def approve_schedule_job(
         commit_sha256=commit_sha,
         previous_status=prev_status,
         new_status="LIVE",
-        approved_at=datetime.utcnow().isoformat() + "Z",
+        approved_at=utc_now().isoformat(),
     )

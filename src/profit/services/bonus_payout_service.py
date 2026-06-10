@@ -27,6 +27,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.profit.models.phase_bonus import PhaseBonusPayout
+from src.shared.time import local_today, utc_now_naive
 
 
 class BonusPayoutService:
@@ -48,7 +49,7 @@ class BonusPayoutService:
         whether to treat that as "no bonus configured yet" or as an
         error.
         """
-        ref = on_date or date.today()
+        ref = on_date or local_today()
         stmt = (
             select(PhaseBonusPayout)
             .where(PhaseBonusPayout.tenant_id == self.tenant_id)
@@ -83,7 +84,7 @@ class BonusPayoutService:
             phid = op["phase_id"]
             ts = op.get("completed_at")
             on_date = (
-                ts.date() if isinstance(ts, datetime) else (ts or date.today())
+                ts.date() if isinstance(ts, datetime) else (ts or local_today())
             )
             total += await self.get_bonus(pid, phid, on_date)
         return total
@@ -122,7 +123,7 @@ class BonusPayoutService:
         Returns number of rows processed.
         """
         payload = []
-        now = datetime.utcnow()
+        now = utc_now_naive()
         for r in rows:
             payload.append({
                 "id": uuid4(),
@@ -131,7 +132,7 @@ class BonusPayoutService:
                 "phase_id": r["phase_id"],
                 "bonus_eur": Decimal(str(r["bonus_eur"])),
                 "currency_code": r.get("currency_code", "EUR"),
-                "valid_from": r.get("valid_from") or date.today(),
+                "valid_from": r.get("valid_from") or local_today(),
                 "valid_to": r.get("valid_to"),
                 "source": r.get("source", "ERP_STANDARD"),
                 "created_at": now,

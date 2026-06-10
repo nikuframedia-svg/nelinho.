@@ -35,6 +35,7 @@ from src.factory_data_product.config import (
 )
 from src.shared.auth.headers import require_tenant_header
 from src.shared.database import get_session
+from src.shared.time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -422,7 +423,7 @@ async def get_metric_explanation(
             factors=[],
             suggestions=[],
             citations=[],
-            computed_at=datetime.utcnow().isoformat(),
+            computed_at=utc_now().isoformat(),
             trust_index=0.0,
         )
 
@@ -449,7 +450,7 @@ async def get_metric_explanation(
             factors=[],  # No factors for BLOCKED metrics
             suggestions=[ImprovementSuggestion(**s) for s in metric_def.get("suggestions", [])],
             citations=[],  # No citations for BLOCKED metrics
-            computed_at=datetime.utcnow().isoformat(),
+            computed_at=utc_now().isoformat(),
             trust_index=0.0,
         )
 
@@ -484,7 +485,7 @@ async def get_metric_explanation(
         factors=[Factor(**f) for f in metric_def.get("factors", [])],
         suggestions=[ImprovementSuggestion(**s) for s in metric_def.get("suggestions", [])],
         citations=[Citation(**c) for c in metric_def.get("citations", [])],
-        computed_at=datetime.utcnow().isoformat(),
+        computed_at=utc_now().isoformat(),
         trust_index=trust_index,
     )
 
@@ -589,7 +590,7 @@ async def compute_metric_value(
         "value": metric_value,
         "source": source,
         "unit": metric_def.get("unit", "%"),
-        "computed_at": datetime.utcnow().isoformat(),
+        "computed_at": utc_now().isoformat(),
         "scope": scope,
         "period": {
             "start": period_start,

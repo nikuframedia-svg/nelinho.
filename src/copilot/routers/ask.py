@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
@@ -30,6 +30,7 @@ from src.copilot.schemas import (
 )
 from src.shared.auth.jwt_handler import UserContext, get_current_user
 from src.shared.database import get_session
+from src.shared.time import local_today
 
 logger = logging.getLogger(__name__)
 
@@ -200,7 +201,7 @@ async def get_daily_feedback(
 
     Se não existir ou expirado, gera novo.
     """
-    target_date = date_param or date.today().isoformat()
+    target_date = date_param or local_today().isoformat()
 
     # Gerar feedback (com cache interno)
     feedback = await _api.generate_daily_feedback(session, tenant_id, target_date)
@@ -224,7 +225,7 @@ async def get_daily_feedback_dev(
     Sprint Q.12 Onda 0.5: gated to non-production via ``dev_only``.
     """
     dev_tenant_id = UUID("00000000-0000-0000-0000-000000000001")
-    target_date = date_param or date.today().isoformat()
+    target_date = date_param or local_today().isoformat()
 
     feedback = await _api.generate_daily_feedback(session, dev_tenant_id, target_date)
 

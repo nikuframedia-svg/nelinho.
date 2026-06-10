@@ -31,6 +31,7 @@ from src.plan.services.ctp_service import CapableToPromiseService
 from src.plan.services.plan_adherence_service import PlanAdherenceService
 from src.shared.auth.headers import require_tenant_header
 from src.shared.database import get_session
+from src.shared.time import local_today
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["PLAN.Dates"])
@@ -65,7 +66,7 @@ async def get_calendar(
     ``calendar`` ETL mirror. No silent fallback: the UI shows an explicit
     empty state.
     """
-    start = from_date or date.today()
+    start = from_date or local_today()
     end = to_date or (start + timedelta(days=90))
     if end < start:
         raise HTTPException(

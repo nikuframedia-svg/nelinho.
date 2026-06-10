@@ -53,6 +53,7 @@ from src.copilot.llm.structured import (
     structured_call,
 )
 from src.copilot.cube.periods import resolve_periodo
+from src.shared.time import local_today
 
 
 PROMPT_PATH = (
@@ -467,7 +468,7 @@ async def interpret(
     casos de desalinhamento semântico (e.g. somar unidades).
     """
     if today is None:
-        today = _dt.date.today()
+        today = local_today()
 
     # Q.95.2 — rede pós-pergunta contra medida derivada inexistente (delega
     # ao `measure_contract`). Defesa primária está no prompt regra 6.

@@ -29,6 +29,7 @@ from uuid import UUID
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from src.shared.time import local_today
 
 from .models import (
     PO_STATUS_CANCELLED,
@@ -117,7 +118,7 @@ class PurchaseOrderService:
 
         rows = list((await self.session.execute(stmt)).scalars().all())
 
-        today = date.today()
+        today = local_today()
         items = [_po_to_dict(r, today) for r in rows]
 
         last_synced_at = max(

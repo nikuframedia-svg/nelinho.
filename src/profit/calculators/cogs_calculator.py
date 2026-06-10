@@ -16,6 +16,7 @@ from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Dict, List, Optional
 from uuid import UUID
+from src.shared.time import utc_now
 
 
 @dataclass
@@ -271,7 +272,7 @@ class COGSCalculator:
             cogs_per_unit=cogs_per_unit,
             breakdown=breakdown,
             currency=self.currency,
-            calculated_at=datetime.utcnow().isoformat(),
+            calculated_at=utc_now().isoformat(),
             assumptions={
                 "scrap_rate": float(scrap_rate),
                 "overhead_rate": float(overhead_rate),

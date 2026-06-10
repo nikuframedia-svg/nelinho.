@@ -44,6 +44,7 @@ from src.core.models.audit import AuditLog
 from src.reports.models import ReportRun, ReportSchedule
 from src.shared.auth.headers import require_tenant_header
 from src.shared.database import get_session
+from src.shared.time import local_today, utc_now, utc_now_naive
 
 router = APIRouter(prefix="/v1/reports", tags=["Reports"])
 
@@ -210,8 +211,8 @@ async def generate_report(
     session: AsyncSession = Depends(get_session),
 ) -> ReportResponse:
     """Dispatcher central. Delega ao service apropriado conforme ``template_id``."""
-    now = datetime.utcnow().isoformat()
-    today = date.today().isoformat()
+    now = utc_now().isoformat()
+    today = local_today().isoformat()
     filename_ext = "csv" if req.format == "csv" else "json"
     filename = f"{req.template_id}_{today}.{filename_ext}"
 
@@ -378,7 +379,7 @@ async def email_report(
     """
     from src.reports.email import EmailDeliveryError, send_report_email
 
-    now = datetime.utcnow()
+    now = utc_now_naive()
     rows = await _collect_rows(
         req.template_id, session, tenant_id, req.since, req.until
     )

@@ -39,6 +39,7 @@ from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.explain.diagnostics.types import MoldUsage, WorkerStats
+from src.shared.time import local_today
 
 logger = logging.getLogger(__name__)
 
@@ -548,7 +549,7 @@ class DiagnosticsRepository:
         """
         try:
             from src.plan.models.transport import TransportBatch
-            today = date.today()
+            today = local_today()
             window_end = today + timedelta(days=days_ahead)
             stmt = (
                 select(func.coalesce(func.sum(TransportBatch.truck_capacity_units), 0))

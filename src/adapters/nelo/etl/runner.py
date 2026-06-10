@@ -32,6 +32,7 @@ from sqlalchemy import select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.models.etl_run import EtlRun
+from src.shared.time import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +86,7 @@ class EtlRunner:
             tenant_id=self.tenant_id,
             source=self.result.source,
             status="running",
-            started_at=datetime.utcnow(),
+            started_at=utc_now(),
         )
         self.session.add(self._run)
         await self.session.flush()
@@ -102,7 +103,7 @@ class EtlRunner:
             self.result.status = "ok"
         if self._run is not None:
             self._run.status = self.result.status
-            self._run.finished_at = datetime.utcnow()
+            self._run.finished_at = utc_now()
             self._run.rows_read = self.result.rows_read
             self._run.rows_inserted = self.result.rows_inserted
             self._run.rows_updated = self.result.rows_updated

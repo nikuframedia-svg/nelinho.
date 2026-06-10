@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import logging
 import statistics
+from src.shared.time import local_today
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Optional
@@ -122,7 +123,7 @@ class StockoutPredictor:
 
         Returns a document — see module docstring for the honesty rules.
         """
-        today = as_of or date.today()
+        today = as_of or local_today()
         since = datetime.now(timezone.utc) - timedelta(days=self.window_days)
 
         stmt = (

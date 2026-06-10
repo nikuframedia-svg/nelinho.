@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional
 from src.plan.cpo.state import NON_PRODUCTION_PHASE_IDS, FactoryState
 from src.plan.engines.scheduling_adapter import SchedulingOperation
 from src.plan.services.phase_workcenters import station_ids_for
+from src.shared.time import utc_now_naive
 
 logger = logging.getLogger(__name__)
 
@@ -158,7 +159,7 @@ class RoutingResolver:
            `modelo_id` (template-of-templates).
         3. If none: use `FasesStandardModelos` template with 2x buffer.
         """
-        horizon_start = horizon_start or datetime.utcnow()
+        horizon_start = horizon_start or utc_now_naive()
         order_id = str(order.get("of_id") or order.get("order_id") or "")
         modelo_id = str(order.get("modelo_id") or "")
         product_id = str(order.get("produto_id") or modelo_id)

@@ -26,6 +26,7 @@ import logging
 
 from src.shared.kafka_client import EventBase, publish_event, Topics
 from src.shared.events import ScheduleCreatedEvent
+from src.shared.time import utc_now_naive
 
 logger = logging.getLogger(__name__)
 
@@ -197,7 +198,7 @@ class SchedulingService:
                 ),
                 quality_risk_score=quality_risk_score,
                 quality_risk_scored_at=(
-                    datetime.utcnow() if quality_risk_score is not None else None
+                    utc_now_naive() if quality_risk_score is not None else None
                 ),
             )
             self.session.add(schedule)
