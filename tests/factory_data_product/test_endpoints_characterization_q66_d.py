@@ -172,6 +172,13 @@ def client(
     app.dependency_overrides[get_engine] = lambda: stub_engine
     app.dependency_overrides[get_semantic] = lambda: stub_semantic
     app.dependency_overrides[require_tenant_header] = lambda: TEST_TENANT_ID
+    # Q.171.C — gates RBAC nomeados da quarentena (PII): override no harness.
+    from src.factory_data_product.api.routers.quality import (
+        _require_quarantine_read,
+        _require_quarantine_write,
+    )
+    app.dependency_overrides[_require_quarantine_read] = lambda: None
+    app.dependency_overrides[_require_quarantine_write] = lambda: None
 
     async def _db():
         yield fake_db

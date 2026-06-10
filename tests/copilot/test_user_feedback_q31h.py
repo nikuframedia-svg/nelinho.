@@ -19,6 +19,7 @@ import pytest
 from fastapi import HTTPException
 
 from src.copilot.api import submit_user_feedback
+from src.copilot.routers.suggestions import UserFeedbackRequest
 from src.copilot.models import CopilotUserFeedback
 
 _TENANT = UUID("11111111-1111-1111-1111-111111111111")
@@ -42,7 +43,7 @@ class _FakeSession:
 async def test_feedback_up_is_persisted():
     session = _FakeSession()
     result = await submit_user_feedback(
-        payload={"thumb": "up", "text": "Resposta clara", "context": {"source": "x"}},
+        payload=UserFeedbackRequest(thumb="up", text="Resposta clara", context={"source": "x"}),
         tenant_id=_TENANT,
         session=session,  # type: ignore[arg-type]
     )
@@ -61,7 +62,7 @@ async def test_feedback_up_is_persisted():
 async def test_feedback_down_with_empty_text_stores_none():
     session = _FakeSession()
     await submit_user_feedback(
-        payload={"thumb": "down", "text": "   "},
+        payload=UserFeedbackRequest(thumb="down", text="   "),
         tenant_id=_TENANT,
         session=session,  # type: ignore[arg-type]
     )
@@ -73,24 +74,18 @@ async def test_feedback_down_with_empty_text_stores_none():
 
 @pytest.mark.asyncio
 async def test_feedback_invalid_thumb_is_400_and_nothing_staged():
-    session = _FakeSession()
-    with pytest.raises(HTTPException) as exc:
-        await submit_user_feedback(
-            payload={"thumb": "maybe"},
-            tenant_id=_TENANT,
-            session=session,  # type: ignore[arg-type]
-        )
-    assert exc.value.status_code == 400
-    assert session.staged == []
-    assert session.committed is False
+    """Q.171.C — o contrato passou a Pydantic: thumb inválido é rejeitado
+    na FRONTEIRA (422 na API) antes de chegar à função."""
+    import pydantic
+
+    with pytest.raises(pydantic.ValidationError):
+        UserFeedbackRequest(thumb="maybe")
 
 
 @pytest.mark.asyncio
 async def test_feedback_non_dict_context_is_ignored():
-    session = _FakeSession()
-    await submit_user_feedback(
-        payload={"thumb": "up", "context": "not-a-dict"},
-        tenant_id=_TENANT,
-        session=session,  # type: ignore[arg-type]
-    )
-    assert session.staged[0].context is None
+    """Q.171.C — context não-dict é rejeitado pelo Pydantic na fronteira."""
+    import pydantic
+
+    with pytest.raises(pydantic.ValidationError):
+        UserFeedbackRequest(thumb="up", context="not-a-dict")

@@ -54,6 +54,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/quality", tags=["Quality"])
 
+# Q.171.C — escrita de qualidade exige papel com QUALITY_WRITE (operador/
+# gestor/admin); viewer fica de fora. Nomeada p/ override em testes.
+from src.shared.auth.rbac import Permission, PermissionDependency
+
+_require_quality_write = PermissionDependency([Permission.QUALITY_WRITE])
+
 
 get_tenant_id = require_tenant_header
 
@@ -136,7 +142,11 @@ def _rework_to_dict(row, phase_names: dict[str, str] | None = None) -> dict[str,
 
 # ─── R.1 — Rework CRUD ────────────────────────────────────────────────────
 
-@router.post("/rework", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/rework",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(_require_quality_write)],
+)
 async def create_rework(
     req: ReworkCreateRequest,
     tenant_id: UUID = Depends(get_tenant_id),
@@ -178,7 +188,10 @@ async def list_rework(
     return [_rework_to_dict(r, names) for r in rows]
 
 
-@router.patch("/rework/{rework_id}/resolve")
+@router.patch(
+    "/rework/{rework_id}/resolve",
+    dependencies=[Depends(_require_quality_write)],
+)
 async def resolve_rework(
     rework_id: UUID,
     resolved_by: Optional[str] = None,

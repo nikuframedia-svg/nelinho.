@@ -32,11 +32,18 @@ from src.shared.auth.headers import (
     require_tenant_header,
 )
 from src.shared.auth.jwt_handler import UserContext
+from src.shared.auth.rbac import Permission, PermissionDependency
 from src.shared.database import get_session
 from src.shared.time import utc_now
 
 
 router = APIRouter(tags=["factory"])
+
+# Q.171.C — a quarentena expõe colunas SENSITIVE/PII das tabelas curadas
+# (valor_hora_eur, funcionario_*): leitura exige MASTER_DATA_READ e a
+# resolução CONFIG_WRITE (viewer fica fora). Ressalva do reviewer Q.168.D.
+_require_quarantine_read = PermissionDependency([Permission.MASTER_DATA_READ])
+_require_quarantine_write = PermissionDependency([Permission.CONFIG_WRITE])
 
 # Tabelas curadas com QuarantineMixin — a fonte REAL da quarentena.
 # (nome público da API → modelo ORM; o nome segue o __tablename__)
@@ -216,6 +223,7 @@ def _row_response(table_name: str, model: Any, row: Any) -> QuarantineRowRespons
 @router.get(
     "/quarantine",
     response_model=QuarantineListResponse,
+    dependencies=[Depends(_require_quarantine_read)],
     summary="List Quarantined Rows",
     description="Get rows that have been quarantined due to data quality issues.",
     tags=["factory", "data-quality"],
@@ -282,6 +290,7 @@ async def list_quarantined_rows(
 @router.post(
     "/quarantine/{row_id}/resolve",
     summary="Resolve Quarantine",
+    dependencies=[Depends(_require_quarantine_write)],
     description="Mark a quarantined row as resolved (repaired or accepted).",
     tags=["factory", "data-quality"],
 )

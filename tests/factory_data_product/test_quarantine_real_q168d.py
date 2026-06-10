@@ -53,6 +53,13 @@ def client(fake_db: FakeSession) -> TestClient:
     app.dependency_overrides[get_engine] = lambda: object()
     app.dependency_overrides[get_semantic] = lambda: None
     app.dependency_overrides[require_tenant_header] = lambda: TEST_TENANT_ID
+    # Q.171.C — gates RBAC nomeados da quarentena (PII): override no harness.
+    from src.factory_data_product.api.routers.quality import (
+        _require_quarantine_read,
+        _require_quarantine_write,
+    )
+    app.dependency_overrides[_require_quarantine_read] = lambda: None
+    app.dependency_overrides[_require_quarantine_write] = lambda: None
     app.dependency_overrides[get_current_user_or_dev_header] = lambda: UserContext(
         user_id=_USER_ID, tenant_id=TEST_TENANT_ID, role="ADMIN",
     )

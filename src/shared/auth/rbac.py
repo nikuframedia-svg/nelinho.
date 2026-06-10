@@ -55,6 +55,11 @@ class Permission(str, Enum):
     # Concedida a todos os roles (decisão do owner: "qualquer user pode editar").
     ROUTING_EDIT = "routing:edit"
 
+    # QUALITY — Q.171.C: registo/resolução de retrabalho era escrita SEM
+    # gate de papel (qualquer viewer escrevia). Operador PODE registar
+    # (é quem aponta o defeito no terreno); viewer/CEO não.
+    QUALITY_WRITE = "quality:write"
+
     # PROFIT
     COGS_READ = "cogs:read"
     COGS_WRITE = "cogs:write"
@@ -77,6 +82,7 @@ ROLE_PERMISSIONS: dict[Role, Set[Permission]] = {
     Role.ADMIN_PLATFORM: set(Permission),  # All permissions
     
     Role.MANAGER_OPERATIONS: {
+        Permission.QUALITY_WRITE,  # Q.171.C
         Permission.ROUTING_EDIT,  # Q.133.B.1
         Permission.MASTER_DATA_READ,
         Permission.MASTER_DATA_WRITE,
@@ -140,6 +146,7 @@ ROLE_PERMISSIONS: dict[Role, Set[Permission]] = {
         Permission.SCHEDULE_READ,
         Permission.ALLOCATION_READ,
         Permission.PRODUCTIVITY_READ,
+        Permission.QUALITY_WRITE,  # Q.171.C — regista retrabalho no terreno
     },
 
     Role.CEO: {

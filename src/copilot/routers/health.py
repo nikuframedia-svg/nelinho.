@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from uuid import UUID, uuid4
 
+from pydantic import BaseModel, Field
 from fastapi import APIRouter, Body, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,12 +34,20 @@ router = APIRouter()
 # ──────────────────────────────────────────────────────────────────────────
 
 
+class RagIngestRequest(BaseModel):
+    """Q.171.C — contrato do ingest RAG com bounds."""
+
+    source_type: str = Field(..., min_length=1, max_length=64)
+    source_id: str = Field(..., min_length=1, max_length=256)
+    text: str = Field(..., min_length=1, max_length=100_000)
+    metadata: Optional[dict] = None
+
+
 @router.post("/rag/ingest", status_code=status.HTTP_201_CREATED)
 async def ingest_rag_document(
-    source_type: str,
-    source_id: str,
-    text: str,
-    metadata: Optional[dict] = None,
+    # Q.171.C — eram 3 query-strings SEM bounds (DoS por texto gigante no
+    # pipeline de embeddings). Body tipado com limites honestos.
+    body: "RagIngestRequest",
     user: UserContext = Depends(
         PermissionDependency([Permission.CONFIG_WRITE])
     ),
@@ -53,17 +62,17 @@ async def ingest_rag_document(
     chunks_created = await _api.ingest_document(
         session,
         tenant_id,
-        source_type,
-        source_id,
-        text,
-        metadata,
+        body.source_type,
+        body.source_id,
+        body.text,
+        body.metadata,
     )
 
     return {
         "status": "success",
         "chunks_created": chunks_created,
-        "source_type": source_type,
-        "source_id": source_id,
+        "source_type": body.source_type,
+        "source_id": body.source_id,
     }
 
 

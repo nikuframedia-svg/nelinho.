@@ -527,11 +527,13 @@ async def test_rag_ingest_returns_chunks_created_shape():
     """POST /rag/ingest → {status, chunks_created, source_type, source_id}."""
     session = _FakeSession()
     with patch.object(copilot_api, "ingest_document", new=AsyncMock(return_value=7)):
+        from src.copilot.routers.health import RagIngestRequest
+
         result = await ingest_rag_document(
-            source_type="doc",
-            source_id="abc-123",
-            text="conteudo",
-            metadata={"k": "v"},
+            body=RagIngestRequest(
+                source_type="doc", source_id="abc-123",
+                text="conteudo", metadata={"k": "v"},
+            ),
             user=_user(),
             tenant_id=TENANT_ID,
             session=session,  # type: ignore[arg-type]
@@ -551,8 +553,10 @@ async def test_rag_ingest_returns_chunks_created_shape():
 async def test_feedback_user_persists_thumb_up():
     """thumb=up → 200 + CopilotUserFeedback staged + commit."""
     session = _FakeSession()
+    from src.copilot.routers.suggestions import UserFeedbackRequest
+
     result = await submit_user_feedback(
-        payload={"thumb": "up", "text": "Bom"},
+        payload=UserFeedbackRequest(thumb="up", text="Bom"),
         tenant_id=TENANT_ID,
         session=session,  # type: ignore[arg-type]
     )
@@ -564,16 +568,13 @@ async def test_feedback_user_persists_thumb_up():
 
 @pytest.mark.asyncio
 async def test_feedback_user_rejects_invalid_thumb():
-    """thumb inválido → 400, nada staged."""
-    session = _FakeSession()
-    with pytest.raises(HTTPException) as exc:
-        await submit_user_feedback(
-            payload={"thumb": "maybe"},
-            tenant_id=TENANT_ID,
-            session=session,  # type: ignore[arg-type]
-        )
-    assert exc.value.status_code == 400
-    assert session.staged == []
+    """Q.171.C — thumb inválido é rejeitado na FRONTEIRA (Pydantic/422)."""
+    import pydantic
+
+    from src.copilot.routers.suggestions import UserFeedbackRequest
+
+    with pytest.raises(pydantic.ValidationError):
+        UserFeedbackRequest(thumb="maybe")
 
 
 # ──────────────────────────────────────────────────────────────────────────

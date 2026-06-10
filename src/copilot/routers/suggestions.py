@@ -11,6 +11,8 @@ from __future__ import annotations
 import logging
 from uuid import UUID, uuid4
 
+from typing import Optional
+from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -49,9 +51,17 @@ async def get_suggestion(
 # ──────────────────────────────────────────────────────────────────────────
 
 
+class UserFeedbackRequest(BaseModel):
+    """Q.171.C — contrato tipado (era dict sem schema: campos quaisquer)."""
+
+    thumb: str = Field(..., pattern="^(up|down)$")
+    text: str = Field(default="", max_length=4000)
+    context: Optional[dict] = None
+
+
 @router.post("/feedback/user", status_code=status.HTTP_200_OK)
 async def submit_user_feedback(
-    payload: dict,
+    payload: UserFeedbackRequest,
     tenant_id: UUID = Depends(_api.get_tenant_id),
     session: AsyncSession = Depends(get_session),
 ):
@@ -62,12 +72,12 @@ async def submit_user_feedback(
 
     Payload aceita: ``{thumb: 'up'|'down', text: str, context?: dict}``.
     """
-    thumb = (payload.get("thumb") or "").strip()
-    text = (payload.get("text") or "").strip()
+    thumb = payload.thumb.strip()
+    text = payload.text.strip()
     if thumb not in ("up", "down"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="thumb must be 'up' or 'down'")
 
-    context = payload.get("context")
+    context = payload.context
     row = CopilotUserFeedback(
         id=uuid4(),
         tenant_id=tenant_id,

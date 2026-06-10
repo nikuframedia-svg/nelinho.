@@ -152,7 +152,8 @@ async def _gen_qualidade(
 
         svc = QualityDashboardService(session, tenant_id)
         since_dt = datetime.combine(since, datetime.min.time()) if since else None
-        until_dt = datetime.combine(until, datetime.min.time()) if until else None
+        # Q.171.C — until com min.time() EXCLUÍA o próprio dia do relatório.
+        until_dt = datetime.combine(until, datetime.max.time()) if until else None
         result = await svc.group_by(
             group_by="phase",
             since=since_dt,
