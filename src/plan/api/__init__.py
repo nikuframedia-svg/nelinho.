@@ -17,6 +17,7 @@ from .mold import router as mold_router  # Sprint R.6 (Q.18.ZIP.BE.3 wire)
 from .orders import router as orders_router  # Sprint Q.18.ZIP.BE.1
 from .dates import router as dates_router  # Q.53.B (calendário + datas de entrega)
 from .timeline import router as timeline_router  # Q.141 (linha temporal: actuals)
+from .order_materials import router as order_materials_router  # Q.173.U (materiais por OF)
 
 router = APIRouter(prefix="/v1/plan", tags=["PLAN"])
 
@@ -31,6 +32,7 @@ router.include_router(mold_router)
 router.include_router(orders_router)
 router.include_router(dates_router)
 router.include_router(timeline_router)
+router.include_router(order_materials_router)  # Q.173.U
 
 
 

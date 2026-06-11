@@ -78,12 +78,12 @@ class CapableToPromiseService:
 
         backward = BackwardSchedulerService(self.session, self.tenant_id)
 
-        # Stock by product_code for the materials gate.
+        # Stock por product_code (UUID string) para o gate de materiais BOM.
         stock_by_product = await self._stock_by_product()
-        # Q.171.D — sem snapshot de stock o gate devolvia "OK" em SILÊNCIO
-        # (o consumidor via verde sem saber que era "sem dados"). A base
-        # fica explícita na resposta — honesto, não bloqueante.
-        materials_basis = "stock_real" if stock_by_product else "sem_snapshot"
+        # Q.171.D / Q.173.X — base explícita na resposta (honesto).
+        # "bom_nivel1" quando o stock real existe + BOM explodida por ordem.
+        # "sem_snapshot" quando não há dados de stock.
+        materials_basis = "bom_nivel1" if stock_by_product else "sem_snapshot"
 
         evaluated: List[Dict[str, Any]] = []
         for order in orders:
@@ -93,9 +93,13 @@ class CapableToPromiseService:
                 datetime.fromisoformat(suggested) if suggested else None
             )
             date_ok = ship_dt is not None and ship_dt <= truck_dt
-            materials_ok, missing, materials_known = self._materials_gate(
+            # Q.173.X — gate BOM nível-1: substitui o proxy do produto
+            # acabado por explosão real de core.bom_items.
+            materials_ok, missing, materials_known = await self._materials_gate_bom(
                 order, stock_by_product,
             )
+            # bom_data_available sinaliza se a BOM existia (False = sem dados).
+            bom_data_available = materials_known
             evaluated.append({
                 "order_id": str(order.id),
                 "hull": (
@@ -109,6 +113,7 @@ class CapableToPromiseService:
                 "materials_ok": materials_ok,
                 "materials_known": materials_known,
                 "missing_materials": missing,
+                "bom_data_available": bom_data_available,
                 "_ship_dt": ship_dt,
             })
 
@@ -150,6 +155,99 @@ class CapableToPromiseService:
                 "n_rejected": len(rejected),
             },
         }
+
+    async def _bom_for_product(self, product_id) -> List[Dict[str, Any]]:
+        """Explode BOM nível-1 de ``core.bom_items`` para o produto.
+
+        ``product_id`` é o código LEGACY da ordem (``ProductionOrder.
+        product_id`` = OF_P_ID = ``core.products.product_code``) — a BOM é
+        keyed por UUID, por isso o pai resolve-se via ``product_code`` e
+        cada componente devolve o SEU ``product_code`` (a chave do
+        ``warehouse_stock``). Sem este duplo mapeamento o gate comparava
+        UUID com código e dava sempre 0 disponível (gap apanhado na
+        revisão do Q.173.X).
+
+        Devolve lista de ``{component_code: str, quantity_per: float}`` ou
+        vazia quando o produto não tem BOM.
+        """
+        if not product_id:
+            return []
+        try:
+            from sqlalchemy import select
+            from sqlalchemy.orm import aliased
+
+            from src.core.models.bom import BOMItem
+            from src.core.models.product import Product
+
+            parent = aliased(Product)
+            comp = aliased(Product)
+            stmt = (
+                select(comp.product_code, BOMItem.quantity_per)
+                .join(parent, parent.id == BOMItem.parent_product_id)
+                .join(comp, comp.id == BOMItem.component_product_id)
+                .where(
+                    BOMItem.tenant_id == self.tenant_id,
+                    parent.product_code == str(product_id),
+                )
+            )
+            rows = (await self.session.execute(stmt)).all()
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.debug("ctp bom lookup falhou: %s", exc)
+            return []
+        return [
+            {
+                "component_code": str(code),
+                "quantity_per": float(qty),
+            }
+            for code, qty in rows
+        ]
+
+    async def _materials_gate_bom(
+        self,
+        order,
+        stock_by_product: Dict[str, float],
+    ) -> tuple[bool, List[Dict[str, Any]], bool]:
+        """Verifica materiais por explosão BOM nível-1 (Q.173.X).
+
+        Tri-state honesto:
+        - ``(True, components_checked, True)`` — BOM explodida, todos os
+          componentes com stock suficiente.
+        - ``(False, missing_list, True)`` — BOM explodida, pelo menos um
+          componente em falta; ``missing_list`` é lista de dicts
+          ``{component, needed, available}``.
+        - ``(True, [], False)`` — sem BOM para o produto → não bloqueia
+          (ausência de dados ≠ escassez); caller distingue via
+          ``materials_known=False`` e deve apresentar aviso, nunca "OK".
+
+        Preserva o contrato chamador (``materials_ok``, ``missing_materials``,
+        ``materials_known``) sem remover campos existentes.
+        """
+        product_id = getattr(order, "product_id", None)
+        bom_items = await self._bom_for_product(product_id)
+
+        if not bom_items:
+            # Sem BOM → inconclusivo; não bloqueia mas declara data_available=False
+            return True, [], False
+
+        if not stock_by_product:
+            # BOM existe mas sem snapshot de stock → inconclusivo
+            return True, [], False
+
+        missing: List[Dict[str, Any]] = []
+        for item in bom_items:
+            code = item["component_code"]
+            needed = item["quantity_per"]
+            available = stock_by_product.get(code, 0.0)
+            if available < needed:
+                missing.append({
+                    "component": code,
+                    "needed": needed,
+                    "available": available,
+                })
+
+        if missing:
+            return False, missing, True
+        return True, [], True
 
     async def _stock_by_product(self) -> Dict[str, float]:
         """Aggregate `supply.warehouse_stock` to total stock per product."""
