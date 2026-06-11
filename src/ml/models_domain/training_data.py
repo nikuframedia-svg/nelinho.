@@ -25,15 +25,12 @@ the ERP sync already fills:
   * ``plan.production_orders``      — completed orders with transport dates,
     the label source for the OTD-risk model.
 
-The two history tables do not share an order-id space (the ERP keeps phase
-history and checklist rework on different id sequences), so the
-``is_error`` label for the quality-risk classifier is built from the
-**empirical per-fase rework rate**: for each fase we know how many phase
-executions happened and how many rework events were blamed on it; we then
-deterministically stratify-label that fraction of the fase's phase rows as
-``is_error=1``. That keeps the real, learnable signal — "Laminagem and
-Pintura are error-prone, Armazém is not" — without inventing per-row joins
-that the data cannot support.
+Q.173.AQ — o ``is_error`` do quality-risk é um label REAL por linha: existe
+``quality.rework_entry`` para aquela (OF, fase causadora)? O pressuposto
+antigo ("os id-spaces não cruzam") morreu com o repoint do ETL de rework
+(Q.167.A): medido em 2026-06-12, 99,9% das entradas de rework cruzam com
+``of_fp`` por OF e 4.909/5.919 por (OF, fase). A taxa empírica por fase
+continua como *feature* (``phase_error_rate``), não como label.
 
 Everything here is best-effort: a missing table or an empty result yields
 ``[]`` (with a WARN), which the surrounding `RetrainJob.run` turns into an
@@ -179,16 +176,22 @@ async def build_quality_risk_dataset(
 ) -> List[Dict[str, Any]]:
     """One row per completed phase execution with a binary `is_error` label.
 
-    Label construction (see module docstring): for every fase we compute the
-    empirical rework rate ``rework_events / phase_executions`` and then
-    deterministically mark the first ``rate × n`` phase rows of that fase
-    (ordered by start date) as ``is_error=1``. This reproduces the real
-    per-fase error rate, which is exactly the signal the classifier learns
-    against the (modelo_id, fase_id, team_size, mold_pocket_count,
-    phase_error_rate, queue_depth) features.
+    Q.173.AQ — labels REAIS: ``is_error=1`` quando existe um
+    ``quality.rework_entry`` apontado a esta (OF, fase causadora). O
+    pressuposto antigo do módulo ("os id-spaces não cruzam") deixou de ser
+    verdade depois do repoint do ETL de rework (Q.167.A RCA single-source):
+    medido em 2026-06-12, 5.915/5.919 entradas de rework cruzam com
+    ``factory_raw.of_fp`` por OF (99,9%) e 4.909 por (OF, fase). O label
+    sintético (estratificar a taxa por fase) foi removido — fabricava
+    positivos em execuções concretas que nunca tiveram defeito.
+
+    A amostra passou de ORDER BY fase (que truncava as fases altas no
+    LIMIT) para as execuções mais RECENTES — todas as fases entram e o
+    sinal acompanha o estado atual da fábrica. ``phase_error_rate``
+    (taxa real por fase) continua como feature.
     """
-    # Q.124: fonte = factory_raw.of_fp (ERP real). Todas as execucoes de fase
-    # (sem filtro de duracao) para construir a taxa empirica de rework por fase.
+    # Q.124: fonte = factory_raw.of_fp (ERP real). Label real por EXISTS
+    # contra quality.rework_entry (of_id + phase_id_causer são text).
     phase_sql = text(
         """
         SELECT
@@ -198,7 +201,13 @@ async def build_quality_risk_dataset(
             CAST(NULLIF(op."OFFP_DATAINICIO", '') AS timestamp) AS data_inicio,
             ofb."OF_P_ID"       AS product_type,
             -- Q.156.D (BD-3) — team_size real de factory_raw.offp_eq.
-            COALESCE(eqc.team_size, 1) AS team_size
+            COALESCE(eqc.team_size, 1) AS team_size,
+            EXISTS (
+                SELECT 1 FROM quality.rework_entry r
+                WHERE r.tenant_id = :tenant_id
+                  AND r.of_id = op."OFFP_OF_ID"::text
+                  AND r.phase_id_causer = op."OFFP_FP_ID"::text
+            ) AS is_error
         FROM factory_raw.of_fp op
         LEFT JOIN factory_raw.ordemfabrico ofb ON ofb."OF_ID" = op."OFFP_OF_ID"
         LEFT JOIN (
@@ -206,7 +215,7 @@ async def build_quality_risk_dataset(
             FROM factory_raw.offp_eq GROUP BY "OFFPEQ_OFFP_ID"
         ) eqc ON eqc.offp_id = op."OFFP_ID"
         WHERE NULLIF(op."OFFP_DATAINICIO", '') IS NOT NULL
-        ORDER BY op."OFFP_FP_ID", data_inicio
+        ORDER BY data_inicio DESC
         LIMIT :limit
         """
     )
@@ -249,15 +258,13 @@ async def build_quality_risk_dataset(
             rework_by_fase.get(_normalise_phase_key(phase), 0) + int(n or 0)
         )
 
-    # Count phase executions per fase so we can turn the rework count into a
-    # rate and cap labelled positives at the number of phase rows we have.
+    # Execuções por fase DENTRO da amostra — alimenta as features
+    # phase_error_rate (taxa real por fase) e queue_depth.
     phase_counts: Dict[str, int] = {}
     for r in phase_rows:
         fid = str(r["fase_id"])
         phase_counts[fid] = phase_counts.get(fid, 0) + 1
 
-    # Empirical per-fase error rate, clamped to [0, 0.95] so no fase is
-    # all-positive (the classifier needs both classes).
     fase_error_rate: Dict[str, float] = {}
     for fid, total in phase_counts.items():
         events = rework_by_fase.get(fid, 0)
@@ -265,18 +272,9 @@ async def build_quality_risk_dataset(
         fase_error_rate[fid] = min(0.95, max(0.0, rate))
 
     rows: List[Dict[str, Any]] = []
-    seen_per_fase: Dict[str, int] = {}
     for r in phase_rows:
         fase_id = str(r["fase_id"])
-        total = phase_counts.get(fase_id, 0)
         rate = fase_error_rate.get(fase_id, 0.0)
-        positives_target = round(rate * total)
-        idx = seen_per_fase.get(fase_id, 0)
-        seen_per_fase[fase_id] = idx + 1
-        # phase_rows are ordered by (fase_id, data_inicio); the first
-        # `positives_target` rows of the fase are the labelled errors.
-        is_error = 1 if idx < positives_target else 0
-
         rows.append(
             {
                 "modelo_id": str(r["product_type"] or "desconhecido"),
@@ -284,16 +282,17 @@ async def build_quality_risk_dataset(
                 "team_size": int(r.get("team_size") or 1),  # Q.156.D — real, de offp_eq
                 "mold_pocket_count": 1,
                 "phase_error_rate": round(rate, 4),
-                "queue_depth": total,
-                "is_error": is_error,
+                "queue_depth": phase_counts.get(fase_id, 0),
+                # Q.173.AQ — label REAL: rework registado para esta (OF, fase).
+                "is_error": 1 if r.get("is_error") else 0,
                 "timestamp": r["data_inicio"],
             }
         )
 
     positives = sum(r["is_error"] for r in rows)
     logger.info(
-        "build_quality_risk_dataset: %d rows from order_phase ⋈ rework "
-        "(%d positives, prior=%.3f)",
+        "build_quality_risk_dataset: %d rows from of_fp ⋈ rework_entry "
+        "(%d positives REAIS por (OF,fase), prior=%.4f)",
         len(rows),
         positives,
         positives / len(rows) if rows else 0.0,

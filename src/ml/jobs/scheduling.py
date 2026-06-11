@@ -49,15 +49,18 @@ def register_ml_retrain_jobs(
     from src.ml.models_domain.quality_risk import QualityRiskRetrainJob
     from src.ml.models_domain.sequence_mining import SequenceMiningRetrainJob
     from src.ml.models_domain.throughput_forecast import ThroughputForecastRetrainJob
-    from src.ml.observability.drift import DriftDetectionJob
 
+    # Q.173.AQ — drift_detection REMOVIDO do agendamento: o DriftDetectionJob
+    # era um scaffold 100% inoperante (nenhum feature snapshot persistido,
+    # eventos sempre 0) e rebentava com TypeError (run() não aceitava os
+    # kwargs do dispatcher). O DriftDetector 1D continua disponível em
+    # src/ml/observability/drift.py para quando os snapshots existirem.
     job_specs = [
         ("duration", DurationRetrainJob, DurationRetrainJob.schedule_cron),
         ("quality_risk", QualityRiskRetrainJob, QualityRiskRetrainJob.schedule_cron),
         ("otd_risk", OTDRiskRetrainJob, OTDRiskRetrainJob.schedule_cron),
         ("sequence_mining", SequenceMiningRetrainJob, SequenceMiningRetrainJob.schedule_cron),
         ("throughput_forecast", ThroughputForecastRetrainJob, ThroughputForecastRetrainJob.schedule_cron),
-        ("drift_detection", DriftDetectionJob, DriftDetectionJob.schedule_cron),
     ]
 
     count = 0
@@ -85,65 +88,74 @@ def register_ml_retrain_jobs(
 
 async def _run_retrain_job(job_name: str, tenant_id_str: str) -> None:
     """
-    Dispatcher: lookup the job class by name, construct it with a semantic
-    queries handle, and run it inside its own DB session.
+    Dispatcher: run the retrain for one model inside its own DB session.
+
+    Q.173.AQ — duration/quality_risk/otd_risk passaram a usar o caminho
+    DB-backed do `training_service` (factory_raw/plan reais). O caminho
+    antigo construía `SemanticQueriesInMemory()` (TypeError: exige engine),
+    caía em `semantic=None`, e cada job lia a camada curated VAZIA →
+    `EmptyDatasetError` em todas as corridas desde sempre (auditoria
+    2026-06-11: otd_risk com 0 artefactos).
+
+    Promoção: bootstrap-only — o re-treino agendado regista o artefacto
+    novo (auditável no registry) mas só o promove quando ainda não há
+    nenhum ativo. Substituir um modelo ativo continua a ser um gesto
+    deliberado, não um efeito colateral do cron.
     """
     from uuid import UUID
     tenant_id = UUID(tenant_id_str)
 
     try:
-        from src.factory_data_product.services.semantic_queries_inmemory import (
-            SemanticQueriesInMemory,
-        )
-        semantic = SemanticQueriesInMemory()
-    except Exception as e:
-        logger.warning(f"Semantic layer unavailable for retrain: {e}")
-        semantic = None
-
-    try:
-        from src.governance.service import GovernanceService
-        from src.ml.models_domain.duration import DurationRetrainJob
-        from src.ml.models_domain.otd_risk import OTDRiskRetrainJob
-        from src.ml.models_domain.quality_risk import QualityRiskRetrainJob
         from src.shared.database import get_session_context
 
-        from src.ml.models_domain.sequence_mining import SequenceMiningRetrainJob
-        from src.ml.models_domain.throughput_forecast import ThroughputForecastRetrainJob
-        from src.ml.observability.drift import DriftDetectionJob
-
-        job_cls_map = {
-            "duration": DurationRetrainJob,
-            "quality_risk": QualityRiskRetrainJob,
-            "otd_risk": OTDRiskRetrainJob,
-            "sequence_mining": SequenceMiningRetrainJob,
-            "throughput_forecast": ThroughputForecastRetrainJob,
-            "drift_detection": DriftDetectionJob,
-        }
-        job_cls = job_cls_map.get(job_name)
-        if job_cls is None:
-            logger.error(f"Unknown retrain job: {job_name}")
-            return
-
-        _no_semantic = {"sequence_mining", "throughput_forecast", "drift_detection"}
-
         async with get_session_context() as session:
-            governance = GovernanceService(db=session, tenant_id=tenant_id)
-            if job_name in _no_semantic:
-                job = job_cls()
-            else:
-                job = job_cls(semantic_queries=semantic)
-            summary = await job.run(
-                session,
-                tenant_id,
-                governance_service=governance,
-                proposed_by="scheduler",
-            )
+            summary = await _dispatch_retrain(session, tenant_id, job_name)
             await session.commit()
             logger.info(
                 f"ML retrain {job_name} tenant={tenant_id}: "
                 f"status={summary.get('status')} "
-                f"samples={summary.get('training_samples')} "
+                f"samples={summary.get('training_samples') or summary.get('metrics', {}).get('samples')} "
                 f"metrics={summary.get('metrics')}"
             )
     except Exception as e:
         logger.error(f"ML retrain {job_name} failed: {e}", exc_info=True)
+
+
+async def _dispatch_retrain(session, tenant_id: UUID, job_name: str) -> dict:
+    """Route one job name to the right (DB-backed) training path."""
+    _db_backed = {"duration", "quality_risk", "otd_risk"}
+
+    if job_name in _db_backed:
+        from src.ml.models.registry import ModelRegistry
+        from src.ml.training_service import (
+            TrainingError,
+            train_duration,
+            train_otd_risk,
+            train_quality_risk,
+        )
+
+        registry = ModelRegistry(session, tenant_id)
+        has_active = await registry.get_active(job_name) is not None
+        train_fn = {
+            "duration": train_duration,
+            "quality_risk": train_quality_risk,
+            "otd_risk": train_otd_risk,
+        }[job_name]
+        try:
+            return await train_fn(
+                session, tenant_id,
+                trained_by="scheduler",
+                promote=not has_active,  # bootstrap-only
+            )
+        except TrainingError as exc:
+            return {"status": "skipped", "reason": str(exc)}
+
+    if job_name == "sequence_mining":
+        from src.ml.models_domain.sequence_mining import SequenceMiningRetrainJob
+        return await SequenceMiningRetrainJob().run(session, tenant_id)
+    if job_name == "throughput_forecast":
+        from src.ml.models_domain.throughput_forecast import ThroughputForecastRetrainJob
+        return await ThroughputForecastRetrainJob().run(session, tenant_id)
+
+    logger.error(f"Unknown retrain job: {job_name}")
+    return {"status": "error", "reason": f"unknown job {job_name}"}

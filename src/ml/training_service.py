@@ -46,6 +46,25 @@ class TrainingError(RuntimeError):
     """Raised when a model could not be trained from the available data."""
 
 
+# Q.173.AQ — cooldown dos bootstraps on-demand. Quando o treino falha
+# (TrainingError: dados insuficientes), cada visita à página voltava a
+# pagar o dataset completo (~200k linhas de factory_raw.of_fp) só para
+# falhar outra vez. Janela in-memory por (tenant, modelo): dentro dela o
+# ensure_* devolve None sem re-tentar. Reinício do processo limpa o mapa.
+_ENSURE_COOLDOWN_SEC = 15 * 60
+_last_failed_attempt: Dict[str, float] = {}
+
+
+def _in_cooldown(tenant_id: UUID, model_name: str) -> bool:
+    key = f"{tenant_id}:{model_name}"
+    last = _last_failed_attempt.get(key)
+    return last is not None and (time.time() - last) < _ENSURE_COOLDOWN_SEC
+
+
+def _mark_failed(tenant_id: UUID, model_name: str) -> None:
+    _last_failed_attempt[f"{tenant_id}:{model_name}"] = time.time()
+
+
 async def train_quality_risk(
     session: AsyncSession,
     tenant_id: UUID,
@@ -216,12 +235,15 @@ async def ensure_quality_risk_model(
     active = await registry.get_active("quality_risk")
     if active is not None:
         return None
+    if _in_cooldown(tenant_id, "quality_risk"):
+        return None  # Q.173.AQ — falhou há pouco; não re-pagar o dataset
     try:
         summary = await train_quality_risk(session, tenant_id)
         await session.commit()
         return summary
     except TrainingError as exc:
         logger.warning("ensure_quality_risk_model: %s", exc)
+        _mark_failed(tenant_id, "quality_risk")
         await session.rollback()
         return None
 
@@ -242,11 +264,14 @@ async def ensure_otd_risk_model(
     active = await registry.get_active("otd_risk")
     if active is not None:
         return None
+    if _in_cooldown(tenant_id, "otd_risk"):
+        return None  # Q.173.AQ — falhou há pouco; não re-pagar o dataset
     try:
         summary = await train_otd_risk(session, tenant_id)
         await session.commit()
         return summary
     except TrainingError as exc:
         logger.warning("ensure_otd_risk_model: %s", exc)
+        _mark_failed(tenant_id, "otd_risk")
         await session.rollback()
         return None

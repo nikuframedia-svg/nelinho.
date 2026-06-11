@@ -62,9 +62,10 @@ class _ScriptedSession:
 
 # ─── quality-risk dataset ─────────────────────────────────────────────────
 
-def test_quality_risk_dataset_labels_by_empirical_fase_rate():
-    """A fase with 40 rework events over 100 phase rows must end up with
-    ~40 of its 100 dataset rows labelled is_error=1."""
+def test_quality_risk_dataset_labels_reais_por_of_fase_q173aq():
+    """Q.173.AQ — o label vem REAL da query (EXISTS contra rework_entry por
+    (OF, fase causadora)), não de estratificação sintética. A taxa por fase
+    continua como feature."""
     phase_rows = [
         {
             "of_id": f"O{i}",
@@ -72,6 +73,8 @@ def test_quality_risk_dataset_labels_by_empirical_fase_rate():
             "molde_id": "M1",
             "data_inicio": T0 + timedelta(hours=i),
             "product_type": "K1",
+            # 3 execuções concretas COM rework registado — label real
+            "is_error": i in (2, 5, 7),
         }
         for i in range(100)
     ] + [
@@ -81,10 +84,11 @@ def test_quality_risk_dataset_labels_by_empirical_fase_rate():
             "molde_id": None,
             "data_inicio": T0 + timedelta(hours=i),
             "product_type": "K1",
+            "is_error": False,
         }
         for i in range(50)
     ]
-    rework_rows = [("36", 40)]  # 40 rework events blamed on fase 36
+    rework_rows = [("36", 40)]  # eventos imputados à fase 36 (alimenta a FEATURE)
 
     session = _ScriptedSession([phase_rows, rework_rows])
     rows = build_quality_risk_dataset_sync(session)
@@ -92,20 +96,22 @@ def test_quality_risk_dataset_labels_by_empirical_fase_rate():
     lam = [r for r in rows if r["fase_id"] == "36"]
     arm = [r for r in rows if r["fase_id"] == "9"]
     assert len(lam) == 100 and len(arm) == 50
-    # 40 / 100 → 40 positives for Laminagem, 0 for Armazem.
-    assert sum(r["is_error"] for r in lam) == 40
+    # labels = exatamente as execuções com rework real, não rate × n.
+    assert sum(r["is_error"] for r in lam) == 3
     assert sum(r["is_error"] for r in arm) == 0
-    # phase_error_rate feature reflects the real rate.
+    # phase_error_rate feature reflects the real per-fase rate.
     assert lam[0]["phase_error_rate"] == pytest.approx(0.40)
     assert arm[0]["phase_error_rate"] == pytest.approx(0.0)
 
 
-def test_quality_risk_dataset_clamps_rate_below_one():
-    """A fase with more rework events than phase rows must not produce an
-    all-positive fase (the classifier needs both classes)."""
+def test_quality_risk_phase_error_rate_clampada_q173aq():
+    """A FEATURE phase_error_rate fica clampada a 0.95 mesmo quando o ERP
+    tem mais eventos de rework do que execuções (dados sujos); o label de
+    cada linha segue o rework real e não é afetado pelo clamp."""
     phase_rows = [
         {"of_id": f"O{i}", "fase_id": "1", "molde_id": None,
-         "data_inicio": T0 + timedelta(hours=i), "product_type": "K2"}
+         "data_inicio": T0 + timedelta(hours=i), "product_type": "K2",
+         "is_error": i == 0}
         for i in range(20)
     ]
     rework_rows = [("1", 500)]  # absurdly high rework count
@@ -113,8 +119,8 @@ def test_quality_risk_dataset_clamps_rate_below_one():
     session = _ScriptedSession([phase_rows, rework_rows])
     rows = build_quality_risk_dataset_sync(session)
 
-    positives = sum(r["is_error"] for r in rows)
-    assert 0 < positives < len(rows)  # clamped to 0.95 → 19 of 20
+    assert rows[0]["phase_error_rate"] == pytest.approx(0.95)
+    assert sum(r["is_error"] for r in rows) == 1  # só a execução com rework real
 
 
 def test_quality_risk_dataset_empty_when_no_phases():
