@@ -104,6 +104,41 @@ export function dateToSlotIndex(
   return diff < 0 ? 0 : diff;
 }
 
+/**
+ * Duração real em slots entre `startIso` e `endIso` (ou `startIso +
+ * durationMin`). Mínimo 1 slot. Clampado a `maxSlots` (fim do intervalo
+ * visível). `null` se start indefinido.
+ *
+ * Q.173.AE — barras com duração real no Gantt.
+ */
+export function dateToSpanSlots(
+  startIso: string | undefined | null,
+  endIso: string | undefined | null,
+  durationMin: number | undefined | null,
+  startDate: Date,
+  scale: TimelineScale,
+  totalSlots: number,
+): number {
+  const startIdx = dateToSlotIndex(startIso, startDate, scale);
+  if (startIdx === null) return 1;
+
+  let endIdx: number | null = null;
+  if (endIso) {
+    endIdx = dateToSlotIndex(endIso, startDate, scale);
+  } else if (durationMin) {
+    // Aproximar: 1 slot dia = 8h de trabalho (480 min); semana ≈ 5d = 2400 min; mês ≈ 20d = 9600 min
+    const minsPerSlot = scale === 'day' ? 480 : scale === 'week' ? 2400 : 9600;
+    const extraSlots = Math.ceil(durationMin / minsPerSlot);
+    endIdx = startIdx + extraSlots;
+  }
+
+  if (endIdx === null || endIdx <= startIdx) return 1;
+  const span = endIdx - startIdx;
+  // Clamp ao fim do intervalo visível
+  const remaining = totalSlots - startIdx;
+  return Math.min(span, remaining);
+}
+
 // ─── Componente ──────────────────────────────────────────────────────────────
 
 export function Timeline({

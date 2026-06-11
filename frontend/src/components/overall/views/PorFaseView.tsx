@@ -19,7 +19,7 @@ import {
 import type { DragEndEvent } from '@dnd-kit/core';
 import { EmptyState } from '../../dark';
 import { Clickable } from '../../entitySheets';
-import { Timeline, buildSlots, dateToSlotIndex } from '../Timeline';
+import { Timeline, buildSlots, dateToSlotIndex, dateToSpanSlots } from '../Timeline';
 import type { TimelineScale } from '../Timeline';
 import type { TimelineLane, TimelineItem } from '../../dark';
 import type { ScheduledOp } from '../types';
@@ -74,10 +74,11 @@ function PhaseDropSlot({
 
   // Q.141.J — escalas grossas (semana/mês): contagem por célula em vez de
   // milhares de cartões. Verde quando há realizado, neutro quando só plano.
+  // Q.173.AE — CountBadge com onClick para drill-down (deixa de ser cego).
   if (compact) {
     return (
       <div ref={setNodeRef} className="h-full w-full flex items-center justify-center p-0.5">
-        {ops.length > 0 && <CountBadge ops={ops} />}
+        {ops.length > 0 && <CountBadge ops={ops} onClick={expand ? () => expand(ops) : undefined} />}
       </div>
     );
   }
@@ -225,15 +226,23 @@ export const PorFaseView = memo(function PorFaseView({
       const [phaseId, slotId] = key.split('__slot__');
       const slotIdx = slots.findIndex((s) => s.id === slotId);
       if (slotIdx === -1) continue;
+      // Q.173.AE — spanSlots real: a célula ocupa o máximo das suas ops (a mais
+      // longa determina a largura da barra agregada).
+      const span = Math.max(
+        1,
+        ...ops.map((op) =>
+          dateToSpanSlots(op.start, op.end, op.duration_min, startDate, scale, slots.length),
+        ),
+      );
       result.push({
         id: key,
         laneId: phaseId,
         startSlot: slotIdx,
-        spanSlots: 1,
+        spanSlots: span,
       });
     }
     return result;
-  }, [opsByPhaseSlot, slots]);
+  }, [opsByPhaseSlot, slots, startDate, scale]);
 
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {

@@ -720,3 +720,36 @@ export const phasesCatalogApi = {
   list: () => request<PhaseCatalogItem[]>(`/v1/plan/phases/catalog`),
 };
 
+// ─── Q.173.AD — contexto de filtros do Gantt ─────────────────────────────────
+//
+// GET /v1/plan/filters-context → FiltersContextOut
+// Um fetch leve que entrega todos os mapas necessários para os 12 filtros
+// do /overall sem inchar o payload do plano (2,3 MB).
+
+export interface FiltersContextOut {
+  /** SHA do plano-base do contexto (pode ser null se sem plano). */
+  commit_sha: string | null;
+  /** código do produto → nome real (factory_raw.produto). */
+  product_names: Record<string, string>;
+  /** order_id → código do produto (OF_P_ID via ordemfabrico). */
+  order_products: Record<string, string>;
+  /** código do produto → disciplina/gama (P_TP_ID_DISCIPLINA). */
+  product_gamas: Record<string, string>;
+  /** fase_id → setor (AREA_GROUPS). */
+  phase_sectors: Record<string, string>;
+  /** order_id → boost efetivo (snapshot pré-solve). */
+  orders_boost: Record<string, number>;
+  /** order_id → promessa de transporte ISO (só quando real). */
+  orders_due: Record<string, string>;
+  /** order_ids afetados por previsão de ruturas de materiais. */
+  orders_material_risk: string[];
+  /** IDs das fases de reparação (config planning.repair.phase_ids). */
+  repair_phase_ids: string[];
+  /** true se orders_material_risk veio da cache TTL (pode estar desatualizado). */
+  material_risk_stale: boolean;
+}
+
+export const filtersContextApi = {
+  get: () => request<FiltersContextOut>('/v1/plan/filters-context'),
+};
+

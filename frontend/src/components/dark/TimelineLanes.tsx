@@ -10,12 +10,14 @@
  * caller passa `lanes`, `slots` e os `items` (cada um com a sua raia,
  * coluna de início e duração em colunas).
  *
- * Vive em `components/dark/` para a Onda 1 não partilhar ficheiros.
+ * Q.173.AE — virtualização de lanes (@tanstack/react-virtual) +
+ * sticky header de datas + sticky coluna de etiquetas.
  *
  * Sprint Q.52.B.
  */
 
-import type { ReactNode } from 'react';
+import { useRef, type ReactNode, type CSSProperties } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 
 export interface TimelineSlot {
   /** Identificador único da coluna. */
@@ -62,6 +64,9 @@ export interface TimelineLanesProps {
   renderItem: (item: TimelineItem) => ReactNode;
 }
 
+// Altura do cabeçalho de datas em px (para o sticky offset correto).
+const HEADER_HEIGHT = 28;
+
 export function TimelineLanes({
   slots,
   lanes,
@@ -72,124 +77,185 @@ export function TimelineLanes({
   renderItem,
 }: TimelineLanesProps): ReactNode {
   const gridWidth = slots.length * slotWidth;
+  const totalWidth = labelWidth + gridWidth;
+
+  // ── Q.173.AE: virtualização das lanes ────────────────────────────────────
+  // Contentor de scroll: o div exterior abaixo. O virtualizer só precisa de
+  // saber quantas lanes existem e a altura fixa de cada uma.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: lanes.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => laneHeight,
+    overscan: 5,
+  });
+
+  const totalLanesHeight = rowVirtualizer.getTotalSize();
+
+  // Mapa laneId → items para O(1) por raia virtualizada
+  const itemsByLane = new Map<string, TimelineItem[]>();
+  for (const item of items) {
+    if (!itemsByLane.has(item.laneId)) itemsByLane.set(item.laneId, []);
+    itemsByLane.get(item.laneId)!.push(item);
+  }
+
+  // ── Estilos CSS partilhados ───────────────────────────────────────────────
+
+  const stickyLabelStyle: CSSProperties = {
+    position: 'sticky',
+    left: 0,
+    zIndex: 2,
+    width: labelWidth,
+    flexShrink: 0,
+    borderRight: '1px solid var(--bd-1)',
+    background: 'var(--bg-2)',
+  };
 
   return (
     <div
+      ref={scrollRef}
       style={{
         border: '1px solid var(--bd-1)',
         borderRadius: 'var(--r-md)',
         background: 'var(--bg-1)',
         overflow: 'auto',
+        // Altura máxima para que o scroll seja interno (evita super-scroll de 124k px)
+        maxHeight: '100%',
+        position: 'relative',
       }}
     >
-      {/* Cabeçalho de colunas */}
-      <div style={{ display: 'flex', minWidth: labelWidth + gridWidth }}>
+      {/* ── Cabeçalho sticky de datas ────────────────────────────────────── */}
+      <div
+        style={{
+          position: 'sticky',
+          top: 0,
+          zIndex: 10,
+          display: 'flex',
+          minWidth: totalWidth,
+          background: 'var(--bg-2)',
+          borderBottom: '1px solid var(--bd-1)',
+        }}
+      >
+        {/* Canto vazio (interseção header × label col) */}
         <div
           style={{
-            width: labelWidth,
-            flexShrink: 0,
+            ...stickyLabelStyle,
+            height: HEADER_HEIGHT,
             borderRight: '1px solid var(--bd-1)',
-            borderBottom: '1px solid var(--bd-1)',
-            background: 'var(--bg-2)',
           }}
         />
-        <div style={{ display: 'flex' }}>
-          {slots.map((s) => (
-            <div
-              key={s.id}
-              style={{
-                width: slotWidth,
-                flexShrink: 0,
-                padding: '6px 4px',
-                textAlign: 'center',
-                fontSize: 10,
-                color: s.highlight ? 'var(--fg-1)' : 'var(--fg-3)',
-                borderRight: '1px solid var(--bd-1)',
-                borderBottom: '1px solid var(--bd-1)',
-                background: s.highlight ? 'var(--bg-3)' : 'var(--bg-2)',
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-              }}
-            >
-              {s.label}
-            </div>
-          ))}
-        </div>
+        {/* Colunas de datas */}
+        {slots.map((s) => (
+          <div
+            key={s.id}
+            style={{
+              width: slotWidth,
+              flexShrink: 0,
+              height: HEADER_HEIGHT,
+              padding: '4px 4px',
+              textAlign: 'center',
+              fontSize: 10,
+              color: s.highlight ? 'var(--fg-1)' : 'var(--fg-3)',
+              borderRight: '1px solid var(--bd-1)',
+              background: s.highlight ? 'var(--bg-3)' : 'var(--bg-2)',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}
+          >
+            {s.label}
+          </div>
+        ))}
       </div>
 
-      {/* Raias */}
-      {lanes.map((lane) => {
-        const laneItems = items.filter((it) => it.laneId === lane.id);
-        return (
-          <div
-            key={lane.id}
-            style={{ display: 'flex', minWidth: labelWidth + gridWidth }}
-          >
-            {/* Etiqueta fixa */}
+      {/* ── Área virtualizada das lanes ───────────────────────────────────── */}
+      <div
+        style={{
+          position: 'relative',
+          height: totalLanesHeight,
+          minWidth: totalWidth,
+        }}
+      >
+        {rowVirtualizer.getVirtualItems().map((vRow) => {
+          const lane = lanes[vRow.index];
+          if (!lane) return null;
+          const laneItems = itemsByLane.get(lane.id) ?? [];
+
+          return (
             <div
+              key={lane.id}
               style={{
-                width: labelWidth,
-                flexShrink: 0,
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                transform: `translateY(${vRow.start}px)`,
+                width: '100%',
                 height: laneHeight,
-                padding: '0 10px',
                 display: 'flex',
-                flexDirection: 'column',
-                justifyContent: 'center',
-                borderRight: '1px solid var(--bd-1)',
-                borderBottom: '1px solid var(--bd-1)',
-                background: 'var(--bg-2)',
               }}
             >
-              <span
+              {/* Etiqueta sticky à esquerda */}
+              <div
                 style={{
-                  fontSize: 11.5,
-                  color: 'var(--fg-1)',
-                  fontWeight: 500,
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
+                  ...stickyLabelStyle,
+                  height: laneHeight,
+                  padding: '0 10px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'center',
+                  borderBottom: '1px solid var(--bd-1)',
                 }}
               >
-                {lane.labelNode ?? lane.label}
-              </span>
-              {lane.sublabel ? (
-                <span style={{ fontSize: 9.5, color: 'var(--fg-3)' }}>
-                  {lane.sublabel}
-                </span>
-              ) : null}
-            </div>
-
-            {/* Pista com grelha + items posicionados */}
-            <div
-              style={{
-                position: 'relative',
-                height: laneHeight,
-                width: gridWidth,
-                flexShrink: 0,
-                borderBottom: '1px solid var(--bd-1)',
-                backgroundImage: `linear-gradient(90deg, var(--bd-1) 1px, transparent 1px)`,
-                backgroundSize: `${slotWidth}px 100%`,
-              }}
-            >
-              {laneItems.map((it) => (
-                <div
-                  key={it.id}
+                <span
                   style={{
-                    position: 'absolute',
-                    top: 4,
-                    bottom: 4,
-                    left: it.startSlot * slotWidth + 2,
-                    width: it.spanSlots * slotWidth - 4,
+                    fontSize: 11.5,
+                    color: 'var(--fg-1)',
+                    fontWeight: 500,
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
                   }}
                 >
-                  {renderItem(it)}
-                </div>
-              ))}
+                  {lane.labelNode ?? lane.label}
+                </span>
+                {lane.sublabel ? (
+                  <span style={{ fontSize: 9.5, color: 'var(--fg-3)' }}>
+                    {lane.sublabel}
+                  </span>
+                ) : null}
+              </div>
+
+              {/* Pista com grelha + items posicionados */}
+              <div
+                style={{
+                  position: 'relative',
+                  height: laneHeight,
+                  width: gridWidth,
+                  flexShrink: 0,
+                  borderBottom: '1px solid var(--bd-1)',
+                  backgroundImage: `linear-gradient(90deg, var(--bd-1) 1px, transparent 1px)`,
+                  backgroundSize: `${slotWidth}px 100%`,
+                }}
+              >
+                {laneItems.map((it) => (
+                  <div
+                    key={it.id}
+                    style={{
+                      position: 'absolute',
+                      top: 4,
+                      bottom: 4,
+                      left: it.startSlot * slotWidth + 2,
+                      width: it.spanSlots * slotWidth - 4,
+                    }}
+                  >
+                    {renderItem(it)}
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
   );
 }

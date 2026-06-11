@@ -8,6 +8,8 @@ export interface ScheduledOp {
   phase_name: string;
   order_id?: string;
   product_id?: string;
+  // Q.173.AF — nome real do modelo (filters-context); o código fica no tooltip.
+  product_name?: string;
   operator_id?: string;
   operator_name?: string;
   cliente?: string;

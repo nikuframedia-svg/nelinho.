@@ -236,6 +236,8 @@ export const planKeys = {
   manualOverrideAlerts: () => [...planKeys.all, 'manual-override-alerts'] as const,
   // Q.153.C2 — barcos excluídos/adiados do plano (drag p/ zona de remoção).
   excludedBoats: () => [...planKeys.all, 'excluded-boats'] as const,
+  // Q.173.AF — contexto de filtros do Gantt (mapas de nomes/sectores/boosts).
+  filtersContext: () => [...planKeys.all, 'filters-context'] as const,
 } as const;
 
 // ─── Reports admin (Q.67.2.B) ──────────────────────────────────────────

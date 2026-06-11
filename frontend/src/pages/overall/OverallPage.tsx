@@ -10,13 +10,16 @@
 import { useMemo, useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
 import { motion } from 'framer-motion';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { addDays, startOfDay, format } from 'date-fns';
 import { pt } from 'date-fns/locale';
 import { Calendar, AlertTriangle, Ship, RotateCcw } from 'lucide-react';
 import { planKeys, fabricaKeys, coreKeys } from '../../lib/api/keys';
-import { cpoCommitsApi, planOperationsApi, timelineActualsApi, phasesCatalogApi, copilotAlertsApi, planExclusionApi, schedulePreviewApi } from '../../lib/api';
+import { cpoCommitsApi, planOperationsApi, timelineActualsApi, phasesCatalogApi, copilotAlertsApi, planExclusionApi, schedulePreviewApi, filtersContextApi } from '../../lib/api';
 import type { CpoCommit, TimelineActualItem, CopilotAlertItem, ExcludedBoat } from '../../lib/api';
+import { PlanFilters } from '../../components/overall/PlanFilters';
+import { filterOps, filtersToSearchParams, filtersFromSearchParams } from '../../components/overall/planFilterLogic';
+import type { PlanFilterState } from '../../components/overall/planFilterLogic';
 import { MoveBoatConfirm } from '../producao/MoveBoatConfirm';
 import { fabricaApi } from '../producao/fabricaApi';
 import type { ActiveOrderCard } from '../producao/fabricaApi';
@@ -94,8 +97,26 @@ export default function OverallPage(): ReactNode {
   const [groupBy, setGroupBy] = useState<GroupBy>('fase');
   // Q.147.B — ops da célula em drill-down (heatmap → lista).
   const [expandedCellOps, setExpandedCellOps] = useState<ScheduledOp[] | null>(null);
-  // Q.147.D — filtro/foco (barco/operador/fase/cliente). Esconde lanes vazias.
-  const [filterText, setFilterText] = useState('');
+  // Q.173.AF — filtros estruturados (12, persistidos no URL).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const planFilters: PlanFilterState = useMemo(
+    () => filtersFromSearchParams(searchParams),
+    [searchParams],
+  );
+  const setPlanFilters = useCallback(
+    (f: PlanFilterState) => {
+      const p = filtersToSearchParams(f);
+      // Preservar params não-filtros (como ?tab=...) que possam existir.
+      // Limpa só os que começam por f_
+      const next = new URLSearchParams(searchParams);
+      for (const key of Array.from(next.keys())) {
+        if (key.startsWith('f_')) next.delete(key);
+      }
+      for (const [k, v] of p.entries()) next.append(k, v);
+      setSearchParams(next, { replace: true });
+    },
+    [searchParams, setSearchParams],
+  );
   // Q.153.C0 — "Só barcos" (ligado por defeito): esconde acessórios/straps das
   // vistas (a Por Barco inundava com ~1912 lanes de straps dos realizados).
   const [boatsOnly, setBoatsOnly] = useState(true);
@@ -195,6 +216,16 @@ export default function OverallPage(): ReactNode {
     queryKey: planKeys.phaseCatalog(),
     queryFn: () => phasesCatalogApi.list(),
     staleTime: 60 * 60 * 1000,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+
+  // Q.173.AD — contexto de filtros do Gantt (mapas de nomes/sectores/boosts).
+  // Derivado do mesmo commit saudável que o plano — TTL 5 min, ≤5s de latência.
+  const { data: filtersCtx } = useQuery({
+    queryKey: planKeys.filtersContext(),
+    queryFn: () => filtersContextApi.get(),
+    staleTime: 5 * 60_000,
     retry: false,
     refetchOnWindowFocus: false,
   });
@@ -388,6 +419,16 @@ export default function OverallPage(): ReactNode {
           phase_name: String(op.phase_name ?? op.phase_id ?? 'UNKNOWN'),
           order_id: op.order_id ? String(op.order_id) : undefined,
           product_id: op.product_id ? String(op.product_id) : undefined,
+          // Q.173.AF — nome real do modelo nas lanes (decisão da auditoria:
+          // OF_P_ID cru era ilegível); código continua no tooltip/filtros.
+          product_name: (() => {
+            const code = op.product_id
+              ? String(op.product_id)
+              : op.order_id
+                ? filtersCtx?.order_products?.[String(op.order_id)]
+                : undefined;
+            return code ? filtersCtx?.product_names?.[code] : undefined;
+          })(),
           // Q.135.F4 — operadores vêm em `workers: [code,…]`, não `operator_id`.
           operator_id: op.operator_id
             ? String(op.operator_id)
@@ -426,6 +467,9 @@ export default function OverallPage(): ReactNode {
         order_id: it.of_id ? String(it.of_id) : undefined,
         // Q.153.C3 — modelo (OF_P_ID) p/ abrir o ModeloSheet de barcos só-realizados.
         product_id: it.modelo_id ? String(it.modelo_id) : undefined,
+        product_name: it.modelo_id
+          ? filtersCtx?.product_names?.[String(it.modelo_id)]
+          : undefined,
         operator_id: it.worker_id ?? undefined,
         operator_name: it.worker_nome ?? undefined,
         cliente: it.barco_nome ?? undefined,
@@ -447,7 +491,7 @@ export default function OverallPage(): ReactNode {
       (o) => !doneKeys.has(`${o.order_id ?? ''}__${o.phase_id}`),
     );
     return [...actualOps, ...planFiltered];
-  }, [commitDetail, localOverrides, actualsData, empNameByCode]);
+  }, [commitDetail, localOverrides, actualsData, empNameByCode, filtersCtx]);
 
   // Q.147.C — opções do editor de operação. Q.159 — só operadores ATIVOS
   // (a query já filtra via active_only; o `status === 'ACTIVE'` é defesa em
@@ -478,22 +522,18 @@ export default function OverallPage(): ReactNode {
       .sort((a, b) => a.name.localeCompare(b.name, 'pt'));
   }, [operations]);
 
-  // Q.147.D — operações filtradas (alimentam as VISTAS; as opções do editor e o
-  // editingOp usam `operations` completo). Filtrar esconde lanes vazias (as
-  // lanes derivam das ops passadas à vista).
+  // Q.147.D / Q.173.AF — operações filtradas (alimentam as VISTAS; as opções do
+  // editor e o editingOp usam `operations` completo). Filtrar esconde lanes vazias
+  // (as lanes derivam das ops passadas à vista).
   const filteredOperations = useMemo(() => {
     // Q.153.C0 — "Só barcos" (ligado por defeito): esconde acessórios/straps
     // (is_boat===false). Mantém os de is_boat desconhecido (undefined) — honesto,
     // não esconde por omissão; a vista Por Barco passa de ~1912 lanes para barcos.
     let base = operations;
     if (boatsOnly) base = base.filter((o) => o.is_boat !== false);
-    const q = filterText.trim().toLowerCase();
-    if (!q) return base;
-    return base.filter((o) =>
-      [o.order_id, o.operator_name, o.phase_name, o.cliente]
-        .some((v) => (v ?? '').toLowerCase().includes(q)),
-    );
-  }, [operations, filterText, boatsOnly]);
+    // Q.173.AF — 12 filtros estruturados (texto incluído em planFilters.text).
+    return filterOps(base, filtersCtx, planFilters);
+  }, [operations, boatsOnly, filtersCtx, planFilters]);
 
   // Op em edição: em modo Editar, clicar numa op de PLANO abre o editor.
   const editingOp = useMemo(() => {
@@ -1028,23 +1068,18 @@ export default function OverallPage(): ReactNode {
                 <Ship size={13} />
                 {boatsOnly ? 'Só barcos' : 'Mostrar acessórios'}
               </button>
-
-              {/* Q.147.D — filtro/foco: narra a vista a um subconjunto legível. */}
-              <input
-                type="search"
-                value={filterText}
-                onChange={(e) => setFilterText(e.target.value)}
-                placeholder="Filtrar barco / operador / fase…"
-                className="ml-auto text-xs px-2.5 py-1 rounded-md placeholder:text-slate-500"
-                style={{
-                  background: 'var(--bg-3)',
-                  color: 'var(--fg-0)',
-                  border: '1px solid var(--bd-2)',
-                  minWidth: 220,
-                  outline: 'none',
-                }}
-              />
             </div>
+
+            {/* Q.173.AF — barra de 12 filtros estruturados (substitui o input texto avulso). */}
+            <PlanFilters
+              filters={planFilters}
+              onChange={setPlanFilters}
+              ctx={filtersCtx}
+              phaseCatalog={phaseCatalog}
+              operators={operatorOptions}
+              opCount={filteredOperations.length}
+              boatCount={boatCount}
+            />
 
             {/* Vista ativa — preenche o resto e faz scroll INTERNO (sem super-scroll). */}
             <CellExpandProvider value={setExpandedCellOps}>

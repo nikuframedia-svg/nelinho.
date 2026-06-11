@@ -18,7 +18,7 @@ import type { DragEndEvent } from '@dnd-kit/core';
 import { useQuery } from '@tanstack/react-query';
 import { EmptyState } from '../../dark';
 import { Clickable } from '../../entitySheets';
-import { Timeline, buildSlots, dateToSlotIndex } from '../Timeline';
+import { Timeline, buildSlots, dateToSlotIndex, dateToSpanSlots } from '../Timeline';
 import type { TimelineScale } from '../Timeline';
 import { CountBadge } from './CountBadge';
 import type { TimelineLane, TimelineItem } from '../../dark';
@@ -68,10 +68,11 @@ function PessoaDropSlot({
   const { setNodeRef, isOver } = useDroppable({ id: dropId });
   const expand = useCellExpand();
 
+  // Q.173.AE — CountBadge com onClick drill-down em escalas semana/mês.
   if (compact) {
     return (
       <div ref={setNodeRef} className="h-full w-full flex items-center justify-center p-0.5">
-        {ops.length > 0 && <CountBadge ops={ops} />}
+        {ops.length > 0 && <CountBadge ops={ops} onClick={expand ? () => expand(ops) : undefined} />}
       </div>
     );
   }
@@ -241,10 +242,17 @@ export const PorPessoaView = memo(function PorPessoaView({
       if (!laneId || !slotId) continue;
       const slotIdx = slots.findIndex((s) => s.id === slotId);
       if (slotIdx === -1) continue;
-      result.push({ id: key, laneId, startSlot: slotIdx, spanSlots: 1 });
+      // Q.173.AE — spanSlots real: máximo das ops da célula.
+      const span = Math.max(
+        1,
+        ...ops.map((op) =>
+          dateToSpanSlots(op.start, op.end, op.duration_min, startDate, scale, slots.length),
+        ),
+      );
+      result.push({ id: key, laneId, startSlot: slotIdx, spanSlots: span });
     }
     return result;
-  }, [opsByPessoaSlot, slots]);
+  }, [opsByPessoaSlot, slots, startDate, scale]);
 
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
