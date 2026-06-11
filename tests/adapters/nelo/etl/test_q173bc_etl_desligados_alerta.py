@@ -20,7 +20,6 @@ from src.adapters.nelo.etl.runner import EtlRunResult
 from src.adapters.nelo.etl.sync import (
     _alert_etl_failure,
     _load_mirror_modules,
-    registered_mirrors,
 )
 from src.copilot.alerts.models import (
     CODE_ETL_SYNC_FAILED,
@@ -40,18 +39,38 @@ def _failed(source: str = "stock") -> EtlRunResult:
 
 
 def test_q173b_mirrors_partidos_fora_do_registo() -> None:
-    _load_mirror_modules()
-    registados = registered_mirrors()
-    assert "phase_history" not in registados, (
-        "phase_history consulta dbo.FasesOf (só existe no fake-ERP) — "
-        "religar exige repontar para OF_FP (decisão do Luis pendente)"
+    # Asserções ESTÁTICAS ao código-fonte (sem tocar no registo global nem
+    # fazer importlib.reload — ambos poluem outros testes sob ordem
+    # aleatória do pytest-randomly): o registo de mirrors é efeito de
+    # import, por isso a fonte de verdade auditável é o próprio código.
+    import inspect
+
+    from src.adapters.nelo.etl import phase_history, worker_assignment
+
+    loader_src = inspect.getsource(_load_mirror_modules)
+    assert '"phase_history"' not in loader_src, (
+        "phase_history voltou ao _load_mirror_modules — consulta dbo.FasesOf "
+        "(só existe no fake-ERP); religar exige repontar para OF_FP "
+        "(decisão do Luis pendente)"
     )
-    assert "worker_assignment" not in registados, (
-        "worker_assignment consulta dbo.WorkerAssignment (só fake-ERP)"
+    assert '"worker_assignment"' not in loader_src, (
+        "worker_assignment voltou ao _load_mirror_modules — consulta "
+        "dbo.WorkerAssignment (só fake-ERP)"
     )
-    # Os mirrors saudáveis continuam registados.
-    for vivo in ("stock", "checklist", "material_master", "purchase_orders"):
-        assert vivo in registados
+    # Os módulos desligados não podem registar-se no import (a linha
+    # register_mirror tem de estar comentada/removida).
+    for mod in (phase_history, worker_assignment):
+        active_lines = [
+            line for line in inspect.getsource(mod).splitlines()
+            if line.strip().startswith("register_mirror(")
+        ]
+        assert active_lines == [], (
+            f"{mod.__name__} regista-se no import — Q.173.B desligou-o"
+        )
+    # Os mirrors saudáveis continuam no loader.
+    for vivo in ('"stock"', '"checklist"', '"material_master"',
+                 '"purchase_orders"'):
+        assert vivo in loader_src
 
 
 @pytest.mark.asyncio
