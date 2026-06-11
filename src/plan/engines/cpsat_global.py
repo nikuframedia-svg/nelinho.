@@ -96,8 +96,33 @@ def run_cpsat_global(
     # reparação DESAPARECIAM do plano servido (auditoria 2026-06-11). Bónus:
     # o result fica comensurável com o baseline greedy no gate axioma-7
     # (ambos incluem reparações).
+    # Q.173.Q.1 — ordens MISTAS (reparação + fases principais na mesma rota):
+    # o piso 0 da reparação não pode atropelar irmãs de sequência INFERIOR já
+    # temporizadas pelo CP-SAT — o assign_concrete só serializa contra irmãs
+    # processadas antes, e o validador estrutural recusa o commit ("um barco
+    # não está em 2 fases"; 13 violações na validação live de 2026-06-11).
+    # Piso da reparação = fim (start+dur) da irmã anterior mais tardia.
+    # Ordens SÓ-reparação (as ~76 OFs) mantêm piso 0 → prioridade.
+    starts = dict(timing.starts_min)
+    main_by_order: Dict[str, List[Any]] = {}
+    for o in main_ops:
+        main_by_order.setdefault(str(o.order_id), []).append(o)
+    for r in repair_ops:
+        sibs = main_by_order.get(str(r.order_id))
+        if not sibs:
+            continue
+        r_seq = int(getattr(r, "sequence", 0) or 0)
+        floor_min = 0
+        for s in sibs:
+            if int(getattr(s, "sequence", 0) or 0) < r_seq:
+                s_start = int(starts.get(str(s.operation_id), 0))
+                s_dur = int(float(getattr(s, "duration_minutes", 0) or 0))
+                floor_min = max(floor_min, s_start + s_dur)
+        if floor_min:
+            starts[str(r.operation_id)] = floor_min
+
     all_ops = repair_ops + main_ops
-    scheduled = assign_concrete(all_ops, state, horizon_start, timing.starts_min)
+    scheduled = assign_concrete(all_ops, state, horizon_start, starts)
 
     # 4) result-dict canónico (mesmo contrato do decoder).
     result = build_result_dict(

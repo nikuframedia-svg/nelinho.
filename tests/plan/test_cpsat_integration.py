@@ -91,6 +91,23 @@ def test_run_cpsat_global_contract_and_merges_repairs_q173q():
                     f"operador {w} sobreposto"
                 )
             busy.setdefault(w, []).append((op["start_time"], op["end_time"]))
+    # Q.173.Q.1 — "um barco não está em 2 fases": NENHUMA sobreposição
+    # intra-ordem (o gap apanhado pela validação live de 2026-06-11: a
+    # reparação com piso 0 atropelava irmãs de sequência inferior — o
+    # validador estrutural recusava o commit com 13 violações).
+    by_order: dict = {}
+    for op in res["operations"]:
+        by_order.setdefault(op["order_id"], []).append(op)
+    for order_id, order_ops in by_order.items():
+        for i, a in enumerate(order_ops):
+            for b in order_ops[i + 1:]:
+                assert not (
+                    a["start_time"] < b["end_time"]
+                    and b["start_time"] < a["end_time"]
+                ), (
+                    f"ordem {order_id}: fases {a['phase_id']} e "
+                    f"{b['phase_id']} sobrepostas no tempo"
+                )
 
 
 def test_run_cpsat_global_no_ortools_returns_none(monkeypatch):
