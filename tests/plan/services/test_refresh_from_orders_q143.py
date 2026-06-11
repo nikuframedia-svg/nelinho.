@@ -78,11 +78,22 @@ def _wire(
         assigned.append((batch_id, order_id))
         return SimpleNamespace(batch_id=batch_id, order_id=order_id)
 
+    removed: list = []  # Q.173.W — (batch_id, order_id) largados
+
+    async def _remove_order(*, batch_id, order_id):
+        removed.append((batch_id, order_id))
+        # reflete a remoção no mapa para o resto do fluxo
+        ids = (existing_assignments or {}).get(batch_id)
+        if ids and order_id in ids:
+            ids.remove(order_id)
+        return True
+
     svc.orders_by_batch = _orders_by_batch  # type: ignore[assignment]
     svc.list_batches = _list_batches  # type: ignore[assignment]
     svc.create_batch = _create_batch  # type: ignore[assignment]
     svc.assign_order = _assign_order  # type: ignore[assignment]
-    return created, assigned
+    svc.remove_order = _remove_order  # type: ignore[assignment]
+    return created, assigned, removed
 
 
 @pytest.mark.asyncio
@@ -92,7 +103,7 @@ async def test_creates_batch_and_assigns_up_to_capacity(fake_session):
     fake_session.queue_scalars(orders)  # o único select (ordens elegíveis)
 
     svc = TransportBatchService(fake_session, TENANT)
-    created, assigned = _wire(svc)
+    created, assigned, _removed = _wire(svc)
 
     summary = await svc.refresh_from_orders(default_capacity=2, today=TODAY)
 
@@ -108,6 +119,9 @@ async def test_idempotent_does_not_reassign_already_placed_orders(fake_session):
     """2ª corrida (ordens já atribuídas) → 0 novas atribuições, 0 camiões."""
     d = TODAY + timedelta(days=3)
     orders = [_order(d) for _ in range(2)]
+    # Q.173.W — 2 selects: lookup do release (datas batem → 0 largadas) +
+    # ordens elegíveis do fluxo principal.
+    fake_session.queue_scalars(orders)
     fake_session.queue_scalars(orders)
 
     existing = _batch(d)
@@ -115,7 +129,7 @@ async def test_idempotent_does_not_reassign_already_placed_orders(fake_session):
     assignments = {existing.id: [o.id for o in orders]}
 
     svc = TransportBatchService(fake_session, TENANT)
-    created, assigned = _wire(
+    created, assigned, _removed = _wire(
         svc, existing_batches=[existing], existing_assignments=assignments,
     )
 
@@ -128,18 +142,24 @@ async def test_idempotent_does_not_reassign_already_placed_orders(fake_session):
 
 @pytest.mark.asyncio
 async def test_does_not_clobber_manual_move(fake_session):
-    """Uma ordem movida à mão para OUTRO camião não volta para o do seu dia."""
+    """Uma ordem movida à mão para OUTRO camião não volta para o do seu dia.
+
+    Q.173.W — o drag manual SINCRONIZA a promessa da ordem com a data do
+    camião (_sync_order_promise), por isso o release de obsoletos não a
+    larga (datas batem) e o refresh não a reatribui (já colocada)."""
     d = TODAY + timedelta(days=4)
-    o_moved, o_free = _order(d), _order(d)
+    o_moved, o_free = _order(d + timedelta(days=1)), _order(d)
+    # 2 selects: lookup do release + elegíveis do fluxo principal.
+    fake_session.queue_scalars([o_moved])
     fake_session.queue_scalars([o_moved, o_free])
 
     day_batch = _batch(d)
     other_batch = _batch(d + timedelta(days=1))
-    # o_moved foi arrastado para other_batch manualmente
+    # o_moved foi arrastado para other_batch; a promessa seguiu o camião
     assignments = {other_batch.id: [o_moved.id]}
 
     svc = TransportBatchService(fake_session, TENANT)
-    created, assigned = _wire(
+    created, assigned, removed = _wire(
         svc,
         existing_batches=[day_batch, other_batch],
         existing_assignments=assignments,
@@ -162,7 +182,7 @@ async def test_skips_frozen_batch(fake_session):
     frozen = _batch(d, status="FROZEN")
 
     svc = TransportBatchService(fake_session, TENANT)
-    created, assigned = _wire(svc, existing_batches=[frozen])
+    created, assigned, _removed = _wire(svc, existing_batches=[frozen])
 
     summary = await svc.refresh_from_orders(default_capacity=50, today=TODAY)
 
@@ -179,10 +199,37 @@ async def test_one_batch_per_distinct_date(fake_session):
     fake_session.queue_scalars(orders)
 
     svc = TransportBatchService(fake_session, TENANT)
-    created, assigned = _wire(svc)
+    created, assigned, _removed = _wire(svc)
 
     summary = await svc.refresh_from_orders(default_capacity=50, today=TODAY)
 
     assert summary["batches_created"] == 2
     assert summary["orders_assigned"] == 3
     assert {b.transport_date for b in created} == {d1, d2}
+
+
+@pytest.mark.asyncio
+async def test_q173w_release_de_assignments_obsoletos(fake_session):
+    """Q.173.W — promessa mudou no ERP → o camião antigo larga a ordem e o
+    refresh coloca-a no camião da data nova. Era o camião SHP-2026-06-19
+    com 45/50 assignments de datas já mudadas (auditoria 2026-06-11)."""
+    d_old, d_new = TODAY + timedelta(days=2), TODAY + timedelta(days=9)
+    o = _order(d_new)  # a promessa atual é d_new
+    fake_session.queue_scalars([o])       # lookup do release
+    fake_session.queue_scalars([o])       # elegíveis do fluxo principal
+
+    old_batch = _batch(d_old)
+    assignments = {old_batch.id: [o.id]}  # ...mas está presa ao camião antigo
+
+    svc = TransportBatchService(fake_session, TENANT)
+    created, assigned, removed = _wire(
+        svc, existing_batches=[old_batch], existing_assignments=assignments,
+    )
+
+    summary = await svc.refresh_from_orders(default_capacity=50, today=TODAY)
+
+    assert summary["orders_released"] == 1
+    assert removed == [(old_batch.id, o.id)]
+    # re-colocada no camião da data NOVA (criado pelo refresh)
+    assert summary["orders_assigned"] == 1
+    assert any(b.transport_date == d_new for b in created)
