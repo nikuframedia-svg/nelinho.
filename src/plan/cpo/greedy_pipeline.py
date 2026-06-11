@@ -163,11 +163,18 @@ class GreedyPipeline:
             post_desmolde_buffer_minutes=post_desmolde_buffer_minutes,
         )
         core_elapsed = time.time() - t0
-        # Report phases 4-7 together — they share one decoder pass.
-        timings.append(PhaseTiming(4, "setup_grouping", core_elapsed / 4, True))
-        timings.append(PhaseTiming(5, "multi_center_dispatch", core_elapsed / 4, True))
-        timings.append(PhaseTiming(6, "workforce_assignment", core_elapsed / 4, True))
-        timings.append(PhaseTiming(7, "buffer_jit", core_elapsed / 4, True))
+        # Q.173.I — as fases 4-7 partilham UMA passagem do decoder e não há
+        # breakdown medido; reportar core_elapsed/4 por fase era telemetria
+        # fabricada (invariante #8). Uma entrada única com o tempo REAL.
+        timings.append(PhaseTiming(
+            4,
+            "decoder_core (fases 4-7 partilhadas: setup_grouping, "
+            "multi_center_dispatch, workforce_assignment, buffer_jit)",
+            core_elapsed,
+            core_elapsed <= sum(
+                self.phase_budgets.get(p, 0.0) for p in (4, 5, 6, 7)
+            ),
+        ))
 
         # Phase 8 — Scoring (annotate schedule with aggregate anchors + idle).
         t0 = time.time()

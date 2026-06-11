@@ -428,7 +428,11 @@ async def test_orchestrator_returns_recommendation_for_each_hypothesis_type(monk
 
     assert result.recommendation is not None
     assert "Manutenção" in result.recommendation["action"]
-    assert result.recommendation["cost_estimate_eur"] == 400
+    # Q.173.I — sem €/horas inventados (invariante #8): a recomendação é
+    # qualitativa e declara explicitamente que não há estimativa medida.
+    assert "cost_estimate_eur" not in result.recommendation
+    assert "downtime_hours" not in result.recommendation
+    assert "sem estimativa" in result.recommendation["estimate"]
 
 
 @pytest.mark.asyncio

@@ -514,12 +514,17 @@ def _build_causal_chain(h: Hypothesis, trigger: TriggerType) -> List[str]:
 
 
 def _recommend_action(h: Hypothesis) -> Dict[str, Any]:
-    """Map hypothesis type to a concrete operator action."""
+    """Map hypothesis type to a concrete operator action.
+
+    Q.173.I — sem `cost_estimate_eur`/`downtime_hours` inventados
+    (invariante #8): o sistema não tem dados reais de custo/paragem de
+    manutenção de moldes; a recomendação é qualitativa e di-lo.
+    """
     if h.type == "mold_degradation":
         return {
             "action": f"Manutenção do molde {h.entity}",
-            "cost_estimate_eur": 400,
-            "downtime_hours": 4,
+            "estimate": "sem estimativa — custo/paragem variam por molde; "
+                        "pedir orçamento à manutenção",
             "alternative": (
                 "Rerouting temporário para outro molde compatível "
                 "(0 downtime, throughput inferior)"
@@ -528,13 +533,11 @@ def _recommend_action(h: Hypothesis) -> Dict[str, Any]:
     if h.type == "worker_skill":
         return {
             "action": f"Substituir {h.entity} por operador mais experiente",
-            "cost_estimate_eur": 0,
             "alternative": "Par com sénior para supervisão (formação)",
         }
     if h.type == "overload":
         return {
             "action": "Atrasar barcos não-urgentes para aliviar pressão",
-            "cost_estimate_eur": 0,
             "alternative": "Turno extra (custo €/h × headcount)",
         }
     return {"action": "Revisão manual", "detail": "Tipo de hipótese desconhecido"}

@@ -60,10 +60,12 @@ class ExplanationEngine:
                 ],
                 "suggestion": {
                     "title": "Increase safety stock",
-                    "description": "...",
-                    "estimatedImpact": {...}
+                    "description": "..."
                 }
             }
+
+        (Os ``weight`` do OTD são MEDIDOS — % real das causas contadas na
+        janela; nada autoral. Q.173.I removeu o ``estimatedImpact``.)
         """
         if end_date is None:
             end_date = local_today()
@@ -218,33 +220,31 @@ class ExplanationEngine:
         
         top_cause = max(weighted.items(), key=lambda x: x[1])
         
+        # Q.173.I — sem `estimatedImpact` inventado (invariante #8): os
+        # "+5%/+8%" eram números autorais sem medição. A sugestão é
+        # qualitativa até existir um cost ledger real que meça impacto.
         suggestions_map = {
             "Machine Issues": {
                 "title": "Increase preventive maintenance",
                 "description": "Schedule more frequent maintenance to reduce breakdowns",
-                "estimatedImpact": {"otd": "+5%", "cost": "+2%"},
             },
             "Capacity Constraints": {
                 "title": "Increase safety stock",
                 "description": "Build buffer inventory to handle demand spikes",
-                "estimatedImpact": {"otd": "+8%", "inventory": "+15%"},
             },
             "Setup Delays": {
                 "title": "Optimize changeover process",
                 "description": "Reduce setup times through SMED techniques",
-                "estimatedImpact": {"otd": "+3%", "efficiency": "+10%"},
             },
             "Material Shortages": {
                 "title": "Improve material planning",
                 "description": "Better forecasting and supplier coordination",
-                "estimatedImpact": {"otd": "+6%", "cost": "+1%"},
             },
         }
-        
+
         return suggestions_map.get(top_cause[0], {
             "title": "Review scheduling process",
             "description": "Analyze late orders to identify patterns",
-            "estimatedImpact": {"otd": "+2%"},
         })
     
     async def explain_margin(
@@ -270,20 +270,21 @@ class ExplanationEngine:
                 "Margin = (revenue - direct cost) / revenue. Direct cost "
                 "is dominated by labour, overtime and rework loops."
             ),
+            # Q.173.I — sem pesos (55/25/20%) nem impactos ("+2-4 pp")
+            # inventados (invariante #8): nunca foram medidos. A explicação
+            # é estrutural (fórmula + alavancas), sem números autorais, até
+            # o cost ledger real permitir medir os pesos.
             "topFactors": [
                 {
                     "name": "Direct labour",
-                    "weight": "55%",
                     "description": "workers × hours × hourly rate",
                 },
                 {
                     "name": "Rework",
-                    "weight": "25%",
-                    "description": "lixagem/pintura return rates ~42-49%",
+                    "description": "lixagem/pintura return loops",
                 },
                 {
                     "name": "Overtime premium",
-                    "weight": "20%",
                     "description": "hours beyond shift × CoeficienteX bonus",
                 },
             ],
@@ -294,7 +295,6 @@ class ExplanationEngine:
                     "single highest leverage item. See quality_risk_score "
                     "and the Pintura return rates for diagnostics."
                 ),
-                "estimatedImpact": {"margin": "+2-4 pp"},
             },
             "advisory_mode": True,
         }
@@ -319,20 +319,19 @@ class ExplanationEngine:
                 "between Laminagem→Pintura because the post-Laminagem "
                 "queue absorbs cure-time variance."
             ),
+            # Q.173.I — sem pesos (60/25/15%) nem "+1.5-2x" inventados
+            # (invariante #8): nunca foram medidos.
             "topFactors": [
                 {
                     "name": "WIP buffer (Laminagem→Pintura)",
-                    "weight": "60%",
                     "description": "Largest queue; cure variance amplifies dwell",
                 },
                 {
                     "name": "Finished-goods buffer",
-                    "weight": "25%",
                     "description": "Pre-shipment hold for batched transport",
                 },
                 {
                     "name": "Raw material",
-                    "weight": "15%",
                     "description": "Resin / fibre safety stock",
                 },
             ],
@@ -342,7 +341,6 @@ class ExplanationEngine:
                     "Apply a CONWIP limit at the cure exit (max boats "
                     "in queue). Drives turnover up by reducing dwell."
                 ),
-                "estimatedImpact": {"inventory_turnover": "+1.5-2x"},
             },
             "advisory_mode": True,
         }

@@ -211,7 +211,11 @@ def test_greedy_pipeline_produces_phase_timings():
     )
     assert result.schedule["operations"]
     phases = [t.phase for t in result.phase_timings]
-    assert phases == [1, 2, 3, 4, 5, 6, 7, 8]
+    # Q.173.I — fases 4-7 partilham uma passagem do decoder; entrada ÚNICA
+    # com o tempo real medido (o split core/4 por fase era fabricado).
+    assert phases == [1, 2, 3, 4, 8]
+    decoder_core = next(t for t in result.phase_timings if t.phase == 4)
+    assert "fases 4-7" in decoder_core.name
 
 
 def test_greedy_pipeline_demand_aggregation_drops_zero_duration():
