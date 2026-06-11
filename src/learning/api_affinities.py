@@ -32,6 +32,10 @@ _tenant_id = require_tenant_header
 
 class AffinitySignal(BaseModel):
     operator_id: str
+    # Q.173.AG — código ERP do operador (E_ID): as lanes do plano usam
+    # employee_code, não UUID — o badge de afinidade comparava UUID com
+    # código e nunca acendia (auditoria 2026-06-11).
+    operator_code: str | None = None
     operator_name: str
     phase_id: str
     phase_name: str
@@ -87,8 +91,10 @@ async def get_affinities(
         Employee.id.in_(operator_ids),
     )
     emp_result = await session.execute(emp_stmt)
-    emp_map: dict[UUID, str] = {
-        e.id: e.employee_name for e in emp_result.scalars().all()
+    _emps = list(emp_result.scalars().all())
+    emp_map: dict[UUID, str] = {e.id: e.employee_name for e in _emps}
+    code_map: dict[UUID, str | None] = {
+        e.id: getattr(e, "employee_code", None) for e in _emps
     }
 
     # Nomes das fases (primeira ocorrência por phase_id no tenant)
@@ -109,6 +115,7 @@ async def get_affinities(
     return [
         AffinitySignal(
             operator_id=str(a.operator_id),
+            operator_code=code_map.get(a.operator_id),
             operator_name=emp_map.get(a.operator_id, str(a.operator_id)),
             phase_id=a.phase_id,
             phase_name=phase_map.get(a.phase_id, a.phase_id),

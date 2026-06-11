@@ -629,17 +629,24 @@ async def get_modelo_summary(
 ) -> ModeloSummary:
     """Sheet "Modelo" — resumo de um modelo NELO.
 
-    `model_id` é a STRING business-key (product_name no ERP). Sem FK
-    rigorosa nesta versão porque o ERP mantém o identificador como string.
+    `model_id` aceita o NOME (product_name) ou o CÓDIGO numérico
+    (OF_P_ID = production_orders.product_id). Q.173.AG — o /overall abre
+    o ModeloSheet com o código (cpo_commit_orders injeta product_id) e a
+    sonda por product_name devolvia tabs vazias + título numérico
+    (auditoria 2026-06-11).
     """
-    # 1. Sondamos production_orders por product_name — define se o modelo
-    #    "existe" (tem encomendas registadas).
+    # 1. Sondamos production_orders — por código numérico (product_id)
+    #    quando o id é dígitos, senão por product_name.
+    if model_id.isdigit():
+        orders_filter = ProductionOrder.product_id == int(model_id)
+    else:
+        orders_filter = ProductionOrder.product_name == model_id
     orders_stmt = (
         select(ProductionOrder)
         .where(
             and_(
                 ProductionOrder.tenant_id == tenant_id,
-                ProductionOrder.product_name == model_id,
+                orders_filter,
             )
         )
     )
@@ -756,9 +763,14 @@ async def get_modelo_summary(
         session, tenant_id, routing_template_out
     )
 
+    # Q.173.AG — quando resolvido por código, o nome humano vem das ordens
+    # (antes o título do sheet era o número cru).
+    _human_name = next(
+        (o.product_name for o in orders if o.product_name), model_id,
+    )
     return ModeloSummary(
         model_id=model_id,
-        model_name=model_id,  # business-key é também o nome humano no NELO
+        model_name=_human_name,
         product_type=product_type,
         routing_template=routing_template_out,
         active_orders_count=active_orders_count,
@@ -1190,11 +1202,16 @@ async def get_encomenda_summary(
 
 @router.get("/operador/{employee_id}", response_model=OperadorSummary)
 async def get_operador_summary(
-    employee_id: UUID,
+    employee_id: str,
     tenant_id: UUID = Depends(require_tenant_header),
     session: AsyncSession = Depends(get_session),
 ) -> OperadorSummary:
     """Sheet "Operador" — resumo de um operador NELO.
+
+    Q.173.AG — aceita UUID OU employee_code: as ops do plano transportam
+    o operador como `workers: [code]` (decoder, Q.148) e clicar num
+    operador na vista Por Pessoa rebentava com 422 (o path param era
+    tipado UUID; auditoria 2026-06-11).
 
     Devolve metadados HR básicos + top-5 fases por afinidade aprendida
     (PhaseOperatorAffinity, score DESC) + contagem total de fases para
@@ -1205,11 +1222,15 @@ async def get_operador_summary(
     Lista vazia de `top_phases` quando o operador existe mas ainda não
     há sinal aprendido — honesto, sem mock.
     """
-    # 1. Operador — 404 se não existir no tenant.
+    # 1. Operador — UUID direto ou employee_code; 404 se não existir.
+    try:
+        emp_filter = Employee.id == UUID(employee_id)
+    except (ValueError, AttributeError):
+        emp_filter = Employee.employee_code == str(employee_id)
     emp_stmt = select(Employee).where(
         and_(
             Employee.tenant_id == tenant_id,
-            Employee.id == employee_id,
+            emp_filter,
         )
     )
     emp_result = await session.execute(emp_stmt)
@@ -1230,7 +1251,7 @@ async def get_operador_summary(
         .where(
             and_(
                 PhaseOperatorAffinity.tenant_id == tenant_id,
-                PhaseOperatorAffinity.operator_id == employee_id,
+                PhaseOperatorAffinity.operator_id == employee.id,
             )
         )
         .order_by(PhaseOperatorAffinity.score.desc(), PhaseOperatorAffinity.phase_id)
@@ -1276,7 +1297,7 @@ async def get_operador_summary(
         .where(
             and_(
                 PhaseOperatorAffinity.tenant_id == tenant_id,
-                PhaseOperatorAffinity.operator_id == employee_id,
+                PhaseOperatorAffinity.operator_id == employee.id,
             )
         )
     )

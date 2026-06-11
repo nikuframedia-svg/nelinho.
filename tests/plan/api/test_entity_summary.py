@@ -1335,3 +1335,67 @@ async def test_customer_of_ids_from_erp_mirror_absent():
     from src.plan.api.entity_summary import _customer_of_ids_from_erp
 
     assert await _customer_of_ids_from_erp(_BoomSession(), "4711") == []
+
+
+# ─── Q.173.AG — operador por employee_code + modelo por código numérico ──────
+
+
+def test_q173ag_operador_aceita_employee_code():
+    """As ops do plano trazem workers=[employee_code] — clicar num operador
+    na Por Pessoa dava 422 porque o path param era tipado UUID."""
+    session = FakeSession()
+    emp = SimpleNamespace(
+        id=uuid4(),
+        tenant_id=TEST_TENANT_ID,
+        employee_code="20365",
+        employee_name="João Alvão",
+        job_title="Laminador",
+        department="Laminagem",
+        active=True,
+    )
+    session.queue_scalar(emp)        # lookup por employee_code
+    session.queue_scalars([])        # afinidades (vazio honesto)
+    session.queue_scalar(0)          # contagem de fases
+
+    client = _minimal_app(session)
+    r = client.get("/v1/entity/operador/20365", headers=_HEADERS)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["operator_name"] == "João Alvão"
+
+
+def test_q173ag_operador_uuid_continua_a_funcionar():
+    session = FakeSession()
+    emp = SimpleNamespace(
+        id=uuid4(),
+        tenant_id=TEST_TENANT_ID,
+        employee_code="20365",
+        employee_name="João Alvão",
+        job_title=None,
+        department="Laminagem",
+        active=True,
+    )
+    session.queue_scalar(emp)
+    session.queue_scalars([])
+    session.queue_scalar(0)
+
+    client = _minimal_app(session)
+    r = client.get(f"/v1/entity/operador/{emp.id}", headers=_HEADERS)
+    assert r.status_code == 200
+
+
+def test_q173ag_modelo_por_codigo_numerico_resolve_nome():
+    """O /overall abre o ModeloSheet com OF_P_ID (código) — a sonda por
+    product_name devolvia tabs vazias + título numérico."""
+    session = FakeSession()
+    o = _order(product_name="Ocean Ski 560 L")
+    o.product_id = 20155
+    session.queue_scalars([o])       # sonda por product_id == 20155
+    session.queue_scalar(None)       # routing resolve (sem template)
+
+    client = _minimal_app(session)
+    r = client.get("/v1/entity/modelo/20155", headers=_HEADERS)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["model_name"] == "Ocean Ski 560 L"  # nome humano, não o número
+    assert body["active_orders_count"] == 1
