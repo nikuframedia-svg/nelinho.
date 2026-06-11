@@ -403,20 +403,22 @@ MEASURE_REGISTRY: dict[str, MeasureSpec] = {
         unit=CanonicalUnit.CONTAGEM,
         dimensions_supported=frozenset({"fase"}),
         business_decision=(
-            "Q.99 Onda 1 / Agente A: contagem de OFs em curso "
-            "(FP_SEQUENCIA<30, critério canónico Q.79). Fonte: "
-            "marts.v_ofs_em_curso_snapshot. Anchor factory_raw espelho: "
-            "4 233 OFs activas em 32 fases (top: Laminagem peças 1 233, "
-            "Corte peças 1 100). CONTAGEM adimensional. Snapshot do "
-            "estado actual — dim 'tempo' NÃO suportada (pergunta 'este "
-            "mês' → abstain via assert_dims_supported). Dim 'material' "
-            "fora do escopo."
+            "Q.99 Onda 1 / Agente A / Q.173.AK: contagem de OFs abertas "
+            "(FP_SEQUENCIA<30, critério canónico Q.79 ERP). Fonte: "
+            "marts.v_ofs_em_curso_snapshot. Anchor live 2026-06-11: "
+            "8 533 OFs (SUM n_ofs por 34 fases). CONTAGEM adimensional. "
+            "Snapshot do estado actual — dim 'tempo' NÃO suportada. "
+            "ATENÇÃO: NÃO confundir com o critério NELO 'em produção' "
+            "(v_of_em_producao ≈ 1 147, operação aberta na fase actual "
+            "sem OF_DATAFIM, usado pelo CPO). São dois universos distintos: "
+            "este é o critério ERP broad (8 533); o CPO usa o critério "
+            "NELO restrito (1 147). Dim 'material' fora do escopo."
         ),
-        description="Número de OFs em curso (não-terminais, snapshot actual)",
+        description="OFs abertas (todas, critério ERP FP_SEQUENCIA<30) — anchor live 8 533",
         synonyms=(
-            "OFs", "ordens de fabrico", "em curso", "abertas", "activas",
-            "produção", "a fabricar", "kayaks", "barcos em produção",
-            "encomendas activas",
+            "OFs abertas", "OFs em curso", "ordens de fabrico abertas",
+            "ordens abertas", "em curso", "abertas", "activas",
+            "a fabricar", "kayaks em curso", "encomendas activas",
         ),
     ),
     "producao_pecas_laminadas.total": MeasureSpec(
@@ -998,7 +1000,7 @@ MEASURE_REGISTRY: dict[str, MeasureSpec] = {
             "SUM — somar 30 dias × 12 meses não dá 360 dias). Cube faz "
             "AVG; para ponderar pelo n_ofs ver derived KPI."
         ),
-        description="Lead time médio (dias) de OFs fechadas no mês",
+        description="Lead time médio (dias) de OFs fechadas no mês [média de médias mensais, não ponderada]",
         synonyms=(
             "lead time", "tempo de produção", "duração OF",
             "dias por OF", "tempo médio OF", "tempo até fechar",
@@ -1015,7 +1017,7 @@ MEASURE_REGISTRY: dict[str, MeasureSpec] = {
             "(0.5) — mais robusto a outliers do que AVG. Agregação CROSS-row "
             "é AVG (médio dos P50 mensais), NÃO SUM."
         ),
-        description="Lead time MEDIANO (P50) das OFs por mês (dias)",
+        description="Lead time MEDIANO (P50) das OFs por mês (dias) [média de medianas mensais, não ponderada]",
         synonyms=(
             "lead time mediano", "P50 lead time", "mediana duração OF",
             "mediana tempo produção",
@@ -1031,7 +1033,7 @@ MEASURE_REGISTRY: dict[str, MeasureSpec] = {
             "90 % das OFs fecharam em <= este número de dias. Útil para "
             "SLA / promessas de prazo. Cross-row aggregation AVG, NÃO SUM."
         ),
-        description="Lead time P90 das OFs por mês (dias)",
+        description="Lead time P90 das OFs por mês (dias) [média de P90 mensais, não ponderada]",
         synonyms=(
             "P90 lead time", "lead time pior caso", "SLA OFs",
             "duração 90 percentil",
@@ -1104,7 +1106,7 @@ MEASURE_REGISTRY: dict[str, MeasureSpec] = {
             "Q.108.W1: AVG horas entre proposed_at e (executed_at ou "
             "rolled_back_at). TEMPO; cross-row AVG (NÃO SUM)."
         ),
-        description="Tempo médio de aprovação Q.17 (horas)",
+        description="Tempo médio de aprovação Q.17 (horas) [média de médias mensais, não ponderada]",
         synonyms=(
             "tempo aprovação", "approval time", "horas aprovação",
             "latência decisória",
@@ -1119,7 +1121,7 @@ MEASURE_REGISTRY: dict[str, MeasureSpec] = {
             "Q.108.W1: PERCENTILE_CONT(0.5) mediano das horas de aprovação. "
             "TEMPO; cross-row AVG."
         ),
-        description="Tempo mediano (P50) de aprovação Q.17 (horas)",
+        description="Tempo mediano (P50) de aprovação Q.17 (horas) [média de medianas mensais, não ponderada]",
         synonyms=(
             "P50 aprovação", "mediana aprovação", "tempo mediano decisão",
         ),
@@ -1318,7 +1320,7 @@ MEASURE_REGISTRY: dict[str, MeasureSpec] = {
             "Q.108.W2: AVG horas idle entre fim de fase e início da seguinte. "
             "Mede queue entre estações. TEMPO; cross-row AVG."
         ),
-        description="Tempo médio de transição entre fases (horas)",
+        description="Tempo médio de transição entre fases (horas) [média de médias mensais, não ponderada]",
         synonyms=(
             "idle time", "tempo entre fases", "queue", "espera entre fases",
             "tempo morto", "transition time",
@@ -1330,7 +1332,7 @@ MEASURE_REGISTRY: dict[str, MeasureSpec] = {
         dimensions_supported=frozenset({"tempo", "fase_origem", "fase_destino"}),
         aggregation="AVG",
         business_decision="Q.108.W2: P50 horas transição. Cross-row AVG.",
-        description="Mediana das horas de transição entre fases",
+        description="Mediana das horas de transição entre fases [média de medianas mensais, não ponderada]",
         synonyms=("mediana transição", "P50 idle"),
     ),
     "producao_phase_transition.transition_p90": MeasureSpec(
@@ -1342,7 +1344,7 @@ MEASURE_REGISTRY: dict[str, MeasureSpec] = {
             "Q.108.W2: P90 horas transição — 90% das transições em <= este nº "
             "horas. SLA-like."
         ),
-        description="P90 das horas de transição entre fases",
+        description="P90 das horas de transição entre fases [média de P90 mensais, não ponderada]",
         synonyms=("pior transição", "P90 transição"),
     ),
     # ── Q.108.W2: lead time entrega ──
@@ -1366,7 +1368,7 @@ MEASURE_REGISTRY: dict[str, MeasureSpec] = {
             "Q.108.W2: AVG dias entre MAX(OFFP_DATAFIM) e TR_DATA. "
             "TEMPO em dias; cross-row AVG."
         ),
-        description="Lead time entrega médio (dias)",
+        description="Lead time entrega médio (dias) [média de médias mensais, não ponderada]",
         synonyms=(
             "lead time entrega", "dias até entregar", "tempo entrega",
             "dias OF→cliente", "delivery lead time",
@@ -1378,7 +1380,7 @@ MEASURE_REGISTRY: dict[str, MeasureSpec] = {
         dimensions_supported=frozenset({"tempo"}),
         aggregation="AVG",
         business_decision="Q.108.W2: P50 dias lead time entrega.",
-        description="Mediana lead time entrega (dias)",
+        description="Mediana lead time entrega (dias) [média de medianas mensais, não ponderada]",
         synonyms=("mediana entrega",),
     ),
     "logistica_lead_time_entrega.lead_time_p90": MeasureSpec(
@@ -1387,7 +1389,7 @@ MEASURE_REGISTRY: dict[str, MeasureSpec] = {
         dimensions_supported=frozenset({"tempo"}),
         aggregation="AVG",
         business_decision="Q.108.W2: P90 dias lead time entrega — SLA candidato.",
-        description="P90 lead time entrega (dias)",
+        description="P90 lead time entrega (dias) [média de P90 mensais, não ponderada]",
         synonyms=("SLA entrega", "P90 entrega"),
     ),
     # ── Q.108.W3: idade de moldes ──
@@ -2075,9 +2077,14 @@ def list_measure_catalog() -> list[dict[str, object]]:
       - `dimensions`: lista ordenada de `dimensions_supported`.
       - `supports_period`: True se a medida tem a dimensão `tempo` (habilita o
         filtro "este mês" no card).
+      - `sql`: expressão SQL da measure no YAML (ex: "qty_out * P_PRECOCUSTO").
+        Vazio se o YAML não tiver correspondência.
+      - `sql_table`: fonte do cube (sql_table ou sql do cube-level do YAML).
     """
+    sql_map = get_sql_map()
     catalog: list[dict[str, object]] = []
     for name, spec in MEASURE_REGISTRY.items():
+        sql_expr, sql_table = sql_map.get(name, ("", ""))
         catalog.append(
             {
                 "name": name,
@@ -2086,10 +2093,54 @@ def list_measure_catalog() -> list[dict[str, object]]:
                 "domain": name.split(".", 1)[0],
                 "dimensions": sorted(spec.dimensions_supported),
                 "supports_period": "tempo" in spec.dimensions_supported,
+                "sql": sql_expr,
+                "sql_table": sql_table,
             }
         )
     catalog.sort(key=lambda m: (m["domain"], m["name"]))
     return catalog
+
+
+def _build_sql_map() -> dict[str, tuple[str, str]]:
+    """Q.173.AL — lê cube/model/*.yml e devolve {cube.measure: (sql_expr, sql_table)}.
+
+    Usado por `list_measure_catalog` para expor fórmula+fonte no catálogo.
+    Lazy import do yaml_validator para evitar ciclo (yaml_validator importa daqui).
+    Cache em módulo (imutável após startup).
+    """
+    from pathlib import Path as _Path
+    import yaml as _yaml
+
+    cube_dir = _Path(__file__).resolve().parents[3] / "cube" / "model"
+    result: dict[str, tuple[str, str]] = {}
+    for yml_path in cube_dir.glob("*.yml"):
+        try:
+            with yml_path.open("r", encoding="utf-8") as fh:
+                raw = _yaml.safe_load(fh)
+            for cube in raw.get("cubes", []):
+                cube_name: str = cube.get("name", "")
+                sql_table: str = cube.get("sql_table") or cube.get("sql") or ""
+                for m in cube.get("measures", []):
+                    key = f"{cube_name}.{m['name']}"
+                    result[key] = (m.get("sql", ""), sql_table)
+        except Exception as exc:  # um YML mau não derruba o catálogo
+            import logging as _logging
+
+            _logging.getLogger(__name__).debug(
+                "sql_map: yml ilegível %s (%s)", yml_path.name, exc,
+            )
+    return result
+
+
+_SQL_MAP: dict[str, tuple[str, str]] | None = None
+
+
+def get_sql_map() -> dict[str, tuple[str, str]]:
+    """Singleton do mapa sql (lazy-built)."""
+    global _SQL_MAP
+    if _SQL_MAP is None:
+        _SQL_MAP = _build_sql_map()
+    return _SQL_MAP
 
 
 def can_sum_measures(measures: list[str]) -> tuple[bool, str | None]:
@@ -2561,6 +2612,10 @@ _MATERIAL_GENERIC_TOKENS = {
     "efeitos", "efeito", "geral", "generico", "genérico",
     "fase", "fases", "qualidade", "material", "materiais",
     "total", "mensal", "consumo", "disciplina",
+    # Termos comuns em perguntas sobre OFs/sistema que NÃO identificam material
+    # (Q.173.AM fix q5: "Vortex Flexx s/sistema" exportava "sistema" → falso-match).
+    "sistema", "sistemas", "agora", "abertas", "curso", "activas",
+    "temos", "tenho", "quantos", "quantas",
 }
 
 

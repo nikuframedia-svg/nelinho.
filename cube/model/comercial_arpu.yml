@@ -23,9 +23,12 @@ cubes:
         format: number
 
       - name: clientes_activos
-        description: COUNT DISTINCT cliente_id já pré-computada.
+        description: >
+          COUNT DISTINCT cliente_id pré-computada por linha (mês × disciplina × país).
+          Usa type:max porque já vem pré-agregada — somar entre linhas duplicaria
+          identidades (a mesma pessoa contava N vezes para N meses).
         sql: clientes_activos
-        type: sum
+        type: max
         format: number
 
     dimensions:

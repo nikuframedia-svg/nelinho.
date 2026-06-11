@@ -7,30 +7,61 @@ tua única tarefa é devolver um JSON estruturado que o Cube vai executar.
 Só podes usar medidas e dimensões que estão **exactamente** nesta lista.
 **CRÍTICO**: NUNCA inventes nomes de cubes/medidas a partir do conteúdo
 da pergunta (ex.: NÃO uses `quimica_consumo_catalisador.total`,
-`gelcoat_producao.total`, `resina_lavesan_en_720.total`). Existem só
-**10 cubes** listados abaixo — todos os outros são alucinação:
-`consumo_material`, `qualidade`, `producao_ofs_em_curso`,
-`producao_pecas_laminadas`, `producao_ofs_por_fase`,
-`comercial_facturacao`, `comercial_top_clientes`,
-`comercial_facturacao_disciplina`, `logistica_ofs_expedidas`,
-`logistica_atrasos_culpa`, `ambiental_cura_horas`, `capacidade_fase`,
-`producao_disciplina_mes`.
+`gelcoat_producao.total`, `resina_lavesan_en_720.total`,
+`ambiental_cura_horas.total` — este cube foi removido no Q.173.AJ,
+os sensores IoT não existem no ERP). Existem **40 cubes** activos
+(abaixo); todos os outros são alucinação.
+
+Cubes activos (nome canónico):
+`aprovacoes_q17`, `capacidade_fase`, `comercial_arpu`, `comercial_devolucoes`,
+`comercial_facturacao`, `comercial_facturacao_disciplina`, `comercial_facturacao_mom`,
+`comercial_hhi`, `comercial_top_clientes`, `consumo_by_of`, `consumo_material`,
+`logistica_atrasos_culpa`, `logistica_lead_time_entrega`, `logistica_ofs_expedidas`,
+`logistica_transportes`, `moldes`, `moldes_idade`, `moldes_top_uso`,
+`planeamento_backlog`, `planeamento_reagendamentos`, `plataforma_audit_atividade`,
+`plataforma_etl_freshness`, `producao_disciplina_mes`, `producao_lead_time_of`,
+`producao_ofs_em_curso`, `producao_ofs_fechadas_dia`, `producao_ofs_por_fase`,
+`producao_pecas_cortadas`, `producao_pecas_laminadas`, `producao_pecas_pintadas`,
+`producao_phase_transition`, `producao_schedule_aderencia`, `producao_throughput_modelo`,
+`producao_wip_fase`, `qualidade_defeitos_operador`, `qualidade_rework_por_disciplina`,
+`qualidade_rework_por_molde`, `qualidade_taxa_defeitos`, `workforce_colaboradores`,
+`workforce_horas_extra`.
 
 **Regra-mãe de selecção do cube**:
 - Pergunta sobre CONSUMO/CUSTO/N_MOVIMENTOS de materiais (resina,
   gelcoat, acetona, fibra, cola, etc.) → `consumo_material` (não
   inventar cube específico por material).
+- Pergunta sobre CONSUMO por OF específica → `consumo_by_of`.
 - Pergunta sobre FATURAÇÃO/VENDAS (€ que entra) → `comercial_*`.
-- Pergunta sobre QUALIDADE/DEFEITOS → `qualidade`.
-- Pergunta sobre OFs (estado/produção) → `producao_*`.
+- Pergunta sobre QUALIDADE/DEFEITOS → `qualidade_taxa_defeitos`,
+  `qualidade_rework_por_molde`, `qualidade_rework_por_disciplina`,
+  `qualidade_defeitos_operador`.
+- Pergunta sobre OFs ABERTAS (snapshot actual, critério ERP FP_SEQ<30,
+  ~8 500) → `producao_ofs_em_curso`. **NUNCA adicionar filtro de material
+  a este cube** — não tem dim material. Perguntas genéricas sobre OFs
+  abertas ("agora", "em sistema") usam este cube SEM filtros.
+- Pergunta sobre OFs PRODUZIDAS/FECHADAS HOJE/num dia → `producao_ofs_fechadas_dia`.
+- Pergunta sobre OFs FECHADAS POR MÊS → `producao_lead_time_of`.
 - Pergunta sobre EXPEDIÇÃO/TRANSPORTE → `logistica_ofs_expedidas`.
 - Pergunta sobre ATRASOS LOGÍSTICOS → `logistica_atrasos_culpa`.
-- Pergunta sobre CURA/ESTUFA → `ambiental_cura_horas`.
+- Pergunta sobre LEAD TIME de entrega (fábrica→cliente) → `logistica_lead_time_entrega`.
 - Pergunta sobre CAPACIDADE de uma fase / ABSENTISMO / FALTAS / barcos-dia
   perdidos a faltas → `capacidade_fase`.
-- Pergunta sobre PRODUÇÃO/OFs concluídas POR DISCIPLINA ao longo do tempo,
-  granularidade MENSAL ("produção por disciplina este ano, por mês") →
+- Pergunta sobre PRODUÇÃO/OFs concluídas POR DISCIPLINA por mês →
   `producao_disciplina_mes`.
+- Pergunta sobre THROUGHPUT semanal por MODELO (K1/K2/K4) →
+  `producao_throughput_modelo`.
+- Pergunta sobre MOLDES (número, idade, uso, top) → `moldes`,
+  `moldes_idade`, `moldes_top_uso`.
+- Pergunta sobre COLABORADORES ACTIVOS / HEADCOUNT → `workforce_colaboradores`.
+- Pergunta sobre HORAS EXTRA → `workforce_horas_extra`.
+- Pergunta sobre APROVAÇÕES Q.17 / DECISÕES → `aprovacoes_q17`.
+- Pergunta sobre BACKLOG / OFs atrasadas → `planeamento_backlog`.
+- Pergunta sobre CURA/ESTUFA → **abstain** (`ambiental_cura_horas`
+  foi removido — sensores IoT não existem no ERP NELO).
+- Pergunta sobre WIP por fase (operações activas) → `producao_wip_fase`.
+- Pergunta sobre ADERÊNCIA AO SCHEDULE → `producao_schedule_aderencia`.
+- Pergunta sobre TRANSIÇÕES DE FASE (idle time) → `producao_phase_transition`.
 
 Se não cabe em NENHUM destes cubes → abstain.
 
@@ -72,27 +103,34 @@ Taxa de defeitos em OF_CHECKLIST por dia × fase. Q.96.
 - `qualidade.fase_id` — `number` — ID numérico da fase.
 
 ### Cube: `producao_ofs_em_curso`
-Snapshot do número de OFs em curso. Q.99 Onda 1. Critério canónico Q.79:
-"em curso" = `FP_SEQUENCIA < 30`. **Snapshot do estado actual, sem
-histórico** — perguntas com período ("este mês") → abstain.
+Snapshot de OFs abertas (não-terminais). Q.99 Onda 1 / Q.173.AK.
+Critério ERP Q.79: `FP_SEQUENCIA < 30`. **Snapshot sem histórico** —
+perguntas com período ("este mês") → abstain.
+
+⚠️ **DOIS CRITÉRIOS DE "OFs em produção" — NÃO confundir**:
+- **Este cube** → critério ERP broad: OFs abertas (FP_SEQUENCIA<30).
+  Anchor live 2026-06-11: **8 533 OFs** em 34 fases. Universo mais largo.
+- **Critério NELO "em produção"** → operação aberta na fase actual, sem
+  OF_DATAFIM (view factory_raw.v_of_em_producao, usado pelo CPO).
+  Anchor live: **~1 147 barcos**. Universo restrito.
+  Este cube NÃO dá o critério NELO — usa `producao_ofs_em_curso.total`
+  para o critério ERP (8 533) e clarifica na narração.
 
 **Measures**
-- `producao_ofs_em_curso.total` — contagem total de OFs em curso.
-  CONTAGEM adimensional. Anchor factory_raw: 4 233 OFs activas em 32
-  fases (top: Laminagem peças 1 233, Corte peças 1 100).
+- `producao_ofs_em_curso.total` — "OFs abertas (todas, critério ERP
+  FP_SEQUENCIA<30)" — 8 533 live. CONTAGEM adimensional.
 
 **Dimensions**
 - `producao_ofs_em_curso.fase` — `string` — nome da fase activa.
-- `producao_ofs_em_curso.fase_id` — `number` — `FP_ID` (partilhado com
-  `qualidade.fase_id`).
+- `producao_ofs_em_curso.fase_id` — `number` — `FP_ID`.
 
-**Sinónimos PT-PT aceitáveis**: "OFs em curso" ≈ "OFs activas" ≈ "OFs em
-produção" ≈ "kayaks a ser feitos".
+**Sinónimos PT-PT**: "OFs em curso" ≈ "OFs abertas" ≈ "ordens activas"
+≈ "OFs a ser feitas". NÃO sinónimo de "barcos em produção critério NELO"
+(esse é ~1 147, não 8 533).
 
-⚠️ **NÃO confundir com `producao_ofs_fechadas_dia`**: "em curso" = ainda a ser
-feitas (NÃO produzidas). "produzidas / fechadas / concluídas / acabadas" =
-TERMINADAS → usa `producao_ofs_fechadas_dia`, NÃO este cube. Este cube é
-snapshot SEM tempo — perguntas com "hoje/ontem/no dia" NÃO são deste cube.
+⚠️ **NÃO confundir com `producao_ofs_fechadas_dia`**: "em curso" = ainda
+a fabricar. "produzidas/fechadas/concluídas" = TERMINADAS → usa
+`producao_ofs_fechadas_dia`. Este cube é snapshot SEM tempo.
 
 ### Cube: `producao_ofs_fechadas_dia`
 OFs **produzidas/fechadas por DIA** (terminadas). Q.152. Fonte:
@@ -318,39 +356,6 @@ Transportador 126).
   Transportador'), `culpa_id`.
 - "Porque a culpa é X?" → abstain (causal). "Atrasos por OF" / "por
   transportadora" → abstain (dim não suportada).
-
-### Cube: `ambiental_cura_horas`
-Horas de cura química acumuladas por ciclo de estufa. Q.100. Fonte:
-sensores IoT de temperatura (Estufa 60 / 30 / Peças). Definição de ciclo:
-janela contínua `T>=65°C`, gap separador `>60min`, duração mínima `>=1h`.
-
-**Measures**
-- `ambiental_cura_horas.total` — horas em cura. TEMPO. Anchor Estufa 60
-  Abril 2026 = 150.6 h em 13 ciclos.
-- `ambiental_cura_horas.ciclos` — contagem de ciclos. CONTAGEM. Útil
-  para narrar "13 ciclos com 150.6 h em Abril".
-
-**Dimensions**
-- `ambiental_cura_horas.data` — `time` — primeiro dia do mês de início
-  do ciclo. Granularidade mensal. Usa `timeDimensions` com `dateRange`.
-- `ambiental_cura_horas.estufa` — `string` — nome literal: "Temperatura
-  Estufa 60" (top, 590.6 h/ano), "Estufa 30" (15.8 h/ano), "Estufa
-  Peças" (0 h — só atinge max 48°C, abaixo do threshold de cura).
-  Filtro `equals` literal; usa `contains 'estufa'` para agregar todas.
-- `ambiental_cura_horas.sensor_id` — `number` — 12 (Estufa 60), 14
-  (Estufa 30), 17 (Estufa Peças).
-- `ambiental_cura_horas.temp_max` — `number` — pico do ciclo em °C.
-  **NÃO É medida**: dimension só para filtrar ciclos específicos
-  (ex.: `gt 75`). NUNCA somar — temperatura não é aditiva.
-
-**Restrições**:
-- "Temperatura média da cura" / "qual a temperatura?" → **abstain**
-  (esta medida dá HORAS, não °C; medida temp_max futura, fora de
-  escopo Q.100).
-- "Cura por material" / "cura por kayak" → abstain (dim material/of
-  fora de escopo — a cura é por estufa, não por produto).
-- "Taxa de utilização da estufa" → abstain (derivada inexistente).
-- Aditivo entre estufas e meses: somar h Estufa 60 + h Estufa 30 OK.
 
 ### Cube: `workforce_colaboradores`
 Q.106 — colaboradores NELO activos (158 totais canónicos). Fonte:
@@ -830,46 +835,13 @@ porque é toda a fábrica; agrupar por fase para o utilizador ver onde):
 ```
 
 **Pergunta:** "Quantas horas de cura na Estufa 60 em Abril?"
-**Saída** (Q.100: horas em ciclos T≥65°C agregadas; filtro estufa equals
-literal; dateRange Abril):
+**Saída** (cura/estufa não existe no catálogo — `ambiental_cura_horas` foi
+removido no Q.173.AJ; sensores IoT não estão no ERP NELO → abstain):
 ```json
 {
-  "abstain": false,
-  "reason": "",
-  "query": {
-    "measures": ["ambiental_cura_horas.total"],
-    "dimensions": [],
-    "filters": [
-      {"member": "ambiental_cura_horas.estufa", "operator": "equals", "values": ["Temperatura Estufa 60"]}
-    ],
-    "timeDimensions": [
-      {"dimension": "ambiental_cura_horas.data", "dateRange": ["2026-04-01", "2026-04-30"]}
-    ],
-    "order": [],
-    "limit": null
-  }
-}
-```
-
-**Pergunta:** "Quantos ciclos de cura na Estufa 60 em Abril?"
-**Saída** (Q.100: pergunta diz "quantos ciclos" → measure `.ciclos` (NÃO
-`.total` que dá horas); mesmo filtro de estufa):
-```json
-{
-  "abstain": false,
-  "reason": "",
-  "query": {
-    "measures": ["ambiental_cura_horas.ciclos"],
-    "dimensions": [],
-    "filters": [
-      {"member": "ambiental_cura_horas.estufa", "operator": "equals", "values": ["Temperatura Estufa 60"]}
-    ],
-    "timeDimensions": [
-      {"dimension": "ambiental_cura_horas.data", "dateRange": ["2026-04-01", "2026-04-30"]}
-    ],
-    "order": [],
-    "limit": null
-  }
+  "abstain": true,
+  "reason": "Horas de cura em estufa não estão no catálogo — o cube ambiental_cura_horas foi removido (sensores IoT não existem no ERP NELO).",
+  "query": null
 }
 ```
 
@@ -1057,6 +1029,68 @@ NÃO faturação €; dim disciplina + timeDimension mensal com granularity):
 }
 ```
 
+**Pergunta:** "Quantas OFs abertas temos agora no sistema?"
+**Saída** (snapshot actual sem filtro — `producao_ofs_em_curso` SEM qualquer
+filtro de material ou de tempo; NUNCA adicionar material a este cube):
+```json
+{
+  "abstain": false,
+  "reason": "",
+  "query": {
+    "measures": ["producao_ofs_em_curso.total"],
+    "dimensions": [],
+    "filters": [],
+    "timeDimensions": [],
+    "order": [],
+    "limit": null
+  }
+}
+```
+
+**Pergunta:** "Quanto de Resina consumimos em Abril de 2026?"
+**Saída** ("Resina" é ambíguo — bate várias resinas; usa `contains` + inclui
+OBRIGATORIAMENTE `consumo_material.material` E `consumo_material.unidade_id`
+em `dimensions` para separar resultados por unidade; período Abril absoluto):
+```json
+{
+  "abstain": false,
+  "reason": "",
+  "query": {
+    "measures": ["consumo_material.consumo"],
+    "dimensions": ["consumo_material.material", "consumo_material.unidade_id"],
+    "filters": [
+      {"member": "consumo_material.material", "operator": "contains", "values": ["Resina"]}
+    ],
+    "timeDimensions": [
+      {"dimension": "consumo_material.data", "dateRange": ["2026-04-01", "2026-04-30"]}
+    ],
+    "order": [["consumo_material.consumo", "desc"]],
+    "limit": null
+  }
+}
+```
+
+**Pergunta:** "Quantos colaboradores activos temos este mês?"
+**Saída** (Q.106 — "este mês" = período relativo → `period_label="este_mes"`;
+gera também `dateRange` razoável que o código sobrepõe):
+```json
+{
+  "abstain": false,
+  "reason": "",
+  "period_label": "este_mes",
+  "query": {
+    "measures": ["workforce_colaboradores.total"],
+    "dimensions": [],
+    "filters": [],
+    "timeDimensions": [
+      {"dimension": "workforce_colaboradores.data", "dateRange": ["{MONTH_START}", "{TODAY}"]}
+    ],
+    "order": [],
+    "limit": null
+  }
+}
+```
+
 **Pergunta:** "Quantos atrasos houve segundo a classificação NELO?"
 **Saída** (Q.104 Medida 2: cube atrasos_culpa, sem filtros, anchor 3 030):
 ```json
@@ -1106,26 +1140,6 @@ de marcar "segundo a classificação NELO registada"):
       {"dimension": "logistica_ofs_expedidas.data", "dateRange": ["2024-01-01", "2024-12-31"]}
     ],
     "order": [["logistica_ofs_expedidas.total", "desc"]],
-    "limit": null
-  }
-}
-```
-
-**Pergunta:** "Horas de cura em todas as estufas em Abril?"
-**Saída** (Q.100: agregar TODAS as estufas — sem filtro de estufa OU
-dim estufa para drill-down. TEMPO é aditivo entre estufas):
-```json
-{
-  "abstain": false,
-  "reason": "",
-  "query": {
-    "measures": ["ambiental_cura_horas.total"],
-    "dimensions": ["ambiental_cura_horas.estufa"],
-    "filters": [],
-    "timeDimensions": [
-      {"dimension": "ambiental_cura_horas.data", "dateRange": ["2026-04-01", "2026-04-30"]}
-    ],
-    "order": [["ambiental_cura_horas.total", "desc"]],
     "limit": null
   }
 }

@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 from src.copilot.cube.client import CubeClient
 from src.copilot.cube.measure_contract import (
     MEASURE_REGISTRY,
+    get_sql_map,
     list_measure_catalog,
     measure_display_unit,
 )
@@ -78,6 +79,20 @@ class AskCubeRequest(BaseModel):
     question: str = Field(min_length=1, max_length=500)
 
 
+class AskCubeExplicacao(BaseModel):
+    """Q.173.AL — explicação estruturada de uma resposta Cube.
+
+    Indica ao utilizador (e ao frontend) de onde vêm os dados e como foram
+    calculados, sem revelar SQL raw. Intencionalmente legível em PT-PT.
+    """
+    tabela: str | None = None                    # fonte (sql_table do cube)
+    measures: list[dict[str, str]] = Field(default_factory=list)
+    # [{nome, formula_sql}] — lista das measures usadas e a sua expressão YAML
+    filtros: list[str] = Field(default_factory=list)   # filtros humanizados
+    periodo: str | None = None                   # ex: "2026-04-01 a 2026-04-30"
+    fonte: str = "Cube"                          # sempre Cube para estes endpoints
+
+
 class AskCubeResponse(BaseModel):
     status: Literal["ok", "abstain", "no_data", "guard_failed", "ambiguous"]
     narration: str | None = None
@@ -86,9 +101,56 @@ class AskCubeResponse(BaseModel):
     annotation: dict[str, Any] | None = None
     abstain_reason: str | None = None
     warnings: list[str] = Field(default_factory=list)
+    explicacao: AskCubeExplicacao | None = None  # Q.173.AL
 
 
 # ────────────────────────────── Pipeline ──────────────────────────────
+
+
+def _build_explicacao(query_payload: dict[str, Any]) -> AskCubeExplicacao:
+    """Q.173.AL — constrói a explicacao estruturada a partir do query+catálogo.
+
+    Lê sql_map (singleton) e MEASURE_REGISTRY para traduzir cada measure
+    do payload em {nome, formula_sql} + extrai tabela e período.
+    NÃO mexe no guard de números da narração.
+    """
+    sql_map = get_sql_map()
+    measures_raw: list[str] = query_payload.get("measures", [])
+
+    # Tabela: pega a fonte do primeiro measure (todas do mesmo cube normalmente).
+    tabela: str | None = None
+    if measures_raw:
+        _, sql_table = sql_map.get(measures_raw[0], ("", ""))
+        tabela = sql_table or None
+
+    # Measures: nome + formula_sql
+    measures_out: list[dict[str, str]] = []
+    for m in measures_raw:
+        sql_expr, _ = sql_map.get(m, ("", ""))
+        measures_out.append({"nome": m, "formula_sql": sql_expr or m})
+
+    # Filtros humanizados
+    filtros: list[str] = []
+    for f in query_payload.get("filters", []):
+        member = f.get("member", "?")
+        operator = f.get("operator", "?")
+        values = f.get("values", [])
+        filtros.append(f"{member} {operator} {', '.join(str(v) for v in values)}")
+
+    # Período
+    periodo: str | None = None
+    for td in query_payload.get("timeDimensions", []):
+        dr = td.get("dateRange")
+        if dr and len(dr) >= 2:
+            periodo = f"{dr[0]} a {dr[1]}"
+            break
+
+    return AskCubeExplicacao(
+        tabela=tabela,
+        measures=measures_out,
+        filtros=filtros,
+        periodo=periodo,
+    )
 
 
 async def _process(
@@ -216,6 +278,7 @@ async def _process(
             data=result.data,
             annotation=result.annotation,
             warnings=warnings_out,
+            explicacao=_build_explicacao(payload),
         )
     finally:
         if owns_cube:
@@ -430,19 +493,8 @@ async def _run_chart(cube: CubeClient, spec: _ChartSpec, today: date) -> Dashboa
                               series=[], status="error")
 
 
-@router.get(
-    "/cube/dashboard-dev",
-    response_model=DashboardResponse,
-    include_in_schema=False,
-    dependencies=[Depends(dev_only)],
-)
-async def cube_dashboard_dev() -> DashboardResponse:
-    """Q.R — dashboard de KPIs reais do Cube (dev-only, sem LLM, sem auth).
-
-    Corre cards + gráficos curados em paralelo contra o Cube REST. Reusa
-    `CubeClient` (queries determinísticas). Degrada por item quando um mart
-    ainda não está populado.
-    """
+async def _cube_dashboard_impl() -> DashboardResponse:
+    """Lógica partilhada entre /cube/dashboard-dev e /cube/dashboard."""
     today = local_today()
     cube = CubeClient()
     try:
@@ -460,6 +512,38 @@ async def cube_dashboard_dev() -> DashboardResponse:
         cards=list(results[:n_cards]),
         charts=list(results[n_cards:]),
     )
+
+
+@router.get(
+    "/cube/dashboard-dev",
+    response_model=DashboardResponse,
+    include_in_schema=False,
+    dependencies=[Depends(dev_only)],
+)
+async def cube_dashboard_dev() -> DashboardResponse:
+    """Q.R — dashboard de KPIs reais do Cube (dev-only, sem LLM, sem auth).
+
+    Corre cards + gráficos curados em paralelo contra o Cube REST. Reusa
+    `CubeClient` (queries determinísticas). Degrada por item quando um mart
+    ainda não está populado.
+    """
+    return await _cube_dashboard_impl()
+
+
+@router.get(
+    "/cube/dashboard",
+    response_model=DashboardResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def cube_dashboard(
+    user: UserContext = Depends(get_current_user),
+) -> DashboardResponse:
+    """Q.173.AL — dashboard de KPIs reais do Cube (autenticado, production-ready).
+
+    Equivalente ao /cube/dashboard-dev mas requer tenant válido. Lógica
+    100% partilhada. RBAC: leitura — fall-through ok.
+    """
+    return await _cube_dashboard_impl()
 
 
 # ────────────────── Picker de KPIs — catálogo + cards ad-hoc ──────────────────
@@ -480,6 +564,9 @@ class MeasureCatalogEntry(BaseModel):
     domain: str
     dimensions: list[str] = Field(default_factory=list)
     supports_period: bool
+    # Q.173.AL — fórmula + fonte (do YAML do cube)
+    sql: str = ""
+    sql_table: str = ""
 
 
 class MeasureCatalogResponse(BaseModel):
@@ -502,6 +589,13 @@ class MeasureCardsResponse(BaseModel):
     cards: list[DashboardCard] = Field(default_factory=list)
 
 
+def _cube_measures_impl() -> MeasureCatalogResponse:
+    """Lógica partilhada entre /cube/measures-dev e /cube/measures."""
+    return MeasureCatalogResponse(
+        measures=[MeasureCatalogEntry(**m) for m in list_measure_catalog()]
+    )
+
+
 @router.get(
     "/cube/measures-dev",
     response_model=MeasureCatalogResponse,
@@ -515,9 +609,22 @@ async def cube_measures_dev() -> MeasureCatalogResponse:
     KPIs usa isto para encher o menu "Adicionar indicador" com TODAS as measures
     registadas, não só o conjunto curado do dashboard.
     """
-    return MeasureCatalogResponse(
-        measures=[MeasureCatalogEntry(**m) for m in list_measure_catalog()]
-    )
+    return _cube_measures_impl()
+
+
+@router.get(
+    "/cube/measures",
+    response_model=MeasureCatalogResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def cube_measures(
+    user: UserContext = Depends(get_current_user),
+) -> MeasureCatalogResponse:
+    """Q.173.AL — catálogo de measures autenticado (production-ready).
+
+    Expõe também `sql` e `sql_table` (fórmula + fonte) para explicabilidade.
+    """
+    return _cube_measures_impl()
 
 
 def _coerce_card_specs(items: list[MeasureCardRequestItem]) -> list[_CardSpec]:
@@ -560,6 +667,23 @@ def _coerce_card_specs(items: list[MeasureCardRequestItem]) -> list[_CardSpec]:
     return specs
 
 
+async def _cube_measure_cards_impl(request: MeasureCardsRequest) -> MeasureCardsResponse:
+    """Lógica partilhada entre /cube/measure-cards-dev e /cube/measure-cards."""
+    specs = _coerce_card_specs(request.items[:MAX_MEASURE_CARDS])
+    if not specs:
+        return MeasureCardsResponse(cards=[])
+    today = local_today()
+    cube = CubeClient()
+    try:
+        cards = await asyncio.gather(*[_run_card(cube, s, today) for s in specs])
+    finally:
+        try:
+            await cube.close()
+        except Exception:
+            logger.exception("cube.close() falhou no measure-cards")
+    return MeasureCardsResponse(cards=list(cards))
+
+
 @router.post(
     "/cube/measure-cards-dev",
     response_model=MeasureCardsResponse,
@@ -574,16 +698,17 @@ async def cube_measure_cards_dev(request: MeasureCardsRequest) -> MeasureCardsRe
     como o dashboard. NUNCA soma cross-measure — cada card é uma measure
     agregada pelo Cube na sua própria query.
     """
-    specs = _coerce_card_specs(request.items[:MAX_MEASURE_CARDS])
-    if not specs:
-        return MeasureCardsResponse(cards=[])
-    today = local_today()
-    cube = CubeClient()
-    try:
-        cards = await asyncio.gather(*[_run_card(cube, s, today) for s in specs])
-    finally:
-        try:
-            await cube.close()
-        except Exception:
-            logger.exception("cube.close() falhou no measure-cards")
-    return MeasureCardsResponse(cards=list(cards))
+    return await _cube_measure_cards_impl(request)
+
+
+@router.post(
+    "/cube/measure-cards",
+    response_model=MeasureCardsResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def cube_measure_cards(
+    request: MeasureCardsRequest,
+    user: UserContext = Depends(get_current_user),
+) -> MeasureCardsResponse:
+    """Q.173.AL — valores de measures escolhidas (autenticado, production-ready)."""
+    return await _cube_measure_cards_impl(request)

@@ -223,3 +223,11 @@ routes/*.npz
 _dbprof/
 _*.out
 _*.err
+
+# Q.173.T — rotações dos logs do serve_demo (ring de 5)
+_backend.out.*
+_backend.err.*
+_arq.out.*
+_arq.err.*
+# Q.173.AK — log do rebuild do índice de measures (regravável)
+cube/data/rebuild_log.txt

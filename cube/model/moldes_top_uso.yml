@@ -25,7 +25,10 @@ cubes:
         format: number
 
       - name: moldes_count
-        description: COUNT moldes activos com counter > 0.
+        description: >
+          COUNT(*) de moldes activos no snapshot (inclui n_utilizacoes=0 —
+          type:count conta linhas, não filtra por n_utilizacoes>0). Para
+          contar APENAS moldes com utilizações usa moldes.com_utilizacao.
         sql: n_utilizacoes
         type: count
         format: number

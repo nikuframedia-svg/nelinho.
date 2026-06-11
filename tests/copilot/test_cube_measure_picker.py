@@ -31,14 +31,16 @@ def test_catalog_covers_every_registered_measure():
     assert len(catalog) == len(MEASURE_REGISTRY)
     assert {m["name"] for m in catalog} == set(MEASURE_REGISTRY)
     # Cada entrada tem os campos que o menu do frontend precisa.
+    # Q.173.AL: sql + sql_table adicionados (fórmula + fonte para explicabilidade).
+    required = {"name", "label", "unit", "domain", "dimensions", "supports_period"}
     for m in catalog:
-        assert set(m) == {
-            "name", "label", "unit", "domain", "dimensions", "supports_period"
-        }
+        assert required.issubset(set(m)), f"campos em falta em {m['name']}: {required - set(m)}"
         assert m["label"]  # nunca vazio (fallback para name)
         assert m["unit"] in {"", "%", "€"}
         assert isinstance(m["dimensions"], list)
         assert isinstance(m["supports_period"], bool)
+        assert isinstance(m["sql"], str)        # Q.173.AL: pode ser "" se YAML não tem
+        assert isinstance(m["sql_table"], str)  # Q.173.AL: pode ser ""
 
 
 def test_catalog_is_sorted_by_domain_then_name():
