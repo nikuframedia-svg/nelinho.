@@ -4,7 +4,7 @@ import { Activity, AlertTriangle, Check, ChevronLeft, Clock, Hash, Loader2, Play
 import type { ReactNode } from 'react';
 import { twinApi } from '../../lib/api';
 import { useToastContext } from '../ToastProvider';
-import { Card, SectionHeader, Tag, fmtEuro, toneBd, toneBg, toneVar } from './atoms';
+import { Card, SectionHeader, Tag, toneBd, toneBg, toneVar } from './atoms';
 import type { Tone } from './atoms';
 import { CRISIS_SCENARIOS } from './crisisScenarios';
 import type { CrisisScenario } from './crisisScenarios';
@@ -369,71 +369,6 @@ export function CrisisSimulator(): ReactNode {
               {picked.detail}
             </div>
           </div>
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'flex-end',
-              gap: 4,
-            }}
-          >
-            <span
-              style={{
-                fontSize: 9,
-                color: 'var(--fg-3)',
-                textTransform: 'uppercase',
-                letterSpacing: 0.4,
-              }}
-            >
-              cenário de referência · estimativa operacional
-            </span>
-            <div style={{ display: 'flex', gap: 16, alignItems: 'baseline' }}>
-              <div style={{ textAlign: 'right' }}>
-                <div
-                  className="display tabular"
-                  style={{
-                    fontSize: 24,
-                    color: 'var(--red)',
-                    fontWeight: 600,
-                  }}
-                >
-                  −{fmtEuro(picked.deltaEur)}
-                </div>
-                <div
-                  style={{
-                    fontSize: 10,
-                    color: 'var(--fg-3)',
-                    textTransform: 'uppercase',
-                    letterSpacing: 0.4,
-                  }}
-                >
-                  se nada fizer
-                </div>
-              </div>
-              <div style={{ textAlign: 'right' }}>
-                <div
-                  className="display tabular"
-                  style={{
-                    fontSize: 24,
-                    color: 'var(--red)',
-                    fontWeight: 600,
-                  }}
-                >
-                  +{picked.deltaDays}d
-                </div>
-                <div
-                  style={{
-                    fontSize: 10,
-                    color: 'var(--fg-3)',
-                    textTransform: 'uppercase',
-                    letterSpacing: 0.4,
-                  }}
-                >
-                  atraso
-                </div>
-              </div>
-            </div>
-          </div>
         </div>
       </Card>
 
@@ -585,7 +520,7 @@ export function CrisisSimulator(): ReactNode {
         <SectionHeader
           icon={<Sparkles size={14} />}
           title="Opções de mitigação"
-          subtitle="Custo estimado de referência · escolhe uma para preparar o plano"
+          subtitle="Escolhe uma para preparar o plano"
         />
         <div
           style={{ display: 'flex', flexDirection: 'column', gap: 10 }}
@@ -648,42 +583,13 @@ export function CrisisSimulator(): ReactNode {
                   {o.letter}
                 </div>
                 <div style={{ flex: 1 }}>
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'baseline',
-                      gap: 10,
-                    }}
-                  >
-                    <span
-                      style={{
-                        fontSize: 13,
-                        fontWeight: 500,
-                        color: 'var(--fg-0)',
-                      }}
-                    >
-                      {o.label}
-                    </span>
-                    <span
-                      className="tabular"
-                      style={{
-                        fontSize: 12,
-                        fontWeight: 600,
-                        color: o.cost.startsWith('+€')
-                          ? 'var(--orange)'
-                          : o.cost.startsWith('−€')
-                            ? 'var(--red)'
-                            : 'var(--fg-2)',
-                      }}
-                    >
-                      {o.cost}
-                    </span>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--fg-0)', marginBottom: 3 }}>
+                    {o.label}
                   </div>
                   <div
                     style={{
                       fontSize: 11.5,
                       color: 'var(--fg-2)',
-                      marginTop: 3,
                     }}
                   >
                     {o.detail}

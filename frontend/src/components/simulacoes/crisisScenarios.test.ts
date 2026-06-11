@@ -6,6 +6,9 @@
  * (`mold`, `employee`, `material`…) → `apply-delta` devolvia 422 → o
  * fluxo de crise falhava sempre. Este teste fixa o contrato: cada delta
  * usa um `entity_type` suportado e um patch válido.
+ *
+ * Q.173.J: garante também que nenhum cenário contém campos € autorais
+ * (`deltaEur`, `deltaDays`, `options[].cost`).
  */
 
 import { describe, it, expect } from 'vitest';
@@ -63,4 +66,26 @@ describe('CRISIS_SCENARIOS — contrato dos deltas', () => {
       }
     });
   }
+});
+
+describe('CRISIS_SCENARIOS — sem campos € autorais (Q.173.J)', () => {
+  it('nenhum cenário tem deltaEur', () => {
+    for (const scenario of CRISIS_SCENARIOS) {
+      expect(scenario).not.toHaveProperty('deltaEur');
+    }
+  });
+
+  it('nenhum cenário tem deltaDays', () => {
+    for (const scenario of CRISIS_SCENARIOS) {
+      expect(scenario).not.toHaveProperty('deltaDays');
+    }
+  });
+
+  it('nenhuma opção tem cost', () => {
+    for (const scenario of CRISIS_SCENARIOS) {
+      for (const option of scenario.options) {
+        expect(option).not.toHaveProperty('cost');
+      }
+    }
+  });
 });

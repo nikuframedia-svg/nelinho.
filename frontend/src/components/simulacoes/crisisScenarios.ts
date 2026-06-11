@@ -8,15 +8,11 @@
  * `twin/scenario` real (`POST /v1/twin/scenarios`), aplica os deltas
  * (`POST .../apply-delta`) e simula (`POST .../simulate`).
  *
- * Duas naturezas de número, NÃO confundir:
- *   • COMPUTADO pelo twin (real): o delta de KPIs agregados
- *     (`backlog_horas_theoretical`, `quality_errors_total`) em
- *     `simulation_result.before/after` + o `scenario_hash` reprodutível.
- *     É isto que a card "Resultado real da simulação" mostra.
- *   • REFERÊNCIA (config, aqui em baixo): `deltaEur`, `deltaDays`, `cascade`
- *     e `options` são uma estimativa operacional hand-authored para dar
- *     contexto — a UI rotula-os explicitamente como "cenário de referência".
- *     O twin modela KPIs, não €, por isso o € NÃO vem do backend.
+ * O resultado computado pelo twin (real) são os deltas de KPIs agregados
+ * (`backlog_horas_theoretical`, `quality_errors_total`) em
+ * `simulation_result.before/after` + o `scenario_hash` reprodutível.
+ * É isso que a card "Resultado real da simulação" mostra. Não há €
+ * autorais neste ficheiro — os cenários são apenas parametrizações.
  *
  * Os `deltas` seguem o contrato `DeltaApplyRequest` do twin:
  *   { entity_type, entity_key, patch, description }
@@ -53,8 +49,6 @@ export interface CrisisOption {
   letter: 'A' | 'B' | 'C';
   label: string;
   detail: string;
-  /** Custo legível (ex: "+€480", "€0", "−€4.500"). */
-  cost: string;
   tone: Tone;
   recommended: boolean;
 }
@@ -77,10 +71,6 @@ export interface CrisisScenario {
   /** Deltas aplicados ao twin (contrato DeltaApplyRequest). */
   deltas: CrisisDelta[];
   cascade: CrisisCascadeStep[];
-  /** Custo de não fazer nada (€, negativo). */
-  deltaEur: number;
-  /** Atraso em dias se nada for feito. */
-  deltaDays: number;
   options: CrisisOption[];
 }
 
@@ -103,32 +93,28 @@ export const CRISIS_SCENARIOS: CrisisScenario[] = [
       },
     ],
     cascade: [
-      { t: '+0min', what: 'Laminagem #4274 interrompida', tone: 'red' },
       {
-        t: '+30min',
-        what: 'Limpeza de emergência · barco para retrabalho',
+        t: '+0min',
+        what: 'Laminagem interrompida · barco para retrabalho',
         tone: 'red',
       },
-      { t: '+2h', what: '6 K1 em fila perdem slot', tone: 'orange' },
+      { t: '+2h', what: 'K1 em fila perdem slot', tone: 'orange' },
       {
         t: '+1 dia',
-        what: 'K1 7 ML (02) em sobrecarga · fila +2 dias',
+        what: 'K1 7 ML (02) em sobrecarga · fila cresce',
         tone: 'orange',
       },
       {
         t: '+3 dias',
-        what: 'Fed. Francesa 15/06 em risco crítico',
+        what: 'Encomendas de exportação em risco crítico',
         tone: 'red',
       },
     ],
-    deltaEur: -3200,
-    deltaDays: 4,
     options: [
       {
         letter: 'A',
-        label: 'Reroute 6 K1 para molde 7 ML (02)',
-        detail: '+2h por barco · fila cresce 12h',
-        cost: '+€480',
+        label: 'Reroute K1 para molde 7 ML (02)',
+        detail: '+2h por barco · fila cresce',
         tone: 'yellow',
         recommended: false,
       },
@@ -136,15 +122,13 @@ export const CRISIS_SCENARIOS: CrisisScenario[] = [
         letter: 'B',
         label: 'Subcontratar reparação 24h',
         detail: 'Especialista externo · molde volta em 18h',
-        cost: '+€1.200',
         tone: 'green',
         recommended: true,
       },
       {
         letter: 'C',
-        label: 'Aceitar atraso de 7d na Fed. Francesa',
-        detail: 'Comunicar agora · penalização €4.500',
-        cost: '−€4.500',
+        label: 'Aceitar atraso de 7d e comunicar ao cliente',
+        detail: 'Comunicar agora · evita surpresas de última hora',
         tone: 'red',
         recommended: false,
       },
@@ -189,14 +173,11 @@ export const CRISIS_SCENARIOS: CrisisScenario[] = [
         tone: 'green',
       },
     ],
-    deltaEur: -480,
-    deltaDays: 0.5,
     options: [
       {
         letter: 'A',
         label: 'Substituto sob supervisão de operadora sénior',
         detail: 'Mais lento mas seguro · sem retrabalho extra',
-        cost: '+€140',
         tone: 'green',
         recommended: true,
       },
@@ -204,7 +185,6 @@ export const CRISIS_SCENARIOS: CrisisScenario[] = [
         letter: 'B',
         label: 'Concentrar séniores só nos K1 críticos',
         detail: 'K2 atrasa mas o crítico fica coberto',
-        cost: '€0',
         tone: 'yellow',
         recommended: false,
       },
@@ -212,7 +192,6 @@ export const CRISIS_SCENARIOS: CrisisScenario[] = [
         letter: 'C',
         label: 'Convocar operador da Colagem',
         detail: 'Skill transferível · Colagem fica curta',
-        cost: '+€60',
         tone: 'yellow',
         recommended: false,
       },
@@ -235,15 +214,15 @@ export const CRISIS_SCENARIOS: CrisisScenario[] = [
       },
     ],
     cascade: [
-      { t: 'agora', what: '8L disponíveis · acaba em ~12h', tone: 'red' },
+      { t: 'agora', what: 'Stock crítico · acaba em ~12h', tone: 'red' },
       {
         t: '+12h',
-        what: 'K1 #4271 e K2 #5103 param antes da Pintura',
+        what: 'Barcos param antes da Pintura',
         tone: 'red',
       },
       {
         t: '+1 dia',
-        what: '2 barcos sem gelcoat · backlog 36h',
+        what: 'Backlog cresce · capacidade bloqueada',
         tone: 'orange',
       },
       {
@@ -252,14 +231,11 @@ export const CRISIS_SCENARIOS: CrisisScenario[] = [
         tone: 'green',
       },
     ],
-    deltaEur: -540,
-    deltaDays: 1.5,
     options: [
       {
         letter: 'A',
         label: 'Encomenda urgente · fornecedor em 24h',
-        detail: '€240 de sobretaxa · chega amanhã às 12h',
-        cost: '+€240',
+        detail: 'Sobretaxa de entrega urgente · chega amanhã',
         tone: 'green',
         recommended: true,
       },
@@ -267,7 +243,6 @@ export const CRISIS_SCENARIOS: CrisisScenario[] = [
         letter: 'B',
         label: 'Avançar lixagem antes da pintura',
         detail: 'Reordenar fases · poupa tempo morto',
-        cost: '€0',
         tone: 'yellow',
         recommended: false,
       },
@@ -275,7 +250,6 @@ export const CRISIS_SCENARIOS: CrisisScenario[] = [
         letter: 'C',
         label: 'Substituir por gelcoat off-white',
         detail: 'Cliente privado pode aceitar a variação',
-        cost: '€0',
         tone: 'orange',
         recommended: false,
       },
@@ -318,18 +292,15 @@ export const CRISIS_SCENARIOS: CrisisScenario[] = [
       },
       {
         t: '+1 dia',
-        what: 'Se mantido · €2.400 de retrabalho por dia',
+        what: 'Se mantido · retrabalho acumula por dia',
         tone: 'red',
       },
     ],
-    deltaEur: -1620,
-    deltaDays: 2,
     options: [
       {
         letter: 'A',
         label: 'Bloquear lote · usar lote anterior em stock',
         detail: 'Stock chega para 3 dias · zero defeito esperado',
-        cost: '€0',
         tone: 'green',
         recommended: true,
       },
@@ -337,7 +308,6 @@ export const CRISIS_SCENARIOS: CrisisScenario[] = [
         letter: 'B',
         label: 'Contactar fornecedor · análise do lote',
         detail: 'Suspende encomendas até resposta · 48h',
-        cost: '€0',
         tone: 'yellow',
         recommended: false,
       },
@@ -345,7 +315,6 @@ export const CRISIS_SCENARIOS: CrisisScenario[] = [
         letter: 'C',
         label: 'Aceitar retrabalho · ajustar parâmetros',
         detail: '+15min de cura · 8% mais resina',
-        cost: '+€180',
         tone: 'orange',
         recommended: false,
       },
@@ -389,14 +358,11 @@ export const CRISIS_SCENARIOS: CrisisScenario[] = [
         tone: 'yellow',
       },
     ],
-    deltaEur: -8400,
-    deltaDays: 2,
     options: [
       {
         letter: 'A',
         label: 'Gerador imediato · prioridade às estufas',
         detail: 'Combustível para 8h · cobre todos os barcos',
-        cost: '+€420',
         tone: 'green',
         recommended: true,
       },
@@ -404,15 +370,13 @@ export const CRISIS_SCENARIOS: CrisisScenario[] = [
         letter: 'B',
         label: 'Reagendar cura para mais tarde',
         detail: 'Só viável se a falha durar <30min',
-        cost: '+€140',
         tone: 'yellow',
         recommended: false,
       },
       {
         letter: 'C',
-        label: 'Aceitar perda · 12 barcos para retrabalho',
-        detail: '€8.4K em material + 2 dias',
-        cost: '−€8.400',
+        label: 'Aceitar perda · barcos para retrabalho',
+        detail: 'Perda de material e atraso na produção',
         tone: 'red',
         recommended: false,
       },
@@ -451,14 +415,11 @@ export const CRISIS_SCENARIOS: CrisisScenario[] = [
         tone: 'green',
       },
     ],
-    deltaEur: -680,
-    deltaDays: 2,
     options: [
       {
         letter: 'A',
         label: 'Camião alternativo · transportadora B',
-        detail: 'Disponível em 4h · €120 de sobretaxa',
-        cost: '+€120',
+        detail: 'Disponível em 4h · sobretaxa de urgência',
         tone: 'green',
         recommended: true,
       },
@@ -466,7 +427,6 @@ export const CRISIS_SCENARIOS: CrisisScenario[] = [
         letter: 'B',
         label: 'Dividir em 2 camiões parciais',
         detail: 'Armazém alivia mais cedo',
-        cost: '+€800',
         tone: 'yellow',
         recommended: false,
       },
@@ -474,7 +434,6 @@ export const CRISIS_SCENARIOS: CrisisScenario[] = [
         letter: 'C',
         label: 'Aguardar · cliente aceita +2d',
         detail: 'Relação OK · risco de repetir',
-        cost: '€0',
         tone: 'gray',
         recommended: false,
       },
