@@ -51,10 +51,10 @@ _WIP_CTE = """
             COALESCE(NULLIF(f."FP_NOME", ''),
                      ofb."OF_FP_ID"::text)                AS phase_name,
             CAST(NULLIF(ofb."OF_DATA", '') AS timestamp)::date            AS created_date,
-            COALESCE(
-                CAST(NULLIF(ofb."OF_TR_DATA_PREVISTA", '') AS timestamp),
-                CAST(NULLIF(ofb."OF_DATA", '')           AS timestamp)
-            )::date                                       AS transport_date
+            -- Q.173.A: transport_date é a promessa REAL de transporte do ERP.
+            -- Sem fallback para OF_DATA (data de criação) — isso fabricava
+            -- "data de expedição" para 100% das ordens (invariante #8).
+            CAST(NULLIF(ofb."OF_TR_DATA_PREVISTA", '') AS timestamp)::date AS transport_date
         FROM factory_raw.ordemfabrico ofb
         JOIN factory_raw.fases_producao f ON f."FP_ID" = ofb."OF_FP_ID"
         LEFT JOIN factory_raw.produto p   ON p."P_ID"  = ofb."OF_P_ID"
