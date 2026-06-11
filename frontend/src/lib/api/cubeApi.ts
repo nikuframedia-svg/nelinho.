@@ -9,7 +9,7 @@
  * Em dev usamos directamente o endpoint -dev (sem auth, X-Tenant-Id dev),
  * espelhando o padrão de copilotApi.ask().
  */
-import { API_BASE } from './client';
+import { request, API_BASE } from './client';
 
 const DEV_TENANT = '00000000-0000-0000-0000-000000000001';
 
@@ -49,6 +49,9 @@ export interface CubeMeasureCatalogEntry {
   domain: string; // prefixo do cube, ex: "consumo_material" — agrupa o menu
   dimensions: string[];
   supports_period: boolean; // tem dimensão `tempo` → permite filtro "este mês"
+  /** Q.173.AL — fórmula SQL e tabela de origem (do YAML do cube). */
+  sql: string;
+  sql_table: string;
 }
 
 export interface CubeMeasureCatalog {
@@ -87,35 +90,62 @@ async function cubeDevFetch<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const cubeApi = {
-  /** KPIs + gráficos reais do Cube (operações NELO via marts). */
+  /** KPIs + gráficos reais do Cube (operações NELO via marts).
+   *
+   * Q.173.AL — tenta o endpoint autenticado /cube/dashboard primeiro
+   * (client.ts injeta X-Tenant-Id + X-User-Id). Em caso de 401/403 (sem
+   * sessão) cai no /cube/dashboard-dev (sem auth, X-Tenant-Id dev).
+   * NÃO parte o chat da demo.
+   */
   dashboard: async (): Promise<CubeDashboard> => {
-    const url = `${API_BASE}/api/copilot/cube/dashboard-dev`;
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: { 'X-Tenant-Id': DEV_TENANT },
-    });
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      const message =
-        (errorData as { detail?: string; message?: string }).detail ||
-        (errorData as { message?: string }).message ||
-        `HTTP ${response.status}`;
-      const err = new Error(message);
-      (err as Error & { status?: number }).status = response.status;
+    try {
+      return await request<CubeDashboard>('/api/copilot/cube/dashboard');
+    } catch (err: unknown) {
+      const status = (err as { status?: number }).status;
+      if (status === 401 || status === 403) {
+        return cubeDevFetch<CubeDashboard>('/api/copilot/cube/dashboard-dev');
+      }
       throw err;
     }
-    return (await response.json()) as CubeDashboard;
   },
 
-  /** Catálogo completo das measures registadas (alimenta o picker de KPIs). */
-  measures: (): Promise<CubeMeasureCatalog> =>
-    cubeDevFetch<CubeMeasureCatalog>('/api/copilot/cube/measures-dev'),
+  /** Catálogo completo das measures (inclui sql + sql_table — Q.173.AL).
+   *
+   * Tenta /cube/measures (autenticado) e cai no /cube/measures-dev se sem sessão.
+   */
+  measures: async (): Promise<CubeMeasureCatalog> => {
+    try {
+      return await request<CubeMeasureCatalog>('/api/copilot/cube/measures');
+    } catch (err: unknown) {
+      const status = (err as { status?: number }).status;
+      if (status === 401 || status === 403) {
+        return cubeDevFetch<CubeMeasureCatalog>('/api/copilot/cube/measures-dev');
+      }
+      throw err;
+    }
+  },
 
-  /** Valores actuais das measures escolhidas no picker. */
-  measureCards: (items: CubeMeasureCardItem[]): Promise<CubeMeasureCards> =>
-    cubeDevFetch<CubeMeasureCards>('/api/copilot/cube/measure-cards-dev', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ items }),
-    }),
+  /** Valores actuais das measures escolhidas no picker.
+   *
+   * Tenta /cube/measure-cards (autenticado) e cai no /cube/measure-cards-dev se sem sessão.
+   */
+  measureCards: async (items: CubeMeasureCardItem[]): Promise<CubeMeasureCards> => {
+    const body = JSON.stringify({ items });
+    try {
+      return await request<CubeMeasureCards>('/api/copilot/cube/measure-cards', {
+        method: 'POST',
+        body,
+      });
+    } catch (err: unknown) {
+      const status = (err as { status?: number }).status;
+      if (status === 401 || status === 403) {
+        return cubeDevFetch<CubeMeasureCards>('/api/copilot/cube/measure-cards-dev', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body,
+        });
+      }
+      throw err;
+    }
+  },
 };

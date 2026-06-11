@@ -3,6 +3,22 @@
  * Separate types file to ensure exports are recognized
  */
 
+/** Q.173.AL — explicação estruturada de uma resposta Cube.
+ *  Espelha AskCubeExplicacao do backend (ask_cube.py).
+ *  Só presente em respostas do caminho Cube (status ok). */
+export interface CubeExplicacao {
+  /** Tabela de origem (sql_table do cube, ex: "mart_producao"). */
+  tabela: string | null;
+  /** Lista de measures usadas e a expressão SQL de cada uma. */
+  measures: Array<{ nome: string; formula_sql: string }>;
+  /** Filtros aplicados em formato humanizado. */
+  filtros: string[];
+  /** Período usado, ex: "2026-04-01 a 2026-04-30". Null se sem período. */
+  periodo: string | null;
+  /** Sempre "Cube" para estes endpoints. */
+  fonte: string;
+}
+
 export interface CopilotAskRequest {
   user_query: string;
   entity_type?: string;
@@ -44,6 +60,8 @@ export interface CopilotResponse {
     latency_ms: number;
     validation_passed: boolean;
   };
+  /** Q.173.AL — só presente em respostas do caminho Cube (status ok). */
+  explicacao?: CubeExplicacao | null;
 }
 
 export interface DailyFeedbackResponse {

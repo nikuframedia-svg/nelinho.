@@ -11,7 +11,7 @@ import { request, API_BASE } from './client';
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // Import types from separate file (import before using)
-import type { CopilotAskRequest, CopilotResponse, DailyFeedbackResponse } from '../copilot-types';
+import type { CopilotAskRequest, CopilotResponse, CubeExplicacao, DailyFeedbackResponse } from '../copilot-types';
 
 // Re-export types for external use
 export type { CopilotAskRequest, CopilotResponse, DailyFeedbackResponse };
@@ -31,9 +31,12 @@ interface AskCubeResponse {
   annotation?: Record<string, unknown> | null;
   abstain_reason?: string | null;
   warnings?: string[];
+  /** Q.173.AL — só presente em status="ok". */
+  explicacao?: CubeExplicacao | null;
 }
 
-function cubeToCopilotResponse(r: AskCubeResponse): CopilotResponse {
+/** @internal — exportado apenas para testes unitários. */
+export function cubeToCopilotResponse(r: AskCubeResponse): CopilotResponse {
   const id = `cube-${Date.now()}`;
   const cubeCitation = {
     source_type: 'calculation' as const,
@@ -88,6 +91,8 @@ function cubeToCopilotResponse(r: AskCubeResponse): CopilotResponse {
     actions: [],
     warnings,
     meta: { model: 'cube+gemma4', tokens: 0, latency_ms: 0, validation_passed: r.status === 'ok' },
+    // Q.173.AL — preservar explicação estruturada (null quando ausente)
+    explicacao: r.explicacao ?? null,
   };
 }
 

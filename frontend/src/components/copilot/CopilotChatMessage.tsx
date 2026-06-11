@@ -14,11 +14,11 @@
 
 import { useState } from 'react';
 import type { ReactNode } from 'react';
-import { FileText, AlertTriangle, Check, Play, ExternalLink, ThumbsUp, ThumbsDown } from 'lucide-react';
+import { FileText, AlertTriangle, Check, Play, ExternalLink, ThumbsUp, ThumbsDown, Info, ChevronDown, ChevronRight } from 'lucide-react';
 import { copilotApi } from '../../lib/api/copilotApi';
 import { DarkBadge } from '../dark';
 import { Clickable } from '../entitySheets';
-import type { CopilotResponse } from '../../lib/copilot-types';
+import type { CopilotResponse, CubeExplicacao } from '../../lib/copilot-types';
 import { CopilotChart } from './CopilotChart';
 import type { ChatMessage, CopilotResponseWithCharts } from './copilotPageHelpers';
 import { WARNING_LABELS } from './copilotPageHelpers';
@@ -40,6 +40,90 @@ function renderWithClickables(text: string): ReactNode[] {
   }
   if (lastIndex < text.length) out.push(text.slice(lastIndex));
   return out;
+}
+
+// ── Q.173.AL — "Como cheguei a isto" (só para respostas Cube) ─────────────────
+
+function CubeExplicacaoPanel({ exp }: { exp: CubeExplicacao }): ReactNode {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded-md border border-bd-1 bg-bg-2 overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-bg-3 transition-colors"
+      >
+        <Info size={11} className="text-fg-3 shrink-0" />
+        <span className="flex-1 text-xs text-fg-2 font-medium">Como cheguei a isto</span>
+        {open ? (
+          <ChevronDown size={11} className="text-fg-3" />
+        ) : (
+          <ChevronRight size={11} className="text-fg-3" />
+        )}
+      </button>
+      {open && (
+        <div className="px-3 pb-3 flex flex-col gap-2 border-t border-bd-1 pt-2">
+          {/* Tabela de origem */}
+          {exp.tabela && (
+            <div>
+              <span className="text-[10px] uppercase tracking-wide text-fg-3 font-semibold">Tabela</span>
+              <p className="font-mono text-xs text-fg-1 mt-0.5">{exp.tabela}</p>
+            </div>
+          )}
+
+          {/* Measures com fórmula SQL */}
+          {exp.measures.length > 0 && (
+            <div>
+              <span className="text-[10px] uppercase tracking-wide text-fg-3 font-semibold">
+                Medida{exp.measures.length > 1 ? 's' : ''} ({exp.measures.length})
+              </span>
+              <div className="flex flex-col gap-1 mt-0.5">
+                {exp.measures.map((m) => (
+                  <div key={m.nome} className="rounded bg-bg-3 border border-bd-1 px-2 py-1.5">
+                    <p className="text-[10px] text-fg-3 mb-0.5">{m.nome}</p>
+                    <button
+                      type="button"
+                      title="Copiar fórmula"
+                      onClick={() => navigator.clipboard.writeText(m.formula_sql).catch(() => {})}
+                      className="w-full text-left font-mono text-xs text-fg-1 hover:text-accent transition-colors"
+                    >
+                      {m.formula_sql}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Filtros */}
+          {exp.filtros.length > 0 && (
+            <div>
+              <span className="text-[10px] uppercase tracking-wide text-fg-3 font-semibold">Filtros</span>
+              <div className="flex flex-wrap gap-1 mt-0.5">
+                {exp.filtros.map((f, i) => (
+                  <span
+                    key={i}
+                    className="inline-flex items-center rounded px-1.5 py-0.5 bg-bg-3 border border-bd-1 font-mono text-fg-2"
+                    style={{ fontSize: 9.5 }}
+                  >
+                    {f}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Período */}
+          {exp.periodo && (
+            <div>
+              <span className="text-[10px] uppercase tracking-wide text-fg-3 font-semibold">Período</span>
+              <p className="text-xs text-fg-1 mt-0.5">{exp.periodo}</p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 const ACTION_ICON: Record<string, ReactNode> = {
@@ -151,6 +235,11 @@ function ResponseBody({
             </div>
           ))}
         </div>
+      )}
+
+      {/* Q.173.AL — "Como cheguei a isto": só para respostas Cube com explicacao */}
+      {response.explicacao && (
+        <CubeExplicacaoPanel exp={response.explicacao} />
       )}
     </div>
   );

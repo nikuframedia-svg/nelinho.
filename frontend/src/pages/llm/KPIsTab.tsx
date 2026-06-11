@@ -16,7 +16,7 @@
  * "sem dados" — nunca valores inventados. ZERO MOCKS.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   BarChart3,
@@ -26,6 +26,7 @@ import {
   Database,
   Plus,
   X,
+  Info,
 } from 'lucide-react';
 import { DarkPageLayout } from '../../layouts';
 import { DarkCard, DarkButton, DarkBadge, DarkSearchInput } from '../../components/dark';
@@ -73,6 +74,22 @@ function formatValue(card: CubeDashboardCard): string {
 }
 
 const COLORS = ['#4ea7c1', '#7bb274', '#c9a72a', '#b97fc9', '#d6845a', '#5aa9d6'];
+
+// Q.173.AL — mapa dos cards curados (backend _CARD_SPECS): key → measure canónico.
+// Estático porque o conjunto curado só muda com deploy.
+const DASHBOARD_CARD_MEASURE: Record<string, string> = {
+  ofs_produzidas_hoje: 'producao_ofs_fechadas_dia.total',
+  ofs_em_curso: 'producao_ofs_em_curso.total',
+  taxa_defeitos: 'qualidade.taxa_defeitos',
+  facturacao_mes: 'comercial_facturacao.total',
+  consumo_custo_mes: 'consumo_material.custo',
+  backlog: 'planeamento_backlog.total',
+  lead_time_p50: 'producao_lead_time_of.lead_time_p50',
+  ofs_expedidas_mes: 'logistica_ofs_expedidas.total',
+};
+
+// Cards curados sem período temporal: mostram "todo o histórico do espelho".
+const ALL_TIME_KEYS = new Set(['taxa_defeitos', 'lead_time_p50', 'ofs_em_curso', 'backlog']);
 
 // ── Componente principal ─────────────────────────────────────────────────
 
@@ -291,9 +308,18 @@ export function KPIsTab() {
         </div>
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 mb-7">
-          {cards.map((card) => (
-            <KpiCard key={card.key} card={card} />
-          ))}
+          {cards.map((card) => {
+            const measureName = DASHBOARD_CARD_MEASURE[card.key];
+            const catalogEntry = measureName ? catalogByName.get(measureName) : undefined;
+            return (
+              <KpiCard
+                key={card.key}
+                card={card}
+                catalogEntry={catalogEntry}
+                isAllTime={ALL_TIME_KEYS.has(card.key)}
+              />
+            );
+          })}
         </div>
       )}
 
@@ -492,13 +518,37 @@ function UnavailableKpiCard({ label, onRemove }: { label: string; onRemove: () =
 
 // ── Card de KPI (destaque curado) ───────────────────────────────────────────
 
-function KpiCard({ card }: { card: CubeDashboardCard }) {
+function KpiCard({
+  card,
+  catalogEntry,
+  isAllTime,
+}: {
+  card: CubeDashboardCard;
+  catalogEntry?: CubeMeasureCatalogEntry;
+  isAllTime?: boolean;
+}) {
   const hasData = card.status === 'ok' && card.value !== null;
+  const [tipOpen, setTipOpen] = useState(false);
+  const tipRef = useRef<HTMLDivElement>(null);
+
+  // Fecha ao clicar fora
+  useEffect(() => {
+    if (!tipOpen) return;
+    function handleClick(e: MouseEvent) {
+      if (tipRef.current && !tipRef.current.contains(e.target as Node)) {
+        setTipOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [tipOpen]);
+
+  const hasInfo = !!(catalogEntry?.sql || catalogEntry?.sql_table || isAllTime);
 
   return (
     <DarkCard className="relative group">
       <div className="flex items-start justify-between gap-2 mb-1">
-        <span className="text-xs font-medium text-fg-2 leading-tight">{card.label}</span>
+        <span className="text-xs font-medium text-fg-2 leading-tight pr-5">{card.label}</span>
         {!hasData && <DarkBadge variant="neutral">sem dados</DarkBadge>}
       </div>
       <div className="flex items-baseline gap-1 mt-1.5">
@@ -508,6 +558,59 @@ function KpiCard({ card }: { card: CubeDashboardCard }) {
           <span className="text-sm text-fg-3">—</span>
         )}
       </div>
+      {/* Subtítulo all-time */}
+      {isAllTime && hasData && (
+        <span className="mt-1 block text-[10px] uppercase tracking-wide text-fg-3">
+          todo o histórico do espelho
+        </span>
+      )}
+
+      {/* Ícone ⓘ com tooltip de fórmula+tabela */}
+      {hasInfo && (
+        <div ref={tipRef} className="absolute top-2 right-2">
+          <button
+            type="button"
+            title="Ver fórmula e fonte"
+            onClick={() => setTipOpen((v) => !v)}
+            className="text-fg-3 hover:text-accent transition-colors"
+          >
+            <Info size={13} />
+          </button>
+          {tipOpen && (
+            <div
+              className="absolute right-0 top-6 z-20 w-64 rounded-lg border border-bd-2 bg-bg-0 shadow-lg p-3 flex flex-col gap-2"
+              style={{ fontSize: 11 }}
+            >
+              {catalogEntry?.sql_table && (
+                <div>
+                  <span className="text-[9.5px] uppercase tracking-wide text-fg-3 font-semibold">Tabela</span>
+                  <p className="font-mono text-fg-1 mt-0.5">{catalogEntry.sql_table}</p>
+                </div>
+              )}
+              {catalogEntry?.sql && (
+                <div>
+                  <span className="text-[9.5px] uppercase tracking-wide text-fg-3 font-semibold">Fórmula SQL</span>
+                  <button
+                    type="button"
+                    title="Copiar fórmula"
+                    onClick={() => navigator.clipboard.writeText(catalogEntry.sql).catch(() => {})}
+                    className="w-full text-left font-mono text-fg-1 mt-0.5 hover:text-accent transition-colors break-all"
+                  >
+                    {catalogEntry.sql}
+                  </button>
+                </div>
+              )}
+              {isAllTime && (
+                <div>
+                  <span className="text-[9.5px] uppercase tracking-wide text-fg-3 font-semibold">Período</span>
+                  <p className="text-fg-1 mt-0.5">todo o histórico do espelho</p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       <button
         type="button"
         title="Investigar a causa via copiloto"
