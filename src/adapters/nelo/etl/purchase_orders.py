@@ -1,54 +1,41 @@
-"""Q.64.D — purchase_orders mirror (ERP → supply.purchase_orders).
+"""Q.64.D / Q.173.E — purchase_orders mirror (espelho local → supply.purchase_orders).
 
-Desbloqueia o endpoint `GET /v1/supply/purchase-orders` que devolvia
-`data_available=false` porque `supply.purchase_orders` estava a 0 linhas.
-A tab Entregas (Materiais page) depende deste mirror para mostrar o
-tracking de encomendas a fornecedor com fornecedor, material, qty
-encomendada vs recebida, ETA e estado de recepção.
+Q.173.E corrige dois problemas da versão anterior (Q.64.D):
+  1. A versão Q.64.D lia o ERP LIVE com limit=5000 e filtrava tipo 9 em
+     Python → cobria ~2% das POs dos últimos 12 meses (138 de ~5.987).
+  2. Fabricava `eta = ordered_at + 30d` para 100% das linhas.
+  3. Supplier_name ficava como "Fornecedor {id}" em vez do nome real.
 
-A fonte canónica é `dbo.MOVIMENTO WHERE MOV_TPMOV_ID=9` ("Pedidos a
-fornecedor"). Cada movimento desse tipo é uma encomenda a fornecedor;
-o ERP NELO mantém um único registo por encomenda (não há receipt
-tracking granular na MOVIMENTO em si — isso vive na MOVIMENTO_FORNECEDOR
-que não está no scope deste mirror).
+Solução Q.173.E:
+  - Lê directamente de `factory_raw.movimento` (espelho local, sem limit
+    artificial) com JOIN a `factory_raw.entidade` para o nome do fornecedor
+    e a `factory_raw.produto` para o nome do produto.
+  - `eta = None` — sem ETA inventada. Os leitores do modelo já são
+    NULL-safe (purchase_order_service.py usa `po.eta is not None`).
+  - Janela: 12 meses (env `NELINHO_PURCHASE_ORDERS_LOOKBACK_MONTHS`,
+    default 12).
+  - Chunking: lê em blocos de 2000 para não sobrecarregar a sessão.
+  - Idempotente: upsert por `(tenant_id, erp_movement_id)`.
 
-Estratégia: filtramos inline em Python o resultado de
-`services.list_recent_movements()` por `movement_type_id == 9` — evita
-adicionar uma nova função NELO só para isto e mantém a janela de 12
-meses da view.
+`qty_received` mantém-se 0: as recepções vivem em dbo.MOVIMENTO_FORNECEDOR,
+sem acesso ainda — ver comentário inline.
 
-Mapping concreto:
-
-* `movement_id`              → `erp_movement_id` (idempotency key)
-* `f"PO-{movement_id}"`      → `po_number` (slug determinístico)
-* `entity_id`                → `supplier_erp_id`
-* `f"Fornecedor {entity_id}"` → `supplier_name` (placeholder; Q.67.1.A:
-                                bloqueado pendente ENTIDADE mirror — issue Q.68.A)
-* `product_id`               → `product_code` (string)
-* `quantity`                 → `qty_ordered`
-* 0                          → `qty_received` (até haver receipt tracking)
-* `moved_at`                 → `ordered_at`
-* `moved_at + 30 dias`       → `eta` (placeholder; Q.67.1.A: bloqueado
-                                pendente MOVIMENTO_FORNECEDOR helper service
-                                + leitura de MOVFOR_ETA — issue Q.68.A)
-* "ORDERED" (legacy alias)   → na verdade `PO_STATUS_OPEN` ("OPEN")
-* "EUR"                      → `currency_code` (não persistido — model
-                                não tem coluna; mantemos só `unit_cost`
-                                em €)
-
-Idempotente: upsert por `(tenant_id, erp_movement_id)`.
+Gate `sqlserver_enabled` mantém-se inalterado (o espelho só está fresco
+quando o sync NELO corre).
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import date, timedelta
+import os
+from datetime import date
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from src.adapters.nelo import services
-from src.adapters.nelo.schemas import MovementRow
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from src.supply.models import PO_STATUS_OPEN, PurchaseOrder
 
 from .runner import EtlRunner, EtlRunResult
@@ -56,72 +43,135 @@ from .sync import register_mirror
 
 logger = logging.getLogger(__name__)
 
-#: Movement type for "Pedidos a fornecedor" (supplier purchase orders).
-#: Defined in `dbo.TIPO_MOVIMENTO` (MAR-KAYAKS ERP) — see
-#: `agent_docs/mar_kayaks_schema_discovery.md`.
+#: Movement type "Pedidos a fornecedor" — `dbo.TIPO_MOVIMENTO.TPMOV_ID=9`.
 _PO_MOVEMENT_TYPE_ID = 9
-
-#: ETA placeholder lead-time (days). The ERP keeps the real ETA on
-#: `dbo.MOVIMENTO_FORNECEDOR.MOVFOR_ETA`, a separate table not yet
-#: covered by an adapter service. 30d matches the factory's typical
-#: lead time for non-critical raw materials.
-_ETA_PLACEHOLDER_DAYS = 30
 
 _Q6 = Decimal("0.000001")
 
+#: Chunk size para iterar sobre `factory_raw.movimento` sem sobrecarregar
+#: a sessão. ~5.987 linhas/12 meses → 3 batches de 2000.
+_CHUNK_SIZE = 2000
 
-def _map_movement_to_po(row: MovementRow) -> Optional[Dict[str, Any]]:
-    """`MovementRow` → linha para `supply.purchase_orders`.
 
-    Devolve `None` quando o movimento não é uma PO (tipo != 9), ou
-    quando faltam campos essenciais (movement_id, product_id, moved_at).
-    O upsert ignora `None` — `mirror_purchase_orders` filtra a lista.
+# ---------------------------------------------------------------------------
+# SQL de leitura do espelho local
+# ---------------------------------------------------------------------------
+
+_FETCH_POS_SQL = text("""
+    SELECT
+        m."MOV_ID"             AS movement_id,
+        m."MOV_DATA"           AS moved_at,
+        m."MOV_P_ID"           AS product_id,
+        m."MOV_E_ID"           AS entity_id,
+        m."MOV_QUANTIDADE"     AS quantity,
+        e."E_NOME"             AS supplier_name,
+        p."P_NOME"             AS product_name
+    FROM factory_raw.movimento m
+    LEFT JOIN factory_raw.entidade e ON e."E_ID" = m."MOV_E_ID"
+    LEFT JOIN factory_raw.produto  p ON p."P_ID" = m."MOV_P_ID"
+    WHERE m."MOV_TPMOV_ID" = :movement_type
+      AND m."MOV_DATA"     >= to_char(
+              NOW() - (:lookback_months * INTERVAL '1 month'),
+              'YYYY-MM-DD'
+          )
+    ORDER BY m."MOV_ID"
+    LIMIT  :chunk_size
+    OFFSET :offset
+""")
+
+
+async def _fetch_po_rows(
+    session: AsyncSession,
+    *,
+    lookback_months: int,
+    chunk_size: int = _CHUNK_SIZE,
+) -> List[Dict[str, Any]]:
+    """Lê todos os movimentos tipo 9 do espelho local em chunks.
+
+    Devolve lista de dicts com os campos necessários para o mapeamento.
+    Usa OFFSET/LIMIT sobre `MOV_ID` ordenado — determinístico para
+    re-runs (o espelho é append-only durante o sync).
     """
-    if row.movement_type_id != _PO_MOVEMENT_TYPE_ID:
-        return None
-    if row.movement_id is None:
-        return None
-    if row.product_id is None:
-        return None
-    if row.moved_at is None:
+    all_rows: List[Dict[str, Any]] = []
+    offset = 0
+    params = {
+        "movement_type": _PO_MOVEMENT_TYPE_ID,
+        "lookback_months": lookback_months,
+        "chunk_size": chunk_size,
+        "offset": offset,
+    }
+    while True:
+        params["offset"] = offset
+        result = await session.execute(_FETCH_POS_SQL, params)
+        batch = result.mappings().fetchall()
+        if not batch:
+            break
+        all_rows.extend(dict(r) for r in batch)
+        if len(batch) < chunk_size:
+            break
+        offset += chunk_size
+    return all_rows
+
+
+def _map_raw_row(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Raw dict do espelho → linha para `supply.purchase_orders`.
+
+    Devolve `None` quando faltam campos essenciais.
+    """
+    movement_id = row.get("movement_id")
+    product_id = row.get("product_id")
+    moved_at_raw = row.get("moved_at")
+
+    if movement_id is None or product_id is None or moved_at_raw is None:
         return None
 
-    qty_ordered = Decimal(str(row.quantity or 0)).quantize(_Q6)
-    # `unit_price` em € no ERP. O model `PurchaseOrder` (Q.53.D) ainda
-    # não tem coluna `unit_cost`/`total_cost`; quando for adicionada,
-    # o mapping abaixo enriquece a row. Por agora a precisão fica no
-    # ERP e o frontend mostra apenas `qty_ordered`.
-    # Q.67.1.A: bloqueado pendente migration alembic
-    # (`supply.purchase_orders.unit_cost`/`total_cost` Numeric(18,6)) — a
-    # drift chain está congelada em Q.62.A. Issue Q.68.A.
-    _ = Decimal(str(row.unit_price or 0)).quantize(_Q6)  # touch unit_price to surface schema drift
+    # MOV_DATA é texto ISO: '2026-06-11T13:30:00'
+    try:
+        if isinstance(moved_at_raw, str):
+            ordered_at = date.fromisoformat(moved_at_raw[:10])
+        else:
+            # datetime ou date directos (ex: testes com mocks)
+            ordered_at = (
+                moved_at_raw.date()
+                if hasattr(moved_at_raw, "date")
+                else moved_at_raw
+            )
+    except (ValueError, TypeError):
+        return None
 
-    # `moved_at` é datetime; o model guarda `ordered_at` como Date.
-    ordered_at: date = row.moved_at.date()
-    eta_at: date = ordered_at + timedelta(days=_ETA_PLACEHOLDER_DAYS)
+    qty_ordered = Decimal(str(row.get("quantity") or 0)).quantize(_Q6)
 
-    # Supplier name placeholder. ENTIDADE lookup é caro (uma query por
-    # PO ou um join 30k linhas) — fica para um mirror futuro que
-    # popule ENTIDADE local e o JOIN seja local.
-    # Q.67.1.A: bloqueado pendente ENTIDADE mirror (adapter novo grande:
-    # MOVIMENTO_FORNECEDOR.MOVFOR_ENTIDADE → ENTIDADE.ENT_NOME).
-    # Issue Q.68.A.
-    supplier_name = (
-        f"Fornecedor {row.entity_id}" if row.entity_id else "Fornecedor desconhecido"
-    )
+    # Supplier_name real (JOIN a entidade); fallback apenas se o JOIN não
+    # devolver nome (entidade sem nome ou entity_id NULL).
+    entity_id = row.get("entity_id")
+    supplier_name_raw = row.get("supplier_name")
+    if supplier_name_raw:
+        supplier_name = str(supplier_name_raw)[:255]
+    elif entity_id:
+        supplier_name = f"E_{entity_id}"
+    else:
+        supplier_name = "Fornecedor desconhecido"
+
+    product_name_raw = row.get("product_name")
+    product_name = str(product_name_raw)[:255] if product_name_raw else None
 
     return {
-        "erp_movement_id": int(row.movement_id),
-        "po_number": f"PO-{int(row.movement_id)}",
-        "supplier_name": supplier_name[:255],
-        "supplier_erp_id": int(row.entity_id) if row.entity_id else None,
-        "product_code": str(row.product_id),
-        "product_name": None,
+        "erp_movement_id": int(movement_id),
+        "po_number": f"PO-{int(movement_id)}",
+        "supplier_name": supplier_name,
+        "supplier_erp_id": int(entity_id) if entity_id else None,
+        "product_code": str(product_id),
+        "product_name": product_name,
         "qty_ordered": qty_ordered,
-        "qty_received": Decimal("0"),  # no receipt tracking yet
+        # qty_received mantém-se 0: as recepções vivem em
+        # dbo.MOVIMENTO_FORNECEDOR, ainda sem acesso — pergunta pendente
+        # ao Luis. Não inventamos um valor.
+        "qty_received": Decimal("0"),
         "unit_of_measure": "UN",
         "ordered_at": ordered_at,
-        "eta": eta_at,
+        # eta=None — sem ETA inventada. Q.173.E elimina o placeholder +30d.
+        # Os leitores (purchase_order_service.py) já são NULL-safe.
+        "eta": None,
         "received_at": None,
         "status": PO_STATUS_OPEN,
         "source": "erp_nelo_movimento",
@@ -135,35 +185,32 @@ async def mirror_purchase_orders(
     tenant_id: UUID,
     since: Optional[date] = None,
 ) -> EtlRunResult:
-    """Mirror `dbo.MOVIMENTO WHERE MOV_TPMOV_ID=9` → `supply.purchase_orders`.
+    """Mirror `factory_raw.movimento WHERE MOV_TPMOV_ID=9` → `supply.purchase_orders`.
 
-    Q.64.D — desbloqueia `/v1/supply/purchase-orders`. A view do ERP
-    devolve a janela completa (12 meses); filtramos inline por
-    `movement_type_id == 9` antes de mapear. Look-back limit por defeito
-    5000, override via `NELINHO_PURCHASE_ORDERS_FETCH_LIMIT`.
+    Q.173.E — usa o espelho local (sem limit artificial, com JOIN real a
+    entidade/produto) e remove a ETA fictícia.
+    Janela configurável via `NELINHO_PURCHASE_ORDERS_LOOKBACK_MONTHS`
+    (default 12).
     """
-    import os
-
-    limit = int(os.environ.get("NELINHO_PURCHASE_ORDERS_FETCH_LIMIT", "5000"))
+    lookback_months = int(
+        os.environ.get("NELINHO_PURCHASE_ORDERS_LOOKBACK_MONTHS", "12")
+    )
 
     async with EtlRunner(session, tenant_id, source="purchase_orders") as run:
-        rows = await services.list_recent_movements(limit=limit)
-        run.count_read(len(rows))
+        raw_rows = await _fetch_po_rows(
+            session, lookback_months=lookback_months,
+        )
+        run.count_read(len(raw_rows))
 
-        # Filtramos inline por tipo 9 — no_match não é "skipped" em sentido
-        # útil (são saídas/consumos de outro tipo); contamos como skipped
-        # os que matcham o tipo mas falham na validação de campos.
-        po_candidates: List[MovementRow] = [
-            r for r in rows if r.movement_type_id == _PO_MOVEMENT_TYPE_ID
-        ]
-        non_po = len(rows) - len(po_candidates)
-
-        mapped = [m for m in (_map_movement_to_po(r) for r in po_candidates) if m is not None]
-        invalid_po = len(po_candidates) - len(mapped)
-
-        # Skipped = não-PO (esperado, é o filtro) + PO inválidas
-        # (movement_id/product_id/moved_at em falta — anomalia ERP).
-        run.count_skipped(non_po + invalid_po)
+        mapped: List[Dict[str, Any]] = []
+        skipped = 0
+        for row in raw_rows:
+            m = _map_raw_row(row)
+            if m is None:
+                skipped += 1
+            else:
+                mapped.append(m)
+        run.count_skipped(skipped)
 
         await run.upsert(
             PurchaseOrder,
@@ -187,8 +234,9 @@ async def mirror_purchase_orders(
             ],
         )
         logger.info(
-            "purchase_orders mirror — %d PO(s) mapped (read %d, non-po skipped %d, invalid %d)",
-            len(mapped), len(rows), non_po, invalid_po,
+            "purchase_orders mirror — %d PO(s) mapped (read %d, skipped %d), "
+            "lookback %d meses",
+            len(mapped), len(raw_rows), skipped, lookback_months,
         )
 
     return run.result

@@ -52,6 +52,11 @@ class InventoryLedgerEntry(TenantBase):
     transaction_type: Mapped[str] = mapped_column(String(20), nullable=False)  # 'consume', 'receive', 'adjust'
     reference_id: Mapped[Optional[UUID]] = mapped_column(PG_UUID(as_uuid=True), nullable=True)  # operation_id or po_id
 
+    # Q.173.F — rastreio por Ordem de Fabrico (MOV_OF_ID do ERP).
+    # Permite consumo-por-barco nas Fases 4/5. NULL para movimentos
+    # sem OF associada (ajustes de inventário, devoluções, etc.).
+    erp_of_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
 
 class SupplyForecast(TenantBase):
     """
@@ -148,6 +153,16 @@ class MaterialMaster(TenantBase):
 
     critical_flag: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    # Q.173.D — proveniência do valor de stock mínimo e lead-time.
+    # Valores possíveis: 'default' | 'erp' | 'manual'.
+    # O ETL só actualiza se != 'manual'; o PATCH /min-stock marca 'manual'.
+    min_stock_source: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="default", default="default",
+    )
+    lead_time_source: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="default", default="default",
+    )
 
 
 class MaterialInTransit(TenantBase):

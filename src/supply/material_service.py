@@ -128,11 +128,16 @@ class MaterialService:
         sku_id: str,
         min_stock_qty: Decimal,
     ) -> MaterialMaster:
-        """MR05/O.3 — patch just the min_stock_qty. Enforces >= 0."""
+        """MR05/O.3 — override manual do min_stock_qty.
+
+        Marca `min_stock_source='manual'` para que re-runs do ETL
+        (Q.173.D) não clobberem o valor definido pelo operador.
+        """
         if min_stock_qty < 0:
             raise ValueError("min_stock_qty must be >= 0")
         row = await self.get_material(sku_id)
         row.min_stock_qty = min_stock_qty
+        row.min_stock_source = "manual"
         await self.session.flush()
         return row
 
