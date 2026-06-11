@@ -16,9 +16,11 @@ Detectors (Sprint C baseline):
   transport_date falls within DELIVERY_RISK_WINDOW_DAYS (or is already
   past). Reads production_orders directly — no semantic layer needed.
 
-Deduplication: for each detector, scans the last
-`ALERT_DEDUPE_WINDOW_MINUTES` of alerts and skips any that already match
-`(code, entity_refs[0])`.
+Deduplication (Q.173.AR.1, alinhada com a constraint Q.138.I): no máximo
+um alerta ATIVO por (tenant, code) — candidatos múltiplos do mesmo código
+são agregados num só (`_aggregate_candidates`) e o persist salta quando já
+existe um ativo. Resolver/acknowledgar o alerta liberta o código para o
+scan seguinte voltar a emitir.
 """
 
 from __future__ import annotations
@@ -51,13 +53,62 @@ logger = logging.getLogger(__name__)
 # Thresholds — tuned to a first-useful pass, not calibrated
 BOTTLENECK_DAYS_THRESHOLD = 10.0
 QUALITY_EVENTS_THRESHOLD = 500
-ALERT_DEDUPE_WINDOW_MINUTES = 60
 # Q.31.H — janela de risco de entrega: barco com transporte dentro de N dias
 # (ou já passado) e ainda em produção dispara o alerta.
 DELIVERY_RISK_WINDOW_DAYS = 3
 # Q.173.AR — dias sem nenhum plano LIVE aprovado a partir dos quais o loop
 # plan-vs-actual está cego (só aprende de LIVE); 2x = CRITICAL.
 PLAN_LIVE_STALENESS_DAYS = 7
+# Q.173.AR.1 — entidades guardadas no alerta agregado (amostra; o total
+# vai em context.count).
+_AGGREGATE_SAMPLE = 15
+
+
+def _aggregate_candidates(
+    candidates: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Q.173.AR.1 — colapsa candidatos do MESMO código num único alerta.
+
+    A BD garante (Q.138.I) no máximo 1 alerta ativo por (tenant, code);
+    um detector que emita 1 candidato por barco (delivery_risk: 167 em
+    2026-06-12) tem de chegar ao persist já agregado — senão o flush
+    rebenta na constraint. Severidade = a pior; entity_refs = amostra;
+    context = contagem + amostras dos contextos individuais.
+    """
+    by_code: Dict[str, List[Dict[str, Any]]] = {}
+    for c in candidates:
+        by_code.setdefault(str(c.get("code")), []).append(c)
+
+    out: List[Dict[str, Any]] = []
+    for code, group in by_code.items():
+        if len(group) == 1:
+            out.append(group[0])
+            continue
+        worst = next(
+            (c for c in group if c.get("severity") == "CRITICAL"), group[0],
+        )
+        refs: List[str] = []
+        for c in group:
+            for ref in c.get("entity_refs") or []:
+                if ref not in refs:
+                    refs.append(ref)
+        n_critical = sum(1 for c in group if c.get("severity") == "CRITICAL")
+        out.append({
+            "severity": worst["severity"],
+            "code": code,
+            "title": f"{worst['title']} (+{len(group) - 1} casos)",
+            "message_pt": (
+                f"{worst['message_pt']} Há {len(group)} casos ativos deste "
+                f"alerta ({n_critical} críticos) — ver contexto para a amostra."
+            ),
+            "context": {
+                "count": len(group),
+                "count_critical": n_critical,
+                "sample": [c.get("context", {}) for c in group[:5]],
+            },
+            "entity_refs": refs[:_AGGREGATE_SAMPLE],
+        })
+    return out
 
 
 class AlertsEngine:
@@ -114,7 +165,7 @@ class AlertsEngine:
                 )
                 continue
 
-            for candidate in candidates:
+            for candidate in _aggregate_candidates(candidates):
                 persisted = await self._persist_if_new(candidate)
                 if persisted:
                     created += 1
@@ -526,32 +577,28 @@ class AlertsEngine:
 
     async def _persist_if_new(self, candidate: Dict[str, Any]) -> bool:
         """
-        Returns True if inserted, False if skipped because a recent duplicate
-        (same code + same primary entity_ref) already exists as active.
+        Returns True if inserted, False if an ACTIVE alert with the same code
+        already exists.
+
+        Q.173.AR.1 — alinhado com a constraint Q.138.I da BD (unique partial
+        index (tenant_id, code) WHERE status='active'): existe NO MÁXIMO um
+        alerta ativo por código. O dedup antigo (janela de 60 min + match por
+        entity_ref) violava a constraint sempre que um detector emitia >1
+        candidato do mesmo código — combinado com o bug aware/naive da janela,
+        o scan inteiro rebentava e NENHUM alerta novo nasceu desde 2026-06-01.
+        Candidatos múltiplos do mesmo código são agregados a montante
+        (`_aggregate_candidates`).
         """
-        dedupe_key = candidate["entity_refs"][0] if candidate.get("entity_refs") else None
-        if dedupe_key:
-            since = datetime.now(timezone.utc) - timedelta(minutes=ALERT_DEDUPE_WINDOW_MINUTES)
-            stmt = select(CopilotAlert.id).where(
-                and_(
-                    CopilotAlert.tenant_id == self.tenant_id,
-                    CopilotAlert.code == candidate["code"],
-                    CopilotAlert.status == STATUS_ACTIVE,
-                    CopilotAlert.created_at >= since,
-                )
-            ).limit(50)
-            existing = await self.session.execute(stmt)
-            rows = existing.scalars().all()
-            if rows:
-                # Check entity_refs manually since JSONB contains queries vary by dialect
-                dup_stmt = select(CopilotAlert).where(
-                    CopilotAlert.id.in_(rows)
-                )
-                dups = await self.session.execute(dup_stmt)
-                for alert in dups.scalars().all():
-                    refs = alert.entity_refs or []
-                    if refs and refs[0] == dedupe_key:
-                        return False
+        stmt = select(CopilotAlert.id).where(
+            and_(
+                CopilotAlert.tenant_id == self.tenant_id,
+                CopilotAlert.code == candidate["code"],
+                CopilotAlert.status == STATUS_ACTIVE,
+            )
+        ).limit(1)
+        existing = (await self.session.execute(stmt)).scalar_one_or_none()
+        if existing is not None:
+            return False
 
         alert = CopilotAlert(
             id=uuid4(),

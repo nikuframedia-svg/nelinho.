@@ -267,9 +267,12 @@ class TestDeliveryRiskDetector:
 # ---------------------------------------------------------------------------
 
 class TestDedup:
-    async def test_second_scan_within_window_does_not_reinsert(
+    async def test_second_scan_with_active_alert_does_not_reinsert(
         self, fake_session, tenant_id,
     ):
+        """Q.173.AR.1 — a BD garante 1 alerta ATIVO por (tenant, code)
+        (constraint Q.138.I); o persist salta quando já existe um ativo,
+        independentemente da idade."""
         sq = FakeSemanticQueries()
         sq.set("get_bottlenecks", {
             "status": "OK",
@@ -286,22 +289,67 @@ class TestDedup:
         inserted_first = _added_alerts(fake_session)
         assert len(inserted_first) == 1
 
-        # Simulate second scan hitting dedup: pre-queue the id of the recent
-        # alert, then the full alert row for the entity_ref check.
+        # Second scan: the existing-active lookup finds the alert id → skip.
         recent = inserted_first[0]
-        # queue scalar list (id subquery) then scalar list (full row check)
-        fake_session.queue_scalars([recent.id])  # id query result
-        fake_session.queue_scalars([recent])      # full row check
-        # bottleneck is the first detector, then each other detector will
-        # run its own query — empty results keep them silent.
+        fake_session.queue_scalar(recent.id)
         summary_second = await engine.scan()
 
         assert summary_second["skipped_duplicate"] >= 1
-        # No additional CopilotAlert added after dedup
         bottleneck_alerts = [
             a for a in _added_alerts(fake_session) if a.code == CODE_BOTTLENECK_FORMATION
         ]
         assert len(bottleneck_alerts) == 1
+
+
+class TestAggregateCandidates:
+    """Q.173.AR.1 — N candidatos do mesmo código colapsam num só alerta
+    (a constraint da BD só permite 1 ativo por código)."""
+
+    def test_167_barcos_viram_um_alerta(self):
+        from src.copilot.alerts.engine import _aggregate_candidates
+
+        candidates = [
+            {
+                "severity": "CRITICAL" if i % 3 == 0 else "WARN",
+                "code": CODE_DELIVERY_RISK,
+                "title": f"Risco de atraso — barco #{i}",
+                "message_pt": f"O barco #{i} está atrasado.",
+                "context": {"hull": i},
+                "entity_refs": [f"barco:{i}"],
+            }
+            for i in range(167)
+        ]
+
+        out = _aggregate_candidates(candidates)
+
+        assert len(out) == 1
+        agg = out[0]
+        assert agg["severity"] == "CRITICAL"  # a pior do grupo
+        assert agg["context"]["count"] == 167
+        assert agg["context"]["count_critical"] == 56
+        assert len(agg["entity_refs"]) == 15  # amostra, não os 167
+        assert "+166 casos" in agg["title"]
+        assert "167 casos ativos" in agg["message_pt"]
+
+    def test_um_candidato_passa_intacto(self):
+        from src.copilot.alerts.engine import _aggregate_candidates
+
+        single = [{
+            "severity": "WARN", "code": CODE_DELIVERY_RISK,
+            "title": "t", "message_pt": "m", "context": {}, "entity_refs": ["x"],
+        }]
+        assert _aggregate_candidates(single) == single
+
+    def test_codigos_distintos_nao_se_misturam(self):
+        from src.copilot.alerts.engine import _aggregate_candidates
+
+        candidates = [
+            {"severity": "WARN", "code": "A", "title": "a", "message_pt": "a",
+             "context": {}, "entity_refs": ["a:1"]},
+            {"severity": "WARN", "code": "B", "title": "b", "message_pt": "b",
+             "context": {}, "entity_refs": ["b:1"]},
+        ]
+        assert len(_aggregate_candidates(candidates)) == 2
 
 
 # ---------------------------------------------------------------------------
