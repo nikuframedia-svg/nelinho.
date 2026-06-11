@@ -184,16 +184,22 @@ function AprendizagemSection() {
   );
 }
 
+const PAGE_SIZE = 25;
+
 export default function HistoricoTab() {
   const [filter, setFilter] = useState<StatusFilter>('all');
+  const [page, setPage] = useState(1);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
+  // Q.173.AT — paginação real (antes: page_size 100 hardcoded cortava o
+  // histórico a 100 sem aviso; a API já devolvia total/page).
   const query = useQuery({
-    queryKey: decisionKeys.list({ status: `historico:${filter}` }),
+    queryKey: decisionKeys.list({ status: `historico:${filter}:p${page}` }),
     queryFn: () =>
       decisionsApi.list({
         ...(filter === 'all' ? {} : { status: filter }),
-        page_size: 100,
+        page,
+        page_size: PAGE_SIZE,
       }),
     refetchOnWindowFocus: false,
   });
@@ -201,6 +207,13 @@ export default function HistoricoTab() {
   const items: DecisionRun[] = (query.data?.decisions ?? []).filter((d) =>
     filter === 'all' ? d.status !== 'PROPOSED' : true,
   );
+  const total = query.data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  const changeFilter = (next: StatusFilter) => {
+    setFilter(next);
+    setPage(1);
+  };
 
   return (
     <DarkPageLayout
@@ -215,7 +228,7 @@ export default function HistoricoTab() {
         <Segmented<StatusFilter>
           options={FILTER_OPTIONS}
           value={filter}
-          onChange={setFilter}
+          onChange={changeFilter}
           ariaLabel="Filtrar por estado"
         />
       </div>
@@ -285,6 +298,27 @@ export default function HistoricoTab() {
               </DarkCard>
             );
           })}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between pt-2">
+              <DarkButton
+                variant="ghost"
+                disabled={page <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                ← Anterior
+              </DarkButton>
+              <span className="text-xs text-fg-3">
+                Página {page} de {totalPages} · {total} decisões
+              </span>
+              <DarkButton
+                variant="ghost"
+                disabled={page >= totalPages}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              >
+                Próxima →
+              </DarkButton>
+            </div>
+          )}
         </div>
       )}
     </DarkPageLayout>

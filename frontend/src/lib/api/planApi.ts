@@ -10,37 +10,11 @@ import { request, filterParams } from './client';
 // PLAN MODULE - Production Planning
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// Scheduling
-export const schedulingApi = {
-  generate: (data: {
-    orders: Array<Record<string, any>>;
-    machines: Array<Record<string, any>>;
-    operations: Array<Record<string, any>>;
-    engine?: string;
-    rule?: string;
-    planning_weeks?: number;
-  }) =>
-    request<any>('/v1/plan/schedule/generate', { method: 'POST', body: JSON.stringify(data) }),
-  
-  get: (planningRunId: string) =>
-    request<any>(`/v1/plan/schedule/${planningRunId}`),
-  
-  getOrderSchedule: (orderId: string) =>
-    request<any>(`/v1/plan/schedule/order/${orderId}`),
-  
-  // Legacy methods for backward compatibility (deprecated)
-  list: (params?: { status?: string }) =>
-    request<any>(`/v1/plan/schedule?${new URLSearchParams(filterParams(params))}`),
-  
-  create: (data: any) =>
-    request<any>('/v1/plan/schedule', { method: 'POST', body: JSON.stringify(data) }),
-  
-  run: (id: string) =>
-    request<any>(`/v1/plan/schedule/${id}/run`, { method: 'POST' }),
-  
-  getTasks: (scheduleId: string) =>
-    request<any>(`/v1/plan/schedule/${scheduleId}/tasks`),
-};
+// Q.173.AT — `schedulingApi` e `planApi` (objetos legacy do fluxo
+// /v1/plan/schedule + /generate sobre plan.production_schedules) foram
+// REMOVIDOS: zero consumidores no frontend e a tabela destino está a 0
+// desde sempre (o planeamento real é o CPO via cpoCommitsApi). Ver
+// DELETION_LOG.md 2026-06-12.
 
 // MRP
 export const mrpApi = {
@@ -96,45 +70,6 @@ export const capacityApi = {
 };
 
 // Plan API - High-level planning interface
-export const planApi = {
-  // Get all schedules
-  getSchedules: (params?: { limit?: number; status?: string }) =>
-    request<any>(`/v1/plan/schedule?${new URLSearchParams(filterParams(params))}`),
-  
-  // Generate a new schedule
-  generateSchedule: (params: { horizon_days?: number; engine?: string; rule?: string }) =>
-    request<any>('/v1/plan/schedule/generate', { 
-      method: 'POST', 
-      body: JSON.stringify({
-        orders: [],
-        machines: [],
-        operations: [],
-        planning_weeks: Math.ceil((params.horizon_days || 14) / 7),
-        engine: params.engine || 'genetic',
-        rule: params.rule || 'SPT',
-      })
-    }),
-  
-  // Get a specific schedule
-  getSchedule: (id: string) =>
-    request<any>(`/v1/plan/schedule/${id}`),
-  
-  // Get tasks for a schedule
-  getScheduleTasks: (scheduleId: string) =>
-    request<any>(`/v1/plan/schedule/${scheduleId}/tasks`),
-  
-  // Capacity analysis
-  getCapacityAnalysis: () =>
-    request<any>('/v1/plan/capacity/analysis'),
-  
-  // MRP results
-  getMRPResults: (params?: { limit?: number }) =>
-    request<any>(`/v1/plan/mrp/results${params?.limit ? `?limit=${params.limit}` : ''}`),
-  
-  // Calculate MRP
-  calculateMRP: (data: any) =>
-    request<any>('/v1/plan/mrp/calculate', { method: 'POST', body: JSON.stringify(data) }),
-};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ORDERS API - Paginated Production Orders (NEW)

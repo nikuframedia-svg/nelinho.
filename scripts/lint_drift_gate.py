@@ -40,6 +40,20 @@ FRONTEND_REGEX_RULES = {
         ["frontend/src/**/*.ts", "frontend/src/**/*.tsx"],
         r":\s*any\b",
     ),
+    # Q.173.AT — request<any> no fetch layer: 160 sites na auditoria
+    # 2026-06-11; tipar tudo de uma vez e churn cego (e acorda type
+    # errors dormentes). Baseline congela; touched-file pays.
+    "Q173_AT_request_any": (
+        ["frontend/src/lib/api/**/*.ts"],
+        r"request<any>",
+    ),
+    # Q.173.AT — queryKey inline (array literal) fora das factories de
+    # keys.ts (invariante Q.61.27): 47 sites na auditoria. keys.ts nao
+    # contem `queryKey:` (so define factories) → o padrao nao o apanha.
+    "Q173_AT_inline_query_keys": (
+        ["frontend/src/**/*.ts", "frontend/src/**/*.tsx"],
+        r"queryKey:\s*\[\s*['\"]",
+    ),
 }
 
 # Python custom (AST walk via tools/lint_*.py) — chave logica.

@@ -23,6 +23,7 @@ import type { ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { cn } from '../../lib/utils';
 import { authApi, decisionsApi, type CurrentUser } from '../../lib/api';
+import { decisionKeys, opsKeys } from '../../lib/api/keys';
 
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/);
@@ -63,24 +64,25 @@ export function Sidebar() {
   const location = useLocation();
 
   // Badge dinâmico para Decisões (decisões PROPOSED por aprovar).
+  // Q.173.AT — o catch{return 0} antigo mascarava o erro como sucesso:
+  // backend em baixo mostrava "0 pendentes" para sempre (o TanStack via
+  // o query verde e nunca re-tentava). Sem catch: em erro o badge
+  // desaparece (estado honesto) e o refetchInterval recupera sozinho.
   const inboxCountQuery = useQuery({
-    queryKey: ['sidebar', 'inbox-pending'],
+    queryKey: decisionKeys.pending(),
     queryFn: async () => {
-      try {
-        const r = await decisionsApi.list({ status: 'PROPOSED', page_size: 1 });
-        return r.total ?? 0;
-      } catch {
-        return 0;
-      }
+      const r = await decisionsApi.list({ status: 'PROPOSED', page_size: 1 });
+      return r.total ?? 0;
     },
     staleTime: 30_000,
-    retry: 0,
+    retry: 1,
+    refetchInterval: (q) => (q.state.status === 'error' ? 60_000 : false),
   });
 
-  const inboxBadge = inboxCountQuery.data ?? undefined;
+  const inboxBadge = inboxCountQuery.isError ? undefined : inboxCountQuery.data;
 
   const meQuery = useQuery<CurrentUser>({
-    queryKey: ['auth', 'me'],
+    queryKey: opsKeys.authMe(),
     queryFn: () => authApi.me(),
     staleTime: 5 * 60_000,
     refetchOnWindowFocus: false,

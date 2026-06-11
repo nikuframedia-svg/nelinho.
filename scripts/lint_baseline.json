@@ -1,6 +1,8 @@
 {
-  "BLE001": 448,
+  "BLE001": 447,
+  "Q173_AT_inline_query_keys": 44,
+  "Q173_AT_request_any": 146,
   "Q61_07_no_direct_fetch": 1,
-  "Q61_28_any_annotation": 69,
+  "Q61_28_any_annotation": 67,
   "Q66_B2_audit_coverage_violations": 0
 }
