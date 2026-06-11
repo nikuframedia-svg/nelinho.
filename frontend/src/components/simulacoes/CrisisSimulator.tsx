@@ -111,8 +111,8 @@ export function CrisisSimulator(): ReactNode {
                   marginTop: 2,
                 }}
               >
-                Escolhe um problema de produção · vê a cascata, os barcos
-                afectados e as opções com € e dias
+                Escolhe um problema de produção · o digital twin simula o
+                impacto real e mostra as opções de resposta
               </div>
             </div>
             <div style={{ marginLeft: 'auto' }}>
