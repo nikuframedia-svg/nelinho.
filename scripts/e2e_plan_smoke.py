@@ -12,6 +12,9 @@ Prova, com dados reais e o backend servido em :8001, o ciclo inteiro:
   7. drag INVÁLIDO (sobreposição do mesmo barco) → 422 com axiom PT-PT
   8. reapply: novo run do robô → o override manual sobrevive (Q.142/Q.148)
   9. operador: GET /worker/{id}/operations-today → 200
+ 10. cleanup: apaga os commits manual_drag do smoke (Q.173.AN — sem isto cada
+     corrida deixava um override ativo que o robô re-aplicava durante o TTL;
+     foi o "override fantasma" da Q.173.S)
 
 Uso:  .venv/Scripts/python.exe scripts/e2e_plan_smoke.py
 Sai com código 0 (verde) / 1 (falha) e imprime um relatório por passo.
@@ -83,6 +86,41 @@ async def _get_commit(client: httpx.AsyncClient, sha: str, ops: bool = False) ->
     )
     r.raise_for_status()
     return r.json()
+
+
+async def _cleanup_smoke_overrides() -> int:
+    """Q.173.AN — apaga os commits manual_drag criados por smokes (este e
+    corridas anteriores que falharam a meio). O reorder do passo 6 fica em
+    `plan_schedule_commits` com `delta.tipo='manual_drag'` e autor humano —
+    exatamente o que `active_manual_overrides` coleta — e sem limpeza o robô
+    re-aplicava o move do smoke a TODOS os planos durante o TTL (14d).
+
+    Acesso direto à BD (não há DELETE de commits na API, por design):
+    o smoke corre na máquina do stack, com o venv do projeto.
+    """
+    import sys as _sys
+    from pathlib import Path
+
+    _sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from sqlalchemy import text as _text
+
+    from src.shared.database import engine
+
+    try:
+        async with engine.begin() as conn:
+            res = await conn.execute(
+                _text(
+                    "DELETE FROM plan_schedule_commits "
+                    "WHERE tenant_id = :tid "
+                    "  AND delta->>'tipo' = 'manual_drag' "
+                    "  AND delta->>'reason' LIKE 'E2E smoke%' "
+                    "  AND status != 'LIVE'"
+                ),
+                {"tid": TENANT},
+            )
+            return int(res.rowcount or 0)
+    finally:
+        await engine.dispose()
 
 
 async def main() -> int:
@@ -291,6 +329,13 @@ async def main() -> int:
                 _fail("operador operations-today", f"{r.status_code}")
         else:
             print("  WARN operador: sem employees ativos para testar")
+
+    # 10 — cleanup: o smoke não deixa overrides ativos atrás de si (Q.173.AN)
+    try:
+        n = await _cleanup_smoke_overrides()
+        _ok("cleanup overrides do smoke", f"{n} commit(s) manual_drag apagados")
+    except Exception as exc:
+        _fail("cleanup overrides do smoke", f"{type(exc).__name__}: {exc}")
 
     print()
     print(f"E2E PLAN SMOKE: {len(_passed)} OK, {len(_failed)} FAIL")
