@@ -188,16 +188,26 @@ export const PorFaseView = memo(function PorFaseView({
   const lanes: TimelineLane[] = phases.map(([id, label]) => ({
     id,
     label,
+    // Q.173.AH — separar: nome abre o FaseSheet (Clickable), funil filtra.
+    // Ambos alvo >=24px (padding/min-width).
     labelNode: (
-      <span
-        role="button"
-        tabIndex={0}
-        className="text-left hover:text-[color:var(--accent)] transition-colors cursor-pointer"
-        onClick={() => onSelect?.({ kind: 'phase', id })}
-        onKeyDown={(e) => e.key === 'Enter' && onSelect?.({ kind: 'phase', id })}
-        title={`Filtrar por fase: ${label}`}
-      >
-        <Clickable kind="fase" id={id}>{label}</Clickable>
+      <span className="flex items-center gap-1 min-w-0">
+        <Clickable kind="fase" id={id} className="truncate hover:text-[color:var(--accent)] transition-colors">
+          {label}
+        </Clickable>
+        <button
+          type="button"
+          tabIndex={0}
+          title={`Filtrar por fase: ${label}`}
+          className="shrink-0 opacity-40 hover:opacity-100 transition-opacity"
+          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', minWidth: 24, minHeight: 24, display: 'inline-flex', alignItems: 'center' }}
+          onClick={() => onSelect?.({ kind: 'phase', id })}
+        >
+          {/* funil SVG inline (sem dep extra) */}
+          <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M1 2h10l-4 5v3l-2-1V7L1 2z" />
+          </svg>
+        </button>
       </span>
     ),
   }));

@@ -51,14 +51,21 @@ export function SearchResultsPage(): ReactNode {
   const { openSheet } = useEntitySheet();
   const q = (params.get('q') ?? '').trim();
 
-  // Navegar para o destino correcto consoante o tipo de resultado.
-  // operador → ficha de entidade (?sheet=operador&id=…)
-  // barco / molde / erro → /overall (única rota viva com contexto de produção)
+  // Q.173.AH — cada tipo abre a sheet contextual correcta.
+  // barco → EncomendaSheet (openSheet funciona de qualquer rota via EntitySheetProvider global)
+  // operador → OperadorSheet
+  // molde → ModeloSheet
+  // erro → /overall (sem sheet dedicada; comentário para futura ligação)
   const handleHitClick = useCallback(
     (hit: SearchHit) => {
       if (hit.type === 'operador') {
         openSheet('operador', hit.id);
+      } else if (hit.type === 'barco') {
+        openSheet('encomenda', hit.id);
+      } else if (hit.type === 'molde') {
+        openSheet('modelo', hit.id);
       } else {
+        // erro: sem sheet dedicada — navega para /overall onde o contexto existe
         navigate('/overall');
       }
     },

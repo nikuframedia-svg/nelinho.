@@ -5,7 +5,7 @@
  * componentes da Lista vivem em ./tabs/listaComponents; os helpers puros
  * em ./expedicaoShared.
  */
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Truck, Target, Flag, RefreshCw, CalendarDays, PackageCheck, DownloadCloud, Loader2 } from 'lucide-react';
@@ -23,9 +23,23 @@ type TabId = 'lista' | 'pordata' | 'prontos' | 'ctp' | 'activas';
 
 export default function ExpedicaoPage() {
   // Q.135.F2.1 — /overall liga uma data via ?date=YYYY-MM-DD → abre a aba "Por data".
-  const [searchParams] = useSearchParams();
+  // Q.173.AH — tab agora em ?tab= (como as outras páginas); mantém ?date= a abrir pordata.
+  const [searchParams, setSearchParams] = useSearchParams();
   const dateParam = searchParams.get('date');
-  const [tab, setTab] = useState<TabId>(dateParam ? 'pordata' : 'lista');
+  const tabParam = searchParams.get('tab') as TabId | null;
+  const validTabs: TabId[] = ['lista', 'pordata', 'prontos', 'ctp', 'activas'];
+  const activeTab: TabId = (tabParam && validTabs.includes(tabParam))
+    ? tabParam
+    : dateParam
+      ? 'pordata'
+      : 'lista';
+
+  function setTab(id: TabId) {
+    const next = new URLSearchParams(searchParams);
+    next.set('tab', id);
+    // Não limpar ?date= — pode ser necessário se voltar à aba pordata
+    setSearchParams(next, { replace: true });
+  }
   const queryClient = useQueryClient();
 
   // Q.143.D — janela: só camiões de hoje−3d em diante (esconde o histórico).
@@ -107,13 +121,13 @@ export default function ExpedicaoPage() {
       <div className="px-6 pt-2">
         <Tabs
           tabs={tabs}
-          value={tab}
+          value={activeTab}
           onChange={(id) => setTab(id as TabId)}
         />
       </div>
 
       <div className="px-6 py-4 page-enter">
-        {tab === 'lista' && (
+        {activeTab === 'lista' && (
           <ListaTab
             batches={batches}
             isLoading={batchesQuery.isLoading}
@@ -122,17 +136,17 @@ export default function ExpedicaoPage() {
             isSyncing={syncMutation.isPending}
           />
         )}
-        {tab === 'pordata' && (
+        {activeTab === 'pordata' && (
           <PorDataTab initialDate={dateParam ?? undefined} />
         )}
-        {tab === 'prontos' && <ProntosTab />}
-        {tab === 'ctp' && (
+        {activeTab === 'prontos' && <ProntosTab />}
+        {activeTab === 'ctp' && (
           <CTPTab
             batches={batches}
             batchesLoading={batchesQuery.isLoading}
           />
         )}
-        {tab === 'activas' && (
+        {activeTab === 'activas' && (
           <ActivasTab
             batches={batches}
             isLoading={batchesQuery.isLoading}

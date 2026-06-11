@@ -163,14 +163,16 @@ export const PorPessoaView = memo(function PorPessoaView({
     retry: false,
   });
 
-  // Mapa operadorId → top affinity (score > 0.7)
+  // Q.173.AH — mapa por employee_code (= workers[] key do plano) quando disponível,
+  // fallback para operator_id UUID. Antes era keyed por UUID mas as lanes usam código.
   const topAffinity = useMemo(() => {
     const m = new Map<string, { phase_name: string; score: number }>();
     if (!affinities) return m;
     for (const a of affinities) {
-      const cur = m.get(a.operator_id);
+      const key = a.operator_code ?? a.operator_id;
+      const cur = m.get(key);
       if ((!cur || a.score > cur.score) && a.score > 0.7) {
-        m.set(a.operator_id, { phase_name: a.phase_name, score: a.score });
+        m.set(key, { phase_name: a.phase_name, score: a.score });
       }
     }
     return m;

@@ -178,14 +178,20 @@ export default function OverallPage(): ReactNode {
 
   const latestCommit: CpoCommit | undefined = commits?.[0];
 
+  // Q.173.AH — ver plano histórico via ?commit_sha=<sha>. Se presente, carrega
+  // esse commit em vez do mais recente (sem refetch automático — é snapshot).
+  const historicSha = searchParams.get('commit_sha') ?? undefined;
+  const activeSha = historicSha ?? latestCommit?.commit_sha256;
+
   const { data: commitDetail, isLoading: detailLoading } = useQuery({
-    queryKey: [...planKeys.scheduleCurrent(), latestCommit?.commit_sha256 ?? 'none'],
+    queryKey: [...planKeys.scheduleCurrent(), activeSha ?? 'none'],
     queryFn: () =>
-      latestCommit
-        ? cpoCommitsApi.get(latestCommit.commit_sha256, { include_operations: true })
+      activeSha
+        ? cpoCommitsApi.get(activeSha, { include_operations: true })
         : Promise.resolve(null),
-    enabled: Boolean(latestCommit),
-    refetchInterval: 30_000,
+    enabled: Boolean(activeSha),
+    // Se estamos a ver histórico, não re-fetch; senão 30s normal.
+    refetchInterval: historicSha ? false : 30_000,
     refetchOnWindowFocus: false,
   });
 
@@ -451,6 +457,11 @@ export default function OverallPage(): ReactNode {
           end: (op.end as string | undefined) ?? (op.end_time as string | undefined),
           duration_min: (op.duration_min as number | undefined) ?? (op.duration_minutes as number | undefined),
           status: op.status as string | undefined,
+          // Q.173.AH — boost efetivo do contexto de filtros (pré-solve snapshot).
+          effective_boost: (() => {
+            const ordId = op.order_id ? String(op.order_id) : undefined;
+            return ordId ? filtersCtx?.orders_boost?.[ordId] : undefined;
+          })(),
           // Q.153.C0 — barco vs acessório (injectado pelo backend ao ler o commit).
           is_boat: typeof op.is_boat === 'boolean' ? op.is_boat : undefined,
           source: 'plan',
@@ -778,6 +789,32 @@ export default function OverallPage(): ReactNode {
       <div className="flex-1 overflow-hidden p-4 flex flex-col gap-3 relative min-h-0">
         {/* AutoProposeOverlay — fantasmas PROPOSED (Q.115.M) */}
         <AutoProposeOverlay />
+
+        {/* Q.173.AH — banner plano histórico (só quando ?commit_sha= presente) */}
+        {historicSha && (
+          <div
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs flex-shrink-0"
+            style={{ background: 'var(--warning-bg, rgba(245,158,11,0.1))', border: '1px solid var(--warning-bd, rgba(245,158,11,0.3))' }}
+          >
+            <AlertTriangle size={13} style={{ color: 'var(--warning, #f59e0b)' }} />
+            <span style={{ color: 'var(--warning, #f59e0b)', fontWeight: 500 }}>
+              A ver plano histórico{' '}
+              <span className="font-mono">{historicSha.slice(0, 8)}</span>
+            </span>
+            <button
+              type="button"
+              className="ml-auto underline text-xs"
+              style={{ color: 'var(--fg-2)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+              onClick={() => {
+                const next = new URLSearchParams(searchParams);
+                next.delete('commit_sha');
+                setSearchParams(next, { replace: true });
+              }}
+            >
+              voltar ao actual
+            </button>
+          </div>
+        )}
 
         {/* Faixa colapsável de riscos operacionais */}
         <RiskStrip />

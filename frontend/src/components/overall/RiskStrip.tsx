@@ -10,7 +10,6 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 import { OtdRiskPanel } from './OtdRiskPanel';
 import { MoldHealthPanel } from './MoldHealthPanel';
 import { ShortageRiskPanel } from './ShortageRiskPanel';
-import { SpofRiskPanel } from './SpofRiskPanel';
 
 export const RiskStrip = memo(function RiskStrip() {
   const [expanded, setExpanded] = useState(false);
@@ -37,7 +36,7 @@ export const RiskStrip = memo(function RiskStrip() {
         </span>
         {!expanded && (
           <span className="text-[10px]" style={{ color: 'var(--fg-4)' }}>
-            OTD · Moldes · Stocks · SPOF
+            OTD · Moldes · Stocks
           </span>
         )}
       </button>
@@ -47,7 +46,6 @@ export const RiskStrip = memo(function RiskStrip() {
         <OtdRiskPanel />
         <MoldHealthPanel />
         <ShortageRiskPanel />
-        <SpofRiskPanel />
       </div>
     </div>
   );

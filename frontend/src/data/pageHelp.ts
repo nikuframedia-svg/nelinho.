@@ -12,13 +12,20 @@
  */
 
 export type PageHelpId =
+  // ── Rotas activas ───────────────────────────────────────────────────────
+  | 'decisoes'
+  | 'overall'
+  | 'expedicao'
+  | 'materiais'
+  | 'llm'
+  | 'configuracoes'
+  | 'pesquisa'
+  // ── Rotas legadas (mantidas para não partir helpId existente) ───────────
   | 'painel'
   | 'planeamento'
   | 'fabrica'
-  | 'expedicao'
   | 'equipa'
   | 'qualidade'
-  | 'materiais'
   | 'simulacoes'
   | 'custos'
   | 'regras'
@@ -61,6 +68,142 @@ export function helpIdFromPath(pathname: string): PageHelpId | undefined {
 }
 
 export const PAGE_HELP: Record<PageHelpId, PageHelpEntry> = {
+  // ── Rotas activas ─────────────────────────────────────────────────────────
+
+  decisoes: {
+    title: 'Decisões',
+    purpose:
+      'O hub central de decisão: o sistema propõe, tu aprovas (ou rejeitas). Tudo o que mexe no plano passa aqui antes de acontecer.',
+    whatYouSee: [
+      'Decisões pendentes — propostas do robô aguardando aprovação',
+      'Cartão de cada decisão: o que muda, porquê, e o resultado esperado',
+      'Botões Aprovar / Rejeitar',
+      'Histórico — decisões já tomadas e os seus efeitos',
+    ],
+    howToUse: {
+      title: 'Cenário: o robô propõe um replan',
+      steps: [
+        'Abre Decisões — cartões amarelos são pendentes',
+        'Lê a decisão: o que muda (barco, fase, operador) e porquê',
+        'Se concordas, Aprovar; se não, Rejeitar com uma razão',
+        'O plano actualiza-se automaticamente após aprovação',
+      ],
+    },
+    tips: [
+      'Toda a aprovação fica registada na trilha de auditoria',
+    ],
+    relatedPages: [
+      { id: 'overall', reason: 'Ver o plano resultante após aprovar' },
+      { id: 'regras', reason: 'Editar as regras que originam estas decisões' },
+    ],
+  },
+
+  overall: {
+    title: 'Planeamento',
+    purpose:
+      'O plano da fábrica nos próximos dias: que barco faz o quê, quando, e com quem. Mexes no plano e vês logo a consequência antes de a aplicar.',
+    whatYouSee: [
+      'Gantt por Fase / Barco / Pessoa / Expedição — a mesma grelha em 4 ângulos',
+      'Realizado (verde sólido) + Planeado (tracejado) na mesma timeline',
+      'Drag-and-drop — arrasta uma op para mudar de fase/data/pessoa',
+      'Botão Replanear — corre o optimizador (CPO) outra vez',
+    ],
+    howToUse: {
+      title: 'Cenário: mudar uma operação de fase',
+      steps: [
+        'Escolhe a vista "Por Fase"',
+        'Arrasta uma barra para outra fase',
+        'O sistema pede confirmação com a consequência (preview)',
+        'Confirma com uma razão — o plano atualiza em fundo (DRAFT)',
+        'Para aprovar o DRAFT como LIVE, clica em Aprovar plano',
+      ],
+    },
+    tips: [
+      'Arrastar nunca aplica às cegas — passa sempre pela confirmação com motivo',
+      'O botão "?" no label de uma fase abre os detalhes; o funil ao lado filtra por essa fase',
+    ],
+    relatedPages: [
+      { id: 'decisoes', reason: 'Aprovar/rejeitar as propostas do robô' },
+      { id: 'expedicao', reason: 'Ver que barcos saem em que camião' },
+    ],
+  },
+
+  llm: {
+    title: 'Copiloto & Regras & KPIs',
+    purpose:
+      'Três ferramentas numa: conversa com o sistema, edita as regras de decisão e acompanha os KPIs da fábrica em tempo real.',
+    whatYouSee: [
+      'Aba Chat — pergunta o que quiseres sobre a fábrica; o copiloto responde com dados ao vivo',
+      'Aba Regras — o editor de regras Q.17 (lógica como dados)',
+      'Aba KPIs — indicadores do Cube com picker de 127 measures',
+    ],
+    howToUse: {
+      title: 'Cenário: perceber a carga da fábrica hoje',
+      steps: [
+        'Abre a aba Chat',
+        'Escreve "quantos barcos estão em produção hoje?"',
+        'O copiloto responde com o número real e as fontes',
+        'Para explorar por gráfico, troca para a aba KPIs',
+      ],
+    },
+    tips: [
+      'KPIs: usa "Adicionar indicador" para pesquisar as 127 measures do Cube',
+    ],
+    relatedPages: [
+      { id: 'decisoes', reason: 'Decisões que o copiloto pode ajudar a analisar' },
+      { id: 'overall', reason: 'O plano que o copiloto comenta' },
+    ],
+  },
+
+  configuracoes: {
+    title: 'Configurações',
+    purpose:
+      'Onde se afina o sistema: parâmetros de scheduling, custos, cura, moldes, alertas — e os dados mestre (produtos, BOMs, tarifas, fornecedores).',
+    whatYouSee: [
+      'Abas de parâmetros por área — cada valor mostra quem o definiu e quando',
+      'Dados mestre — os CRUDs de produtos, BOM, operações, tarifas',
+      'Sistema — saúde, ingestão, relatórios agendados',
+      'Botão de repor o valor por defeito em cada parâmetro',
+    ],
+    howToUse: {
+      title: 'Cenário: mudar um parâmetro',
+      steps: [
+        'Abre a aba da área que queres afinar',
+        'Encontra o parâmetro — vê o valor actual e o histórico',
+        'Muda o valor e guarda',
+        'Se te arrependeres, usa repor ao default',
+      ],
+    },
+    relatedPages: [
+      { id: 'decisoes', reason: 'As regras que governam as decisões automáticas' },
+    ],
+  },
+
+  pesquisa: {
+    title: 'Pesquisa global',
+    purpose:
+      'Procura qualquer entidade da fábrica pelo nome: barcos, operadores, moldes. Clica num resultado para abrir a ficha de detalhe.',
+    whatYouSee: [
+      'Resultados agrupados por tipo (barco / operador / molde / erro)',
+      'Label e sublabel de cada resultado',
+      'Clicar abre a ficha contextual da entidade',
+    ],
+    howToUse: {
+      title: 'Cenário: encontrar um operador',
+      steps: [
+        'Usa ⌘K (ou a caixa de pesquisa no topo)',
+        'Escreve o nome — os resultados aparecem em tempo real',
+        'Clica no operador — abre a ficha com skills, histórico e tarefas de hoje',
+      ],
+    },
+    relatedPages: [
+      { id: 'overall', reason: 'Planeamento onde a entidade aparece' },
+      { id: 'expedicao', reason: 'Expedições relacionadas com o barco pesquisado' },
+    ],
+  },
+
+  // ── Rotas legadas ─────────────────────────────────────────────────────────
+
   painel: {
     title: 'Painel diário',
     purpose:

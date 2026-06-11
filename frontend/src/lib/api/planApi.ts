@@ -483,6 +483,9 @@ export const planExclusionApi = {
 
 export interface AffinitySignal {
   operator_id: string;
+  // Q.173.AH — employee_code (E_ID do ERP); coincide com a chave usada pelo
+  // plano em `workers[]`. Pode ser null em registos históricos sem mapping.
+  operator_code: string | null;
   operator_name: string;
   phase_id: string;
   phase_name: string;

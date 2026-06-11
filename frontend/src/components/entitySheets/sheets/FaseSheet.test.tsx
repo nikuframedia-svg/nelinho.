@@ -25,6 +25,7 @@ const FASE: FaseSummary = {
   difficult_boats: [],
   curing_gaps_in: [],
   curing_gaps_out: [],
+  fila_mediana_h: null,
 };
 
 const CONFIG: PhaseConfigOut = {

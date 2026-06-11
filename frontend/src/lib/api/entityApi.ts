@@ -121,6 +121,8 @@ export interface FaseSummary {
   difficult_boats: BoatScore[];
   curing_gaps_in: CuringGap[];
   curing_gaps_out: CuringGap[];
+  // Q.160 — mediana REAL da fila inter-fase (horas). None quando <5 obs.
+  fila_mediana_h: number | null;
 }
 
 export interface OrderInList {

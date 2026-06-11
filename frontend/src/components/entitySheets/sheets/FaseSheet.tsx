@@ -33,6 +33,7 @@ const TABS = [
   { id: 'operadores', label: 'Operadores' },
   { id: 'barcos', label: 'Barcos exigentes' },
   { id: 'cura', label: 'Cura' },
+  { id: 'kpis', label: 'KPIs' },
   { id: 'configuracao', label: 'Configuração' },
 ];
 
@@ -80,6 +81,10 @@ export default function FaseSheet({ phaseId, onClose }: FaseSheetProps) {
 
       {tab === 'cura' && (
         <TabCura phaseId={phaseId} />
+      )}
+
+      {tab === 'kpis' && (
+        <TabKpis summary={data} />
       )}
 
       {tab === 'configuracao' && (
@@ -433,6 +438,110 @@ function TabCura({ phaseId }: { phaseId: string }) {
   );
 }
 
+// ─── Tab KPIs (Q.173.AH) ────────────────────────────────────────────────────
+//
+// Mostra os campos REAIS do FaseSummary que não são expostos nas outras tabs:
+// fila_mediana_h (Q.160), nº de operadores qualificados, top boats count.
+
+function TabKpis({ summary }: { summary: import('../../../lib/api/entityApi').FaseSummary }) {
+  const nOps = summary.top_operators.length;
+  const nBoats = summary.difficult_boats.length;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* Fila inter-fase */}
+      <KpiCard
+        label="Fila inter-fase mediana"
+        hint="Mediana real de of_fp — tempo entre a fase anterior e esta. Fila = desperdício (gargalo). Cura = química (ver aba Cura)."
+      >
+        {summary.fila_mediana_h != null ? (
+          <span style={{ fontSize: 22, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
+            {summary.fila_mediana_h.toFixed(1)}
+            <span style={{ fontSize: 13, fontWeight: 400, color: 'var(--fg-2)', marginLeft: 4 }}>h</span>
+          </span>
+        ) : (
+          <span style={{ fontSize: 13, color: 'var(--fg-3)' }}>
+            Sem dados (menos de 5 observações reais)
+          </span>
+        )}
+      </KpiCard>
+
+      {/* Operadores qualificados */}
+      <KpiCard
+        label="Operadores qualificados (top afinidade)"
+        hint="Número de operadores com registo de afinidade nesta fase (score calculado de of_fp)."
+      >
+        {nOps > 0 ? (
+          <span style={{ fontSize: 22, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
+            {nOps}
+          </span>
+        ) : (
+          <span style={{ fontSize: 13, color: 'var(--fg-3)' }}>
+            Sem dados de afinidade calculados ainda
+          </span>
+        )}
+      </KpiCard>
+
+      {/* Barcos exigentes */}
+      <KpiCard
+        label="Barcos exigentes registados"
+        hint="Modelos de barco com score baixo nesta fase (score calculado de of_fp — mais baixo = mais exigente)."
+      >
+        {nBoats > 0 ? (
+          <span style={{ fontSize: 22, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
+            {nBoats}
+          </span>
+        ) : (
+          <span style={{ fontSize: 13, color: 'var(--fg-3)' }}>
+            Sem dados de dificuldade calculados ainda
+          </span>
+        )}
+      </KpiCard>
+
+      {/* Cura (read-only count) */}
+      {(summary.curing_gaps_in.length > 0 || summary.curing_gaps_out.length > 0) && (
+        <KpiCard
+          label="Transições de cura"
+          hint="Total de transições de cura (entrada + saída). Detalhes na aba Cura."
+        >
+          <span style={{ fontSize: 22, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
+            {summary.curing_gaps_in.length + summary.curing_gaps_out.length}
+          </span>
+        </KpiCard>
+      )}
+    </div>
+  );
+}
+
+function KpiCard({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        padding: '12px 16px',
+        background: 'var(--bg-2)',
+        borderRadius: 8,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 4,
+      }}
+    >
+      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--fg-2)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+        {label}
+      </div>
+      <div>{children}</div>
+      <div style={{ fontSize: 11, color: 'var(--fg-3)', fontStyle: 'italic' }}>{hint}</div>
+    </div>
+  );
+}
+
 // ─── Tab Configuração (Q.135.3.4) ───────────────────────────────────────────
 
 function TabConfiguracao({ phaseId }: { phaseId: string }) {
@@ -615,14 +724,16 @@ function TabConfiguracao({ phaseId }: { phaseId: string }) {
               value={teamSize}
               onChange={(e) => setTeamSize(e.target.value)}
               placeholder={`default: ${baselines.team_size_default}`}
-              className="bg-white text-slate-900 placeholder:text-slate-400"
               style={{
                 width: '100%',
                 padding: '6px 10px',
                 borderRadius: 6,
-                border: '1px solid var(--bd-1)',
+                border: '1px solid var(--bd-2)',
                 fontSize: 13,
                 boxSizing: 'border-box',
+                background: 'var(--bg-3)',
+                color: 'var(--fg-0)',
+                colorScheme: 'dark',
               }}
             />
           </div>
@@ -636,14 +747,16 @@ function TabConfiguracao({ phaseId }: { phaseId: string }) {
               value={numStations}
               onChange={(e) => setNumStations(e.target.value)}
               placeholder={`sugerido: ${baselines.suggested_stations}`}
-              className="bg-white text-slate-900 placeholder:text-slate-400"
               style={{
                 width: '100%',
                 padding: '6px 10px',
                 borderRadius: 6,
-                border: '1px solid var(--bd-1)',
+                border: '1px solid var(--bd-2)',
                 fontSize: 13,
                 boxSizing: 'border-box',
+                background: 'var(--bg-3)',
+                color: 'var(--fg-0)',
+                colorScheme: 'dark',
               }}
             />
           </div>
@@ -658,15 +771,17 @@ function TabConfiguracao({ phaseId }: { phaseId: string }) {
           onChange={(e) => setNote(e.target.value)}
           placeholder="Nota opcional sobre esta configuração..."
           rows={2}
-          className="bg-white text-slate-900 placeholder:text-slate-400"
           style={{
             width: '100%',
             padding: '6px 10px',
             borderRadius: 6,
-            border: '1px solid var(--bd-1)',
+            border: '1px solid var(--bd-2)',
             fontSize: 13,
             resize: 'vertical',
             boxSizing: 'border-box',
+            background: 'var(--bg-3)',
+            color: 'var(--fg-0)',
+            colorScheme: 'dark',
           }}
         />
       </section>
