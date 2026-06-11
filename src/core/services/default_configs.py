@@ -291,6 +291,12 @@ DEFAULT_SEEDS: list[ConfigSeed] = [
      "Fallback severity when an alert source omits one (info|warning|critical)."),
     ("alertas", "delivery.recipients_email", "", "string",
      "Comma-separated list of emails that receive delivery-risk alerts."),
+    ("alertas", "bottleneck.days_threshold", 10.0, "float",
+     "Q.173.M — backlog (dias) numa fase a partir do qual o detector de "
+     "bottleneck dispara; 2x = CRITICAL. Lido pelo AlertsEngine."),
+    ("alertas", "quality.events_threshold", 500, "int",
+     "Q.173.M — total de eventos de qualidade na janela a partir do qual "
+     "o detector de degradação dispara. Lido pelo AlertsEngine."),
 
     # ───────────────────────── learning rules (Sprint Q.9 Onda 3.6) ─────────
     # Plan §22-§26 — the manager toggles confidence thresholds + decides

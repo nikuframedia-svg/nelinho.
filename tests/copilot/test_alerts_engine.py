@@ -391,3 +391,80 @@ class TestCpoAlertUpsertDedup:
         codes = {p.get("code") for p in session.params}
         assert codes == {CODE_ORDERS_WITHOUT_ROUTING, CODE_DURATION_FALLBACK_HIGH}
         assert session.commit_calls == 2
+
+
+# ---------------------------------------------------------------------------
+# Q.173.M — thresholds vêm da config de tenant (categoria 'alertas')
+# ---------------------------------------------------------------------------
+
+class TestQ173MThresholdsConfiguraveis:
+    _CFG = (
+        "src.core.services.tenant_config_service."
+        "TenantConfigService.get_category"
+    )
+
+    async def test_scan_carrega_thresholds_da_config(
+        self, fake_session, tenant_id, monkeypatch,
+    ):
+        """Mudar o knob em Configurações muda MESMO o detector — antes as
+        keys 'alertas.*' eram seeded e ignoradas (auditoria 2026-06-11)."""
+        async def fake_cfg(self, category):
+            assert category == "alertas"
+            return {
+                "bottleneck.days_threshold": 2.0,
+                "quality.events_threshold": 1,
+                "delivery_risk.window_days": 30,
+            }
+
+        monkeypatch.setattr(self._CFG, fake_cfg)
+
+        sq = FakeSemanticQueries()
+        # backlog 3 dias: abaixo do default 10, ACIMA do configurado 2.
+        sq.set("get_bottlenecks", {
+            "status": "OK",
+            "rows": [{"fase_id": "40", "fase_nome": "Pintura",
+                      "backlog_dias": 3.0}],
+        })
+        engine = AlertsEngine(fake_session, tenant_id, semantic_queries=sq)
+        await engine.scan()
+
+        assert engine.bottleneck_days_threshold == 2.0
+        assert engine.quality_events_threshold == 1
+        assert engine.delivery_risk_window_days == 30
+        codes = [a.code for a in _added_alerts(fake_session)]
+        assert CODE_BOTTLENECK_FORMATION in codes, (
+            "com threshold configurado 2.0, backlog 3.0 tem de disparar"
+        )
+
+    async def test_sem_config_fica_nos_defaults(
+        self, fake_session, tenant_id, monkeypatch,
+    ):
+        async def boom(self, category):
+            raise ValueError("config indisponível")
+
+        monkeypatch.setattr(self._CFG, boom)
+
+        sq = FakeSemanticQueries()
+        sq.set("get_bottlenecks", {
+            "status": "OK",
+            "rows": [{"fase_id": "40", "fase_nome": "Pintura",
+                      "backlog_dias": 3.0}],
+        })
+        engine = AlertsEngine(fake_session, tenant_id, semantic_queries=sq)
+        await engine.scan()
+
+        assert engine.bottleneck_days_threshold == BOTTLENECK_DAYS_THRESHOLD
+        assert engine.quality_events_threshold == QUALITY_EVENTS_THRESHOLD
+        # backlog 3.0 < default 10 → nada dispara
+        assert CODE_BOTTLENECK_FORMATION not in [
+            a.code for a in _added_alerts(fake_session)
+        ]
+
+    def test_seeds_q173m_presentes(self):
+        from src.core.services.default_configs import iter_seeds
+
+        seeds = {(c, k): (v, t) for c, k, v, t, _n in iter_seeds()}
+        assert seeds[("alertas", "bottleneck.days_threshold")] == (10.0, "float")
+        assert seeds[("alertas", "quality.events_threshold")] == (500, "int")
+        # as keys já-existentes continuam seeded (agora finalmente lidas)
+        assert seeds[("alertas", "delivery_risk.window_days")] == (3, "int")

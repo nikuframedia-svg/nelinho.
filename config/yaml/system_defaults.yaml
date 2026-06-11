@@ -507,6 +507,16 @@ categories:
       value: ''
       data_type: string
       description: Comma-separated list of emails that receive delivery-risk alerts.
+    - key: bottleneck.days_threshold
+      value: 10.0
+      data_type: float
+      description: Q.173.M — backlog (dias) numa fase a partir do qual o detector
+        de bottleneck dispara; 2x = CRITICAL. Lido pelo AlertsEngine.
+    - key: quality.events_threshold
+      value: 500
+      data_type: int
+      description: Q.173.M — total de eventos de qualidade na janela a partir do
+        qual o detector de degradação dispara. Lido pelo AlertsEngine.
   learning_rules:
     description: Confidence thresholds for the rule detector + auto-revert window.
     settings:

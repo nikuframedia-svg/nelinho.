@@ -29,6 +29,7 @@ from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
 from sqlalchemy import and_, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.copilot.alerts.models import (
@@ -74,6 +75,13 @@ class AlertsEngine:
         self.session = session
         self.tenant_id = tenant_id
         self._sq = semantic_queries  # Inject for tests; lazy-loaded otherwise
+        # Q.173.M — thresholds EFETIVOS: a categoria 'alertas' da config de
+        # tenant existia seeded mas nunca era lida (auditoria 2026-06-11:
+        # mudar o knob não mudava nada). `scan()` carrega-os; chamadas
+        # diretas aos detectors (testes) usam os defaults = constantes.
+        self.bottleneck_days_threshold: float = BOTTLENECK_DAYS_THRESHOLD
+        self.quality_events_threshold: int = QUALITY_EVENTS_THRESHOLD
+        self.delivery_risk_window_days: int = DELIVERY_RISK_WINDOW_DAYS
 
     # ------------------------------------------------------------------ #
     # Public                                                             #
@@ -81,6 +89,7 @@ class AlertsEngine:
 
     async def scan(self) -> Dict[str, int]:
         """Run every detector. Returns a counters dict for observability."""
+        await self._load_thresholds()
         created = 0
         skipped = 0
 
@@ -114,13 +123,47 @@ class AlertsEngine:
             "detectors_run": 4,
         }
 
+    async def _load_thresholds(self) -> None:
+        """Q.173.M — lê os thresholds da categoria 'alertas' (best-effort).
+
+        Sem config / erro → defaults (constantes do módulo). Mudar o knob
+        em Configurações passa a mudar de facto o comportamento dos
+        detectors — antes as keys eram seeded e ignoradas.
+        """
+        try:
+            from src.core.services.tenant_config_service import (
+                TenantConfigService,
+            )
+            cfg = await TenantConfigService(
+                self.session, self.tenant_id,
+            ).get_category("alertas")
+        except (SQLAlchemyError, ImportError, ValueError, TypeError) as exc:
+            logger.debug("alertas config indisponível (%s); defaults", exc)
+            return
+
+        def _num(key: str, fallback: float) -> float:
+            try:
+                return float(cfg[key]) if key in cfg else float(fallback)
+            except (TypeError, ValueError):
+                return float(fallback)
+
+        self.bottleneck_days_threshold = _num(
+            "bottleneck.days_threshold", BOTTLENECK_DAYS_THRESHOLD,
+        )
+        self.quality_events_threshold = int(_num(
+            "quality.events_threshold", QUALITY_EVENTS_THRESHOLD,
+        ))
+        self.delivery_risk_window_days = int(_num(
+            "delivery_risk.window_days", DELIVERY_RISK_WINDOW_DAYS,
+        ))
+
     # ------------------------------------------------------------------ #
     # Detectors                                                          #
     # ------------------------------------------------------------------ #
 
     @record_rule_firing(
         rule_id="alerts.bottleneck_formation",
-        extract_payload=lambda self: {"threshold_days": BOTTLENECK_DAYS_THRESHOLD},
+        extract_payload=lambda self: {"threshold_days": self.bottleneck_days_threshold},
         serialise_output=lambda candidates: {
             "candidate_count": len(candidates),
             "fase_ids": [c.get("context", {}).get("fase_id") for c in candidates],
@@ -134,7 +177,7 @@ class AlertsEngine:
         candidates: List[Dict[str, Any]] = []
         for row in result["rows"]:
             backlog_dias = _coerce_float(row.get("backlog_dias"))
-            if backlog_dias is None or backlog_dias < BOTTLENECK_DAYS_THRESHOLD:
+            if backlog_dias is None or backlog_dias < self.bottleneck_days_threshold:
                 continue
 
             fase_id = str(row.get("fase_id") or row.get("id") or "")
@@ -142,14 +185,14 @@ class AlertsEngine:
             if not fase_id:
                 continue
 
-            severity = "CRITICAL" if backlog_dias >= 2 * BOTTLENECK_DAYS_THRESHOLD else "WARN"
+            severity = "CRITICAL" if backlog_dias >= 2 * self.bottleneck_days_threshold else "WARN"
             candidates.append({
                 "severity": severity,
                 "code": CODE_BOTTLENECK_FORMATION,
                 "title": f"Bottleneck na fase {fase_nome}",
                 "message_pt": (
                     f"A fase '{fase_nome}' tem {backlog_dias:.1f} dias de backlog acumulado "
-                    f"(limiar: {BOTTLENECK_DAYS_THRESHOLD:.0f} dias). Considera rever capacidade "
+                    f"(limiar: {self.bottleneck_days_threshold:.0f} dias). Considera rever capacidade "
                     f"ou reprioritizar ordens em curso."
                 ),
                 "context": {
@@ -203,7 +246,7 @@ class AlertsEngine:
 
     @record_rule_firing(
         rule_id="alerts.quality_degradation",
-        extract_payload=lambda self: {"threshold_events": QUALITY_EVENTS_THRESHOLD},
+        extract_payload=lambda self: {"threshold_events": self.quality_events_threshold},
         serialise_output=lambda candidates: {
             "candidate_count": len(candidates),
             "total_errors": (
@@ -224,7 +267,7 @@ class AlertsEngine:
         total_errors = sum(
             (_coerce_int(r.get("total_erros")) or 0) for r in result["rows"]
         )
-        if total_errors < QUALITY_EVENTS_THRESHOLD:
+        if total_errors < self.quality_events_threshold:
             return []
 
         top_types = [
@@ -244,14 +287,14 @@ class AlertsEngine:
             "context": {
                 "total_errors": total_errors,
                 "top_error_types": top_types,
-                "threshold": QUALITY_EVENTS_THRESHOLD,
+                "threshold": self.quality_events_threshold,
             },
             "entity_refs": ["quality:global"],
         }]
 
     @record_rule_firing(
         rule_id="alerts.delivery_risk",
-        extract_payload=lambda self: {"window_days": DELIVERY_RISK_WINDOW_DAYS},
+        extract_payload=lambda self: {"window_days": self.delivery_risk_window_days},
         serialise_output=lambda candidates: {
             "candidate_count": len(candidates),
             "hulls": [c.get("context", {}).get("hull") for c in candidates],
@@ -266,7 +309,7 @@ class AlertsEngine:
         risco de entrega.
         """
         today = local_today()
-        horizon = today + timedelta(days=DELIVERY_RISK_WINDOW_DAYS)
+        horizon = today + timedelta(days=self.delivery_risk_window_days)
         stmt = select(ProductionOrder).where(
             and_(
                 ProductionOrder.tenant_id == self.tenant_id,
