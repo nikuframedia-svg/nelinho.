@@ -205,6 +205,18 @@ class RuleEngine:
                 rec.today = today
                 rec.fires_today = 0
                 rec.recent_fingerprints = {}
+            # Q.168 F4.E — prune ANTES dos checks (não só após dispatch):
+            # antes, fingerprints fora da janela só eram limpos quando a
+            # regra voltava a DISPARAR — uma regra que deixasse de disparar
+            # retinha o último lote indefinidamente (leak pequeno mas
+            # acumulativo). Aqui a limpeza corre em cada avaliação, mesmo
+            # quando o evento acaba rate-limited ou deduped.
+            if rec.recent_fingerprints:
+                rec.recent_fingerprints = {
+                    fp: ts
+                    for fp, ts in rec.recent_fingerprints.items()
+                    if ts >= cutoff
+                }
             cap = rule.safety.max_fires_per_day
             if rec.fires_today >= cap:
                 _log.info(
@@ -230,13 +242,9 @@ class RuleEngine:
 
             results = await dispatch(rule, ctx)
 
-            # Update bookkeeping
+            # Update bookkeeping (o prune corre antes dos checks, acima)
             rec.fires_today += 1
             rec.recent_fingerprints[fingerprint] = now
-            # Prune fingerprints older than window
-            rec.recent_fingerprints = {
-                fp: ts for fp, ts in rec.recent_fingerprints.items() if ts >= cutoff
-            }
 
             fired.append((rule, results))
             _log.info(

@@ -10,7 +10,7 @@ Sub-routers live in :mod:`src.governance.routers`:
 
 * :mod:`.routers.policies`     — GET /policies + /policies/{type}.
 * :mod:`.routers.decisions`    — propose / approve / get / list / pending/me
-  / audit-pack / execute / rollback / bulk / payload-patch / kill-switch
+  / audit-pack / execute / rollback / payload-patch / kill-switch
   / delta.
 * :mod:`.routers.timeline`     — /decisions/timeline + /audit/timeline.
 * :mod:`.routers.rbac`         — /rbac/matrix.

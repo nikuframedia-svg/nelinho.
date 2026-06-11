@@ -200,6 +200,8 @@ _RoutePolicy = Tuple[Tuple[str, ...], List[Permission]]
 ROUTE_PREFIX_REQUIREMENTS: "OrderedDict[str, _RoutePolicy]" = OrderedDict([
     # ── Operator surface (tablet) — Sprint Q.13 §10 ────────────────────
     ("/v1/operador",                ((), [Permission.SCHEDULE_READ])),
+    # ── Observability (trace lookup) — leitura interna, não pública ────
+    ("/v1/observability",           ((), [Permission.SCHEDULE_READ])),
     # ── Quality rework — operators record + resolve rework ────────────
     ("/v1/quality/rework",          ((), [Permission.SCHEDULE_READ])),
 

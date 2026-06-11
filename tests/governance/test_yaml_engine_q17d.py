@@ -472,6 +472,52 @@ async def test_engine_block_results_helper():
 
 
 @pytest.mark.asyncio
+async def test_engine_prunes_stale_fingerprints_without_dispatch_q168_f4e():
+    """Q.168 F4.E — fingerprints fora da janela são limpos em cada avaliação,
+    NÃO apenas quando a regra volta a disparar.
+
+    Antes, o prune corria só após o dispatch: um evento deduped (que não
+    dispara) deixava os fingerprints antigos acumulados indefinidamente
+    (leak pequeno mas real).
+    """
+    from datetime import datetime, timedelta, timezone
+
+    tenant_id = UUID("11111111-1111-1111-1111-111111111111")
+    rule = _build_rule(
+        action=ActionType.ALERT,
+        params={"severity": "high", "title": "x", "message_pt": "y", "entity_refs": []},
+    )
+    row = _make_db_row(rule, tenant_id=tenant_id)
+    engine = RuleEngine()
+    engine.install_rule(row, rule)
+
+    payload = {"uses_count": 850}
+    fired = await engine.on_event(
+        EventType.MOLD_USAGE_THRESHOLD, payload, tenant_id=tenant_id,
+    )
+    assert len(fired) == 1
+
+    # Injecta um fingerprint "antigo" (de um lote anterior, fora da janela).
+    rec = engine._fire_records[rule.id]
+    stale_fp = "deadbeef00000000"
+    rec.recent_fingerprints[stale_fp] = (
+        datetime.now(timezone.utc)
+        - timedelta(seconds=engine.DEDUPE_WINDOW_SECONDS * 2)
+    )
+
+    # Mesmo payload outra vez → dedupe skip (a regra NÃO dispara)…
+    fired_again = await engine.on_event(
+        EventType.MOLD_USAGE_THRESHOLD, payload, tenant_id=tenant_id,
+    )
+    assert fired_again == []
+
+    # …mas o fingerprint fora da janela foi limpo na mesma.
+    assert stale_fp not in rec.recent_fingerprints
+    # O fingerprint vivo (dentro da janela) mantém-se para o dedupe.
+    assert _payload_fingerprint(payload) in rec.recent_fingerprints
+
+
+@pytest.mark.asyncio
 async def test_engine_remove_rule():
     tenant_id = UUID("11111111-1111-1111-1111-111111111111")
     rule = _build_rule(

@@ -803,9 +803,10 @@ async def rollback_decision(
     # against the ERP / schedule until Sprint G. Surfacing the snapshot lets
     # downstream consumers (Timeline UI, audit reports) show the operator
     # what would have been reverted.
-    before_state_snapshot = (
-        decision.before_state if hasattr(decision, "before_state") else None
-    )
+    # Q.168 F4.E — sem hasattr(): `before_state` é nullable=False no modelo
+    # (shared/models/governance.py) — o atributo existe sempre; o guard era
+    # código morto de um esquema anterior.
+    before_state_snapshot = decision.before_state
 
     # Q.130.V — invariante 7: a transição EXECUTED→ROLLED_BACK escreve
     # `audit_change` na MESMA tx que a mudança de estado (o `commit` abaixo

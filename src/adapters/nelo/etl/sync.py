@@ -18,6 +18,8 @@ from datetime import date
 from typing import Awaitable, Callable, Dict, List, Optional, Union
 from uuid import UUID
 
+from src.shared.time import utc_now
+
 from .runner import EtlRunResult
 
 #: ``since`` aceita uma única data (igual para todos os mirrors) ou um
@@ -90,6 +92,46 @@ def _since_for(since: SinceArg, mirror: str) -> Optional[date]:
     return since
 
 
+def _failed_result(name: str, exc: Exception) -> EtlRunResult:
+    """Tally in-memory de um mirror falhado (loga e devolve)."""
+    logger.error("nelo_sync mirror=%s failed: %s", name, exc, exc_info=True)
+    failed = EtlRunResult(name)
+    failed.status = "error"
+    failed.error = f"{type(exc).__name__}: {exc}"
+    return failed
+
+
+async def _persist_error_run(
+    session, tenant_id: UUID, failed: EtlRunResult, started_at,
+) -> None:
+    """Grava o ``core.etl_run`` de uma corrida falhada (Q.168 F4.E).
+
+    O ``EtlRunner`` escreve o status='error' na MESMA sessão do mirror, mas
+    o rollback que descarta as escritas parciais descarta também esse
+    registo — sem esta re-gravação, as corridas falhadas eram invisíveis na
+    BD (a página de sync e qualquer auditoria só viam sucessos).
+    Best-effort: se a própria escrita de auditoria falhar (BD em baixo),
+    loga e não aborta os mirrors seguintes.
+    """
+    from src.core.models.etl_run import EtlRun
+
+    try:
+        session.add(EtlRun(
+            tenant_id=tenant_id,
+            source=failed.source,
+            status="error",
+            started_at=started_at,
+            finished_at=utc_now(),
+            error=failed.error,
+        ))
+        await session.commit()
+    except Exception as audit_exc:
+        logger.warning(
+            "nelo_sync mirror=%s — falha a persistir etl_run de erro: %s",
+            failed.source, audit_exc,
+        )
+
+
 async def run_nelo_sync(
     *,
     only: Optional[List[str]] = None,
@@ -149,24 +191,37 @@ async def run_nelo_sync(
             return []
 
         for name in selected:
+            started_at = utc_now()
             try:
                 async with async_session_factory() as session:
-                    result = await _MIRRORS[name](
-                        session=session,
-                        tenant_id=tenant_id,
-                        since=_since_for(since, name),
-                    )
+                    try:
+                        result = await _MIRRORS[name](
+                            session=session,
+                            tenant_id=tenant_id,
+                            since=_since_for(since, name),
+                        )
+                    except Exception as exc:
+                        # Q.168 F4.E — antes, a exceção saía do `async with`
+                        # sem commit: o rollback implícito do close descartava
+                        # também o etl_run status='error' que o EtlRunner
+                        # tinha escrito+flushed → corrida falhada SEM registo
+                        # de auditoria na BD. Rollback explícito (descarta as
+                        # escritas parciais do mirror) e re-grava o registo de
+                        # erro numa transacção limpa, best-effort.
+                        await session.rollback()
+                        failed = _failed_result(name, exc)
+                        results.append(failed)
+                        await _persist_error_run(
+                            session, tenant_id, failed, started_at,
+                        )
+                        continue
                     await session.commit()
                 results.append(result)
                 logger.info("nelo_sync mirror=%s %r", name, result)
             except Exception as exc:
-                logger.error(
-                    "nelo_sync mirror=%s failed: %s", name, exc, exc_info=True,
-                )
-                failed = EtlRunResult(name)
-                failed.status = "error"
-                failed.error = f"{type(exc).__name__}: {exc}"
-                results.append(failed)
+                # Falha fora do mirror (abrir a sessão / commit final) —
+                # sem sessão utilizável só fica o registo in-memory.
+                results.append(_failed_result(name, exc))
     finally:
         await close_engine()
 

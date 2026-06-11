@@ -63,3 +63,110 @@ async def test_run_nelo_sync_rejects_unknown_mirror(monkeypatch):
     monkeypatch.setattr(settings, "sqlserver_enabled", True, raising=False)
     with pytest.raises(ValueError, match="unknown mirror"):
         await run_nelo_sync(only=["does_not_exist"])
+
+
+# ---------------------------------------------------------------------------
+# Q.168 F4.E — corrida falhada persiste o etl_run de erro
+# ---------------------------------------------------------------------------
+
+
+class _CtxFakeSession:
+    """FakeSession canónica embrulhada como async context manager.
+
+    ``run_nelo_sync`` faz ``async with async_session_factory() as session``;
+    a FakeSession do conftest não implementa ``__aenter__``/``__aexit__``,
+    por isso o teste compõe-na aqui.
+    """
+
+    def __init__(self, inner) -> None:
+        self._inner = inner
+
+    async def __aenter__(self):
+        return self._inner
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+def _wire_fake_erp(monkeypatch, session):
+    """sqlserver on + health_check/close_engine inertes + sessão fake."""
+    import types
+
+    import src.adapters.nelo.services as services_mod
+    import src.shared.database as database_mod
+    from src.shared.config import settings
+
+    monkeypatch.setattr(settings, "sqlserver_enabled", True, raising=False)
+
+    async def _fake_health_check():
+        return types.SimpleNamespace(open_orders_count=1, movements_last_30d=1)
+
+    async def _fake_close_engine():
+        return None
+
+    monkeypatch.setattr(services_mod, "health_check", _fake_health_check)
+    monkeypatch.setattr(services_mod, "close_engine", _fake_close_engine)
+    monkeypatch.setattr(
+        database_mod, "async_session_factory", lambda: _CtxFakeSession(session),
+    )
+
+
+async def test_failed_mirror_persists_error_etl_run_q168_f4e(monkeypatch):
+    """Mirror que rebenta → rollback explícito + etl_run status='error' COMMITADO.
+
+    Antes do Q.168 F4.E a exceção saía do ``async with`` sem commit: o
+    rollback implícito descartava o etl_run de erro que o EtlRunner tinha
+    flushed → a corrida falhada não deixava rasto na BD.
+    """
+    from tests.conftest import FakeSession
+
+    from src.core.models.etl_run import EtlRun
+
+    session = FakeSession()
+    _wire_fake_erp(monkeypatch, session)
+
+    async def _boom(**_kw):
+        raise RuntimeError("ERP caiu a meio")
+
+    register_mirror("boom", _boom)
+
+    results = await run_nelo_sync(only=["boom"])
+
+    assert len(results) == 1
+    assert results[0].status == "error"
+    assert "RuntimeError" in (results[0].error or "")
+    # rollback explícito descartou as escritas parciais do mirror
+    assert session.rollback_calls == 1
+    # o registo de auditoria foi re-gravado e COMMITADO numa tx limpa
+    error_runs = [o for o in session.added if isinstance(o, EtlRun)]
+    assert len(error_runs) == 1
+    assert error_runs[0].status == "error"
+    assert error_runs[0].source == "boom"
+    assert "ERP caiu a meio" in (error_runs[0].error or "")
+    assert error_runs[0].finished_at is not None
+    assert session.commit_calls == 1
+
+
+async def test_failing_mirror_does_not_abort_the_rest_q168_f4e(monkeypatch):
+    """Um mirror mau nunca aborta o sync — o seguinte ainda corre e commita."""
+    from tests.conftest import FakeSession
+
+    session = FakeSession()
+    _wire_fake_erp(monkeypatch, session)
+
+    async def _boom(**_kw):
+        raise RuntimeError("falha transiente")
+
+    async def _ok(**_kw):
+        result = EtlRunResult("bom")
+        result.status = "ok"
+        return result
+
+    register_mirror("boom", _boom)
+    register_mirror("bom", _ok)
+
+    results = await run_nelo_sync(only=["boom", "bom"])
+
+    assert [r.status for r in results] == ["error", "ok"]
+    # 1 commit do etl_run de erro + 1 commit do mirror saudável
+    assert session.commit_calls == 2

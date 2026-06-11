@@ -77,6 +77,12 @@ def _safe_str(value: Any) -> Optional[str]:
     return s.encode("utf-8", errors="replace").decode("utf-8")
 
 
+# Q.168 F4.E — tecto de sanidade: nenhuma fase real da NELO demora 30 dias.
+# Acima disto é dado sujo do ERP (ex.: OF_FP com 1900-01-01 num dos lados, OF
+# esquecida aberta meses) e contaminaria as medianas/durações downstream do CPO.
+_MAX_PHASE_DURATION_MIN = 43_200  # 30 dias
+
+
 def _calc_duration_min(
     fase_inicio: Optional[datetime],
     fase_fim: Optional[datetime],
@@ -84,14 +90,17 @@ def _calc_duration_min(
     """Duracao em minutos entre inicio e fim da fase.
 
     Calcula em Python (nao SQL GENERATED) porque `fase_fim` e nullable.
-    Devolve None se qualquer dos timestamps for None ou se a diferenca
-    for negativa (dados sujos do ERP).
+    Devolve None se qualquer dos timestamps for None, se a diferenca for
+    negativa, ou se exceder ``_MAX_PHASE_DURATION_MIN`` (30 dias) — ambos
+    os extremos sao dados sujos do ERP, nao fases reais.
     """
     if fase_inicio is None or fase_fim is None:
         return None
     delta = fase_fim - fase_inicio
     minutes = delta.total_seconds() / 60.0
     if minutes < 0:
+        return None
+    if minutes > _MAX_PHASE_DURATION_MIN:
         return None
     return Decimal(str(round(minutes, 2)))
 

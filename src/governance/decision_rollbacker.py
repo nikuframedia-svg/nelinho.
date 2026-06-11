@@ -294,13 +294,18 @@ class DecisionRollbacker:
         if decision_type:
             scopes.append(f"decision_type:{decision_type}")
 
+        # Q.168 F4.E — com 2+ scopes ativos (ex.: "all" + "decision_type:X")
+        # o `.limit(1)` sem ORDER BY devolvia um qualquer de forma
+        # não-determinística — o bloqueio funcionava, mas a auditoria de
+        # "qual kill switch bloqueou" variava entre execuções. Devolve
+        # determinìsticamente o ativado mais recentemente.
         stmt = select(KillSwitchActive).where(
             and_(
                 KillSwitchActive.tenant_id == self.tenant_id,
                 KillSwitchActive.scope.in_(scopes),
                 KillSwitchActive.deactivated_at.is_(None),
             )
-        ).limit(1)
+        ).order_by(KillSwitchActive.activated_at.desc()).limit(1)
         result = await self.db.execute(stmt)
         row = result.scalar_one_or_none()
         # Defensive — unit tests with FakeSession queue a single

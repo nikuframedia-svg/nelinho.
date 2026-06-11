@@ -1,13 +1,19 @@
 """Decision lifecycle endpoints: propose / list / get / pending-me / approve /
-execute / rollback / bulk / payload-patch / audit-pack / delta / kill-switch.
+execute / rollback / payload-patch / audit-pack / delta / kill-switch.
 
 Q.67.6.B5 — split from the legacy ``src/governance/api.py``. All shared
-schemas (``DecisionResponse``, ``BulkRequest``, ``ModifyPayloadIn``) live here
-because every endpoint in this router consumes or produces them.
+schemas (``DecisionResponse``, ``ModifyPayloadIn``) live here because every
+endpoint in this router consumes or produces them.
 
-Sprint Q.18.A.1: irreversible ops (bulk, payload patch, execute, rollback,
+Sprint Q.18.A.1: irreversible ops (payload patch, execute, rollback,
 kill-switch) require :func:`require_admin` — any authenticated user could
 previously stop production via /kill-switch.
+
+Q.168 F4.E — o endpoint ``POST /decisions/bulk`` foi removido: era órfão
+(o frontend migrou no Q.130.I para ``/v1/decisions/bulk``, que opera na
+tabela certa ``shared.decision_runs``; este operava em
+``governance.decision_run``). O método de serviço ``bulk_act`` mantém-se
+na camada de serviço (testes de caracterização M.2).
 """
 
 from __future__ import annotations
@@ -94,16 +100,6 @@ def _decision_to_response(decision: Dict[str, Any]) -> DecisionResponse:
         **decision,
         work_order_id=_extract_wo_id(decision.get("action_data")),
     )
-
-
-class BulkItemIn(BaseModel):
-    decision_id: str
-    action: ApprovalAction
-    reason: str = Field("", description="Required by approve_decision (min 10 chars)")
-
-
-class BulkRequest(BaseModel):
-    items: List[BulkItemIn]
 
 
 class ModifyPayloadIn(BaseModel):
@@ -283,28 +279,8 @@ async def approve_decision(
 
 
 # ============================================================================
-# BULK / MODIFY (Sprint M.2 WG04 + M.4 WG05)
+# MODIFY (Sprint M.4 WG05)
 # ============================================================================
-
-@router.post("/decisions/bulk")
-async def bulk_act(
-    body: BulkRequest,
-    admin: AdminContext = Depends(require_admin),
-    service: GovernanceService = Depends(get_governance_service),
-):
-    """Apply multiple approve/reject/request_changes in a single call.
-
-    Per-item response — a SoD violation on one decision does not abort the rest.
-
-    Sprint Q.18.A.1: admin-only.
-    """
-    results = await service.bulk_act(
-        items=[item.model_dump() for item in body.items],
-        approved_by=admin.user_id,
-    )
-    ok = sum(1 for r in results if r["status"] == "ok")
-    return {"ok": ok, "failed": len(results) - ok, "results": results}
-
 
 @router.patch("/decisions/{decision_id}/payload")
 async def modify_decision_payload(
@@ -520,8 +496,6 @@ async def activate_kill_switch(
 
 __all__ = [
     "router",
-    "BulkItemIn",
-    "BulkRequest",
     "DecisionResponse",
     "ModifyPayloadIn",
 ]

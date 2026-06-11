@@ -578,12 +578,16 @@ class DecisionQuery:
         ledger. Tenant-scoped so cross-tenant chain references can't be
         used to spoof verification.
         """
+        # Q.168 F4.E — `audit_hash` não tem UNIQUE constraint; sem ORDER BY o
+        # `.limit(1)` era não-determinístico se alguma corrupção duplicasse o
+        # hash — `_verify_hash_chain` podia seguir linhas diferentes em
+        # execuções diferentes. Ordenar por id garante resultado estável.
         stmt = select(DecisionRun).where(
             and_(
                 DecisionRun.tenant_id == self.tenant_id,
                 DecisionRun.audit_hash == audit_hash,
             )
-        ).limit(1)
+        ).order_by(DecisionRun.id.desc()).limit(1)
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 

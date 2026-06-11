@@ -442,7 +442,11 @@ async def _dispatch_pause_writes(rule: Rule, params: dict[str, Any], ctx: Dispat
     )
     return DispatchResult(
         action="pause_writes",
-        status=_stubbed_or_ok("pause_writes"),
+        # Q.168 F4.E — has_callback=True explícito: esta acção não depende de
+        # nenhum callback do DispatchContext (executa directamente via
+        # register_pause acima), ao contrário dos restantes dispatchers que
+        # passam `has_callback=ctx.X is not None`.
+        status=_stubbed_or_ok("pause_writes", has_callback=True),
         payload=payload,
     )
 

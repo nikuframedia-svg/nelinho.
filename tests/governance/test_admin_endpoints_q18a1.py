@@ -1,6 +1,9 @@
 """Sprint Q.18.A.1 — admin gate on irreversible governance endpoints.
 
-The 5 endpoints below used to accept any authenticated user (only
+(Q.168 F4.E: ``decisions/bulk`` saiu da matriz — o endpoint órfão foi
+removido; ver ``test_governance_bulk_route_removed_q168_f4e``.)
+
+The endpoints below used to accept any authenticated user (only
 ``require_user_header`` was applied). That meant any logged-in operator
 could ``POST /v1/governance/kill-switch`` and stop production in their
 own tenant — directly contradicting the YAML policy schema's
@@ -52,7 +55,6 @@ def _fake_service() -> AsyncMock:
         "status": "rolled_back",
         "rolled_back_at": "2026-05-08T12:00:00Z",
     }
-    svc.bulk_act.return_value = []
     svc.modify_payload.return_value = {"id": "d-1", "patched": True}
     return svc
 
@@ -126,13 +128,6 @@ ROUTES = [
         "json": None,
     },
     {
-        "name": "decisions.bulk",
-        "method": "POST",
-        "path": "/v1/governance/decisions/bulk",
-        "params": None,
-        "json": {"items": []},
-    },
-    {
         "name": "decisions.payload",
         "method": "PATCH",
         "path": "/v1/governance/decisions/d-1/payload",
@@ -172,6 +167,25 @@ def test_no_role_header_forbidden(client, route):
     """No X-User-Role header → 403 (require_admin needs explicit role)."""
     status_code = _call(client, route, _no_role_headers())
     assert status_code == 403, f"no-role must be 403 for {route['name']}, got {status_code}"
+
+
+def test_governance_bulk_route_removed_q168_f4e(client):
+    """Q.168 F4.E — ``POST /v1/governance/decisions/bulk`` foi removido.
+
+    O endpoint era órfão: o frontend migrou no Q.130.I para
+    ``/v1/decisions/bulk`` (tabela ``shared.decision_runs``); este operava
+    na tabela DIFERENTE ``governance.decision_run`` — um caller enganado
+    aprovaria decisões na casa errada. Mesmo com headers de admin tem de
+    ser 404.
+    """
+    resp = client.post(
+        "/v1/governance/decisions/bulk",
+        json={"items": []},
+        headers=_admin_headers(),
+    )
+    # 405 (não 404): o path "bulk" ainda casa com GET /decisions/{decision_id},
+    # mas o handler POST desapareceu — qualquer um dos dois prova a remoção.
+    assert resp.status_code in (404, 405)
 
 
 # ---------------------------------------------------------------------------

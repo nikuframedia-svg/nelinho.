@@ -43,6 +43,15 @@ _DEFAULT_ROBOT_TIME_LIMIT_S = 300.0  # 5 min de SOLVER — << job_timeout=1200s 
 
 # Estado in-memory por tenant: (último enqueue, watermark do WIP nesse momento).
 # Reset no restart é aceitável — apenas re-planeia 1× após rearranque.
+#
+# Q.168 F4.E — sobre a "race" read→write em _last_run (auditada 2×): NÃO se
+# materializa. (1) Dentro de um processo, o job está registado no APScheduler
+# com `max_instances=1` (scheduling/core.py) → nunca há 2 corridas
+# concorrentes a interlear o await entre o `.get()` e a escrita. (2) Entre
+# processos (uvicorn --workers N) cada worker tem a SUA cópia do dict — não há
+# memória partilhada, logo não há race; há cópias independentes, e o pior caso
+# é 1 enqueue redundante que o Arq coalesce via `_job_id` determinístico
+# (dedup durável, ver _enqueue_cpo). Um asyncio.Lock aqui seria peso morto.
 _last_run: Dict[UUID, Tuple[datetime, Tuple[int, str]]] = {}
 
 # Watermark barato do WIP-barco: nº de barcos em produção + max actualização.

@@ -631,8 +631,14 @@ async def _auto_propose_signals_job(tenant_ids: List[UUID]) -> None:
                     # Rate-limit in-memory (5 min) para não repetir entre ticks.
                     if not _rate_limiter.is_allowed(key):
                         continue
-                    await propose_decision_row(async_session_factory, tenant_id=tid, **cand)
+                    # Q.168 F4.E — record ANTES do propose: se o propose falhar
+                    # com erro transiente (DB timeout / audit), a chave fica
+                    # registada na mesma → sem re-spam dentro da janela de
+                    # 5 min. O retry NÃO se perde: o tick seguinte é a +15 min
+                    # (> janela), e o dedup durável (_blocked_targets) continua
+                    # a ser quem impede duplicados na BD.
                     _rate_limiter.record(key)
+                    await propose_decision_row(async_session_factory, tenant_id=tid, **cand)
                     created += 1
 
                 if created:

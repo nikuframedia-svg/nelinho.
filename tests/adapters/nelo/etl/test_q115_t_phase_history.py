@@ -134,6 +134,33 @@ def test_duration_min_null_when_fase_fim_none():
     assert _calc_duration_min(t0, None) is None
 
 
+# ── 5b. Q.168 F4.E — duracoes patologicas (dados sujos do ERP) ────────────
+
+
+def test_duration_min_null_when_negative():
+    """fase_fim antes do inicio (dados sujos) → None, nao negativo."""
+    t0 = datetime(2025, 1, 2, 8, 0, tzinfo=timezone.utc)
+    t1 = datetime(2025, 1, 1, 8, 0, tzinfo=timezone.utc)
+    assert _calc_duration_min(t0, t1) is None
+
+
+def test_duration_min_null_when_pathologically_long_q168_f4e():
+    """Fase de ~125 anos (OF_FP com 1900-01-01, padrao real do ERP: 37% das
+    linhas) → None. Sem o tecto, anos de 'duracao' contaminavam as medianas
+    downstream do CPO."""
+    t0 = datetime(1900, 1, 1, 0, 0, tzinfo=timezone.utc)
+    t1 = datetime(2025, 1, 1, 8, 0, tzinfo=timezone.utc)
+    assert _calc_duration_min(t0, t1) is None
+
+
+def test_duration_min_exactly_30_days_is_kept_q168_f4e():
+    """Fronteira: exatamente 30 dias (43 200 min) ainda e aceite — o tecto
+    rejeita apenas o que EXCEDE."""
+    t0 = datetime(2025, 1, 1, 0, 0, tzinfo=timezone.utc)
+    t1 = datetime(2025, 1, 31, 0, 0, tzinfo=timezone.utc)
+    assert _calc_duration_min(t0, t1) == Decimal("43200.00")
+
+
 # ── 6. encoding UTF-8: acento PT-PT preservado ────────────────────────────
 
 
