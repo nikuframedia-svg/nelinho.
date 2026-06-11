@@ -60,6 +60,7 @@ from .routers.inventory import router as _inventory_router
 from .routers.materials import router as _materials_router
 from .routers.purchasing import router as _purchasing_router
 from .routers.rop import router as _rop_router
+from .routers.shortage_forecast import router as _shortage_forecast_router
 from .services.rop_calculator import recompute_rop_configs
 from .stockout_predictor import StockoutPredictor
 
@@ -71,5 +72,6 @@ for _sub in (
     _rop_router,
     _materials_router,
     _purchasing_router,
+    _shortage_forecast_router,
 ):
     router.include_router(_sub)
