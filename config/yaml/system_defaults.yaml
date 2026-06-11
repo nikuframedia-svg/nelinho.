@@ -158,6 +158,12 @@ categories:
       data_type: bool
       description: Q.173.L — fila inter-fase mediana por fase no decoder (true,
         default) vs one-piece-flow fila=0 (false). Lida por _build_cpo_config.
+    - key: cpo.cpsat_gate.soft_waiver_gain
+      value: 0.5
+      data_type: float
+      description: Q.173.P — isenta os guardrails SOFT do gate axioma-7 quando o
+        CP-SAT corta o makespan >= esta fração vs baseline (0 = desligado). Hard
+        guardrails (tardiness, late orders, OTD, cap 1.5x) vetam sempre.
     - key: repair.phase_ids
       value: [14, 76, 77]
       data_type: json

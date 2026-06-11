@@ -68,17 +68,18 @@ def run_cpsat_global(
     """Corre o pipeline CP-SAT global e devolve o result-dict, ou None (fallback)."""
     if not HAS_ORTOOLS:
         return None
-    # 1) excluir fases de reparação — Q.173.L: ids efetivos vêm do state
+    # 1) separar fases de reparação — Q.173.L: ids efetivos vêm do state
     # (config de tenant `planning`/`repair.phase_ids`; default {14,76,77}).
     repair_ids = (
         frozenset(getattr(state, "repair_phase_ids", None) or REPAIR_PHASE_IDS)
     )
     main_ops = [o for o in operations if str(o.phase_id) not in repair_ids]
-    repair_excluded = len(operations) - len(main_ops)
+    repair_ops = [o for o in operations if str(o.phase_id) in repair_ids]
     if not main_ops:
         return None
 
-    # 2) TIMING global (24/7, cumulative, makespan).
+    # 2) TIMING global (24/7, cumulative, makespan) — só ops principais:
+    # reparações são rotas truncadas de 1 op, sem ganho no solver.
     timing = CPSATScheduler(config or CPSATConfig()).solve_timing(
         main_ops, state, horizon_start, hint_starts_min=greedy_hint,
     )
@@ -86,12 +87,21 @@ def run_cpsat_global(
         logger.info("CP-SAT global indisponível (%s) — fallback ao greedy", timing.reason)
         return None
 
-    # 3) recursos concretos + calendário.
-    scheduled = assign_concrete(main_ops, state, horizon_start, timing.starts_min)
+    # 3) recursos concretos + calendário — Q.173.Q (decisão Luis 2026-06-11):
+    # as REPARAÇÕES entram no MESMO plano (merge-back). O assign_concrete usa
+    # o start do CP-SAT como PISO e resolve conflitos de operador/molde/cura/
+    # precedência por construção — as reparações (sem start no timing → piso
+    # 0) são colocadas primeiro, consistente com a prioridade repair_rank do
+    # loader (Q.161.A). Antes, quando o CP-SAT ganhava, as ~76 OFs de
+    # reparação DESAPARECIAM do plano servido (auditoria 2026-06-11). Bónus:
+    # o result fica comensurável com o baseline greedy no gate axioma-7
+    # (ambos incluem reparações).
+    all_ops = repair_ops + main_ops
+    scheduled = assign_concrete(all_ops, state, horizon_start, timing.starts_min)
 
     # 4) result-dict canónico (mesmo contrato do decoder).
     result = build_result_dict(
-        scheduled, main_ops, machines, horizon_start, horizon_end,
+        scheduled, all_ops, machines, horizon_start, horizon_end,
         product_price_eur=product_price_eur,
         engine_used="cpsat_global",
     )
@@ -102,7 +112,7 @@ def run_cpsat_global(
         "cpsat_solve_time_s": round(timing.solve_time_s, 1),
         "makespan_hours_24x7": round(timing.makespan_min / 60.0, 2),
         "cpsat_objective_bound_min": round(timing.objective_bound, 1),
-        "repair_ops_excluded": repair_excluded,
+        "repair_ops_merged": len(repair_ops),
         "boats_in_main_plan": n_boats,
     }
     return result

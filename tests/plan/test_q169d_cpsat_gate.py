@@ -141,3 +141,67 @@ class TestPhase8AnchorsAlive:
         anchors = {"OF-1": _H0 + timedelta(days=1)}
         out = pipeline._phase8_scoring(schedule, anchors)
         assert out["tardiness_transport_d"] == pytest.approx(2.0, abs=0.01)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Q.173.P — isenção de guardrails SOFT por ganho de makespan (decisão Luis)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestQ173PSoftWaiver:
+    def test_idle_ratio_soft_isentado_com_ganho_grande(self):
+        """O cenário REAL da auditoria 2026-06-11: makespan 22.297h→~690h
+        (−97%) vetado por idle_ratio +5,25pp. Com soft_waiver_gain=0.5 o
+        guardrail soft é isentado e o plano 6,5× melhor passa."""
+        ok, meta = _cpsat_gate_decision(
+            _kpis(makespan=690.0, idle_ratio=0.6805),
+            _kpis(makespan=22297.0, idle_ratio=0.6280),
+            soft_waiver_gain=0.5,
+        )
+        assert ok
+        assert meta["violations"] == []
+        assert any("idle_ratio" in w for w in meta["waived_soft"])
+        assert meta["makespan_gain"] > 0.9
+        assert "isentado" in meta["reason"]
+
+    def test_waiver_desligado_mantem_veto_soft(self):
+        """soft_waiver_gain=0 (desligado) → comportamento Q.169.D intacto."""
+        ok, meta = _cpsat_gate_decision(
+            _kpis(makespan=690.0, idle_ratio=0.6805),
+            _kpis(makespan=22297.0, idle_ratio=0.6280),
+            soft_waiver_gain=0.0,
+        )
+        assert not ok
+        assert any("idle_ratio" in v for v in meta["violations"])
+
+    def test_ganho_pequeno_nao_isenta(self):
+        """Melhoria de makespan abaixo do limiar não compra isenção."""
+        ok, meta = _cpsat_gate_decision(
+            _kpis(makespan=90.0, idle_ratio=0.70),
+            _kpis(makespan=100.0, idle_ratio=0.60),
+            soft_waiver_gain=0.5,
+        )
+        assert not ok
+        assert any("idle_ratio" in v for v in meta["violations"])
+        assert meta["waived_soft"] == []
+
+    def test_hard_guardrail_nunca_e_isentado(self):
+        """Tardiness pior é HARD — nem um makespan −97% compra a isenção
+        (axioma 7: nunca pior que o baseline nas dimensões hard)."""
+        ok, meta = _cpsat_gate_decision(
+            _kpis(makespan=690.0, tardy_h=50.0),
+            _kpis(makespan=22297.0, tardy_h=10.0),
+            soft_waiver_gain=0.5,
+        )
+        assert not ok
+        assert any("total_tardiness_hours" in v for v in meta["violations"])
+
+    def test_meta_regista_waiver_para_auditoria(self):
+        ok, meta = _cpsat_gate_decision(
+            _kpis(makespan=100.0, setups=200),
+            _kpis(makespan=400.0, setups=100),
+            soft_waiver_gain=0.5,
+        )
+        assert ok
+        assert meta["soft_waiver_gain"] == 0.5
+        assert any("setups" in w for w in meta["waived_soft"])

@@ -86,6 +86,10 @@ DEFAULT_SEEDS: list[ConfigSeed] = [
     ("planning", "cpo.use_queue_time", True, "bool",
      "Q.173.L — fila inter-fase mediana por fase no decoder (True, default) "
      "vs one-piece-flow fila=0 (False). Lida por _build_cpo_config."),
+    ("planning", "cpo.cpsat_gate.soft_waiver_gain", 0.5, "float",
+     "Q.173.P — isenta os guardrails SOFT do gate axioma-7 quando o CP-SAT "
+     "corta o makespan >= esta fração vs baseline (0 = desligado). Hard "
+     "guardrails vetam sempre. Decisão Luis 2026-06-11."),
     ("planning", "repair.phase_ids", [14, 76, 77], "json",
      "Q.173.L — fases de REPARAÇÃO para o planeador (prioridade no loader + "
      "exclusão no CP-SAT global). A view v_of_em_producao continua {14,76,77} "

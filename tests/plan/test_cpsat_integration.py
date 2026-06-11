@@ -61,8 +61,12 @@ def _machines():
 
 
 @pytest.mark.skipif(not cs.HAS_ORTOOLS, reason="ortools não instalado")
-def test_run_cpsat_global_contract_and_excludes_repairs():
+def test_run_cpsat_global_contract_and_merges_repairs_q173q():
+    """Q.173.Q (decisão Luis 2026-06-11): as reparações entram no MESMO
+    plano via merge-back no assign_concrete — antes desapareciam quando o
+    CP-SAT ganhava (76 OFs invisíveis, auditoria 2026-06-11)."""
     state = _state()
+    state.skill_matrix["Rep"] = {"w5"}
     ops = _ops(4, with_repair=True)
     res = run_cpsat_global(
         state, ops, _machines(), _H0, _HE,
@@ -71,11 +75,22 @@ def test_run_cpsat_global_contract_and_excludes_repairs():
     assert res is not None
     assert _CONTRACT_KEYS.issubset(res.keys())
     assert res["engine_used"] == "cpsat_global"
-    # reparações (fase 76) excluídas do plano principal
+    # reparações (fase 76) INCLUÍDAS no plano servido
     phases = {op["phase_id"] for op in res["operations"]}
-    assert "76" not in phases
-    assert res["cpo_meta"]["repair_ops_excluded"] == 4
+    assert "76" in phases
+    assert res["cpo_meta"]["repair_ops_merged"] == 4
+    assert len(res["operations"]) == len(ops)
     assert res["makespan_hours"] > 0
+    # axioma: nenhum operador em 2 sítios ao mesmo tempo (merge respeitou
+    # a ocupação — assign_concrete trata reparações como ops normais)
+    busy: dict = {}
+    for op in res["operations"]:
+        for w in op.get("workers") or []:
+            for s, e in busy.get(w, []):
+                assert not (op["start_time"] < e and s < op["end_time"]), (
+                    f"operador {w} sobreposto"
+                )
+            busy.setdefault(w, []).append((op["start_time"], op["end_time"]))
 
 
 def test_run_cpsat_global_no_ortools_returns_none(monkeypatch):
@@ -106,3 +121,37 @@ def test_engine_cpsat_global_off_keeps_ga():
     eng = CPOv4Engine(state, config=cfg)
     res = eng.schedule(_ops(3), _machines(), _H0, _HE)
     assert res["engine_used"] == "cpo_v4"
+
+
+def test_engine_persiste_cpsat_gate_em_rejeicao_q173p(monkeypatch):
+    """Q.173.P — quando o CP-SAT é rejeitado/indisponível, o veredicto do
+    gate viaja no cpo_meta do plano final (greedy/GA) — auditável pela BD.
+    Antes morria com o result descartado (só visível em logs truncáveis)."""
+    import src.plan.engines.cpsat_global as cg_mod
+
+    monkeypatch.setattr(cg_mod, "run_cpsat_global", lambda *a, **kw: None)
+
+    state = _state()
+    cfg = CPOConfig(
+        use_cpsat_global=True, generations=1, time_limit_sec=1,
+        population_size=6,
+    )
+    eng = CPOv4Engine(state, config=cfg)
+    res = eng.schedule(_ops(2), _machines(), _H0, _HE)
+
+    meta = res["cpo_meta"]
+    assert meta["engine"] == "greedy_ga"
+    assert meta["cpsat_gate"]["accepted"] is False
+    assert "indisponível" in meta["cpsat_gate"]["reason"]
+
+
+def test_engine_sem_cpsat_nao_inventa_gate(monkeypatch):
+    """Flag OFF → sem cpsat_gate no meta (não inventar veredictos)."""
+    state = _state()
+    cfg = CPOConfig(
+        use_cpsat_global=False, generations=1, time_limit_sec=1,
+        population_size=6,
+    )
+    res = CPOv4Engine(state, config=cfg).schedule(_ops(2), _machines(), _H0, _HE)
+    assert res["cpo_meta"]["engine"] == "greedy_ga"
+    assert "cpsat_gate" not in res["cpo_meta"]

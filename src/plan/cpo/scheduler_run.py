@@ -268,6 +268,10 @@ async def _build_cpo_config(
         use_cpsat_global=use_cpsat_global,
         cpsat_num_workers=int(_num("cpo.cpsat_num_workers", base.cpsat_num_workers)),
         cpsat_deterministic=_bool("cpo.cpsat_deterministic", base.cpsat_deterministic),
+        # Q.173.P — isenção dos guardrails soft do gate (decisão Luis).
+        cpsat_gate_soft_waiver_gain=_num(
+            "cpo.cpsat_gate.soft_waiver_gain", base.cpsat_gate_soft_waiver_gain,
+        ),
         # Q.173.L — one-piece-flow configurável: fila inter-fase mediana
         # (True, default) vs fila=0 (False). Antes só mudável em código.
         use_queue_time=_bool("cpo.use_queue_time", base.use_queue_time),

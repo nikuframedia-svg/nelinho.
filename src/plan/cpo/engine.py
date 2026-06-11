@@ -119,6 +119,12 @@ class CPOConfig:
     cpsat_num_workers: int = 8
     #: determinismo do CP-SAT (max_deterministic_time) — para testes reproduzíveis.
     cpsat_deterministic: bool = False
+    #: Q.173.P — isenção dos guardrails SOFT do gate axioma-7 quando o
+    #: candidato CP-SAT corta o makespan em >= esta fração vs baseline
+    #: (decisão Luis 2026-06-11; 0 = desligado). Hard guardrails (tardiness,
+    #: late orders, OTD, cap 1.5×) vetam SEMPRE. Config:
+    #: `cpo.cpsat_gate.soft_waiver_gain`.
+    cpsat_gate_soft_waiver_gain: float = 0.5
 
     # -------------------- Sprint P.12 phase budgets ------------------ #
     #: Total cascade budget (seconds). Sub-budgets MUST sum to ≤ this value.
@@ -157,8 +163,27 @@ class CPOConfig:
         )
 
 
+# Q.173.P — guardrails SOFT do safety_net (toleram ruído da GA). Os HARD
+# (num_late_orders, total_tardiness_hours, otd_delivery, makespan 1.5×cap)
+# nunca são isentados. Decisão do Luis 2026-06-11: um candidato CP-SAT que
+# corta o makespan em >X% (default 50%) não pode ser vetado por 0,25pp de
+# idle_ratio — foi exatamente isso que manteve o plano live em 22.297h
+# (~2,5 anos) vs ~690h durante dias (auditoria 2026-06-11).
+_SOFT_GATE_METRICS = frozenset({
+    "throughput_eur_day",
+    "avg_quality_risk",
+    "setups",
+    "total_idle_hours",
+    "lam_utilization",
+    "idle_ratio",
+})
+
+
 def _cpsat_gate_decision(
-    candidate: Dict[str, Any], baseline: Dict[str, Any],
+    candidate: Dict[str, Any],
+    baseline: Dict[str, Any],
+    *,
+    soft_waiver_gain: float = 0.0,
 ) -> Tuple[bool, Dict[str, Any]]:
     """Q.169.D — gate COMPLETO do axioma 7 para o caminho CP-SAT.
 
@@ -172,6 +197,12 @@ def _cpsat_gate_decision(
                (com o objetivo tardiness+makespan do Q.169.D, um candidato
                pode trocar makespan por menos atraso — ambos contam).
 
+    Q.173.P — `soft_waiver_gain` (config `cpo.cpsat_gate.soft_waiver_gain`,
+    0 = desligado): quando o candidato corta o makespan em pelo menos esta
+    fração vs baseline, as violações SOFT são ISENTADAS (registadas em
+    `waived_soft`); as HARD vetam sempre. Os op-sets já são comensuráveis:
+    desde Q.173.Q o candidato CP-SAT inclui as reparações (merge-back).
+
     Pura → testável isolada. Devolve (aceite, meta) — meta vai para
     cpo_meta.cpsat_gate (auditoria; fora do hash)."""
     cm = float(candidate.get("makespan_hours", 1e18) or 1e18)
@@ -180,6 +211,12 @@ def _cpsat_gate_decision(
     bt = float(baseline.get("total_tardiness_hours", 0.0) or 0.0)
     violations = _gather_violations(candidate, baseline)
     improves = cm < bm or ct < bt
+
+    makespan_gain = (bm - cm) / bm if bm > 0 else 0.0
+    waived: List[Tuple[str, str]] = []
+    if soft_waiver_gain > 0 and makespan_gain >= soft_waiver_gain:
+        waived = [v for v in violations if v[0] in _SOFT_GATE_METRICS]
+        violations = [v for v in violations if v[0] not in _SOFT_GATE_METRICS]
 
     reason = "ok"
     if violations:
@@ -191,6 +228,11 @@ def _cpsat_gate_decision(
             f"sem melhoria estrita (makespan {cm:.1f}h vs {bm:.1f}h, "
             f"tardiness {ct:.1f}h vs {bt:.1f}h)"
         )
+    elif waived:
+        reason = (
+            f"ok (makespan -{makespan_gain:.0%}; {len(waived)} guardrail(s) "
+            "soft isentado(s) pela melhoria)"
+        )
 
     meta = {
         "accepted": not violations and improves,
@@ -200,6 +242,9 @@ def _cpsat_gate_decision(
         "tardiness_h": round(ct, 1),
         "baseline_tardiness_h": round(bt, 1),
         "violations": [f"{metric}: {msg}" for metric, msg in violations],
+        "waived_soft": [f"{metric}: {msg}" for metric, msg in waived],
+        "soft_waiver_gain": soft_waiver_gain,
+        "makespan_gain": round(makespan_gain, 4),
     }
     return meta["accepted"], meta
 
@@ -268,11 +313,14 @@ class CPOv4Engine:
         horizon_start: datetime,
         horizon_end: datetime,
         product_price_eur: Optional[Dict[str, Any]],
-    ) -> Optional[Dict[str, Any]]:
-        """Q.166.F — corre o CP-SAT global; devolve o result se passar o gate
-        COMPLETO do axioma 7 (Q.169.D: as 9 dimensões do safety_net + melhoria
-        estrita em makespan OU tardiness), senão None (cai na GA). Best-effort:
-        qualquer falha → None (fallback). O greedy `baseline` dá o warm-start."""
+    ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+        """Q.166.F — corre o CP-SAT global; devolve (result, gate_meta).
+
+        result=None ⇒ cai na GA. Q.173.P: o gate_meta é devolvido SEMPRE
+        (aceite, rejeitado, exceção ou indisponível) para o commit final
+        carregar `cpo_meta.cpsat_gate` — a auditoria 2026-06-11 provou que
+        a rejeição morria com o result descartado e o veto só era visível
+        em logs truncáveis. O greedy `baseline` dá o warm-start."""
         try:
             from src.plan.engines.cpsat_global import (
                 greedy_hint_minutes,
@@ -292,25 +340,34 @@ class CPOv4Engine:
             )
         except Exception as exc:  # pragma: no cover — fallback robusto
             logger.warning("CP-SAT global falhou (%s) — fallback ao greedy/GA", exc)
-            return None
+            return None, {"accepted": False, "reason": f"exception: {exc}"}
         if result is None:
-            return None
-        accepted, gate_meta = _cpsat_gate_decision(result, baseline)
+            return None, {
+                "accepted": False,
+                "reason": "cpsat indisponível (sem ortools / sem solução / "
+                          "0 ops elegíveis)",
+            }
+        accepted, gate_meta = _cpsat_gate_decision(
+            result, baseline,
+            soft_waiver_gain=float(self.config.cpsat_gate_soft_waiver_gain),
+        )
         result.setdefault("cpo_meta", {})["cpsat_gate"] = gate_meta
         if not accepted:
             logger.info(
                 "CP-SAT global REJEITADO pelo gate axioma-7: %s — mantém greedy/GA",
                 gate_meta.get("reason"),
             )
-            return None
+            return None, gate_meta
         result["safety_net_triggered"] = False
         logger.info(
             "CP-SAT global ACEITE: makespan %.1fh (baseline %.1fh), "
-            "tardiness %.1fh (baseline %.1fh), 0 violações axioma-7",
+            "tardiness %.1fh (baseline %.1fh), violações hard=0 "
+            "(soft isentadas=%d)",
             gate_meta["makespan_h"], gate_meta["baseline_makespan_h"],
             gate_meta["tardiness_h"], gate_meta["baseline_tardiness_h"],
+            len(gate_meta.get("waived_soft", [])),
         )
-        return result
+        return result, gate_meta
 
     def schedule(
         self,
@@ -386,8 +443,9 @@ class CPOv4Engine:
         # O greedy baseline acima serve de WARM-START (hint) + comparação de
         # segurança (axioma 7: nunca pior que o baseline). Sem ortools / sem solução
         # / makespan não-melhor → cai na GA abaixo (fallback gracioso).
+        cpsat_gate_meta: Optional[Dict[str, Any]] = None
         if self.config.use_cpsat_global:
-            cpsat_result = self._try_cpsat_global(
+            cpsat_result, cpsat_gate_meta = self._try_cpsat_global(
                 baseline, operations, machines, horizon_start, horizon_end,
                 product_price_eur,
             )
@@ -556,6 +614,12 @@ class CPOv4Engine:
         best_final["solve_time_sec"] = round(elapsed, 3)
         best_final["status"] = "optimal" if not best_final.get("safety_net_triggered") else "safety_net"
         cpo_meta: Dict[str, Any] = {
+            # Q.173.P — etiqueta do motor SEMPRE presente (a auditoria
+            # 2026-06-11 encontrou 182/206 commits sem `engine`) e o veredicto
+            # do gate CP-SAT persiste mesmo em rejeição — auditável pela BD,
+            # não só por logs truncáveis.
+            "engine": "greedy_ga",
+            **({"cpsat_gate": cpsat_gate_meta} if cpsat_gate_meta else {}),
             "baseline_fitness": round(baseline_fit, 2),
             "best_fitness": round(best_fit, 2),
             "improvement_pct": round(
