@@ -415,7 +415,8 @@ SELECT
     of_.OF_P_ID           AS product_id,
     pt.TP_NOME            AS product_type_name,
     chefe.OFFPEQ_E_ID     AS causer_chefe_eid,
-    oper.OFFPEQ_E_ID      AS causer_operator_eid
+    oper.OFFPEQ_E_ID      AS causer_operator_eid,
+    of_.OF_OF_ID_MLD      AS mold_work_order_id
 FROM        dbo.OF_CHECKLIST ch  WITH (NOLOCK)
 INNER JOIN  dbo.ORDEMFABRICO of_ WITH (NOLOCK) ON of_.OF_ID = ch.OFCH_OF_ID
 INNER JOIN  dbo.PRODUTO      p   WITH (NOLOCK) ON p.P_ID = of_.OF_P_ID

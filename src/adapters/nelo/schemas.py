@@ -245,6 +245,7 @@ class ChecklistIncidentRow(_Frozen):
     product_type_name: Optional[str] = None  # TP_NOME (disciplina)
     causer_chefe_eid: Optional[int] = None  # OFFPEQ_E_ID (chefe da op culpada)
     causer_operator_eid: Optional[int] = None  # OFFPEQ_E_ID (operário da op culpada)
+    mold_work_order_id: Optional[int] = None  # OF_OF_ID_MLD — OF do molde em que o barco foi fabricado
 
 
 # ─── Phases (vw_pp1_phases) — master of work centres ───────────────────

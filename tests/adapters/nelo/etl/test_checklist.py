@@ -14,7 +14,12 @@ from unittest.mock import AsyncMock
 from uuid import NAMESPACE_DNS, UUID, uuid5
 
 from src.adapters.nelo.etl import checklist as checklist_mod
-from src.adapters.nelo.etl.checklist import build_rework_from_checklist, mirror_checklist
+from src.adapters.nelo.etl.checklist import (
+    _BACKFILL_MOLD_ID_SQL,
+    _backfill_mold_id,
+    build_rework_from_checklist,
+    mirror_checklist,
+)
 from src.adapters.nelo.schemas import ChecklistIncidentRow
 from src.quality.models.rework import ReworkEntry
 
@@ -115,6 +120,45 @@ def test_skips_incident_with_no_detected_at():
     assert build_rework_from_checklist([_inc(detected_at=None)], BY_CODE) == []
 
 
+# ── Q.173.G — mold_id mapping ────────────────────────────────────────────
+
+
+def test_build_mold_id_from_mold_work_order_id():
+    """OF_OF_ID_MLD presente → mold_id = str(OF_OF_ID_MLD) na rework_entry."""
+    row = build_rework_from_checklist([_inc(mold_work_order_id=70257)], BY_CODE)[0]
+    assert row["mold_id"] == "70257"
+
+
+def test_build_mold_id_none_when_no_mold_work_order():
+    """OF_OF_ID_MLD ausente → mold_id = None (invariante #8 — sem inventar)."""
+    row = build_rework_from_checklist([_inc(mold_work_order_id=None)], BY_CODE)[0]
+    assert row["mold_id"] is None
+
+
+def test_backfill_sql_has_correct_filter_clauses():
+    """SQL de backfill tem os três predicados obrigatórios:
+    mold_id IS NULL, source='erp_of_checklist', OF_OF_ID_MLD IS NOT NULL."""
+    sql_text = str(_BACKFILL_MOLD_ID_SQL)
+    assert "mold_id IS NULL" in sql_text
+    assert "erp_of_checklist" in sql_text
+    assert "OF_OF_ID_MLD" in sql_text
+    assert "IS NOT NULL" in sql_text
+
+
+async def test_backfill_mold_id_calls_execute_and_returns_rowcount():
+    """_backfill_mold_id executa o SQL de backfill na sessão e devolve rowcount."""
+    from unittest.mock import AsyncMock, MagicMock
+    mock_result = MagicMock()
+    mock_result.rowcount = 3
+    mock_session = MagicMock()
+    mock_session.execute = AsyncMock(return_value=mock_result)
+
+    n = await _backfill_mold_id(mock_session)
+
+    mock_session.execute.assert_awaited_once_with(_BACKFILL_MOLD_ID_SQL)
+    assert n == 3
+
+
 # ── end-to-end mirror ─────────────────────────────────────────────────────
 
 
@@ -130,6 +174,8 @@ async def test_mirror_checklist_imports_defects(monkeypatch, recording_session):
     monkeypatch.setattr(
         checklist_mod, "_employee_id_by_code", AsyncMock(return_value=BY_CODE),
     )
+    # _backfill_mold_id usa text() — não suportado pela RecordingSession; mock.
+    monkeypatch.setattr(checklist_mod, "_backfill_mold_id", AsyncMock(return_value=0))
     result = await mirror_checklist(session=recording_session, tenant_id=TENANT, since=None)
 
     assert result.status == "ok"
@@ -140,3 +186,22 @@ async def test_mirror_checklist_imports_defects(monkeypatch, recording_session):
     # the canonical split survived end-to-end
     split = next(r for r in rework if r.error_code == "CHK-P1")
     assert (split.phase_id_causer, split.phase_id_rework) == ("1", "6")
+
+
+async def test_mirror_checklist_propagates_mold_id(monkeypatch, recording_session):
+    """mold_work_order_id presente no incidente → mold_id gravado na rework_entry."""
+    monkeypatch.setattr(
+        checklist_mod.services, "list_checklist_incidents",
+        AsyncMock(return_value=[
+            _inc(checklist_id=10, mold_work_order_id=70257),
+        ]),
+    )
+    monkeypatch.setattr(
+        checklist_mod, "_employee_id_by_code", AsyncMock(return_value=BY_CODE),
+    )
+    monkeypatch.setattr(checklist_mod, "_backfill_mold_id", AsyncMock(return_value=0))
+    await mirror_checklist(session=recording_session, tenant_id=TENANT, since=None)
+
+    rework = [o for o in recording_session.added if isinstance(o, ReworkEntry)]
+    assert len(rework) == 1
+    assert rework[0].mold_id == "70257"

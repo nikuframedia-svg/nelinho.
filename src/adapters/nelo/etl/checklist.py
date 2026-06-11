@@ -24,7 +24,7 @@ from datetime import date, datetime, time, timezone, timedelta
 from typing import Any, Dict, List, Optional
 from uuid import NAMESPACE_DNS, UUID, uuid5
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from src.adapters.nelo import services
 from src.adapters.nelo.schemas import ChecklistIncidentRow
@@ -99,10 +99,14 @@ def build_rework_from_checklist(
         causer_id = chefe_id if inc.culpa_chefe else operator_id
 
         description = (inc.description or "Defeito de checklist sem descrição").strip()
+        # OF_OF_ID_MLD — OF do molde em que o barco foi fabricado. Nullable: a NELO
+        # só regista o molde em ~8% das OFs; sem molde fica NULL (invariante #8).
+        mold_id = str(inc.mold_work_order_id) if inc.mold_work_order_id is not None else None
         rows.append({
             "id": uuid5(NAMESPACE_DNS, f"nelo-erp-ofch-{inc.checklist_id}"),
             "of_id": str(inc.work_order_id),
             "model_id": str(inc.product_id) if inc.product_id else None,
+            "mold_id": mold_id,
             "phase_id_causer": causer_phase,
             "phase_id_rework": rework_phase,
             "causer_employee_id": causer_id,
@@ -131,6 +135,33 @@ def build_rework_from_checklist(
             },
         })
     return rows
+
+
+# Q.173.G — SQL de backfill idempotente: preenche mold_id nas linhas já
+# existentes em quality.rework_entry onde mold_id IS NULL e a fonte é o
+# checklist. Liga rework_entry.of_id → of_checklist.OFCH_OF_ID → ordemfabrico.OF_ID
+# → ordemfabrico.OF_OF_ID_MLD (OF do molde). No-op quando já preenchido.
+# Cobertura esperada: limitada a OFs que têm OF_OF_ID_MLD registado (~8% das OFs).
+_BACKFILL_MOLD_ID_SQL = text("""
+UPDATE quality.rework_entry r
+SET    mold_id = o."OF_OF_ID_MLD"::text
+FROM   factory_raw.of_checklist c
+JOIN   factory_raw.ordemfabrico o ON o."OF_ID" = c."OFCH_OF_ID"
+WHERE  r.of_id = c."OFCH_OF_ID"::text
+  AND  r.mold_id IS NULL
+  AND  r.context->>'source' = 'erp_of_checklist'
+  AND  o."OF_OF_ID_MLD" IS NOT NULL
+""")
+
+
+async def _backfill_mold_id(session) -> int:
+    """Preenche mold_id nas linhas já existentes de source='erp_of_checklist'.
+
+    Idempotente — só toca linhas onde mold_id IS NULL. Retorna o número de
+    linhas actualizadas (útil para logging; será 0 quando já completo).
+    """
+    result = await session.execute(_BACKFILL_MOLD_ID_SQL)
+    return result.rowcount
 
 
 async def _employee_id_by_code(session, tenant_id: UUID) -> Dict[str, UUID]:
@@ -162,16 +193,18 @@ async def mirror_checklist(
             ReworkEntry, rework,
             key_fields=["id"],
             update_fields=[
-                "of_id", "model_id", "phase_id_causer", "phase_id_rework",
+                "of_id", "model_id", "mold_id", "phase_id_causer", "phase_id_rework",
                 "causer_employee_id", "chefe_employee_id", "original_op_id",
                 "rework_op_id", "error_code", "error_description", "detected_at",
                 "context",
             ],
         )
         n_split = sum(1 for r in rework if r["phase_id_causer"] != r["phase_id_rework"])
+        # Backfill idempotente: preenche mold_id em linhas fora da janela actual.
+        n_backfill = await _backfill_mold_id(session)
         logger.info(
-            "checklist mirror — window=%s..%s defects=%d causer!=detector=%d",
-            date_from, date_to, len(rework), n_split,
+            "checklist mirror — window=%s..%s defects=%d causer!=detector=%d backfill_mold=%d",
+            date_from, date_to, len(rework), n_split, n_backfill,
         )
     return run.result
 
