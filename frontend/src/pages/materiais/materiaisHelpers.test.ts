@@ -19,9 +19,6 @@ describe('sugestaoVariant', () => {
   it('compra → danger', () => {
     expect(sugestaoVariant('compra')).toBe('danger');
   });
-  it('transferencia → warning', () => {
-    expect(sugestaoVariant('transferencia')).toBe('warning');
-  });
   it('replaneamento → info', () => {
     expect(sugestaoVariant('replaneamento')).toBe('info');
   });
@@ -36,9 +33,6 @@ describe('sugestaoVariant', () => {
 describe('sugestaoLabel', () => {
   it('compra → "Compra"', () => {
     expect(sugestaoLabel('compra')).toBe('Compra');
-  });
-  it('transferencia → "Transferência"', () => {
-    expect(sugestaoLabel('transferencia')).toBe('Transferência');
   });
   it('replaneamento → "Replaneamento"', () => {
     expect(sugestaoLabel('replaneamento')).toBe('Replaneamento');

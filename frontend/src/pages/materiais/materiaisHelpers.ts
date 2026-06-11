@@ -14,8 +14,6 @@ export function sugestaoVariant(
   switch (tipo) {
     case 'compra':
       return 'danger';
-    case 'transferencia':
-      return 'warning';
     case 'replaneamento':
       return 'info';
     case 'ok':
@@ -29,8 +27,6 @@ export function sugestaoLabel(tipo: MaterialEmRisco['sugestao']): string {
   switch (tipo) {
     case 'compra':
       return 'Compra';
-    case 'transferencia':
-      return 'Transferência';
     case 'replaneamento':
       return 'Replaneamento';
     case 'ok':

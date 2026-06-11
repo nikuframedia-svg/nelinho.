@@ -30,7 +30,7 @@ HOJE = date(2026, 6, 11)
 
 def test_project_stock_sem_consumo_sem_rutura():
     """Stock alto, sem consumo previsto → sem rutura."""
-    resultado = _project_stock(
+    data_rutura, saldo_minimo = _project_stock(
         stock_atual=500.0,
         reservas=0.0,
         entradas=[],
@@ -39,12 +39,13 @@ def test_project_stock_sem_consumo_sem_rutura():
         horizonte_dias=30,
         hoje=HOJE,
     )
-    assert resultado is None
+    assert data_rutura is None
+    assert saldo_minimo == 500.0
 
 
 def test_project_stock_ja_em_rutura_hoje():
     """Stock abaixo do mínimo → rutura reportada em HOJE."""
-    resultado = _project_stock(
+    data_rutura, saldo_minimo = _project_stock(
         stock_atual=5.0,
         reservas=0.0,
         entradas=[],
@@ -53,13 +54,15 @@ def test_project_stock_ja_em_rutura_hoje():
         horizonte_dias=30,
         hoje=HOJE,
     )
-    assert resultado == HOJE
+    assert data_rutura == HOJE
+    # Q.173.AO — défice real = min_stock − saldo_minimo = 10 − 5 = 5
+    assert saldo_minimo == 5.0
 
 
 def test_project_stock_rutura_por_consumo():
     """Stock suficiente hoje mas consumo previsto esgota no dia 5."""
     consumos = [(HOJE + timedelta(days=i), 20.0) for i in range(1, 10)]
-    resultado = _project_stock(
+    data_rutura, saldo_minimo = _project_stock(
         stock_atual=90.0,
         reservas=0.0,
         entradas=[],
@@ -69,7 +72,9 @@ def test_project_stock_rutura_por_consumo():
         hoje=HOJE,
     )
     # 90 - 5×20 = -10 → rutura no dia 5
-    assert resultado == HOJE + timedelta(days=5)
+    assert data_rutura == HOJE + timedelta(days=5)
+    # ponto mais fundo = fim dos 9 dias de consumo: 90 − 180 = −90
+    assert saldo_minimo == -90.0
 
 
 def test_project_stock_entradas_evitam_rutura():
@@ -77,7 +82,7 @@ def test_project_stock_entradas_evitam_rutura():
     consumos = [(HOJE + timedelta(days=i), 20.0) for i in range(1, 10)]
     eta = HOJE + timedelta(days=3)
     entradas = [(eta, 200.0, False)]  # (date, qty, eta_estimada)
-    resultado = _project_stock(
+    data_rutura, _ = _project_stock(
         stock_atual=50.0,
         reservas=0.0,
         entradas=entradas,
@@ -86,12 +91,12 @@ def test_project_stock_entradas_evitam_rutura():
         horizonte_dias=30,
         hoje=HOJE,
     )
-    assert resultado is None
+    assert data_rutura is None
 
 
 def test_project_stock_reservas_deduzem_imediatamente():
     """Reservas abertas deduzem do saldo inicial — picking pendente."""
-    resultado = _project_stock(
+    data_rutura, _ = _project_stock(
         stock_atual=100.0,
         reservas=95.0,  # deixa só 5
         entradas=[],
@@ -101,12 +106,12 @@ def test_project_stock_reservas_deduzem_imediatamente():
         hoje=HOJE,
     )
     # saldo = 100 - 95 = 5; dia1: 5 - 10 = -5 → rutura dia 1
-    assert resultado == HOJE + timedelta(days=1)
+    assert data_rutura == HOJE + timedelta(days=1)
 
 
 def test_project_stock_negativo_erp_ainda_compara_com_min():
     """Stock negativo (dado real ERP) → rutura em HOJE se abaixo do min."""
-    resultado = _project_stock(
+    data_rutura, saldo_minimo = _project_stock(
         stock_atual=-50.0,
         reservas=0.0,
         entradas=[],
@@ -115,13 +120,14 @@ def test_project_stock_negativo_erp_ainda_compara_com_min():
         horizonte_dias=30,
         hoje=HOJE,
     )
-    assert resultado == HOJE
+    assert data_rutura == HOJE
+    assert saldo_minimo == -50.0
 
 
 def test_project_stock_fora_do_horizonte_nao_conta():
     """Consumo após horizonte não afecta a projeção."""
     consumos = [(HOJE + timedelta(days=100), 1000.0)]  # fora dos 30 dias
-    resultado = _project_stock(
+    data_rutura, _ = _project_stock(
         stock_atual=10.0,
         reservas=0.0,
         entradas=[],
@@ -130,7 +136,27 @@ def test_project_stock_fora_do_horizonte_nao_conta():
         horizonte_dias=30,
         hoje=HOJE,
     )
-    assert resultado is None
+    assert data_rutura is None
+
+
+def test_project_stock_defice_vs_min_stock_q173ao():
+    """Caso real Q.173.AO: saldo positivo mas abaixo do mínimo do ERP.
+
+    O défice antigo media contra zero → 0.0 "rutura sem défice" na página
+    /materiais. O défice real é min_stock − saldo_minimo.
+    """
+    data_rutura, saldo_minimo = _project_stock(
+        stock_atual=1562.0,
+        reservas=600.0,  # saldo = 962
+        entradas=[],
+        consumos=[],
+        min_stock=1000.0,
+        horizonte_dias=60,
+        hoje=HOJE,
+    )
+    assert data_rutura == HOJE
+    defice = max(0.0, 1000.0 - saldo_minimo)
+    assert defice == 38.0  # 1000 − 962 — acionável, não 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -143,24 +169,20 @@ def test_sugestao_sem_rutura():
         hoje=HOJE,
         lead_time_days=7,
         defice=0.0,
-        outros_armazens=[],
-        total_outros=0.0,
     )
     assert sugestao == "ok"
     assert limite is None
 
 
-def test_sugestao_transferencia_quando_outro_armazem_tem_suficiente():
-    sugestao, detalhe, limite = _calcular_sugestao(
-        data_rutura=HOJE + timedelta(days=10),
-        hoje=HOJE,
-        lead_time_days=7,
-        defice=50.0,
-        outros_armazens=[{"warehouse_name": "Armazém B", "stock": 100.0}],
-        total_outros=100.0,
-    )
-    assert sugestao == "transferencia"
-    assert limite is None
+def test_sugestao_transferencia_removida_q173ao():
+    """Q.173.AO: 'transferencia' não existe mais — o saldo agrega todos os
+    armazéns, mover stock entre eles nunca corrige o total (era dupla contagem).
+    """
+    import inspect
+
+    src = inspect.getsource(_calcular_sugestao)
+    assert '"transferencia"' not in src
+    assert "total_outros" not in src
 
 
 def test_sugestao_compra_quando_ha_tempo():
@@ -170,8 +192,6 @@ def test_sugestao_compra_quando_ha_tempo():
         hoje=HOJE,
         lead_time_days=7,
         defice=50.0,
-        outros_armazens=[],
-        total_outros=0.0,
     )
     assert sugestao == "compra"
     assert limite == rutura - timedelta(days=7)
@@ -185,12 +205,23 @@ def test_sugestao_replaneamento_quando_lead_time_nao_chega():
         hoje=HOJE,
         lead_time_days=7,
         defice=50.0,
-        outros_armazens=[],
-        total_outros=0.0,
     )
     assert sugestao == "replaneamento"
     assert limite is not None
     assert (limite - HOJE).days < 0  # data no passado
+
+
+def test_load_reservas_exclui_ofs_fechadas_q173ao():
+    """Guard estático: o SQL das reservas exclui OFs já fechadas (lixo
+    histórico — 10.268 reservas abertas de OFs com OF_DATAFIM preenchida).
+    """
+    import inspect
+
+    from src.supply.services.shortage_forecast_service import ShortageForecastService
+
+    src = inspect.getsource(ShortageForecastService._load_reservas)
+    assert 'LEFT JOIN factory_raw.ordemfabrico' in src
+    assert '"OF_DATAFIM" IS NULL' in src
 
 
 # ---------------------------------------------------------------------------

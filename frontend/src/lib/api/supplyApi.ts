@@ -390,7 +390,7 @@ export interface MaterialEmRisco {
   data_rutura_prevista: string | null;
   defice: number;
   ordens_afetadas: OrdemAfetada[];
-  sugestao: 'compra' | 'transferencia' | 'replaneamento' | 'ok' | string;
+  sugestao: 'compra' | 'replaneamento' | 'ok' | string;
   sugestao_detalhe: string;
   lead_time_days: number;
   lead_time_source: 'erp' | 'manual' | 'default' | string;

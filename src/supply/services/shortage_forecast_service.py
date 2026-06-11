@@ -173,8 +173,8 @@ def _project_stock(
     min_stock: float,
     horizonte_dias: int,
     hoje: date,
-) -> Optional[date]:
-    """Projeta o saldo ao longo do horizonte e devolve o primeiro dia de rutura.
+) -> Tuple[Optional[date], float]:
+    """Projeta o saldo ao longo do horizonte completo.
 
     Args:
         stock_atual: Stock actual (pode ser negativo — dado real ERP).
@@ -186,10 +186,14 @@ def _project_stock(
         hoje: Data de referência.
 
     Returns:
-        Primeiro dia com saldo < min_stock, ou None se não há rutura.
+        (primeiro dia com saldo < min_stock ou None, saldo mínimo projetado
+        no horizonte). O saldo mínimo permite calcular o défice REAL contra o
+        min_stock (Q.173.AO — o défice antigo media contra zero e dava 0.0
+        quando o saldo era positivo mas abaixo do mínimo).
     """
     # saldo inicial = stock - reservas abertas (picking pendente)
     saldo = stock_atual - reservas
+    saldo_minimo = saldo
 
     # índice: data → qty_entrada
     entradas_por_dia: Dict[date, float] = defaultdict(float)
@@ -204,17 +208,22 @@ def _project_stock(
             consumos_por_dia[cons_d] += qty
 
     # verificar já hoje (stock pode já ser rutura pré-plano)
+    data_rutura: Optional[date] = None
     if saldo < min_stock:
-        return hoje
+        data_rutura = hoje
 
+    # percorre o horizonte INTEIRO (não para na 1ª rutura) para conhecer o
+    # ponto mais fundo — é esse que dita quanto é preciso repor.
     for delta in range(1, horizonte_dias + 1):
         dia = hoje + timedelta(days=delta)
         saldo += entradas_por_dia.get(dia, 0.0)
         saldo -= consumos_por_dia.get(dia, 0.0)
-        if saldo < min_stock:
-            return dia
+        if saldo < saldo_minimo:
+            saldo_minimo = saldo
+        if data_rutura is None and saldo < min_stock:
+            data_rutura = dia
 
-    return None
+    return data_rutura, saldo_minimo
 
 
 def _calcular_sugestao(
@@ -223,26 +232,20 @@ def _calcular_sugestao(
     hoje: date,
     lead_time_days: int,
     defice: float,
-    outros_armazens: List[Dict[str, Any]],
-    total_outros: float,
 ) -> Tuple[str, str, Optional[date]]:
     """Devolve (sugestao, detalhe, data_limite_encomenda).
 
     Regras:
-    1. "transferência" — se outro armazém tem stock > defice.
-    2. "compra" — se lead time permite chegar antes da rutura.
-    3. "replaneamento" — a rutura é causada pelo plano e não há compra a tempo.
+    1. "compra" — se lead time permite chegar antes da rutura.
+    2. "replaneamento" — a rutura é causada pelo plano e não há compra a tempo.
+
+    Q.173.AO: "transferência" foi REMOVIDA — o saldo projeta o stock agregado
+    de todos os armazéns, por isso mover stock entre armazéns nunca altera o
+    total (a sugestão antiga contava o mesmo stock duas vezes). A repartição
+    por armazém continua no payload (`outros_armazens`) como contexto.
     """
     if data_rutura is None:
         return ("ok", "Sem rutura prevista no horizonte.", None)
-
-    # Transferência possível?
-    if total_outros >= defice:
-        detail = (
-            f"Outro(s) armazém(ns) tem {total_outros:.1f} unidades disponíveis "
-            f"(défice: {defice:.1f})."
-        )
-        return ("transferencia", detail, None)
 
     # Data limite para encomenda
     data_limite = data_rutura - timedelta(days=lead_time_days)
@@ -388,7 +391,7 @@ class ShortageForecastService:
             lead_time_source = master.get("lead_time_source", "default")
             nome = nomes_map.get(pc, pc)
 
-            data_rutura = _project_stock(
+            data_rutura, saldo_minimo = _project_stock(
                 stock_atual=stock_total,
                 reservas=reservas,
                 entradas=entradas,
@@ -401,29 +404,19 @@ class ShortageForecastService:
             if data_rutura is None:
                 continue  # sem rutura no horizonte
 
-            # Défice = qty necessária até rutura − disponível
-            consumo_ate_rutura = sum(
-                qty for d, qty in consumos if d <= data_rutura
-            )
-            entradas_ate_rutura = sum(
-                qty for eta_d, qty, _ in entradas if eta_d <= data_rutura
-            )
-            defice = max(
-                0.0,
-                consumo_ate_rutura - (stock_total - reservas + entradas_ate_rutura),
-            )
+            # Q.173.AO — défice = quanto falta repor para voltar ao mínimo no
+            # ponto mais fundo do horizonte (o cálculo antigo media contra zero
+            # e devolvia 0.0 sempre que o saldo era positivo mas < min_stock).
+            defice = max(0.0, min_stock - saldo_minimo)
 
-            # Outros armazéns do mesmo product_code
+            # Repartição por armazém — contexto informativo (não é sugestão)
             outros_armazens = warehouse_map.get(pc, [])
-            total_outros = sum(w["stock"] for w in outros_armazens if w["stock"] > 0)
 
             sugestao, detalhe, data_limite = _calcular_sugestao(
                 data_rutura=data_rutura,
                 hoje=hoje,
                 lead_time_days=lead_time,
                 defice=defice,
-                outros_armazens=outros_armazens,
-                total_outros=total_outros,
             )
 
             if sugestao == "ok":
@@ -815,7 +808,13 @@ class ShortageForecastService:
         self,
         product_codes: Set[str],
     ) -> Dict[str, float]:
-        """Reservas abertas (TPMOV=4 MOV_SATISFEITO=false) por product_code."""
+        """Reservas abertas (TPMOV=4 MOV_SATISFEITO=false) por product_code.
+
+        Q.173.AO: exclui reservas cuja OF já fechou (OF_DATAFIM preenchida) —
+        lixo histórico do ERP que nunca foi satisfeito nem cancelado (10.268
+        movimentos globais). Reservas sem OF ou cuja OF não está no espelho
+        contam (conservador).
+        """
         if not product_codes:
             return {}
 
@@ -830,12 +829,14 @@ class ShortageForecastService:
             return {}
 
         q = text("""
-            SELECT "MOV_P_ID"::text, SUM("MOV_QUANTIDADE") AS reserva
-            FROM factory_raw.movimento
-            WHERE "MOV_TPMOV_ID" = 4
-              AND "MOV_SATISFEITO" = false
-              AND "MOV_P_ID" = ANY(:ids)
-            GROUP BY "MOV_P_ID"
+            SELECT m."MOV_P_ID"::text, SUM(m."MOV_QUANTIDADE") AS reserva
+            FROM factory_raw.movimento m
+            LEFT JOIN factory_raw.ordemfabrico o ON o."OF_ID" = m."MOV_OF_ID"
+            WHERE m."MOV_TPMOV_ID" = 4
+              AND m."MOV_SATISFEITO" = false
+              AND m."MOV_P_ID" = ANY(:ids)
+              AND (o."OF_ID" IS NULL OR o."OF_DATAFIM" IS NULL)
+            GROUP BY m."MOV_P_ID"
         """)
         result = await self._session.execute(q, {"ids": int_codes})
         reservas: Dict[str, float] = {}
