@@ -71,6 +71,7 @@ def _load_mirror_modules() -> None:
         "inventory_ledger",  # Q.64.A — desbloqueia shortage-risks
         "material_master",   # Q.64.B — alimenta ShortageDetector
         "purchase_orders",   # Q.64.D — desbloqueia tab Entregas
+        "bonus_payout",      # Q.173.AS — CoeficienteX (€) → profit.phase_bonus_payout
         # Q.173.B — phase_history e worker_assignment DESLIGADOS: consultavam
         # dbo.FasesOf / dbo.WorkerAssignment, tabelas que só existem no
         # fake-ERP de teste (o ERP real usa OF_FP/OFFP_EQ) → 9/9 corridas em
