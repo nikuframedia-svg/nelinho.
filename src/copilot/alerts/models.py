@@ -66,6 +66,12 @@ CODE_ETL_SYNC_FAILED = "ETL_SYNC_FAILED"                          # WARN
 # healthy plan (never a frozen 2-op plan masquerading as "current").
 CODE_PLAN_DEGENERATE = "PLAN_DEGENERATE"                          # WARN
 
+# Q.173.AR — emitted when no LIVE plan has been approved for N days. The
+# plan-vs-actual calibration loop (Q.131-134) only learns from LIVE commits;
+# with the factory running on DRAFTs forever (auditoria 2026-06-11: 154 DRAFT
+# vs 2 LIVE, last 2026-06-02) the deviation model goes silently blind.
+CODE_PLAN_LIVE_STALENESS = "PLAN_LIVE_STALENESS"                  # WARN/CRITICAL
+
 
 class CopilotAlert(TenantBase):
     """A proactive alert surfaced by the Copilot AlertsEngine."""

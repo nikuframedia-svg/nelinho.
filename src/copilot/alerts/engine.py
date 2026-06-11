@@ -35,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.copilot.alerts.models import (
     CODE_BOTTLENECK_FORMATION,
     CODE_DELIVERY_RISK,
+    CODE_PLAN_LIVE_STALENESS,
     CODE_QUALITY_DEGRADATION,
     CODE_SKILLS_CONCENTRATION,
     STATUS_ACTIVE,
@@ -54,6 +55,9 @@ ALERT_DEDUPE_WINDOW_MINUTES = 60
 # Q.31.H — janela de risco de entrega: barco com transporte dentro de N dias
 # (ou já passado) e ainda em produção dispara o alerta.
 DELIVERY_RISK_WINDOW_DAYS = 3
+# Q.173.AR — dias sem nenhum plano LIVE aprovado a partir dos quais o loop
+# plan-vs-actual está cego (só aprende de LIVE); 2x = CRITICAL.
+PLAN_LIVE_STALENESS_DAYS = 7
 
 
 class AlertsEngine:
@@ -82,6 +86,7 @@ class AlertsEngine:
         self.bottleneck_days_threshold: float = BOTTLENECK_DAYS_THRESHOLD
         self.quality_events_threshold: int = QUALITY_EVENTS_THRESHOLD
         self.delivery_risk_window_days: int = DELIVERY_RISK_WINDOW_DAYS
+        self.plan_live_staleness_days: int = PLAN_LIVE_STALENESS_DAYS
 
     # ------------------------------------------------------------------ #
     # Public                                                             #
@@ -93,12 +98,14 @@ class AlertsEngine:
         created = 0
         skipped = 0
 
-        for detector in (
+        detectors = (
             self._detect_bottleneck_formation,
             self._detect_skills_concentration,
             self._detect_quality_degradation,
             self._detect_delivery_risk,
-        ):
+            self._detect_plan_live_staleness,
+        )
+        for detector in detectors:
             try:
                 candidates = await detector()
             except Exception as e:
@@ -120,7 +127,7 @@ class AlertsEngine:
         return {
             "created": created,
             "skipped_duplicate": skipped,
-            "detectors_run": 4,
+            "detectors_run": len(detectors),
         }
 
     async def _load_thresholds(self) -> None:
@@ -155,6 +162,9 @@ class AlertsEngine:
         ))
         self.delivery_risk_window_days = int(_num(
             "delivery_risk.window_days", DELIVERY_RISK_WINDOW_DAYS,
+        ))
+        self.plan_live_staleness_days = int(_num(
+            "plan_live.staleness_days", PLAN_LIVE_STALENESS_DAYS,
         ))
 
     # ------------------------------------------------------------------ #
@@ -348,6 +358,97 @@ class AlertsEngine:
                 "entity_refs": [f"barco:{o.legacy_id}"],
             })
         return candidates
+
+    async def _detect_plan_live_staleness(self) -> List[Dict[str, Any]]:
+        """Q.173.AR — nenhum plano LIVE aprovado há N dias.
+
+        O loop plan-vs-actual (Q.131-134) calibra o CPO comparando o plano
+        LIVE com a execução real — só aprende de commits LIVE. Com a fábrica
+        a viver de DRAFTs (auditoria 2026-06-11: 154 DRAFT vs 2 LIVE, último
+        2026-06-02), o modelo de desvio fica silenciosamente cego. Lê
+        `plan_schedule_commits` diretamente; enquanto houver um alerta ATIVO
+        deste código não re-emite (o scan corre de 15 em 15 min — sem spam).
+        """
+        from sqlalchemy import func
+
+        from src.plan.cpo.commits import ScheduleCommit
+
+        existing = await self.session.execute(
+            select(CopilotAlert.id).where(
+                and_(
+                    CopilotAlert.tenant_id == self.tenant_id,
+                    CopilotAlert.code == CODE_PLAN_LIVE_STALENESS,
+                    CopilotAlert.status == STATUS_ACTIVE,
+                )
+            ).limit(1)
+        )
+        if existing.scalar_one_or_none() is not None:
+            return []
+
+        last_live = (
+            await self.session.execute(
+                select(func.max(ScheduleCommit.created_at)).where(
+                    and_(
+                        ScheduleCommit.tenant_id == self.tenant_id,
+                        ScheduleCommit.status == "LIVE",
+                    )
+                )
+            )
+        ).scalar()
+
+        threshold = max(1, int(self.plan_live_staleness_days))
+        # created_at é naive-UTC (padrão do modelo) — comparar naive com naive.
+        now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+
+        async def _count_drafts_since(cutoff) -> int:
+            stmt = select(func.count()).select_from(ScheduleCommit).where(
+                and_(
+                    ScheduleCommit.tenant_id == self.tenant_id,
+                    ScheduleCommit.status == "DRAFT",
+                )
+            )
+            if cutoff is not None:
+                stmt = stmt.where(ScheduleCommit.created_at > cutoff)
+            return int((await self.session.execute(stmt)).scalar() or 0)
+
+        if last_live is None:
+            drafts = await _count_drafts_since(None)
+            if drafts == 0:
+                return []  # instalação sem planos — nada a alertar
+            dias: Optional[int] = None
+            quando = "nunca"
+        else:
+            last_naive = (
+                last_live.replace(tzinfo=None) if last_live.tzinfo else last_live
+            )
+            dias = (now_naive - last_naive).days
+            if dias < threshold:
+                return []
+            drafts = await _count_drafts_since(last_naive)
+            quando = f"há {dias} dia(s) ({last_naive.date().isoformat()})"
+
+        severity = "CRITICAL" if (dias is None or dias >= 2 * threshold) else "WARN"
+        return [{
+            "severity": severity,
+            "code": CODE_PLAN_LIVE_STALENESS,
+            "title": "Sem plano LIVE — calibração do CPO parada",
+            "message_pt": (
+                f"O último plano aprovado (LIVE) foi {quando}; desde então há "
+                f"{drafts} rascunho(s) por aprovar. O loop plano-vs-real só "
+                "aprende de planos LIVE — sem aprovação, o CPO não recalibra "
+                "os desvios. Aprova um plano no Planeamento (botão 'Aprovar "
+                "plano') ou ajusta o limiar em Configurações → Alertas."
+            ),
+            "context": {
+                "last_live_at": (
+                    last_live.isoformat() if last_live is not None else None
+                ),
+                "days_without_live": dias,
+                "drafts_since_live": drafts,
+                "threshold_days": threshold,
+            },
+            "entity_refs": ["plan:live-staleness"],
+        }]
 
     # ------------------------------------------------------------------ #
     # Internals                                                          #

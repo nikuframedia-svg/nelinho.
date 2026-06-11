@@ -311,6 +311,9 @@ DEFAULT_SEEDS: list[ConfigSeed] = [
     ("alertas", "quality.events_threshold", 500, "int",
      "Q.173.M — total de eventos de qualidade na janela a partir do qual "
      "o detector de degradação dispara. Lido pelo AlertsEngine."),
+    ("alertas", "plan_live.staleness_days", 7, "int",
+     "Q.173.AR — dias sem nenhum plano LIVE aprovado a partir dos quais o "
+     "detector avisa (o loop plan-vs-actual só aprende de LIVE; 2x = CRITICAL)."),
 
     # ───────────────────────── learning rules (Sprint Q.9 Onda 3.6) ─────────
     # Plan §22-§26 — the manager toggles confidence thresholds + decides

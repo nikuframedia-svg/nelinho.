@@ -539,6 +539,12 @@ categories:
       data_type: int
       description: Q.173.M — total de eventos de qualidade na janela a partir do
         qual o detector de degradação dispara. Lido pelo AlertsEngine.
+    - key: plan_live.staleness_days
+      value: 7
+      data_type: int
+      description: Q.173.AR — dias sem nenhum plano LIVE aprovado a partir dos
+        quais o detector avisa (o loop plan-vs-actual só aprende de LIVE; 2x =
+        CRITICAL). Lido pelo AlertsEngine.
   learning_rules:
     description: Confidence thresholds for the rule detector + auto-revert window.
     settings:

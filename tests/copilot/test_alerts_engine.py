@@ -468,3 +468,88 @@ class TestQ173MThresholdsConfiguraveis:
         assert seeds[("alertas", "quality.events_threshold")] == (500, "int")
         # as keys já-existentes continuam seeded (agora finalmente lidas)
         assert seeds[("alertas", "delivery_risk.window_days")] == (3, "int")
+
+
+# ---------------------------------------------------------------------------
+# Plan LIVE staleness (Q.173.AR)
+# ---------------------------------------------------------------------------
+
+class TestPlanLiveStalenessDetector:
+    """O loop plan-vs-actual só aprende de commits LIVE; o detector avisa
+    quando ninguém aprova um plano há N dias (default 7; 2x = CRITICAL)."""
+
+    @staticmethod
+    def _engine(fake_session, tenant_id) -> AlertsEngine:
+        return AlertsEngine(
+            fake_session, tenant_id, semantic_queries=FakeSemanticQueries(),
+        )
+
+    async def test_nunca_houve_live_com_drafts_e_critical(self, fake_session, tenant_id):
+        fake_session.queue_scalar(None)  # sem alerta ativo deste código
+        fake_session.queue_scalar(None)  # max(created_at) LIVE → nunca
+        fake_session.queue_scalar(154)   # drafts acumulados
+        engine = self._engine(fake_session, tenant_id)
+
+        candidates = await engine._detect_plan_live_staleness()
+
+        assert len(candidates) == 1
+        assert candidates[0]["severity"] == "CRITICAL"
+        assert candidates[0]["context"]["drafts_since_live"] == 154
+        assert candidates[0]["entity_refs"] == ["plan:live-staleness"]
+        assert "nunca" in candidates[0]["message_pt"]
+
+    async def test_instalacao_nova_sem_drafts_nao_alerta(self, fake_session, tenant_id):
+        fake_session.queue_scalar(None)  # sem alerta ativo
+        fake_session.queue_scalar(None)  # sem LIVE
+        fake_session.queue_scalar(0)     # sem DRAFTs
+        engine = self._engine(fake_session, tenant_id)
+
+        assert await engine._detect_plan_live_staleness() == []
+
+    async def test_live_recente_nao_alerta(self, fake_session, tenant_id):
+        fake_session.queue_scalar(None)
+        fake_session.queue_scalar(datetime.now() - timedelta(days=2))
+        engine = self._engine(fake_session, tenant_id)
+
+        assert await engine._detect_plan_live_staleness() == []
+
+    async def test_live_velho_e_warn(self, fake_session, tenant_id):
+        from datetime import timezone
+
+        # created_at é naive-UTC no modelo — construir o fixture igual
+        # (datetime.now() local daria 8d−1h = 7 dias em Lisboa).
+        utc_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+        fake_session.queue_scalar(None)
+        fake_session.queue_scalar(utc_naive - timedelta(days=8, hours=2))
+        fake_session.queue_scalar(12)
+        engine = self._engine(fake_session, tenant_id)
+
+        candidates = await engine._detect_plan_live_staleness()
+
+        assert len(candidates) == 1
+        assert candidates[0]["severity"] == "WARN"
+        assert candidates[0]["context"]["days_without_live"] == 8
+        assert candidates[0]["context"]["drafts_since_live"] == 12
+
+    async def test_live_2x_threshold_e_critical(self, fake_session, tenant_id):
+        fake_session.queue_scalar(None)
+        fake_session.queue_scalar(datetime.now() - timedelta(days=20))
+        fake_session.queue_scalar(40)
+        engine = self._engine(fake_session, tenant_id)
+
+        candidates = await engine._detect_plan_live_staleness()
+
+        assert len(candidates) == 1
+        assert candidates[0]["severity"] == "CRITICAL"
+
+    async def test_alerta_ativo_suprime_reemissao(self, fake_session, tenant_id):
+        fake_session.queue_scalar(uuid4())  # já existe um PLAN_LIVE_STALENESS ativo
+        engine = self._engine(fake_session, tenant_id)
+
+        assert await engine._detect_plan_live_staleness() == []
+
+    def test_seed_q173ar_presente(self):
+        from src.core.services.default_configs import iter_seeds
+
+        seeds = {(c, k): (v, t) for c, k, v, t, _n in iter_seeds()}
+        assert seeds[("alertas", "plan_live.staleness_days")] == (7, "int")
