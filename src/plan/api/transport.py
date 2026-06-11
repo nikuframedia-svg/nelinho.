@@ -182,21 +182,39 @@ async def _resolve_customer_ids_for_orders(
     if not order_ids:
         return []
     try:
-        ord_stmt = select(ProductionOrder.customer_name).where(
+        # Q.172.E — `ProductionOrder.customer_name` NUNCA existiu no ORM;
+        # o AttributeError era engolido pelo except → customer_ids=[]
+        # SEMPRE (re-rastreio apanhou). Caminho real: legacy_id (OF_ID) →
+        # factory_raw.ordemfabrico.OF_E_ID_ENC (fallback OF_E_ID) → core.customers.customer_code.
+        ord_stmt = select(ProductionOrder.legacy_id).where(
             ProductionOrder.tenant_id == tenant_id,
             ProductionOrder.id.in_(order_ids),
         )
-        ord_rows = (await session.execute(ord_stmt)).all()
-        names = {
-            row[0]
-            for row in ord_rows
-            if row and row[0]
-        }
-        if not names:
+        legacy_ids = [
+            int(row[0])
+            for row in (await session.execute(ord_stmt)).all()
+            if row and row[0] is not None
+        ]
+        if not legacy_ids:
+            return []
+        from sqlalchemy import text as _text
+
+        eid_rows = (await session.execute(
+            _text(
+                '''
+                SELECT DISTINCT COALESCE(o."OF_E_ID_ENC", o."OF_E_ID") AS e_id
+                FROM factory_raw.ordemfabrico o
+                WHERE o."OF_ID" = ANY(:ids) AND COALESCE(o."OF_E_ID_ENC", o."OF_E_ID") IS NOT NULL
+                '''
+            ),
+            {"ids": legacy_ids},
+        )).all()
+        codes = sorted({str(r.e_id) for r in eid_rows})
+        if not codes:
             return []
         cust_stmt = select(Customer.id).where(
             Customer.tenant_id == tenant_id,
-            Customer.customer_name.in_(names),
+            Customer.customer_code.in_(codes),
         )
         cust_rows = (await session.execute(cust_stmt)).all()
         seen: list[str] = []

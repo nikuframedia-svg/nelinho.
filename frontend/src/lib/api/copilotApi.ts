@@ -195,6 +195,14 @@ export const copilotApi = {
       throw error;
     }),
   
+  /** Q.172.E — 👍/👎 do utilizador sobre uma resposta (loop de aprendizagem
+   *  Q.31.H/Q.171.F; o backend grava user_id + contexto). */
+  sendUserFeedback: (thumb: 'up' | 'down', context: Record<string, unknown>, text?: string) =>
+    request<{ id: string }>('/api/copilot/feedback/user', {
+      method: 'POST',
+      body: JSON.stringify({ thumb, text: text ?? null, context }),
+    }),
+
   getDailyFeedback: (date?: string) => {
     const endpoint = `/api/copilot/daily-feedback${date ? `?date=${date}` : ''}`;
     const devEndpoint = `/api/copilot/daily-feedback-dev${date ? `?date=${date}` : ''}`;

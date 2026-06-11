@@ -290,12 +290,15 @@ def test_q170e_regroup_by_client_fires_on_spread():
     )
 
     svc = TransportSuggestionsService.__new__(TransportSuggestionsService)
+    # Q.172.E — o cliente vem do espelho ERP (legacy_id->OF_E_ID->customers),
+    # nao de um atributo do ORM; o detector recebe o mapa pre-resolvido.
     orders = [
-        SimpleNamespace(customer_name="Acme Naval", legacy_id=101),
-        SimpleNamespace(customer_name="Outro Cliente", legacy_id=102),
+        SimpleNamespace(legacy_id=101),
+        SimpleNamespace(legacy_id=102),
     ]
+    self_clients = {101: "Acme Naval", 102: "Outro Cliente"}
     peers = {uuid4(): {"Acme Naval"} for _ in range(3)}
-    out = svc._detect_regroup_by_client(orders, peers)
+    out = svc._detect_regroup_by_client(orders, self_clients, peers)
 
     assert len(out) == 1
     s = out[0]
@@ -314,6 +317,7 @@ def test_q170e_regroup_quiet_below_threshold():
     )
 
     svc = TransportSuggestionsService.__new__(TransportSuggestionsService)
-    orders = [SimpleNamespace(customer_name="Acme Naval", legacy_id=101)]
+    orders = [SimpleNamespace(legacy_id=101)]
+    self_clients = {101: "Acme Naval"}
     peers = {uuid4(): {"Acme Naval"}, uuid4(): {"Sem Relacao"}}
-    assert svc._detect_regroup_by_client(orders, peers) == []
+    assert svc._detect_regroup_by_client(orders, self_clients, peers) == []

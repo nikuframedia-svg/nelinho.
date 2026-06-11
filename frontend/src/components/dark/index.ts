@@ -39,13 +39,9 @@ export type { WorkerPairCardProps } from './WorkerPairCard';
 // Sprint Q.13.C — Plan v4 §10 tablet kiosk + barcode scanner.
 export { KioskWrapper } from './KioskWrapper';
 export type { KioskWrapperProps } from './KioskWrapper';
-export { BarcodeScanButton } from './BarcodeScanButton';
-export type { BarcodeScanButtonProps } from './BarcodeScanButton';
 
 // Sprint X.2 — Plan v4 §4.7 editable parameter row with provenance
 // badge + reset + accept-learned-rule.
-export { ConfigParam } from './ConfigParam';
-export type { ConfigParamProps, ConfigParamType } from './ConfigParam';
 
 // Sprint Q.18.UI.A — atomic primitives para o refactor 8-páginas
 // alinhado com FRONTEND_DESIGN_PROMPT.md.

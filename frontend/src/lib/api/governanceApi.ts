@@ -85,16 +85,11 @@ export const decisionsApi = {
       body: JSON.stringify(data),
     }),
   
-  execute: (id: string) =>
-    request<DecisionRun>(`/v1/decisions/${id}/execute`, {
-      method: 'POST',
-    }),
-  
-  rollback: (id: string) =>
-    request<DecisionRun>(`/v1/decisions/${id}/rollback`, {
-      method: 'POST',
-    }),
-  
+  // execute/rollback advisory: bindings FE removidos (Q.172.E) — nunca
+  // tiveram consumidor UI e a escrita real no ERP está fora de âmbito por
+  // decisão (campanha Q.168). Os endpoints backend continuam vivos
+  // (advisory_mode=true) para API/testes.
+
   getAuditTrail: (id: string) =>
     request<{
       decision: DecisionRun;

@@ -19,8 +19,8 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import FastAPI, status
-from fastapi.responses import JSONResponse, Response
+from fastapi import FastAPI, status, Response
+from fastapi.responses import JSONResponse
 
 from src.app.lifespan import lifespan
 from src.app.middleware_registry import (
@@ -57,9 +57,16 @@ register_routers(app)
 
 
 # Health check endpoints
+# Q.172.E — versao do contrato da API. O ContractDegradedBanner do FE
+# compara este header com a sua EXPECTED_CONTRACT_VERSION; sem o header o
+# banner nunca podia disparar (feature aspiracional desde Q.61).
+API_CONTRACT_VERSION = "1.0.0"
+
+
 @app.get("/health", tags=["Health"])
-async def health_check():
+async def health_check(response: Response):
     """Basic health check."""
+    response.headers["X-Api-Contract"] = API_CONTRACT_VERSION
     return {"status": "healthy", "service": "prodplan-one"}
 
 

@@ -560,7 +560,7 @@ export function MoveBoatConfirm({
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             placeholder="Porquê esta mudança? (opcional)"
-            className="text-slate-900 placeholder:text-slate-400"
+            className="text-fg-0 placeholder:text-fg-3"
             style={{
               flex: 1,
               padding: '5px 10px',

@@ -31,8 +31,10 @@ from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from sqlalchemy import and_, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.models.partner import Customer
 from src.plan.models.order import OrderStatus, ProductionOrder
 from src.plan.models.transport import TransportBatch, TransportBatchAssignment
 
@@ -127,7 +129,10 @@ class TransportSuggestionsService:
         peer_clients = await self._fetch_peer_batch_clients(
             [b.id for b in peer_batches]
         )
-        suggestions.extend(self._detect_regroup_by_client(orders, peer_clients))
+        self_clients = await self._client_names_for_orders(orders)
+        suggestions.extend(
+            self._detect_regroup_by_client(orders, self_clients, peer_clients)
+        )
         return suggestions
 
     # ------------------------------------------------------------------
@@ -311,20 +316,20 @@ class TransportSuggestionsService:
     def _detect_regroup_by_client(
         self,
         orders: List[ProductionOrder],
+        self_clients: Dict[int, str],
         peer_clients: Dict[UUID, set],
     ) -> List[TransportSuggestion]:
-        """Q.170.E — REAL: o mesmo cliente espalhado por este camião +
-        ≥CLIENT_SPREAD_BATCHES camiões vizinhos → sugerir reagrupar.
+        """Q.170.E/Q.172.E — REAL: o mesmo cliente espalhado por este camião
+        + ≥CLIENT_SPREAD_BATCHES camiões vizinhos → sugerir reagrupar.
 
-        Era um "teaser" documentado que devolvia SEMPRE [] (o rastreio
-        funcional marcou a feature ASPIRACIONAL). O pretexto ("não há
-        customer no ProductionOrder") morreu: `customer_name` existe e
-        alimenta o boost/encomendas desde Q.116."""
-        if not orders or not peer_clients:
+        Q.172.E (re-rastreio): a 1ª versão lia `ProductionOrder.customer_name`,
+        atributo que NUNCA existiu no ORM → AttributeError → 500 live. O
+        cliente REAL vem do espelho ERP: `legacy_id (OF_ID) →
+        factory_raw.ordemfabrico.OF_E_ID_ENC → core.customers` (o mesmo caminho
+        do Q.171.H no entity_summary). `self_clients` = {legacy_id: nome}."""
+        if not orders or not peer_clients or not self_clients:
             return []
-        clients_in_self = {
-            str(o.customer_name) for o in orders if getattr(o, "customer_name", None)
-        }
+        clients_in_self = set(self_clients.values())
         out: List[TransportSuggestion] = []
         for client in sorted(clients_in_self):
             spread = [
@@ -333,7 +338,7 @@ class TransportSuggestionsService:
             if len(spread) >= CLIENT_SPREAD_BATCHES:
                 affected = [
                     str(o.legacy_id) for o in orders
-                    if str(getattr(o, "customer_name", "")) == client
+                    if self_clients.get(int(o.legacy_id)) == client
                 ]
                 out.append(TransportSuggestion(
                     type="regroup_by_client",
@@ -354,16 +359,71 @@ class TransportSuggestionsService:
                 ))
         return out
 
+    async def _client_names_for_orders(
+        self, orders: List[ProductionOrder],
+    ) -> Dict[int, str]:
+        """{legacy_id: nome do cliente} via espelho ERP (Q.172.E).
+
+        `OF_E_ID_ENC` (entidade da encomenda; fallback `OF_E_ID`, só 0,9% povoado) liga a OF ao cliente; `core.customers.customer_code`
+        guarda esse E_ID (seed Q.125). Best-effort: sem espelho → {}."""
+        legacy_ids = [int(o.legacy_id) for o in orders if o.legacy_id is not None]
+        if not legacy_ids:
+            return {}
+        from sqlalchemy import text
+
+        try:
+            rows = (await self.session.execute(
+                text(
+                    '''
+                    SELECT o."OF_ID" AS of_id, COALESCE(o."OF_E_ID_ENC", o."OF_E_ID") AS e_id
+                    FROM factory_raw.ordemfabrico o
+                    WHERE o."OF_ID" = ANY(:ids)
+                    '''
+                ),
+                {"ids": legacy_ids},
+            )).all()
+        except (SQLAlchemyError, OSError) as exc:  # pragma: no cover — espelho ausente em dev
+            logger.debug("clientes por OF indisponíveis: %s", exc)
+            return {}
+        of_to_eid = {int(r.of_id): str(r.e_id) for r in rows if r.e_id is not None}
+        if not of_to_eid:
+            return {}
+        names = await self._customer_names_by_code(set(of_to_eid.values()))
+        return {
+            of_id: names.get(eid, f"cliente {eid}")
+            for of_id, eid in of_to_eid.items()
+        }
+
+    async def _customer_names_by_code(
+        self, codes: set,
+    ) -> Dict[str, str]:
+        """{customer_code (E_ID): customer_name} de core.customers."""
+        if not codes:
+            return {}
+        try:
+            stmt = select(Customer.customer_code, Customer.customer_name).where(
+                and_(
+                    Customer.tenant_id == self.tenant_id,
+                    Customer.customer_code.in_(sorted(codes)),
+                )
+            )
+            rows = (await self.session.execute(stmt)).all()
+            return {str(c): str(n) for c, n in rows if c and n}
+        except (SQLAlchemyError, OSError) as exc:  # pragma: no cover — best-effort
+            logger.debug("nomes de cliente indisponíveis: %s", exc)
+            return {}
+
     async def _fetch_peer_batch_clients(
         self, peer_ids: List[UUID],
     ) -> Dict[UUID, set]:
-        """{batch_id: {customer_name,…}} dos camiões vizinhos (1 query)."""
+        """{batch_id: {nome de cliente,…}} dos camiões vizinhos (Q.172.E:
+        via espelho ERP — `customer_name` nunca existiu no ORM)."""
         if not peer_ids:
             return {}
         stmt = (
             select(
                 TransportBatchAssignment.batch_id,
-                ProductionOrder.customer_name,
+                ProductionOrder.legacy_id,
             )
             .join(
                 ProductionOrder,
@@ -373,14 +433,32 @@ class TransportSuggestionsService:
                 and_(
                     TransportBatchAssignment.tenant_id == self.tenant_id,
                     TransportBatchAssignment.batch_id.in_(peer_ids),
-                    ProductionOrder.customer_name.isnot(None),
                 )
             )
         )
         rows = (await self.session.execute(stmt)).all()
+        batch_to_ofs: Dict[UUID, List[int]] = {}
+        all_ofs: List[int] = []
+        for batch_id, legacy_id in rows:
+            if legacy_id is None:
+                continue
+            batch_to_ofs.setdefault(batch_id, []).append(int(legacy_id))
+            all_ofs.append(int(legacy_id))
+        if not all_ofs:
+            return {}
+
+        class _Stub:
+            def __init__(self, lid: int) -> None:
+                self.legacy_id = lid
+
+        of_names = await self._client_names_for_orders(
+            [_Stub(lid) for lid in sorted(set(all_ofs))]
+        )
         out: Dict[UUID, set] = {}
-        for batch_id, name in rows:
-            out.setdefault(batch_id, set()).add(str(name))
+        for batch_id, ofs in batch_to_ofs.items():
+            names = {of_names[lid] for lid in ofs if lid in of_names}
+            if names:
+                out[batch_id] = names
         return out
 
     # ------------------------------------------------------------------

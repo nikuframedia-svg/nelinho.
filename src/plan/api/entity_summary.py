@@ -514,7 +514,7 @@ async def _customer_of_ids_from_erp(
 
     `core.customers.customer_code` é o `E_ID` da entidade NELO (seed
     Q.125 `setup_customers_from_entidade`); `factory_raw.ordemfabrico`
-    liga cada OF ao cliente via `OF_E_ID`. Esta é a junção REAL que o
+    liga cada OF ao cliente via `OF_E_ID_ENC` (fallback `OF_E_ID`). Esta é a junção REAL que o
     filtro antigo por `customer_name` (atributo inexistente no modelo —
     lista sempre vazia) nunca conseguiu fazer.
 
@@ -532,7 +532,7 @@ async def _customer_of_ids_from_erp(
         """
         SELECT o."OF_ID" AS of_id
         FROM factory_raw.ordemfabrico o
-        WHERE o."OF_E_ID" = :eid
+        WHERE COALESCE(o."OF_E_ID_ENC", o."OF_E_ID") = :eid
         -- mais recentes primeiro; cap defensivo p/ clientes com décadas
         -- de histórico (a lista alimenta um IN() em production_orders)
         ORDER BY o."OF_ID" DESC

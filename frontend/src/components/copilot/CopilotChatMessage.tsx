@@ -12,8 +12,10 @@
  * `POST /api/copilot/action`).
  */
 
+import { useState } from 'react';
 import type { ReactNode } from 'react';
-import { FileText, AlertTriangle, Check, Play, ExternalLink } from 'lucide-react';
+import { FileText, AlertTriangle, Check, Play, ExternalLink, ThumbsUp, ThumbsDown } from 'lucide-react';
+import { copilotApi } from '../../lib/api/copilotApi';
 import { DarkBadge } from '../dark';
 import { Clickable } from '../entitySheets';
 import type { CopilotResponse } from '../../lib/copilot-types';
@@ -160,6 +162,57 @@ export interface CopilotChatMessageProps {
   actionPending: boolean;
 }
 
+// ─── 👍/👎 — fecha o loop de aprendizagem (Q.172.E; backend Q.31.H/Q.171.F) ────
+
+function FeedbackThumbs({ response }: { response: CopilotResponseWithCharts }): ReactNode {
+  const [sent, setSent] = useState<'up' | 'down' | null>(null);
+  const send = (thumb: 'up' | 'down') => {
+    if (sent) return;
+    setSent(thumb);
+    // best-effort: o feedback nunca pode partir o chat; falha fica no log.
+    copilotApi
+      .sendUserFeedback(thumb, {
+        suggestion_id: response.suggestion_id,
+        type: response.type,
+        model: response.meta?.model ?? null,
+      })
+      .catch((err) => console.error('feedback do copiloto falhou', err));
+  };
+  return (
+    <span className="inline-flex items-center gap-1">
+      <button
+        type="button"
+        aria-label="Resposta útil"
+        title="Resposta útil"
+        onClick={() => send('up')}
+        disabled={sent !== null}
+        style={{
+          color: sent === 'up' ? 'var(--ok)' : 'var(--fg-3)',
+          opacity: sent && sent !== 'up' ? 0.35 : 1,
+          cursor: sent ? 'default' : 'pointer',
+        }}
+      >
+        <ThumbsUp size={11} />
+      </button>
+      <button
+        type="button"
+        aria-label="Resposta não ajudou"
+        title="Resposta não ajudou"
+        onClick={() => send('down')}
+        disabled={sent !== null}
+        style={{
+          color: sent === 'down' ? 'var(--danger)' : 'var(--fg-3)',
+          opacity: sent && sent !== 'down' ? 0.35 : 1,
+          cursor: sent ? 'default' : 'pointer',
+        }}
+      >
+        <ThumbsDown size={11} />
+      </button>
+      {sent && <span style={{ fontSize: 10 }}>obrigado</span>}
+    </span>
+  );
+}
+
 export function CopilotChatMessage({
   message,
   onAction,
@@ -226,6 +279,12 @@ export function CopilotChatMessage({
                 </>
               )}
               {r.type === 'ERROR' && <DarkBadge variant="danger">erro</DarkBadge>}
+              {r.type !== 'ERROR' && r.suggestion_id && (
+                <>
+                  <span>·</span>
+                  <FeedbackThumbs response={r} />
+                </>
+              )}
             </>
           )}
         </div>

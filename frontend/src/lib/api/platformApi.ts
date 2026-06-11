@@ -249,108 +249,11 @@ export const diagnosticsApi = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SPRINT Q.1 — Tenant Configuration (ConfigStore)
+// SPRINT Q.1 — Tenant Configuration: binding FE REMOVIDO (Q.172.E).
+// Zero consumidores desde sempre (rastreio 2026-06-10: VAZIO_DESONESTO);
+// a configuração de tenant é admin-via-API (/v1/config/*, backend
+// src/core/api/config.py). Se ganhar UI um dia, recriar o binding então.
 // ═══════════════════════════════════════════════════════════════════════════════
-
-export type ConfigDataType =
-  | 'int'
-  | 'float'
-  | 'bool'
-  | 'string'
-  | 'json'
-  | 'duration'
-  | 'currency';
-
-export interface ConfigEntry {
-  id: string;
-  category: string;
-  key: string;
-  value: unknown;
-  data_type: ConfigDataType;
-  valid_from: string;
-  valid_to: string | null;
-  last_modified_by: string | null;
-  last_modified_at: string;
-  // Sprint X.1 — Plan v4 §4.7 provenance: 'default' | 'manual' | 'learned_rule'
-  source: ConfigSource;
-}
-
-export type ConfigSource = 'default' | 'manual' | 'learned_rule';
-
-export interface ConfigCategoryValues {
-  category: string;
-  values: Record<string, unknown>;
-}
-
-export interface ConfigBulkEntry {
-  category: string;
-  key: string;
-  value: unknown;
-  data_type: ConfigDataType;
-}
-
-export const configApi = {
-  /** Latest active value for one key. 404 if never set. */
-  get: (category: string, key: string) =>
-    request<ConfigEntry>(`/v1/config/${encodeURIComponent(category)}/${encodeURIComponent(key)}`),
-
-  /** All active values in a category as `{key: value}`. */
-  listCategory: (category: string) =>
-    request<ConfigCategoryValues>(`/v1/config/${encodeURIComponent(category)}`),
-
-  /** Full audit history (oldest → newest, including soft-deleted). */
-  history: (category: string, key: string) =>
-    request<ConfigEntry[]>(
-      `/v1/config/${encodeURIComponent(category)}/${encodeURIComponent(key)}/history`,
-    ),
-
-  /** Set or override a single key. */
-  set: (
-    category: string,
-    key: string,
-    payload: { value: unknown; data_type: ConfigDataType },
-  ) =>
-    request<ConfigEntry>(
-      `/v1/config/${encodeURIComponent(category)}/${encodeURIComponent(key)}`,
-      { method: 'POST', body: JSON.stringify(payload) },
-    ),
-
-  /** Apply many overrides atomically (one audit row per entry). */
-  bulkSet: (entries: ConfigBulkEntry[]) =>
-    request<ConfigEntry[]>('/v1/config/bulk', {
-      method: 'PATCH',
-      body: JSON.stringify({ entries }),
-    }),
-
-  /** Revert a config row by id; creates a new audit row pointing at the reverted value. */
-  rollback: (configId: string) =>
-    request<ConfigEntry>(`/v1/config/rollback/${encodeURIComponent(configId)}`, {
-      method: 'POST',
-    }),
-
-  /** Sprint Q.6 — list every category that has at least one seeded default. */
-  listCategories: () =>
-    request<{ categories: Array<{ category: string; default_keys: number }>; total: number }>(
-      '/v1/config/categories',
-    ),
-
-  /** Sprint Q.6 — reset a key to its seeded default value. 404 if no seed exists. */
-  resetToDefault: (category: string, key: string) =>
-    request<ConfigEntry>(
-      `/v1/config/${encodeURIComponent(category)}/${encodeURIComponent(key)}/reset-to-default`,
-      { method: 'POST' },
-    ),
-
-  /** Snapshot the entire tenant config (read-only). */
-  exportSnapshot: () => request<Record<string, unknown>>('/v1/config/snapshot/export'),
-
-  /** Replace the tenant config with the supplied snapshot. */
-  importSnapshot: (snapshot: Record<string, unknown>) =>
-    request<{ written: number }>('/v1/config/snapshot/import', {
-      method: 'POST',
-      body: JSON.stringify(snapshot),
-    }),
-};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // AUTH (Sprint Q.18.UI.A.1) — minimal /v1/auth/me for the Sidebar user chip.
