@@ -144,7 +144,14 @@ async def test_failed_mirror_persists_error_etl_run_q168_f4e(monkeypatch):
     assert error_runs[0].source == "boom"
     assert "ERP caiu a meio" in (error_runs[0].error or "")
     assert error_runs[0].finished_at is not None
-    assert session.commit_calls == 1
+    # Q.173.C — 1 commit do etl_run de erro + 1 commit do alerta ETL_SYNC_FAILED
+    assert session.commit_calls == 2
+    from src.copilot.alerts.models import CODE_ETL_SYNC_FAILED, CopilotAlert
+
+    alerts = [o for o in session.added if isinstance(o, CopilotAlert)]
+    assert len(alerts) == 1
+    assert alerts[0].code == CODE_ETL_SYNC_FAILED
+    assert alerts[0].context["source"] == "boom"
 
 
 async def test_failing_mirror_does_not_abort_the_rest_q168_f4e(monkeypatch):
@@ -168,5 +175,5 @@ async def test_failing_mirror_does_not_abort_the_rest_q168_f4e(monkeypatch):
     results = await run_nelo_sync(only=["boom", "bom"])
 
     assert [r.status for r in results] == ["error", "ok"]
-    # 1 commit do etl_run de erro + 1 commit do mirror saudável
-    assert session.commit_calls == 2
+    # 1 commit do etl_run de erro + 1 do alerta Q.173.C + 1 do mirror saudável
+    assert session.commit_calls == 3

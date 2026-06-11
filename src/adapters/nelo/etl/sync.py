@@ -71,8 +71,12 @@ def _load_mirror_modules() -> None:
         "inventory_ledger",  # Q.64.A — desbloqueia shortage-risks
         "material_master",   # Q.64.B — alimenta ShortageDetector
         "purchase_orders",   # Q.64.D — desbloqueia tab Entregas
-        "phase_history",     # Q.115.T — historico fases OF (FasesOf)
-        "worker_assignment", # Q.115.T — atribuicoes operador/fase
+        # Q.173.B — phase_history e worker_assignment DESLIGADOS: consultavam
+        # dbo.FasesOf / dbo.WorkerAssignment, tabelas que só existem no
+        # fake-ERP de teste (o ERP real usa OF_FP/OFFP_EQ) → 9/9 corridas em
+        # erro permanente e destinos sempre a 0 (auditoria 2026-06-11). Os
+        # consumidores reais já leem factory_raw.of_fp/offp_eq (Q.150).
+        # Repontar é decisão pendente do Luis — ver DELETION_LOG.md.
     ):
         try:
             __import__(f"src.adapters.nelo.etl.{mod}")
@@ -131,6 +135,64 @@ async def _persist_error_run(
         logger.warning(
             "nelo_sync mirror=%s — falha a persistir etl_run de erro: %s",
             failed.source, audit_exc,
+        )
+
+
+async def _alert_etl_failure(
+    session, tenant_id: UUID, failed: EtlRunResult,
+) -> None:
+    """Q.173.C — alerta visível no copiloto quando um mirror ETL falha.
+
+    A auditoria 2026-06-11 encontrou mirrors a falhar 100% das corridas
+    durante semanas (phase_history/worker_assignment, 9/9 'error') com o
+    erro visível apenas em ``core.etl_run`` — onde ninguém olha. Cria um
+    ``CopilotAlert`` WARN por mirror, dedupado enquanto existir um ACTIVE
+    para o mesmo mirror (o resolve manual reabre a vigilância). Best-effort:
+    nunca aborta o sync.
+    """
+    from sqlalchemy import select
+
+    from src.copilot.alerts.models import (
+        CODE_ETL_SYNC_FAILED,
+        STATUS_ACTIVE,
+        CopilotAlert,
+    )
+
+    try:
+        rows = await session.execute(
+            select(CopilotAlert)
+            .where(CopilotAlert.tenant_id == tenant_id)
+            .where(CopilotAlert.code == CODE_ETL_SYNC_FAILED)
+            .where(CopilotAlert.status == STATUS_ACTIVE)
+        )
+        # Dedup por mirror em Python (portável: evita JSONB @> nos fakes;
+        # re-verifica status porque os fakes de teste ignoram o WHERE).
+        for alert in rows.scalars().all():
+            if (
+                alert.status == STATUS_ACTIVE
+                and alert.code == CODE_ETL_SYNC_FAILED
+                and (alert.context or {}).get("source") == failed.source
+            ):
+                return
+        session.add(CopilotAlert(  # noqa: audit_coverage — padrão AlertsEngine
+            tenant_id=tenant_id,
+            severity="WARN",
+            code=CODE_ETL_SYNC_FAILED,
+            title=f"Sync ERP falhou: {failed.source}",
+            message_pt=(
+                f"O espelho ETL '{failed.source}' falhou a última corrida: "
+                f"{(failed.error or 'erro desconhecido')[:300]} — os dados "
+                "deste espelho podem estar desatualizados."
+            ),
+            context={"source": failed.source, "error": failed.error},
+            entity_refs=[failed.source],
+            status=STATUS_ACTIVE,
+        ))
+        await session.commit()
+    except (SQLAlchemyError, OSError) as alert_exc:
+        logger.warning(
+            "nelo_sync mirror=%s — falha a criar alerta ETL_SYNC_FAILED: %s",
+            failed.source, alert_exc,
         )
 
 
@@ -216,6 +278,7 @@ async def run_nelo_sync(
                         await _persist_error_run(
                             session, tenant_id, failed, started_at,
                         )
+                        await _alert_etl_failure(session, tenant_id, failed)
                         continue
                     await session.commit()
                 results.append(result)

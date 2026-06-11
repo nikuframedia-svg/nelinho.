@@ -32,7 +32,6 @@ from src.adapters.nelo.schemas import WorkerAssignmentRow
 from src.hr.models.worker_phase_assignment import WorkerPhaseAssignment
 
 from .runner import EtlRunner, EtlRunResult
-from .sync import register_mirror
 
 logger = logging.getLogger(__name__)
 
@@ -162,4 +161,8 @@ async def mirror_worker_assignment(
     )
 
 
-register_mirror("worker_assignment", mirror_worker_assignment)
+# Q.173.B — registo REMOVIDO: este mirror consulta dbo.WorkerAssignment,
+# que só existe no fake-ERP de teste. 9/9 corridas em erro permanente em
+# produção (auditoria 2026-06-11). Religar exige repontar para OFFP_EQ —
+# decisão pendente do Luis (ver DELETION_LOG.md).
+# register_mirror("worker_assignment", mirror_worker_assignment)

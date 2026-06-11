@@ -67,6 +67,9 @@ class RecordingSession:
     def add(self, obj) -> None:
         self.added.append(obj)
 
+    async def commit(self) -> None:
+        """No-op — a sessão real comita; o fake só regista os adds."""
+
     async def flush(self) -> None:
         for obj in self.added:
             if getattr(obj, "id", None) is None:

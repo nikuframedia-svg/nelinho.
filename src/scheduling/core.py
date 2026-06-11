@@ -47,7 +47,6 @@ from src.scheduling.jobs.nelo_erp import (
     _nelo_erp_customers_job,
     _nelo_erp_incremental_sync_job,
     _nelo_erp_logistica_job,
-    _nelo_erp_phase_history_incremental_job,
     _nelo_erp_production_orders_job,
     _nelo_erp_raw_full_nightly_job,
     _nelo_erp_raw_incremental_job,
@@ -197,18 +196,10 @@ def start_scheduler(
         coalesce=True,
         max_instances=1,
     )
-    # Q.115.T — sync incremental phase_history + worker_assignment (15 min).
-    # Alta cardinalidade — job separado para nao bloquear stock/calendar.
-    # No-op quando sqlserver_enabled=False.
-    _scheduler.add_job(
-        _nelo_erp_phase_history_incremental_job,
-        trigger=IntervalTrigger(minutes=15),
-        id="nelo_erp_phase_history_incremental",
-        name="nelo_erp_phase_history_incremental",
-        replace_existing=True,
-        coalesce=True,
-        max_instances=1,
-    )
+    # Q.173.B — o job nelo_erp_phase_history_incremental (Q.115.T) foi
+    # removido: os mirrors phase_history/worker_assignment consultavam
+    # tabelas que só existem no fake-ERP (dbo.FasesOf/dbo.WorkerAssignment)
+    # e falharam 100% das corridas desde sempre. Ver DELETION_LOG.md.
     # Q.125 — sync de 5/5 min dos dados PESADOS do ERP que alimentam o
     # dashboard/copiloto (factory_raw + faturação PHC + logística). O sync
     # incremental Q.54.A só cobria os mirrors ORM operacionais; estes três

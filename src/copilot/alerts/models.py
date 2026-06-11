@@ -53,6 +53,12 @@ CODE_DURATION_FALLBACK_HIGH = "DURATION_FALLBACK_HIGH"            # WARN
 # operator knows exactly which orders (and why) were left out.
 CODE_ORDERS_WITHOUT_ROUTING = "ORDERS_WITHOUT_ROUTING"           # WARN
 
+# Q.173.C — emitted when an ERP→Postgres ETL mirror run fails. Before this,
+# a mirror could fail 100% of its runs for weeks (auditoria 2026-06-11:
+# phase_history/worker_assignment 9/9 'error') with the failure visible only
+# in core.etl_run — nobody looks there. One ACTIVE alert per mirror.
+CODE_ETL_SYNC_FAILED = "ETL_SYNC_FAILED"                          # WARN
+
 # Q.162.B — emitted when a completed schedule covered far too few of the orders
 # it was asked to plan (big scope, tiny coverage) — a transient solver failure or
 # a data regression. The plan is persisted for audit but flagged

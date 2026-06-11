@@ -33,7 +33,6 @@ from src.adapters.nelo.schemas import FasesOfHistoryRow
 from src.plan.models.fases_of_history import FasesOfHistory
 
 from .runner import EtlRunner, EtlRunResult
-from .sync import register_mirror
 
 logger = logging.getLogger(__name__)
 
@@ -179,4 +178,8 @@ async def mirror_phase_history(
     return await sync_phase_history(session=session, tenant_id=tenant_id, since=since)
 
 
-register_mirror("phase_history", mirror_phase_history)
+# Q.173.B — registo REMOVIDO: este mirror consulta dbo.FasesOf, que só
+# existe no fake-ERP de teste (o ERP real usa OF_FP). 9/9 corridas em erro
+# permanente em produção (auditoria 2026-06-11). Religar exige repontar a
+# query para OF_FP/OFFP_EQ — decisão pendente do Luis (ver DELETION_LOG.md).
+# register_mirror("phase_history", mirror_phase_history)
