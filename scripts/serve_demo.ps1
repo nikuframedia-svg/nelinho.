@@ -28,6 +28,19 @@ function Test-Http($url, $timeoutSec = 4) {
   catch { return $false }
 }
 
+function Rotate-Log([string]$path, [int]$keep = 5) {
+  # Q.173.T — Start-Process TRUNCA o ficheiro redirecionado a cada arranque,
+  # apagando a evidencia operacional (o veto CP-SAT de 2026-06-10 perdeu-se
+  # assim — auditoria 2026-06-11). Ring de $keep geracoes: x -> x.1 -> x.2 ...
+  if (-not (Test-Path $path)) { return }
+  if ((Get-Item $path).Length -eq 0) { return }
+  for ($i = $keep - 1; $i -ge 1; $i--) {
+    $src = "$path.$i"; $dst = "$path.$($i + 1)"
+    if (Test-Path $src) { Move-Item -Force $src $dst }
+  }
+  Move-Item -Force $path "$path.1"
+}
+
 # --- pre-checks ---------------------------------------------------------------
 if (-not (Test-Path $py))       { Log "ERRO: venv python nao encontrado em $py"; exit 1 }
 if (-not (Test-Path $caddyCfg)) { Log "ERRO: Caddyfile nao encontrado em $caddyCfg"; exit 1 }
@@ -75,6 +88,7 @@ if ($port8001) {
   $orphans = @(Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object { $_.CommandLine -like '*uvicorn src.main:app*' })
   if ($orphans.Count -gt 0) { Log ("Backend: limpar {0} proc(s) uvicorn orfaos (porto livre)" -f $orphans.Count); $orphans | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; Start-Sleep -Seconds 2 }
   Log "Backend: a arrancar uvicorn (127.0.0.1:8001)"
+  Rotate-Log (Join-Path $repo '_backend.out'); Rotate-Log (Join-Path $repo '_backend.err')
   Start-Process -FilePath $py `
     -ArgumentList @('-m','uvicorn','src.main:app','--host','127.0.0.1','--port','8001','--log-level','warning') `
     -WorkingDirectory $repo -WindowStyle Hidden `
@@ -91,6 +105,7 @@ if ($port8001) {
 $arq = @(Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object { $_.CommandLine -like '*arq src.plan.cpo.worker*' })
 if ($arq.Count -eq 0) {
   Log "Worker arq: nenhum -> a arrancar 1"
+  Rotate-Log (Join-Path $repo '_arq.out'); Rotate-Log (Join-Path $repo '_arq.err')
   Start-Process -FilePath $py `
     -ArgumentList @('-m','arq','src.plan.cpo.worker.WorkerSettings') `
     -WorkingDirectory $repo -WindowStyle Hidden `
@@ -102,6 +117,7 @@ if ($arq.Count -eq 0) {
   Log ("Worker arq: {0} procs => >1 worker -> reset para 1" -f $arq.Count)
   $arq | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
   Start-Sleep -Seconds 2
+  Rotate-Log (Join-Path $repo '_arq.out'); Rotate-Log (Join-Path $repo '_arq.err')
   Start-Process -FilePath $py `
     -ArgumentList @('-m','arq','src.plan.cpo.worker.WorkerSettings') `
     -WorkingDirectory $repo -WindowStyle Hidden `
