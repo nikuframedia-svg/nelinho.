@@ -3,7 +3,7 @@ ProdPlan ONE — CPO v4 Safety Net
 =================================
 
 Inviolable rule: the CPO NEVER returns a schedule worse than the baseline
-greedy. If GA produces a candidate that degrades any of the seven
+greedy. If GA produces a candidate that degrades any of the nine
 fitness-dimensions, the baseline wins.
 
 This is both a correctness guarantee (regressions can't ship) and a UX
@@ -232,7 +232,7 @@ def _gather_violations(
     if cand_ir is not None and base_ir is not None:
         cand_v = float(cand_ir)
         base_v = float(base_ir)
-        if cand_v > base_v + _IDLE_RATIO_TOLERANCE + 1e-6:
+        if cand_v > base_v + _IDLE_RATIO_TOLERANCE - 1e-6:
             violations.append((
                 "idle_ratio",
                 f"idle_ratio={cand_v:.4f} > baseline={base_v:.4f} "

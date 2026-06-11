@@ -11,7 +11,7 @@ require_tenant_header + get_session. Não toca DB real.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any, List, Optional
@@ -482,26 +482,36 @@ def test_fase_only_curing_gap_no_404():
 
 
 def test_cliente_happy_path_with_orders():
-    """Cliente existe + prioridade + encomendas associadas."""
+    """Cliente existe + prioridade + encomendas associadas.
+
+    Q.172.F4E — a associação cliente→encomendas passou a ser REAL:
+    customer_code (=E_ID NELO) → factory_raw.ordemfabrico.OF_E_ID →
+    production_orders.legacy_id. O filtro antigo por `customer_name`
+    comparava um atributo que o modelo nunca teve — lista sempre vazia.
+    """
     session = FakeSession()
     customer_id = uuid4()
-    cust = _customer(id_=customer_id, customer_name="Acme Náutica")
+    # customer_code numérico = E_ID da entidade NELO (seed Q.125).
+    cust = _customer(id_=customer_id, customer_name="Acme Náutica",
+                     customer_code="4711")
     cp = _client_priority(client_id=customer_id, priority=1)
     orders = [
         _order(legacy_id=101, customer_name="Acme Náutica",
                current_phase_name="Laminagem"),
         _order(legacy_id=102, customer_name="Acme Náutica",
                current_phase_name="Entregue", status_=OrderStatus.COMPLETED),
-        _order(legacy_id=103, customer_name="Outro Cliente",
-               current_phase_name="Cura"),
     ]
 
     # FakeSession.execute pops 1 from EACH queue per call. Aligned:
-    # call 1 (customer scalar), call 2 (cp scalar), call 3 (orders scalars).
+    # call 1 (customer scalar), call 2 (cp scalar),
+    # call 3 (OF_IDs do espelho ERP via mappings().all()),
+    # call 4 (orders scalars), call 5 (revenue scalar → None).
     session.queue_scalar(cust)
     session.queue_scalars([])
     session.queue_scalar(cp)
     session.queue_scalars([])
+    session.queue_scalar(None)
+    session.queue_scalars([{"of_id": 101}, {"of_id": 102}])
     session.queue_scalar(None)
     session.queue_scalars(orders)
 
@@ -612,6 +622,9 @@ def test_encomenda_happy_path():
         customer_name="Naval XYZ",
     )
     session.queue_scalar(order)
+    # Q.172.F4E — phase_history (factory_raw.of_fp): sem espelho → [].
+    session.queue_scalar(None)
+    session.queue_scalars([])
     # Q.116.C — endpoint corre 2 lookups extra (OrderBoost, WorkOrderOverride);
     # devolver None para ambos simula "sem override".
     session.queue_scalar(None)
@@ -630,7 +643,7 @@ def test_encomenda_happy_path():
     assert body["transport_date"] == "2026-06-30"
     assert body["completed_date"] is None
     assert body["status"] == "IN_PROGRESS"
-    # phase_history vazio até sync.WorkOrderPhase (TODO documentado).
+    # phase_history vazio honesto — espelho factory_raw ausente (Q.172.F4E).
     assert body["phase_history"] == []
     # Q.116.C — campos novos: defaults quando nao ha override.
     assert body["boost"] == 0
@@ -673,8 +686,11 @@ def test_encomenda_with_boost_and_transport_override():
         updated_at=datetime.now(timezone.utc),
     )
 
-    # ProductionOrder, OrderBoost, WorkOrderOverride (scalar_one_or_none cada).
+    # ProductionOrder, phase_history (Q.172.F4E), OrderBoost,
+    # WorkOrderOverride (scalar_one_or_none cada).
     session.queue_scalar(order)
+    session.queue_scalar(None)   # phase_history — sem espelho ERP → []
+    session.queue_scalars([])
     session.queue_scalar(boost_row)
     session.queue_scalar(override_row)
 
@@ -1027,12 +1043,15 @@ def test_encomenda_with_boost_returns_breakdown():
 
     # Ordem das execute() no endpoint:
     # 1. ProductionOrder
-    # 2. OrderBoost
-    # 3. WorkOrderOverride
-    # 4. BoatBoost
-    # 5. Customer (por nome)
-    # 6. ClientPriority (por client_id)
+    # 2. phase_history (Q.172.F4E — factory_raw ausente → [])
+    # 3. OrderBoost
+    # 4. WorkOrderOverride
+    # 5. BoatBoost
+    # 6. Customer (por nome)
+    # 7. ClientPriority (por client_id)
     session.queue_scalar(order)
+    session.queue_scalar(None)
+    session.queue_scalars([])
     session.queue_scalar(boost_row)
     session.queue_scalar(override_row)
     session.queue_scalar(boat_boost_row)
@@ -1180,3 +1199,139 @@ def test_modelo_no_in_production_empty_list():
     assert resp.status_code == 200
     body = resp.json()
     assert body["in_production_boats"] == []
+    # Q.172.F4E — sem truncamento quando a lista cabe inteira.
+    assert body["in_production_truncated"] is False
+
+
+def test_modelo_in_production_truncated_flag():
+    """Q.172.F4E (fecha o TODO Q.117.X) — modelo com 25 barcos em produção:
+    a lista é capada a 20 mas o truncamento deixa de ser silencioso —
+    `in_production_truncated=True` e `in_production_count` traz o total REAL.
+
+    Este teste FALHA no código antigo (campo inexistente / truncamento mudo).
+    """
+    session = FakeSession()
+    orders = [
+        _order(
+            legacy_id=1000 + i,
+            product_name="K1-Vanquish-L",
+            current_phase_name="Laminagem",
+            created_date=date(2026, 1, 1) + timedelta(days=i),
+        )
+        for i in range(25)
+    ]
+    session.queue_scalar(None)
+    session.queue_scalars(orders)        # call 1 — production_orders do modelo
+    session.queue_scalar(None)
+    session.queue_scalars([])            # call 2 — resolve_for_model (sem routing)
+    session.queue_scalar(None)
+    session.queue_scalars([])            # call 3 — OrderBoost batch
+    session.queue_scalar(None)
+    session.queue_scalars([])            # call 4 — BoatBoost lookup
+    session.queue_scalar(None)
+    session.queue_scalars([])            # call 5 — Customer batch
+
+    client = _minimal_app(session)
+    resp = client.get("/v1/entity/modelo/K1-Vanquish-L", headers=_HEADERS)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert len(body["in_production_boats"]) == 20      # lista capada
+    assert body["in_production_count"] == 25           # total REAL
+    assert body["in_production_truncated"] is True     # truncamento visível
+
+
+# ─── Q.172.F4E — phase_history da encomenda (factory_raw.of_fp) ───────────────
+
+
+class _MappingSession:
+    """Serve `(await execute(sql, params)).mappings().all()` com rows fixas."""
+
+    def __init__(self, rows):
+        self._rows = rows
+
+    async def execute(self, stmt, params=None):
+        rows = self._rows
+
+        class _R:
+            def mappings(_self):
+                return _self
+
+            def all(_self):
+                return rows
+
+        return _R()
+
+
+class _BoomSession:
+    """Simula espelho factory_raw ausente (dev) — execute rebenta."""
+
+    async def execute(self, stmt, params=None):
+        from sqlalchemy.exc import SQLAlchemyError
+
+        raise SQLAlchemyError("relation factory_raw.of_fp does not exist")
+
+
+@pytest.mark.asyncio
+async def test_build_encomenda_phase_history_maps_rows():
+    """Q.172.F4E (fecha o TODO Q.116.A) — mapeia as fases reais da OF."""
+    from src.plan.api.entity_summary import _build_encomenda_phase_history
+
+    rows = [
+        {
+            "phase_name": "Laminagem",
+            "phase_id": "5",
+            "started": "2026-05-01T08:00:00",
+            "finished": "2026-05-01T16:00:00",
+        },
+        {
+            "phase_name": None,  # FP_NOME em falta → cai para o phase_id
+            "phase_id": "40",
+            "started": "2026-05-02T08:00:00",
+            "finished": None,    # fase ainda aberta
+        },
+    ]
+    out = await _build_encomenda_phase_history(_MappingSession(rows), 501171)
+    assert len(out) == 2
+    assert out[0].phase_name == "Laminagem"
+    assert out[0].start_at == "2026-05-01T08:00:00"
+    assert out[0].end_at == "2026-05-01T16:00:00"
+    assert out[1].phase_name == "40"   # fallback honesto para o id
+    assert out[1].end_at is None       # aberta — sem data inventada
+
+
+@pytest.mark.asyncio
+async def test_build_encomenda_phase_history_empty_when_mirror_absent():
+    """Sem espelho factory_raw (dev) → lista vazia honesta, sem rebentar."""
+    from src.plan.api.entity_summary import _build_encomenda_phase_history
+
+    assert await _build_encomenda_phase_history(_BoomSession(), 501171) == []
+
+
+# ─── Q.172.F4E — OF_IDs do cliente via espelho ERP ────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_customer_of_ids_from_erp_numeric_code():
+    """customer_code numérico (=E_ID NELO) → OF_IDs do espelho."""
+    from src.plan.api.entity_summary import _customer_of_ids_from_erp
+
+    rows = [{"of_id": 101}, {"of_id": 102}, {"of_id": "lixo"}]
+    out = await _customer_of_ids_from_erp(_MappingSession(rows), "4711")
+    assert out == [101, 102]  # não-numéricos descartados
+
+
+@pytest.mark.asyncio
+async def test_customer_of_ids_from_erp_non_numeric_code():
+    """Cliente criado à mão (código não-numérico) → [] sem tocar na BD."""
+    from src.plan.api.entity_summary import _customer_of_ids_from_erp
+
+    assert await _customer_of_ids_from_erp(_BoomSession(), "ACME-01") == []
+    assert await _customer_of_ids_from_erp(_BoomSession(), None) == []
+
+
+@pytest.mark.asyncio
+async def test_customer_of_ids_from_erp_mirror_absent():
+    """Espelho factory_raw ausente (dev) → [] honesto, sem rebentar."""
+    from src.plan.api.entity_summary import _customer_of_ids_from_erp
+
+    assert await _customer_of_ids_from_erp(_BoomSession(), "4711") == []

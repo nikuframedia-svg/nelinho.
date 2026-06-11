@@ -30,7 +30,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import NAMESPACE_OID, UUID, uuid5
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Body, Depends, Path, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -96,8 +96,10 @@ def _audit_entity_id(boat_id: str) -> UUID:
     dependencies=[Depends(_require_schedule_write)],
 )
 async def upsert_boat_boost(
-    boat_id: str,
-    body: BoatBoostUpsert,
+    # Q.172.F4E — espelha o String(80) do modelo BoatBoost: sem o constraint,
+    # um boat_id >80 chars rebentava/truncava silenciosamente no INSERT.
+    boat_id: str = Path(..., min_length=1, max_length=80),
+    body: BoatBoostUpsert = Body(...),
     tenant_id: UUID = Depends(require_tenant_header),
     user_id: str = Depends(require_user_header),
     session: AsyncSession = Depends(get_session),

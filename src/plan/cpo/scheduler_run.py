@@ -348,7 +348,7 @@ async def run_cpo_schedule(
                 ),
                 context={"resolved_orders": len(orders)},
             )
-            await session.flush()
+            # flush() removido: _upsert_cpo_alert já faz commit() interno (Q.138.I)
         except Exception as alert_exc:
             logger.warning("CPO schedule: failed to emit routing alert: %s", alert_exc)
 
@@ -383,7 +383,7 @@ async def run_cpo_schedule(
                     "fallback_fraction": round(resolver.fallback_fraction, 4),
                 },
             )
-            await session.flush()
+            # flush() removido: _upsert_cpo_alert já faz commit() interno (Q.138.I)
         except (SQLAlchemyError, ImportError, TypeError, ValueError) as alert_exc:
             logger.warning(
                 "CPO schedule: failed to emit duration-fallback alert: %s", alert_exc
@@ -429,7 +429,7 @@ async def run_cpo_schedule(
                     "reasons": sorted({u["reason"] for u in resolver.unplanned}),
                 },
             )
-            await session.flush()
+            # flush() removido: _upsert_cpo_alert já faz commit() interno (Q.138.I)
         except (SQLAlchemyError, ImportError, TypeError, ValueError) as alert_exc:
             logger.warning(
                 "CPO schedule: failed to emit unplanned-orders alert: %s", alert_exc
@@ -577,7 +577,7 @@ async def run_cpo_schedule(
                     "orders_coverage": round(resolver.orders_coverage, 4),
                 },
             )
-            await session.flush()
+            # flush() removido: _upsert_cpo_alert já faz commit() interno (Q.138.I)
         except (SQLAlchemyError, ImportError, TypeError, ValueError) as alert_exc:
             logger.warning("CPO schedule: failed to emit degenerate alert: %s", alert_exc)
 

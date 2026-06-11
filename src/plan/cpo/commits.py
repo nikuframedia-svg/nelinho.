@@ -264,6 +264,11 @@ class CommitsService:
             bool(schedule_result.get("safety_net_triggered", False)),
         )
 
+        # Parent lido à hora de PERSISTIR (não antes do solver) — de propósito
+        # (triagem F4.E, achado "stale parent read" arquivado como decisão):
+        # o head mais fresco mantém a cadeia de hash íntegra, e uma edição
+        # manual feita DURANTE o solver não se perde — o reapply (Q.142/Q.148)
+        # re-aplica os deltas manuais por cima do DRAFT novo.
         parent = await self.get_latest()
         parent_sha = parent.commit_sha256 if parent else None
         parent_id = parent.id if parent else None
@@ -330,7 +335,7 @@ class CommitsService:
             & (ScheduleCommit.commit_sha256.like(f"{prefix}%"))
         ).limit(2)
         rows = list((await self.session.execute(stmt)).scalars().all())
-        return rows[0] if len(rows) == 1 else None
+        return rows[0] if len(rows) == 1 else None  # return only if exactly one match; >1 means ambiguous (limit(2) catches this)
 
     async def get_latest(self) -> Optional[ScheduleCommit]:
         stmt = (

@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.factory_data_product.models.curated import CuratedPhaseCapacity
 from src.plan.models.schedule import ProductionSchedule, ScheduleStatus
+from src.plan.services.factory_calendar import FactoryCalendar
 from src.shared.kafka_client import publish_event, Topics
 from src.shared.events import CapacityConstraintEvent
 from src.shared.time import local_today
@@ -105,29 +106,46 @@ class CapacityService:
         """
         from_date = from_date or local_today()
         to_date = to_date or from_date + timedelta(weeks=4)
-        
+
         results: List[CapacityAnalysis] = []
         warnings: List[str] = []
-        
+
+        # Q.172.F4E — calendário REAL da fábrica (fins-de-semana, feriados,
+        # paragens). Antes assumia `min(period_days, 5)` dias úteis por
+        # período — errado para feriados E para period_days>7 (14 dias
+        # contavam 5 úteis). Sem tabela semeada o load devolve fallback
+        # Mon-Fri honesto (mesmo comportamento do scheduler).
+        calendar = await FactoryCalendar.load(self.session, self.tenant_id)
+
         # Generate periods
         periods = []
         current = from_date
         while current < to_date:
             periods.append(current)
             current += timedelta(days=period_days)
-        
+
+        # Dias úteis REAIS por período (partilhado por todas as máquinas).
+        working_days_by_period = {
+            p: sum(
+                1
+                for offset in range(period_days)
+                if calendar.is_working_day(p + timedelta(days=offset))
+            )
+            for p in periods
+        }
+
         # Analyze each machine
         for machine in machines:
             machine_id = UUID(machine["machine_id"]) if isinstance(machine["machine_id"], str) else machine["machine_id"]
             machine_name = machine.get("machine_name", "Unknown")
             available_hours_per_day = float(machine.get("available_hours_per_day", 8))
-            available_days_per_period = min(period_days, 5)  # Assume 5-day week
-            
-            available_minutes = int(available_hours_per_day * 60 * available_days_per_period)
-            
+
             for period in periods:
                 period_end = period + timedelta(days=period_days)
-                
+                available_minutes = int(
+                    available_hours_per_day * 60 * working_days_by_period[period]
+                )
+
                 # Query scheduled operations for this machine and period
                 query = select(
                     func.sum(ProductionSchedule.scheduled_duration_hours)
@@ -209,10 +227,17 @@ class CapacityService:
         to_date: date = None,
         available_hours_per_day: float = 8.0,
     ) -> Dict[str, Any]:
-        """Get availability for a single machine."""
+        """Get availability for a single machine.
+
+        Q.172.F4E — dias não-úteis (fim-de-semana/feriado do calendário
+        fabril) contam 0 minutos disponíveis; antes todos os dias valiam
+        `available_hours_per_day`, inflacionando a capacidade ~40%.
+        """
         from_date = from_date or local_today()
         to_date = to_date or from_date + timedelta(weeks=4)
-        
+
+        calendar = await FactoryCalendar.load(self.session, self.tenant_id)
+
         # Query all scheduled operations
         query = select(ProductionSchedule).where(
             and_(
@@ -231,8 +256,12 @@ class CapacityService:
         current = from_date
         
         while current <= to_date:
-            available_minutes = int(available_hours_per_day * 60)
-            
+            available_minutes = (
+                int(available_hours_per_day * 60)
+                if calendar.is_working_day(current)
+                else 0
+            )
+
             day_schedules = [
                 s for s in schedules
                 if s.scheduled_start_date == current

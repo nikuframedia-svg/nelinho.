@@ -50,8 +50,26 @@ class MachineInput(BaseModel):
 
 
 class CPOScheduleRequest(BaseModel):
-    orders: Optional[List[Dict[str, Any]]] = None
-    machines: Optional[List[MachineInput]] = None
+    # Q.172.F4E — semântica documentada: o runner usa um falsy-check
+    # (`request.orders or state.open_orders`), por isso `[]` é tratado
+    # IGUAL a None. Não há forma de pedir "plano de zero ordens" — se
+    # precisares disso, é mudança no scheduler_run, não aqui.
+    orders: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description=(
+            "None (default) OU lista vazia [] = planear as ordens reais do "
+            "estado da fábrica (state.open_orders). Lista não-vazia = planear "
+            "exactamente estas ordens (ignora plan_cap)."
+        ),
+    )
+    machines: Optional[List[MachineInput]] = Field(
+        default=None,
+        description=(
+            "None (default) OU lista vazia [] = usar as estações reais do "
+            "estado da fábrica (state.phase_stations). Lista não-vazia = "
+            "usar exactamente estas máquinas."
+        ),
+    )
     horizon_days: int = Field(default=30, ge=1, le=180)
     # Q.138.D — via _REQ_DEFAULT_TIME_LIMIT_S / _MAX_TIME_LIMIT_S (constantes).
     time_limit_sec: float = Field(default=_REQ_DEFAULT_TIME_LIMIT_S, ge=1.0, le=_MAX_TIME_LIMIT_S)

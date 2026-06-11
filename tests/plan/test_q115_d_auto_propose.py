@@ -4,7 +4,7 @@
   1. Happy path orders.created → Decision criada com source=auto_propose
   2. Debounce: 2 eventos <30s mesma chave → 1 só Decision
   3. Rate-limit: 2 eventos dentro de 5min → 2º silenciado
-  4. config.updated: replan_hook + auto_propose coexistem; só auto_propose cria Decision
+  4. config.updated: auto_propose cria a Decision (replan_hook removido Q.171.H)
   5. quality.defect_logged: defeito → Decision com payload incluindo defeito
   6. plan.manual_override: override Q.115.C → Decision criada
   7. Audit log: cada Decision tem audit row com action_type=auto_propose
@@ -26,7 +26,6 @@ import pytest
 from src.plan.services.auto_propose import AutoProposeService, _debounce_key
 from src.plan.services.debouncer import Debouncer
 from src.plan.services.rate_limiter import RateLimiter
-from src.plan.services.replan_hook import handle_config_updated, should_trigger_replan
 from src.shared.models.governance import DecisionStatus, SharedDecisionRun
 
 # ---------------------------------------------------------------------------
@@ -215,39 +214,22 @@ async def test_rate_limit_second_event_dropped():
 
 
 # ---------------------------------------------------------------------------
-# Teste 4 — config.updated: replan_hook + auto_propose coexistem
+# Teste 4 — config.updated: auto_propose cria a Decision
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_config_updated_replan_hook_and_auto_propose_coexist():
-    """replan_hook invoca scheduler_hook; auto_propose cria Decision. Sem duplicação."""
+async def test_config_updated_auto_propose_creates_single_decision():
+    """config.updated → auto_propose cria 1 Decision (o replan_hook morto
+    foi removido no Q.171.H; o replaneamento real é do robô Q.137)."""
     sessions: List[FakeSession] = []
     svc = _build_service(sessions, debounce_delay=0.0, cpo_runner=_fake_cpo_ok)
 
-    # replan_hook parte pura (predicado)
     payload = _payload_config_updated("machine_capacity_h_day")
-    assert should_trigger_replan({"config_type": "machine_rates"}) is True
-
-    scheduler_called = []
-
-    async def _mock_scheduler(**kwargs):
-        scheduler_called.append(kwargs)
-
-    await handle_config_updated(
-        {"config_type": "machine_rates"},
-        tenant_id=TENANT,
-        scheduler_hook=_mock_scheduler,
-    )
-    # replan_hook invocou scheduler
-    assert len(scheduler_called) == 1, "replan_hook deve ter chamado scheduler"
-
-    # auto_propose cria Decision separadamente
     await svc.handle_event("config.updated", payload)
     await asyncio.sleep(0.05)
 
     decisions = [a for s in sessions for a in s.added if isinstance(a, SharedDecisionRun)]
     assert len(decisions) == 1, "auto_propose deve criar 1 Decision independente"
-    # replan_hook NÃO criou Decisions (sessions do svc só têm a Decision do auto_propose)
     assert all(d.action_type == "AUTO_PROPOSE_SCHEDULE" for d in decisions)
 
 

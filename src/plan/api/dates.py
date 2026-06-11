@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.plan.models.factory_calendar import FactoryCalendarDay
 from src.plan.models.order import ProductionOrder
 from src.plan.services.backward_scheduler import BackwardSchedulerService
+from src.plan.services.factory_calendar import DEFAULT_SHIFT_START
 from src.plan.services.ctp_service import CapableToPromiseService
 from src.plan.services.plan_adherence_service import PlanAdherenceService
 from src.shared.auth.headers import require_tenant_header
@@ -149,8 +150,11 @@ async def order_suggest_shipment(
     """Earliest realistic ship date if the order starts on `start`."""
     order = await _load_order(order_id, tenant_id, session)
     service = BackwardSchedulerService(session, tenant_id)
+    # Q.172.F4E — era `datetime.min.time().replace(hour=8)` (anti-padrão
+    # confuso); o início de turno canónico vive em factory_calendar
+    # (naive intencional: calendário fabril local, como o BackwardScheduler).
     start_dt = (
-        datetime.combine(start, datetime.min.time().replace(hour=8))
+        datetime.combine(start, DEFAULT_SHIFT_START)
         if start else None
     )
     return await service.suggest_shipment_for_order(order, start=start_dt)

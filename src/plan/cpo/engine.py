@@ -142,6 +142,10 @@ class CPOConfig:
         # without GA iteration; leave that case alone.
         if self.time_limit_sec > self.ga_budget_s and self.ga_budget_s > 0:
             self.time_limit_sec = self.ga_budget_s
+        # Guard: tournament_size < 1 causes IndexError in _tournament() because
+        # sample(scored, 0) returns [] and competitors[0] would raise.
+        if self.tournament_size < 1:
+            self.tournament_size = 1
 
     def phase_budget_total(self) -> float:
         return (

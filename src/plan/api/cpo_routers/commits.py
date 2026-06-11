@@ -89,7 +89,13 @@ async def list_commits(
     tenant_id: UUID = Depends(_tenant_id),
     db: AsyncSession = Depends(get_session),
 ):
-    """List the most recent schedule commits for the tenant."""
+    """List the most recent schedule commits for the tenant.
+
+    Semântica honesta do vazio (Q.172.F4E): devolve `200 []` — e NÃO 404 —
+    quando o tenant ainda não tem commits, ou quando `exclude_degenerate=true`
+    e nenhum commit saudável existe (todos marcados `cpo_meta.degenerate`).
+    O frontend /overall trata `[]` como "Sem plano activo".
+    """
     service = CommitsService(db, tenant_id)
     rows = await service.list_commits(limit=limit, healthy_only=exclude_degenerate)
     return [CommitResponse(**CommitsService.to_dict(r)) for r in rows]

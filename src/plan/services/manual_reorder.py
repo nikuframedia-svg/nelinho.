@@ -263,6 +263,7 @@ async def apply_manual_reorder(
     author: str = "operator",
     reason: Optional[str] = None,
     state_skills: Optional[Dict[str, Any]] = None,
+    expected_parent_id: Optional[UUID] = None,
 ) -> Dict[str, Any]:
     """Aplica reorder manual, valida axiomas Spelke, cria novo ScheduleCommit.
 
@@ -270,17 +271,31 @@ async def apply_manual_reorder(
     guardado no delta, no `user_preference_signal` (uniforme com o apply-move)
     e no `audit_change`, na mesma tx.
 
+    Q.172.F4E — `expected_parent_id` (opcional, usado pelo reapply do robô):
+    quando fornecido, o commit base lido via `get_latest()` TEM de ser esse —
+    se outro processo (POST /reorder concorrente) entretanto criou um commit,
+    levantamos `ValueError` em vez de bifurcar a história sobre um pai
+    diferente do encadeamento esperado. O caminho interativo não o passa
+    (None = comportamento de sempre).
+
     Raises:
         SafetyNetViolation: se qualquer axioma Spelke for violado.
-        ValueError: se nao existir commit base ou op nao encontrada.
+        ValueError: se nao existir commit base, op nao encontrada, duracao
+            invalida ou conflito com `expected_parent_id`.
 
     Returns:
-        {"commit_sha": str, "delta_summary": dict}
+        {"commit_sha": str, "commit_id": str, "delta_summary": dict}
     """
     commits_svc = CommitsService(session, tenant_id)
     parent = await commits_svc.get_latest()
     if parent is None:
         raise ValueError("sem_commit_base: corre /v1/plan/cpo/schedule primeiro")
+    if expected_parent_id is not None and parent.id != expected_parent_id:
+        raise ValueError(
+            "conflito_reapply: o plano mudou durante o reapply "
+            f"(base={parent.id} esperado={expected_parent_id}) — "
+            "o override entra no próximo ciclo de replan"
+        )
 
     ops: List[Dict[str, Any]] = list(parent.operations or [])
 
@@ -308,7 +323,16 @@ async def apply_manual_reorder(
     if _dur_min is None:
         _os = _to_aware(original_op.get("start_time") or original_op.get("start_ts"))
         _oe = _to_aware(original_op.get("end_time") or original_op.get("end_ts"))
-        _dur_min = ((_oe - _os).total_seconds() / 60.0) if (_os and _oe) else 0.0
+        _dur_min = ((_oe - _os).total_seconds() / 60.0) if (_os and _oe) else None
+    # Q.172.F4E — recusar duração desconhecida/<=0: o fallback antigo era
+    # 0.0, que criava ops com end_time==start_time (lixo no plano e invisível
+    # ao validador, cuja tolerância de overlap é 60s). Inventar um mínimo
+    # seria mock (invariante #8) — a op sem duração real não se move.
+    if _dur_min is None or float(_dur_min) <= 0.0:
+        raise ValueError(
+            f"duracao_invalida: operação {operation_id!r} sem duração conhecida "
+            "(duration_minutes/end_time em falta ou <= 0) — movimento recusado"
+        )
     modified_ops[target_idx]["end_time"] = (
         new_start_ts + timedelta(minutes=float(_dur_min))
     ).isoformat()
@@ -487,7 +511,12 @@ async def apply_manual_reorder(
         "Reorder manual commit=%s op=%s %s->%s tenant=%s",
         sha[:12], operation_id, from_phase, new_phase, tenant_id,
     )
-    return {"commit_sha": sha, "delta_summary": delta_summary}
+    # Q.172.F4E — `commit_id` permite ao reapply encadear o expected_parent_id.
+    return {
+        "commit_sha": sha,
+        "commit_id": str(commit.id),
+        "delta_summary": delta_summary,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -546,9 +575,24 @@ async def reapply_manual_overrides(
     `get_latest()` encadeia o override seguinte sobre o anterior (Postgres
     `now()` é estável por transacção). Best-effort: nunca rebenta — o DRAFT do
     robô fica de pé. Devolve `{"reapplied", "skipped", "rejected"}`.
+
+    Semântica de SNAPSHOT (Q.172.F4E, intencional): a lista de overrides é
+    lida UMA vez antes do loop. Um override criado DURANTE o reapply não entra
+    neste ciclo — não precisa: o próprio POST /reorder já o aplicou ao plano, e
+    a coleta do próximo replan volta a apanhá-lo (continua ativo até ao próximo
+    LIVE). E o encadeamento é GUARDADO contra corridas: cada iteração passa
+    `expected_parent_id` ao `apply_manual_reorder` — se um commit concorrente
+    aparecer entre iterações, o override é skip (entra no próximo ciclo) em vez
+    de se aplicar sobre um pai fora da cadeia (bifurcação de história).
     """
-    overrides = await CommitsService(session, tenant_id).active_manual_overrides()
+    commits_svc = CommitsService(session, tenant_id)
+    overrides = await commits_svc.active_manual_overrides()
     stats = {"reapplied": 0, "skipped": 0, "rejected": 0}
+
+    # Q.172.F4E — base do encadeamento: o DRAFT fresco do robô. Cada sucesso
+    # avança o ponteiro para o commit que acabou de criar.
+    _base = await commits_svc.get_latest()
+    expected_parent_id: Optional[UUID] = getattr(_base, "id", None)
 
     for ov in overrides:
         op_id = str(ov.get("operation_id") or "")
@@ -560,7 +604,7 @@ async def reapply_manual_overrides(
             continue
 
         try:
-            await apply_manual_reorder(
+            result = await apply_manual_reorder(
                 session=session,
                 tenant_id=tenant_id,
                 operation_id=op_id,
@@ -569,10 +613,15 @@ async def reapply_manual_overrides(
                 new_operator_id=ov.get("new_operator_id"),
                 author="system",  # author=system → excluído da próxima coleta
                 state_skills=state_skills,
+                expected_parent_id=expected_parent_id,
             )
             # Q.171.A — o apply_manual_reorder já persiste por dentro (audit
             # na mesma tx + commit antes do emit); cada override segue em tx
             # própria na mesma (created_at distinto → encadeia).
+            try:
+                expected_parent_id = UUID(str(result.get("commit_id")))
+            except (ValueError, TypeError):
+                expected_parent_id = None  # sem id → não força o check seguinte
             stats["reapplied"] += 1
             logger.info("reapply: override op=%s re-aplicado em %s", op_id, ov.get("to_phase"))
         except SafetyNetViolation as exc:
@@ -586,6 +635,9 @@ async def reapply_manual_overrides(
         except ValueError as exc:
             await session.rollback()
             stats["skipped"] += 1
-            logger.info("reapply: op=%s já não está no plano fresco — skip (%s)", op_id, exc)
+            # Ordem expedida/fase passada OU conflito de encadeamento
+            # (Q.172.F4E) — em ambos os casos o skip é seguro: o override
+            # continua ativo e entra no próximo ciclo de replan.
+            logger.info("reapply: op=%s não re-aplicado — skip (%s)", op_id, exc)
 
     return stats

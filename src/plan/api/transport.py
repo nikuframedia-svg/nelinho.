@@ -702,7 +702,10 @@ async def ready_to_ship(
                 LEFT JOIN LATERAL (
                     SELECT x."OFFP_DATAINICIO" AS ds FROM factory_raw.of_fp x
                     WHERE x."OFFP_OF_ID" = o."OF_ID" AND x."OFFP_FP_ID" = o."OF_FP_ID"
-                    ORDER BY x."OFFP_DATAINICIO" DESC LIMIT 1
+                    -- Q.172.F4E: tiebreak OFFP_ID — re-trabalhos repetem a fase
+                    -- e podem partilhar OFFP_DATAINICIO; sem ele o LIMIT 1 era
+                    -- não-determinístico.
+                    ORDER BY x."OFFP_DATAINICIO" DESC, x."OFFP_ID" DESC LIMIT 1
                 ) ph ON TRUE
                 WHERE f."FP_NOME" = 'Embalado' AND o."OF_DATAFIM" IS NULL
                   AND NOT EXISTS (

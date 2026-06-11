@@ -104,11 +104,22 @@ def test_property_reduce_overrides_unique_and_last_wins(drags):
 # ---------------------------------------------------------------------------
 
 class _FakeSession:
-    """Conta commits/rollbacks; o resto é mockado."""
+    """Conta commits/rollbacks; o resto é mockado.
+
+    Q.172.F4E — `execute` serve o `get_latest()` do guard de encadeamento
+    (devolve None → expected_parent_id=None → sem check, como antes).
+    """
 
     def __init__(self) -> None:
         self.committed = 0
         self.rolledback = 0
+
+    async def execute(self, stmt: Any) -> Any:
+        class _R:
+            def scalar_one_or_none(_self) -> None:
+                return None
+
+        return _R()
 
     async def commit(self) -> None:
         self.committed += 1

@@ -150,7 +150,8 @@ class CPSATScheduler:
                 if mg is not None:
                     try:
                         gap_h = float(mg(prev.phase_id, cur.phase_id))
-                    except Exception:  # pragma: no cover — defensivo
+                    except Exception as _e:  # pragma: no cover — defensivo
+                        logger.warning("state.min_gap_hours(%s→%s) failed: %s", prev.phase_id, cur.phase_id, _e)
                         gap_h = 0.0
                 gap = max(0, round(gap_h * 60))
                 model.Add(starts[str(cur.operation_id)]
@@ -168,7 +169,8 @@ class CPSATScheduler:
             if nsf is not None:
                 try:
                     n_st = max(1, int(nsf(fase)))
-                except Exception:  # pragma: no cover
+                except Exception as _e:  # pragma: no cover
+                    logger.warning("state.num_stations_for(%s) failed: %s", fase, _e)
                     n_st = 1
             model.AddCumulative(ivs, [1] * len(ivs), n_st)
             # operadores da fase: demanda=team_size, cap=|pool apto|.
@@ -177,7 +179,8 @@ class CPSATScheduler:
             if wf is not None:
                 try:
                     pool = len(wf(fase))
-                except Exception:  # pragma: no cover
+                except Exception as _e:  # pragma: no cover
+                    logger.warning("state.workers_for(%s) failed: %s", fase, _e)
                     pool = 0
             if pool > 0:
                 demands = [team[str(o.operation_id)] for o in fase_ops]
@@ -214,7 +217,8 @@ class CPSATScheduler:
             if mfm is not None and not model_id.startswith("order::"):
                 try:
                     n_molds = max(1, len(mfm(model_id)))
-                except Exception:  # pragma: no cover
+                except Exception as _e:  # pragma: no cover
+                    logger.warning("state.molds_for_model(%s) failed: %s", model_id, _e)
                     n_molds = 1
             ivs = [intervals[str(o.operation_id)] for o in mops]
             model.AddCumulative(ivs, [1] * len(ivs), n_molds)
@@ -262,6 +266,17 @@ class CPSATScheduler:
                 hv = hint_starts_min.get(oid)
                 if hv is not None and 0 <= int(hv) <= H:
                     model.AddHint(s, int(hv))
+            # Hints para operações não presentes em main_ops (ex.: fases de
+            # reparação 14/76/77 excluídas pelo cpsat_global) são ignoradas
+            # silenciosamente acima. Logar em DEBUG para troubleshooting.
+            ignored_hints = set(hint_starts_min.keys()) - set(starts.keys())
+            if ignored_hints:
+                logger.debug(
+                    "CP-SAT: %d hints ignoradas para ops fora de main_ops "
+                    "(fases reparação?): %s",
+                    len(ignored_hints),
+                    sorted(ignored_hints)[:20],
+                )
 
         # ── Solve ───────────────────────────────────────────────────────────────
         solver = cp_model.CpSolver()

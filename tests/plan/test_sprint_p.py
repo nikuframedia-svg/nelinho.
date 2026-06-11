@@ -36,10 +36,6 @@ from src.copilot.poetiq_expanded import (
     default_perturbation_tester,
 )
 from src.plan.engines.cpsat_lrho import CPSATLRHO, LRHOConfig
-from src.plan.services.replan_hook import (
-    handle_config_updated,
-    should_trigger_replan,
-)
 from src.plan.services.routing_template_service import mine_routing_patterns
 from src.plan.services.transport_batch_service import (
     compute_truck_consolidation_penalty_h,
@@ -430,65 +426,10 @@ def test_default_perturbation_tester_counts_affected_workers():
 
 
 # ---------------------------------------------------------------------------
-# P.14 — Replan hook
+# P.14 — Replan hook: REMOVIDO (Q.171.H). `replan_hook.py` era código morto
+# (zero callers de produção desde o Sprint P; o fluxo real é o auto_propose
+# + robô APScheduler Q.137). Os testes foram com ele.
 # ---------------------------------------------------------------------------
-
-def test_replan_triggers_on_planning_routing_update():
-    assert should_trigger_replan({
-        "config_type": "tenant_configuration.planning",
-        "affected_entities": ["routing.templates.default_id"],
-    })
-
-
-def test_replan_ignores_unrelated_category():
-    assert not should_trigger_replan({
-        "config_type": "tenant_configuration.copilot",
-        "affected_entities": ["rate_limit.per_hour"],
-    })
-
-
-def test_replan_triggers_on_legacy_machine_rates():
-    assert should_trigger_replan({"config_type": "machine_rates"})
-
-
-@pytest.mark.asyncio
-async def test_handle_config_updated_calls_hook():
-    seen = {}
-
-    async def fake_trigger(*, tenant_id, reason, payload):
-        seen["tenant_id"] = tenant_id
-        seen["reason"] = reason
-        seen["payload"] = payload
-
-    tenant = uuid4()
-    triggered = await handle_config_updated(
-        {
-            "config_type": "tenant_configuration.planning",
-            "affected_entities": ["cpo.gen_count"],
-        },
-        tenant_id=tenant,
-        scheduler_hook=fake_trigger,
-    )
-    assert triggered is True
-    assert seen["tenant_id"] == tenant
-    assert seen["reason"] == "CAPACITY_CHANGE"
-
-
-@pytest.mark.asyncio
-async def test_handle_config_updated_noop_when_not_triggering():
-    called = {"n": 0}
-
-    async def fake_trigger(**_kw):
-        called["n"] += 1
-
-    triggered = await handle_config_updated(
-        {"config_type": "tenant_configuration.copilot",
-         "affected_entities": ["rate_limit.per_hour"]},
-        tenant_id=uuid4(),
-        scheduler_hook=fake_trigger,
-    )
-    assert triggered is False
-    assert called["n"] == 0
 
 
 # ---------------------------------------------------------------------------

@@ -367,6 +367,60 @@ async def _build_operator_phase_history(
     return out
 
 
+async def _build_encomenda_phase_history(
+    session: AsyncSession,
+    legacy_id: int,
+    limit: int = 100,
+) -> List["PhaseHistoryEntry"]:
+    """Q.172.F4E (era TODO Q.116.A) — histórico REAL de fases da encomenda.
+
+    Fonte: `factory_raw.of_fp` (a mesma cadeia do histórico do operador
+    Q.116.F e dos jobs de afinidade Q.150 — `plan.fases_of_history` está
+    vazia em produção, não é fonte). Ordenado cronologicamente, com
+    tiebreak `OFFP_ID` (re-trabalhos repetem a fase, datas podem empatar).
+    Sentinela SQL-Server `1900-01-01` (= sem data) excluída — mostrar uma
+    data falsa seria mock. `text()` defensivo — em dev sem `factory_raw`
+    devolve lista vazia (honesto, sem mock).
+    """
+    from sqlalchemy import text
+
+    stmt = text(
+        """
+        SELECT fp."FP_NOME"                  AS phase_name,
+               o."OFFP_FP_ID"::text          AS phase_id,
+               o."OFFP_DATAINICIO"           AS started,
+               NULLIF(o."OFFP_DATAFIM", '')  AS finished
+        FROM factory_raw.of_fp o
+        LEFT JOIN factory_raw.fases_producao fp ON fp."FP_ID" = o."OFFP_FP_ID"
+        WHERE o."OFFP_OF_ID" = :of_id
+          AND NULLIF(o."OFFP_DATAINICIO", '') IS NOT NULL
+          AND o."OFFP_DATAINICIO"::text NOT LIKE '1900-01-01%'
+        ORDER BY o."OFFP_DATAINICIO" ASC, o."OFFP_ID" ASC
+        LIMIT :lim
+        """
+    )
+    try:
+        rows = (
+            await session.execute(stmt, {"of_id": int(legacy_id), "lim": limit})
+        ).mappings().all()
+    except (SQLAlchemyError, AttributeError) as exc:  # factory_raw ausente em dev.
+        logger.debug("encomenda phase_history skipped (%s)", exc)
+        return []
+
+    out: List[PhaseHistoryEntry] = []
+    for r in rows:
+        started = r["started"]
+        finished = r["finished"]
+        out.append(
+            PhaseHistoryEntry(
+                phase_name=str(r["phase_name"] or r["phase_id"]),
+                start_at=str(started) if started is not None else None,
+                end_at=str(finished) if finished is not None else None,
+            )
+        )
+    return out
+
+
 async def _build_operator_today_tasks(
     session: AsyncSession,
     tenant_id: UUID,
@@ -450,6 +504,52 @@ def _as_date(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.date()
     return value
+
+
+async def _customer_of_ids_from_erp(
+    session: AsyncSession,
+    customer_code: Optional[str],
+) -> List[int]:
+    """Q.172.F4E (era TODO Q.116.C) — OF_IDs do cliente no espelho ERP.
+
+    `core.customers.customer_code` é o `E_ID` da entidade NELO (seed
+    Q.125 `setup_customers_from_entidade`); `factory_raw.ordemfabrico`
+    liga cada OF ao cliente via `OF_E_ID`. Esta é a junção REAL que o
+    filtro antigo por `customer_name` (atributo inexistente no modelo —
+    lista sempre vazia) nunca conseguiu fazer.
+
+    Devolve [] quando o código não é numérico (cliente criado à mão) ou
+    quando o espelho `factory_raw` não está disponível (dev) — o caller
+    devolve lista vazia honesta, sem mock.
+    """
+    try:
+        entity_id = int(str(customer_code).strip())
+    except (TypeError, ValueError):
+        return []
+    from sqlalchemy import text
+
+    stmt = text(
+        """
+        SELECT o."OF_ID" AS of_id
+        FROM factory_raw.ordemfabrico o
+        WHERE o."OF_E_ID" = :eid
+        -- mais recentes primeiro; cap defensivo p/ clientes com décadas
+        -- de histórico (a lista alimenta um IN() em production_orders)
+        ORDER BY o."OF_ID" DESC
+        LIMIT 2000
+        """
+    )
+    try:
+        rows = (await session.execute(stmt, {"eid": entity_id})).mappings().all()
+    except (SQLAlchemyError, AttributeError) as exc:  # factory_raw ausente em dev.
+        logger.debug("cliente OF_IDs (ERP mirror) skipped (%s)", exc)
+        return []
+    out: List[int] = []
+    for r in rows:
+        v = _safe_int(r["of_id"])
+        if v is not None:
+            out.append(v)
+    return out
 
 
 async def _build_cliente_history(
@@ -608,7 +708,9 @@ async def get_modelo_summary(
     # Q.116.G — barcos do modelo actualmente em produção (ordem
     # `created_date DESC`, limit 20). Aproveita a query inicial de
     # ProductionOrder (já carregada) para evitar segunda viagem ao DB.
-    # TODO Q.117.X: paginar — modelos populares podem ter > 20.
+    # Q.172.F4E (fecha o TODO Q.117.X): o truncamento a 20 deixa de ser
+    # silencioso — `in_production_truncated` + `in_production_count`
+    # (total real) dizem ao frontend que a lista é parcial.
     in_production: List[ProductionOrder] = [
         o
         for o in orders
@@ -620,6 +722,7 @@ async def get_modelo_summary(
         key=lambda o: (o.created_date is None, o.created_date),
         reverse=True,
     )
+    in_production_truncated = len(in_production) > 20
     in_production = in_production[:20]
 
     in_production_boats = await _build_boats_in_production(
@@ -661,6 +764,7 @@ async def get_modelo_summary(
         active_orders_count=active_orders_count,
         in_production_count=in_production_count,
         in_production_boats=in_production_boats,
+        in_production_truncated=in_production_truncated,
         orders=orders_out,
         phase_drilldown=phase_drilldown_out,
     )
@@ -685,6 +789,8 @@ async def get_fase_summary(
     nem aparece em NELO_CURING_GAPS_SEED.
     """
     # 1. Nome humano da fase — primeiro nome distinto no routing_template_phase.
+    # Q.172.F4E — ORDER BY no DISTINCT antes do LIMIT 1: sem ele o nome
+    # devolvido era não-determinístico quando a fase tem >1 nome nos templates.
     phase_name_stmt = (
         select(distinct(RoutingTemplatePhase.phase_name))
         .where(
@@ -693,6 +799,7 @@ async def get_fase_summary(
                 RoutingTemplatePhase.phase_id == phase_id,
             )
         )
+        .order_by(RoutingTemplatePhase.phase_name)
         .limit(1)
     )
     phase_name_result = await session.execute(phase_name_stmt)
@@ -700,7 +807,7 @@ async def get_fase_summary(
     phase_name = phase_name_row or phase_id
     has_template_match = phase_name_row is not None
 
-    # 2. top_operators — top 5 por score DESC.
+    # 2. top_operators — top 5 por score DESC (tiebreak operator_id p/ determinismo).
     aff_stmt = (
         select(PhaseOperatorAffinity)
         .where(
@@ -709,7 +816,9 @@ async def get_fase_summary(
                 PhaseOperatorAffinity.phase_id == phase_id,
             )
         )
-        .order_by(PhaseOperatorAffinity.score.desc())
+        .order_by(
+            PhaseOperatorAffinity.score.desc(), PhaseOperatorAffinity.operator_id
+        )
         .limit(5)
     )
     aff_result = await session.execute(aff_stmt)
@@ -737,7 +846,8 @@ async def get_fase_summary(
         for a in affinities
     ]
 
-    # 3. difficult_boats — top 5 por score ASC (mais difícil = score mais baixo).
+    # 3. difficult_boats — top 5 por score ASC (mais difícil = score mais baixo;
+    # tiebreak boat_id p/ determinismo entre execuções).
     boat_stmt = (
         select(BoatPhaseScore)
         .where(
@@ -746,7 +856,7 @@ async def get_fase_summary(
                 BoatPhaseScore.phase_id == phase_id,
             )
         )
-        .order_by(BoatPhaseScore.score.asc())
+        .order_by(BoatPhaseScore.score.asc(), BoatPhaseScore.boat_id)
         .limit(5)
     )
     boat_result = await session.execute(boat_stmt)
@@ -846,34 +956,35 @@ async def get_cliente_summary(
     cp_row = cp_result.scalar_one_or_none()
     priority = cp_row.priority if cp_row is not None else None
 
-    # 3. Encomendas associadas ao cliente.
-    # TODO Q.116.C: substituir esta junção por FK adequada
-    # production_orders.customer_id → core.customers.id. Por agora, o
-    # ProductionOrder não tem coluna `customer_name` populada de forma
-    # confiável (Q.53.I está pendente do sync ERP). Deixamos a query
-    # filtrada pelo nome do cliente como contrato, mas em DB stale
-    # devolverá lista vazia — é honesto.
-    orders_stmt = (
-        select(ProductionOrder)
-        .where(
-            and_(
-                ProductionOrder.tenant_id == tenant_id,
-                ProductionOrder.status != OrderStatus.CANCELLED,
-                # Filtro best-effort por customer_name string (Q.53.I).
-                ProductionOrder.product_name.is_not(None),
+    # 3. Encomendas associadas ao cliente — junção REAL via espelho ERP
+    # (Q.172.F4E, fecha o TODO Q.116.C): customer_code (=E_ID NELO) →
+    # factory_raw.ordemfabrico.OF_E_ID → production_orders.legacy_id.
+    # O filtro antigo comparava `getattr(o, "customer_name", None)` com o
+    # nome do cliente, mas ProductionOrder nunca teve essa coluna — a
+    # lista vinha SEMPRE vazia (filtro partido, não "sem encomendas").
+    # Sem espelho (dev) ou sem OFs → lista vazia honesta.
+    customer_orders: List[ProductionOrder] = []
+    of_ids = await _customer_of_ids_from_erp(session, customer.customer_code)
+    if of_ids:
+        orders_stmt = (
+            select(ProductionOrder)
+            .where(
+                and_(
+                    ProductionOrder.tenant_id == tenant_id,
+                    ProductionOrder.status != OrderStatus.CANCELLED,
+                    ProductionOrder.legacy_id.in_(of_ids),
+                )
             )
+            # Tiebreak legacy_id: created_date é Date (sem hora) — sem o
+            # desempate o LIMIT devolvia linhas diferentes entre execuções.
+            .order_by(
+                ProductionOrder.created_date.desc().nullslast(),
+                ProductionOrder.legacy_id.desc(),
+            )
+            .limit(200)
         )
-        .order_by(ProductionOrder.created_date.desc().nullslast())
-        .limit(200)
-    )
-    orders_result = await session.execute(orders_stmt)
-    all_orders = list(orders_result.scalars().all())
-
-    # Filtra em Python pelo customer_name (atributo soft do model — pode
-    # não estar populado ainda).
-    customer_orders = [
-        o for o in all_orders if getattr(o, "customer_name", None) == customer.customer_name
-    ]
+        orders_result = await session.execute(orders_stmt)
+        customer_orders = list(orders_result.scalars().all())
 
     active_orders_count = sum(
         1 for o in customer_orders if not is_completed_phase(o.current_phase_name)
@@ -919,8 +1030,8 @@ async def get_encomenda_summary(
     """Sheet "Encomenda" — resumo de uma encomenda (production order).
 
     `legacy_id` é o inteiro do ERP. 404 se não existir. `phase_history`
-    é uma lista vazia até a sincronização sync.WorkOrderPhase (Q.44.Z)
-    estar populada em produção — ver TODO inline.
+    vem do espelho `factory_raw.of_fp` (Q.172.F4E) — lista vazia honesta
+    quando o espelho não está disponível (dev) ou a OF não tem fases.
     """
     stmt = select(ProductionOrder).where(
         and_(
@@ -936,11 +1047,12 @@ async def get_encomenda_summary(
             detail=f"Encomenda legacy_id={legacy_id} não existe",
         )
 
-    # TODO Q.116.A: phase_history virá quando sync.WorkOrderPhase
-    # (Q.44.Z, ver agent_docs/sprint_history.md) estiver em prod. Hoje
-    # não há tabela 1:N para histórico de fases ligada a
-    # ProductionOrder — devolver lista vazia é honesto, sem mock.
-    phase_history: List[PhaseHistoryEntry] = []
+    # Q.172.F4E (fecha o TODO Q.116.A) — histórico real de fases via
+    # factory_raw.of_fp (OFFP_OF_ID = legacy_id). Vazio honesto em dev
+    # sem espelho ERP.
+    phase_history: List[PhaseHistoryEntry] = await _build_encomenda_phase_history(
+        session, int(legacy_id)
+    )
 
     # Q.116.C — boost manual + override de data de transporte. Defesa em
     # profundidade: o Agent B esta a criar plan.order_boost +
@@ -1111,7 +1223,8 @@ async def get_operador_summary(
     role = employee.job_title or employee.department
     active_flag = bool(getattr(employee, "active", True))
 
-    # 2. Top 5 afinidades — score DESC.
+    # 2. Top 5 afinidades — score DESC (tiebreak phase_id: o operador é fixo
+    # nesta query, por isso o desempate determinístico é pela fase).
     aff_stmt = (
         select(PhaseOperatorAffinity)
         .where(
@@ -1120,7 +1233,7 @@ async def get_operador_summary(
                 PhaseOperatorAffinity.operator_id == employee_id,
             )
         )
-        .order_by(PhaseOperatorAffinity.score.desc())
+        .order_by(PhaseOperatorAffinity.score.desc(), PhaseOperatorAffinity.phase_id)
         .limit(5)
     )
     aff_result = await session.execute(aff_stmt)

@@ -52,7 +52,7 @@ class FitnessConfig:
     w_tardiness: float = 10.0
     w_setups: float = 0.5
     # Sprint A F4 — was 0.0; raised to 0.10 (Blueprint v2.0 §5.5).
-    # When no predictor is wired, `schedule["quality_risk_score"]` defaults
+    # When no predictor is wired, `schedule.get("quality_risk", 0)` defaults
     # to 0, so the term is 0.10 × 0 = 0 and nothing changes. Once a Sprint H
     # predictor is attached via `quality_risk_predictor`, the weight is
     # already live without a second config change.

@@ -64,9 +64,11 @@ class ModeloSummary(BaseModel):
     # Q.116.G — lista (até 20) de barcos do modelo actualmente em
     # produção, ordenados por `created_date DESC`. effective_boost vem
     # do mesmo stack do EncomendaSummary (cliente + encomenda + barco).
-    # TODO Q.117.X: paginar quando ultrapassar 20 — modelos populares
-    # como K1-Vanquish-L podem ter muito mais.
+    # Q.172.F4E (fecha o TODO Q.117.X): o truncamento deixou de ser
+    # silencioso — `in_production_truncated=True` quando a lista é
+    # parcial; o total REAL está em `in_production_count`.
     in_production_boats: List[BoatInProduction] = Field(default_factory=list)
+    in_production_truncated: bool = False
     # Q.116.C — lista (até 20) de encomendas activas do modelo. Reutiliza
     # o shape OrderInList (mesmo do ClienteSummary). Forward-ref resolvido
     # via model_rebuild() no fim do bloco de schemas.
