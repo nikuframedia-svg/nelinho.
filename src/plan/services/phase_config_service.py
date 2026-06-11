@@ -128,7 +128,7 @@ class PhaseConfigService:
                 updated_by=actor,
                 updated_at=now,
             )
-            self.session.add(row)
+            self.session.add(row)  # noqa: audit_coverage — audit_change() abaixo (mesma tx, L163)
             action = "INSERT"
             old_values = None
             new_values = {

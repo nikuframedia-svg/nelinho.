@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
 from sqlalchemy import select, and_
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.governance.audit_service import audit_change
@@ -50,7 +51,7 @@ class MRPService:
                 WarehouseStock.tenant_id == self.tenant_id,
             )
             rows = (await self.session.execute(stmt)).scalars().all()
-        except Exception as exc:  # pragma: no cover — defensivo
+        except (SQLAlchemyError, ImportError, OSError) as exc:  # pragma: no cover
             logger.warning(
                 "MRP: warehouse_stock indisponível (%s) — inventário vazio", exc,
             )

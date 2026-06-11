@@ -46,6 +46,7 @@ from typing import Any, Optional
 from uuid import UUID
 
 from sqlalchemy import and_, func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.quality.models.rework import ErrorCatalog, ReworkEntry
@@ -77,7 +78,7 @@ async def _quality_cost_config(session, tenant_id) -> tuple[float, float]:
             default=DEFAULT_ACTION_COST_EUR,
         ))
         return rate, action
-    except Exception as exc:
+    except (SQLAlchemyError, ValueError, TypeError, ImportError, AttributeError) as exc:
         logger.warning(
             "quality config indisponível (%s) — a usar defaults documentados",
             exc,

@@ -23,6 +23,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import SQLAlchemyError
 from starlette.requests import Request
 
 from src.governance.service import GovernanceService
@@ -319,7 +320,7 @@ async def get_drift_events(
     try:
         result = await db.execute(stmt)
         rows = result.scalars().all()
-    except Exception as exc:
+    except SQLAlchemyError as exc:
         # F4.E — padrão Q.170.G: a lista vazia continua a ser o contrato
         # (o painel mostra "sem drift" em vez de rebentar), mas a falha
         # deixa de ser invisível — fica contada em silent_fallback_total.
@@ -327,7 +328,7 @@ async def get_drift_events(
         try:
             from src.shared.metrics import bump_silent_fallback
             bump_silent_fallback("ml_drift", "query_failed")
-        except Exception as metric_exc:  # pragma: no cover — best-effort
+        except (ImportError, RuntimeError, ValueError) as metric_exc:  # pragma: no cover
             logger.debug("métrica ml_drift falhou: %s", metric_exc)
         rows = []
 

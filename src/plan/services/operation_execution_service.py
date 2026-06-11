@@ -85,7 +85,7 @@ class OperationExecutionService:
                 status="IN_PROGRESS",
                 actual_start=when,
             )
-            self.session.add(row)
+            self.session.add(row)  # noqa: audit_coverage — audit_change() abaixo (mesma tx, L99)
             action = "INSERT"
         elif row.status == "SCHEDULED":
             row.status = "IN_PROGRESS"

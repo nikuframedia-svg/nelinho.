@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from sqlalchemy.exc import SQLAlchemyError
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -25,7 +26,7 @@ _HEADERS = {"X-Tenant-Id": str(TEST_TENANT_ID)}
 
 class _FailingSession(FakeSession):
     async def execute(self, stmt: Any, *args: Any, **kwargs: Any):
-        raise RuntimeError("BD em baixo (simulado)")
+        raise SQLAlchemyError("BD em baixo (simulado)")
 
 
 def _fallback_count() -> float:

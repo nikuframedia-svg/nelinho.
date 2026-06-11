@@ -76,6 +76,10 @@ ignore_imports = [
     "src.shared.api.capabilities -> src.factory_data_product.config",
     "src.shared.api.capabilities -> src.factory_data_product.models.meta",
     "src.shared.api.decisions -> src.governance.audit_service",
+    # Q.157.F — aprovar decisão de planeamento promove o ScheduleCommit
+    # a LIVE (import lazy, best-effort). Candidato à inversão via hook
+    # na campanha de fronteiras (Q.66 Fase 4), como os events.handlers.
+    "src.shared.api.decisions -> src.plan.cpo.commits",
     "src.shared.decorators -> src.governance.ab_framework",
     "src.shared.decorators -> src.governance.models",
     "src.shared.events.handlers -> src.hr.services.allocation_service",

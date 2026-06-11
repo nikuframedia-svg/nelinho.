@@ -18,6 +18,8 @@ from datetime import date
 from typing import Awaitable, Callable, Dict, List, Optional, Union
 from uuid import UUID
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from src.shared.time import utc_now
 
 from .runner import EtlRunResult
@@ -125,7 +127,7 @@ async def _persist_error_run(
             error=failed.error,
         ))
         await session.commit()
-    except Exception as audit_exc:
+    except (SQLAlchemyError, OSError) as audit_exc:
         logger.warning(
             "nelo_sync mirror=%s — falha a persistir etl_run de erro: %s",
             failed.source, audit_exc,
