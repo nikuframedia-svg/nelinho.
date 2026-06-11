@@ -33,6 +33,11 @@ class MarginPreviewOut(BaseModel):
     confidence: Literal["high", "medium", "low"]
     sample_size: int
     computed_at: datetime
+    # Q.173.H — proveniência do custo/h: 'labor_rates' (média real) ou
+    # 'none' (sem taxas na BD → margem null, nunca € inventado).
+    cost_rate_eur_h: Optional[Decimal] = None
+    cost_rate_source: Literal["labor_rates", "none"] = "none"
+    ops_sem_duracao: int = 0
 
     model_config = {"from_attributes": True}
 
@@ -79,4 +84,7 @@ async def get_margin_preview(
         confidence=preview.confidence,
         sample_size=preview.sample_size,
         computed_at=preview.computed_at,
+        cost_rate_eur_h=preview.cost_rate_eur_h,
+        cost_rate_source=preview.cost_rate_source,
+        ops_sem_duracao=preview.ops_sem_duracao,
     )

@@ -5,6 +5,12 @@ Calcula `predicted_margin_eur` somando, por operação do commit:
 onde `bonus_eur` é o CoeficienteX (bónus € do PhaseBonusPayout — dinheiro)
 e `custo_op = duration_h × cost_rate` (€). Margem = € − €; nunca tempo.
 
+Q.173.H — `cost_rate` vem de `core.labor_rates` (média das `loaded_rate`
+mais recentes por colaborador). Sem taxas reais → `predicted_margin_eur`
+fica None (invariante #8 — antes havia €12/h hardcoded com 4.244 taxas
+reais disponíveis na BD). Operações sem duração conhecida são EXCLUÍDAS
+da soma (antes inventava-se 1h) e contadas em `ops_sem_duracao`.
+
 Baseline = daily_revenue_target mais recente × (commit_hours / 8h).
 
 NÃO importa nada de src.plan.cpo (invariante CoeficienteX).
@@ -14,7 +20,7 @@ RoutingTemplatePhase se sem modelo activo (confidence sempre "low" nesse caso).
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Literal, Optional
@@ -24,16 +30,13 @@ from sqlalchemy import and_, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.models.daily_revenue_target import DailyRevenueTarget
+from src.core.models.rates import LaborRate
 from src.plan.cpo.commits import ScheduleCommit
 from src.plan.models.routing_template import RoutingTemplatePhase
 from src.profit.models.phase_bonus import PhaseBonusPayout
 from src.shared.time import local_today
 
 log = logging.getLogger(__name__)
-
-# Custo horário de mão-de-obra padrão (€/h) quando não existe tabela labor_rates.
-# Valor NELO provisório — substituir por core.labor_rates quando disponível.
-_DEFAULT_COST_RATE_EUR_H = Decimal("12.00")
 
 
 @dataclass
@@ -45,6 +48,11 @@ class MarginPreview:
     confidence: Literal["high", "medium", "low"]
     sample_size: int
     computed_at: datetime
+    # Q.173.H — explicabilidade da taxa usada: 'labor_rates' (média real)
+    # ou 'none' (sem taxas na BD → margem None, nunca € inventado).
+    cost_rate_eur_h: Optional[Decimal] = None
+    cost_rate_source: Literal["labor_rates", "none"] = "none"
+    ops_sem_duracao: int = field(default=0)
 
 
 async def compute_margin_preview(
@@ -67,44 +75,56 @@ async def compute_margin_preview(
     sample_size = len(operations)
     today = local_today()
 
-    # 2. Calcula margem prevista somando por operação
+    # 2. Custo horário REAL — média das loaded_rate mais recentes por
+    # colaborador (Q.173.H). Sem taxas → margem None, nunca € inventado.
+    cost_rate = await _load_cost_rate(session, tenant_id)
+
+    # 3. Calcula margem prevista somando por operação
     predicted_total = Decimal("0")
     using_fallback = False
+    ops_sem_duracao = 0
 
-    for op in operations:
-        product_id_raw = op.get("product_id")
-        phase_id_raw = op.get("phase_id") or op.get("fase_id")
+    if cost_rate is not None:
+        for op in operations:
+            product_id_raw = op.get("product_id")
+            phase_id_raw = op.get("phase_id") or op.get("fase_id")
 
-        # 2a. CoeficienteX (bónus € desta operação)
-        bonus_eur = await _load_bonus(
-            session, tenant_id, product_id_raw, phase_id_raw, today
-        )
+            # 3a. CoeficienteX (bónus € desta operação)
+            bonus_eur = await _load_bonus(
+                session, tenant_id, product_id_raw, phase_id_raw, today
+            )
 
-        # 2b. Duração prevista
-        duration_h, fallback = await _estimate_duration(
-            session, tenant_id, op, phase_id_raw, duration_model
-        )
-        if fallback:
-            using_fallback = True
+            # 3b. Duração prevista — None = desconhecida → op excluída da
+            # soma (Q.173.H: antes inventava-se 1h como último recurso)
+            duration_h, fallback = await _estimate_duration(
+                session, tenant_id, op, phase_id_raw, duration_model
+            )
+            if fallback:
+                using_fallback = True
+            if duration_h is None:
+                ops_sem_duracao += 1
+                continue
 
-        # 2c. Custo horário — usa default até existir tabela labor_rates
-        cost_rate = _DEFAULT_COST_RATE_EUR_H
+            op_margin = bonus_eur - (duration_h * cost_rate)
+            predicted_total += op_margin
 
-        op_margin = bonus_eur - (duration_h * cost_rate)
-        predicted_total += op_margin
+    predicted_margin: Optional[Decimal] = None
+    if cost_rate is not None and sample_size > 0:
+        predicted_margin = predicted_total
 
-    predicted_margin = predicted_total if sample_size > 0 else None
-
-    # 3. Baseline via daily_revenue_target
+    # 4. Baseline via daily_revenue_target
     baseline_margin = await _compute_baseline(session, tenant_id, operations)
 
-    # 4. Delta
+    # 5. Delta
     delta: Optional[Decimal] = None
     if predicted_margin is not None and baseline_margin is not None:
         delta = predicted_margin - baseline_margin
 
-    # 5. Confidence
-    confidence = _confidence(sample_size, using_fallback)
+    # 6. Confidence — sem taxa real ou com ops excluídas é sempre "low"
+    if cost_rate is None or ops_sem_duracao > 0:
+        confidence: Literal["high", "medium", "low"] = "low"
+    else:
+        confidence = _confidence(sample_size, using_fallback)
 
     return MarginPreview(
         schedule_commit_id=commit_id_str,
@@ -114,6 +134,9 @@ async def compute_margin_preview(
         confidence=confidence,
         sample_size=sample_size,
         computed_at=datetime.now(timezone.utc),
+        cost_rate_eur_h=cost_rate,
+        cost_rate_source="labor_rates" if cost_rate is not None else "none",
+        ops_sem_duracao=ops_sem_duracao,
     )
 
 
@@ -154,6 +177,41 @@ async def _load_commit(
             return rows[0]
 
     return None
+
+
+async def _load_cost_rate(
+    session: AsyncSession,
+    tenant_id: UUID,
+) -> Optional[Decimal]:
+    """Custo horário real (€/h): média das ``loaded_rate`` mais recentes
+    por colaborador em ``core.labor_rates``.
+
+    Q.173.H — devolve None quando não há taxas (>0) na BD; o chamador
+    devolve margem None em vez de inventar um valor (antes: €12/h
+    hardcoded enquanto a tabela tinha 4.244 taxas reais, média 5,41 €/h).
+    """
+    stmt = select(LaborRate).where(
+        and_(
+            LaborRate.tenant_id == tenant_id,
+            LaborRate.loaded_rate > 0,
+        )
+    )
+    rows = (await session.execute(stmt)).scalars().all()
+
+    latest: Dict[Any, Any] = {}
+    for row in rows:
+        current = latest.get(row.employee_id)
+        if current is None or (row.effective_date or date.min) > (
+            current.effective_date or date.min
+        ):
+            latest[row.employee_id] = row
+
+    if not latest:
+        return None
+    total = sum(
+        (Decimal(str(r.loaded_rate)) for r in latest.values()), Decimal("0")
+    )
+    return (total / Decimal(len(latest))).quantize(Decimal("0.0001"))
 
 
 async def _load_bonus(
@@ -202,10 +260,12 @@ async def _estimate_duration(
     op: Dict[str, Any],
     phase_id_raw: Any,
     duration_model: Optional[Any],
-) -> tuple[Decimal, bool]:
+) -> tuple[Optional[Decimal], bool]:
     """Devolve (duration_h, used_fallback).
 
-    Tenta DurationModel → p50_duration se ML falhou → 1h como último recurso.
+    Tenta DurationModel → duration_h da operação → duration_p50_h do
+    template. Q.173.H: sem nenhuma fonte devolve ``None`` (a operação é
+    excluída da margem) — antes inventava-se 1h, distorcendo o custo.
     """
     # Tenta DurationModel (já carregado pelo chamador)
     if duration_model is not None and hasattr(duration_model, "predict"):
@@ -238,8 +298,8 @@ async def _estimate_duration(
         if p50_db is not None and p50_db > 0:
             return Decimal(str(round(float(p50_db), 4))), True
 
-    # Último recurso: 1h
-    return Decimal("1.0"), True
+    # Sem fonte nenhuma — duração desconhecida (op excluída pelo chamador).
+    return None, True
 
 
 async def _load_template_p50(

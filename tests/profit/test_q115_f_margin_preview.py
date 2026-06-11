@@ -71,6 +71,28 @@ def _make_bonus_row(*, bonus_eur: Decimal = Decimal("5.50")) -> SimpleNamespace:
     return r
 
 
+def _make_rate(
+    loaded: str = "12.00",
+    *,
+    employee_id: Optional[UUID] = None,
+    effective: Optional[date] = None,
+) -> SimpleNamespace:
+    """Linha de core.labor_rates (Q.173.H)."""
+    r = SimpleNamespace()
+    r.employee_id = employee_id or uuid4()
+    r.loaded_rate = Decimal(loaded)
+    r.effective_date = effective or date(2026, 1, 1)
+    return r
+
+
+def _queue_rate(session: "_FakeSession", *rates: SimpleNamespace) -> None:
+    """Alinha a fila para o execute de _load_cost_rate (Q.173.H): cada
+    execute da fake pop-a UM scalar e UMA lista de scalars — a taxa vem
+    via .scalars().all(), por isso empilha um scalar None par."""
+    session.queue_scalar(None)
+    session.queue_scalars(list(rates) or [_make_rate()])
+
+
 def _make_target(*, target_eur: float = 35000.0) -> SimpleNamespace:
     t = SimpleNamespace()
     t.target_eur = target_eur
@@ -151,6 +173,7 @@ async def test_happy_path_50_ops_confidence_low():
     session = _FakeSession()
     session.set_get(commit)
 
+    _queue_rate(session)  # Q.173.H — taxa real 12.00 €/h
     # Por cada operação: 1 scalar para bonus + 0 para template_p50 (ML ok)
     # + 1 scalar para daily_target no final
     for _ in ops:
@@ -193,6 +216,7 @@ async def test_no_target_baseline_null():
     session = _FakeSession()
     session.set_get(commit)
 
+    _queue_rate(session)  # Q.173.H — taxa real 12.00 €/h
     for _ in ops:
         session.queue_scalar(_make_bonus_row(bonus_eur=Decimal("10.00")))
 
@@ -219,6 +243,7 @@ async def test_no_duration_model_fallback_p50():
     session = _FakeSession()
     session.set_get(commit)
 
+    _queue_rate(session)  # Q.173.H — taxa real 12.00 €/h
     for _ in ops:
         session.queue_scalar(_make_bonus_row(bonus_eur=Decimal("8.00")))
 
@@ -242,6 +267,7 @@ async def test_sample_gte_100_medium_confidence():
     session = _FakeSession()
     session.set_get(commit)
 
+    _queue_rate(session)  # Q.173.H — taxa real 12.00 €/h
     for _ in ops:
         session.queue_scalar(_make_bonus_row(bonus_eur=Decimal("5.00")))
 
@@ -288,6 +314,7 @@ async def test_demo_orders_50_of_consistent():
     session.set_get(commit)
 
     bonus_val = Decimal("6.00")
+    _queue_rate(session)  # Q.173.H — taxa real 12.00 €/h
     for _ in ops:
         session.queue_scalar(_make_bonus_row(bonus_eur=bonus_val))
     session.queue_scalar(_make_target(target_eur=35000.0))
@@ -301,6 +328,7 @@ async def test_demo_orders_50_of_consistent():
     # Segunda run com session fresca — resultado tem de ser idêntico
     session2 = _FakeSession()
     session2.set_get(commit)
+    _queue_rate(session2)
     for _ in ops:
         session2.queue_scalar(_make_bonus_row(bonus_eur=bonus_val))
     session2.queue_scalar(_make_target(target_eur=35000.0))
@@ -314,3 +342,90 @@ async def test_demo_orders_50_of_consistent():
     assert result.sample_size == 50
     assert result.predicted_margin_eur == result2.predicted_margin_eur
     assert result.predicted_margin_eur is not None
+
+
+# ---------------------------------------------------------------------------
+# Q.173.H — custo/h real de core.labor_rates (fim do €12/h hardcoded)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_q173h_sem_labor_rates_margem_none():
+    """Sem taxas na BD → predicted_margin_eur=None (nunca € inventado)."""
+    ops = [_make_op(duration_h=2.0) for _ in range(3)]
+    commit = _make_commit(ops)
+    session = _FakeSession()
+    session.set_get(commit)
+
+    # execute #1 = _load_cost_rate → sem linhas
+    session.queue_scalar(None)
+    session.queue_scalars([])
+    # sem loop de bónus (cost_rate None salta-o); segue logo para o target
+    session.queue_scalar(_make_target(target_eur=35000.0))
+
+    result = await compute_margin_preview(
+        session, _TENANT, str(commit.id), duration_model=_make_duration_model()
+    )
+
+    assert result.predicted_margin_eur is None
+    assert result.delta_eur is None
+    assert result.cost_rate_eur_h is None
+    assert result.cost_rate_source == "none"
+    assert result.confidence == "low"
+    # baseline continua honesto (target existe)
+    assert result.baseline_margin_eur is not None
+
+
+@pytest.mark.asyncio
+async def test_q173h_media_da_taxa_mais_recente_por_colaborador():
+    """A taxa é a média das loaded_rate MAIS RECENTES por colaborador."""
+    emp_a, emp_b = uuid4(), uuid4()
+    rates = [
+        _make_rate("10.00", employee_id=emp_a, effective=date(2025, 1, 1)),
+        _make_rate("20.00", employee_id=emp_a, effective=date(2026, 1, 1)),
+        _make_rate("10.00", employee_id=emp_b, effective=date(2026, 1, 1)),
+    ]
+    # média(20, 10) = 15 — a taxa antiga de A não conta
+    ops = [_make_op(duration_h=1.0)]
+    commit = _make_commit(ops)
+    session = _FakeSession()
+    session.set_get(commit)
+
+    _queue_rate(session, *rates)
+    session.queue_scalar(None)  # bónus inexistente → 0
+    session.queue_scalar(_make_target(target_eur=35000.0))
+
+    result = await compute_margin_preview(
+        session, _TENANT, str(commit.id),
+        duration_model=_make_duration_model(p50_h=1.0),
+    )
+
+    assert result.cost_rate_eur_h == Decimal("15.0000")
+    assert result.cost_rate_source == "labor_rates"
+    # 1 op × (0 − 1h × 15) = −15
+    assert result.predicted_margin_eur == Decimal("-15.0000")
+
+
+@pytest.mark.asyncio
+async def test_q173h_op_sem_duracao_excluida_nao_inventa_1h():
+    """Op sem fonte de duração é EXCLUÍDA (antes inventava-se 1h)."""
+    op_ok = _make_op(duration_h=2.0)
+    op_sem = _make_op(duration_h=0.0)  # sem modelo, sem duration, sem p50
+    commit = _make_commit([op_ok, op_sem])
+    session = _FakeSession()
+    session.set_get(commit)
+
+    _queue_rate(session)            # taxa 12.00
+    session.queue_scalar(None)      # bónus op_ok → 0
+    session.queue_scalar(None)      # bónus op_sem → 0
+    session.queue_scalar(None)      # template p50 op_sem → None
+    session.queue_scalar(_make_target(target_eur=35000.0))
+
+    result = await compute_margin_preview(
+        session, _TENANT, str(commit.id), duration_model=None
+    )
+
+    # Só a op com duração conta: (0 − 2h × 12) = −24; nada de 1h fabricada
+    assert result.predicted_margin_eur == Decimal("-24.0000")
+    assert result.ops_sem_duracao == 1
+    assert result.confidence == "low"
