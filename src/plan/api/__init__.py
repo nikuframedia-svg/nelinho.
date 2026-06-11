@@ -18,6 +18,7 @@ from .orders import router as orders_router  # Sprint Q.18.ZIP.BE.1
 from .dates import router as dates_router  # Q.53.B (calendário + datas de entrega)
 from .timeline import router as timeline_router  # Q.141 (linha temporal: actuals)
 from .order_materials import router as order_materials_router  # Q.173.U (materiais por OF)
+from .filters_context import router as filters_context_router  # Q.173.AD (contexto do Gantt)
 
 router = APIRouter(prefix="/v1/plan", tags=["PLAN"])
 
@@ -33,6 +34,7 @@ router.include_router(orders_router)
 router.include_router(dates_router)
 router.include_router(timeline_router)
 router.include_router(order_materials_router)  # Q.173.U
+router.include_router(filters_context_router)  # Q.173.AD
 
 
 

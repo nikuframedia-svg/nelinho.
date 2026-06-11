@@ -93,6 +93,15 @@ class TenantContextMiddleware(BaseHTTPMiddleware):
 
 def register_middleware(app: FastAPI) -> None:
     """Register every middleware on the app in the legacy order."""
+    # Q.173.AD — GZip nas respostas grandes: o plano do /overall pesa
+    # ~2,3MB de JSON re-fetched a cada 30s (auditoria 2026-06-11); com
+    # gzip cai para ~15-25%. Adicionado PRIMEIRO (innermost) para comprimir
+    # o corpo antes dos middlewares de headers; minimum_size evita custo
+    # nos payloads pequenos.
+    from starlette.middleware.gzip import GZipMiddleware
+
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
+
     # Q.61.12 — trace_id end-to-end. Extrai X-Request-Id (ou gera UUID),
     # mete em ContextVar; call-sites lem via `get_trace_id()`. Ecoa no
     # response header para o cliente correlacionar com network logs.
