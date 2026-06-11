@@ -679,7 +679,7 @@ async def _cube_measure_cards_impl(request: MeasureCardsRequest) -> MeasureCards
     finally:
         try:
             await cube.close()
-        except Exception:
+        except Exception:  # noqa: BLE001  # close de driver HTTP: nunca mascarar o resultado
             logger.exception("cube.close() falhou no measure-cards")
     return MeasureCardsResponse(cards=list(cards))
 

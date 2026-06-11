@@ -503,7 +503,7 @@ async def run_cpo_schedule(
             session, tenant_id,
             [{"order_id": getattr(op, "order_id", None)} for op in operations],
         )
-    except Exception as snap_exc:  # pragma: no cover — defensive
+    except Exception as snap_exc:  # noqa: BLE001  # boost é opcional: snapshot falhado não trava o solve
         logger.warning(f"boost snapshot failed: {snap_exc}", exc_info=True)
     boost_map: Dict[str, int] = {
         str(lid): int(comp.get("effective", 0) or 0)

@@ -154,7 +154,7 @@ class OrderMaterialsService:
             rows = (
                 await self._session.execute(sql, {"tid": str(self._tenant_id)})
             ).all()
-        except Exception:  # pragma: no cover — defesa: ETL stock não correu
+        except Exception:  # noqa: BLE001  # defesa: ETL stock não correu → campo fica vazio honesto
             return {}
         return {int(r[0]): float(r[1]) for r in rows if r[0] is not None}
 
@@ -173,6 +173,6 @@ class OrderMaterialsService:
                     sql, {"ids": list(produto_ids)}
                 )
             ).all()
-        except Exception:  # pragma: no cover — defesa: espelho produto sem dados
+        except Exception:  # noqa: BLE001  # defesa: espelho produto sem dados → nomes ficam vazios
             return {}
         return {int(r[0]): str(r[1]) for r in rows if r[0] is not None and r[1]}

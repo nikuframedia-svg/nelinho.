@@ -191,7 +191,7 @@ class CapableToPromiseService:
                 )
             )
             rows = (await self.session.execute(stmt)).all()
-        except Exception as exc:  # pragma: no cover — defensive
+        except Exception as exc:  # noqa: BLE001  # gate tri-state: sem BOM → desconhecido, nunca 500
             logger.debug("ctp bom lookup falhou: %s", exc)
             return []
         return [
@@ -260,7 +260,7 @@ class CapableToPromiseService:
                 WarehouseStock.tenant_id == self.tenant_id,
             )
             rows = (await self.session.execute(stmt)).scalars().all()
-        except Exception as exc:  # pragma: no cover — defensive
+        except Exception as exc:  # noqa: BLE001  # gate tri-state: sem stock → desconhecido, nunca 500
             logger.debug("ctp stock lookup skipped: %s", exc)
             return {}
         agg: Dict[str, float] = {}

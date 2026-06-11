@@ -74,7 +74,7 @@ async def get_order_materials(
     svc = OrderMaterialsService(session, tenant_id)
     try:
         result = await svc.materiais_restantes(legacy_id)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001  # fronteira HTTP: re-levanta como 503 honesto
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Erro ao consultar materiais da OF {legacy_id}: {exc}",

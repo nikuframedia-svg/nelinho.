@@ -2123,7 +2123,7 @@ def _build_sql_map() -> dict[str, tuple[str, str]]:
                 for m in cube.get("measures", []):
                     key = f"{cube_name}.{m['name']}"
                     result[key] = (m.get("sql", ""), sql_table)
-        except Exception as exc:  # um YML mau não derruba o catálogo
+        except Exception as exc:  # noqa: BLE001  # um YML mau não derruba o catálogo
             import logging as _logging
 
             _logging.getLogger(__name__).debug(

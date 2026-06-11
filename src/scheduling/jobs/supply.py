@@ -58,7 +58,7 @@ async def _rop_recompute_job(tenant_id: UUID) -> None:
             "rop_recompute tenant=%s %s elapsed_ms=%s",
             tenant_id, summary, elapsed_ms,
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001  # job APScheduler: loga e sobrevive ao próximo tick
         logger.error(
             "rop_recompute tenant=%s failed: %s", tenant_id, exc, exc_info=True,
         )

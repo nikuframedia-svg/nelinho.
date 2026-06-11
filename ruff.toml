@@ -28,6 +28,10 @@ target-version = "py311"
 line-length = 200  # don't flag long lines — we want bugs only
 
 [lint]
+# Q.173.AP — BLE001 é enforced FORA deste ruleset (scripts/lint_drift_gate.py
+# corre `ruff --select BLE001` contra o baseline). `external` impede o RUF100
+# de marcar os `# noqa: BLE001` (com razão, por site) como unused no ruff base.
+external = ["BLE001"]
 select = [
     "F",     # pyflakes — REAL BUGS (undefined names, unused imports)
     "E9",    # syntax errors only (skip E1xx-E7xx style)
