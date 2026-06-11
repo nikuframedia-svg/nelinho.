@@ -230,8 +230,16 @@ ROUTE_PREFIX_REQUIREMENTS: "OrderedDict[str, _RoutePolicy]" = OrderedDict([
     ("/v1/core/operations",         ((), [Permission.MASTER_DATA_WRITE])),
     ("/v1/core/rates",              ((), [Permission.CONFIG_WRITE])),
     ("/v1/core/tenants",            ((), [Permission.TENANT_WRITE])),
-    ("/v1/core/config",             ((), [Permission.CONFIG_WRITE])),
-    ("/v1/core/tenant-config",      ((), [Permission.CONFIG_WRITE])),
+    # Q.173.K — o router real de configuração é /v1/config
+    # (src/core/api/tenant_config.py + q115_config revenue-target/
+    # client-priority); as entradas antigas /v1/core/config e
+    # /v1/core/tenant-config protegiam prefixos que NENHUM router usa —
+    # mutações de config passavam pelo fall-through sem CONFIG_WRITE
+    # (auditoria 2026-06-11). GET fica fora da matriz de propósito: a UI
+    # (todas as roles) lê valores de config (ex.: capacidade do camião);
+    # o tenant-header gate continua a aplicar-se.
+    ("/v1/config",                  (("POST", "PUT", "PATCH", "DELETE"),
+                                     [Permission.CONFIG_WRITE])),
 
     # ── HR / workforce ────────────────────────────────────────────────
     ("/v1/hr/allocations",          ((), [Permission.ALLOCATION_WRITE])),

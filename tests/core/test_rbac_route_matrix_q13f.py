@@ -122,9 +122,9 @@ def test_ceo_is_read_only_on_dashboard():
     assert not is_route_allowed_for_role(
         "/v1/plan/cpo/schedule", "POST", ceo,
     )
-    # CEO must NOT touch tenant config
+    # CEO must NOT touch tenant config (Q.173.K — prefixo real /v1/config)
     assert not is_route_allowed_for_role(
-        "/v1/core/tenant-config", "POST", ceo,
+        "/v1/config/planning/scope", "POST", ceo,
     )
 
 
@@ -156,3 +156,34 @@ def test_planner_supply_can_run_cpo_but_not_change_master_data():
     assert not is_route_allowed_for_role(
         "/v1/core/customers", "POST", planner,
     )
+
+
+def test_q173k_config_mutations_exigem_config_write():
+    """Q.173.K — o prefixo real /v1/config está na matriz para mutações.
+
+    A auditoria 2026-06-11 encontrou a matriz a proteger /v1/core/config,
+    prefixo que NENHUM router usa — PUT/POST de configuração passavam pelo
+    fall-through sem CONFIG_WRITE.
+    """
+    from src.shared.auth.rbac import Permission, requirements_for_route
+
+    for method in ("POST", "PUT", "PATCH", "DELETE"):
+        req = requirements_for_route("/v1/config/planning/scope", method)
+        assert req == [Permission.CONFIG_WRITE], (method, req)
+    # GET fica fora da matriz de propósito (UI de todas as roles lê config;
+    # tenant-header gate continua).
+    assert requirements_for_route("/v1/config/transporte/truck", "GET") is None
+    # As entradas mortas saíram — nenhum router usa estes prefixos.
+    from src.shared.auth.rbac import ROUTE_PREFIX_REQUIREMENTS
+
+    assert "/v1/core/config" not in ROUTE_PREFIX_REQUIREMENTS
+    assert "/v1/core/tenant-config" not in ROUTE_PREFIX_REQUIREMENTS
+
+
+def test_q173k_revenue_target_post_coberto():
+    """POST /v1/config/revenue-target (q115) também fica sob a matriz."""
+    from src.shared.auth.rbac import Permission, requirements_for_route
+
+    assert requirements_for_route(
+        "/v1/config/revenue-target", "POST",
+    ) == [Permission.CONFIG_WRITE]
