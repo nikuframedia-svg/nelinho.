@@ -164,6 +164,16 @@ categories:
       description: Q.173.L — fases de REPARAÇÃO para o planeador (prioridade no
         loader + exclusão no CP-SAT global). A view v_of_em_producao continua
         {14,76,77} hardcoded na BD — mudar aqui governa só o solver.
+    - key: auto_replan_plan_cap
+      value: 0
+      data_type: int
+      description: Q.161.B — cap de ordens do robô de fundo (0 = todos os
+        em-produção). Lido por auto_cpo_replan_job.
+    - key: auto_replan_time_limit_s
+      value: 300.0
+      data_type: float
+      description: Q.162.A — budget do SOLVER do robô (<< job_timeout 1200s do
+        Arq). Lido por auto_cpo_replan_job.
     - key: fitness.weight.makespan
       value: 0.2
       data_type: float

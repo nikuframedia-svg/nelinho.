@@ -90,6 +90,12 @@ DEFAULT_SEEDS: list[ConfigSeed] = [
      "Q.173.L — fases de REPARAÇÃO para o planeador (prioridade no loader + "
      "exclusão no CP-SAT global). A view v_of_em_producao continua {14,76,77} "
      "hardcoded na BD — mudar aqui governa só o solver."),
+    ("planning", "auto_replan_plan_cap", 0, "int",
+     "Q.161.B — cap de ordens do robô de fundo (0 = todos os em-produção). "
+     "Lido por auto_cpo_replan_job; seeded em Q.173.O para ter UI."),
+    ("planning", "auto_replan_time_limit_s", 300.0, "float",
+     "Q.162.A — budget do SOLVER do robô (<< job_timeout 1200s do Arq). "
+     "Lido por auto_cpo_replan_job; seeded em Q.173.O para ter UI."),
 
     # Fitness weights (Blueprint v2.0 §5.5 — normalised, sum = 1.0)
     ("planning", "fitness.weight.makespan", 0.20, "float", ""),
