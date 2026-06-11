@@ -77,22 +77,26 @@ class RiskFlagsMixin:
     async def shortage_risks(self, *, horizon_days: int = 14) -> dict[str, Any]:
         """Minimal ROP-based shortage detector.
 
-        Compares each `ROPConfig.rop` against the most recent
-        `InventoryLedgerEntry.qty_closing`. Orders are joined in lazily —
-        a full BOM explosion ships in Sprint O.2.
+        Q.173.Y.1 — `on_hand` vem do SNAPSHOT real do ERP
+        (`supply.warehouse_stock`, somado por produto), NÃO do
+        `qty_closing` do ledger: o ledger reconstruído do espelho (24
+        meses, Q.173.F) não tem saldo inicial — o seu running total é
+        relativo, não stock real (invariante #8). O join antigo à última
+        data do ledger também DUPLICAVA linhas quando havia vários
+        movimentos no mesmo dia (6.147 itens para 2.282 ROPs na primeira
+        corrida live).
 
         Output is always non-null; `items=[]` when no inventory is present.
         """
-        from src.supply.models import InventoryLedgerEntry, ROPConfig
+        from src.supply.models import ROPConfig, WarehouseStock
 
-        # Latest closing qty per SKU (correlated subquery via max(date))
-        latest_subq = (
+        stock_subq = (
             select(
-                InventoryLedgerEntry.sku_id,
-                func.max(InventoryLedgerEntry.date).label("latest"),
+                WarehouseStock.product_code.label("sku_id"),
+                func.sum(WarehouseStock.stock).label("on_hand"),
             )
-            .where(InventoryLedgerEntry.tenant_id == self.tenant_id)
-            .group_by(InventoryLedgerEntry.sku_id)
+            .where(WarehouseStock.tenant_id == self.tenant_id)
+            .group_by(WarehouseStock.product_code)
             .subquery()
         )
         stmt = (
@@ -101,19 +105,11 @@ class RiskFlagsMixin:
                 ROPConfig.rop,
                 ROPConfig.avg_daily_demand,
                 ROPConfig.lead_time_days,
-                InventoryLedgerEntry.qty_closing,
+                stock_subq.c.on_hand,
             )
             .join(
-                latest_subq,
-                ROPConfig.sku_id == latest_subq.c.sku_id,
-                isouter=True,
-            )
-            .join(
-                InventoryLedgerEntry,
-                and_(
-                    InventoryLedgerEntry.sku_id == latest_subq.c.sku_id,
-                    InventoryLedgerEntry.date == latest_subq.c.latest,
-                ),
+                stock_subq,
+                ROPConfig.sku_id == stock_subq.c.sku_id,
                 isouter=True,
             )
             .where(ROPConfig.tenant_id == self.tenant_id)

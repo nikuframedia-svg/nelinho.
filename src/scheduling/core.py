@@ -71,7 +71,7 @@ from src.scheduling.jobs.capture_plan_execution import (
 from src.scheduling.jobs.phase_calibration_job import _phase_calibration_global_job
 from src.scheduling.jobs.plan_vs_actual import _plan_vs_actual_global_job
 from src.scheduling.jobs.runbook_learning import _runbook_learning_job
-from src.scheduling.jobs.supply import _shortage_scan_job
+from src.scheduling.jobs.supply import _rop_recompute_job, _shortage_scan_job
 
 logger = logging.getLogger(__name__)
 
@@ -430,6 +430,19 @@ def register_tenant(
         args=[tenant_id],
         id=f"mold_health_scan:{tenant_id}",
         name=f"mold_health_scan[{tenant_id}]",
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+    )
+    # Q.173.Y — ROPs recalculados de madrugada (depois do sync nocturno
+    # 02:30 dos espelhos). O serviço existia desde Q.67 e nunca correu —
+    # supply_rop_configs=0 e shortage-risks=[] para sempre.
+    _scheduler.add_job(
+        _rop_recompute_job,
+        trigger=CronTrigger.from_crontab("40 3 * * *", timezone="UTC"),
+        args=[tenant_id],
+        id=f"rop_recompute:{tenant_id}",
+        name=f"rop_recompute[{tenant_id}]",
         replace_existing=True,
         coalesce=True,
         max_instances=1,
