@@ -89,11 +89,16 @@ async def _get_commit(client: httpx.AsyncClient, sha: str, ops: bool = False) ->
 
 
 async def _cleanup_smoke_overrides() -> int:
-    """Q.173.AN — apaga os commits manual_drag criados por smokes (este e
-    corridas anteriores que falharam a meio). O reorder do passo 6 fica em
-    `plan_schedule_commits` com `delta.tipo='manual_drag'` e autor humano —
-    exatamente o que `active_manual_overrides` coleta — e sem limpeza o robô
-    re-aplicava o move do smoke a TODOS os planos durante o TTL (14d).
+    """Q.173.AN — apaga TODOS os commits criados por smokes (este e corridas
+    anteriores que falharam a meio), incluindo descendentes via parent_id:
+
+    - o reorder do passo 6 (`delta.tipo='manual_drag'`, autor humano) é
+      coletado por `active_manual_overrides` — sem limpeza o robô re-aplicava
+      o move do smoke a TODOS os planos durante o TTL (14d);
+    - os DRAFTs de plan_cap=80 dos passos 2/8 (e o commit-filho do reapply,
+      autor system) ficavam como "último commit saudável" — /overall e o
+      shortage-forecast regrediam para um plano de 80 ops até o robô horário
+      correr de novo.
 
     Acesso direto à BD (não há DELETE de commits na API, por design):
     o smoke corre na máquina do stack, com o venv do projeto.
@@ -110,11 +115,18 @@ async def _cleanup_smoke_overrides() -> int:
         async with engine.begin() as conn:
             res = await conn.execute(
                 _text(
+                    "WITH RECURSIVE smoke AS ("
+                    "    SELECT id FROM plan_schedule_commits"
+                    "    WHERE tenant_id = :tid AND status != 'LIVE'"
+                    "      AND (message LIKE 'E2E smoke%'"
+                    "           OR delta->>'reason' LIKE 'E2E smoke%')"
+                    "    UNION"
+                    "    SELECT c.id FROM plan_schedule_commits c"
+                    "    JOIN smoke s ON c.parent_id = s.id"
+                    "    WHERE c.status != 'LIVE'"
+                    ") "
                     "DELETE FROM plan_schedule_commits "
-                    "WHERE tenant_id = :tid "
-                    "  AND delta->>'tipo' = 'manual_drag' "
-                    "  AND delta->>'reason' LIKE 'E2E smoke%' "
-                    "  AND status != 'LIVE'"
+                    "WHERE id IN (SELECT id FROM smoke)"
                 ),
                 {"tid": TENANT},
             )
@@ -330,12 +342,12 @@ async def main() -> int:
         else:
             print("  WARN operador: sem employees ativos para testar")
 
-    # 10 — cleanup: o smoke não deixa overrides ativos atrás de si (Q.173.AN)
+    # 10 — cleanup: o smoke não deixa overrides nem DRAFTs atrás de si (Q.173.AN)
     try:
         n = await _cleanup_smoke_overrides()
-        _ok("cleanup overrides do smoke", f"{n} commit(s) manual_drag apagados")
+        _ok("cleanup commits do smoke", f"{n} commit(s) apagados (drag+DRAFTs+filhos)")
     except Exception as exc:
-        _fail("cleanup overrides do smoke", f"{type(exc).__name__}: {exc}")
+        _fail("cleanup commits do smoke", f"{type(exc).__name__}: {exc}")
 
     print()
     print(f"E2E PLAN SMOKE: {len(_passed)} OK, {len(_failed)} FAIL")
