@@ -47,3 +47,17 @@ def test_upsert_continua_a_propagar_transport_date() -> None:
     # promessas novas/alteradas no ERP cheguem ao espelho (e NULLs honestos
     # substituam datas fabricadas antigas).
     assert "transport_date     = EXCLUDED.transport_date" in _UPSERT_SQL
+
+
+def test_q173v_reparacoes_reentradas_no_espelho() -> None:
+    """Q.173.V — reparações re-entradas (OF_DATAFIM preenchido, op aberta
+    na fase de reparação) entram no espelho via UNION com o critério
+    canónico v_of_em_producao; a promessa de transporte fica NULL (a do
+    ERP é a da venda ORIGINAL — usá-la seria desonesto)."""
+    assert "UNION" in _WIP_CTE
+    repair_branch = _WIP_CTE.split("UNION", 1)[1]
+    assert "v.is_reparacao = true" in repair_branch
+    assert 'NULLIF(ofb."OF_DATAFIM", \'\') IS NOT NULL' in repair_branch
+    assert "NULL::date" in repair_branch, (
+        "reparação sem promessa real de transporte → NULL (invariante #8)"
+    )

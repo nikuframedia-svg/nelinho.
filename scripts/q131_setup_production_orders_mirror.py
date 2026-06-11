@@ -32,7 +32,15 @@ from src.shared.config import settings
 
 DEV_TENANT = "00000000-0000-0000-0000-000000000001"
 
-# WIP real: OF não-terminada cuja fase atual é de produção (FP_PRODUCAO=true).
+# WIP real: OF não-terminada cuja fase atual é de produção (FP_PRODUCAO=true)
+# UNION as REPARAÇÕES re-entradas (Q.173.V): um barco entregue que voltou
+# para reparação tem OF_DATAFIM preenchido (da produção original) e ficava
+# FORA do espelho — 74/76 reparações invisíveis na expedição/OTD/risco
+# (auditoria 2026-06-11). O critério é o canónico v_of_em_producao
+# (op aberta na fase atual, is_reparacao = fase em {14,76,77}); a
+# transport_date de uma reparação é NULL (a promessa do ERP é a da VENDA
+# original, ex. 2024 — usá-la seria desonesto; promessa nova de reparação
+# é pergunta pendente ao Luis).
 # Spelke CX1: zero campos monetários (€) — só IDs, nomes, datas e fase.
 _WIP_CTE = """
     wip AS (
@@ -60,6 +68,33 @@ _WIP_CTE = """
         LEFT JOIN factory_raw.produto p   ON p."P_ID"  = ofb."OF_P_ID"
         WHERE NULLIF(ofb."OF_DATAFIM", '') IS NULL
           AND f."FP_PRODUCAO" = true
+          AND ofb."OF_P_ID" IS NOT NULL
+
+        UNION
+
+        -- Q.173.V — reparações re-entradas (OF fechada mas com op aberta na
+        -- fase atual de reparação). Datas de promessa a NULL: honesto.
+        SELECT
+            ofb."OF_ID",
+            ofb."OF_P_ID",
+            COALESCE(NULLIF(p."P_NOME", ''),
+                     'Modelo ' || ofb."OF_P_ID"::text),
+            CASE
+                WHEN split_part(upper(trim(COALESCE(p."P_NOME", ''))), ' ', 1)
+                     IN ('K1','K2','K4','C1','C2','C4')
+                THEN split_part(upper(trim(p."P_NOME")), ' ', 1)
+                ELSE 'Other'
+            END,
+            ofb."OF_FP_ID",
+            COALESCE(NULLIF(f."FP_NOME", ''), ofb."OF_FP_ID"::text),
+            CAST(NULLIF(ofb."OF_DATA", '') AS timestamp)::date,
+            NULL::date                                    -- sem promessa real
+        FROM factory_raw.v_of_em_producao v
+        JOIN factory_raw.ordemfabrico ofb ON ofb."OF_ID" = v.of_id
+        JOIN factory_raw.fases_producao f ON f."FP_ID" = ofb."OF_FP_ID"
+        LEFT JOIN factory_raw.produto p   ON p."P_ID"  = ofb."OF_P_ID"
+        WHERE v.is_reparacao = true
+          AND NULLIF(ofb."OF_DATAFIM", '') IS NOT NULL
           AND ofb."OF_P_ID" IS NOT NULL
     )
 """
