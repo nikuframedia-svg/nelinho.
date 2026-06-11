@@ -1,18 +1,18 @@
 cubes:
   - name: consumo_by_of
     description: >
-      Q.108.G — Consumo material por OF (preservando work_order_id).
+      Q.108.G / Q.173.AJ — Consumo material por OF (preservando erp_of_id).
       Source: marts.v_consumo_by_of_dia sobre supply.inventory_ledger_entries
-      com MOV_OF_ID populado desde Q.108.G. Destrava margem por OF +
-      `corr_custo_por_of_vs_facturacao`.
+      (erp_of_id = INTEGER FK para OF_FP, adicionado em Q.173.F).
+      Destrava margem por OF + `corr_custo_por_of_vs_facturacao`.
     sql_table: marts.v_consumo_by_of_dia
 
     measures:
       - name: custo_eur
         description: >
-          SUM(qty_out × P_PRECOCUSTO) por (dia, work_order_id, sku).
+          SUM(qty_out x P_PRECOCUSTO) por (dia, erp_of_id, sku).
           DINHEIRO aditivo. Para custo TOTAL por OF: filtrar/agrupar por
-          work_order_id sem time.
+          erp_of_id sem time.
         sql: custo_eur
         type: sum
         format: number
@@ -33,15 +33,15 @@ cubes:
       - name: data
         sql: data
         type: time
-      - name: work_order_id
-        description: ERP OF_ID stringificada.
-        sql: work_order_id
-        type: string
+      - name: erp_of_id
+        description: ERP OF_ID (INTEGER) da ordem de fabrico.
+        sql: erp_of_id
+        type: number
       - name: sku_id
         description: P_ID stringificada (chave material).
         sql: sku_id
         type: string
       - name: material
-        description: P_NOME canónico do material.
+        description: P_NOME canonico do material.
         sql: material
         type: string

@@ -1,15 +1,16 @@
 """Q.108.W1.2 — view `marts.v_reagendamentos_mes`.
 
-Reagendamentos = cada novo `plan.plan_schedule_commits` no mês representa
-um plano produzido pelo CPO (mesmo que ainda em DRAFT). Mede o ritmo de
-re-planeamento. Sub-conta:
-  - total_commits: COUNT por mês
-  - live_commits: COUNT que chegaram a status='LIVE' (aprovados Q.62.D.4)
-  - draft_commits: ficaram em DRAFT (CPO produziu mas não foi aprovado)
-  - replans_per_parent: para cada parent_id, quantos commits filhos
-    existem — proxy de quantas vezes o plano foi alterado.
+Reagendamentos = cada planning_run_id distinto em plan.production_schedules
+no mês representa uma corrida do CPO. Mede o ritmo de re-planeamento.
+Sub-conta:
+  - total_commits: COUNT(DISTINCT planning_run_id) por mês
+  - live_commits: COUNT onde status = 'LIVE'
+  - draft_commits: COUNT onde status = 'DRAFT'
+  - replans: total_commits - 1 (cada corrida após a primeira é um re-plano)
 
-Source: src/plan/cpo/commits.py (plan.plan_schedule_commits).
+Q.173.AJ: plan.plan_schedule_commits não existe; usa production_schedules
+agrupado por planning_run_id (1 planning_run = 1 corrida CPO).
+View válida com 0 rows enquanto o CPO não correr.
 """
 from __future__ import annotations
 
@@ -23,14 +24,30 @@ from src.shared.config import settings
 
 VIEW_SQL = """
 CREATE OR REPLACE VIEW marts.v_reagendamentos_mes AS
+-- Q.173.AJ: usa production_schedules agrupado por planning_run_id.
+-- 1 planning_run_id distinto = 1 corrida CPO = 1 "commit".
+WITH runs AS (
+    SELECT
+        planning_run_id,
+        DATE_TRUNC('month', MIN(created_at))::date  AS data,
+        -- status dominante da corrida (SCHEDULED/COMPLETED=LIVE, DRAFT=DRAFT)
+        CASE
+            WHEN BOOL_OR(status IN ('SCHEDULED', 'COMPLETED', 'IN_PROGRESS')) THEN 'LIVE'
+            WHEN BOOL_OR(status = 'DRAFT')                                    THEN 'DRAFT'
+            ELSE 'OTHER'
+        END AS run_status
+    FROM plan.production_schedules
+    WHERE created_at IS NOT NULL
+      AND planning_run_id IS NOT NULL
+    GROUP BY 1
+)
 SELECT
-    DATE_TRUNC('month', created_at)::date          AS data,
-    COUNT(*)                                       AS total_commits,
-    COUNT(*) FILTER (WHERE status = 'LIVE')        AS live_commits,
-    COUNT(*) FILTER (WHERE status = 'DRAFT')       AS draft_commits,
-    COUNT(*) FILTER (WHERE parent_id IS NOT NULL)  AS replans
-FROM plan.plan_schedule_commits
-WHERE created_at IS NOT NULL
+    data,
+    COUNT(*)::bigint                                    AS total_commits,
+    COUNT(*) FILTER (WHERE run_status = 'LIVE')::bigint AS live_commits,
+    COUNT(*) FILTER (WHERE run_status = 'DRAFT')::bigint AS draft_commits,
+    GREATEST(COUNT(*) - 1, 0)::bigint                   AS replans
+FROM runs
 GROUP BY 1
 """
 

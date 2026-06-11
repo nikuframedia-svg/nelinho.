@@ -124,7 +124,7 @@ CANONICAL_DIMENSIONS: frozenset[str] = frozenset({
     "mold_type",    # Q.108.J.2: plan.mold.mold_type — tipo (tipo-1, tipo-2, …).
     "modelo",       # Q.108.F.3b: factory_raw.produto.P_NOME — K1/K2/K4/...
     "modelo_id",    # Q.108.F.3b: factory_raw.produto.P_ID.
-    "work_order_id",  # Q.108.G: supply.inventory_ledger_entries.work_order_id.
+    "erp_of_id",      # Q.108.G/Q.173.AJ: supply.inventory_ledger_entries.erp_of_id (INTEGER FK OF_FP).
     "sku_id",       # Q.108.G: P_ID stringificada — chave material no ledger.
     "operador_id",  # Q.108.M: AT_E_ID — FK para ENTIDADE (operador NELO).
     "fase_id",      # Q.108.M: FP_ID — FK para FASES_PRODUCAO.
@@ -513,50 +513,11 @@ MEASURE_REGISTRY: dict[str, MeasureSpec] = {
         ),
     ),
     # ── Q.103 Agente A: drill-down comercial por cliente ──
-    # ── Q.107 Onda 4: TEMPERATURA (refactor zona fixa) ──
-    "ambiental_estufa_temp.temp_max": MeasureSpec(
-        name="ambiental_estufa_temp.temp_max",
-        unit=CanonicalUnit.TEMPERATURA,
-        dimensions_supported=frozenset({"tempo", "estufa"}),
-        business_decision=(
-            "Q.107 Onda 4: temperatura MÁXIMA registada nas estufas "
-            "de cura (sensors 12/14/17). Agregação MAX cross-row "
-            "(NÃO SUM — somar °C é inválido). Anchor Estufa 60 Abril "
-            "2026 = 79.4°C. Q.82 documenta cura química a 68-71°C "
-            "(15h); pico observado 80.2°C historicamente."
-        ),
-        description="Pico de temperatura em estufa (°C, MAX cross-row, NÃO somar)",
-        synonyms=(
-            "temperatura máxima estufa", "temperatura maxima",
-            "pico temperatura estufa", "pico temperatura", "pico cura",
-            "temp máx estufa", "estufa quente", "máximo cura",
-            "graus celsius máximo", "que temperatura atingiu",
-            "qual a temperatura", "que temperatura", "quão quente",
-            # Q.107.B: padrões "temperatura na/da cura" (cu08)
-            "temperatura cura", "temperatura na cura", "temperatura da cura",
-            "qual a temperatura atingida", "que temperatura cura",
-            "Estufa 60 temperatura", "temperatura Estufa",
-            "celsius", "graus", "°C",
-        ),
-        aggregation="MAX",
-    ),
-    "ambiental_estufa_temp.temp_avg": MeasureSpec(
-        name="ambiental_estufa_temp.temp_avg",
-        unit=CanonicalUnit.TEMPERATURA,
-        dimensions_supported=frozenset({"tempo", "estufa"}),
-        business_decision=(
-            "Q.107 Onda 4: temperatura MÉDIA das estufas. Agregação "
-            "AVG cross-row (NÃO SUM). Anchor Estufa 60 Abril 2026 = "
-            "51.3°C avg (inclui standby + cura — entre ciclos a "
-            "estufa baixa)."
-        ),
-        description="Temperatura média em estufa de cura (°C AVG)",
-        synonyms=(
-            "temperatura média", "temp média", "média estufa",
-            "temperatura ambiente", "celsius médio",
-        ),
-        aggregation="AVG",
-    ),
+    # Q.173.AJ: ambiental_estufa_temp removido (factory_raw.iot_sensor_data nao existe).
+    # Q.173.AJ: ambiental_estufa_humidade removido (idem).
+    # Q.173.AJ: ambiental_cura_horas removido (idem).
+    # Q.173.AJ: ambiental_cura_compliance removido (idem).
+    # Q.173.AJ: ambiental_iot_alarmes removido (factory_raw.iot_sensor_alarm nao existe).
     # ── Q.107 Onda 3: moldes ──
     "moldes.total": MeasureSpec(
         name="moldes.total",
@@ -589,24 +550,8 @@ MEASURE_REGISTRY: dict[str, MeasureSpec] = {
             "moldes a trabalhar",
         ),
     ),
-    # ── Q.107 Onda 3: ciclos de cura (registar measure existente no YAML) ──
-    "ambiental_cura_horas.ciclos": MeasureSpec(
-        name="ambiental_cura_horas.ciclos",
-        unit=CanonicalUnit.CONTAGEM,
-        dimensions_supported=frozenset({"tempo", "estufa"}),
-        business_decision=(
-            "Q.107 Onda 3: contagem de ciclos de cura. Measure já "
-            "existia no cube YAML ambiental_cura_horas desde Q.100 "
-            "mas faltava no REGISTRY. Anchor Estufa 60 Abril 2026 = "
-            "13 ciclos."
-        ),
-        description="Número de ciclos de cura em estufa",
-        synonyms=(
-            "ciclos de cura", "ciclos", "quantos ciclos", "n ciclos",
-            "ciclos estufa",
-        ),
-    ),
-    # ── Q.107 Onda 1: pecas_cortadas + pecas_pintadas (padrão Q.99) ──
+    # Q.173.AJ: ambiental_cura_horas.ciclos removido (idem — iot_sensor_data inexistente).
+    # ── Q.107 Onda 1: pecas_cortadas + pecas_pintadas (padrao Q.99) ──
     "producao_pecas_cortadas.total": MeasureSpec(
         name="producao_pecas_cortadas.total",
         unit=CanonicalUnit.CONTAGEM,
@@ -876,40 +821,8 @@ MEASURE_REGISTRY: dict[str, MeasureSpec] = {
             "facto objectivo."
         ),
     ),
-    # ── Q.100 Medida 1: primeira medida do domínio Ambiental (IoT) ──
-    "ambiental_cura_horas.total": MeasureSpec(
-        name="ambiental_cura_horas.total",
-        unit=CanonicalUnit.TEMPO,
-        description="Horas de cura química em estufa (T>=65°C)",
-        synonyms=(
-            "cura", "horas de cura", "horas cura", "tempo de cura",
-            "tempo cura", "estufa", "tempo em estufa", "secagem",
-            "Estufa 60", "Estufa 30", "Estufa Peças", "ciclo de cura",
-            "química", "curagem",
-            # Q.107.B: padrões comparativos (cu03 Março vs Abril)
-            "cura mensal", "cura por mês", "comparativo cura",
-            "estufa por período", "estufa mensal",
-            "Março vs Abril", "Abril vs Maio", "comparar cura",
-            # Q.107.B: variantes de pergunta
-            "quantas horas", "estufa quanto tempo", "duração cura",
-        ),
-        dimensions_supported=frozenset({"tempo", "estufa"}),
-        business_decision=(
-            "Q.100 Medida 1: horas em ciclos de cura química. Fonte: "
-            "marts.v_ciclos_cura (1 row por ciclo). Ciclo = janela "
-            "contínua T>=65°C com gap separador >60min e duração >=1h. "
-            "SUM(duracao_h) onde duracao_h = MAX(ts)-MIN(ts) do ciclo "
-            "(NÃO 'n_leituras × 5min' — esse subestima ~10%). Threshold "
-            "65°C separa standby (~30°C) de cura activa (73-77°C avg, "
-            "pico 80.2°C). IOT_SENSOR_ALARM.SA_MIN=45°C é o limite "
-            "NELO documentado mas 65 é onde os ciclos reais aparecem "
-            "na distribuição. Anchor Q.100.A: Estufa 60 (sensor 12) "
-            "em Abril 2026 = 13 ciclos / 150.6 h (médio 11.58 h, pico "
-            "79.4°C). Padrão noturno (~19h→07h overnight). Aditivo "
-            "entre estufas e meses. Cobertura: 1 ano espelho Q.98."
-        ),
-    ),
-    # ── Q.108 Onda A: utilização total de moldes (SUM(MLD_UTILIZ)) ──
+    # Q.173.AJ: ambiental_cura_horas.total removido (iot_sensor_data inexistente).
+    # ── Q.108 Onda A: utilizacao total de moldes (SUM(MLD_UTILIZ)) ──
     "moldes.utilizacao_total": MeasureSpec(
         name="moldes.utilizacao_total",
         unit=CanonicalUnit.CONTAGEM,
@@ -975,128 +888,10 @@ MEASURE_REGISTRY: dict[str, MeasureSpec] = {
             "kg CO2", "carbon footprint",
         ),
     ),
-    # ── Q.108 Onda A: humidade média das estufas (FRACAO, AGG=AVG) ──
-    "ambiental_estufa_humidade.avg": MeasureSpec(
-        name="ambiental_estufa_humidade.avg",
-        unit=CanonicalUnit.FRACAO,
-        dimensions_supported=frozenset({"tempo", "estufa"}),
-        aggregation="AVG",
-        business_decision=(
-            "Q.108 Onda A: humidade relativa média das estufas. View "
-            "marts.v_estufa_humidade_mes divide SD_HUM por 100 (0-100% "
-            "→ 0-1 FRACAO) e agrega AVG por mês × sensor. Filtra "
-            "sensores 12 (Estufa 60), 14 (Estufa 30), 17 (Estufa Peças) "
-            "— exclui sensor 15 'Temperatura Exterior' (não é estufa). "
-            "Anchors globais histórico: Estufa 60 ~0.383 (38.3%); "
-            "Estufa 30 ~0.305; Estufa Peças ~0.414. Agregação cross-row "
-            "AVG (NÃO SUM — humidade média não soma). Apresentar em % "
-            "na narração (×100)."
-        ),
-        description="Humidade relativa média das estufas (0-1, narração em %)",
-        synonyms=(
-            "humidade", "humidade estufa", "humidade média", "%RH",
-            "humidade relativa", "hum média estufa",
-            "humidade Estufa 60", "humidade Estufa 30", "humidade Estufa Peças",
-            "qual a humidade", "humidade na estufa", "humidade ambiente estufa",
-            "RH estufa", "SD_HUM",
-        ),
-    ),
-    # ── Q.108.B2: documentação dos transportes (TRANSP_DOCS) ──
-    "logistica_docs.emitidos_total": MeasureSpec(
-        name="logistica_docs.emitidos_total",
-        unit=CanonicalUnit.CONTAGEM,
-        dimensions_supported=frozenset({"tempo"}),
-        business_decision=(
-            "Q.108.B2: COUNT(*) sobre factory_raw.transp_docs com "
-            "TRDOC_DATA preenchida (CMR, factura, packing list, etc). "
-            "Cobertura 64% (29 969 / 46 917 datadas; 16 948 docs sem "
-            "data não entram na medida). Anchor 2024 = 1 397 docs "
-            "emitidos. CONTAGEM aditiva entre meses. NUNCA confundir "
-            "com `logistica_transportes.total` (transportes "
-            "granularidade — 1 transporte pode ter 0+ docs)."
-        ),
-        description="Documentos de transporte emitidos por mês (CMR, packing list)",
-        synonyms=(
-            "documentos transporte", "docs transporte", "CMR", "packing list",
-            "factura transporte", "documentos emitidos", "docs emitidos",
-            "documentação logística", "documentos logística",
-            "quantos documentos", "n documentos", "papelada transporte",
-            "carta de porte", "guia de transporte", "Bill of Lading", "B/L",
-            "documentos expedição", "guias expedição", "guias de remessa",
-            "CMR emitidos", "documentos enviados transporte",
-        ),
-    ),
-    "logistica_docs.pendentes_total": MeasureSpec(
-        name="logistica_docs.pendentes_total",
-        unit=CanonicalUnit.CONTAGEM,
-        dimensions_supported=frozenset({"tempo"}),
-        business_decision=(
-            "Q.108.B2: COUNT(*) sobre factory_raw.transp_docs com "
-            "TRDOC_TRATADO=FALSE (ou NULL) E TRDOC_DATA preenchida. "
-            "Anchor histórico = 20 pendentes (vs 29 949 tratados, "
-            "99.9% processados); 2024 = 3 pendentes. Indicador de "
-            "backlog logístico residual. Aditivo entre meses."
-        ),
-        description="Documentos de transporte por processar (TRDOC_TRATADO=FALSE)",
-        synonyms=(
-            "docs pendentes", "documentos pendentes", "papelada pendente",
-            "docs por tratar", "documentos não tratados", "docs em atraso",
-            "backlog documentos", "documentação em falta",
-            "papelada por fazer", "TRDOC_TRATADO false",
-        ),
-    ),
-    # ── Q.108 Onda A: regras de alarme IoT configuradas ──
-    "ambiental_iot_alarmes.total": MeasureSpec(
-        name="ambiental_iot_alarmes.total",
-        unit=CanonicalUnit.CONTAGEM,
-        dimensions_supported=frozenset(),
-        business_decision=(
-            "Q.108 Onda A: contagem de regras de alarme IoT configuradas "
-            "(factory_raw.iot_sensor_alarm.SA_ID). Cada linha = UMA "
-            "regra viva (limite min/max num sensor), NÃO um disparo. "
-            "Anchor espelho = 14 regras em 14 sensores distintos. "
-            "Q.82 documentou correctamente 14. Snapshot — sem dim "
-            "tempo (regras são configuração, não eventos)."
-        ),
-        description="Regras de alarme IoT configuradas (limites min/max em sensores)",
-        synonyms=(
-            "alarmes IoT", "regras de alarme", "alarmes configurados",
-            "limites sensores", "thresholds sensores", "alertas IoT",
-            "quantas regras alarme", "regras vivas alarme",
-            "configuração alarmes", "alarme min max sensor",
-            "monitoring rules", "sensores com alarme",
-        ),
-    ),
-    # ── Q.108.C: facturação atribuída a agentes (AGENTE_FATURACAO) ──
-    "comercial_facturacao_agente.total": MeasureSpec(
-        name="comercial_facturacao_agente.total",
-        unit=CanonicalUnit.DINHEIRO,
-        dimensions_supported=frozenset({"tempo", "agente"}),
-        business_decision=(
-            "Q.108.C: SUM(AF_VALOR) sobre marts.v_facturacao_agente_trim. "
-            "Fonte AGENTE_FATURACAO (Q.108-A espelhada) — declaração "
-            "TRIMESTRAL de agentes comerciais. Granularidade trimestral "
-            "(NÃO mensal). Anchor acumulado = €65 816 613 em 59 agentes "
-            "/ 2 234 declarações. Anchor 2024 = €3 102 232 (39 agentes "
-            "em 123 declarações). Top 2024: Gusser KanuSport (Nauticus "
-            "GmbH) €395 698; Anjana International €336 822; Flat Water "
-            "€292 129. NUNCA somar com comercial_facturacao.total — "
-            "fonte distinta (EPHCF vs AGENTE_FATURACAO); são ângulos "
-            "diferentes da mesma facturação (cliente vs agente que "
-            "comissionou); dupla contagem. Granularidade AGENTE_FATURACAO "
-            "é trimestral, EPHCF é mensal — não comparáveis directamente."
-        ),
-        description="Facturação atribuída a agentes comerciais (€, AGENTE_FATURACAO, trimestral)",
-        synonyms=(
-            "agente", "agentes", "agente comercial", "agentes comerciais",
-            "comissão agente", "comissões", "facturação agente",
-            "vendas por agente", "AF_VALOR", "declaração agente",
-            "declarações trimestrais agente", "top agente",
-            "Gusser agente", "Anjana", "Olimpijczyk agente",
-            "Flat Water agente", "Nelo Canada agente",
-            "comissionado", "agenciado",
-        ),
-    ),
+    # Q.173.AJ: ambiental_estufa_humidade.avg removido (iot_sensor_data inexistente).
+    # Q.173.AJ: logistica_docs.emitidos_total + pendentes_total removidos (transp_docs inexistente).
+    # Q.173.AJ: ambiental_iot_alarmes.total removido (iot_sensor_alarm inexistente).
+    # Q.173.AJ: comercial_facturacao_agente.total removido (agente_faturacao inexistente).
     # ── Q.108.E.2: rework por molde (mart sobre quality.rework_entry) ──
     "qualidade_rework_por_molde.total": MeasureSpec(
         name="qualidade_rework_por_molde.total",
@@ -1242,52 +1037,7 @@ MEASURE_REGISTRY: dict[str, MeasureSpec] = {
             "duração 90 percentil",
         ),
     ),
-    # ── Q.108.W1: cura compliance % (destrava corr_temp_avg_vs_compliance_cura) ──
-    "ambiental_cura_compliance.taxa": MeasureSpec(
-        name="ambiental_cura_compliance.taxa",
-        unit=CanonicalUnit.FRACAO,
-        dimensions_supported=frozenset({"tempo", "estufa", "sensor_id"}),
-        business_decision=(
-            "Q.108.W1: ratio measure SUM(ciclos_compliant)/NULLIF(SUM(total_ciclos),0) "
-            "sobre marts.v_cura_compliance_mes. Universo: ciclos que atingiram "
-            "T>=45°C (alarme); compliant = T_max>=65°C AND duracao_h>=1h "
-            "(critério Q.100). FRACAO 0-1; NUNCA SUM(taxa). Destrava "
-            "`corr_temp_avg_vs_compliance_cura`."
-        ),
-        description="% ciclos de cura compliant (T>=65°C, duração>=1h)",
-        synonyms=(
-            "cura compliance", "compliance cura", "ciclos válidos", "cura ok",
-            "cura conforme", "compliance químico", "secagem válida",
-            "% cura compliant",
-        ),
-    ),
-    "ambiental_cura_compliance.total": MeasureSpec(
-        name="ambiental_cura_compliance.total",
-        unit=CanonicalUnit.CONTAGEM,
-        dimensions_supported=frozenset({"tempo", "estufa", "sensor_id"}),
-        business_decision=(
-            "Q.108.W1: SUM(total_ciclos) — universo de ciclos que atingiram "
-            "T>=45°C (denominador da compliance). CONTAGEM, aditiva."
-        ),
-        description="Total ciclos de cura tentados (T>=45°C) por mês/estufa",
-        synonyms=(
-            "total ciclos cura", "ciclos tentados", "tentativas cura",
-        ),
-    ),
-    "ambiental_cura_compliance.compliant": MeasureSpec(
-        name="ambiental_cura_compliance.compliant",
-        unit=CanonicalUnit.CONTAGEM,
-        dimensions_supported=frozenset({"tempo", "estufa", "sensor_id"}),
-        business_decision=(
-            "Q.108.W1: SUM(ciclos_compliant) — numerador isolado da taxa. "
-            "CONTAGEM, aditiva. Para drill-down de quantos ciclos passaram "
-            "o critério canónico Q.100."
-        ),
-        description="Ciclos de cura compliant (T_max>=65°C E duração>=1h)",
-        synonyms=(
-            "ciclos compliant", "cura ok contagem", "secagem válida count",
-        ),
-    ),
+    # Q.173.AJ: ambiental_cura_compliance removido (iot_sensor_data nao existe).
     # ── Q.108.W1: aprovações Q.17 (governance decisions) ──
     "aprovacoes_q17.propostas": MeasureSpec(
         name="aprovacoes_q17.propostas",
@@ -1929,152 +1679,20 @@ MEASURE_REGISTRY: dict[str, MeasureSpec] = {
         description="Número de moldes com utilizações > 0",
         synonyms=("moldes com uso", "moldes com counter"),
     ),
-    # ── Q.108.L.2: copilot latency ──
-    "plataforma_copilot_latency.requests": MeasureSpec(
-        name="plataforma_copilot_latency.requests",
-        unit=CanonicalUnit.CONTAGEM,
-        dimensions_supported=frozenset({"tempo", "route"}),
-        business_decision="Q.108.L.2: COUNT total requests por (dia, route).",
-        description="Requests ao copilot por dia × route",
-        synonyms=("copilot requests", "asks ao copilot", "queries"),
-    ),
-    "plataforma_copilot_latency.abstain": MeasureSpec(
-        name="plataforma_copilot_latency.abstain",
-        unit=CanonicalUnit.CONTAGEM,
-        dimensions_supported=frozenset({"tempo", "route"}),
-        business_decision="Q.108.L.2: COUNT requests com status=abstain.",
-        description="Requests onde o copilot se absteve",
-        synonyms=("abstain count", "copilot absteve"),
-    ),
-    "plataforma_copilot_latency.errors": MeasureSpec(
-        name="plataforma_copilot_latency.errors",
-        unit=CanonicalUnit.CONTAGEM,
-        dimensions_supported=frozenset({"tempo", "route"}),
-        business_decision="Q.108.L.2: COUNT requests com status=error.",
-        description="Requests com erro (LLM down, etc.)",
-        synonyms=("copilot errors", "LLM errors"),
-    ),
-    "plataforma_copilot_latency.latency_avg": MeasureSpec(
-        name="plataforma_copilot_latency.latency_avg",
-        unit=CanonicalUnit.TEMPO,
-        dimensions_supported=frozenset({"tempo", "route"}),
-        aggregation="AVG",
-        business_decision="Q.108.L.2: AVG latency_ms; cross-row AVG.",
-        description="Latency média do copilot (ms)",
-        synonyms=("copilot latency", "tempo resposta", "AVG latency"),
-    ),
-    "plataforma_copilot_latency.latency_p50": MeasureSpec(
-        name="plataforma_copilot_latency.latency_p50",
-        unit=CanonicalUnit.TEMPO,
-        dimensions_supported=frozenset({"tempo", "route"}),
-        aggregation="AVG",
-        business_decision="Q.108.L.2: P50 latency (mediana).",
-        description="P50 latency do copilot (ms)",
-        synonyms=("P50 latency",),
-    ),
-    "plataforma_copilot_latency.latency_p95": MeasureSpec(
-        name="plataforma_copilot_latency.latency_p95",
-        unit=CanonicalUnit.TEMPO,
-        dimensions_supported=frozenset({"tempo", "route"}),
-        aggregation="AVG",
-        business_decision="Q.108.L.2: P95 — SLA target. Cross-row AVG.",
-        description="P95 latency do copilot (ms)",
-        synonyms=("P95 latency", "SLA copilot"),
-    ),
-    "plataforma_copilot_latency.latency_p99": MeasureSpec(
-        name="plataforma_copilot_latency.latency_p99",
-        unit=CanonicalUnit.TEMPO,
-        dimensions_supported=frozenset({"tempo", "route"}),
-        aggregation="AVG",
-        business_decision="Q.108.L.2: P99 latency — worst case observado.",
-        description="P99 latency do copilot (ms)",
-        synonyms=("P99 latency", "pior latency"),
-    ),
-    # ── Q.108.L.2: RAG hit rate + citações ──
-    "plataforma_copilot_rag.hit_rate": MeasureSpec(
-        name="plataforma_copilot_rag.hit_rate",
-        unit=CanonicalUnit.FRACAO,
-        dimensions_supported=frozenset({"tempo", "route"}),
-        business_decision=(
-            "Q.108.L.2: ratio SUM(n_rag_hit)/SUM(n_requests). FRACAO 0-1; "
-            "NUNCA SUM(taxa)."
-        ),
-        description="% requests com chunks RAG retrieved > 0",
-        synonyms=(
-            "RAG hit rate", "RAG hits", "% RAG", "chunks retrieved rate",
-        ),
-    ),
-    "plataforma_copilot_rag.chunks_avg": MeasureSpec(
-        name="plataforma_copilot_rag.chunks_avg",
-        unit=CanonicalUnit.CONTAGEM,
-        dimensions_supported=frozenset({"tempo", "route"}),
-        aggregation="AVG",
-        business_decision="Q.108.L.2: AVG chunks RAG retrieved.",
-        description="Chunks RAG médios retrieved por request",
-        synonyms=("chunks RAG", "AVG chunks"),
-    ),
-    "plataforma_copilot_rag.citations_avg": MeasureSpec(
-        name="plataforma_copilot_rag.citations_avg",
-        unit=CanonicalUnit.CONTAGEM,
-        dimensions_supported=frozenset({"tempo", "route"}),
-        aggregation="AVG",
-        business_decision="Q.108.L.2: AVG citations_count.",
-        description="Citações médias por resposta",
-        synonyms=("citações por resposta", "AVG citations"),
-    ),
-    "plataforma_copilot_rag.requests": MeasureSpec(
-        name="plataforma_copilot_rag.requests",
-        unit=CanonicalUnit.CONTAGEM,
-        dimensions_supported=frozenset({"tempo", "route"}),
-        business_decision="Q.108.L.2: COUNT requests no scope RAG.",
-        description="Requests considerados na taxa RAG",
-        synonyms=("requests RAG",),
-    ),
-    # ── Q.108.L.2: copilot feedback ──
-    "plataforma_copilot_feedback.taxa_positivo": MeasureSpec(
-        name="plataforma_copilot_feedback.taxa_positivo",
-        unit=CanonicalUnit.FRACAO,
-        dimensions_supported=frozenset({"tempo"}),
-        business_decision=(
-            "Q.108.L.2: ratio SUM(n_positive)/SUM(n_feedback). FRACAO 0-1; "
-            "NUNCA SUM(taxa)."
-        ),
-        description="% feedback positivo no copilot",
-        synonyms=(
-            "feedback positivo", "votos positivos", "taxa aprovação copilot",
-        ),
-    ),
-    "plataforma_copilot_feedback.total": MeasureSpec(
-        name="plataforma_copilot_feedback.total",
-        unit=CanonicalUnit.CONTAGEM,
-        dimensions_supported=frozenset({"tempo"}),
-        business_decision="Q.108.L.2: COUNT feedback total recebido.",
-        description="Total de feedback no mês",
-        synonyms=("total feedback", "votos copilot"),
-    ),
-    "plataforma_copilot_feedback.rating_avg": MeasureSpec(
-        name="plataforma_copilot_feedback.rating_avg",
-        unit=CanonicalUnit.CONTAGEM,
-        dimensions_supported=frozenset({"tempo"}),
-        aggregation="AVG",
-        business_decision="Q.108.L.2: AVG rating (1-5). NULL se sem rating.",
-        description="Rating médio (escala 1-5)",
-        synonyms=("rating médio", "estrelas copilot"),
-    ),
     # ── Q.108.F.3b: throughput semanal por modelo × disciplina ──
     # ── Q.108.G: consumo material POR OF ──
     "consumo_by_of.custo_eur": MeasureSpec(
         name="consumo_by_of.custo_eur",
         unit=CanonicalUnit.DINHEIRO,
         dimensions_supported=frozenset(
-            {"tempo", "work_order_id", "sku_id", "material"}
+            {"tempo", "erp_of_id", "sku_id", "material"}
         ),
         business_decision=(
-            "Q.108.G: SUM(qty_out × P_PRECOCUSTO) preservando work_order_id. "
+            "Q.108.G/Q.173.AJ: SUM(qty_out x P_PRECOCUSTO) preservando erp_of_id "
+            "(INTEGER FK para OF_FP, adicionado Q.173.F). "
             "Source: marts.v_consumo_by_of_dia sobre "
-            "supply.inventory_ledger_entries (com MOV_OF_ID populado desde "
-            "Q.108.G). DINHEIRO aditivo. Destrava margem por OF + "
-            "`corr_custo_por_of_vs_facturacao`."
+            "supply.inventory_ledger_entries. DINHEIRO aditivo. Destrava margem "
+            "por OF + `corr_custo_por_of_vs_facturacao`."
         ),
         description="Custo material em € agregado por OF (e dia/sku/material)",
         synonyms=(
@@ -2086,11 +1704,11 @@ MEASURE_REGISTRY: dict[str, MeasureSpec] = {
         name="consumo_by_of.consumo_qty",
         unit=CanonicalUnit.QUANTIDADE_FISICA,
         dimensions_supported=frozenset(
-            {"tempo", "work_order_id", "sku_id", "material"}
+            {"tempo", "erp_of_id", "sku_id", "material"}
         ),
         business_decision=(
-            "Q.108.G: SUM(qty_out) preservando work_order_id. NUNCA somar "
-            "entre materiais com unidades distintas (kg + tambor inválido) — "
+            "Q.108.G/Q.173.AJ: SUM(qty_out) preservando erp_of_id. NUNCA somar "
+            "entre materiais com unidades distintas (kg + tambor invalido) -- "
             "filtrar/agrupar pelo material primeiro."
         ),
         description="Quantidade física consumida agregada por OF",
@@ -2102,7 +1720,7 @@ MEASURE_REGISTRY: dict[str, MeasureSpec] = {
         name="consumo_by_of.n_movimentos",
         unit=CanonicalUnit.CONTAGEM,
         dimensions_supported=frozenset(
-            {"tempo", "work_order_id", "sku_id", "material"}
+            {"tempo", "erp_of_id", "sku_id", "material"}
         ),
         business_decision=(
             "Q.108.G: COUNT movimentos de consumo (transaction_type=consume) "
@@ -2111,49 +1729,7 @@ MEASURE_REGISTRY: dict[str, MeasureSpec] = {
         description="Número de movimentos de consumo por OF",
         synonyms=("movimentos por OF", "linhas consumo OF"),
     ),
-    # ── Q.108.M: horas trabalhadas (mão-de-obra real) ──
-    "operadores_horas.horas_total": MeasureSpec(
-        name="operadores_horas.horas_total",
-        unit=CanonicalUnit.TEMPO,
-        dimensions_supported=frozenset(
-            {"tempo", "operador_id", "fase_id", "fase"}
-        ),
-        business_decision=(
-            "Q.108.M: SUM(AT_HORAS) sobre marts.v_horas_operador_mes "
-            "(factory_raw.apontamento_trabalho, mirror Q.108.M). TEMPO em "
-            "horas; aditiva entre operadores e fases dentro do mesmo período."
-        ),
-        description="Horas trabalhadas (mão-de-obra real)",
-        synonyms=(
-            "horas trabalhadas", "horas operador", "mão-de-obra",
-            "horas apontadas", "AT_HORAS", "labor hours",
-        ),
-    ),
-    "operadores_horas.n_apontamentos": MeasureSpec(
-        name="operadores_horas.n_apontamentos",
-        unit=CanonicalUnit.CONTAGEM,
-        dimensions_supported=frozenset(
-            {"tempo", "operador_id", "fase_id", "fase"}
-        ),
-        business_decision=(
-            "Q.108.M: COUNT entradas de apontamento. CONTAGEM aditiva."
-        ),
-        description="Número de apontamentos de trabalho",
-        synonyms=("apontamentos", "linhas apontamento", "n entries"),
-    ),
-    "operadores_horas.n_ofs_distintas": MeasureSpec(
-        name="operadores_horas.n_ofs_distintas",
-        unit=CanonicalUnit.CONTAGEM,
-        dimensions_supported=frozenset(
-            {"tempo", "operador_id", "fase_id", "fase"}
-        ),
-        business_decision=(
-            "Q.108.M: COUNT(DISTINCT AT_OF_ID) por linha — já agregada. "
-            "NÃO somar entre meses (mesma OF aparece em vários)."
-        ),
-        description="OFs distintas trabalhadas no período",
-        synonyms=("OFs trabalhadas", "ordens distintas"),
-    ),
+    # Q.173.AJ: operadores_horas removido (factory_raw.apontamento_trabalho nao existe).
     # ── Q.108.M2: defeitos e operações por operador ──
     "qualidade_defeitos_operador.n_defeitos": MeasureSpec(
         name="qualidade_defeitos_operador.n_defeitos",
@@ -2286,6 +1862,69 @@ MEASURE_REGISTRY: dict[str, MeasureSpec] = {
             "produção Ocean", "produção Marathon", "produção Fitness",
             "produzidas por disciplina", "OFs concluídas por disciplina",
         ),
+    ),
+    # ── Q.106: aliases Cube-side (YML usa workforce_colaboradores / workforce_horas_extra) ──
+    "workforce_colaboradores.total": MeasureSpec(
+        name="workforce_colaboradores.total",
+        unit=CanonicalUnit.CONTAGEM,
+        dimensions_supported=frozenset({"tempo", "departamento", "colaborador"}),
+        business_decision=(
+            "Q.106: COUNT(DISTINCT colaborador_id) sobre "
+            "marts.v_workforce_colaboradores_mes. Alias Cube-side de "
+            "workforce.colaboradores_activos.total. Anchor 158 colaboradores."
+        ),
+        description="Colaboradores NELO activos no período (alias cube workforce_colaboradores)",
+        synonyms=(
+            "colaboradores activos", "headcount", "trabalhadores",
+        ),
+    ),
+    "workforce_colaboradores.n_eventos": MeasureSpec(
+        name="workforce_colaboradores.n_eventos",
+        unit=CanonicalUnit.CONTAGEM,
+        dimensions_supported=frozenset({"tempo", "departamento", "colaborador"}),
+        business_decision=(
+            "Q.106: SUM(n_eventos) ENT_MOV por colaborador/mês. "
+            "CONTAGEM aditiva. Tendência de actividade RH."
+        ),
+        description="Eventos ENT_MOV por colaborador e mês",
+        synonyms=("eventos RH", "actividade colaborador"),
+    ),
+    "workforce_horas_extra.total": MeasureSpec(
+        name="workforce_horas_extra.total",
+        unit=CanonicalUnit.TEMPO,
+        dimensions_supported=frozenset({"tempo", "departamento", "colaborador"}),
+        business_decision=(
+            "Q.106: SUM(horas_extra) sobre marts.v_workforce_horas_extra_mes "
+            "(MET=1). Alias Cube-side de workforce.horas_extra.total. "
+            "Anchor histórico: 220 057h."
+        ),
+        description="Horas extra (h) colaboradores NELO — alias cube workforce_horas_extra",
+        synonyms=(
+            "horas extra", "overtime", "horas suplementares",
+        ),
+    ),
+    "workforce_horas_extra.n_eventos": MeasureSpec(
+        name="workforce_horas_extra.n_eventos",
+        unit=CanonicalUnit.CONTAGEM,
+        dimensions_supported=frozenset({"tempo", "departamento", "colaborador"}),
+        business_decision=(
+            "Q.106: COUNT eventos MET=1 (Horas Extra). "
+            "CONTAGEM aditiva. Anchor histórico: 64 784 eventos."
+        ),
+        description="Eventos de horas extra (MET=1) por colaborador e mês",
+        synonyms=("eventos horas extra", "n horas extra"),
+    ),
+    "qualidade.defeitos_intermedios": MeasureSpec(
+        name="qualidade.defeitos_intermedios",
+        unit=CanonicalUnit.CONTAGEM,
+        dimensions_supported=frozenset({"tempo", "disciplina", "modelo"}),
+        business_decision=(
+            "Q.108 Onda A: SUM(defeitos_intermedios) da view "
+            "marts.v_taxa_defeitos_dia (OFCH_GRAVIDADE=2). Numerador "
+            "isolado de taxa_intermedia. CONTAGEM aditiva. Anchor 1 368."
+        ),
+        description="Defeitos intermédios (gravidade 2) — numerador isolado",
+        synonyms=("defeitos intermédios", "gravidade 2", "intermedios"),
     ),
     # ── Q.106 Medida 1: colaboradores NELO activos ──
     "workforce.colaboradores_activos.total": MeasureSpec(

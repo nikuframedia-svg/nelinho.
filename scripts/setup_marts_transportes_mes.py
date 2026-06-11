@@ -1,4 +1,8 @@
-"""Q.107 Onda 1 — view `marts.v_transportes_mes`. Anchor 2024 = 490 transportes."""
+"""Q.107 Onda 1 — view `marts.v_transportes_mes`. Anchor 2024 = 490 transportes.
+
+Q.173.AJ: factory_raw.paises nao existe nesta BD; dim `pais` fica sempre
+'Desconhecido'. O campo pais_id fica NULLable (TR_PAISES_ID direto).
+"""
 from __future__ import annotations
 
 import asyncio
@@ -13,26 +17,22 @@ VIEW_SQL = """
 CREATE OR REPLACE VIEW marts.v_transportes_mes AS
 -- Q.107 — transportes (TRANSPORTE granularidade, não OF). Cada row =
 -- 1 viagem registada. Conta TR_DATA NOT NULL. Anchor 2024 = 490.
--- Q.108 Onda A: adiciona dim `pais` via TR_PAISES_ID + PAISES_NOME
--- (cobertura ~81% pós-Q.108-A; antes só E_PAIS livre 10%).
+-- Q.173.AJ: factory_raw.paises nao existe; pais='Desconhecido' fixo.
 SELECT
     DATE_TRUNC('month', CAST(NULLIF(tr."TR_DATA", '') AS date))::date  AS data,
     COALESCE(td."DEST_NOME", 'Desconhecido')                          AS destino,
     tr."TR_DEST_ID"                                                    AS destino_id,
     COALESCE(tt."TRTP_NOME", 'Desconhecido')                          AS tipo_transporte,
     tr."TR_TRTP_ID"                                                    AS tipo_transporte_id,
-    COALESCE(p."PAISES_NOME", 'Desconhecido')                         AS pais,
+    'Desconhecido'::text                                               AS pais,
     tr."TR_PAISES_ID"                                                  AS pais_id,
     COUNT(*)                                                           AS n,
     SUM(CASE WHEN tr."TR_DATA_ENTREGA" IS NOT NULL
              AND NULLIF(tr."TR_DATA_ENTREGA",'') IS NOT NULL THEN 1 ELSE 0 END) AS n_entregues,
-    -- Q.108 Onda A: emissões CO2 estimadas (kg) somadas por mês/destino/tipo.
-    -- Sub-unidade fixa kg_co2; não confundir com kg de material consumido.
     COALESCE(SUM(tr."TR_CO2"::numeric), 0)::numeric(20,2)               AS co2_kg
 FROM factory_raw.transporte tr
 LEFT JOIN factory_raw.transp_destino td ON td."DEST_ID" = tr."TR_DEST_ID"
 LEFT JOIN factory_raw.transp_tipo tt   ON tt."TRTP_ID" = tr."TR_TRTP_ID"
-LEFT JOIN factory_raw.paises p ON p."PAISES_ID" = tr."TR_PAISES_ID"
 WHERE tr."TR_DATA" IS NOT NULL
   AND NULLIF(tr."TR_DATA", '') IS NOT NULL
 GROUP BY 1, 2, 3, 4, 5, 6, 7

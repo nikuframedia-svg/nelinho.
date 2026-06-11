@@ -123,12 +123,33 @@ async def seed_configs(tenant_id: UUID) -> int:
         return written
 
 
+async def _setup_marts_best_effort() -> None:
+    """Corre setup_marts_all.py (best-effort) — falha silenciosa em dev."""
+    import importlib.util
+    from pathlib import Path
+    p = Path(__file__).parent / "setup_marts_all.py"
+    spec = importlib.util.spec_from_file_location("setup_marts_all", p)
+    if spec is None or spec.loader is None:
+        print("  setup_marts_all: script nao encontrado, a saltar")
+        return
+    mod = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(mod)  # type: ignore[attr-defined]
+        rc = await mod.main()  # type: ignore[attr-defined]
+        if rc != 0:
+            print(f"  setup_marts_all: {rc} scripts falharam (best-effort, continua)")
+    except Exception as exc:
+        print(f"  setup_marts_all: erro {exc} (best-effort, continua)")
+
+
 async def main() -> None:
     await ensure_schemas()
     await create_all_tables()
     tid = await ensure_tenant()
     written = await seed_configs(tid)
     print(f"OK — DB ready, tenant {tid}, {written} configs seeded")
+    print("A correr setup_marts_all (best-effort)...")
+    await _setup_marts_best_effort()
 
 
 if __name__ == "__main__":

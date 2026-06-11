@@ -1,10 +1,11 @@
 """Q.108.J.2 — view `marts.v_moldes_top_uso`.
 
-Top moldes mais usados (snapshot). Source: plan.mold (com usage_counter
-populado por src/adapters/nelo/etl/molds.py após Q.108.J.2).
+Top moldes mais usados (snapshot).
+Q.173.AJ: plan.mold não tem usage_counter; substitui por contagem real
+de OFs que usaram o molde via factory_raw.of_fp.OF_OF_ID_MLD (molde pai).
 
-Granularidade: snapshot diário, 1 linha por molde activo com counter > 0.
-Cube consume e ordena por uso DESC para top-N.
+Granularidade: snapshot diário, 1 linha por molde activo.
+Cube consume e ordena por n_utilizacoes DESC para top-N.
 """
 from __future__ import annotations
 
@@ -18,15 +19,26 @@ from src.shared.config import settings
 
 VIEW_SQL = """
 CREATE OR REPLACE VIEW marts.v_moldes_top_uso AS
+-- Q.173.AJ: plan.mold não tem usage_counter → conta OFs via OF_OF_ID_MLD.
+-- OF_OF_ID_MLD = OF do molde-pai (raiz); join sobre OF_ID = ID do barco.
 SELECT
-    CURRENT_DATE             AS data,
-    id                       AS molde_id,
-    mold_code,
-    name                     AS molde_nome,
-    mold_type,
-    usage_counter            AS n_utilizacoes
-FROM plan.mold
-WHERE active = TRUE
+    CURRENT_DATE                                AS data,
+    m.id                                        AS molde_id,
+    m.mold_code,
+    m.name                                      AS molde_nome,
+    m.mold_type,
+    COALESCE(uso.n_utilizacoes, 0)              AS n_utilizacoes
+FROM plan.mold m
+LEFT JOIN (
+    SELECT
+        CAST(ofp."OFFP_OF_ID_MLD" AS text)       AS mold_erp_id,
+        COUNT(DISTINCT ofp."OFFP_OF_ID")         AS n_utilizacoes
+    FROM factory_raw.of_fp ofp
+    WHERE ofp."OFFP_OF_ID_MLD" IS NOT NULL
+      AND ofp."OFFP_OF_ID_MLD" != ofp."OFFP_OF_ID"
+    GROUP BY 1
+) uso ON uso.mold_erp_id = m.mold_code
+WHERE m.active = TRUE
 """
 
 

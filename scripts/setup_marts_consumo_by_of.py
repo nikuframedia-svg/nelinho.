@@ -1,12 +1,14 @@
 """Q.108.G — view `marts.v_consumo_by_of_dia`.
 
-Consumo de material PRESERVANDO work_order_id, ao contrário de
+Consumo de material PRESERVANDO erp_of_id, ao contrário de
 marts.v_consumo_material_dia (que agrega por material+dia perdendo a OF).
 
-Source: supply.inventory_ledger_entries com work_order_id NOT NULL
-(populado pela ETL desde Q.108.G via MOV_OF_ID).
+Source: supply.inventory_ledger_entries com erp_of_id NOT NULL.
+Q.173.F adicionou a coluna erp_of_id ao ledger (INTEGER FK para OF_FP.OF_ID).
+O campo legacy work_order_id (UUID) foi substituído por erp_of_id (INTEGER)
+para alinhar com o ERP canónico.
 
-Granularidade: (data, work_order_id, sku_id). Permite cross-cube com
+Granularidade: (data, erp_of_id, sku_id). Permite cross-cube com
 comercial_facturacao_disciplina (para margem por OF) e logística.
 
 Custo é qty_out × P_PRECOCUSTO; mas P_PRECOCUSTO vive em factory_raw.produto,
@@ -25,9 +27,10 @@ from src.shared.config import settings
 
 VIEW_SQL = """
 CREATE OR REPLACE VIEW marts.v_consumo_by_of_dia AS
+-- Q.173.AJ: usa erp_of_id (INTEGER) em vez de work_order_id (UUID removido).
 SELECT
     DATE_TRUNC('day', ile.date)::date                            AS data,
-    ile.work_order_id                                            AS work_order_id,
+    ile.erp_of_id                                                AS erp_of_id,
     ile.sku_id                                                   AS sku_id,
     p."P_NOME"                                                   AS material,
     SUM(ile.qty_out)                                             AS consumo_qty,
@@ -36,7 +39,7 @@ SELECT
 FROM supply.inventory_ledger_entries ile
 LEFT JOIN factory_raw.produto p
   ON p."P_ID"::text = ile.sku_id
-WHERE ile.work_order_id IS NOT NULL
+WHERE ile.erp_of_id IS NOT NULL
   AND ile.transaction_type = 'consume'
   AND ile.qty_out > 0
 GROUP BY 1, 2, 3, 4
@@ -65,7 +68,7 @@ async def setup() -> int:
         edge = await conn.fetchrow(
             """
             SELECT
-                COUNT(DISTINCT work_order_id)    AS n_ofs,
+                COUNT(DISTINCT erp_of_id)        AS n_ofs,
                 COUNT(DISTINCT sku_id)           AS n_materiais,
                 SUM(consumo_qty)                 AS total_qty,
                 SUM(custo_eur)                   AS total_eur,
