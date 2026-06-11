@@ -11,7 +11,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Truck, Target, Flag, RefreshCw, CalendarDays, PackageCheck, DownloadCloud, Loader2 } from 'lucide-react';
 import { PageHeader, Tabs } from '../../components/dark';
 import { transportApi } from '../../lib/api';
-import { transportKeys } from '../../lib/api/keys';
+import { transportKeys, configKeys } from '../../lib/api/keys';
+import { configApi } from '../../lib/api/configApi';
 import { ListaTab } from './tabs/ListaTab';
 import { CTPTab } from './tabs/CTPTab';
 import { ActivasTab } from './tabs/ActivasTab';
@@ -33,6 +34,19 @@ export default function ExpedicaoPage() {
     d.setDate(d.getDate() - 3);
     return d.toISOString().slice(0, 10);
   }, []);
+
+  const truckConfigQ = useQuery({
+    queryKey: configKeys.category('transporte'),
+    queryFn: () => configApi.getCategory('transporte'),
+    staleTime: 5 * 60_000,
+    retry: 0,
+  });
+  const truckCapacity = truckConfigQ.data?.['truck.capacity'] != null
+    ? Number(truckConfigQ.data['truck.capacity'])
+    : 50;
+  const truckModa = truckConfigQ.data?.['truck.capacity_moda'] != null
+    ? Number(truckConfigQ.data['truck.capacity_moda'])
+    : 26;
 
   const batchesQuery = useQuery({
     queryKey: transportKeys.batches(fromDate),
@@ -64,7 +78,7 @@ export default function ExpedicaoPage() {
     <div>
       <PageHeader
         title="Expedição"
-        subtitle="Camiões de 50 lugares · arrasta barcos entre expedições · CTP encaixa em camiões existentes"
+        subtitle={`Camiões de ${truckCapacity} lugares (moda real ${truckModa}) · arrasta barcos entre expedições · CTP encaixa em camiões existentes`}
         helpId="expedicao"
         actions={
           <div className="flex items-center gap-2">

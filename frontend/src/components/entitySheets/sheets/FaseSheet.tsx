@@ -11,13 +11,14 @@ import { SheetError } from '../SheetError';
 import { Tabs } from '../../dark/Tabs';
 import { EmptyState } from '../../dark/EmptyState';
 import { DarkBadge } from '../../dark/DarkBadge';
-import { entityKeys } from '../../../lib/api/keys';
+import { DarkButton } from '../../dark/DarkButton';
+import { entityKeys, phaseGapsKeys } from '../../../lib/api/keys';
 import {
   entityApi,
   type OperatorScore,
   type BoatScore,
-  type CuringGap,
 } from '../../../lib/api/entityApi';
+import { phaseGapsApi, type PhaseGap } from '../../../lib/api/governanceApi';
 import { useToastContext } from '../../ToastProvider';
 import { useEmployeeNamesByCode } from '../../../hooks/useEmployeeNamesByCode';
 import { useBoatComplexity } from '../../../hooks/useBoatComplexity';
@@ -78,10 +79,7 @@ export default function FaseSheet({ phaseId, onClose }: FaseSheetProps) {
       )}
 
       {tab === 'cura' && (
-        <TabCura
-          gapsIn={data.curing_gaps_in}
-          gapsOut={data.curing_gaps_out}
-        />
+        <TabCura phaseId={phaseId} />
       )}
 
       {tab === 'configuracao' && (
@@ -209,15 +207,173 @@ function TabBarcos({ boats }: { boats: BoatScore[] }) {
   );
 }
 
-function TabCura({
-  gapsIn,
-  gapsOut,
+// ─── TabCura editável (Q.173.O) ─────────────────────────────────────────────
+//
+// Usa phaseGapsApi (GET /v1/plan/phase-gaps) e filtra pela fase corrente.
+// Edição inline: horas (0-72) + razão ≥10 chars → PATCH.
+// Badge source: 'seed' = "padrão NELO" (neutral), 'db' = "editado" (accent).
+
+interface EditState {
+  hours: string;
+  reason: string;
+}
+
+function GapRow({
+  gap,
+  label,
 }: {
-  gapsIn: CuringGap[];
-  gapsOut: CuringGap[];
+  gap: PhaseGap;
+  label: string;
 }) {
+  const toast = useToastContext();
+  const queryClient = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState<EditState>({ hours: String(gap.min_gap_hours), reason: gap.reason ?? '' });
+
+  const mut = useMutation({
+    mutationFn: () =>
+      phaseGapsApi.update(gap.from_phase_code, gap.to_phase_code, {
+        min_gap_hours: parseFloat(form.hours),
+        reason: form.reason.trim(),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: phaseGapsKeys.all });
+      toast.success('Transição de cura actualizada');
+      setEditing(false);
+    },
+    onError: () => {
+      toast.error('Erro ao actualizar transição de cura');
+    },
+  });
+
+  const hoursNum = parseFloat(form.hours);
+  const hoursValid = Number.isFinite(hoursNum) && hoursNum > 0 && hoursNum <= 72;
+  const reasonValid = form.reason.trim().length >= 10;
+  const canSave = hoursValid && reasonValid && !mut.isPending;
+
+  return (
+    <div
+      style={{
+        fontSize: 13,
+        padding: '8px 10px',
+        background: 'var(--bg-2)',
+        borderRadius: 6,
+      }}
+    >
+      {/* cabeçalho da linha */}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span style={{ color: 'var(--fg-3)', fontSize: 12 }}>{label}</span>
+        {!editing && (
+          <>
+            <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
+              {gap.min_gap_hours}h
+            </span>
+            <DarkBadge variant={gap.source === 'db' ? 'accent' : 'neutral'} size="sm">
+              {gap.source === 'db' ? 'editado' : 'padrão NELO'}
+            </DarkBadge>
+            {gap.reason && (
+              <span style={{ color: 'var(--fg-3)', fontSize: 11, fontStyle: 'italic' }}>
+                {gap.reason}
+              </span>
+            )}
+            <DarkButton size="sm" variant="ghost" onClick={() => {
+              setForm({ hours: String(gap.min_gap_hours), reason: gap.reason ?? '' });
+              setEditing(true);
+            }}>
+              Editar
+            </DarkButton>
+          </>
+        )}
+      </div>
+
+      {/* form de edição inline */}
+      {editing && (
+        <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <label style={{ fontSize: 11, color: 'var(--fg-2)', minWidth: 48 }}>Horas</label>
+            <input
+              type="number"
+              min={0.1}
+              max={72}
+              step={0.5}
+              className="bg-white text-slate-900 placeholder:text-slate-400 border border-slate-300 rounded px-2 py-1 text-xs w-20"
+              value={form.hours}
+              onChange={(e) => setForm((f) => ({ ...f, hours: e.target.value }))}
+            />
+            {!hoursValid && form.hours !== '' && (
+              <span style={{ fontSize: 11, color: 'var(--danger)' }}>0–72h</span>
+            )}
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <label style={{ fontSize: 11, color: 'var(--fg-2)' }}>Razão (obrigatória)</label>
+              <span style={{ fontSize: 11, color: form.reason.trim().length >= 10 ? 'var(--fg-3)' : 'var(--danger)' }}>
+                {form.reason.trim().length}/10 mín.
+              </span>
+            </div>
+            <textarea
+              rows={2}
+              className="bg-white text-slate-900 placeholder:text-slate-400 border border-slate-300 rounded px-2 py-1 text-xs resize-none w-full"
+              placeholder="Explica a razão (química real, não ajuste de fila)"
+              value={form.reason}
+              onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))}
+            />
+          </div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <DarkButton size="sm" disabled={!canSave} onClick={() => mut.mutate()}>
+              {mut.isPending ? 'A guardar…' : 'Guardar'}
+            </DarkButton>
+            <DarkButton size="sm" variant="ghost" onClick={() => setEditing(false)}>
+              Cancelar
+            </DarkButton>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TabCura({ phaseId }: { phaseId: string }) {
+  const q = useQuery({
+    queryKey: phaseGapsKeys.list(),
+    queryFn: () => phaseGapsApi.list(),
+  });
+
+  if (q.isLoading) {
+    return <div style={{ color: 'var(--fg-3)', fontSize: 13 }}>A carregar transições de cura…</div>;
+  }
+  if (q.isError) {
+    return (
+      <EmptyState
+        title="Erro ao carregar transições de cura"
+        hint="Verifica a ligação ao backend."
+        size="sm"
+        action={<DarkButton size="sm" onClick={() => q.refetch()}>Tentar novamente</DarkButton>}
+      />
+    );
+  }
+
+  const all = q.data?.items ?? [];
+  const gapsIn = all.filter((g) => g.to_phase_code === phaseId && g.active);
+  const gapsOut = all.filter((g) => g.from_phase_code === phaseId && g.active);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      {/* aviso: cura é química real */}
+      <div
+        style={{
+          fontSize: 11,
+          color: 'var(--fg-3)',
+          padding: '6px 10px',
+          background: 'var(--bg-1)',
+          borderRadius: 4,
+          borderLeft: '3px solid var(--warning)',
+        }}
+      >
+        Cura é química real (NELO_CURING_GAPS_SEED) — não confundir com tempo de fila de espera.
+        Alterações afectam o próximo plano do CPO.
+      </div>
+
       <div>
         <div
           style={{
@@ -232,28 +388,15 @@ function TabCura({
           Gaps de entrada
         </div>
         {gapsIn.length === 0 ? (
-          <EmptyState title="Sem gaps de entrada" size="sm" mascot={false} />
+          <EmptyState title="Sem gaps de entrada para esta fase" size="sm" mascot={false} />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {gapsIn.map((g, i) => (
-              <div
-                key={i}
-                style={{
-                  fontSize: 13,
-                  padding: '6px 10px',
-                  background: 'var(--bg-2)',
-                  borderRadius: 6,
-                  display: 'flex',
-                  gap: 8,
-                  alignItems: 'center',
-                }}
-              >
-                <span style={{ color: 'var(--fg-2)' }}>{g.from_phase ?? '—'}</span>
-                <span style={{ color: 'var(--fg-3)' }}>→ esta fase:</span>
-                <span style={{ fontVariantNumeric: 'tabular-nums' }}>
-                  {g.hours}h
-                </span>
-              </div>
+            {gapsIn.map((g) => (
+              <GapRow
+                key={`${g.from_phase_code}-${g.to_phase_code}`}
+                gap={g}
+                label={`${g.from_phase_code} → esta fase:`}
+              />
             ))}
           </div>
         )}
@@ -273,28 +416,15 @@ function TabCura({
           Gaps de saída
         </div>
         {gapsOut.length === 0 ? (
-          <EmptyState title="Sem gaps de saída" size="sm" mascot={false} />
+          <EmptyState title="Sem gaps de saída para esta fase" size="sm" mascot={false} />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {gapsOut.map((g, i) => (
-              <div
-                key={i}
-                style={{
-                  fontSize: 13,
-                  padding: '6px 10px',
-                  background: 'var(--bg-2)',
-                  borderRadius: 6,
-                  display: 'flex',
-                  gap: 8,
-                  alignItems: 'center',
-                }}
-              >
-                <span style={{ color: 'var(--fg-3)' }}>esta fase →</span>
-                <span style={{ color: 'var(--fg-2)' }}>{g.to_phase ?? '—'}:</span>
-                <span style={{ fontVariantNumeric: 'tabular-nums' }}>
-                  {g.hours}h
-                </span>
-              </div>
+            {gapsOut.map((g) => (
+              <GapRow
+                key={`${g.from_phase_code}-${g.to_phase_code}`}
+                gap={g}
+                label={`esta fase → ${g.to_phase_code}:`}
+              />
             ))}
           </div>
         )}

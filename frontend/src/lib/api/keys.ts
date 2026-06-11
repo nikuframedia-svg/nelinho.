@@ -413,6 +413,27 @@ export const copilotAlertsKeys = {
       : (copilotAlertsKeys.all as readonly string[]),
 } as const;
 
+// ─── config (Q.173.O) ─────────────────────────────────────────────────────────
+//
+// GET /v1/config/{category} → {key: value}
+// POST /v1/config/{category}/{key} → grava (201)
+// Categorias: planning, transporte, alertas
+
+export const configKeys = {
+  all: ['config'] as const,
+  category: (cat: string) => [...configKeys.all, cat] as const,
+} as const;
+
+// ─── phase-gaps / cura (Q.173.O) ─────────────────────────────────────────────
+//
+// GET /v1/plan/phase-gaps → {items: PhaseGap[]}
+// PATCH /v1/plan/phase-gaps/{from}/{to} → upsert com auditoria
+
+export const phaseGapsKeys = {
+  all: ['phase-gaps'] as const,
+  list: () => [...phaseGapsKeys.all, 'list'] as const,
+} as const;
+
 // ─── transporte / expedição (ExpedicaoPage, listaComponents) ─────────────────
 //
 // GET /v1/transport/batches + /manifest/{id} + /otd.

@@ -16,10 +16,25 @@ import { DarkBadge, DarkCard, EmptyState } from '../../../components/dark';
 import { SkeletonLoader } from '../../../components/ui/Skeleton';
 import { transportApi, type ReadyBoat } from '../../../lib/api/supplyApi';
 import { Clickable } from '../../../components/entitySheets';
+import { configApi } from '../../../lib/api/configApi';
+import { configKeys } from '../../../lib/api/keys';
 
-const TRUCK_CAP = 26; // moda real Vila do Conde (Q.13.E)
+// Fallback: moda real Vila do Conde (Q.13.E). Substituído pela config quando disponível.
+const TRUCK_CAP_FALLBACK = 26;
 
 export function ProntosTab(): ReactNode {
+  const configQ = useQuery({
+    queryKey: configKeys.category('transporte'),
+    queryFn: () => configApi.getCategory('transporte'),
+    staleTime: 5 * 60_000,
+    retry: 0,
+  });
+  // Usa a moda da config; fallback se a config ainda não carregou ou falhou.
+  const truckCap =
+    configQ.data?.['truck.capacity_moda'] != null
+      ? Number(configQ.data['truck.capacity_moda'])
+      : TRUCK_CAP_FALLBACK;
+
   const readyQ = useQuery({
     queryKey: ['expedicao', 'ready'],
     queryFn: () => transportApi.ready(200),
@@ -57,7 +72,7 @@ export function ProntosTab(): ReactNode {
   }
 
   const data = readyQ.data!;
-  const nextTruck = data.boats.slice(0, TRUCK_CAP);
+  const nextTruck = data.boats.slice(0, truckCap);
   const oldest = nextTruck.length > 0 ? nextTruck[0].days_ready : null;
 
   return (
@@ -119,11 +134,11 @@ export function ProntosTab(): ReactNode {
           ))}
 
           {/* Resto — colapsado por defeito (174 linhas seriam ruído) */}
-          {showAll && data.boats.slice(TRUCK_CAP).map((b) => (
+          {showAll && data.boats.slice(truckCap).map((b) => (
             <ReadyRow key={b.of_id} boat={b} isNext={false} />
           ))}
 
-          {data.boats.length > TRUCK_CAP && (
+          {data.boats.length > truckCap && (
             <button
               type="button"
               onClick={() => setShowAll((v) => !v)}
@@ -132,7 +147,7 @@ export function ProntosTab(): ReactNode {
               <ChevronDown size={13} className={showAll ? 'rotate-180 transition-transform' : 'transition-transform'} />
               {showAll
                 ? 'Mostrar só o próximo camião'
-                : `Mostrar mais ${data.boats.length - TRUCK_CAP} prontos`}
+                : `Mostrar mais ${data.boats.length - truckCap} prontos`}
             </button>
           )}
         </DarkCard>

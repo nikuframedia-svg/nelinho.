@@ -18,6 +18,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { MasterDataTab } from './tabs/MasterDataTab';
 import { EquipaNiveisTab } from './tabs/EquipaNiveisTab';
 import { MelhoresPorFaseTab } from './tabs/MelhoresPorFaseTab';
+import { PlaneadorTab } from './tabs/PlaneadorTab';
 import {
   Settings,
   BookOpen,
@@ -31,6 +32,7 @@ import {
   ChevronUp,
   Users,
   Star,
+  Cpu,
 } from 'lucide-react';
 import { PageHeader, Tabs, DarkCard, DarkButton, DarkBadge, EmptyState, Modal } from '../../components/dark';
 import { DarkPageLayout } from '../../layouts';
@@ -64,7 +66,7 @@ const RegrasPage = lazy(() => import('../admin/RegrasPage'));
 
 // ─── tipos locais ──────────────────────────────────────────────────────────────
 
-const TAB_IDS = ['master', 'regras', 'logica-llm', 'custos', 'input', 'aprendizagem', 'equipa', 'melhores'] as const;
+const TAB_IDS = ['master', 'regras', 'logica-llm', 'custos', 'input', 'aprendizagem', 'equipa', 'melhores', 'planeador'] as const;
 type TabId = (typeof TAB_IDS)[number];
 
 function isTabId(v: string | null): v is TabId {
@@ -80,6 +82,7 @@ const TABS = [
   { id: 'aprendizagem', label: 'Aprendizagem', icon: <Brain size={13} /> },
   { id: 'equipa', label: 'Equipa', icon: <Users size={13} /> },
   { id: 'melhores', label: 'Melhores por fase', icon: <Star size={13} /> },
+  { id: 'planeador', label: 'Planeador', icon: <Cpu size={13} /> },
 ] as const;
 
 // ─── Tab: Custos & Objectivos ─────────────────────────────────────────────────
@@ -1181,6 +1184,7 @@ export default function ConfiguracoesPage() {
         {activeTab === 'aprendizagem' && <TabAprendizagem />}
         {activeTab === 'equipa' && <EquipaNiveisTab />}
         {activeTab === 'melhores' && <MelhoresPorFaseTab />}
+        {activeTab === 'planeador' && <PlaneadorTab />}
       </div>
     </DarkPageLayout>
   );

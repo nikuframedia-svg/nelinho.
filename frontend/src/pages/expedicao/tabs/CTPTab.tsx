@@ -1,11 +1,13 @@
 // ExpedicaoPage · CTPTab (Q.60.S). ZERO MOCKS — endpoints reais.
-import { useMemo, useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useMemo, useState, useEffect } from 'react';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { Target, CalendarClock, PackageCheck, AlertTriangle, CircleSlash } from 'lucide-react';
 import { EmptyState } from '../../../components/dark';
 import { type TransportBatch } from '../../../lib/api';
 import { expedicaoCtpApi, type CtpBoat, type CtpResponse } from '../expedicaoCtpApi';
 import { shortDate, todayIso } from '../expedicaoShared';
+import { configApi } from '../../../lib/api/configApi';
+import { configKeys } from '../../../lib/api/keys';
 
 export function CTPTab({
   batches,
@@ -27,9 +29,23 @@ export function CTPTab({
     [batches],
   );
 
+  const configQ = useQuery({
+    queryKey: configKeys.category('transporte'),
+    queryFn: () => configApi.getCategory('transporte'),
+    staleTime: 5 * 60_000,
+    retry: 0,
+  });
+
   const [truckDate, setTruckDate] = useState('');
-  const [capacity, setCapacity] = useState('50'); // camião-tipo NELO (50 lugares)
+  const [capacity, setCapacity] = useState('50'); // default camião-tipo NELO; actualizado pela config
   const [startFrom, setStartFrom] = useState('');
+
+  // Actualiza o default da capacidade quando a config chega (uma só vez).
+  useEffect(() => {
+    if (configQ.data?.['truck.capacity'] != null && capacity === '50') {
+      setCapacity(String(configQ.data['truck.capacity']));
+    }
+  }, [configQ.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Resultado da última avaliação — mutation porque o CTP só *computa*
   // a pedido (não é uma query reactiva a parâmetros de URL).
