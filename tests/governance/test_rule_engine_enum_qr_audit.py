@@ -78,16 +78,24 @@ def _build_active_rule(rule_id: str):
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_rule_engine_refresh_loads_active_rule_against_real_db():
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
     from src.governance.yaml_policy.engine import RuleEngine
     from src.shared.auth.tenant_context import tenant_scope
-    from src.shared.database import async_session_factory
+    from src.shared.config import get_settings
+
+    # Q.172.B — engine/factory FRESCOS: a factory partilhada de
+    # src.shared.database é substituída/fechada por outros testes e este
+    # falhava consoante a ORDEM do full-run (passa sempre a solo).
+    db_engine = create_async_engine(get_settings().database_url)
+    session_factory = async_sessionmaker(db_engine, expire_on_commit=False)
 
     tenant_id = UUID("0a0a0a0a-0000-4000-8000-00000000a17d")
     rule = _build_active_rule(f"qr-audit-{uuid4().hex[:8]}")
     row_id = uuid4()
 
     with tenant_scope(tenant_id):
-        async with async_session_factory() as session:
+        async with session_factory() as session:
             try:
                 session.add(
                     TenantRule(
@@ -126,3 +134,4 @@ async def test_rule_engine_refresh_loads_active_rule_against_real_db():
                     {"id": row_id},
                 )
                 await session.commit()
+    await db_engine.dispose()

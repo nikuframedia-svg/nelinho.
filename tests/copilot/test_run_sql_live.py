@@ -67,6 +67,24 @@ async def skip_if_no_db():
         )
 
 
+@pytest.fixture(autouse=True)
+async def fresh_shared_engine(monkeypatch):
+    """Q.172.B — hermético contra poluição da suite: os tools reutilizam
+    `src.shared.database.engine` (by design), mas no full-run outros testes
+    substituem/fecham esse engine — estes testes live falhavam consoante a
+    ORDEM. Engine fresco por teste, descartado no fim."""
+    import src.shared.database as shared_db
+
+    settings = get_settings()
+    url = settings.copilot_database_url or settings.database_url
+    engine = create_async_engine(url)
+    monkeypatch.setattr(shared_db, "engine", engine)
+    try:
+        yield
+    finally:
+        await engine.dispose()
+
+
 async def test_real_select_information_schema():
     """SELECT contra `information_schema.tables` devolve ≥ 1 row.
 

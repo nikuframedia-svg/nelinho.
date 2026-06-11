@@ -12,6 +12,7 @@ Pré-flight:
 from __future__ import annotations
 
 import asyncio
+import warnings
 from typing import Optional
 
 import pytest
@@ -27,7 +28,7 @@ async def _cube_available() -> bool:
         async with httpx.AsyncClient(timeout=2.0) as client:
             r = await client.get("http://localhost:4000/readyz")
         return r.status_code == 200
-    except Exception:  # noqa: BLE001
+    except Exception:
         return False
 
 
@@ -40,8 +41,8 @@ async def _fetch_cube_meta() -> Optional[set[str]]:
         meta = await client.fetch_meta()
         await client.close()
         return set(meta.all_measure_names())
-    except Exception as exc:  # noqa: BLE001
-        print(f"  WARN: fetch_meta failed: {exc}")
+    except Exception as exc:
+        warnings.warn(f"fetch_meta falhou: {exc}", stacklevel=2)
         return None
 
 

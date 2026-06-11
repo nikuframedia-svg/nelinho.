@@ -688,18 +688,49 @@ async def test_interpret_abstains_for_out_of_catalog_question():
 # ────────────────────────────── 1, 2, 3, 5. LIVE end-to-end ──────────────────────────────
 
 
+async def _cube_truth_lavesan_abril() -> float:
+    """Verdade do Cube para a âncora — a MESMA query que o pipeline devia
+    emitir. Q.172.B: a âncora congelada (4.724) apodreceu quando o sync
+    DROP-free do espelho ERP corrigiu o histórico (4.6907 hoje); ancorar
+    contra o próprio Cube prova fidelidade ponta-a-ponta sem prazo de
+    validade."""
+    from src.copilot.cube.client import CubeClient
+
+    cube = CubeClient()
+    try:
+        res = await cube.load({
+            "measures": ["consumo_material.consumo"],
+            "dimensions": ["consumo_material.unidade_id"],
+            "filters": [{
+                "member": "consumo_material.material",
+                "operator": "equals",
+                "values": ["Resina Lavesan EN 720"],
+            }],
+            "timeDimensions": [{
+                "dimension": "consumo_material.data",
+                "dateRange": ["2026-04-01", "2026-04-30"],
+            }],
+        })
+    finally:
+        await cube.close()
+    data = getattr(res, "data", res) or []
+    assert data, "precondição live: o Cube tem consumo de Lavesan em Abril 2026"
+    return float(data[0]["consumo_material.consumo"])
+
+
 @requires_live
 @pytest.mark.asyncio
-async def test_anchor_end_to_end_returns_4_724():
-    """Anchor: 'Resina Lavesan EN 720 em Abril 2026' → narração com 4.72(4)."""
+async def test_anchor_end_to_end_matches_cube_truth():
+    """Anchor: o número narrado pelo pipeline == verdade do Cube (2 casas)."""
     from src.copilot.routers.ask_cube import _process
 
+    expected = await _cube_truth_lavesan_abril()
     resp = await _process("Quanto consumimos de Resina Lavesan EN 720 em Abril de 2026?")
     assert resp.status == "ok", f"esperado ok, got {resp.status}: {resp.warnings}"
     assert resp.narration is not None
-    # Aceita "4.724" ou "4.72" (arredondamento).
-    assert "4.72" in resp.narration, (
-        f"narração não menciona 4.72: {resp.narration!r}"
+    rounded = f"{expected:.2f}"
+    assert rounded in resp.narration, (
+        f"narração não menciona {rounded} (verdade do Cube): {resp.narration!r}"
     )
     # data tem 1 linha com unidade_id=18.
     assert len(resp.data) >= 1
@@ -734,12 +765,13 @@ async def test_synonyms_match_consumo():
     """'Saiu para produção' = 'consumimos' = 'gastámos' — todos chegam à mesma medida."""
     from src.copilot.routers.ask_cube import _process
 
+    expected = await _cube_truth_lavesan_abril()
     resp = await _process(
         "Saiu para produção quanto de Resina Lavesan EN 720 em Abril de 2026?"
     )
     assert resp.status == "ok"
     assert resp.narration is not None
-    assert "4.72" in resp.narration
+    assert f"{expected:.2f}" in resp.narration
 
 
 @requires_live

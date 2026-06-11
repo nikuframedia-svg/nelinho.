@@ -172,8 +172,20 @@ class OllamaClient:
             messages.extend(history)
         messages.append({"role": "user", "content": prompt})
 
-        effective_num_ctx = num_ctx if num_ctx is not None else getattr(settings, "ollama_num_ctx", 4096)
         effective_num_predict = num_predict if num_predict is not None else getattr(settings, "ollama_num_predict", 512)
+        if num_ctx is not None:
+            effective_num_ctx = num_ctx
+        else:
+            # Q.172.B — num_ctx fixo (4096) truncava prompts grandes EM
+            # SILÊNCIO: o cube_interpret.md (47KB ≈ 15.8k tokens) era cortado
+            # e o modelo parava em done_reason=length após 1 token ('{') →
+            # TODAS as perguntas Cube abstinham. Auto-size pelo tamanho real
+            # (≈3 chars/token nos prompts PT) + espaço de geração, com piso
+            # no default e teto em 32k (VRAM).
+            total_chars = sum(len(m.get("content") or "") for m in messages)
+            estimated = total_chars // 3 + effective_num_predict + 512
+            floor = getattr(settings, "ollama_num_ctx", 4096)
+            effective_num_ctx = max(floor, min(estimated, 32_768))
 
         payload = {
             "model": model,
@@ -220,6 +232,19 @@ class OllamaClient:
 
                 data = response.json()
                 self._record_success()
+
+                # Q.172.B — geração morta por limite (done_reason=length
+                # com eval_count≈1) era reportada como "JSON inválido" e
+                # mascarava a causa real (num_ctx/num_predict curtos).
+                if (
+                    data.get("done_reason") == "length"
+                    and int(data.get("eval_count") or 0) <= 2
+                ):
+                    raise ValueError(
+                        "Ollama truncou a geração (done_reason=length, "
+                        f"eval_count={data.get('eval_count')}) — prompt maior "
+                        f"que num_ctx={payload['options']['num_ctx']}?"
+                    )
 
                 # Extrair resposta do formato Ollama
                 if "message" in data and "content" in data["message"]:

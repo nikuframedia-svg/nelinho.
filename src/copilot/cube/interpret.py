@@ -843,6 +843,7 @@ async def interpret(
         result.query,
         material_mencionado=material_mencionado,
         fase_mencionada=fase_mencionada,
+        question=question,
     )
     if coverage_violations:
         return InterpretResult(

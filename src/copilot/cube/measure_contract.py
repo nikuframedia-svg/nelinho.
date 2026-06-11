@@ -3003,6 +3003,7 @@ def assert_question_coverage(
     *,
     material_mencionado: str | None = None,
     fase_mencionada: str | None = None,
+    question: str | None = None,
 ) -> list[str]:
     """Q.97b FIX B — guard de fidelidade: entidades MENCIONADAS na pergunta
     têm de estar honradas na query.
@@ -3025,12 +3026,43 @@ def assert_question_coverage(
     violations: list[str] = []
 
     if material_mencionado:
+        # Q.172.B — o guard exigia que o filtro fosse EXACTAMENTE o top-1 do
+        # retrieval; mas o LLM escolhe do MESMO catálogo (constrained
+        # decoding) e materiais vizinhos ('Resina Lavesan EN 720' vs
+        # 'Mistura Epoxy Lavesan EN 720') empatam no índice. Fidelidade real:
+        # o material FILTRADO tem de aparecer na PERGUNTA (tokens ≥4 chars) —
+        # apanha na mesma o caso de alucinação (filtrar material sem relação)
+        # sem abster em sinónimos legítimos do próprio catálogo.
+        def _filter_value_named_in_question(value: str) -> bool:
+            if not question:
+                return False
+            q_low = question.lower()
+            val_low = str(value).lower()
+            alpha_toks = re.findall(r"[a-zà-ÿ]{4,}", val_low)
+            num_toks = re.findall(r"\d+", val_low)
+            # Reviewer Q.172.B (2 voltas): os números são a parte DISTINTIVA
+            # das variantes — TODOS os números do valor filtrado têm de
+            # aparecer na pergunta com WORD-BOUNDARY ('72' não casa '720');
+            # e a MAIORIA dos tokens alfabéticos ≥4 chars tem de estar na
+            # pergunta ('Gelcoat Lavesan Azul' não passa só por 'lavesan').
+            # Fica documentado: valor de token alfabético ÚNICO e sem número
+            # (ex. material chamado só 'Resina') é furo teórico aceite — o
+            # catálogo NELO não tem materiais de nome genérico de 1 palavra.
+            if not alpha_toks:
+                return False
+            nums_ok = all(
+                re.search(rf"\b{re.escape(n)}\b", q_low) for n in num_toks
+            )
+            alpha_hits = sum(1 for t in alpha_toks if t in q_low)
+            return nums_ok and (alpha_hits / len(alpha_toks)) >= 0.5
+
         has_material_filter = any(
             f.member.endswith(".material")
             and f.operator == "equals"
             and any(
                 material_mencionado.lower() == str(v).lower()
                 or material_mencionado.lower() in str(v).lower()
+                or _filter_value_named_in_question(v)
                 for v in f.values
             )
             for f in query.filters
