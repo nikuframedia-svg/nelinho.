@@ -174,7 +174,7 @@ async def _alert_etl_failure(
                 and (alert.context or {}).get("source") == failed.source
             ):
                 return
-        session.add(CopilotAlert(  # noqa: audit_coverage — padrão AlertsEngine
+        session.add(CopilotAlert(  # noqa: audit_coverage  # alerta, nao estado gov (padrao AlertsEngine)
             tenant_id=tenant_id,
             severity="WARN",
             code=CODE_ETL_SYNC_FAILED,
