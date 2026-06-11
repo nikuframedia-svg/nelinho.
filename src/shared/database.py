@@ -169,8 +169,15 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
     async with async_session_factory() as session:
         try:
             yield session
-            # Only commit if there are pending changes
-            if session.dirty or session.new or session.deleted:
+            # Q.173.O.1 — comitar SEMPRE que houve transação. A condição
+            # antiga (`dirty or new or deleted`) é FALSA depois de um
+            # `flush()` (o flush esvazia os três sets) → qualquer endpoint
+            # cujo serviço fazia flush (tenant_config.set, phase_gaps PATCH)
+            # devolvia 201/200 e a transação morria em ROLLBACK silencioso
+            # no close. Mesma família do bug Q.133.A (ScheduleCommit).
+            # Provado live 2026-06-11: POST /v1/config → 201, 0 linhas na BD.
+            # Commit de transação só-leitura é barato e inócuo no Postgres.
+            if session.in_transaction():
                 await session.commit()
         except Exception:
             await session.rollback()
@@ -183,7 +190,7 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
 async def get_session_context() -> AsyncGenerator[AsyncSession, None]:
     """
     Context manager for database session.
-    
+
     Usage:
         async with get_session_context() as session:
             ...
@@ -191,8 +198,9 @@ async def get_session_context() -> AsyncGenerator[AsyncSession, None]:
     async with async_session_factory() as session:
         try:
             yield session
-            # Only commit if there are pending changes
-            if session.dirty or session.new or session.deleted:
+            # Q.173.O.1 — ver get_session: flush() esvazia dirty/new/deleted
+            # e a condição antiga deixava a transação morrer em rollback.
+            if session.in_transaction():
                 await session.commit()
         except Exception:
             await session.rollback()
