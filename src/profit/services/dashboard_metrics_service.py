@@ -316,8 +316,12 @@ class DashboardMetricsService:
         """
         since = datetime.now(timezone.utc).date() - timedelta(days=window_days)
 
-        # Total completed orders in the window
-        total_stmt = select(func.count(CuratedOrder.id)).where(
+        # Total completed orders in the window.
+        # F4.E — DISTINCT of_id, não count(id): CuratedOrder pode ter várias
+        # linhas por of_id (unique é (ingestion_id, of_id)), e o numerador
+        # de rework conta of_id distintos — as duas contagens têm de estar
+        # na MESMA unidade (ordens), senão o FPY sai diluído.
+        total_stmt = select(func.count(func.distinct(CuratedOrder.of_id))).where(
             and_(
                 CuratedOrder.data_conclusao.is_not(None),
                 CuratedOrder.data_conclusao >= since,

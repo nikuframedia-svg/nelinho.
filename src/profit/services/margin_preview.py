@@ -256,6 +256,13 @@ async def _load_template_p50(
                 RoutingTemplatePhase.phase_id == str(phase_id_raw),
             )
         )
+        # F4.E — sem ORDER BY o .limit(1) era não-determinístico quando a
+        # mesma fase aparece em vários templates; mais recente primeiro
+        # (mesmo padrão de _load_bonus/_compute_baseline), id como tiebreak.
+        .order_by(
+            desc(RoutingTemplatePhase.created_at),
+            desc(RoutingTemplatePhase.id),
+        )
         .limit(1)
     )
     result = await session.execute(stmt)

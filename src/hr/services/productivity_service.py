@@ -30,6 +30,36 @@ def _clamp_pct(value: Decimal) -> Decimal:
     return value
 
 
+def aggregate_productivity_totals(
+    records: List[EmployeeProductivity],
+) -> Dict[str, Decimal]:
+    """Totais + percentagens de um conjunto de registos de produtividade.
+
+    F4.E — esta agregação estava copiada em 3 sítios (endpoint /report,
+    get_employee_productivity, get_order_productivity); agora é a fonte
+    única. Sem clamping aqui — quem precisa (employee summary) clampa
+    à saída com `_clamp_pct`.
+    """
+    total_std_hours = sum((r.standard_hours for r in records), Decimal("0"))
+    total_act_hours = sum((r.actual_hours for r in records), Decimal("0"))
+    total_act_qty = sum((r.actual_quantity for r in records), Decimal("0"))
+    total_good_qty = sum((r.good_quantity for r in records), Decimal("0"))
+    return {
+        "total_std_hours": total_std_hours,
+        "total_act_hours": total_act_hours,
+        "total_act_qty": total_act_qty,
+        "total_good_qty": total_good_qty,
+        "efficiency_percent": (
+            (total_std_hours / total_act_hours * 100)
+            if total_act_hours > Decimal("0") else Decimal("0")
+        ),
+        "quality_percent": (
+            (total_good_qty / total_act_qty * 100)
+            if total_act_qty > Decimal("0") else Decimal("0")
+        ),
+    }
+
+
 class ProductivityService:
     """
     Service for productivity tracking.
@@ -145,27 +175,17 @@ class ProductivityService:
                 "bonus_eligible": False,
             }
         
-        total_std_hours = sum(r.standard_hours for r in records)
-        total_act_hours = sum(r.actual_hours for r in records)
-        total_act_qty = sum(r.actual_quantity for r in records)
-        total_good_qty = sum(r.good_quantity for r in records)
-        
-        avg_efficiency = _clamp_pct(
-            (total_std_hours / total_act_hours * 100)
-            if total_act_hours > Decimal("0") else Decimal("0")
-        )
-        avg_quality = _clamp_pct(
-            (total_good_qty / total_act_qty * 100)
-            if total_act_qty > Decimal("0") else Decimal("0")
-        )
+        totals = aggregate_productivity_totals(records)
+        avg_efficiency = _clamp_pct(totals["efficiency_percent"])
+        avg_quality = _clamp_pct(totals["quality_percent"])
 
         return {
             "employee_id": str(employee_id),
             "from_date": from_date.isoformat() if from_date else None,
             "to_date": to_date.isoformat() if to_date else None,
             "records_count": len(records),
-            "total_standard_hours": float(total_std_hours),
-            "total_actual_hours": float(total_act_hours),
+            "total_standard_hours": float(totals["total_std_hours"]),
+            "total_actual_hours": float(totals["total_act_hours"]),
             "avg_efficiency_percent": float(avg_efficiency),
             "avg_quality_percent": float(avg_quality),
             "bonus_eligible": avg_efficiency >= Decimal("100") and avg_quality >= Decimal("98"),
@@ -220,18 +240,15 @@ class ProductivityService:
                 "records_count": 0,
             }
         
-        total_std = sum(r.standard_hours for r in records)
-        total_act = sum(r.actual_hours for r in records)
-        total_qty = sum(r.actual_quantity for r in records)
-        total_good = sum(r.good_quantity for r in records)
-        
+        totals = aggregate_productivity_totals(records)
+
         return {
             "order_id": order_id,
             "records_count": len(records),
-            "total_standard_hours": float(total_std),
-            "total_actual_hours": float(total_act),
-            "efficiency_percent": float((total_std / total_act * 100) if total_act > 0 else 0),
-            "quality_percent": float((total_good / total_qty * 100) if total_qty > 0 else 0),
+            "total_standard_hours": float(totals["total_std_hours"]),
+            "total_actual_hours": float(totals["total_act_hours"]),
+            "efficiency_percent": float(totals["efficiency_percent"]),
+            "quality_percent": float(totals["quality_percent"]),
             "employees_involved": list(set(str(r.employee_id) for r in records)),
         }
 

@@ -110,6 +110,10 @@ class OrderCostService:
             ("ANY", "ANY"),
         ]
         for dest, cat in tried:
+            # `.limit(1)` sem ORDER BY é determinístico AQUI por construção:
+            # uq_shipping_rate_dest_category (tenant, destination, sku_category)
+            # garante no máximo 1 linha por chave — `active` fora da constraint
+            # não permite duplicados, apenas marca essa única linha on/off.
             stmt = select(ShippingRate).where(
                 and_(
                     ShippingRate.tenant_id == self.tenant_id,

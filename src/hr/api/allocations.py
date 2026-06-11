@@ -1,11 +1,16 @@
 """
 ProdPlan ONE - Allocations API
 ===============================
+
+F4.E — o endpoint POST /allocations/create (bulk genérico) foi removido:
+zero consumidores (frontend chama só /daily via workforceApi), zero testes,
+e a sobreposição semântica com /daily confundia a API pública. A criação
+de alocações vive em POST /allocations/daily.
 """
 
 from datetime import date
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -26,29 +31,6 @@ router = APIRouter(prefix="/allocations", tags=["Allocations"])
 
 
 # ─── Schemas ──────────────────────────────────────────────────────────────────
-
-
-class AllocationRequest(BaseModel):
-    """Allocation request."""
-    requirements: List[Dict[str, Any]]
-    employees: List[Dict[str, Any]]
-    strategy: str = "skill_first"
-
-
-class AllocationCreatedItem(BaseModel):
-    allocation_id: str
-    employee_id: str
-    employee_name: str
-    order_id: str
-    operation_id: str
-    allocated_hours: float
-    hourly_rate: float
-    estimated_cost: float
-    skill_match: bool
-
-
-class AllocationCreateResponse(BaseModel):
-    allocations: List[AllocationCreatedItem]
 
 
 class DailyAllocationRequest(BaseModel):
@@ -94,24 +76,6 @@ class OrderAllocationsResponse(BaseModel):
 
 
 # ─── Endpoints ────────────────────────────────────────────────────────────────
-
-
-@router.post("/create", response_model=AllocationCreateResponse)
-async def create_allocations(
-    request: AllocationRequest,
-    tenant_id: UUID = Depends(require_tenant_header),
-    session: AsyncSession = Depends(get_session),
-):
-    """Create employee allocations."""
-    service = AllocationService(session, tenant_id)
-
-    allocations = await service.allocate_employees(
-        requirements=request.requirements,
-        employees=request.employees,
-        strategy=request.strategy,
-    )
-
-    return AllocationCreateResponse(allocations=allocations)
 
 
 @router.post("/daily", response_model=DailyAllocationResponse)

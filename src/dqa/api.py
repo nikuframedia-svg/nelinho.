@@ -15,17 +15,16 @@ without a pull-side integration.
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.dqa.trust_gates import effective_mode, load_gate_config
 from src.dqa.trust_signals import curated_signals_provider
 from src.dqa.trust_v2 import (
-    ALLOWED_SCOPES,
     SCOPE_FACTORY,
     TrustIndexV2Calculator,
 )
@@ -50,17 +49,30 @@ class TrustIndexResponse(BaseModel):
     effective_gates: dict[str, bool]
 
 
+# F4.E — formato dos business keys do ERP (of_id/fase_id): alfanumérico +
+# separadores comuns. Não é defesa anti-SQLi (o ORM parametriza) — é
+# validação de formato HTTP: input fora disto → 422 em vez de query inútil.
+_BUSINESS_KEY_PATTERN = r"^[A-Za-z0-9 _./-]{1,64}$"
+
+
 @router.get("/trust-index", response_model=TrustIndexResponse)
 async def get_trust_index(
-    scope: str = Query(SCOPE_FACTORY, description="factory | order | phase"),
+    # F4.E — Literal substitui o runtime-check manual (400→422 automático,
+    # consistente com ask_cube.period). ALLOWED_SCOPES continua a guardar
+    # o compute_for_scope interno em trust_v2.py.
+    scope: Literal["factory", "order", "phase"] = Query(
+        SCOPE_FACTORY, description="factory | order | phase",
+    ),
     scope_id: Optional[UUID] = Query(None, description="UUID for order/phase scope"),
     order_id: Optional[str] = Query(
         None,
         description="Business key (of_id) when scope=order",
+        pattern=_BUSINESS_KEY_PATTERN,
     ),
     phase_id: Optional[str] = Query(
         None,
         description="Business key (fase_id) when scope=phase",
+        pattern=_BUSINESS_KEY_PATTERN,
     ),
     tenant_id: UUID = Depends(get_tenant_id),
     session: AsyncSession = Depends(get_session),
@@ -74,12 +86,6 @@ async def get_trust_index(
     order_id, phase_id : optional business keys — used when the curated
         tables' business keys differ from the entity UUIDs
     """
-    if scope not in ALLOWED_SCOPES:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            detail=f"Unknown scope '{scope}'. Allowed: {sorted(ALLOWED_SCOPES)}",
-        )
-
     async def provider_with_keys(sess, tid, sc, sid):
         # Closure that forwards the business keys the API caller passed in.
         # The calculator's SignalsProvider protocol has a fixed signature, so

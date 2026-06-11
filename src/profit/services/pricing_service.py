@@ -159,7 +159,7 @@ class PricingService:
         self,
         order_id: str,
         prices: List[Decimal],
-        quantity: int = None,
+        quantity: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """Simulate impact of different prices."""
         # Get latest COGS

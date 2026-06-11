@@ -4,11 +4,11 @@ ProdPlan ONE - Pricing API
 """
 
 from decimal import Decimal
-from typing import List
+from typing import List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, Header, HTTPException, status
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.shared.database import get_session
@@ -40,25 +40,38 @@ async def recommend_pricing(
 ):
     """Generate pricing recommendations."""
     service = PricingService(session, tenant_id)
-    
-    result = await service.recommend_pricing(
-        order_id=request.order_id,
-        base_markup_percent=request.base_markup_percent,
-        target_margin_percent=request.target_margin_percent,
-        demand_pressure=request.demand_pressure,
-        inventory_factor=request.inventory_factor,
-        competitor_factor=request.competitor_factor,
-        seasonality_factor=request.seasonality_factor,
-    )
-    
+
+    # F4.E — ordem sem COGS calculado é 404 (mesmo padrão de cogs.py),
+    # não 500 via global_exception_handler. O serviço continua a levantar
+    # ValueError (também é consumido pelo handler Kafka COGS_CALCULATED).
+    try:
+        result = await service.recommend_pricing(
+            order_id=request.order_id,
+            base_markup_percent=request.base_markup_percent,
+            target_margin_percent=request.target_margin_percent,
+            demand_pressure=request.demand_pressure,
+            inventory_factor=request.inventory_factor,
+            competitor_factor=request.competitor_factor,
+            seasonality_factor=request.seasonality_factor,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc),
+        ) from exc
+
     return result.to_dict()
 
 
 class PriceSimulationRequest(BaseModel):
-    """Price simulation request."""
+    """Price simulation request.
+
+    F4.E — `prices` exige pelo menos 1 preço (lista vazia era aceite e
+    devolvia simulação vazia); `quantity` é opcional (None → quantidade
+    do COGS na BD) mas, quando vem, tem de ser ≥ 1.
+    """
     order_id: str
-    prices: List[Decimal]
-    quantity: int = None
+    prices: List[Decimal] = Field(..., min_length=1)
+    quantity: Optional[int] = Field(None, ge=1)
 
 
 @router.post("/simulate")
@@ -69,13 +82,18 @@ async def simulate_prices(
 ):
     """Simulate impact of different prices."""
     service = PricingService(session, tenant_id)
-    
-    result = await service.simulate_price_impact(
-        order_id=request.order_id,
-        prices=request.prices,
-        quantity=request.quantity,
-    )
-    
+
+    try:
+        result = await service.simulate_price_impact(
+            order_id=request.order_id,
+            prices=request.prices,
+            quantity=request.quantity,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc),
+        ) from exc
+
     return {"simulations": result}
 
 

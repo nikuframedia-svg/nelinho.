@@ -31,7 +31,7 @@ from __future__ import annotations
 import csv
 import io
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any, Literal
 from uuid import UUID
 
@@ -151,9 +151,17 @@ async def _gen_qualidade(
         from src.quality.services.dashboard_service import QualityDashboardService
 
         svc = QualityDashboardService(session, tenant_id)
-        since_dt = datetime.combine(since, datetime.min.time()) if since else None
+        # Q.172/F4.E — `ReworkEntry.detected_at` é timezone-aware; comparar
+        # com naive rebenta no asyncpg e o except devolvia [] em silêncio.
+        since_dt = (
+            datetime.combine(since, datetime.min.time(), tzinfo=timezone.utc)
+            if since else None
+        )
         # Q.171.C — until com min.time() EXCLUÍA o próprio dia do relatório.
-        until_dt = datetime.combine(until, datetime.max.time()) if until else None
+        until_dt = (
+            datetime.combine(until, datetime.max.time(), tzinfo=timezone.utc)
+            if until else None
+        )
         result = await svc.group_by(
             group_by="phase",
             since=since_dt,

@@ -3,6 +3,12 @@ ProdPlan ONE - Rates API
 =========================
 
 REST endpoints for rate configuration.
+
+F4.E — DECISÃO (auditoria "rates endpoints órfãos"): MANTER. Não há UI
+(MasterDataBrowser não expõe rates), mas estes endpoints são o único
+write-path de `core.rates` (LaborRate é consumida ao vivo por
+hr/services/allocation_service e pelo costing). Remover deixava o modelo
+vivo sem forma de configuração; criar a UI é frontend (outro lote).
 """
 
 from datetime import date

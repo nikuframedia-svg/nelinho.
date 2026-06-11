@@ -230,10 +230,15 @@ class OperationResponse(BaseModel):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class BOMItemCreate(BaseModel):
-    """Create BOM item request."""
+    """Create BOM item request.
+
+    F4.E — `quantity_per` é gt=0 (não ge=0): uma linha BOM com 0 unidades
+    multiplica a explosão (plan/engines/bom_adapter) para zero em silêncio.
+    Linha sem consumo apaga-se, não se zera.
+    """
     parent_product_id: UUID
     component_product_id: UUID
-    quantity_per: Decimal = Field(..., ge=0)
+    quantity_per: Decimal = Field(..., gt=0)
     unit_of_measure: str = Field(default="UN", max_length=10)
     sequence: int = Field(default=0, ge=0)
     operation_id: Optional[UUID] = None
@@ -246,8 +251,8 @@ class BOMItemCreate(BaseModel):
 
 
 class BOMItemUpdate(BaseModel):
-    """Update BOM item request."""
-    quantity_per: Optional[Decimal] = Field(None, ge=0)
+    """Update BOM item request. `quantity_per` gt=0 — ver BOMItemCreate."""
+    quantity_per: Optional[Decimal] = Field(None, gt=0)
     unit_of_measure: Optional[str] = Field(None, max_length=10)
     sequence: Optional[int] = Field(None, ge=0)
     operation_id: Optional[UUID] = None

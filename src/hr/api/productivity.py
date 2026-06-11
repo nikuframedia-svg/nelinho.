@@ -156,7 +156,8 @@ async def get_productivity_report(
     # Endpoint uses the ORM directly; the service instance was unused dead code.
     from sqlalchemy import select, and_
     from src.hr.models.productivity import EmployeeProductivity
-    
+    from src.hr.services.productivity_service import aggregate_productivity_totals
+
     query = select(EmployeeProductivity).where(
         and_(
             EmployeeProductivity.tenant_id == tenant_id,
@@ -164,10 +165,10 @@ async def get_productivity_report(
             EmployeeProductivity.record_date <= endDate,
         )
     )
-    
+
     result = await session.execute(query)
     records = list(result.scalars().all())
-    
+
     if not records:
         return {
             "start_date": startDate.isoformat(),
@@ -180,28 +181,21 @@ async def get_productivity_report(
             "total_actual_hours": 0,
             "bonus_eligible_count": 0,
         }
-    
-    # Aggregate metrics
-    total_std_hours = sum(r.standard_hours for r in records)
-    total_act_hours = sum(r.actual_hours for r in records)
-    total_act_qty = sum(r.actual_quantity for r in records)
-    total_good_qty = sum(r.good_quantity for r in records)
-    
-    avg_efficiency = (total_std_hours / total_act_hours * 100) if total_act_hours > 0 else Decimal("0")
-    avg_quality = (total_good_qty / total_act_qty * 100) if total_act_qty > 0 else Decimal("0")
-    
+
+    # F4.E — agregação partilhada com o serviço (antes: 3 cópias do loop).
+    totals = aggregate_productivity_totals(records)
     unique_employees = len(set(r.employee_id for r in records))
     bonus_eligible_count = sum(1 for r in records if r.bonus_eligible)
-    
+
     return {
         "start_date": startDate.isoformat(),
         "end_date": endDate.isoformat(),
         "total_records": len(records),
         "total_employees": unique_employees,
-        "avg_efficiency_percent": float(avg_efficiency),
-        "avg_quality_percent": float(avg_quality),
-        "total_standard_hours": float(total_std_hours),
-        "total_actual_hours": float(total_act_hours),
+        "avg_efficiency_percent": float(totals["efficiency_percent"]),
+        "avg_quality_percent": float(totals["quality_percent"]),
+        "total_standard_hours": float(totals["total_std_hours"]),
+        "total_actual_hours": float(totals["total_act_hours"]),
         "bonus_eligible_count": bonus_eligible_count,
     }
 

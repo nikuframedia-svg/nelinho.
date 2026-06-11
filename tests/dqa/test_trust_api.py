@@ -74,10 +74,49 @@ def _cfg_row(tid, key, value, dt="float"):
 _HEADERS = {"X-Tenant-Id": str(TEST_TENANT_ID)}
 
 
-def test_unknown_scope_returns_400(fake_session_and_client):
+def test_unknown_scope_returns_422(fake_session_and_client):
+    # F4.E — scope passou de runtime-check manual (400) a Literal (422
+    # FastAPI). O contrato "scope inválido é rejeitado" mantém-se.
     _, client = fake_session_and_client
     resp = client.get("/v1/dqa/trust-index?scope=nonsense", headers=_HEADERS)
-    assert resp.status_code == 400
+    assert resp.status_code == 422
+
+
+def test_invalid_order_id_format_returns_422(fake_session_and_client):
+    # F4.E — business keys (of_id/fase_id) têm validação de formato no
+    # Query; lixo tipo tentativa de injection é rejeitado com 422 antes
+    # de chegar à BD (antes: 200 com query inútil).
+    _, client = fake_session_and_client
+    resp = client.get(
+        "/v1/dqa/trust-index",
+        params={"scope": "order", "order_id": "x' OR 1=1--"},
+        headers=_HEADERS,
+    )
+    assert resp.status_code == 422
+
+
+def test_invalid_phase_id_format_returns_422(fake_session_and_client):
+    _, client = fake_session_and_client
+    resp = client.get(
+        "/v1/dqa/trust-index",
+        params={"scope": "phase", "phase_id": "a" * 65},  # excede 64 chars
+        headers=_HEADERS,
+    )
+    assert resp.status_code == 422
+
+
+def test_valid_order_id_format_passes_validation(fake_session_and_client):
+    # Formato real de of_id (alfanumérico + separadores) tem de continuar
+    # a passar — o pattern não pode rejeitar chaves legítimas do ERP.
+    session, client = fake_session_and_client
+    for _ in range(5):  # load_weights + tau/kappa + most-recent + samples + gates
+        _queue_execute(session, scalars=[])
+    resp = client.get(
+        "/v1/dqa/trust-index",
+        params={"scope": "order", "order_id": "OF 12345/2026.A-1"},
+        headers=_HEADERS,
+    )
+    assert resp.status_code == 200, resp.text
 
 
 def test_missing_tenant_header_returns_401(fake_session_and_client):

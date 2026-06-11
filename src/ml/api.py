@@ -320,7 +320,15 @@ async def get_drift_events(
         result = await db.execute(stmt)
         rows = result.scalars().all()
     except Exception as exc:
+        # F4.E — padrão Q.170.G: a lista vazia continua a ser o contrato
+        # (o painel mostra "sem drift" em vez de rebentar), mas a falha
+        # deixa de ser invisível — fica contada em silent_fallback_total.
         logger.warning("drift endpoint: query falhou: %s", exc)
+        try:
+            from src.shared.metrics import bump_silent_fallback
+            bump_silent_fallback("ml_drift", "query_failed")
+        except Exception as metric_exc:  # pragma: no cover — best-effort
+            logger.debug("métrica ml_drift falhou: %s", metric_exc)
         rows = []
 
     return [
