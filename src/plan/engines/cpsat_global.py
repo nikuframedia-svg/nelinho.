@@ -68,8 +68,12 @@ def run_cpsat_global(
     """Corre o pipeline CP-SAT global e devolve o result-dict, ou None (fallback)."""
     if not HAS_ORTOOLS:
         return None
-    # 1) excluir fases de reparação (14/76/77) — fluxo separado off-line.
-    main_ops = [o for o in operations if str(o.phase_id) not in REPAIR_PHASE_IDS]
+    # 1) excluir fases de reparação — Q.173.L: ids efetivos vêm do state
+    # (config de tenant `planning`/`repair.phase_ids`; default {14,76,77}).
+    repair_ids = (
+        frozenset(getattr(state, "repair_phase_ids", None) or REPAIR_PHASE_IDS)
+    )
+    main_ops = [o for o in operations if str(o.phase_id) not in repair_ids]
     repair_excluded = len(operations) - len(main_ops)
     if not main_ops:
         return None

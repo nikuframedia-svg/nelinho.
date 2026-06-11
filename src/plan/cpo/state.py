@@ -328,6 +328,12 @@ class FactoryState:
     # open orders available to schedule
     open_orders: List[Dict[str, Any]] = field(default_factory=list)
 
+    # Q.173.L — fases de reparação efetivas para ESTE tenant (config
+    # `planning`/`repair.phase_ids`; default = REPAIR_PHASE_IDS {14,76,77}).
+    # Governa a prioridade no loader e a exclusão no CP-SAT global. NOTA: a
+    # view BD v_of_em_producao.is_reparacao continua {14,76,77} hardcoded.
+    repair_phase_ids: frozenset[str] = REPAIR_PHASE_IDS
+
     # min mandatory gap between consecutive phases (curing/drying).
     # Key: (from_phase_code, to_phase_code) — both normalized via
     # `normalize_phase_code`. Value: hours.
@@ -616,6 +622,13 @@ class FactoryState:
                     eff_plan_cap = (
                         int(_cfg_cap) if _cfg_cap not in (None, "") else None
                     )
+                # Q.173.L — fases de reparação configuráveis por tenant
+                # (lista de ints/strings); inválido/vazio ⇒ default.
+                _rep = _planning.get("repair.phase_ids")
+                if isinstance(_rep, (list, tuple)) and _rep:
+                    state.repair_phase_ids = frozenset(
+                        str(int(x)) for x in _rep
+                    )
             except (
                 SQLAlchemyError, ImportError, ValueError, AttributeError, TypeError,
             ) as exc:
@@ -627,6 +640,7 @@ class FactoryState:
                 session, tenant_id, scope=scope,
                 staleness_months=staleness_months,
                 plan_cap=eff_plan_cap,
+                repair_phase_ids=state.repair_phase_ids,
             )
 
         # Curing/drying gaps (Sprint A D2): DB first, seed fallback

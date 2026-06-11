@@ -968,6 +968,7 @@ async def _load_open_orders_db(
     scope: str = "boats_only",
     staleness_months: int | None = None,
     plan_cap: int | None = None,
+    repair_phase_ids: frozenset[str] | None = None,
 ) -> List[Dict[str, Any]]:
     """Q.126.B — real WIP from `factory_raw.ordemfabrico`: open orders
     (`OF_DATAFIM` NULL) whose current phase (`OF_FP_ID`) is a production phase
@@ -1028,8 +1029,14 @@ async def _load_open_orders_db(
     planeadas. Barco de cliente que volta para reparação fica no topo do horizonte."""
     from src.plan.cpo.state import REPAIR_PHASE_IDS
 
-    # Q.161.A — fragmento SQL dos ids de fase de reparação (DRY com REPAIR_PHASE_IDS).
-    _repair_ids_sql = ", ".join(str(int(x)) for x in sorted(REPAIR_PHASE_IDS, key=int))
+    # Q.173.L — as fases de reparação são configuráveis por tenant
+    # (`planning`/`repair.phase_ids`); default = constante {14,76,77}. NOTA:
+    # a view BD `v_of_em_producao.is_reparacao` continua hardcoded {14,76,77}
+    # — a config governa o SOLVER (prioridade/exclusão CP-SAT), não a view.
+    _repair_ids = repair_phase_ids or REPAIR_PHASE_IDS
+
+    # Q.161.A — fragmento SQL dos ids de fase de reparação (DRY com a config).
+    _repair_ids_sql = ", ".join(str(int(x)) for x in sorted(_repair_ids, key=int))
 
     if session is None:
         return []
@@ -1217,7 +1224,7 @@ async def _load_open_orders_db(
             # que voltou). Lane/UI/prioridade; o decoder agenda a op aberta da
             # fase atual (rota truncada).
             "is_reparacao": (
-                str(r["current_fase_id"]) in REPAIR_PHASE_IDS
+                str(r["current_fase_id"]) in _repair_ids
                 if r["current_fase_id"] is not None
                 else False
             ),

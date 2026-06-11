@@ -195,8 +195,9 @@ async def _build_cpo_config(
     'planning': cpo.gen_count / cpo.total_budget_s / cpo.pop_size + sub-budgets),
     com os campos do request a sobrepor só quando diferem do default do schema.
     Best-effort: sem config / sem session → defaults canónicos do CPOConfig
-    (Blueprint v2.0). NÃO mexe nos flags use_* (ficam nos defaults do engine —
-    evita divergências de seeds)."""
+    (Blueprint v2.0). Flags use_* ficam nos defaults do engine, EXCETO os
+    deliberadamente expostos à configuração de tenant: `cpo.use_cpsat_global`
+    (Q.166.F) e `cpo.use_queue_time` (Q.173.L)."""
     planning: dict[str, Any] = {}
     try:
         from src.core.services.tenant_config_service import TenantConfigService
@@ -267,6 +268,9 @@ async def _build_cpo_config(
         use_cpsat_global=use_cpsat_global,
         cpsat_num_workers=int(_num("cpo.cpsat_num_workers", base.cpsat_num_workers)),
         cpsat_deterministic=_bool("cpo.cpsat_deterministic", base.cpsat_deterministic),
+        # Q.173.L — one-piece-flow configurável: fila inter-fase mediana
+        # (True, default) vs fila=0 (False). Antes só mudável em código.
+        use_queue_time=_bool("cpo.use_queue_time", base.use_queue_time),
     )
 
 

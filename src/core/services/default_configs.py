@@ -83,6 +83,13 @@ DEFAULT_SEEDS: list[ConfigSeed] = [
      "Requires ≥20 real samples before enabling"),
     ("planning", "cpo.use_cpsat_lrho", True, "bool",
      "Sprint P.10 — Rolling Horizon L-RHO (ex-deferred I.2)"),
+    ("planning", "cpo.use_queue_time", True, "bool",
+     "Q.173.L — fila inter-fase mediana por fase no decoder (True, default) "
+     "vs one-piece-flow fila=0 (False). Lida por _build_cpo_config."),
+    ("planning", "repair.phase_ids", [14, 76, 77], "json",
+     "Q.173.L — fases de REPARAÇÃO para o planeador (prioridade no loader + "
+     "exclusão no CP-SAT global). A view v_of_em_producao continua {14,76,77} "
+     "hardcoded na BD — mudar aqui governa só o solver."),
 
     # Fitness weights (Blueprint v2.0 §5.5 — normalised, sum = 1.0)
     ("planning", "fitness.weight.makespan", 0.20, "float", ""),

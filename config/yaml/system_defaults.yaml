@@ -153,6 +153,17 @@ categories:
       value: true
       data_type: bool
       description: Sprint P.10 — Rolling Horizon L-RHO (ex-deferred I.2)
+    - key: cpo.use_queue_time
+      value: true
+      data_type: bool
+      description: Q.173.L — fila inter-fase mediana por fase no decoder (true,
+        default) vs one-piece-flow fila=0 (false). Lida por _build_cpo_config.
+    - key: repair.phase_ids
+      value: [14, 76, 77]
+      data_type: json
+      description: Q.173.L — fases de REPARAÇÃO para o planeador (prioridade no
+        loader + exclusão no CP-SAT global). A view v_of_em_producao continua
+        {14,76,77} hardcoded na BD — mudar aqui governa só o solver.
     - key: fitness.weight.makespan
       value: 0.2
       data_type: float
