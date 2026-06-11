@@ -316,6 +316,42 @@ check(
     + (" ..." if len(empty_tests) > 3 else ""),
 )
 
+# WG2 (Q.172.D) — o validador universal tem de estar LIGADO aos dois
+# caminhos de escrita de schedules. Se alguém o desligar do
+# create_from_schedule ou do apply_manual_reorder, o CI parte aqui.
+_commits_src = Path("src/plan/cpo/commits.py").read_text(encoding="utf-8")
+check(
+    "WG2-validador-no-commit",
+    "validate_schedule" in _commits_src,
+    "create_from_schedule deixou de chamar validate_schedule (Q.169.B)",
+)
+_reorder_src = Path("src/plan/services/manual_reorder.py").read_text(encoding="utf-8")
+check(
+    "WG2-validador-no-drag",
+    "validate_schedule" in _reorder_src,
+    "apply_manual_reorder deixou de passar pelo validador universal (Q.171.D)",
+)
+
+# HD1 (Q.172.D) — dados honestos no backend (invariante #8): padrões de
+# mock/fabricação não entram em src/ (a campanha de saneamento limpou-os;
+# este gate impede o regresso).
+_mock_hits: list[str] = []
+for _fp in Path("src").rglob("*.py"):
+    if "__pycache__" in str(_fp):
+        continue
+    try:
+        _content = _fp.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        continue
+    for _m in re.finditer(r"def _get_mock_|MOCK_[A-Z_]+\s*=|_fake_data\s*=", _content):
+        _line = _content[: _m.start()].count("\n") + 1
+        _mock_hits.append(f"{_fp}:{_line}")
+check(
+    "HD1-zero-mocks-backend",
+    len(_mock_hits) == 0,
+    "padrões de mock no backend: " + ", ".join(_mock_hits[:3]),
+)
+
 # --- TESTES ---
 print("\n-> TESTES")
 if os.environ.get("VERIFY_INVARIANTS_SKIP_TESTS"):
