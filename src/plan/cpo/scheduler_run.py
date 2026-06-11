@@ -490,6 +490,27 @@ async def run_cpo_schedule(
 
     product_price_eur = await _load_product_prices(session, tenant_id)
 
+    # Q.173.S — boosts ANTES do solve: prioridade de cliente/ordem/barco passa
+    # a reordenar o priority_order do decoder (Q.116.D) em todos os caminhos
+    # greedy/GA — antes era recolhida PÓS-solve e servia só de badge no
+    # frontend (auditoria 2026-06-11). O snapshot é reutilizado no commit
+    # (entra no sha + coluna boost_inputs_snapshot — zero queries duplicadas).
+    boost_snapshot: Dict[str, Any] = {}
+    try:
+        from src.plan.api._cpo_common import _collect_boost_inputs
+
+        boost_snapshot = await _collect_boost_inputs(
+            session, tenant_id,
+            [{"order_id": getattr(op, "order_id", None)} for op in operations],
+        )
+    except Exception as snap_exc:  # pragma: no cover — defensive
+        logger.warning(f"boost snapshot failed: {snap_exc}", exc_info=True)
+    boost_map: Dict[str, int] = {
+        str(lid): int(comp.get("effective", 0) or 0)
+        for lid, comp in boost_snapshot.items()
+        if int(comp.get("effective", 0) or 0)
+    }
+
     # Q.169.E — o solve é CPU-bound e SÍNCRONO (greedy+GA em Python; CP-SAT
     # em C++ que LIBERTA o GIL): corrê-lo inline bloqueava o event loop até
     # 600s — /health não respondia e o SSE morria durante cada replan. Em
@@ -500,6 +521,7 @@ async def run_cpo_schedule(
         engine.schedule,
         operations, machines, horizon_start, horizon_end,
         product_price_eur=product_price_eur,
+        boost_inputs=boost_map or None,
     )
 
     # Q.138.E — honestidade: throughput_eur_day=0.0 é enganador quando não há
@@ -637,19 +659,9 @@ async def run_cpo_schedule(
 
     trust_index_value = await _compute_trust_index_for_schedule(session, tenant_id)
 
-    # Q.168.C — snapshot dos inputs de boost ANTES do commit: entra no sha
-    # (Q.116.D, reprodutibilidade do replay) e na coluna boost_inputs_snapshot.
-    # Reutilizado pelo attach pós-commit (zero queries duplicadas). Defensivo:
-    # falha de leitura → {} (sem boosts no hash, nunca derruba o schedule).
-    boost_snapshot: Dict[str, Any] = {}
-    try:
-        from src.plan.api._cpo_common import _collect_boost_inputs
-
-        boost_snapshot = await _collect_boost_inputs(
-            session, tenant_id, list(result.get("operations") or []),
-        )
-    except Exception as snap_exc:  # pragma: no cover — defensive
-        logger.warning(f"boost snapshot failed: {snap_exc}", exc_info=True)
+    # Q.168.C/Q.173.S — o snapshot dos boosts foi recolhido ANTES do solve
+    # (ver acima): aqui entra no sha (reprodutibilidade do replay) e na
+    # coluna boost_inputs_snapshot, e alimenta o attach pós-commit.
 
     commit_sha: Optional[str] = None
     parent_sha: Optional[str] = None

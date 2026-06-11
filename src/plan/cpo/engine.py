@@ -377,7 +377,13 @@ class CPOv4Engine:
         horizon_end: Optional[datetime] = None,
         *,
         product_price_eur: Optional[Dict[str, Any]] = None,
+        boost_inputs: Optional[Dict[str, int]] = None,
     ) -> Dict[str, Any]:
+        # Q.173.S — boost_inputs (work_order_id → effective_boost) chegam
+        # ANTES do solve e reordenam o priority_order do decoder em todos
+        # os caminhos greedy/GA. O CP-SAT global não os consome direto —
+        # herda-os via warm-start (hint do baseline com boosts) e o seu
+        # objetivo é tardiness+makespan sobre due dates reais.
         started = time.time()
         horizon_start = horizon_start or utc_now_naive()
         horizon_end = horizon_end or (horizon_start + timedelta(weeks=4))
@@ -405,6 +411,7 @@ class CPOv4Engine:
                 baseline_chromo, operations, machines, horizon_start, horizon_end,
                 queue_time_minutes=queue_time_min,
                 post_desmolde_buffer_minutes=post_desmolde_min,
+                boost_inputs=boost_inputs,
             )
             baseline = result.schedule
             greedy_meta = result.to_meta()
@@ -415,6 +422,7 @@ class CPOv4Engine:
                 queue_time_minutes=queue_time_min,
                 post_desmolde_buffer_minutes=post_desmolde_min,
                 product_price_eur=product_price_eur,
+                boost_inputs=boost_inputs,
             )
         # Q.153.A3 — escalar as referências de normalização da fitness ao
         # baseline ANTES de o avaliar, para o GA ter gradiente real em
@@ -501,6 +509,7 @@ class CPOv4Engine:
                     queue_time_minutes=queue_time_min,
                     post_desmolde_buffer_minutes=post_desmolde_min,
                     product_price_eur=product_price_eur,
+                    boost_inputs=boost_inputs,
                 )
                 fit = compute_fitness(result, self.fitness_config)
                 scored.append((fit, chromo, result))
