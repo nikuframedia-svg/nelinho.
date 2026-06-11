@@ -371,6 +371,155 @@ export interface ThroughputRow {
 
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Q.173.AC — Previsão de ruturas + catálogo BOM + POs (MateriaisPage)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface OrdemAfetada {
+  order_id: string;
+  modelo: string;
+  start_time: string;
+}
+
+export interface MaterialEmRisco {
+  product_code: string;
+  product_name: string;
+  stock_atual: number;
+  stock_negativo_erp: boolean;
+  min_stock: number;
+  min_stock_source: 'erp' | 'manual' | 'default' | string;
+  data_rutura_prevista: string | null;
+  defice: number;
+  ordens_afetadas: OrdemAfetada[];
+  sugestao: 'compra' | 'transferencia' | 'replaneamento' | 'ok' | string;
+  sugestao_detalhe: string;
+  lead_time_days: number;
+  lead_time_source: 'erp' | 'manual' | 'default' | string;
+  data_limite_encomenda: string | null;
+  outros_armazens: Array<{ warehouse_id: number; warehouse_name: string; stock: number }>;
+  consumo_mediano_por_barco: number | null;
+}
+
+export interface ShortageforecastOut {
+  materiais_em_risco: MaterialEmRisco[];
+  total_em_risco: number;
+  excluidos_sem_stock_rastreado: number;
+  horizonte_dias: number;
+  commit_sha: string | null;
+  commit_ops: number;
+  gerado_em: string;
+  fontes: string[];
+}
+
+export interface WarehouseStockBreakdown {
+  warehouse_id: number;
+  warehouse_name: string;
+  stock: number;
+}
+
+export interface BomMaterialItem {
+  id: string;
+  product_code: string;
+  product_name: string;
+  unit_of_measure: string;
+  standard_cost: number | null;
+  category: string | null;
+  product_type: string;
+  used_in_n_boms: number;
+  total_qty_per: number | null;
+  on_hand: number | null;
+  warehouses: WarehouseStockBreakdown[];
+  predicted_stockout_date: string | null;
+  stockout_confidence: string | null;
+  avg_daily_consumption: number | null;
+}
+
+export interface BomMaterialsEnvelope {
+  items: BomMaterialItem[];
+  count: number;
+  stock_available: boolean;
+  stock_synced_at: string | null;
+  stock_source: string;
+  unavailable_reason: string | null;
+}
+
+export interface PurchaseOrderItem {
+  id: string;
+  po_number: string | null;
+  erp_movement_id: number | null;
+  supplier_name: string;
+  supplier_erp_id: number | null;
+  product_code: string;
+  product_name: string | null;
+  qty_ordered: number;
+  qty_received: number;
+  qty_outstanding: number;
+  unit_of_measure: string;
+  ordered_at: string | null;
+  eta: string | null;
+  received_at: string | null;
+  status: string;
+  is_overdue: boolean;
+  days_to_eta: number | null;
+  source: string;
+  notes: string | null;
+}
+
+export interface PurchaseOrdersSummary {
+  open: number;
+  overdue: number;
+  received: number;
+  cancelled: number;
+  total_outstanding_qty: number;
+}
+
+export interface PurchaseOrdersEnvelope {
+  items: PurchaseOrderItem[];
+  count: number;
+  data_available: boolean;
+  source: string;
+  last_synced_at: string | null;
+  unavailable_reason: string | null;
+  summary: PurchaseOrdersSummary;
+}
+
+export const materiaisApi = {
+  /** GET /v1/supply/shortage-forecast?horizonte_dias=60 */
+  shortageForecast: (horizonte_dias = 60) =>
+    request<ShortageforecastOut>(
+      `/v1/supply/shortage-forecast?horizonte_dias=${horizonte_dias}`,
+    ),
+
+  /** GET /v1/supply/materials/from-bom — catálogo BOM com stock */
+  bomMaterials: (params?: { search?: string; category?: string; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.search) qs.set('search', params.search);
+    if (params?.category) qs.set('category', params.category);
+    if (params?.limit) qs.set('limit', String(params.limit));
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    return request<BomMaterialsEnvelope>(`/v1/supply/materials/from-bom${suffix}`);
+  },
+
+  /** PATCH /v1/supply/materials/{sku_id}/min-stock */
+  patchMinStock: (sku_id: string, min_stock_qty: number) =>
+    request<{ id: string; sku_id: string; min_stock_qty: number }>(
+      `/v1/supply/materials/${encodeURIComponent(sku_id)}/min-stock`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ min_stock_qty }),
+      },
+    ),
+
+  /** GET /v1/supply/purchase-orders */
+  purchaseOrders: (params?: { open_only?: boolean; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.open_only) qs.set('open_only', 'true');
+    if (params?.limit) qs.set('limit', String(params.limit));
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    return request<PurchaseOrdersEnvelope>(`/v1/supply/purchase-orders${suffix}`);
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // Q.118.N — Faltas de material (FM04 shortage detector) GET /v1/factory-map/shortage-risks
 // ═══════════════════════════════════════════════════════════════════════════════
 

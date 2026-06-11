@@ -41,6 +41,8 @@ const ExpedicaoPage = lazy(() => import('./pages/expedicao/ExpedicaoPage'));
 const LLMPage = lazy(() => import('./pages/llm/LLMPage'));
 // Q.115.O — Página Configurações consolidada (6 tabs)
 const ConfiguracoesPage = lazy(() => import('./pages/configuracoes/ConfiguracoesPage'));
+// Q.173.AC — Materiais (ruturas + stock + encomendas)
+const MateriaisPage = lazy(() => import('./pages/materiais/MateriaisPage'));
 
 // ── Pesquisa global (Q.52.S) — overlay/modal, mantém rota ─────────────
 const SearchResultsPage = lazy(() => import('./pages/search/SearchResultsPage'));
@@ -100,6 +102,7 @@ function App() {
                     <Route path="decisoes" element={<Lazy><DecisoesPage /></Lazy>} />
                     <Route path="overall"  element={<Lazy count={4}><OverallPage /></Lazy>} />
                     <Route path="expedicao" element={<Lazy count={4}><ExpedicaoPage /></Lazy>} />
+                    <Route path="materiais" element={<Lazy count={3}><MateriaisPage /></Lazy>} />
                     <Route path="llm"      element={<Lazy count={3}><LLMPage /></Lazy>} />
                     <Route path="configuracoes" element={<Lazy><ConfiguracoesPage /></Lazy>} />
 

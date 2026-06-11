@@ -208,6 +208,15 @@ export const supplyKeys = {
     ] as const,
   shortageAlerts: () =>
     [...supplyKeys.all, 'copilot-alerts', 'shortage'] as const,
+  // Q.173.AC — previsão de ruturas (shortage-forecast) e catálogo BOM
+  shortageForecast: (horizonDays: number) =>
+    [...supplyKeys.all, 'shortage-forecast', horizonDays] as const,
+  bomMaterials: (params?: { search?: string; category?: string }) =>
+    [...supplyKeys.all, 'bom-materials', params ?? {}] as const,
+  purchaseOrders: (params?: { openOnly?: boolean }) =>
+    [...supplyKeys.all, 'purchase-orders', params ?? {}] as const,
+  consumptionByModel: (modelId: number) =>
+    [...supplyKeys.all, 'consumption-by-model', modelId] as const,
 } as const;
 
 // ─── plan / CPO commits (Q.115.K) ──────────────────────────────────────

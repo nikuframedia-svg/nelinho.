@@ -9,6 +9,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { PackageX } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { shortageRisksApi } from '../../lib/api';
 
 const SEV_COLOR: Record<string, string> = {
@@ -60,7 +61,13 @@ export function ShortageRiskPanel() {
           </span>
         ))}
         {atRisk.length > 12 ? (
-          <span className="text-xs text-fg-3 self-center">+{atRisk.length - 12}</span>
+          // Q.173.AC — com ROPs reais (2.282) o "+N" sem destino era inútil
+          <Link
+            to="/materiais"
+            className="text-xs text-blue-300 hover:text-blue-200 underline self-center"
+          >
+            +{atRisk.length - 12} — ver todos em Materiais
+          </Link>
         ) : null}
       </div>
     </div>

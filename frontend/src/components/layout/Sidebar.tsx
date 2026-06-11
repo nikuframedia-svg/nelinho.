@@ -15,6 +15,7 @@ import {
   CheckSquare,
   LayoutGrid,
   Truck,
+  Package,
   Bot,
   Settings,
 } from 'lucide-react';
@@ -53,6 +54,7 @@ const NAV_ITEMS: Omit<NavItem, 'badge'>[] = [
   { path: '/decisoes',      label: 'Decisões',      icon: <CheckSquare size={20} /> },
   { path: '/overall',       label: 'Planeamento',   icon: <LayoutGrid size={20} /> },
   { path: '/expedicao',     label: 'Expedição',     icon: <Truck size={20} /> },
+  { path: '/materiais',     label: 'Materiais',     icon: <Package size={20} /> },
   { path: '/llm',           label: 'Copiloto',      icon: <Bot size={20} /> },
   { path: '/configuracoes', label: 'Configurações', icon: <Settings size={20} /> },
 ];
