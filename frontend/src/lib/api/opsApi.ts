@@ -38,18 +38,6 @@ export interface AuthMeResponse {
   [key: string]: any;
 }
 
-export interface BulkDecisionItem {
-  decision_id: string;
-  action: 'approve' | 'reject';
-  reason?: string;
-}
-
-export interface BulkDecisionsResponse {
-  ok?: number;
-  failed?: number;
-  [key: string]: any;
-}
-
 /**
  * Probe a health endpoint and translate request() failures into a
  * structured `{ ok, body, status }` — mirrors the pre-Q.67 contract
@@ -79,9 +67,4 @@ export const opsApi = {
       body: JSON.stringify({ reason: reason ?? '' }),
     }),
 
-  bulkDecisions: (items: BulkDecisionItem[]) =>
-    request<BulkDecisionsResponse>('/v1/governance/decisions/bulk', {
-      method: 'POST',
-      body: JSON.stringify({ items }),
-    }),
 };

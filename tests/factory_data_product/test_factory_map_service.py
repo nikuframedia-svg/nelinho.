@@ -7,9 +7,8 @@ Integration against real curated data lands in Sprint V.2.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 from decimal import Decimal
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -232,90 +231,15 @@ async def test_line_load_shape(fake_session):
 
 
 # ---------------------------------------------------------------------------
-# projection (N.3)
+# Q.172 (F4.E) — projection (N.3) e boat_view (N.2) removidos com o
+# TrajectoryMixin (endpoints órfãos, zero consumo frontend). O serviço já
+# não expõe estes métodos — guard explícito contra regressão silenciosa.
 # ---------------------------------------------------------------------------
 
-@pytest.mark.asyncio
-async def test_projection_uses_historical_averages(fake_session):
-    # Historical per-phase averages
-    _queue(fake_session, scalars=[
-        ("Laminagem", 8.0, 100),
-        ("Pintura", 4.0, 50),
-    ])
-    # Open orders
-    order = SimpleNamespace(
-        current_phase_name="Laminagem",
-        completed_date=None,
-        tenant_id=TEST_TENANT_ID,
-    )
-    _queue(fake_session, scalars=[order])
-
+def test_trajectory_methods_removed(fake_session):
     svc = FactoryMapService(fake_session, TEST_TENANT_ID)
-    result = await svc.projection(days_ahead=7)
-    assert result["method"] == "historical_avg_durations"
-    assert result["open_orders_projected"] == 1
-    assert result["sample_size_per_phase"]["Laminagem"] == 100
-    assert any(p["phase_id"] == "Laminagem" for p in result["points"])
-
-
-# ---------------------------------------------------------------------------
-# boat_view (N.2)
-# ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_boat_view_returns_none_when_order_not_found(fake_session):
-    _queue(fake_session, scalar=None)
-    svc = FactoryMapService(fake_session, TEST_TENANT_ID)
-    assert await svc.boat_view(of_id="12345") is None
-
-
-@pytest.mark.asyncio
-async def test_boat_view_flags_late_vs_transport(fake_session):
-    order = SimpleNamespace(
-        legacy_id=12345,
-        product_name="K1 Vanquish",
-        product_type="K1",
-        current_phase_name="Laminagem",
-        status="IN_PROGRESS",
-        created_date=date.today() - timedelta(days=30),
-        completed_date=None,
-        transport_date=date.today() - timedelta(days=2),  # OVERDUE
-    )
-    _queue(fake_session, scalar=order)       # ProductionOrder select
-    _queue(fake_session, scalars=[])         # empty trajectory
-    svc = FactoryMapService(fake_session, TEST_TENANT_ID)
-    result = await svc.boat_view(of_id="12345")
-    assert result is not None
-    codes = [f["code"] for f in result["risk_flags"]]
-    assert "LATE_VS_TRANSPORT" in codes
-    high_flag = next(f for f in result["risk_flags"] if f["code"] == "LATE_VS_TRANSPORT")
-    assert high_flag["severity"] == "HIGH"
-
-
-@pytest.mark.asyncio
-async def test_boat_view_at_risk_when_transport_close_and_open_phases(fake_session):
-    order = SimpleNamespace(
-        legacy_id=99,
-        product_name="K4",
-        product_type="K4",
-        current_phase_name="Pintura",
-        status="IN_PROGRESS",
-        created_date=date.today() - timedelta(days=10),
-        completed_date=None,
-        transport_date=date.today() + timedelta(days=2),
-    )
-    phase = SimpleNamespace(
-        fase_id="F1", fase_nome="Pintura", ordem=1,
-        data_inicio=date.today(), data_fim=None,
-        horas_reais=None, horas_previstas=Decimal("2.0"),
-        estado="OPEN", molde_id=None,
-    )
-    _queue(fake_session, scalar=order)
-    _queue(fake_session, scalars=[phase])
-    svc = FactoryMapService(fake_session, TEST_TENANT_ID)
-    result = await svc.boat_view(of_id="99")
-    codes = [f["code"] for f in result["risk_flags"]]
-    assert "AT_RISK_VS_TRANSPORT" in codes
+    assert not hasattr(svc, "boat_view")
+    assert not hasattr(svc, "projection")
 
 
 # ---------------------------------------------------------------------------

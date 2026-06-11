@@ -20,6 +20,8 @@ motores/legacy = SALTADO. **Não reescrever.**
 | 2026-06-04 | F1 | `_DEV_TENANT` fallback no auto_cpo_replan → log ERROR (não silencioso) | comportamento idêntico, só severidade; pytest scheduling 66 verdes | — | b066034 |
 | 2026-06-04 | F2 | Dedup `get_tenant_id` (23 routers → `require_tenant_header`) | 23 importam, 1678+ testes, 5 testes 422→401 (auth correto) | `require_tenant_header` (canónico) | a19b418 |
 | 2026-06-04 | B | `painel/painelApi.ts` (7k, órfão real) + funções mortas de `painelHelpers` (só `fmtEuro` vivo) | grep: painelApi só importado por painelHelpers; painelHelpers só por MoveBoatConfirm (usa `fmtEuro`); página /painel sem rota | `fmtEuro` mantido em painelHelpers | (próximo) |
+| 2026-06-10 | Q.172/F4.E | 4 endpoints factory-map órfãos: `GET /v1/factory-map/{boats/{of_id},projection,line-load,kpis}` + `TrajectoryMixin` (`trajectory.py`: `boat_view`+`projection`) + 9 testes | grep frontend: só `/snapshot` (fabricaApi.ts:202) e `/shortage-risks` (supplyApi.ts:396) consumidos; zero hits p/ os 4; `boat_view`/`projection` liam camada curated vazia (ETL Fase B pendente) | `line_load()`/`kpis()` de serviço MANTIDOS (o `snapshot()` compõe-nos); guard `test_orphan_endpoints_removed` + `test_trajectory_methods_removed` | (próximo) |
+| 2026-06-11 | Q.171.H/F4.E | `src/plan/services/replan_hook.py` (138 LOC) + bloco P.14 de `test_sprint_p.py` + teste de coexistência em `test_q115_d_auto_propose.py` (reduzido a auto_propose-only) | CODIGO_MORTO.md:60 já o listava; grep src/: zero callers de produção (só docstring em auto_propose.py); o replan real é o robô APScheduler Q.137 + auto_propose | auto_propose (vivo) cobre o evento config.updated | (próximo) |
 
 ## Follow-ups (registar para não esquecer)
 

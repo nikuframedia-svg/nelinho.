@@ -4,10 +4,19 @@ Supply ROP / ABC endpoints — `/v1/supply/rop/*` + `/abc` + `/rop-configs/recom
 Q.67.6.B4 — extracted from ``src/supply/api.py``. ``ROPCalculator``,
 ``ABCAnalysis`` and ``recompute_rop_configs`` are resolved through
 ``src.supply.api`` to preserve test patches.
+
+Q.172 (F4.E) — `/rop-configs/recompute` ganhou guarda anti-abuso: o recompute
+itera todos os SKUs ativos (queries caras + upserts) e podia ser martelado em
+paralelo até exaurir CPU/pool. Agora: janela deslizante por tenant (in-process)
+→ 429, timeout explícito → 504, e log INFO com a duração.
 """
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import time
+from collections import deque
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -24,7 +33,45 @@ from ._common import (
 )
 
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["Supply Chain"])
+
+
+# ─── Q.172 — guarda do recompute (rate limit in-process por tenant) ────────
+#
+# Janela deslizante simples com `time.monotonic()` — sem Redis de propósito:
+# o objetivo é travar marteladas num endpoint administrativo caro, não quota
+# exata multi-worker (com N workers o teto efetivo é N×limite, ainda finito).
+# Padrão de referência: src/copilot/rate_limiter.py (sliding window).
+
+_RECOMPUTE_MAX_CALLS = 10          # máx. de recomputes por tenant…
+_RECOMPUTE_WINDOW_S = 3600.0       # …por hora (operação administrativa)
+_recompute_calls: dict[UUID, deque[float]] = {}
+
+
+def _check_recompute_rate_limit(tenant_id: UUID) -> None:
+    """Levanta 429 quando o tenant excede o limite na janela deslizante."""
+    now = time.monotonic()
+    calls = _recompute_calls.setdefault(tenant_id, deque())
+    while calls and now - calls[0] > _RECOMPUTE_WINDOW_S:
+        calls.popleft()
+    if len(calls) >= _RECOMPUTE_MAX_CALLS:
+        retry_after = int(_RECOMPUTE_WINDOW_S - (now - calls[0])) + 1
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                f"Limite de {_RECOMPUTE_MAX_CALLS} recomputes/hora por tenant "
+                f"excedido. Tenta novamente em {retry_after}s."
+            ),
+            headers={"Retry-After": str(retry_after)},
+        )
+    calls.append(now)
+
+
+def _reset_rop_recompute_limiter_for_tests() -> None:
+    """Limpa o estado do limiter — usar em fixtures de teste."""
+    _recompute_calls.clear()
 
 
 @router.get("/rop/{sku_id}", response_model=ROPSkuResponse)
@@ -89,6 +136,7 @@ async def calculate_abc_analysis(
 async def trigger_rop_recompute(
     lookback_days: int = Query(90, ge=7, le=365),
     service_level: float = Query(0.95, ge=0.8, le=0.999),
+    timeout_seconds: int = Query(300, ge=10, le=600),
     tenant_id: UUID = Depends(require_tenant_header),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
@@ -99,14 +147,47 @@ async def trigger_rop_recompute(
     `supply.supply_rop_configs` aplicando a formula classica de inventory
     management. Idempotente: segunda chamada substitui, nao duplica.
     Devolve `{rows_processed, rows_upserted, rows_skipped}`.
+
+    Q.172 — operação cara (itera todos os SKUs ativos): rate limit de
+    10/hora por tenant (429) e timeout explícito (504). O timeout cancela
+    ANTES do commit — nada fica meio-escrito.
     """
+    _check_recompute_rate_limit(tenant_id)
+
     from src.supply import api as supply_api
 
-    result = await supply_api.recompute_rop_configs(
-        session,
-        tenant_id,
-        lookback_days=lookback_days,
-        service_level=service_level,
+    started = time.monotonic()
+    try:
+        async with asyncio.timeout(timeout_seconds):
+            result = await supply_api.recompute_rop_configs(
+                session,
+                tenant_id,
+                lookback_days=lookback_days,
+                service_level=service_level,
+            )
+            await session.commit()
+    except TimeoutError as exc:
+        duration_s = time.monotonic() - started
+        logger.warning(
+            "rop_recompute timeout: tenant=%s lookback_days=%d "
+            "timeout_seconds=%d duration_seconds=%.1f",
+            tenant_id, lookback_days, timeout_seconds, duration_s,
+        )
+        raise HTTPException(
+            status.HTTP_504_GATEWAY_TIMEOUT,
+            detail=(
+                f"Recompute excedeu o timeout de {timeout_seconds}s — "
+                "nenhuma alteração foi gravada. Reduz lookback_days ou "
+                "aumenta timeout_seconds."
+            ),
+        ) from exc
+    duration_s = time.monotonic() - started
+    logger.info(
+        "rop_recompute: tenant=%s lookback_days=%d service_level=%.3f "
+        "rows_processed=%s rows_upserted=%s rows_skipped=%s "
+        "duration_seconds=%.1f",
+        tenant_id, lookback_days, service_level,
+        result.get("rows_processed"), result.get("rows_upserted"),
+        result.get("rows_skipped"), duration_s,
     )
-    await session.commit()
     return result

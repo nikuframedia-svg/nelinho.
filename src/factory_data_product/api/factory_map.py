@@ -2,14 +2,15 @@
 ProdPlan ONE - Factory Map API (Sprint N)
 ==========================================
 
-Blueprint v2.0 §3.2 — 6 endpoints under `/v1/factory-map/*`:
+Blueprint v2.0 §3.2 — endpoints under `/v1/factory-map/*`:
 
     GET /snapshot               — FM01/FM02: full factory snapshot
-    GET /boats/{of_id}          — FM02: per-boat trajectory + risk flags
-    GET /projection             — FM03: forward heatmap (historical avg)
     GET /shortage-risks         — FM04: ROP-based shortage detector
-    GET /line-load              — FM06: schedule load per (op, date)
-    GET /kpis                   — FM05: strategic KPIs
+
+Q.172 (F4.E) — removidos 4 endpoints órfãos sem qualquer consumo frontend
+(`/boats/{of_id}`, `/projection`, `/line-load`, `/kpis`); ver DELETION_LOG.md.
+Os métodos de serviço `line_load()`/`kpis()` continuam vivos — o `snapshot()`
+compõe-nos internamente.
 
 Every endpoint is thin — the heavy lifting is in
 `FactoryMapService`. Redis caching for `/snapshot` honours the
@@ -25,7 +26,7 @@ from datetime import datetime
 from typing import Any, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -149,38 +150,6 @@ async def get_snapshot(
     return payload
 
 
-@router.get("/boats/{of_id}")
-async def get_boat(
-    of_id: str,
-    tenant_id: UUID = Depends(get_tenant_id),
-    session: AsyncSession = Depends(get_session),
-) -> dict[str, Any]:
-    """Per-boat trajectory + risk flags."""
-    svc = await _build_service(session, tenant_id)
-    result = await svc.boat_view(of_id=of_id)
-    if result is None:
-        raise HTTPException(
-            status.HTTP_404_NOT_FOUND, detail=f"Order {of_id} not found",
-        )
-    return result
-
-
-@router.get("/projection")
-async def get_projection(
-    days_ahead: int = Query(7, ge=1, le=30),
-    tenant_id: UUID = Depends(get_tenant_id),
-    session: AsyncSession = Depends(get_session),
-) -> dict[str, Any]:
-    """Forward heatmap based on historical phase durations.
-
-    Does NOT run the CPO engine — Sprint P is the one that wires in the
-    full greedy cascade. The historical-average method is honest about
-    its source via the `method` field in the response.
-    """
-    svc = await _build_service(session, tenant_id)
-    return await svc.projection(days_ahead=days_ahead)
-
-
 @router.get("/shortage-risks")
 async def get_shortage_risks(
     horizon_days: int = Query(14, ge=1, le=180),
@@ -190,24 +159,3 @@ async def get_shortage_risks(
     """ROP-based shortage detector. BOM explosion lands in Sprint O.2."""
     svc = await _build_service(session, tenant_id)
     return await svc.shortage_risks(horizon_days=horizon_days)
-
-
-@router.get("/line-load")
-async def get_line_load(
-    horizon_days: int = Query(14, ge=1, le=180),
-    tenant_id: UUID = Depends(get_tenant_id),
-    session: AsyncSession = Depends(get_session),
-) -> dict[str, Any]:
-    """Production schedule load per (operation, date) for `horizon_days`."""
-    svc = await _build_service(session, tenant_id)
-    return await svc.line_load(horizon_days=horizon_days)
-
-
-@router.get("/kpis")
-async def get_kpis(
-    tenant_id: UUID = Depends(get_tenant_id),
-    session: AsyncSession = Depends(get_session),
-) -> dict[str, Any]:
-    """Strategic KPIs. Throughput €/dia stays `unavailable` until Sprint Q.0."""
-    svc = await _build_service(session, tenant_id)
-    return await svc.kpis()

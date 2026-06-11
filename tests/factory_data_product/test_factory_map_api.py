@@ -7,10 +7,6 @@ already covers that) — these tests assert wiring, auth headers, and 404 paths.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
-from decimal import Decimal
-from types import SimpleNamespace
-
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -77,44 +73,36 @@ _HEADERS = {"X-Tenant-Id": str(TEST_TENANT_ID)}
 
 
 # ---------------------------------------------------------------------------
-# GET /kpis — simplest happy path
+# Tenant gate — require_tenant_header em todos os endpoints do router
 # ---------------------------------------------------------------------------
 
-def test_kpis_requires_tenant_header():
+def test_shortage_risks_requires_tenant_header():
     s = FakeSession()
-    resp = _client(s).get("/v1/factory-map/kpis")
+    resp = _client(s).get("/v1/factory-map/shortage-risks")
     # require_tenant_header (canónico) → 401 sem tenant (auth), não 422 (validação)
     assert resp.status_code == 401
 
 
-def test_kpis_happy_path():
+# ---------------------------------------------------------------------------
+# Q.172 (F4.E) — endpoints órfãos removidos devolvem 404
+# (/boats/{of_id}, /projection, /line-load, /kpis — zero consumo frontend)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("path", [
+    "/v1/factory-map/boats/42",
+    "/v1/factory-map/projection",
+    "/v1/factory-map/line-load",
+    "/v1/factory-map/kpis",
+])
+def test_orphan_endpoints_removed(path):
     s = FakeSession()
-    _queue(s, scalars=[("IN_PROGRESS", 3), ("COMPLETED", 5)])
-    _queue(s, scalar=1)
-    # Sprint Q ThroughputService now runs on the back of kpis(); pad queue.
-    for _ in range(8):
-        _queue(s, scalars=[])
-    resp = _client(s).get("/v1/factory-map/kpis", headers=_HEADERS)
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["wip"] == 3
-    throughput = body["throughput_eur_day"]
-    assert "today" in throughput or throughput.get("status") == "unavailable"
+    resp = _client(s).get(path, headers=_HEADERS)
+    assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------
-# GET /line-load, /shortage-risks, /projection — shape smoke
+# GET /shortage-risks — shape smoke
 # ---------------------------------------------------------------------------
-
-def test_line_load_empty():
-    s = FakeSession()
-    _queue(s, scalars=[])
-    resp = _client(s).get("/v1/factory-map/line-load?horizon_days=7", headers=_HEADERS)
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["has_data"] is False
-    assert body["points"] == []
-
 
 def test_shortage_risks_empty():
     s = FakeSession()
@@ -122,57 +110,6 @@ def test_shortage_risks_empty():
     resp = _client(s).get("/v1/factory-map/shortage-risks", headers=_HEADERS)
     assert resp.status_code == 200
     assert resp.json()["items"] == []
-
-
-def test_projection_with_open_orders():
-    s = FakeSession()
-    # historical medians
-    _queue(s, scalars=[("Laminagem", 8.0, 100)])
-    # open orders
-    order = SimpleNamespace(
-        current_phase_name="Laminagem",
-        completed_date=None,
-    )
-    _queue(s, scalars=[order])
-    resp = _client(s).get("/v1/factory-map/projection?days_ahead=3", headers=_HEADERS)
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["method"] == "historical_avg_durations"
-    assert body["days_ahead"] == 3
-    assert body["open_orders_projected"] == 1
-
-
-# ---------------------------------------------------------------------------
-# GET /boats/{of_id}
-# ---------------------------------------------------------------------------
-
-def test_boat_not_found_returns_404():
-    s = FakeSession()
-    _queue(s, scalar=None)
-    resp = _client(s).get("/v1/factory-map/boats/99999", headers=_HEADERS)
-    assert resp.status_code == 404
-
-
-def test_boat_happy_path():
-    s = FakeSession()
-    order = SimpleNamespace(
-        legacy_id=42,
-        product_name="K1 Vanquish",
-        product_type="K1",
-        current_phase_name="Laminagem",
-        status="IN_PROGRESS",
-        created_date=date.today() - timedelta(days=10),
-        completed_date=None,
-        transport_date=date.today() + timedelta(days=10),
-    )
-    _queue(s, scalar=order)
-    _queue(s, scalars=[])
-    resp = _client(s).get("/v1/factory-map/boats/42", headers=_HEADERS)
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["of_id"] == "42"
-    assert body["trajectory"] == []
-    assert body["risk_flags"] == []
 
 
 # ---------------------------------------------------------------------------

@@ -12,7 +12,9 @@ module-level snapshot-cache helpers) untouched.
   risk-style computations (`kpis`, `_defect_rate_from_db`,
   `_bottlenecks_*`, `_throughput_eur_day`, `_trust_payload`, `line_load`,
   `shortage_risks`).
-* `trajectory` — per-boat view + forward projection.
+
+Q.172 (F4.E) — `trajectory` (boat view + projection) removido: os endpoints
+que o serviam eram órfãos (zero consumo frontend). Ver DELETION_LOG.md.
 """
 
 from __future__ import annotations

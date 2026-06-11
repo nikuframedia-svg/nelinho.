@@ -2,7 +2,8 @@
 
 Holds:
 * `Availability` — soft presence flags for each source the snapshot reads.
-* `RiskFlag` — per-boat risk record returned by `boat_view`.
+* `RiskFlag` — risk record value object (Q.172: `boat_view` foi removido;
+  mantido como value object exportado pela façade).
 * `RiskFlagsMixin` — `kpis()` + its DB-backed fallbacks
   (`_defect_rate_from_db`, `_bottlenecks_from_db`,
   `_bottlenecks_from_orders`), `_throughput_eur_day`, `_trust_payload`,

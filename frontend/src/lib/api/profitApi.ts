@@ -255,6 +255,8 @@ export interface FPYResponse {
   orders_total: number;
   orders_with_rework: number;
   first_pass_yield_pct: number;
+  /** "NO_SOURCE_DATA" quando não há ordens na janela — distingue de FPY=0% real. */
+  reason?: string | null;
 }
 
 export interface ExpeditionRow {

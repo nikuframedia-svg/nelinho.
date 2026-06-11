@@ -3,8 +3,6 @@ Q.67.3.D — Coverage tests for `FactoryMapService` covering the branches the
 original test file did not reach:
 
 * `_snapshot_cache_get` TTL expiry.
-* `boat_view` lookup by `product_name` (non-numeric of_id).
-* `boat_view` returns None when neither lookup mode matches.
 * `_safe_semantic` error paths (no service / missing method / raising method).
 * `_bottlenecks_from_orders` fallback when the curated layer is empty.
 * `_trust_payload` exception branch returning structured "unavailable".
@@ -16,11 +14,8 @@ These exercise read-only behaviour with the queue-based `FakeSession` from
 from __future__ import annotations
 
 import time
-from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
-from uuid import uuid4
 
 import pytest
 
@@ -143,86 +138,10 @@ def test_safe_semantic_swallows_method_exception():
 
 
 # ---------------------------------------------------------------------------
-# boat_view — non-numeric of_id + missing-order branches
+# Q.172 (F4.E) — testes de `boat_view` removidos: o método saiu com o
+# TrajectoryMixin (endpoints órfãos). Guard de regressão em
+# test_factory_map_service.py::test_trajectory_methods_removed.
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_boat_view_falls_back_to_product_name_for_non_numeric_of_id():
-    """If `of_id` isn't an integer, the lookup falls back to
-    `product_name` equality. Returns the order if found."""
-    session = FakeSession()
-    order = SimpleNamespace(
-        legacy_id=4242,
-        product_name="K1 Vanquish",
-        product_type="K1",
-        current_phase_name="Laminagem",
-        status="IN_PROGRESS",
-        created_date=date.today() - timedelta(days=5),
-        completed_date=None,
-        transport_date=None,
-    )
-    _queue(session, scalar=order)          # ProductionOrder by product_name
-    _queue(session, scalars=[])            # empty trajectory
-
-    svc = FactoryMapService(session, TEST_TENANT_ID)
-    result = await svc.boat_view(of_id="K1 Vanquish")
-    assert result is not None
-    assert result["of_id"] == "4242"
-    assert result["product_name"] == "K1 Vanquish"
-    # No transport_date → no risk flag fired.
-    assert result["risk_flags"] == []
-
-
-@pytest.mark.asyncio
-async def test_boat_view_returns_none_for_non_numeric_when_not_found():
-    """Non-numeric of_id that doesn't match any product_name → None
-    (mirrors the missing-id case for numeric of_id)."""
-    session = FakeSession()
-    _queue(session, scalar=None)
-    svc = FactoryMapService(session, TEST_TENANT_ID)
-    assert await svc.boat_view(of_id="DOES_NOT_EXIST") is None
-
-
-@pytest.mark.asyncio
-async def test_boat_view_serialises_full_trajectory_row():
-    """A populated CuratedOrderPhase row must serialise every public field
-    exactly: phase_id, phase_name, seq, start/end, horas, estado, mold_id.
-    The frontend reads these names verbatim."""
-    session = FakeSession()
-    order = SimpleNamespace(
-        legacy_id=77,
-        product_name="K2",
-        product_type="K2",
-        current_phase_name="Pintura",
-        status="IN_PROGRESS",
-        created_date=date(2026, 1, 1),
-        completed_date=None,
-        transport_date=None,
-    )
-    phase = SimpleNamespace(
-        fase_id="F-PIN", fase_nome="Pintura", ordem=3,
-        data_inicio=date(2026, 1, 5), data_fim=date(2026, 1, 7),
-        horas_reais=Decimal("4.50"), horas_previstas=Decimal("3.00"),
-        estado="DONE", molde_id="M-3",
-    )
-    _queue(session, scalar=order)
-    _queue(session, scalars=[phase])
-
-    svc = FactoryMapService(session, TEST_TENANT_ID)
-    result = await svc.boat_view(of_id="77")
-    assert result is not None
-    assert len(result["trajectory"]) == 1
-    t = result["trajectory"][0]
-    assert t["phase_id"] == "F-PIN"
-    assert t["phase_name"] == "Pintura"
-    assert t["seq"] == 3
-    assert t["start"] == "2026-01-05"
-    assert t["end"] == "2026-01-07"
-    assert t["horas_reais"] == 4.5
-    assert t["horas_previstas"] == 3.0
-    assert t["estado"] == "DONE"
-    assert t["mold_id"] == "M-3"
 
 
 # ---------------------------------------------------------------------------

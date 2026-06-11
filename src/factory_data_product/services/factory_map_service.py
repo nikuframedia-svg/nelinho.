@@ -12,26 +12,21 @@ Factory Map UI (Sprint Z) will consume:
    - Effective Trust Index + gates (Sprint AA)
    - Strategic KPIs (see `kpis()`)
 
-2. **Per-boat view** (`boat_view()` — N.2)
-   - ProductionOrder + its CuratedOrderPhase trajectory
-   - Risk flags: LATE_VS_TRANSPORT, QUALITY_RISK_HIGH, MOLD_MAINT_DUE
-
-3. **Projection** (`projection()` — N.3)
-   - **Does NOT call CPO** (too heavy, and Sprint P's greedy pipeline
-     hasn't landed). Uses historical average durations per (model, phase)
-     from curated data to extrapolate a 7-day heatmap. Honest and cheap.
-
-4. **Shortage risks** (`shortage_risks()` — N.4)
+2. **Shortage risks** (`shortage_risks()` — N.4)
    - ROP-based check: `qty_closing` vs `ROPConfig.rop`; no BOM explosion
      (that's Sprint O.2). Surfaces the most-at-risk SKUs.
 
-5. **Line load** (`line_load()` — N.5)
+3. **Line load** (`line_load()` — N.5)
    - Aggregates `ProductionSchedule.scheduled_duration_hours` grouped by
-     (phase, date).
+     (phase, date). Consumido pelo `snapshot()` — sem endpoint próprio.
 
-6. **Strategic KPIs** (`kpis()` — N.6)
-   - WIP, throughput_units_today, defect_rate, OTD. Throughput €/dia
-     returns `"unavailable"` until Sprint Q.0 ships ProductPricing.
+4. **Strategic KPIs** (`kpis()` — N.6)
+   - WIP, throughput_units_today, defect_rate, OTD. Consumido pelo
+     `snapshot()` — sem endpoint próprio.
+
+Q.172 (F4.E) — `boat_view()` (N.2) e `projection()` (N.3) removidos com o
+`TrajectoryMixin`: os endpoints `/boats/{of_id}` e `/projection` nunca
+tiveram consumo frontend e liam a camada curated vazia. Ver DELETION_LOG.md.
 
 Design constraints
 ------------------
@@ -44,14 +39,13 @@ Design constraints
 
 Q.67.6.C4 — decomposition
 -------------------------
-The class body used to weigh ~1000 lines. It now composes three mixins
+The class body used to weigh ~1000 lines. It now composes two mixins
 that live next to this file:
 
 * `factory_map.snapshot.SnapshotMixin` — `snapshot()` orchestration,
   concurrent fan-out, per-source DB summaries, semantic helper.
 * `factory_map.risk_flags.RiskFlagsMixin` — KPIs, defect-rate / bottleneck
   DB fallbacks, throughput band, trust payload, line load, shortage risks.
-* `factory_map.trajectory.TrajectoryMixin` — boat view + projection.
 
 The dataclasses (`Availability`, `RiskFlag`) and the snapshot-cache
 module-level helpers (`_snapshot_cache`, `_snapshot_cache_get`,
@@ -79,9 +73,6 @@ from src.factory_data_product.services.factory_map.snapshot import (
     _snapshot_cache_get,
     _snapshot_cache_put,
 )
-from src.factory_data_product.services.factory_map.trajectory import (
-    TrajectoryMixin,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -99,14 +90,13 @@ __all__ = [
 ]
 
 
-class FactoryMapService(SnapshotMixin, RiskFlagsMixin, TrajectoryMixin):
+class FactoryMapService(SnapshotMixin, RiskFlagsMixin):
     """Aggregator façade. Instantiate per request; methods are independent.
 
     The class itself only carries the constructor — every endpoint method
-    lives on one of the three mixins above. The MRO matters: `Snapshot`
-    first (it consumes `kpis`/`line_load` from `RiskFlags` and the boat /
-    projection helpers from `Trajectory`), but each method name is unique
-    across the mixins so the MRO never has to pick.
+    lives on one of the two mixins above. The MRO matters: `Snapshot`
+    first (it consumes `kpis`/`line_load` from `RiskFlags`), but each
+    method name is unique across the mixins so the MRO never has to pick.
     """
 
     def __init__(

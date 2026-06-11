@@ -338,7 +338,13 @@ async def first_pass_yield(
 
     svc = DashboardMetricsService(session, tenant_id)
     result = await svc.first_pass_yield(window_days=window_days)
-    return result.to_dict()
+    payload = result.to_dict()
+    if result.orders_total == 0:
+        # Invariante #8 (dados honestos) — sem ordens concluídas na janela,
+        # `first_pass_yield_pct=0.0` seria indistinguível de um FPY real de
+        # 0%. Mesmo padrão de src/profit/api/kpis.py: estado-vazio marcado.
+        payload["reason"] = "NO_SOURCE_DATA"
+    return payload
 
 
 # ─── R.5 — Root-cause ─────────────────────────────────────────────────────
@@ -355,8 +361,13 @@ async def root_cause(
     """QA09 — causa-raiz por dimensão para um `error_code`.
 
     Quando `error_code` é omitido, usa o defeito mais frequente da janela
-    (`most_frequent_error_code`) — a tab Diagnóstico nunca abre partida.
+    (`most_frequent_error_code`).
     Devolve `error_code: None` + dimensões vazias quando não há retrabalho.
+
+    Q.172 (F4.E) — sem consumidor frontend desde a consolidação Q.115
+    (página /qualidade removida em 2def464). Mantido por decisão: assenta
+    no RCA canónico de `rework_entry` (fonte única OF_CHECKLIST, Q.167.E);
+    a re-ligação ao frontend fica para o lote de frontend.
     """
     if not error_code:
         error_code = await most_frequent_error_code(
@@ -390,6 +401,9 @@ async def impact_analysis(
 
     Quando `error_code` é omitido, usa o defeito mais frequente da janela.
     Devolve `error_code: None` + zeros quando não há retrabalho.
+
+    Q.172 (F4.E) — sem consumidor frontend desde a consolidação Q.115;
+    mantido (dados reais do RCA canónico Q.167.E), re-ligação pendente.
     """
     if not error_code:
         error_code = await most_frequent_error_code(
@@ -518,8 +532,11 @@ async def roi_actions(
     tenant_id: UUID = Depends(get_tenant_id),
     session: AsyncSession = Depends(get_session),
 ):
-    """Tab "Custos-ROI" — € saved vs invested per quality action, ranked by
-    net return, from `quality.rework_entry` + the error catalog.
+    """€ poupados vs investidos por ação de qualidade, ordenado por retorno
+    líquido, a partir de `quality.rework_entry` + catálogo de erros.
+
+    Q.172 (F4.E) — a tab "Custos-ROI" que o consumia saiu na consolidação
+    Q.115; mantido (dados reais), re-ligação ao frontend pendente.
     """
     from src.quality.services.roi_service import ROIService
 
