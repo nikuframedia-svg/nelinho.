@@ -311,6 +311,30 @@ async def apply_manual_reorder(
     from_phase = original_op.get("phase_id", "")
     from_ts = original_op.get("start_time") or original_op.get("start_ts") or ""
 
+    # Q.173.R — recusar reorder NO-OP: mover para exatamente a mesma fase/
+    # data/operador não altera nada e criava um commit DUPLICADO de ~8k ops
+    # a cada replan (o fantasma "op 110532::77 de 77 para 77" do smoke
+    # Q.172.C duplicou 56 commits, auditoria 2026-06-11). O reapply do robô
+    # trata este ValueError como skip silencioso — override satisfeito.
+    _orig_start = _to_aware(from_ts)
+    _new_start = _to_aware(new_start_ts)
+    _orig_workers = [str(w) for w in (original_op.get("workers") or [])]
+    if (
+        str(new_phase) == str(from_phase)
+        and _orig_start is not None
+        and _new_start is not None
+        and _orig_start == _new_start
+        and (
+            new_operator_id is None
+            or _orig_workers == [str(new_operator_id)]
+        )
+    ):
+        raise ValueError(
+            "reorder_no_op: a operação já está nessa fase/data"
+            + ("/operador" if new_operator_id is not None else "")
+            + " — nada a alterar"
+        )
+
     # Constroi operacoes modificadas (shallow copy da lista)
     modified_ops = [dict(o) for o in ops]
     modified_ops[target_idx] = dict(original_op)

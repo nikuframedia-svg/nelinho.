@@ -100,6 +100,10 @@ DEFAULT_SEEDS: list[ConfigSeed] = [
     ("planning", "auto_replan_time_limit_s", 300.0, "float",
      "Q.162.A — budget do SOLVER do robô (<< job_timeout 1200s do Arq). "
      "Lido por auto_cpo_replan_job; seeded em Q.173.O para ter UI."),
+    ("planning", "manual_override.ttl_days", 14, "int",
+     "Q.173.R — validade (dias) de um ajuste manual do plano sem aprovação "
+     "LIVE; <=0 desliga. Sem TTL, um override órfão re-aplicava-se para "
+     "sempre (a janela só fechava com um LIVE)."),
 
     # Fitness weights (Blueprint v2.0 §5.5 — normalised, sum = 1.0)
     ("planning", "fitness.weight.makespan", 0.20, "float", ""),

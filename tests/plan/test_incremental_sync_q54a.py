@@ -125,21 +125,31 @@ def test_incremental_mirrors_are_operational_only():
 
 
 def test_incremental_mirrors_all_registered():
-    """Os três mirrors do incremental registam-se no registo de mirrors.
+    """Os mirrors do incremental registam-se no registo de mirrors.
 
-    Importa explicitamente os módulos-mirror (recarregando-os) para a
-    asserção não depender da ordem dos testes — o ``_load_mirror_modules``
-    de produção é idempotente, mas o ``__import__`` não re-executa o
-    ``register_mirror`` se o módulo já estiver em ``sys.modules``.
+    Q.173.R — asserção ESTÁTICA ao código-fonte: a versão anterior fazia
+    ``importlib.reload`` dos módulos, o que ENVENENAVA outros testes sob
+    ordem aleatória (monkeypatch por string-path patcha o módulo NOVO em
+    sys.modules enquanto funções importadas antes apontam para o dict de
+    globals ANTIGO — ex.: test_checklist.test_backfill_* falhava). O
+    registo é efeito de import, por isso a fonte auditável é o código.
     """
     import importlib
+    import inspect
 
-    for name in scheduler._INCREMENTAL_MIRRORS:
-        mod = importlib.import_module(f"src.adapters.nelo.etl.{name}")
-        importlib.reload(mod)
-    known = set(sync_mod.registered_mirrors())
+    loader_src = inspect.getsource(sync_mod._load_mirror_modules)
     for mirror in scheduler._INCREMENTAL_MIRRORS:
-        assert mirror in known, mirror
+        # 1) o loader de produção importa o módulo…
+        assert f'"{mirror}"' in loader_src, (
+            f"{mirror} não está em _load_mirror_modules"
+        )
+        # 2) …e o módulo regista-se no import (linha ativa, não comentada).
+        mod = importlib.import_module(f"src.adapters.nelo.etl.{mirror}")
+        active = [
+            line for line in inspect.getsource(mod).splitlines()
+            if line.strip().startswith("register_mirror(")
+        ]
+        assert active, f"{mirror} não chama register_mirror no import"
 
 
 # ─── scheduler registration ──────────────────────────────────────────────

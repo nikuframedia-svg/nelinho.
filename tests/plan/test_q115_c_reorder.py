@@ -648,3 +648,78 @@ async def test_d1_reason_optional_backcompat():
     assert commit.delta["tipo"] == "manual_drag"
     assert "reason" not in commit.delta  # não polui o delta quando ausente
     assert commit.user_preference_signal["reason"] is None
+
+
+# ---------------------------------------------------------------------------
+# Q.173.R — reorder no-op recusado na origem
+# ---------------------------------------------------------------------------
+
+
+class TestQ173RNoOp:
+    async def test_no_op_mesma_fase_data_recusado(self):
+        """Mover para exatamente a mesma fase/data não altera nada — recusa.
+        Era o fantasma 'op 110532::77 de 77 para 77' (smoke Q.172.C) que
+        duplicava um commit de ~8k ops a cada replan (56 duplicados na BD,
+        auditoria 2026-06-11)."""
+        op = _make_op(op_id="110532::77", phase_id="77", start_offset_h=0)
+        session = _FakeSession(_FakeCommit(operations=[op]))
+
+        with pytest.raises(ValueError, match="reorder_no_op"):
+            await apply_manual_reorder(
+                session=session,  # type: ignore[arg-type]
+                tenant_id=TENANT_ID,
+                operation_id="110532::77",
+                new_phase="77",
+                new_start_ts=_BASE_TS,  # mesmo start
+                new_operator_id=None,
+            )
+        assert session.added == []  # nenhum commit criado
+
+    async def test_no_op_com_mesmo_operador_recusado(self):
+        op = _make_op(op_id="op-1", phase_id="40", start_offset_h=0)
+        op["workers"] = ["w-1"]
+        session = _FakeSession(_FakeCommit(operations=[op]))
+
+        with pytest.raises(ValueError, match="reorder_no_op"):
+            await apply_manual_reorder(
+                session=session,  # type: ignore[arg-type]
+                tenant_id=TENANT_ID,
+                operation_id="op-1",
+                new_phase="40",
+                new_start_ts=_BASE_TS,
+                new_operator_id="w-1",  # operador igual ao atual
+            )
+
+    async def test_mudar_so_operador_nao_e_no_op(self):
+        """Mesma fase/data mas operador DIFERENTE é uma mudança real."""
+        op = _make_op(op_id="op-1", phase_id="40", start_offset_h=0)
+        op["workers"] = ["w-1"]
+        op["duration_minutes"] = 120
+        session = _FakeSession(_FakeCommit(operations=[op]))
+
+        with _patch_kafka(), _patch_audit():
+            result = await apply_manual_reorder(
+                session=session,  # type: ignore[arg-type]
+                tenant_id=TENANT_ID,
+                operation_id="op-1",
+                new_phase="40",
+                new_start_ts=_BASE_TS,
+                new_operator_id="w-2",
+            )
+        assert result["commit_sha"]
+
+    async def test_mudar_so_data_nao_e_no_op(self):
+        op = _make_op(op_id="op-1", phase_id="40", start_offset_h=0)
+        op["duration_minutes"] = 120
+        session = _FakeSession(_FakeCommit(operations=[op]))
+
+        with _patch_kafka(), _patch_audit():
+            result = await apply_manual_reorder(
+                session=session,  # type: ignore[arg-type]
+                tenant_id=TENANT_ID,
+                operation_id="op-1",
+                new_phase="40",
+                new_start_ts=_BASE_TS + timedelta(hours=4),
+                new_operator_id=None,
+            )
+        assert result["commit_sha"]

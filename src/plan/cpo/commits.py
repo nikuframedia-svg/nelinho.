@@ -29,6 +29,7 @@ from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
 from sqlalchemy import Index, Integer, String, Text, desc, or_, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
@@ -163,6 +164,10 @@ def compute_commit_hash(
 # "desde sempre". Varremos só os N commits mais recentes (DESC+limit) e
 # revertemos para ASC — chega para o last-wins sem percorrer o histórico todo.
 _OVERRIDE_SCAN_LIMIT = 500
+
+# Q.173.R — TTL default (dias) de um override manual sem aprovação LIVE.
+# Override de `planning`/`manual_override.ttl_days`; <=0 desliga.
+_OVERRIDE_TTL_DAYS_DEFAULT = 14
 
 
 def _reduce_overrides(rows: List["ScheduleCommit"]) -> List[Dict[str, Any]]:
@@ -401,6 +406,31 @@ class CommitsService:
         await self.session.flush()
         return commit
 
+    async def _override_ttl_days(self) -> int:
+        """Q.173.R — TTL (dias) de um override manual sem aprovação LIVE.
+
+        A janela de coleta só fechava com um commit LIVE — e com 203 DRAFT
+        vs 3 LIVE (último 2026-06-02, auditoria 2026-06-11) um override
+        nunca expirava e era re-aplicado eternamente. Config
+        `planning`/`manual_override.ttl_days` (default 14; <=0 desliga o
+        TTL). Best-effort: sem config → default.
+        """
+        try:
+            from src.core.services.tenant_config_service import (
+                TenantConfigService,
+            )
+            planning = await TenantConfigService(
+                self.session, self.tenant_id,
+            ).get_category("planning")
+            raw = planning.get("manual_override.ttl_days")
+            if raw not in (None, ""):
+                return int(raw)
+        except (ImportError, ValueError, TypeError, AttributeError) as exc:
+            logger.debug("manual_override.ttl_days indisponível (%s)", exc)
+        except SQLAlchemyError as exc:
+            logger.debug("manual_override.ttl_days indisponível (%s)", exc)
+        return _OVERRIDE_TTL_DAYS_DEFAULT
+
     async def active_manual_overrides(self) -> List[Dict[str, Any]]:
         """Q.142.C — overrides manuais ATIVOS para o robô re-aplicar após cada
         solve automático (Q.142.D). São os deltas `tipo="manual_drag"` de
@@ -408,9 +438,14 @@ class CommitsService:
         — a aprovação DRAFT→LIVE "assa" os ajustes no plano aprovado e reinicia
         a janela. Last-wins por `operation_id`.
 
+        Q.173.R — TTL adicional (default 14 dias): sem nenhum LIVE a janela
+        era infinita e um override órfão re-aplicava-se para sempre.
+
         Os commits re-aplicados pelo próprio robô usam `author="system"` → ficam
         excluídos daqui (não se auto-coletam em loop).
         """
+        from datetime import timedelta
+
         live = await self.latest_live()
         stmt = select(ScheduleCommit).where(
             (ScheduleCommit.tenant_id == self.tenant_id)
@@ -419,6 +454,10 @@ class CommitsService:
         )
         if live is not None:
             stmt = stmt.where(ScheduleCommit.created_at > live.created_at)
+        ttl_days = await self._override_ttl_days()
+        if ttl_days > 0:
+            cutoff = utc_now_naive() - timedelta(days=ttl_days)
+            stmt = stmt.where(ScheduleCommit.created_at > cutoff)
         # Safety-valve: aos N mais recentes (DESC+limit), depois ASC p/ last-wins.
         stmt = stmt.order_by(desc(ScheduleCommit.created_at)).limit(_OVERRIDE_SCAN_LIMIT)
         rows = list((await self.session.execute(stmt)).scalars().all())
