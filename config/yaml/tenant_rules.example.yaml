@@ -82,3 +82,51 @@ rules:
       axioms_required: [safety_net_baseline]
     safety:
       max_fires_per_day: 1
+
+  # 4. WIP acima do limiar (Q.174.F8 — produtor real: scan de alertas
+  #    dispara quando um bottleneck NOVO é persistido).
+  #    Payload: phase_id, wip_count (dias de backlog), threshold, as_of_date.
+  - id: laminagem-wip-acima-limiar-notifica
+    description: >
+      Quando o backlog da Laminagem (fase 40) passa o limiar configurado,
+      notificar o chefe de produção. O evento só dispara em alertas novos,
+      não a cada scan.
+    when:
+      event: wip_threshold
+      conditions:
+        - { field: phase_id, op: eq, value: "40" }
+        - { field: wip_count, op: gte, value: 10 }
+    then:
+      - action: notify
+        params:
+          channel: alerts
+          topic: wip_laminagem
+          payload:
+            severity: warning
+            phase: laminagem
+    constraints:
+      axioms_required: [capacity_non_negative]
+    safety:
+      max_fires_per_day: 2
+
+  # 5. Plano novo commitado (Q.174.F8 — produtor real: run_cpo_schedule
+  #    emite após cada ScheduleCommit gravado).
+  #    Payload: tenant_id, schedule_id, commit_sha, operations_count.
+  - id: plano-grande-notifica-gestor
+    description: >
+      Quando um plano novo com mais de 5000 operações é commitado,
+      notificar o gestor para rever antes de aprovar (planos full-scope
+      merecem um segundo olhar humano).
+    when:
+      event: schedule_committed
+      conditions:
+        - { field: operations_count, op: gte, value: 5000 }
+    then:
+      - action: notify
+        params:
+          channel: alerts
+          topic: plano_novo_grande
+          payload:
+            severity: info
+    safety:
+      max_fires_per_day: 4

@@ -863,6 +863,30 @@ async def run_cpo_schedule(
 
     commit_sha: Optional[str] = None
     parent_sha: Optional[str] = None
+
+    async def _emit_schedule_committed(sha: Optional[str], n_ops: int) -> None:
+        """Q.174.F8 — 2º evento DSL real (era definido e nunca emitido):
+        regras tipo "quando há plano novo, notifica o chefe de produção"
+        passam a disparar. Best-effort — nunca trava o commit."""
+        if not sha:
+            return
+        try:
+            from src.governance.yaml_policy import EventType as _ET
+            from src.governance.yaml_policy.runtime import (
+                get_engine as _get_yp,
+            )
+            await _get_yp().on_event(
+                _ET.SCHEDULE_COMMITTED,
+                {
+                    "tenant_id": str(tenant_id),
+                    "commit_sha": sha,
+                    "operations_count": n_ops,
+                },
+                tenant_id=tenant_id,
+                session=session,
+            )
+        except Exception as exc:  # pragma: no cover — motor de regras off
+            logger.debug("schedule_committed rules skipped: %s", exc)
     try:
         commits = CommitsService(session, tenant_id)
         alternatives = _extract_mapelites_representatives(engine)
@@ -881,6 +905,10 @@ async def run_cpo_schedule(
         )
         commit_sha = commit.commit_sha256
         parent_sha = await _parent_sha(commits, commit)
+        # Q.174.F8 — evento DSL `schedule_committed` (2º produtor real).
+        await _emit_schedule_committed(
+            commit_sha, len(result.get("operations") or []),
+        )
     except Exception as e:
         logger.warning(f"Schedule-as-Code commit failed: {e}", exc_info=True)
 

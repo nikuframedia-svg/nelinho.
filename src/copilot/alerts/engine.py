@@ -169,6 +169,12 @@ class AlertsEngine:
                 persisted = await self._persist_if_new(candidate)
                 if persisted:
                     created += 1
+                    # Q.174.F8 — 3º evento DSL real: bottleneck novo dispara
+                    # `wip_threshold` (regras tipo "WIP da Laminagem acima do
+                    # limiar → criar decisão"). Só em alertas NOVOS (não a
+                    # cada scan) e best-effort.
+                    if candidate.get("code") == CODE_BOTTLENECK_FORMATION:
+                        await self._emit_wip_threshold(candidate)
                 else:
                     skipped += 1
 
@@ -180,6 +186,30 @@ class AlertsEngine:
             "skipped_duplicate": skipped,
             "detectors_run": len(detectors),
         }
+
+    async def _emit_wip_threshold(self, candidate: Dict[str, Any]) -> None:
+        """Q.174.F8 — emite o evento DSL `wip_threshold` quando um bottleneck
+        NOVO é persistido (payload alinhado com a whitelist do rule_schema:
+        phase_id/wip_count/threshold/as_of_date). Best-effort."""
+        try:
+            from src.governance.yaml_policy import EventType as _ET
+            from src.governance.yaml_policy.runtime import get_engine as _yp
+            from src.shared.time import utc_now_naive as _now
+
+            ctx = candidate.get("context") or {}
+            await _yp().on_event(
+                _ET.WIP_THRESHOLD,
+                {
+                    "phase_id": str(ctx.get("fase_id") or ""),
+                    "wip_count": float(ctx.get("backlog_dias") or 0.0),
+                    "threshold": float(self.bottleneck_days_threshold),
+                    "as_of_date": _now().date().isoformat(),
+                },
+                tenant_id=self.tenant_id,
+                session=self.session,
+            )
+        except Exception as exc:  # pragma: no cover — motor de regras off
+            logger.debug("wip_threshold rules skipped: %s", exc)
 
     async def _load_thresholds(self) -> None:
         """Q.173.M — lê os thresholds da categoria 'alertas' (best-effort).

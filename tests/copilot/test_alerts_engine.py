@@ -68,6 +68,24 @@ def _added_alerts(session) -> List[CopilotAlert]:
     return [o for o in session.added if isinstance(o, CopilotAlert)]
 
 
+@pytest.fixture(autouse=True)
+def _config_indisponivel(monkeypatch):
+    """Mata um flake de ordem pré-existente: `scan()` carrega thresholds via
+    TenantConfigService, cujo `_CACHE` é GLOBAL ao processo — frio, o
+    `get_category` consumia a queue da FakeSession destinada aos detectors
+    (com pytest-randomly o teste passava ou rebentava conforme a ordem).
+    Forçar o caminho "sem config" → defaults, determinístico. Os testes
+    Q.173.M sobrepõem este patch no corpo (monkeypatch posterior ganha)."""
+    async def _unavailable(self, category):
+        raise ValueError("config indisponível nos testes de alerts")
+
+    monkeypatch.setattr(
+        "src.core.services.tenant_config_service."
+        "TenantConfigService.get_category",
+        _unavailable,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Bottleneck
 # ---------------------------------------------------------------------------
@@ -601,3 +619,98 @@ class TestPlanLiveStalenessDetector:
 
         seeds = {(c, k): (v, t) for c, k, v, t, _n in iter_seeds()}
         assert seeds[("alertas", "plan_live.staleness_days")] == (7, "int")
+
+
+# ---------------------------------------------------------------------------
+# Q.174.F8 — bottleneck NOVO emite o evento DSL `wip_threshold`
+# ---------------------------------------------------------------------------
+
+class TestQ174WipThresholdEvent:
+    """Regras tipo "WIP da fase acima do limiar → criar decisão" só vivem
+    se alguém EMITIR o evento. O produtor é o scan de alertas: dispara em
+    alertas novos (não a cada scan) e o payload respeita a whitelist."""
+
+    @staticmethod
+    def _capture(monkeypatch) -> Dict[str, Any]:
+        captured: Dict[str, Any] = {}
+
+        class _FakeRuleEngine:
+            async def on_event(self, event_type, payload, *, tenant_id,
+                               session=None):
+                captured["event_type"] = event_type
+                captured["payload"] = payload
+                captured["tenant_id"] = tenant_id
+                return []
+
+        monkeypatch.setattr(
+            "src.governance.yaml_policy.runtime.get_engine",
+            lambda: _FakeRuleEngine(),
+        )
+        return captured
+
+    async def test_bottleneck_novo_emite_payload_na_whitelist(
+        self, fake_session, tenant_id, monkeypatch,
+    ):
+        from src.governance.yaml_policy import EventType
+        from src.governance.yaml_policy.rule_schema import EVENT_FIELDS
+
+        captured = self._capture(monkeypatch)
+        sq = FakeSemanticQueries()
+        sq.set("get_bottlenecks", {
+            "status": "OK",
+            "rows": [{"fase_id": "40", "fase_nome": "Pintura",
+                      "backlog_dias": BOTTLENECK_DAYS_THRESHOLD + 5,
+                      "backlog_horas": 240}],
+        })
+        engine = AlertsEngine(fake_session, tenant_id, semantic_queries=sq)
+
+        await engine.scan()
+
+        assert captured["event_type"] == EventType.WIP_THRESHOLD
+        assert captured["tenant_id"] == tenant_id
+        payload = captured["payload"]
+        assert set(payload) <= EVENT_FIELDS[EventType.WIP_THRESHOLD]
+        assert payload["phase_id"] == "40"
+        assert payload["wip_count"] == float(BOTTLENECK_DAYS_THRESHOLD + 5)
+        assert payload["threshold"] == float(BOTTLENECK_DAYS_THRESHOLD)
+
+    async def test_alerta_duplicado_nao_reemite(
+        self, fake_session, tenant_id, monkeypatch,
+    ):
+        captured = self._capture(monkeypatch)
+        sq = FakeSemanticQueries()
+        sq.set("get_bottlenecks", {
+            "status": "OK",
+            "rows": [{"fase_id": "40", "fase_nome": "Pintura",
+                      "backlog_dias": BOTTLENECK_DAYS_THRESHOLD + 5,
+                      "backlog_horas": 240}],
+        })
+        engine = AlertsEngine(fake_session, tenant_id, semantic_queries=sq)
+        await engine.scan()
+        captured.clear()
+
+        # 2º scan: o alerta já está ATIVO → persist salta → sem evento.
+        fake_session.queue_scalar(uuid4())  # dedup: alerta ativo existente
+        await engine.scan()
+
+        assert captured == {}
+
+    async def test_falha_do_motor_nao_trava_o_scan(
+        self, fake_session, tenant_id, monkeypatch,
+    ):
+        monkeypatch.setattr(
+            "src.governance.yaml_policy.runtime.get_engine",
+            lambda: (_ for _ in ()).throw(RuntimeError("motor off")),
+        )
+        sq = FakeSemanticQueries()
+        sq.set("get_bottlenecks", {
+            "status": "OK",
+            "rows": [{"fase_id": "40", "fase_nome": "Pintura",
+                      "backlog_dias": BOTTLENECK_DAYS_THRESHOLD + 5,
+                      "backlog_horas": 240}],
+        })
+        engine = AlertsEngine(fake_session, tenant_id, semantic_queries=sq)
+
+        summary = await engine.scan()
+
+        assert summary["created"] >= 1  # alerta persistido na mesma
