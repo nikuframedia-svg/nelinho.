@@ -192,6 +192,11 @@ def register_routers(app: FastAPI) -> None:
 
     app.include_router(plan_exclusion_router)
 
+    # Q.174.F4 — ausências de operadores (override local + anular ERP)
+    from src.plan.api.worker_absence_writes import router as worker_absence_router
+
+    app.include_router(worker_absence_router)
+
     # Q.116.E — master-data LIST endpoints
     from src.master_data.api.lists import router as master_data_lists_router
 
