@@ -4,11 +4,20 @@
  * Resolve "para cada operação escolher a pessoa, pôr numa fase diferente, mudar
  * a data" sem depender da densidade da grelha. Só ops de PLANO (os actuals do
  * passado são read-only). Guardar → reorder (valida axiomas Spelke, cria DRAFT).
+ *
+ * Q.174.F8 — "Porquê?": mostra os fatores REAIS da escolha do CPO (curado,
+ * skill, disponibilidade, carga, ausências) re-derivados pelo backend com a
+ * fórmula do decoder + as melhores alternativas. On-demand (só ao abrir).
  */
 
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { HelpCircle } from 'lucide-react';
 import { Sheet } from '../dark/Sheet';
 import { DarkButton } from '../dark/DarkButton';
+import { planKeys } from '../../lib/api/keys';
+import { cpoCommitsApi } from '../../lib/api';
+import type { CpoExplainCandidate } from '../../lib/api';
 import type { ScheduledOp } from './types';
 
 export interface OperatorOption {
@@ -43,6 +52,45 @@ function Label({ children }: { children: React.ReactNode }) {
   );
 }
 
+function CandidateRow({
+  c,
+  name,
+}: {
+  c: CpoExplainCandidate;
+  name?: string;
+}) {
+  return (
+    <div
+      className="flex items-center gap-2 px-2 py-1 rounded text-[11px]"
+      style={{
+        background: c.escolhido ? 'var(--accent-bg)' : 'var(--bg-4)',
+        border: `1px solid ${c.escolhido ? 'var(--accent-bd)' : 'var(--bd-2)'}`,
+      }}
+    >
+      <span className="font-medium truncate" style={{ color: 'var(--fg-1)' }}>
+        {name ?? c.worker_id}
+      </span>
+      {c.escolhido && (
+        <span className="text-[9px] font-semibold uppercase" style={{ color: 'var(--accent)' }}>
+          escolhido
+        </span>
+      )}
+      <span className="ml-auto flex items-center gap-2 font-mono tabular-nums" style={{ color: 'var(--fg-3)' }}>
+        {c.rank_curado != null && <span title="rank de curado (1.0 = topo da lista Melhores por fase)">★{c.rank_curado.toFixed(2)}</span>}
+        <span title="horas até estar livre no arranque da op">
+          {c.horas_ate_livre <= 0.01 ? 'livre' : `+${c.horas_ate_livre.toFixed(0)}h`}
+        </span>
+        <span title="horas totais atribuídas neste plano">{c.carga_plano_h.toFixed(0)}h</span>
+        {c.ausente_na_janela && (
+          <span style={{ color: 'var(--yellow)' }} title="ausência registada na janela da op">
+            ausente
+          </span>
+        )}
+      </span>
+    </div>
+  );
+}
+
 export function OperationEditSheet({
   op,
   operators,
@@ -61,8 +109,21 @@ export function OperationEditSheet({
   const [phaseId, setPhaseId] = useState(op.phase_id);
   const [operatorId, setOperatorId] = useState(op.operator_id ?? '');
   const [date, setDate] = useState((op.start ?? '').slice(0, 10));
+  // Q.174.F8 — explicação on-demand (não custa nada a quem não pergunta).
+  const [showWhy, setShowWhy] = useState(false);
+
+  const explainQuery = useQuery({
+    queryKey: planKeys.opExplain(op.id),
+    queryFn: () => cpoCommitsApi.explainOperation(op.id, { top_n: 3 }),
+    enabled: showWhy,
+    staleTime: 5 * 60_000,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
 
   const canSave = date.length === 10 && !isPending;
+
+  const nameByCode = new Map(operators.map((o) => [o.code, o.name]));
 
   // Q.154.B — prefere o nome do barco (op.cliente); o código fica entre parêntesis.
   const boatLabel = op.cliente
@@ -121,6 +182,66 @@ export function OperationEditSheet({
           <Label>Data</Label>
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={fieldStyle} />
         </div>
+
+        {/* Q.174.F8 — porquê ESTE(S) operador(es)? Fatores reais do decoder. */}
+        {op.source !== 'actual' && (
+          <div>
+            <button
+              type="button"
+              onClick={() => setShowWhy((v) => !v)}
+              className="inline-flex items-center gap-1.5 text-xs font-medium transition hover:opacity-80"
+              style={{ color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+              aria-expanded={showWhy}
+            >
+              <HelpCircle size={13} />
+              {showWhy ? 'Esconder explicação' : 'Porquê esta atribuição?'}
+            </button>
+
+            {showWhy && (
+              <div className="mt-2 flex flex-col gap-1.5">
+                {explainQuery.isLoading && (
+                  <span className="text-[11px]" style={{ color: 'var(--fg-3)' }}>
+                    A calcular os fatores…
+                  </span>
+                )}
+                {explainQuery.isError && (
+                  <span className="text-[11px]" style={{ color: 'var(--red)' }}>
+                    Não foi possível explicar esta operação (op fora do último
+                    commit ou backend indisponível).
+                  </span>
+                )}
+                {explainQuery.data && (
+                  <>
+                    {explainQuery.data.explain_pt && (
+                      <p className="text-[11px] leading-relaxed m-0" style={{ color: 'var(--fg-2)' }}>
+                        {explainQuery.data.explain_pt}
+                      </p>
+                    )}
+                    {explainQuery.data.pool_size > 0 && (
+                      <>
+                        {explainQuery.data.candidates
+                          .filter((c) => c.escolhido)
+                          .map((c) => (
+                            <CandidateRow key={c.worker_id} c={c} name={nameByCode.get(c.worker_id)} />
+                          ))}
+                        {(explainQuery.data.alternatives ?? []).length > 0 && (
+                          <>
+                            <span className="text-[10px] uppercase tracking-wide font-semibold mt-1" style={{ color: 'var(--fg-3)' }}>
+                              Alternativas no pool ({explainQuery.data.pool_size} aptos)
+                            </span>
+                            {(explainQuery.data.alternatives ?? []).map((c) => (
+                              <CandidateRow key={c.worker_id} c={c} name={nameByCode.get(c.worker_id)} />
+                            ))}
+                          </>
+                        )}
+                      </>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         <p className="text-[10px] leading-relaxed" style={{ color: 'var(--fg-3)' }}>
           Guardar cria um rascunho do plano e valida os axiomas Spelke — precisa de aprovação humana

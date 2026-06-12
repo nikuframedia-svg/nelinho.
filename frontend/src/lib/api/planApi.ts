@@ -316,6 +316,57 @@ export interface CpoWorkerPairsResponse {
   pairs: CpoWorkerPairItem[];
 }
 
+// Q.174.F5 — secção "não planeável" (plano parcial declarado)
+export interface CpoUnplannableItem {
+  operation_id: string | null;
+  order_id: string | null;
+  phase_id: string | null;
+  status: string;
+  label_pt?: string;
+  suggestion_pt?: string;
+  missing?: Record<string, unknown>;
+}
+
+export interface CpoUnplannableResponse {
+  commit_sha: string;
+  available: boolean;
+  unplannable_count: number;
+  viable: boolean;
+  items: CpoUnplannableItem[];
+}
+
+// Q.174.F8 — explicação da escolha de operadores de uma op
+export interface CpoExplainCandidate {
+  worker_id: string;
+  combined: number;
+  skill_score: number;
+  rank_curado: number | null;
+  availability: number;
+  horas_ate_livre: number;
+  ausente_na_janela: boolean;
+  carga_plano_h: number;
+  carga_frac: number;
+  escolhido: boolean;
+}
+
+export interface CpoOperationExplain {
+  operation_id: string;
+  phase_id: string;
+  order_id: string;
+  model_id?: string | null;
+  commit_sha: string;
+  start_time?: string | null;
+  team_size?: number;
+  pool_size: number;
+  op_complexity_icb?: number;
+  quality_weight?: number;
+  chosen: string[];
+  candidates: CpoExplainCandidate[];
+  alternatives?: CpoExplainCandidate[];
+  explain_pt: string;
+  legenda_pt?: Record<string, string>;
+}
+
 export const cpoCommitsApi = {
   list: (params?: { limit?: number; excludeDegenerate?: boolean }) => {
     const sp = new URLSearchParams();
@@ -355,6 +406,31 @@ export const cpoCommitsApi = {
       `/v1/plan/cpo/operations/${encodeURIComponent(operationId)}/worker-pairs${qs}`,
     );
   },
+
+  /**
+   * Q.174.F5 — secção "não planeável" do commit (plano parcial declarado):
+   * por op/ordem, o recurso em falta + sugestão acionável. Commits antigos
+   * devolvem `available=false` (estado-vazio honesto, não zero falso).
+   */
+  unplannable: (sha: string) =>
+    request<CpoUnplannableResponse>(
+      `/v1/plan/cpo/commits/${encodeURIComponent(sha)}/unplannable`,
+    ),
+
+  /**
+   * Q.174.F8 — "Porquê estes operadores?": fatores da escolha re-derivados
+   * com a fórmula do decoder (curado, skill, disponibilidade, carga,
+   * ausências) + top-N alternativas.
+   */
+  explainOperation: (operationId: string, opts?: { sha?: string; top_n?: number }) => {
+    const sp = new URLSearchParams();
+    if (opts?.sha) sp.set('sha', opts.sha);
+    if (opts?.top_n) sp.set('top_n', String(opts.top_n));
+    const qs = sp.toString() ? `?${sp.toString()}` : '';
+    return request<CpoOperationExplain>(
+      `/v1/plan/cpo/operations/${encodeURIComponent(operationId)}/explain${qs}`,
+    );
+  },
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -382,6 +458,51 @@ export const planOperationsApi = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// WORKER ABSENCES API (Q.174.F4 — disponibilidade real de operadores)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface WorkerAbsence {
+  id: string;
+  employee_code: string;
+  date_start: string; // YYYY-MM-DD
+  date_end: string;
+  kind?: string | null;
+  mode: 'add' | 'ignore_erp' | string;
+  erp_movent_id?: number | null;
+  reason?: string | null;
+  created_by: string;
+  created_at: string;
+}
+
+export interface WorkerAbsenceCreate {
+  employee_code: string;
+  date_start: string;
+  date_end: string;
+  kind?: string;
+  reason?: string;
+}
+
+export const workerAbsencesApi = {
+  /** GET /v1/plan/absences — overrides locais (o ERP ENT_MOV entra à parte no CPO). */
+  list: (opts?: { include_past?: boolean }) => {
+    const qs = opts?.include_past ? '?include_past=true' : '';
+    return request<WorkerAbsence[]>(`/v1/plan/absences${qs}`);
+  },
+  /** POST /v1/plan/absences — o CPO exclui o operador no intervalo no PRÓXIMO replan. */
+  create: (body: WorkerAbsenceCreate) =>
+    request<WorkerAbsence>('/v1/plan/absences', {
+      method: 'POST',
+      body: JSON.stringify({ ...body, mode: 'add' }),
+    }),
+  /** DELETE /v1/plan/absences/{id} — anula um override local. */
+  remove: (absenceId: string) =>
+    request<{ id: string; deleted: boolean }>(
+      `/v1/plan/absences/${encodeURIComponent(absenceId)}`,
+      { method: 'DELETE' },
+    ),
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════

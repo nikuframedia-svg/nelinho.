@@ -238,6 +238,13 @@ export const planKeys = {
   excludedBoats: () => [...planKeys.all, 'excluded-boats'] as const,
   // Q.173.AF — contexto de filtros do Gantt (mapas de nomes/sectores/boosts).
   filtersContext: () => [...planKeys.all, 'filters-context'] as const,
+  // Q.174.F5 — secção "não planeável" do commit (plano parcial declarado).
+  unplannable: (sha: string) => [...planKeys.all, 'unplannable', sha] as const,
+  // Q.174.F8 — explicação da escolha de operadores de uma op.
+  opExplain: (operationId: string) =>
+    [...planKeys.all, 'op-explain', operationId] as const,
+  // Q.174.F4 — ausências de operadores (overrides locais sobre o ERP).
+  absences: () => [...planKeys.all, 'absences'] as const,
 } as const;
 
 // ─── Reports admin (Q.67.2.B) ──────────────────────────────────────────

@@ -33,6 +33,8 @@ import type { ScheduledOp } from '../../components/overall/types';
 import { AutoProposeOverlay } from '../../components/overall/AutoProposeOverlay';
 import { ViewPanel } from '../../components/overall/ViewPanel';
 import { RiskStrip } from '../../components/overall/RiskStrip';
+import { UnplannableStrip } from '../../components/overall/UnplannableStrip';
+import { AbsencesSheet } from '../../components/overall/AbsencesSheet';
 import { PeriodSelector } from '../../components/overall/PeriodSelector';
 import type { PlanSelection } from '../../components/overall/selection';
 import { usePendingDecisions } from '../../hooks/usePendingDecisions';
@@ -97,6 +99,8 @@ export default function OverallPage(): ReactNode {
   const [groupBy, setGroupBy] = useState<GroupBy>('fase');
   // Q.147.B — ops da célula em drill-down (heatmap → lista).
   const [expandedCellOps, setExpandedCellOps] = useState<ScheduledOp[] | null>(null);
+  // Q.174.F4 — sheet de ausências de operadores (overrides locais sobre o ERP).
+  const [absencesOpen, setAbsencesOpen] = useState(false);
   // Q.173.AF — filtros estruturados (12, persistidos no URL).
   const [searchParams, setSearchParams] = useSearchParams();
   const planFilters: PlanFilterState = useMemo(
@@ -759,6 +763,17 @@ export default function OverallPage(): ReactNode {
               </DarkButton>
             )}
 
+            {/* Q.174.F4 — registar faltas que o ERP ainda não tem (entra no
+                próximo replan; o CPO respeita o intervalo). */}
+            <DarkButton
+              size="sm"
+              variant="secondary"
+              onClick={() => setAbsencesOpen(true)}
+              title="Registar/anular ausências de operadores (overrides locais sobre o ERP)"
+            >
+              Ausências
+            </DarkButton>
+
             {/* Q.153.B2 — Replanear (async) + Aprovar (DRAFT→LIVE) */}
             <DarkButton
               size="sm"
@@ -818,6 +833,10 @@ export default function OverallPage(): ReactNode {
 
         {/* Faixa colapsável de riscos operacionais */}
         <RiskStrip />
+
+        {/* Q.174.F5 — plano parcial declarado: o que NÃO foi planeável, com o
+            recurso em falta e sugestão acionável (decisão do dono). */}
+        {activeSha && <UnplannableStrip commitSha={activeSha} />}
 
         {/* Q.158 — KPI "barcos em produção" pela regra EXATA da NELO (≈830 =
             NOT fila). Mesma definição do CPO scope e do watermark do robô. Só
@@ -1226,6 +1245,14 @@ export default function OverallPage(): ReactNode {
               { onSuccess: () => clearSelection() },
             )
           }
+        />
+      )}
+
+      {/* Q.174.F4 — gestão mínima de ausências (lista + registar + anular). */}
+      {absencesOpen && (
+        <AbsencesSheet
+          operators={operatorOptions}
+          onClose={() => setAbsencesOpen(false)}
         />
       )}
 
