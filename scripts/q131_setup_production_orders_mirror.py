@@ -37,12 +37,43 @@ DEV_TENANT = "00000000-0000-0000-0000-000000000001"
 # para reparação tem OF_DATAFIM preenchido (da produção original) e ficava
 # FORA do espelho — 74/76 reparações invisíveis na expedição/OTD/risco
 # (auditoria 2026-06-11). O critério é o canónico v_of_em_producao
-# (op aberta na fase atual, is_reparacao = fase em {14,76,77}); a
-# transport_date de uma reparação é NULL (a promessa do ERP é a da VENDA
-# original, ex. 2024 — usá-la seria desonesto; promessa nova de reparação
-# é pergunta pendente ao Luis).
+# (op aberta na fase atual, is_reparacao = fase em {14,76,77}).
+# Q.174.F0.1 — transport_date CANÓNICA: o transporte FUTURO mais próximo em
+# TRANSP_OF→TRANSPORTE.TR_DATA (a promessa real, 93k links; reconciliação
+# live 2026-06-12: a coluna OF_TR_DATA_PREVISTA está morta desde 2009 e
+# 72.753 OFs com transporte agendado eram invisíveis). Fallback: a coluna
+# legacy; nunca OF_DATA (Q.173.A, invariante #8). Uma REPARAÇÃO ganha a
+# promessa NOVA quando existe transporte futuro (resolve a pergunta Q.173:
+# a promessa da venda original, ex. 2024, continua a nunca ser usada).
 # Spelke CX1: zero campos monetários (€) — só IDs, nomes, datas e fase.
-_WIP_CTE = """
+
+
+def _wip_cte(with_transp: bool = True) -> str:
+    """CTE do WIP. `with_transp=False` = fallback para BDs dev/test sem o
+    mirror `factory_raw.transp_of` (criado no Q.174.F0.1) — só a coluna legacy."""
+    transp_cte = ""
+    main_due = 'CAST(NULLIF(ofb."OF_TR_DATA_PREVISTA", \'\') AS timestamp)::date'
+    repair_due = "NULL::date                                    -- sem promessa real"
+    if with_transp:
+        transp_cte = """
+    transp AS (
+        SELECT tof."TROF_OF_ID" AS of_id,
+               MIN(CAST(NULLIF(t."TR_DATA", '') AS date)) AS tr_data_futura
+        FROM factory_raw.transp_of tof
+        JOIN factory_raw.transporte t ON t."TR_ID" = tof."TROF_TR_ID"
+        WHERE CAST(NULLIF(t."TR_DATA", '') AS date) >= CURRENT_DATE
+        GROUP BY tof."TROF_OF_ID"
+    ),"""
+        main_due = (
+            "COALESCE(tr.tr_data_futura,\n"
+            "                     CAST(NULLIF(ofb.\"OF_TR_DATA_PREVISTA\", '') "
+            "AS timestamp)::date)"
+        )
+        # Reparação: SÓ o transporte futuro real conta (a coluna legacy traz a
+        # promessa da venda ORIGINAL — desonesta para uma reparação).
+        repair_due = "tr.tr_data_futura"
+    transp_join = "LEFT JOIN transp tr ON tr.of_id = ofb.\"OF_ID\"" if with_transp else ""
+    return f"""{transp_cte}
     wip AS (
         SELECT
             ofb."OF_ID"                                   AS of_id,
@@ -59,13 +90,15 @@ _WIP_CTE = """
             COALESCE(NULLIF(f."FP_NOME", ''),
                      ofb."OF_FP_ID"::text)                AS phase_name,
             CAST(NULLIF(ofb."OF_DATA", '') AS timestamp)::date            AS created_date,
-            -- Q.173.A: transport_date é a promessa REAL de transporte do ERP.
-            -- Sem fallback para OF_DATA (data de criação) — isso fabricava
-            -- "data de expedição" para 100% das ordens (invariante #8).
-            CAST(NULLIF(ofb."OF_TR_DATA_PREVISTA", '') AS timestamp)::date AS transport_date
+            -- Q.173.A/Q.174.F0.1: transport_date = promessa REAL (camião
+            -- futuro canónico, senão a coluna legacy do ERP). Sem fallback
+            -- para OF_DATA (data de criação) — isso fabricava "data de
+            -- expedição" para 100% das ordens (invariante #8).
+            {main_due} AS transport_date
         FROM factory_raw.ordemfabrico ofb
         JOIN factory_raw.fases_producao f ON f."FP_ID" = ofb."OF_FP_ID"
         LEFT JOIN factory_raw.produto p   ON p."P_ID"  = ofb."OF_P_ID"
+        {transp_join}
         WHERE NULLIF(ofb."OF_DATAFIM", '') IS NULL
           AND f."FP_PRODUCAO" = true
           AND ofb."OF_P_ID" IS NOT NULL
@@ -73,7 +106,8 @@ _WIP_CTE = """
         UNION
 
         -- Q.173.V — reparações re-entradas (OF fechada mas com op aberta na
-        -- fase atual de reparação). Datas de promessa a NULL: honesto.
+        -- fase atual de reparação). Q.174.F0.1: promessa NOVA = transporte
+        -- futuro real quando existe; senão NULL (a da venda original NUNCA).
         SELECT
             ofb."OF_ID",
             ofb."OF_P_ID",
@@ -88,19 +122,25 @@ _WIP_CTE = """
             ofb."OF_FP_ID",
             COALESCE(NULLIF(f."FP_NOME", ''), ofb."OF_FP_ID"::text),
             CAST(NULLIF(ofb."OF_DATA", '') AS timestamp)::date,
-            NULL::date                                    -- sem promessa real
+            {repair_due}
         FROM factory_raw.v_of_em_producao v
         JOIN factory_raw.ordemfabrico ofb ON ofb."OF_ID" = v.of_id
         JOIN factory_raw.fases_producao f ON f."FP_ID" = ofb."OF_FP_ID"
         LEFT JOIN factory_raw.produto p   ON p."P_ID"  = ofb."OF_P_ID"
+        {transp_join}
         WHERE v.is_reparacao = true
           AND NULLIF(ofb."OF_DATAFIM", '') IS NOT NULL
           AND ofb."OF_P_ID" IS NOT NULL
     )
 """
 
-_UPSERT_SQL = f"""
-WITH {_WIP_CTE}
+
+# Forma canónica (com transp_of) — usada pelos testes e pelo caminho normal.
+_WIP_CTE = _wip_cte(True)
+
+def _upsert_sql(wip_cte: str) -> str:
+    return f"""
+WITH {wip_cte}
 INSERT INTO plan.production_orders
     (id, tenant_id, legacy_id, product_id, product_name, product_type,
      current_phase_id, current_phase_name, created_date, transport_date, status,
@@ -132,15 +172,22 @@ ON CONFLICT (legacy_id) DO UPDATE SET
         THEN 'CANCELLED' ELSE 'IN_PROGRESS' END
 """
 
+
 # Remove ordens que já não estão no WIP atual (inclui as 12 demo, OF_ID
 # 4271-6004, que nunca aparecem no WIP real). Preserva soft-cancel.
-_PRUNE_SQL = f"""
-WITH {_WIP_CTE}
+def _prune_sql(wip_cte: str) -> str:
+    return f"""
+WITH {wip_cte}
 DELETE FROM plan.production_orders po
 WHERE po.tenant_id = '{DEV_TENANT}'::uuid
   AND po.status <> 'CANCELLED'
   AND NOT EXISTS (SELECT 1 FROM wip WHERE wip.of_id = po.legacy_id)
 """
+
+
+# Formas canónicas (com transp_of) — usadas pelos testes/inspeção.
+_UPSERT_SQL = _upsert_sql(_WIP_CTE)
+_PRUNE_SQL = _prune_sql(_WIP_CTE)
 
 
 async def setup() -> dict[str, Any]:
@@ -164,9 +211,15 @@ async def setup() -> dict[str, Any]:
                 "pruned": "skipped (factory_raw vazio)", "demo_rows_left": None,
                 "skipped": True,
             }
+        # Q.174.F0.1 — variante canónica (TRANSP_OF) quando o mirror existe;
+        # fallback legacy em BDs sem ele (dev antigo) — sem rebentar o sync.
+        has_transp = bool(await pg.fetchval(
+            "SELECT to_regclass('factory_raw.transp_of') IS NOT NULL"
+        ))
+        wip_cte = _wip_cte(has_transp)
         async with pg.transaction():
-            await pg.execute(_UPSERT_SQL)
-            pruned = await pg.execute(_PRUNE_SQL)
+            await pg.execute(_upsert_sql(wip_cte))
+            pruned = await pg.execute(_prune_sql(wip_cte))
         after = await pg.fetchval(
             "SELECT COUNT(*) FROM plan.production_orders "
             "WHERE tenant_id = $1", DEV_TENANT,

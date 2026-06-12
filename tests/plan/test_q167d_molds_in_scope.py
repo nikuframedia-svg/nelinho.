@@ -47,7 +47,7 @@ class _RecSession:
 def _row(of_id, fase, is_mold):
     return {
         "of_id": of_id, "modelo_id": "900", "current_fase_id": fase,
-        "data_entrega_prevista": None, "is_mold": is_mold, "done_fase_ids": [],
+        "data_entrega_prevista": None, "due_source": None, "is_mold": is_mold, "done_fase_ids": [],
     }
 
 
@@ -56,7 +56,7 @@ async def test_boats_and_molds_sql_has_mold_union():
     """scope=boats_and_molds → o SQL inclui o ramo UNION dos moldes."""
     s = _RecSession([])
     await _load_open_orders_db(s, _TENANT, scope="boats_and_molds", plan_cap=0)
-    sql = str(s.statements[0])
+    sql = str(s.statements[-1])  # Q.174.F0.1: [0] é o probe de transp_of; o SQL principal é o último
     assert "v_of_is_mold" in sql
     assert "UNION ALL" in sql
     assert 'IN (13, 14)' in sql  # fases de reparação de molde
@@ -68,7 +68,7 @@ async def test_boats_only_sql_has_no_mold_branch():
     """scope=boats_only → SEM ramo de moldes (zero regressão no scheduler)."""
     s = _RecSession([])
     await _load_open_orders_db(s, _TENANT, scope="boats_only", plan_cap=0)
-    sql = str(s.statements[0])
+    sql = str(s.statements[-1])  # Q.174.F0.1: [0] é o probe de transp_of; o SQL principal é o último
     assert "v_of_is_mold" not in sql
     assert "UNION ALL" not in sql
     # o ramo dos barcos passa a expor is_mold=false (coluna aditiva, mesmas rows).
@@ -81,7 +81,7 @@ async def test_all_scope_has_neither_view():
     """scope=all → back-compat: sem join de barco nem de molde."""
     s = _RecSession([])
     await _load_open_orders_db(s, _TENANT, scope="all", plan_cap=0)
-    sql = str(s.statements[0])
+    sql = str(s.statements[-1])  # Q.174.F0.1: [0] é o probe de transp_of; o SQL principal é o último
     assert "v_of_is_mold" not in sql
     assert "v_of_is_boat" not in sql
 

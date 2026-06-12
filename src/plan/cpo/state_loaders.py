@@ -1043,6 +1043,60 @@ async def _load_open_orders_db(
     from sqlalchemy import text
     from sqlalchemy.exc import SQLAlchemyError
 
+    # Q.174.F0.1 — due date CANÓNICA: a promessa real de expedição vive em
+    # TRANSP_OF (93k links OF↔camião) → TRANSPORTE.TR_DATA (data de saída da
+    # fábrica, 99.9% preenchida; TR_DATA_ENTREGA_PREV é entrega-no-cliente e só
+    # tem 2% — não serve de deadline de produção). Para uma OF ABERTA o link
+    # relevante é o transporte FUTURO mais próximo: reatribuições deixam links
+    # antigos para trás e um TR_DATA passado numa OF aberta é ruído/reparação,
+    # não prazo (auditoria live 2026-06-12: 0/10 matches da fórmula antiga;
+    # 72.753 OFs com transporte agendado invisíveis). Sem transporte futuro →
+    # fallback legacy (OF_DATAENTREGA→OF_TR_DATA_PREVISTA→OF_PLANO_DATA_PREVISTA),
+    # etiquetado `due_source='plano_erp'` (invariante #8 — fonte às claras).
+    # Probe de existência (dev/test sem o mirror novo → fallback legacy sem
+    # abortar a transação; `scalar` guardado p/ fakes de captura sem o método).
+    has_transp = False
+    try:
+        _probe = await session.execute(text(
+            "SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema = 'factory_raw' AND table_name = 'transp_of'"
+        ))
+        _scalar = getattr(_probe, "scalar", None)
+        has_transp = bool(_scalar()) if callable(_scalar) else False
+    except SQLAlchemyError as exc:  # pragma: no cover — outage
+        logger.debug("Q.174 transp_of probe skipped: %s", exc)
+
+    _legacy_due = (
+        'COALESCE(NULLIF(ofb."OF_DATAENTREGA", \'\'),\n'
+        '                          NULLIF(ofb."OF_TR_DATA_PREVISTA", \'\'),\n'
+        '                          NULLIF(ofb."OF_PLANO_DATA_PREVISTA", \'\'))'
+    )
+    if has_transp:
+        transp_cte = """
+        transp AS (
+          SELECT tof."TROF_OF_ID"::text AS of_id,
+                 MIN(NULLIF(t."TR_DATA", '')) AS tr_data_futura
+          FROM factory_raw.transp_of tof
+          JOIN factory_raw.transporte t ON t."TR_ID" = tof."TROF_TR_ID"
+          WHERE NULLIF(t."TR_DATA", '') >= to_char(now(), 'YYYY-MM-DD')
+          GROUP BY tof."TROF_OF_ID"
+        ),"""
+        transp_join = (
+            'LEFT JOIN transp tr ON tr.of_id = ofb."OF_ID"::text'
+        )
+        due_expr = f"COALESCE(tr.tr_data_futura,\n                          {_legacy_due})"
+        due_source_expr = (
+            "CASE WHEN tr.tr_data_futura IS NOT NULL THEN 'transporte'\n"
+            f"                      WHEN {_legacy_due} IS NOT NULL THEN 'plano_erp' END"
+        )
+    else:
+        transp_cte = ""
+        transp_join = ""
+        due_expr = _legacy_due
+        due_source_expr = (
+            f"CASE WHEN {_legacy_due} IS NOT NULL THEN 'plano_erp' END"
+        )
+
     # Q.157.H — critério raiz=Kayak AND OF_ID<10M (via v_of_is_boat).
     # Substitui o critério deck+casco que perdia C1/Nacra/Prepreg e incluía pagaias.
     # scope="boats_only": JOIN INNER a v_of_is_boat filtrando is_boat=true.
@@ -1078,6 +1132,7 @@ async def _load_open_orders_db(
                  COALESCE(NULLIF(ofb."OF_DATAENTREGA", ''),
                           NULLIF(ofb."OF_TR_DATA_PREVISTA", ''),
                           NULLIF(ofb."OF_PLANO_DATA_PREVISTA", '')) AS data_entrega_prevista,
+                 NULL::text AS due_source,
                  NULLIF(ofb."OF_DATA", '') AS of_data_sort,
                  true AS is_mold
           FROM factory_raw.ordemfabrico ofb
@@ -1116,7 +1171,7 @@ async def _load_open_orders_db(
         -- Q.158 — inclui done_fase_ids: array de OFFP_FP_ID::text com
         -- OFFP_DATAFIM preenchido para este barco. Fonte de verdade para
         -- o RoutingResolver não re-planear fases já concluídas.
-        WITH done AS (
+        WITH {transp_cte} done AS (
           SELECT op."OFFP_OF_ID"::text AS of_id,
                  array_agg(op."OFFP_FP_ID"::text) AS done_fase_ids
           FROM factory_raw.of_fp op
@@ -1130,6 +1185,9 @@ async def _load_open_orders_db(
                -- a sentinela já caía no bucket "sem prazo futuro".)
                CASE WHEN q.data_entrega_prevista::timestamp >= '1901-01-01'
                     THEN q.data_entrega_prevista END AS data_entrega_prevista,
+               -- Q.174.F0.1 — a fonte acompanha a data (e anula-se com ela).
+               CASE WHEN q.data_entrega_prevista::timestamp >= '1901-01-01'
+                    THEN q.due_source END AS due_source,
                q.is_mold,
                COALESCE(done.done_fase_ids, ARRAY[]::text[]) AS done_fase_ids
         FROM (
@@ -1142,9 +1200,10 @@ async def _load_open_orders_db(
                  CASE WHEN ofb."OF_FP_ID" IN ({_repair_ids_sql}) THEN 0 ELSE 1 END
                    AS repair_rank,
                  -- NULLIF: '' (vazio) → NULL, senão o ::timestamp do ORDER BY rebenta.
-                 COALESCE(NULLIF(ofb."OF_DATAENTREGA", ''),
-                          NULLIF(ofb."OF_TR_DATA_PREVISTA", ''),
-                          NULLIF(ofb."OF_PLANO_DATA_PREVISTA", '')) AS data_entrega_prevista,
+                 -- Q.174.F0.1 — transporte futuro real primeiro (canónico);
+                 -- senão o COALESCE legacy das colunas OF_* (etiquetado).
+                 {due_expr} AS data_entrega_prevista,
+                 {due_source_expr} AS due_source,
                  NULLIF(ofb."OF_DATA", '') AS of_data_sort,
                  false AS is_mold
           FROM factory_raw.ordemfabrico ofb
@@ -1153,6 +1212,7 @@ async def _load_open_orders_db(
           -- da NELO exige-o; barcos de stock sem cliente caem fora).
           JOIN factory_raw.entidade cli ON cli."E_ID" = ofb."OF_E_ID_ENC"
           {boats_join}
+          {transp_join}
           WHERE ofb."OF_P_ID" IS NOT NULL
             AND f."FP_PRODUCAO" = true
             -- Q.158 — regra EXATA NELO (CROSS APPLY do /OrdemFabrico): operação
@@ -1231,12 +1291,18 @@ async def _load_open_orders_db(
             # Q.167.D — molde em reparação (scope=boats_and_molds). Default false
             # (barcos). Lane/UI + permite ao decoder/UI distinguir molde de barco.
             "is_mold": bool(r["is_mold"]),
-            # Q.168.A — a data-alvo REAL (COALESCE OF_DATAENTREGA→TR→PLANO;
-            # sentinela 1900 anulada no SQL) viaja até ao RoutingResolver como
-            # due_date do backward-scheduling e da tardiness/OTD. A auditoria
-            # 2026-06-10 apanhou o elo partido: o SELECT trazia o campo mas o
-            # dict deixava-o cair → due_date=None em TODAS as ordens.
+            # Q.168.A — a data-alvo REAL (Q.174.F0.1: transporte futuro canónico
+            # primeiro, senão COALESCE legacy OF_DATAENTREGA→TR→PLANO; sentinela
+            # 1900 anulada no SQL) viaja até ao RoutingResolver como due_date do
+            # backward-scheduling e da tardiness/OTD. A auditoria 2026-06-10
+            # apanhou o elo partido: o SELECT trazia o campo mas o dict
+            # deixava-o cair → due_date=None em TODAS as ordens.
             "data_entrega_prevista": r["data_entrega_prevista"],
+            # Q.174.F0.1 — proveniência da due date (invariante #8):
+            # 'transporte' = TRANSP_OF→TRANSPORTE.TR_DATA futuro (promessa real);
+            # 'plano_erp'  = COALESCE legacy das colunas OF_* (previsão interna);
+            # None         = sem prazo (FIFO por antiguidade).
+            "due_source": r["due_source"],
             # Q.158 — fases já concluídas (OFFP_DATAFIM preenchido); lista de
             # fase_id (texto). O RoutingResolver usa-as para nunca re-planear
             # trabalho já feito. Pode ser None quando PostgreSQL devolve NULL

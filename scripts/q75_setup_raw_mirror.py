@@ -124,6 +124,17 @@ RAW_TABLES: list[RawTable] = [
     # exige-o); pk+inc → o incremental de 5 min mantém os recentes frescos.
     RawTable("ENT_MOV", None, pk_col="MOVENT_ID", inc_col="MOVENT_DATA_I"),
     RawTable("ENT_MOV_TIPO", None),  # lookup (15 linhas: MET_MET_ID=2 = Faltas)
+    # Q.174.F0.1 — expedição canónica. A promessa de entrega real vive em
+    # TRANSP_OF (93k links OF↔camião, PK composto → full nightly) +
+    # TRANSPORTE.TR_DATA_ENTREGA_PREV/TR_DATA (11k). As colunas OF_* de datas
+    # de transporte em ORDEMFABRICO estão mortas (OF_TR_DATA_PREVISTA parou em
+    # 2009; OF_DATAENTREGA 0% nos barcos) — 72.753 OFs com transporte agendado
+    # eram invisíveis (auditoria live 2026-06-12, 0/10 matches).
+    RawTable("TRANSP_OF", None),  # PK composto (TROF_TR_ID, TROF_OF_ID)
+    # inc_col=TR_DATA: a janela de 45d do incremental apanha transportes
+    # recentes E futuros (TR_DATA >= hoje-45d inclui datas futuras) — é
+    # exactamente o conjunto mutável (ETAs/tracker mudam até a entrega).
+    RawTable("TRANSPORTE", None, pk_col="TR_ID", inc_col="TR_DATA"),
 ]
 
 

@@ -32,6 +32,8 @@ _ROW = {
     "is_mold": False,
     "done_fase_ids": [],
     "data_entrega_prevista": "2026-07-15T00:00:00",
+    # Q.174.F0.1 — o SELECT real devolve a proveniência da due date.
+    "due_source": "plano_erp",
 }
 
 
