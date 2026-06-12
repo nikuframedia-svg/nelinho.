@@ -80,6 +80,8 @@ class MaterialEmRisco:
         data_limite_encomenda: Optional[date],
         outros_armazens: List[Dict[str, Any]],
         consumo_mediano_por_barco: Optional[float],
+        pedidos_internos: float = 0.0,
+        producao_interna_aberta: float = 0.0,
     ) -> None:
         self.product_code = product_code
         self.product_name = product_name
@@ -97,6 +99,11 @@ class MaterialEmRisco:
         self.data_limite_encomenda = data_limite_encomenda
         self.outros_armazens = outros_armazens
         self.consumo_mediano_por_barco = consumo_mediano_por_barco
+        # Q.174.F0.3 — canais TPMOV=12 (canónico produto_Stock_Necessidades):
+        # procura interna aberta (entra no saldo) e produção interna já pedida
+        # à Fábrica (alimenta a sugestão).
+        self.pedidos_internos = pedidos_internos
+        self.producao_interna_aberta = producao_interna_aberta
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -122,6 +129,8 @@ class MaterialEmRisco:
             ),
             "outros_armazens": self.outros_armazens,
             "consumo_mediano_por_barco": self.consumo_mediano_por_barco,
+            "pedidos_internos": self.pedidos_internos,
+            "producao_interna_aberta": self.producao_interna_aberta,
         }
 
 
@@ -232,12 +241,17 @@ def _calcular_sugestao(
     hoje: date,
     lead_time_days: int,
     defice: float,
+    producao_interna_aberta: float = 0.0,
 ) -> Tuple[str, str, Optional[date]]:
     """Devolve (sugestao, detalhe, data_limite_encomenda).
 
     Regras:
-    1. "compra" — se lead time permite chegar antes da rutura.
-    2. "replaneamento" — a rutura é causada pelo plano e não há compra a tempo.
+    1. "producao_interna" — Q.174.F0.3: a Fábrica JÁ tem pedido interno aberto
+       (TPMOV=12 para e_id=19747) que cobre o défice — mandar comprar o que
+       já está pedido internamente seria desperdício; a ação é confirmar/
+       acelerar a produção interna.
+    2. "compra" — se lead time permite chegar antes da rutura.
+    3. "replaneamento" — a rutura é causada pelo plano e não há compra a tempo.
 
     Q.173.AO: "transferência" foi REMOVIDA — o saldo projeta o stock agregado
     de todos os armazéns, por isso mover stock entre armazéns nunca altera o
@@ -251,11 +265,25 @@ def _calcular_sugestao(
     data_limite = data_rutura - timedelta(days=lead_time_days)
     dias_restantes = (data_limite - hoje).days
 
+    if producao_interna_aberta >= defice > 0:
+        detail = (
+            f"A Fábrica já tem pedido interno aberto de "
+            f"{producao_interna_aberta:.1f} unidades (cobre o défice de "
+            f"{defice:.1f}). Confirmar/acelerar a produção interna antes de "
+            f"{data_rutura.isoformat()} — não comprar em duplicado."
+        )
+        return ("producao_interna", detail, data_limite)
+
     if dias_restantes >= 0:
         detail = (
             f"Encomendar {defice:.1f} unidades até {data_limite.isoformat()} "
             f"({dias_restantes}d) — lead time {lead_time_days}d."
         )
+        if producao_interna_aberta > 0:
+            detail += (
+                f" Produção interna já pedida: {producao_interna_aberta:.1f} "
+                "un (cobre parte do défice)."
+            )
         return ("compra", detail, data_limite)
 
     # Sem tempo para compra
@@ -264,6 +292,11 @@ def _calcular_sugestao(
         f"já não chega (data-limite encomenda era {data_limite.isoformat()}). "
         "Rever sequência do plano."
     )
+    if producao_interna_aberta > 0:
+        detail += (
+            f" Produção interna já pedida: {producao_interna_aberta:.1f} un — "
+            "acelerá-la pode evitar o replaneamento."
+        )
     return ("replaneamento", detail, data_limite)
 
 
@@ -365,9 +398,18 @@ class ShortageForecastService:
         entradas_map = await self._load_pos(materiais_com_stock, hoje)
         fontes.append("supply.purchase_orders")
 
-        # 7. Reservas abertas por material
+        # 7. Reservas abertas por material (canónico: só OFs de barco de cliente)
         reservas_map = await self._load_reservas(materiais_com_stock)
         fontes.append("factory_raw.movimento(TPMOV=4)")
+
+        # 7b. Q.174.F0.3 — pedidos internos abertos (TPMOV=12, canónico
+        # produto_Stock_Necessidades): procura (≠19747, sem OF) entra no
+        # saldo como as reservas; produção interna já pedida (=19747)
+        # alimenta a sugestão (não mandar comprar o que a Fábrica já vai fazer).
+        pedintern_map, prodintern_map = await self._load_pedidos_internos(
+            materiais_com_stock
+        )
+        fontes.append("factory_raw.movimento(TPMOV=12)")
 
         # 8. Mínimos e lead times
         master_map = await self._load_masters(materiais_com_stock)
@@ -387,6 +429,8 @@ class ShortageForecastService:
             stock_total = stock_map.get(pc, 0.0)
             stock_negativo = stock_total < 0
             reservas = reservas_map.get(pc, 0.0)
+            pedidos_internos = pedintern_map.get(pc, 0.0)
+            producao_interna = prodintern_map.get(pc, 0.0)
             entradas = entradas_map.get(pc, [])
             consumos = consumos_por_material.get(pc, [])
             master = master_map.get(pc, {})
@@ -396,9 +440,11 @@ class ShortageForecastService:
             lead_time_source = master.get("lead_time_source", "default")
             nome = nomes_map.get(pc, pc)
 
+            # Q.174.F0.3 — a procura comprometida = reservas de barcos +
+            # pedidos internos abertos (fórmula canónica necTotal).
             data_rutura, saldo_minimo = _project_stock(
                 stock_atual=stock_total,
-                reservas=reservas,
+                reservas=reservas + pedidos_internos,
                 entradas=entradas,
                 consumos=consumos,
                 min_stock=min_stock,
@@ -422,6 +468,7 @@ class ShortageForecastService:
                 hoje=hoje,
                 lead_time_days=lead_time,
                 defice=defice,
+                producao_interna_aberta=producao_interna,
             )
 
             if sugestao == "ok":
@@ -458,6 +505,8 @@ class ShortageForecastService:
                 data_limite_encomenda=data_limite,
                 outros_armazens=outros_armazens,
                 consumo_mediano_por_barco=mediana,
+                pedidos_internos=pedidos_internos,
+                producao_interna_aberta=producao_interna,
             ))
 
         # Ordenar por data de rutura ascendente
@@ -837,6 +886,12 @@ class ShortageForecastService:
         if not int_codes:
             return {}
 
+        # Q.174.F0.3 — filtros CANÓNICOS de produto_Stock_Necessidades (corpo
+        # lido live 2026-06-12): as necessidades de OF contam SÓ reservas de
+        # OFs de BARCO de cliente (OF_ID < 10M e OF_E_ID_ENC <> 19747). As
+        # reservas de OFs de peças (>= 10M) ficam fora porque a procura de
+        # peças entra pelo canal TPMOV=12 (pedidos internos) — contar ambas
+        # duplicaria; as do Cliente Fábrica (19747) não são procura de cliente.
         q = text("""
             SELECT m."MOV_P_ID"::text, SUM(m."MOV_QUANTIDADE") AS reserva
             FROM factory_raw.movimento m
@@ -844,7 +899,10 @@ class ShortageForecastService:
             WHERE m."MOV_TPMOV_ID" = 4
               AND m."MOV_SATISFEITO" = false
               AND m."MOV_P_ID" = ANY(:ids)
-              AND (o."OF_ID" IS NULL OR o."OF_DATAFIM" IS NULL)
+              AND (o."OF_ID" IS NULL
+                   OR (o."OF_DATAFIM" IS NULL
+                       AND o."OF_ID" < 10000000
+                       AND o."OF_E_ID_ENC" <> 19747))
             GROUP BY m."MOV_P_ID"
         """)
         result = await self._session.execute(q, {"ids": int_codes})
@@ -852,6 +910,56 @@ class ShortageForecastService:
         for row in result.fetchall():
             reservas[str(row[0])] = float(row[1] or 0)
         return reservas
+
+    async def _load_pedidos_internos(
+        self,
+        product_codes: Set[str],
+    ) -> Tuple[Dict[str, float], Dict[str, float]]:
+        """Q.174.F0.3 — pedidos internos abertos (TPMOV=12, MOV_SATISFEITO=false)
+        nos DOIS canais canónicos de ``produto_Stock_Necessidades``:
+
+        * ``pedidos_internos`` (MOV_E_ID <> 19747, sem OF) — PROCURA: requisições
+          internas em aberto que o ERP soma às necessidades. Ignorá-las
+          subestimava o défice (caso live Inserts M8: ERP défice 249, nós
+          víamos saldo +495).
+        * ``producao_interna`` (MOV_E_ID = 19747 = a própria Fábrica) — sinal de
+          OFERTA: a fábrica já tem pedido interno para PRODUZIR o material.
+          Não entra no saldo (sem ETA fiável); alimenta a sugestão
+          "produção interna" em vez de mandar comprar o que já está pedido.
+        """
+        if not product_codes:
+            return {}, {}
+        try:
+            int_codes = [int(pc) for pc in product_codes if pc.isdigit()]
+        except ValueError:
+            int_codes = []
+        if not int_codes:
+            return {}, {}
+
+        q = text("""
+            SELECT m."MOV_P_ID"::text,
+                   SUM(m."MOV_QUANTIDADE") FILTER (
+                     WHERE m."MOV_E_ID" <> 19747 AND m."MOV_OF_ID" IS NULL
+                   ) AS pedidos_internos,
+                   SUM(m."MOV_QUANTIDADE") FILTER (
+                     WHERE m."MOV_E_ID" = 19747
+                   ) AS producao_interna
+            FROM factory_raw.movimento m
+            WHERE m."MOV_TPMOV_ID" = 12
+              AND m."MOV_SATISFEITO" = false
+              AND m."MOV_P_ID" = ANY(:ids)
+            GROUP BY m."MOV_P_ID"
+        """)
+        result = await self._session.execute(q, {"ids": int_codes})
+        pedidos: Dict[str, float] = {}
+        producao: Dict[str, float] = {}
+        for row in result.fetchall():
+            code = str(row[0])
+            if row[1]:
+                pedidos[code] = float(row[1])
+            if row[2]:
+                producao[code] = float(row[2])
+        return pedidos, producao
 
     async def _load_masters(
         self,

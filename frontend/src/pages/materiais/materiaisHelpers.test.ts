@@ -19,6 +19,9 @@ describe('sugestaoVariant', () => {
   it('compra → danger', () => {
     expect(sugestaoVariant('compra')).toBe('danger');
   });
+  it('producao_interna → warning (Q.174.F0.3)', () => {
+    expect(sugestaoVariant('producao_interna')).toBe('warning');
+  });
   it('replaneamento → info', () => {
     expect(sugestaoVariant('replaneamento')).toBe('info');
   });
@@ -33,6 +36,9 @@ describe('sugestaoVariant', () => {
 describe('sugestaoLabel', () => {
   it('compra → "Compra"', () => {
     expect(sugestaoLabel('compra')).toBe('Compra');
+  });
+  it('producao_interna → "Produção interna" (Q.174.F0.3)', () => {
+    expect(sugestaoLabel('producao_interna')).toBe('Produção interna');
   });
   it('replaneamento → "Replaneamento"', () => {
     expect(sugestaoLabel('replaneamento')).toBe('Replaneamento');

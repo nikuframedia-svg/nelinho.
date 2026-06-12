@@ -172,6 +172,7 @@ function RuturasTab() {
         >
           <option value="">Todas as sugestões</option>
           <option value="compra">Compra</option>
+          <option value="producao_interna">Produção interna</option>
           <option value="replaneamento">Replaneamento</option>
         </select>
         <div className="flex items-center gap-2 ml-auto">

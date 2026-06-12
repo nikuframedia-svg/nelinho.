@@ -14,6 +14,10 @@ export function sugestaoVariant(
   switch (tipo) {
     case 'compra':
       return 'danger';
+    case 'producao_interna':
+      // Q.174.F0.3 — a Fábrica já tem pedido interno aberto que cobre o
+      // défice: ação é confirmar/acelerar produção, não comprar.
+      return 'warning';
     case 'replaneamento':
       return 'info';
     case 'ok':
@@ -27,6 +31,8 @@ export function sugestaoLabel(tipo: MaterialEmRisco['sugestao']): string {
   switch (tipo) {
     case 'compra':
       return 'Compra';
+    case 'producao_interna':
+      return 'Produção interna';
     case 'replaneamento':
       return 'Replaneamento';
     case 'ok':

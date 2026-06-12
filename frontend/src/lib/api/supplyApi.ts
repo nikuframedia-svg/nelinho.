@@ -390,8 +390,12 @@ export interface MaterialEmRisco {
   data_rutura_prevista: string | null;
   defice: number;
   ordens_afetadas: OrdemAfetada[];
-  sugestao: 'compra' | 'replaneamento' | 'ok' | string;
+  sugestao: 'compra' | 'producao_interna' | 'replaneamento' | 'ok' | string;
   sugestao_detalhe: string;
+  /** Q.174.F0.3 — TPMOV=12 abertos: procura interna (entra no saldo). */
+  pedidos_internos?: number;
+  /** Q.174.F0.3 — TPMOV=12 à Fábrica (19747): produção interna já pedida. */
+  producao_interna_aberta?: number;
   lead_time_days: number;
   lead_time_source: 'erp' | 'manual' | 'default' | string;
   data_limite_encomenda: string | null;

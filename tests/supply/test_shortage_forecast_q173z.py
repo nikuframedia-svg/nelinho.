@@ -224,6 +224,79 @@ def test_load_reservas_exclui_ofs_fechadas_q173ao():
     assert '"OF_DATAFIM" IS NULL' in src
 
 
+def test_sugestao_producao_interna_cobre_defice_q174():
+    """Q.174.F0.3 — défice coberto por pedido interno aberto à Fábrica
+    (TPMOV=12 → e_id=19747): a sugestão é confirmar a produção interna,
+    NUNCA comprar em duplicado."""
+    sugestao, detalhe, data_limite = _calcular_sugestao(
+        data_rutura=HOJE + timedelta(days=20),
+        hoje=HOJE,
+        lead_time_days=7,
+        defice=100.0,
+        producao_interna_aberta=250.0,
+    )
+    assert sugestao == "producao_interna"
+    assert "250.0" in detalhe and "100.0" in detalhe
+    assert data_limite == HOJE + timedelta(days=13)
+
+
+def test_sugestao_producao_interna_parcial_mantem_compra_q174():
+    """Produção interna aberta que NÃO cobre o défice → compra mantém-se,
+    com a cobertura parcial mencionada (não esconder o que já está pedido)."""
+    sugestao, detalhe, _ = _calcular_sugestao(
+        data_rutura=HOJE + timedelta(days=20),
+        hoje=HOJE,
+        lead_time_days=7,
+        defice=100.0,
+        producao_interna_aberta=30.0,
+    )
+    assert sugestao == "compra"
+    assert "30.0" in detalhe
+
+
+def test_sugestao_sem_producao_interna_back_compat_q174():
+    """Default producao_interna_aberta=0.0 → comportamento Q.173.Z exato."""
+    com = _calcular_sugestao(
+        data_rutura=HOJE + timedelta(days=20), hoje=HOJE,
+        lead_time_days=7, defice=100.0, producao_interna_aberta=0.0,
+    )
+    sem = _calcular_sugestao(
+        data_rutura=HOJE + timedelta(days=20), hoje=HOJE,
+        lead_time_days=7, defice=100.0,
+    )
+    assert com == sem and com[0] == "compra"
+
+
+def test_load_pedidos_internos_canonico_q174():
+    """Q.174.F0.3 — guard estático: o SQL dos pedidos internos segue a fórmula
+    canónica produto_Stock_Necessidades (corpo lido live 2026-06-12):
+    procura = TPMOV=12 abertos com MOV_E_ID<>19747 e SEM OF; oferta interna
+    = TPMOV=12 abertos com MOV_E_ID=19747 (Fábrica produz)."""
+    import inspect
+
+    from src.supply.services.shortage_forecast_service import ShortageForecastService
+
+    src = inspect.getsource(ShortageForecastService._load_pedidos_internos)
+    assert '"MOV_TPMOV_ID" = 12' in src
+    assert '"MOV_SATISFEITO" = false' in src
+    assert '"MOV_E_ID" <> 19747 AND m."MOV_OF_ID" IS NULL' in src
+    assert '"MOV_E_ID" = 19747' in src
+
+
+def test_load_reservas_filtros_canonicos_q174():
+    """Q.174.F0.3 — as reservas contam SÓ OFs de barco de cliente
+    (OF_ID < 10M, OF_E_ID_ENC <> 19747), como produto_Stock_Necessidades —
+    reservas de OFs de peças entram pelo canal TPMOV=12 (evita dupla
+    contagem) e o Cliente Fábrica não é procura."""
+    import inspect
+
+    from src.supply.services.shortage_forecast_service import ShortageForecastService
+
+    src = inspect.getsource(ShortageForecastService._load_reservas)
+    assert '"OF_ID" < 10000000' in src
+    assert '"OF_E_ID_ENC" <> 19747' in src
+
+
 def test_load_bom_direcao_canonica_q174():
     """Q.174.F0.2 — guard estático: a BOM filtra pelo PAI (``COMP_P_ID`` =
     modelo do plano) e devolve o FILHO (``COMP_P_P_ID`` = componente).
