@@ -602,6 +602,8 @@ class FactoryState:
             from sqlalchemy.exc import SQLAlchemyError
             scope = "boats_only"
             staleness_months: int | None = None
+            # Q.174.F0.5 — default canónico: Cliente Fábrica fora do plano.
+            excluded_client_ids: frozenset[int] = frozenset({19747})
             # Q.161.A — precedência do cap: arg explícito (request) > config
             # `planning.plan_cap` > None (⇒ default 200 em _load_open_orders_db).
             eff_plan_cap: int | None = plan_cap
@@ -629,6 +631,19 @@ class FactoryState:
                     state.repair_phase_ids = frozenset(
                         str(int(x)) for x in _rep
                     )
+                # Q.174.F0.5 — clientes excluídos do plano. O canónico
+                # Planeamento_Previsão exclui SEMPRE o Cliente Fábrica
+                # (e_id=19747) de toda a seleção de barcos a planear
+                # (WHERE o.of_e_id_enc <> 19747, corpo lido live); nós
+                # planeávamos +90 OFs que a fábrica nunca planeia.
+                _exc = _planning.get("excluded_client_ids")
+                if isinstance(_exc, (list, tuple)):
+                    excluded_client_ids = frozenset(int(x) for x in _exc)
+                elif isinstance(_exc, str) and _exc.strip():
+                    excluded_client_ids = frozenset(
+                        int(t) for t in _exc.replace(";", ",").split(",")
+                        if t.strip().lstrip("-").isdigit()
+                    )
             except (
                 SQLAlchemyError, ImportError, ValueError, AttributeError, TypeError,
             ) as exc:
@@ -641,6 +656,7 @@ class FactoryState:
                 staleness_months=staleness_months,
                 plan_cap=eff_plan_cap,
                 repair_phase_ids=state.repair_phase_ids,
+                excluded_client_ids=excluded_client_ids,
             )
 
         # Curing/drying gaps (Sprint A D2): DB first, seed fallback

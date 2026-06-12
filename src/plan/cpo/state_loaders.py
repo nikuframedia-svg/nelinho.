@@ -969,6 +969,7 @@ async def _load_open_orders_db(
     staleness_months: int | None = None,
     plan_cap: int | None = None,
     repair_phase_ids: frozenset[str] | None = None,
+    excluded_client_ids: frozenset[int] | None = None,
 ) -> List[Dict[str, Any]]:
     """Q.126.B — real WIP from `factory_raw.ordemfabrico`: open orders
     (`OF_DATAFIM` NULL) whose current phase (`OF_FP_ID`) is a production phase
@@ -1037,6 +1038,18 @@ async def _load_open_orders_db(
 
     # Q.161.A — fragmento SQL dos ids de fase de reparação (DRY com a config).
     _repair_ids_sql = ", ".join(str(int(x)) for x in sorted(_repair_ids, key=int))
+
+    # Q.174.F0.5 — clientes excluídos do plano (canónico: Planeamento_Previsão
+    # exclui o Cliente Fábrica e_id=19747 de TODA a seleção; +90 OFs no scope
+    # atual que a fábrica nunca planeia). Config `planning.excluded_client_ids`;
+    # default {19747}; vazio explícito ⇒ sem exclusão (predicado ausente).
+    _excluded = (
+        frozenset({19747}) if excluded_client_ids is None else excluded_client_ids
+    )
+    excluded_pred = ""
+    if _excluded:
+        _exc_sql = ", ".join(str(int(x)) for x in sorted(_excluded))
+        excluded_pred = f'\n            AND ofb."OF_E_ID_ENC" NOT IN ({_exc_sql})'
 
     if session is None:
         return []
@@ -1224,7 +1237,7 @@ async def _load_open_orders_db(
               WHERE op."OFFP_OF_ID" = ofb."OF_ID"
                 AND op."OFFP_FP_ID" = ofb."OF_FP_ID"
                 AND NULLIF(op."OFFP_DATAFIM", '') IS NULL
-            ){staleness_pred}{molds_union}
+            ){excluded_pred}{staleness_pred}{molds_union}
         ) q
         LEFT JOIN done ON done.of_id = q.of_id
         ORDER BY

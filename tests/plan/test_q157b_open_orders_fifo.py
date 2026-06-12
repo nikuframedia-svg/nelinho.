@@ -183,3 +183,37 @@ async def test_plan_cap_explicit_value_clamped_q161() -> None:
     assert sess.params["plan_cap"] == 900
     sess2 = await _captured(plan_cap=999999)
     assert sess2.params["plan_cap"] == _OPEN_ORDERS_HARD_CAP, "clamp ao tecto"
+
+
+# ───────────────────── Q.174.F0.5 — exclusão de clientes ─────────────────────
+
+
+@pytest.mark.asyncio
+async def test_cliente_fabrica_excluido_por_defeito_q174():
+    """Canónico: Planeamento_Previsão exclui SEMPRE o Cliente Fábrica
+    (e_id=19747) da seleção de barcos a planear (corpo lido live 2026-06-12).
+    Sem config, o default replica-o."""
+    sql = await _captured_sql()
+    assert '"OF_E_ID_ENC" NOT IN (19747)' in sql
+
+
+@pytest.mark.asyncio
+async def test_excluded_client_ids_configuravel_q174():
+    """`planning.excluded_client_ids` substitui o default (e ordena)."""
+    from src.plan.cpo.state import _load_open_orders_db
+
+    sess = _CaptureSession()
+    await _load_open_orders_db(
+        sess, TENANT, excluded_client_ids=frozenset({111, 19747}),
+    )
+    assert '"OF_E_ID_ENC" NOT IN (111, 19747)' in sess.sql_text
+
+
+@pytest.mark.asyncio
+async def test_excluded_client_ids_vazio_desliga_q174():
+    """Vazio EXPLÍCITO ⇒ sem predicado (opt-out consciente, não default)."""
+    from src.plan.cpo.state import _load_open_orders_db
+
+    sess = _CaptureSession()
+    await _load_open_orders_db(sess, TENANT, excluded_client_ids=frozenset())
+    assert "NOT IN" not in sess.sql_text
