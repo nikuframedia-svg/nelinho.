@@ -1079,3 +1079,71 @@ def test_explain_fase_sem_pool_e_honesto(monkeypatch):
     assert body["pool_size"] == 0
     assert body["candidates"] == []
     assert "sem mão-de-obra" in body["explain_pt"]
+
+
+# ---------------------------------------------------------------------------
+# GET /commits/{sha}/unplannable (Q.174.F5)
+# ---------------------------------------------------------------------------
+
+
+def test_unplannable_endpoint_devolve_seccao(monkeypatch):
+    """BUGFIX no Q.174.P: o endpoint lia `commit.sha256` (atributo
+    inexistente — o modelo chama-lhe `commit_sha256`) → 500 em qualquer
+    chamada. Este teste fixa o caminho feliz ponta-a-ponta."""
+    commit = _make_commit(
+        kpis={"unplannable_count": 2, "viable": False},
+    )
+    commit.cpo_meta = {"unplannable": [
+        {"operation_id": "A", "order_id": "OF1", "phase_id": "40",
+         "status": "blocked_operadores",
+         "label_pt": "Sem operadores suficientes",
+         "suggestion_pt": "Qualificar w7 ou w9 para a fase 40."},
+        {"operation_id": None, "order_id": "OF9", "phase_id": None,
+         "status": "sem_rota", "label_pt": "Sem rota de produção",
+         "suggestion_pt": "Definir routing para o modelo."},
+    ]}
+
+    async def _fake_resolve(_service, _sha):
+        return commit
+
+    monkeypatch.setattr(
+        "src.plan.api.cpo_routers.commits._resolve_commit_or_404",
+        _fake_resolve,
+    )
+
+    client = TestClient(_build_app())
+    resp = client.get(
+        f"/v1/plan/cpo/commits/{'a' * 64}/unplannable",
+        headers={"X-Tenant-Id": str(DEV_TENANT)},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["commit_sha"] == "a" * 64
+    assert body["available"] is True
+    assert body["unplannable_count"] == 2
+    assert body["viable"] is False
+    assert len(body["items"]) == 2
+    assert body["items"][0]["label_pt"] == "Sem operadores suficientes"
+
+
+def test_unplannable_endpoint_commit_antigo_honesto(monkeypatch):
+    """Commits pré-Q.174 (sem kpis novos) → available=false, lista vazia."""
+    commit = _make_commit()
+
+    async def _fake_resolve(_service, _sha):
+        return commit
+
+    monkeypatch.setattr(
+        "src.plan.api.cpo_routers.commits._resolve_commit_or_404",
+        _fake_resolve,
+    )
+
+    client = TestClient(_build_app())
+    resp = client.get(
+        f"/v1/plan/cpo/commits/{'a' * 64}/unplannable",
+        headers={"X-Tenant-Id": str(DEV_TENANT)},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["available"] is False
+    assert body["items"] == []

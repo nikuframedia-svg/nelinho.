@@ -117,7 +117,7 @@ async def get_commit_unplannable(
     kpis = commit.kpis or {}
     items = list(meta.get("unplannable") or [])
     return {
-        "commit_sha": commit.sha256,
+        "commit_sha": commit.commit_sha256,
         "available": "unplannable_count" in kpis,
         "unplannable_count": int(kpis.get("unplannable_count") or len(items)),
         "viable": bool(kpis.get("viable", not items)),
