@@ -146,3 +146,70 @@ def test_q169c_moldless_model_ops_not_falsely_serialized():
         "barcos distintos sem modelo NÃO partilham molde fantasma"
     )
     assert max(res.ends_min.values()) == 120, "paralelo => makespan = 1 duração"
+
+
+# ───────────────────────── Q.174.F1 — desempenho ─────────────────────────
+
+
+@pytest.mark.skipif(not cs.HAS_ORTOOLS, reason="ortools não instalado")
+def test_q174_fase_sem_pool_nao_disputa_operadores():
+    """Fases SEM pool (cura/estado químico) não consomem o cumulative global
+    de operadores. Antes, cada op de Cura levava team>=1 — procura FANTASMA
+    (380 ops no último plano live) que serializava curas contra gente que
+    nunca lhes é alocada."""
+    state = FactoryState(tenant_id=uuid4())
+    state.phase_stations = {"A": 10, "CURA": 10}
+    # 1 só operador ativo; CURA sem pool (fase física).
+    state.skill_matrix = {"A": {"w1"}}
+
+    ops = [_op("OA", "OF0", "A", 1, 60, team=1)]
+    # 5 curas paralelas de OFs distintas — sem demanda de gente, correm juntas.
+    ops += [_op(f"C{i}", f"OFC{i}", "CURA", 1, 600, team=1) for i in range(5)]
+
+    res = CPSATScheduler(CPSATConfig(budget_s=10, deterministic=True)).solve_timing(
+        ops, state, _H0,
+    )
+    assert res.available
+    # As 5 curas correm em paralelo (não serializadas pelo operador único):
+    iv = [(res.starts_min[f"C{i}"], res.ends_min[f"C{i}"], 1) for i in range(5)]
+    assert _max_concurrency(iv, lambda d: d) == 5
+    assert res.makespan_min <= 600  # sem serialização fantasma (5×600 antes)
+
+
+@pytest.mark.skipif(not cs.HAS_ORTOOLS, reason="ortools não instalado")
+def test_q174_horizonte_dinamico_com_hint():
+    """Warm-start → o domínio aperta para ~1.5× o hint (e regista-se em
+    horizon_minutes_used); kill-switch dynamic_horizon=False mantém o fixo."""
+    state = FactoryState(tenant_id=uuid4())
+    state.phase_stations = {"A": 2}
+    state.skill_matrix = {"A": {"w1", "w2"}}
+    ops = [_op(f"O{i}", f"OF{i}", "A", 1, 60, team=1) for i in range(4)]
+    hint = {f"O{i}": i * 60 for i in range(4)}  # makespan hint = 240min
+
+    dyn = CPSATScheduler(CPSATConfig(budget_s=10, deterministic=True)).solve_timing(
+        ops, state, _H0, hint_starts_min=hint,
+    )
+    assert dyn.available
+    assert 0 < dyn.horizon_minutes_used < cs._DEFAULT_HORIZON_MINUTES
+
+    fixo = CPSATScheduler(
+        CPSATConfig(budget_s=10, deterministic=True, dynamic_horizon=False)
+    ).solve_timing(ops, state, _H0, hint_starts_min=hint)
+    assert fixo.available
+    assert fixo.horizon_minutes_used == cs._DEFAULT_HORIZON_MINUTES
+    # mesmo resultado de makespan nos dois domínios (apertar não degrada)
+    assert dyn.makespan_min == fixo.makespan_min
+
+
+@pytest.mark.skipif(not cs.HAS_ORTOOLS, reason="ortools não instalado")
+def test_q174_gap_pct_devolvido():
+    """gap_pct viaja no resultado (e daí para cpo_meta — auditável na BD)."""
+    state = FactoryState(tenant_id=uuid4())
+    state.phase_stations = {"A": 1}
+    state.skill_matrix = {"A": {"w1"}}
+    ops = [_op(f"O{i}", f"OF{i}", "A", 1, 30, team=1) for i in range(3)]
+    res = CPSATScheduler(CPSATConfig(budget_s=10, deterministic=True)).solve_timing(
+        ops, state, _H0,
+    )
+    assert res.available
+    assert res.gap_pct >= 0.0  # OPTIMAL → 0.0; FEASIBLE → gap real

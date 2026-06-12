@@ -116,7 +116,7 @@ class CPOConfig:
     #: → fallback ao greedy. Budget = `cpsat_budget_s` (ou maior, do robô).
     use_cpsat_global: bool = False
     #: nº de threads de pesquisa do CP-SAT global.
-    cpsat_num_workers: int = 8
+    cpsat_num_workers: int = 16  # Q.174.F1: 8→16 (medir cpsat_solve_time_s)
     #: determinismo do CP-SAT (max_deterministic_time) — para testes reproduzíveis.
     cpsat_deterministic: bool = False
     #: Q.173.P — isenção dos guardrails SOFT do gate axioma-7 quando o

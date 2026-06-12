@@ -137,6 +137,11 @@ def run_cpsat_global(
         "cpsat_solve_time_s": round(timing.solve_time_s, 1),
         "makespan_hours_24x7": round(timing.makespan_min / 60.0, 2),
         "cpsat_objective_bound_min": round(timing.objective_bound, 1),
+        # Q.174.F1 — gap relativo + domínio efetivo: dizem se o próximo
+        # investimento é mais tempo de search ou modelo melhor (auditável
+        # pela BD, sem logs).
+        "cpsat_gap_pct": timing.gap_pct,
+        "cpsat_horizon_minutes": timing.horizon_minutes_used,
         "repair_ops_merged": len(repair_ops),
         "boats_in_main_plan": n_boats,
     }

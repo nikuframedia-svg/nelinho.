@@ -29,7 +29,7 @@ from collections import defaultdict
 from itertools import pairwise
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -53,10 +53,15 @@ class CPSATConfig:
     """Parâmetros do solver CP-SAT global (Q.166)."""
 
     budget_s: float = 30.0          # orçamento de tempo (robô passa 300-1200s)
-    num_workers: int = 8            # threads de pesquisa
+    num_workers: int = 16           # threads de pesquisa (Q.174.F1: 8→16)
     random_seed: int = 42           # determinismo
     deterministic: bool = False     # True → max_deterministic_time (testes reproduzíveis)
     horizon_minutes: int = _DEFAULT_HORIZON_MINUTES
+    # Q.174.F1 — parar a search com gap relativo aceitável (0.0 = provar
+    # otimalidade, comportamento antigo). FEASIBLE já passa o gate axioma-7.
+    relative_gap_limit: float = 0.02
+    # Q.174.F1 — kill-switch do horizonte dinâmico (bench A/B + reversão).
+    dynamic_horizon: bool = True
 
 
 @dataclass
@@ -69,6 +74,8 @@ class CPSATTimingResult:
     ends_min: Dict[str, int] = field(default_factory=dict)    # op_id → end (min)
     makespan_min: int = 0
     objective_bound: float = 0.0                 # lower bound do solver (p/ gap)
+    gap_pct: float = 0.0                         # Q.174.F1 — gap relativo (%)
+    horizon_minutes_used: int = 0                # Q.174.F1 — domínio efetivo
     solve_time_s: float = 0.0
     reason: str = ""                             # quando available=False
 
@@ -108,7 +115,24 @@ class CPSATScheduler:
         if not operations:
             return CPSATTimingResult(available=True, status="OPTIMAL")
 
+        # Q.174.F1 — horizonte DINÂMICO: o domínio fixo de 150d (216.000 min)
+        # mata a propagação quando o makespan real é semanas. Com warm-start
+        # do greedy, o teto passa a max(hint)×margem (clamp ao fixo) — domínio
+        # 3-10× mais apertado nos casos reais. Sem hint → teto fixo (como era).
+        # A margem 1.5 evita infeasible artificial (o CP-SAT tem de poder
+        # MELHORAR a ordem, não só comprimir o hint).
         H = int(self.config.horizon_minutes)
+        if hint_starts_min and self.config.dynamic_horizon:
+            try:
+                hint_max = max(int(v) for v in hint_starts_min.values())
+                dur_max = max(
+                    1, *(round(float(o.duration_minutes)) for o in operations)
+                )
+                h_dyn = int((hint_max + dur_max) * 1.5)
+                if 0 < h_dyn < H:
+                    H = h_dyn
+            except (ValueError, TypeError):  # pragma: no cover — hint sujo
+                pass
         model = cp_model.CpModel()
 
         starts: Dict[str, Any] = {}
@@ -118,12 +142,40 @@ class CPSATScheduler:
         team: Dict[str, int] = {}
         op_by_id: Dict[str, Any] = {}
 
+        # Q.174.F1 — fases SEM pool de operadores (cura/estado químico,
+        # workers_for(fase) vazio) não disputam gente: demanda 0 nos
+        # cumulative de operadores. Antes, cada op de Cura (380 no último
+        # plano) levava team>=1 ao cumulative GLOBAL — procura FANTASMA de
+        # operador que aperta o solver com gente que nunca é alocada
+        # (o post-pass dá-lhes workers=[] por construção).
+        # NOTA (refutação medida 2026-06-12): FP_PLANEAMENTO=0 NÃO serve para
+        # isto — marca o âmbito do planeador de laminação do ERP e inclui
+        # Montagem/Lixagem/Colagem (6.9k ops COM operadores reais). O critério
+        # honesto é o pool vazio (mesmo do decoder/post-pass).
+        _wf = getattr(state, "workers_for", None)
+
+        def _has_pool(fase: str) -> bool:
+            if _wf is None:
+                return True
+            try:
+                return bool(_wf(fase))
+            except Exception:  # pragma: no cover — defensivo
+                return True
+
+        pool_by_phase: Dict[str, bool] = {}
+
         for op in operations:
             oid = str(op.operation_id)
             op_by_id[oid] = op
             d = max(1, round(float(op.duration_minutes)))
             dur_min[oid] = d
-            team[oid] = max(1, int(getattr(op, "team_size", 1) or 1))
+            fase = str(op.phase_id)
+            if fase not in pool_by_phase:
+                pool_by_phase[fase] = _has_pool(fase)
+            team[oid] = (
+                max(1, int(getattr(op, "team_size", 1) or 1))
+                if pool_by_phase[fase] else 0
+            )
             s = model.NewIntVar(0, H, f"s_{oid}")
             e = model.NewIntVar(0, H, f"e_{oid}")
             iv = model.NewIntervalVar(s, d, e, f"i_{oid}")
@@ -191,12 +243,21 @@ class CPSATScheduler:
                 model.AddCumulative(ivs, demands, cap_phase)
 
         # ── Cumulative GLOBAL de operadores (~106 ativos) ───────────────────────
+        # Q.174.F1 — só ops com demanda real (team>0): fases sem pool (cura/
+        # estado) ficam fora — interval com demanda 0 só pesava no modelo.
         n_active = _active_operator_count(state)
-        all_ivs = [intervals[str(o.operation_id)] for o in operations]
-        all_dem = [team[str(o.operation_id)] for o in operations]
-        # cap global >= max demanda individual (senão infeasible artificial).
-        cap_global = max(n_active, max(all_dem, default=1))
-        model.AddCumulative(all_ivs, all_dem, cap_global)
+        all_ivs = [
+            intervals[str(o.operation_id)] for o in operations
+            if team[str(o.operation_id)] > 0
+        ]
+        all_dem = [
+            team[str(o.operation_id)] for o in operations
+            if team[str(o.operation_id)] > 0
+        ]
+        if all_ivs:
+            # cap global >= max demanda individual (senão infeasible artificial).
+            cap_global = max(n_active, max(all_dem, default=1))
+            model.AddCumulative(all_ivs, all_dem, cap_global)
 
         # ── Cumulative de moldes por modelo ─────────────────────────────────────
         # Q.169.C — ops com mold_required mas SEM model_id iam TODAS para a
@@ -278,10 +339,43 @@ class CPSATScheduler:
                     sorted(ignored_hints)[:20],
                 )
 
+        # Q.174.F1 — DecisionStrategy: fixar primeiro os starts das ordens com
+        # due mais cedo, ao valor mínimo (EDD greedy como guia da pesquisa).
+        # Só quando há due dates suficientes (>=20% das ordens) — sem elas a
+        # heurística não tem sinal e pode atrasar a prova de otimalidade.
+        if tard_vars and len(tard_vars) * 5 >= len(by_order):
+            due_sorted_starts: List[Any] = []
+            order_due: List[Tuple[int, str]] = []
+            for order_id, order_ops in by_order.items():
+                dues = [
+                    d for d in (getattr(o, "due_date", None) for o in order_ops)
+                    if d is not None
+                ]
+                if not dues:
+                    continue
+                dm = int(max(
+                    0.0, (min(dues) - horizon_start).total_seconds() / 60.0,
+                ))
+                order_due.append((dm, str(order_id)))
+            for _dm, order_id in sorted(order_due):
+                for o in by_order[order_id]:
+                    due_sorted_starts.append(starts[str(o.operation_id)])
+            if due_sorted_starts:
+                model.AddDecisionStrategy(
+                    due_sorted_starts,
+                    cp_model.CHOOSE_FIRST,
+                    cp_model.SELECT_MIN_VALUE,
+                )
+
         # ── Solve ───────────────────────────────────────────────────────────────
         solver = cp_model.CpSolver()
         solver.parameters.num_search_workers = int(self.config.num_workers)
         solver.parameters.random_seed = int(self.config.random_seed)
+        # Q.174.F1 — parar cedo com gap aceitável (FEASIBLE já passa o gate;
+        # 300s a provar otimalidade de um plano 2% pior é budget desperdiçado)
+        # + linearization_level=2 (relaxação LP mais forte p/ cumulative).
+        solver.parameters.relative_gap_limit = float(self.config.relative_gap_limit)
+        solver.parameters.linearization_level = 2
         if self.config.deterministic:
             solver.parameters.max_deterministic_time = float(self.config.budget_s)
         else:
@@ -298,12 +392,21 @@ class CPSATScheduler:
 
         starts_out = {oid: int(solver.Value(s)) for oid, s in starts.items()}
         ends_out = {oid: int(solver.Value(e)) for oid, e in ends.items()}
+        # Q.174.F1 — gap relativo persistível (objetivo vs lower bound): diz
+        # se vale investir em mais tempo de search ou em modelo melhor.
+        obj = float(solver.ObjectiveValue())
+        bound = float(solver.BestObjectiveBound())
+        gap_pct = (
+            round(100.0 * (obj - bound) / obj, 2) if obj > 0 else 0.0
+        )
         return CPSATTimingResult(
             available=True,
             status=status_name,
             starts_min=starts_out,
             ends_min=ends_out,
             makespan_min=int(solver.Value(makespan)),
-            objective_bound=float(solver.BestObjectiveBound()),
+            objective_bound=bound,
+            gap_pct=gap_pct,
+            horizon_minutes_used=H,
             solve_time_s=time.time() - t0,
         )
