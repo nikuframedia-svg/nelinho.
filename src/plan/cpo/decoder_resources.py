@@ -593,6 +593,7 @@ def _run_scheduling_loop(
     post_desmolde_extra: timedelta,
     is_backward: bool,
     target_starts: Dict[str, datetime],
+    start_floors: Optional[Mapping[str, datetime]] = None,
 ) -> SchedulingLoopResult:
     """Main pass: walk `priority_order`, schedule every op into the timelines.
 
@@ -647,9 +648,15 @@ def _run_scheduling_loop(
                     continue
                 batch_peers = peers
 
+            # Q.174.F6 — piso por op (ETA de material/componente): o default
+            # do _earliest_start sobe para o floor; floors=None → byte-igual.
             earliest_candidates = [
                 _earliest_start(
-                    p, order_to_ops, op_end_at, horizon_start,
+                    p, order_to_ops, op_end_at,
+                    max(
+                        horizon_start,
+                        start_floors.get(str(p.operation_id), horizon_start),
+                    ) if start_floors else horizon_start,
                     queue_gap=queue_gap, post_desmolde_extra=post_desmolde_extra,
                     op_by_id=op_by_id, state=state,
                 )

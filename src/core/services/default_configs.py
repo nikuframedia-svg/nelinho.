@@ -103,6 +103,10 @@ DEFAULT_SEEDS: list[ConfigSeed] = [
      "Canónico Plano_Planeia: bloqueado os turnos seguintes ≈24h. 0 = off."),
     ("planning", "molds.cooldown_hours_ocean", 72.0, "float",
      "Q.174.F2 — cooldown dos moldes Ocean (canónico: +2 dias ≈72h)."),
+    ("planning", "materials.delay_to_eta", False, "bool",
+     "Q.174.F6 — opt-in: ordens com material em défice e encomenda com "
+     "data-limite ganham PISO de início = essa data (constraint soft vira "
+     "atraso explícito). OFF = só anotação de risco."),
     ("planning", "auto_replan_plan_cap", 0, "int",
      "Q.161.B — cap de ordens do robô de fundo (0 = todos os em-produção). "
      "Lido por auto_cpo_replan_job; seeded em Q.173.O para ter UI."),

@@ -123,6 +123,7 @@ class GreedyPipeline:
         queue_time_minutes: Optional[float] = None,
         post_desmolde_buffer_minutes: Optional[float] = None,
         boost_inputs: Optional[Dict[str, int]] = None,
+        start_floors: Optional[Dict[str, datetime]] = None,
     ) -> GreedyPipelineResult:
         timings: List[PhaseTiming] = []
         started = time.time()
@@ -165,6 +166,7 @@ class GreedyPipeline:
             # Q.173.S — boosts pré-solve: reordenam o priority_order do
             # decoder (Q.116.D); antes nenhum call-site de produção os passava.
             boost_inputs=boost_inputs,
+            start_floors=start_floors,  # Q.174.F6
         )
         core_elapsed = time.time() - t0
         # Q.173.I — as fases 4-7 partilham UMA passagem do decoder e não há

@@ -391,14 +391,28 @@ class ShortageForecastService:
     # Ponto de entrada público
     # ------------------------------------------------------------------
 
-    async def forecast(self, horizonte_dias: int = 60) -> ShortageforecastResult:
-        """Corre o forecast completo e devolve os materiais em risco."""
+    async def forecast(
+        self,
+        horizonte_dias: int = 60,
+        ops: Optional[List[Dict[str, Any]]] = None,
+    ) -> ShortageforecastResult:
+        """Corre o forecast completo e devolve os materiais em risco.
+
+        Q.174.F6 — ``ops`` explícito (lista de op-dicts de um plano em
+        construção) salta o carregamento do último commit: permite ao
+        scheduler anotar o plano ATUAL com risco de material antes de o
+        persistir. ``ops=None`` = caminho Q.173.Z exato (último commit
+        saudável)."""
         hoje = datetime.now(timezone.utc).date()
         fontes: List[str] = []
 
-        # 1. Carregar o último commit saudável
-        commit_sha, commit_ops, ops = await self._load_plan_ops()
-        fontes.append("plan_schedule_commits")
+        # 1. Carregar o último commit saudável (ou usar as ops explícitas)
+        if ops is not None:
+            commit_sha, commit_ops = None, len(ops)
+            fontes.append("ops_explicitas")
+        else:
+            commit_sha, commit_ops, ops = await self._load_plan_ops()
+            fontes.append("plan_schedule_commits")
 
         if not ops:
             logger.warning("shortage_forecast: sem ops no commit atual — horizon vazio")

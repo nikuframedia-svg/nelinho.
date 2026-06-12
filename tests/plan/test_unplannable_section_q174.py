@@ -131,3 +131,51 @@ def test_sugestao_sem_rota_estatica():
     out = enrich_unplannable([entry], FactoryState(tenant_id=uuid4()))
     assert "rota" in out[0]["suggestion_pt"].lower()
     assert out[0]["label_pt"] == "Sem rota de produção"
+
+
+# ─────────────────── Q.174.F6 — materiais no plano (soft) ───────────────────
+
+
+def test_start_floors_empurram_op_no_decoder():
+    """Piso por op (ETA de material/componente): a op não começa antes."""
+    state = FactoryState(tenant_id=uuid4())
+    state.skill_matrix = {"40": {"w1"}}
+    ops = [_op("A", "OF1")]
+    floor = _REF + timedelta(days=5)
+    result = decode(
+        Chromosome.identity(1), ops,
+        [SchedulingMachine(machine_id="M1", name="M1")], state,
+        horizon_start=_REF, horizon_end=_REF + timedelta(days=60),
+        start_floors={"A": floor},
+    )
+    s = datetime.fromisoformat(result["operations"][0]["start_time"])
+    assert s >= floor
+
+
+def test_start_floors_none_byte_identico():
+    state = FactoryState(tenant_id=uuid4())
+    state.skill_matrix = {"40": {"w1"}}
+    ops = [_op("A", "OF1"), _op("B", "OF2")]
+    base = _decode(state, ops)
+    com_none = decode(
+        Chromosome.identity(2), ops,
+        [SchedulingMachine(machine_id="M1", name="M1")], state,
+        horizon_start=_REF, horizon_end=_REF + timedelta(days=60),
+        start_floors=None,
+    )
+    assert [o["start_time"] for o in base["operations"]] == [
+        o["start_time"] for o in com_none["operations"]
+    ]
+
+
+async def test_forecast_aceita_ops_explicitas():
+    """Q.174.F6 — forecast(ops=[]) salta o commit e devolve vazio honesto."""
+    from src.supply.services.shortage_forecast_service import (
+        ShortageForecastService,
+    )
+
+    svc = ShortageForecastService(None, uuid4())  # sem BD — ops=[] sai cedo
+    res = await svc.forecast(ops=[])
+    assert res.materiais_em_risco == []
+    assert "ops_explicitas" in res.fontes
+    assert res.commit_sha is None

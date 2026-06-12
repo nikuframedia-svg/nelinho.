@@ -103,6 +103,7 @@ class CPSATScheduler:
         horizon_start: datetime,
         *,
         hint_starts_min: Optional[Dict[str, int]] = None,
+        start_floors_min: Optional[Dict[str, int]] = None,
     ) -> CPSATTimingResult:
         """Devolve start/end (min desde horizon_start) por op, minimizando makespan.
 
@@ -125,6 +126,10 @@ class CPSATScheduler:
         if hint_starts_min and self.config.dynamic_horizon:
             try:
                 hint_max = max(int(v) for v in hint_starts_min.values())
+                if start_floors_min:
+                    hint_max = max(
+                        hint_max, *(int(v) for v in start_floors_min.values())
+                    )
                 dur_max = max(
                     1, *(round(float(o.duration_minutes)) for o in operations)
                 )
@@ -180,6 +185,13 @@ class CPSATScheduler:
             e = model.NewIntVar(0, H, f"e_{oid}")
             iv = model.NewIntervalVar(s, d, e, f"i_{oid}")
             starts[oid], ends[oid], intervals[oid] = s, e, iv
+            # Q.174.F6 — piso por op (ETA de material/componente). Clamp a H
+            # (um piso além do domínio tornaria o modelo trivialmente
+            # infeasible — o caso é declarado a montante via unplannable).
+            if start_floors_min:
+                fl = start_floors_min.get(oid)
+                if fl is not None and fl > 0:
+                    model.Add(s >= min(int(fl), H))
 
         # ── Precedência intra-OF (sequence) + gap de cura (wall-clock) ──────────
         by_order: Dict[str, List[Any]] = defaultdict(list)

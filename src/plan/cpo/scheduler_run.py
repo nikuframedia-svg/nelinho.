@@ -516,13 +516,78 @@ async def run_cpo_schedule(
     # 600s — /health não respondia e o SSE morria durante cada replan. Em
     # thread, o loop fica livre (totalmente durante o CP-SAT; nos troços
     # Python do GA o GIL alterna). engine.schedule é auto-contido (estado
+    # Q.174.F6 — `materials.delay_to_eta` (opt-in, default OFF): ordens cujo
+    # material em défice tem encomenda ABERTA com ETA ganham PISO = ETA na 1ª
+    # op (decisão do dono: constraint soft; o atraso só se aplica quando há
+    # chegada prevista — sem encomenda, fica só o risco anotado). O forecast
+    # corre sobre o commit ANTERIOR (a procura ordem×BOM quase não muda entre
+    # commits; two-pass do solver seria custo desproporcionado).
+    start_floors: Optional[Dict[str, datetime]] = None
+    try:
+        from src.core.services.tenant_config_service import TenantConfigService
+        _mat_cfg = await TenantConfigService(session, tenant_id).get_category(
+            "planning"
+        )
+        _delay_on = str(_mat_cfg.get("materials.delay_to_eta") or "").lower() in (
+            "true", "1", "yes",
+        ) or _mat_cfg.get("materials.delay_to_eta") is True
+    except Exception:  # pragma: no cover — config indisponível
+        _delay_on = False
+    if _delay_on:
+        try:
+            from src.supply.services.shortage_forecast_service import (
+                ShortageForecastService,
+            )
+            _fc = await ShortageForecastService(session, tenant_id).forecast()
+            # ETA usável = data-limite de encomenda do material em défice
+            # (calculada do lead time real). Por ordem afetada, o piso é a
+            # MAIOR data-limite dos seus materiais em risco.
+            _eta_by_order: Dict[str, datetime] = {}
+            for _m in _fc.materiais_em_risco:
+                _eta = _m.data_limite_encomenda
+                if _eta is None:
+                    continue
+                _dt = datetime.combine(_eta, datetime.min.time())
+                for _oa in _m.ordens_afetadas:
+                    cur = _eta_by_order.get(str(_oa.order_id))
+                    if cur is None or _dt > cur:
+                        _eta_by_order[str(_oa.order_id)] = _dt
+            if _eta_by_order:
+                first_op_by_order: Dict[str, Any] = {}
+                for _op in operations:
+                    k = str(_op.order_id)
+                    cur_op = first_op_by_order.get(k)
+                    if cur_op is None or int(
+                        getattr(_op, "sequence", 0) or 0
+                    ) < int(getattr(cur_op, "sequence", 0) or 0):
+                        first_op_by_order[k] = _op
+                start_floors = {}
+                for k, dt in _eta_by_order.items():
+                    fop = first_op_by_order.get(k)
+                    if fop is not None and dt > horizon_start:
+                        start_floors[str(fop.operation_id)] = dt
+                start_floors = start_floors or None
+                if start_floors:
+                    logger.info(
+                        "Q.174.F6 delay_to_eta: %d ops com piso de material",
+                        len(start_floors),
+                    )
+        except Exception as exc:  # pragma: no cover — forecast nunca trava o solve
+            logger.warning("delay_to_eta forecast falhou (%s) — sem pisos", exc)
+            start_floors = None
+
     # em memória, zero sessões/loop por dentro) → thread-safe aqui.
     result = await asyncio.to_thread(
         engine.schedule,
         operations, machines, horizon_start, horizon_end,
         product_price_eur=product_price_eur,
         boost_inputs=boost_map or None,
+        start_floors=start_floors,
     )
+    if start_floors:
+        result.setdefault("cpo_meta", {})["material_floors"] = {
+            "ops_com_piso": len(start_floors),
+        }
 
     # Q.138.E — honestidade: throughput_eur_day=0.0 é enganador quando não há
     # preços configurados em profit.product_pricing. Nesse caso expõe NULL no
@@ -587,6 +652,50 @@ async def run_cpo_schedule(
     result["unplannable"] = _unplannable
     if _unplannable:
         result.setdefault("cpo_meta", {})["unplannable"] = _unplannable[:200]
+
+    # Q.174.F6 — anotação de RISCO DE MATERIAL no plano em construção
+    # (decisão do dono: constraint soft — o plano agenda na mesma, mas marca
+    # ops/barcos em risco com material/data/sugestão). Corre o forecast sobre
+    # as ops DESTE plano (forecast(ops=...)); best-effort — nunca trava o solve.
+    try:
+        from src.supply.services.shortage_forecast_service import (
+            ShortageForecastService as _SFS,
+        )
+        _fc2 = await _SFS(session, tenant_id).forecast(
+            ops=list(result.get("operations") or []),
+        )
+        _risk_by_order: Dict[str, list] = {}
+        for _m in _fc2.materiais_em_risco:
+            for _oa in _m.ordens_afetadas:
+                _risk_by_order.setdefault(str(_oa.order_id), []).append({
+                    "product_code": _m.product_code,
+                    "product_name": _m.product_name,
+                    "data_rutura": (
+                        _m.data_rutura_prevista.isoformat()
+                        if _m.data_rutura_prevista else None
+                    ),
+                    "data_limite_encomenda": (
+                        _m.data_limite_encomenda.isoformat()
+                        if _m.data_limite_encomenda else None
+                    ),
+                    "sugestao": _m.sugestao,
+                })
+        if _risk_by_order:
+            _n_ops_risco = 0
+            for _opd in result.get("operations") or []:
+                _r = _risk_by_order.get(str(_opd.get("order_id") or ""))
+                if _r:
+                    _opd["material_risk"] = True
+                    _opd["material_risk_detail"] = _r[:3]
+                    _n_ops_risco += 1
+            result.setdefault("cpo_meta", {})["material_risk"] = {
+                "orders_em_risco": len(_risk_by_order),
+                "ops_marcadas": _n_ops_risco,
+                "materiais": len(_fc2.materiais_em_risco),
+            }
+            result["orders_material_risk"] = len(_risk_by_order)
+    except Exception as exc:  # pragma: no cover — forecast nunca trava o plano
+        logger.warning("material_risk annotation falhou (%s)", exc)
 
     # Q.168.A — observabilidade dos due dates: quantas ordens do scope têm
     # data-alvo real (só essas o backward-scheduling/tardiness honram).

@@ -714,6 +714,10 @@ def _extract_kpis(schedule_result: Dict[str, Any]) -> Dict[str, Any]:
         # o hash de cada commit é o calculado na criação).
         "unplannable_count": len(schedule_result.get("unplannable") or []),
         "viable": not (schedule_result.get("unplannable") or []),
+        # Q.174.F6 — ordens com risco de material anotado (constraint soft).
+        "orders_material_risk": int(
+            schedule_result.get("orders_material_risk") or 0
+        ),
     }
 
 

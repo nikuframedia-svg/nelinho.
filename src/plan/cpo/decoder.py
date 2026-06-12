@@ -77,6 +77,7 @@ def decode(
     post_desmolde_buffer_minutes: Optional[float] = None,
     product_price_eur: Optional[Mapping[str, Union[float, Decimal]]] = None,
     boost_inputs: Optional[Mapping[str, int]] = None,  # Q.116.D — work_order_id → effective_boost
+    start_floors: Optional[Mapping[str, datetime]] = None,  # Q.174.F6 — pisos por op
 ) -> Dict[str, Any]:
     """Decode a chromosome into a feasible schedule.
 
@@ -150,6 +151,7 @@ def decode(
         post_desmolde_extra=post_desmolde_extra,
         is_backward=is_backward,
         target_starts=target_starts,
+        start_floors=start_floors,  # Q.174.F6 — pisos (materiais/componentes)
     )
 
     # Phase 9-10 — KPI accumulation + result dict. Q.166.F: extraído para

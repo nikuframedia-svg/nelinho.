@@ -313,6 +313,7 @@ class CPOv4Engine:
         horizon_start: datetime,
         horizon_end: datetime,
         product_price_eur: Optional[Dict[str, Any]],
+        start_floors: Optional[Dict[str, datetime]] = None,
     ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
         """Q.166.F — corre o CP-SAT global; devolve (result, gate_meta).
 
@@ -337,6 +338,7 @@ class CPOv4Engine:
             result = run_cpsat_global(
                 self.state, operations, machines, horizon_start, horizon_end,
                 config=cfg, greedy_hint=hint, product_price_eur=product_price_eur,
+                start_floors=start_floors,  # Q.174.F6
             )
         except Exception as exc:  # pragma: no cover — fallback robusto
             logger.warning("CP-SAT global falhou (%s) — fallback ao greedy/GA", exc)
@@ -378,6 +380,7 @@ class CPOv4Engine:
         *,
         product_price_eur: Optional[Dict[str, Any]] = None,
         boost_inputs: Optional[Dict[str, int]] = None,
+        start_floors: Optional[Dict[str, datetime]] = None,
     ) -> Dict[str, Any]:
         # Q.173.S — boost_inputs (work_order_id → effective_boost) chegam
         # ANTES do solve e reordenam o priority_order do decoder em todos
@@ -412,6 +415,7 @@ class CPOv4Engine:
                 queue_time_minutes=queue_time_min,
                 post_desmolde_buffer_minutes=post_desmolde_min,
                 boost_inputs=boost_inputs,
+                start_floors=start_floors,  # Q.174.F6
             )
             baseline = result.schedule
             greedy_meta = result.to_meta()
@@ -423,6 +427,7 @@ class CPOv4Engine:
                 post_desmolde_buffer_minutes=post_desmolde_min,
                 product_price_eur=product_price_eur,
                 boost_inputs=boost_inputs,
+                start_floors=start_floors,  # Q.174.F6
             )
         # Q.153.A3 — escalar as referências de normalização da fitness ao
         # baseline ANTES de o avaliar, para o GA ter gradiente real em
@@ -455,7 +460,7 @@ class CPOv4Engine:
         if self.config.use_cpsat_global:
             cpsat_result, cpsat_gate_meta = self._try_cpsat_global(
                 baseline, operations, machines, horizon_start, horizon_end,
-                product_price_eur,
+                product_price_eur, start_floors=start_floors,  # Q.174.F6
             )
             if cpsat_result is not None:
                 return cpsat_result
@@ -510,6 +515,7 @@ class CPOv4Engine:
                     post_desmolde_buffer_minutes=post_desmolde_min,
                     product_price_eur=product_price_eur,
                     boost_inputs=boost_inputs,
+                    start_floors=start_floors,  # Q.174.F6
                 )
                 fit = compute_fitness(result, self.fitness_config)
                 scored.append((fit, chromo, result))

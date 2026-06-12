@@ -64,6 +64,7 @@ def run_cpsat_global(
     config: Optional[CPSATConfig] = None,
     greedy_hint: Optional[Dict[str, int]] = None,
     product_price_eur: Optional[Mapping[str, Union[float, Any]]] = None,
+    start_floors: Optional[Mapping[str, datetime]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Corre o pipeline CP-SAT global e devolve o result-dict, ou None (fallback)."""
     if not HAS_ORTOOLS:
@@ -80,8 +81,22 @@ def run_cpsat_global(
 
     # 2) TIMING global (24/7, cumulative, makespan) — só ops principais:
     # reparações são rotas truncadas de 1 op, sem ganho no solver.
+    # Q.174.F6 — pisos por op (ETA de material/componente) em minutos desde
+    # horizon_start, só para ops com piso no FUTURO do horizonte.
+    floors_min: Optional[Dict[str, int]] = None
+    if start_floors:
+        floors_min = {}
+        for oid, dt in start_floors.items():
+            try:
+                m = int((dt - horizon_start).total_seconds() / 60.0)
+            except TypeError:  # pragma: no cover — floor sujo
+                continue
+            if m > 0:
+                floors_min[str(oid)] = m
+        floors_min = floors_min or None
     timing = CPSATScheduler(config or CPSATConfig()).solve_timing(
         main_ops, state, horizon_start, hint_starts_min=greedy_hint,
+        start_floors_min=floors_min,
     )
     if not timing.available:
         logger.info("CP-SAT global indisponível (%s) — fallback ao greedy", timing.reason)
