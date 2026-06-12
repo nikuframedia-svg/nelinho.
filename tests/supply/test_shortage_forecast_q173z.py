@@ -297,6 +297,28 @@ def test_load_reservas_filtros_canonicos_q174():
     assert '"OF_E_ID_ENC" <> 19747' in src
 
 
+def test_filtro_armazem_coerente_q174():
+    """Q.174.F0.4 — quando `supply.production_warehouses` está definido, o
+    filtro de armazém aplica-se COERENTEMENTE: stock (warehouse_id), reservas
+    e pedidos internos (MOV_ARM_ID). Default vazio = todos (canónico —
+    produto_Stock_Necessidades agrega global, corpo lido live 2026-06-12)."""
+    import inspect
+
+    from src.supply.services.shortage_forecast_service import ShortageForecastService
+
+    src_stock = inspect.getsource(ShortageForecastService._load_stock)
+    assert "arm_filter is None or wh_id in arm_filter" in src_stock
+    assert '"conta"' in src_stock  # breakdown transparente
+
+    for fn in (ShortageForecastService._load_reservas,
+               ShortageForecastService._load_pedidos_internos):
+        src = inspect.getsource(fn)
+        assert '"MOV_ARM_ID" = ANY(:arms)' in src, (
+            f"{fn.__name__} tem de honrar o mesmo filtro de armazém do stock"
+        )
+        assert "if arm_filter" in src  # opt-in: vazio = canónico
+
+
 def test_load_bom_direcao_canonica_q174():
     """Q.174.F0.2 — guard estático: a BOM filtra pelo PAI (``COMP_P_ID`` =
     modelo do plano) e devolve o FILHO (``COMP_P_P_ID`` = componente).

@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from uuid import UUID
 
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
@@ -382,7 +383,23 @@ class ShortageForecastService:
             )
 
         # 5. Stock actual por material (agrega por warehouse)
-        stock_map, warehouse_map = await self._load_stock(materiais_relevantes)
+        # Q.174.F0.4 — armazéns que CONTAM para o disponível: config de tenant
+        # `supply`/`production_warehouses` (CSV de ARM_IDs). Default vazio =
+        # TODOS (fórmula canónica: produto_Stock_Necessidades agrega global,
+        # sem filtro de armazém — confirmado no corpo live 2026-06-12).
+        # 79% do stock vive em armazéns de produção/WIP (Montagem 96k,
+        # Lixagem 79k, Laminagem 47k) — quando a fábrica decidir o conjunto
+        # "disponível para produção", liga-se aqui SEM mexer em código, e o
+        # filtro aplica-se COERENTEMENTE a stock + reservas + pedidos internos.
+        arm_filter = await self._load_production_warehouses()
+        if arm_filter:
+            fontes.append(
+                "supply.production_warehouses="
+                + ",".join(str(a) for a in sorted(arm_filter))
+            )
+        stock_map, warehouse_map = await self._load_stock(
+            materiais_relevantes, arm_filter
+        )
         fontes.append("supply.warehouse_stock")
 
         # Excluir materiais sem stock rastreado (pseudo-componentes)
@@ -399,7 +416,7 @@ class ShortageForecastService:
         fontes.append("supply.purchase_orders")
 
         # 7. Reservas abertas por material (canónico: só OFs de barco de cliente)
-        reservas_map = await self._load_reservas(materiais_com_stock)
+        reservas_map = await self._load_reservas(materiais_com_stock, arm_filter)
         fontes.append("factory_raw.movimento(TPMOV=4)")
 
         # 7b. Q.174.F0.3 — pedidos internos abertos (TPMOV=12, canónico
@@ -407,7 +424,7 @@ class ShortageForecastService:
         # saldo como as reservas; produção interna já pedida (=19747)
         # alimenta a sugestão (não mandar comprar o que a Fábrica já vai fazer).
         pedintern_map, prodintern_map = await self._load_pedidos_internos(
-            materiais_com_stock
+            materiais_com_stock, arm_filter
         )
         fontes.append("factory_raw.movimento(TPMOV=12)")
 
@@ -760,22 +777,27 @@ class ShortageForecastService:
     async def _load_stock(
         self,
         product_codes: Set[str],
+        arm_filter: Optional[Set[int]] = None,
     ) -> Tuple[Dict[str, float], Dict[str, List[Dict[str, Any]]]]:
         """Stock total e repartição por armazém.
 
+        Q.174.F0.4 — ``arm_filter`` (config ``supply.production_warehouses``)
+        restringe o saldo aos armazéns que contam; ``None`` = todos (canónico).
+
         Devolve:
-        - stock_map: product_code → total (pode ser negativo — dado real ERP)
-        - warehouse_map: product_code → [{"warehouse_name": ..., "stock": ...}]
+        - stock_map: product_code → total contável (pode ser negativo — dado real)
+        - warehouse_map: product_code → [{"warehouse_id", "warehouse_name",
+          "stock", "conta"}] (TODOS os armazéns, com a flag de contagem)
         """
         if not product_codes:
             return {}, {}
 
         q = text("""
-            SELECT product_code, warehouse_name, SUM(stock) AS stock
+            SELECT product_code, warehouse_id, warehouse_name, SUM(stock) AS stock
             FROM supply.warehouse_stock
             WHERE tenant_id = :tid
               AND product_code = ANY(:codes)
-            GROUP BY product_code, warehouse_name
+            GROUP BY product_code, warehouse_id, warehouse_name
         """)
         result = await self._session.execute(
             q,
@@ -787,11 +809,57 @@ class ShortageForecastService:
         warehouse_map: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
 
         for row in rows:
-            pc, wh_name, stk = str(row[0]), str(row[1]), float(row[2] or 0)
-            stock_total[pc] += stk
-            warehouse_map[pc].append({"warehouse_name": wh_name, "stock": stk})
+            pc, wh_id = str(row[0]), int(row[1]),
+            wh_name, stk = str(row[2]), float(row[3] or 0)
+            # Q.174.F0.4 — só os armazéns configurados contam para o saldo;
+            # o breakdown mantém TODOS com a flag `conta` (transparência).
+            conta = arm_filter is None or wh_id in arm_filter
+            if conta:
+                stock_total[pc] += stk
+            warehouse_map[pc].append({
+                "warehouse_id": wh_id,
+                "warehouse_name": wh_name,
+                "stock": stk,
+                "conta": conta,
+            })
+
+        # Materiais cujo stock está TODO fora do filtro continuam presentes
+        # (stock contável = 0.0) — senão desapareciam de "materiais_com_stock"
+        # e a rutura ficava invisível precisamente quando não há stock útil.
+        if arm_filter is not None:
+            for pc in warehouse_map:
+                stock_total.setdefault(pc, 0.0)
 
         return dict(stock_total), dict(warehouse_map)
+
+    async def _load_production_warehouses(self) -> Optional[Set[int]]:
+        """Q.174.F0.4 — conjunto de ARM_IDs que contam para o disponível.
+
+        Config de tenant ``supply``/``production_warehouses`` (CSV de ints,
+        ex. ``"1,7,20"``). Vazio/ausente → ``None`` = TODOS os armazéns —
+        o comportamento CANÓNICO (produto_Stock_Necessidades agrega global).
+        A escolha do conjunto é decisão da fábrica (pergunta aberta ao dono);
+        o mecanismo fica pronto e coerente (stock+reservas+pedidos internos).
+        """
+        try:
+            from src.core.services.tenant_config_service import (
+                TenantConfigService,
+            )
+            cfg = await TenantConfigService(
+                self._session, self._tenant_id,
+            ).get_category("supply")
+            raw = (cfg.get("production_warehouses") or "").strip()
+            if not raw:
+                return None
+            arms = {int(tok) for tok in raw.replace(";", ",").split(",")
+                    if tok.strip().lstrip("-").isdigit()}
+            return arms or None
+        except (ImportError, ValueError, TypeError, AttributeError) as exc:
+            logger.debug("supply.production_warehouses indisponível (%s)", exc)
+            return None
+        except SQLAlchemyError as exc:
+            logger.debug("supply.production_warehouses indisponível (%s)", exc)
+            return None
 
     async def _load_pos(
         self,
@@ -865,6 +933,7 @@ class ShortageForecastService:
     async def _load_reservas(
         self,
         product_codes: Set[str],
+        arm_filter: Optional[Set[int]] = None,
     ) -> Dict[str, float]:
         """Reservas abertas (TPMOV=4 MOV_SATISFEITO=false) por product_code.
 
@@ -892,20 +961,28 @@ class ShortageForecastService:
         # reservas de OFs de peças (>= 10M) ficam fora porque a procura de
         # peças entra pelo canal TPMOV=12 (pedidos internos) — contar ambas
         # duplicaria; as do Cliente Fábrica (19747) não são procura de cliente.
-        q = text("""
+        # Q.174.F0.4 — filtro de armazém coerente com o do stock: uma reserva
+        # tira do armazém MOV_ARM_ID; se o saldo só conta um subconjunto,
+        # as reservas fora dele não deduzem (senão o défice inflava).
+        arm_pred = ""
+        params: Dict[str, Any] = {"ids": int_codes}
+        if arm_filter:
+            arm_pred = ' AND m."MOV_ARM_ID" = ANY(:arms)'
+            params["arms"] = sorted(arm_filter)
+        q = text(f"""
             SELECT m."MOV_P_ID"::text, SUM(m."MOV_QUANTIDADE") AS reserva
             FROM factory_raw.movimento m
             LEFT JOIN factory_raw.ordemfabrico o ON o."OF_ID" = m."MOV_OF_ID"
             WHERE m."MOV_TPMOV_ID" = 4
               AND m."MOV_SATISFEITO" = false
-              AND m."MOV_P_ID" = ANY(:ids)
+              AND m."MOV_P_ID" = ANY(:ids){arm_pred}
               AND (o."OF_ID" IS NULL
                    OR (o."OF_DATAFIM" IS NULL
                        AND o."OF_ID" < 10000000
                        AND o."OF_E_ID_ENC" <> 19747))
             GROUP BY m."MOV_P_ID"
         """)
-        result = await self._session.execute(q, {"ids": int_codes})
+        result = await self._session.execute(q, params)
         reservas: Dict[str, float] = {}
         for row in result.fetchall():
             reservas[str(row[0])] = float(row[1] or 0)
@@ -914,6 +991,7 @@ class ShortageForecastService:
     async def _load_pedidos_internos(
         self,
         product_codes: Set[str],
+        arm_filter: Optional[Set[int]] = None,
     ) -> Tuple[Dict[str, float], Dict[str, float]]:
         """Q.174.F0.3 — pedidos internos abertos (TPMOV=12, MOV_SATISFEITO=false)
         nos DOIS canais canónicos de ``produto_Stock_Necessidades``:
@@ -936,7 +1014,13 @@ class ShortageForecastService:
         if not int_codes:
             return {}, {}
 
-        q = text("""
+        # Q.174.F0.4 — mesmo filtro de armazém do stock (coerência do saldo).
+        arm_pred = ""
+        params: Dict[str, Any] = {"ids": int_codes}
+        if arm_filter:
+            arm_pred = ' AND m."MOV_ARM_ID" = ANY(:arms)'
+            params["arms"] = sorted(arm_filter)
+        q = text(f"""
             SELECT m."MOV_P_ID"::text,
                    SUM(m."MOV_QUANTIDADE") FILTER (
                      WHERE m."MOV_E_ID" <> 19747 AND m."MOV_OF_ID" IS NULL
@@ -947,10 +1031,10 @@ class ShortageForecastService:
             FROM factory_raw.movimento m
             WHERE m."MOV_TPMOV_ID" = 12
               AND m."MOV_SATISFEITO" = false
-              AND m."MOV_P_ID" = ANY(:ids)
+              AND m."MOV_P_ID" = ANY(:ids){arm_pred}
             GROUP BY m."MOV_P_ID"
         """)
-        result = await self._session.execute(q, {"ids": int_codes})
+        result = await self._session.execute(q, params)
         pedidos: Dict[str, float] = {}
         producao: Dict[str, float] = {}
         for row in result.fetchall():

@@ -183,6 +183,11 @@ DEFAULT_SEEDS: list[ConfigSeed] = [
      "Days-to-stockout below which MATERIAL_STOCKOUT_IMMINENT fires"),
     ("supply", "adjust.auto_approve_threshold_qty", 5.0, "float",
      "|qty_delta| above this requires governance approval (MR06 / ST01)"),
+    ("supply", "production_warehouses", "", "str",
+     "Q.174.F0.4 — ARM_IDs (CSV) que contam como disponível-para-produção no "
+     "forecast de ruturas (stock+reservas+pedidos internos). Vazio = TODOS "
+     "(canónico produto_Stock_Necessidades agrega global). 79% do stock vive "
+     "em armazéns de produção/WIP — decidir o conjunto é negócio, não código."),
 
     # ───────────────────────── quality + mold ──────────────────────────────
     ("quality", "risk_alert_threshold", 0.40, "float",
