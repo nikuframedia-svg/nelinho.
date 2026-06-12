@@ -37,6 +37,30 @@ cubes:
         sql: capacidade_dia_teorica
         type: max
         format: number
+      - name: capacidade_disponivel
+        description: >
+          Q.175.B — capacidade efectiva mensal em barcos: (cap_dia × dias_úteis)
+          - perdida_a_faltas. Fórmula canónica de Report_ProducaoCapacidade_Sub_Capacidade.
+          Usa DIAS_TRABALHO (calendar oficial da NELO). SUM OK para agregar fases/meses.
+          Anchor Laminagem Junho/2026: 9 ops × 22 dias = 198 barcos/mês disponíveis.
+        sql: capacidade_disponivel
+        type: sum
+        format: number
+      - name: capacidade_mes_teorica
+        description: >
+          Q.175.B — capacidade mensal a 100% de presença em barcos (cap_dia × dias_úteis).
+          SUM para agregar. Subtract capacidade_perdida para obter disponivel.
+        sql: capacidade_mes_teorica
+        type: sum
+        format: number
+      - name: dias_uteis
+        description: >
+          Q.175.B — dias úteis do mês segundo DIAS_TRABALHO (calendar oficial da NELO).
+          Constante por mês independente da fase — usa MAX ao agregar.
+          Anchor: Junho/2026 = 22 dias.
+        sql: dias_uteis
+        type: max
+        format: number
 
     dimensions:
       - name: data

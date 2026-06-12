@@ -16,9 +16,17 @@ Granularidade: 1 row por (mês, fase). Colunas:
   * `dias_ausencia`          — dias-pessoa perdidos a faltas nesse mês.
   * `capacidade_perdida`     — barcos-dia perdidos (Σ prod × dias-ausente).
 
-Calendar-free de propósito: a "capacidade disponível" absoluta exigiria o
-calendário de dias úteis (`dias_trabalho`, ainda não espelhado); a perda a
-ausências já é o sinal honesto que faltava e usa só dados que temos.
+Q.175.B — agora que `factory_raw.dias_trabalho` está espelhado (Q.174.I),
+acrescenta `dias_uteis`, `capacidade_mes_teorica` e `capacidade_disponivel`
+(a fórmula completa canónica = cap_dia × dias_úteis - perdida).
+
+Granularidade: 1 row por (mês, fase). Colunas:
+  * `capacidade_dia_teorica` — barcos/dia da fase a 100% de presença.
+  * `dias_ausencia`          — dias-pessoa perdidos a faltas nesse mês.
+  * `capacidade_perdida`     — barcos-dia perdidos (Σ prod × dias-ausente).
+  * `dias_uteis`             — dias úteis do mês (de DIAS_TRABALHO canónico).
+  * `capacidade_mes_teorica` — barcos totais disponíveis a 100% presença.
+  * `capacidade_disponivel`  — capacidade efectiva = teorica - perdida.
 """
 from __future__ import annotations
 
@@ -54,7 +62,15 @@ abs AS (
       AND NULLIF(em."MOVENT_DATA_I", '') IS NOT NULL
     GROUP BY 1, 2
 ),
-meses AS (SELECT DISTINCT mes FROM abs)
+meses AS (SELECT DISTINCT mes FROM abs),
+-- Q.175.B — dias úteis por mês (canónico: DIAS_TRABALHO; DTRB_DATA = dias que a NELO trabalha)
+dias_uteis_mes AS (
+    SELECT DATE_TRUNC('month', "DTRB_DATA"::timestamp)::date AS mes,
+           COUNT(*)                                           AS dias_uteis
+    FROM factory_raw.dias_trabalho
+    WHERE "DTRB_DATA" IS NOT NULL
+    GROUP BY 1
+)
 SELECT
     m.mes                                                          AS data,
     po.fase_id                                                     AS fase_id,
@@ -62,12 +78,20 @@ SELECT
     COUNT(DISTINCT po.e_id)                                        AS operadores,
     ROUND(SUM(po.prod)::numeric, 2)                               AS capacidade_dia_teorica,
     COALESCE(SUM(a.dias_ausente), 0)                              AS dias_ausencia,
-    ROUND(SUM(po.prod * COALESCE(a.dias_ausente, 0))::numeric, 2) AS capacidade_perdida
+    ROUND(SUM(po.prod * COALESCE(a.dias_ausente, 0))::numeric, 2) AS capacidade_perdida,
+    -- Q.175.B — fórmula canónica completa (Report_ProducaoCapacidade_Sub_Capacidade)
+    COALESCE(du.dias_uteis, 0)                                     AS dias_uteis,
+    ROUND((SUM(po.prod) * COALESCE(du.dias_uteis, 0))::numeric, 2) AS capacidade_mes_teorica,
+    GREATEST(0,
+        ROUND((SUM(po.prod) * COALESCE(du.dias_uteis, 0)
+               - SUM(po.prod * COALESCE(a.dias_ausente, 0)))::numeric, 2)
+    )                                                              AS capacidade_disponivel
 FROM meses m
 CROSS JOIN phase_ops po
 JOIN factory_raw.fases_producao fp ON fp."FP_ID" = po.fase_id
 LEFT JOIN abs a ON a.mes = m.mes AND a.e_id = po.e_id
-GROUP BY m.mes, po.fase_id, fp."FP_NOME"
+LEFT JOIN dias_uteis_mes du ON du.mes = m.mes
+GROUP BY m.mes, po.fase_id, fp."FP_NOME", du.dias_uteis
 """
 
 
@@ -82,20 +106,31 @@ async def setup() -> int:
         n = await conn.fetchval("SELECT COUNT(*) FROM marts.v_capacidade_fase_mes")
         tot = await conn.fetchrow(
             "SELECT COUNT(DISTINCT fase_id) AS fases, COUNT(DISTINCT data) AS meses, "
-            "SUM(capacidade_perdida)::float AS perda FROM marts.v_capacidade_fase_mes"
+            "SUM(capacidade_perdida)::float AS perda, "
+            "MAX(dias_uteis) AS max_dias_uteis, "
+            "SUM(capacidade_disponivel)::float AS disponivel "
+            "FROM marts.v_capacidade_fase_mes"
         )
         print(f"  OK -- {n:,} rows (mes x fase). "
               f"{tot['fases']} fases, {tot['meses']} meses, "
-              f"{tot['perda']:,.0f} barcos-dia perdidos a faltas (histórico).")
+              f"{tot['perda']:,.0f} barcos-dia perdidos. "
+              f"Max dias_uteis/mes: {tot['max_dias_uteis']}. "
+              f"Capacidade disponivel total: {tot['disponivel']:,.0f} barcos.")
 
-        print("\n  Top 5 fases por capacidade teórica/dia:")
+        print("\n  Top 5 fases por capacidade disponivel (ultimo mes com dados):")
         rows = await conn.fetch(
-            "SELECT fase, MAX(capacidade_dia_teorica)::float AS cap, MAX(operadores) AS ops "
-            "FROM marts.v_capacidade_fase_mes GROUP BY fase ORDER BY cap DESC LIMIT 5"
+            "SELECT fase, capacidade_dia_teorica::float AS cap_dia, "
+            "dias_uteis, capacidade_mes_teorica::float AS cap_mes, "
+            "capacidade_disponivel::float AS disponivel, operadores "
+            "FROM marts.v_capacidade_fase_mes "
+            "WHERE data = (SELECT MAX(data) FROM marts.v_capacidade_fase_mes) "
+            "ORDER BY disponivel DESC LIMIT 5"
         )
         for r in rows:
-            print(f"    {(r['fase'] or '?')[:30]:<30} {r['cap']:>6.1f} barcos/dia "
-                  f"({r['ops']} ops)")
+            print(f"    {(r['fase'] or '?')[:28]:<28} "
+                  f"{r['cap_dia']:>5.1f}/dia x {r['dias_uteis']:>2}d = "
+                  f"{r['cap_mes']:>6.0f} teorico -> {r['disponivel']:>6.0f} disponivel "
+                  f"({r['operadores']} ops)")
 
         # Sanity anchors (verificado live 2026-06-08: 62 486 faltas met_met_id=2).
         abs_n = await conn.fetchval(
