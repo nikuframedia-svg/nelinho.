@@ -697,6 +697,70 @@ async def run_cpo_schedule(
     except Exception as exc:  # pragma: no cover — forecast nunca trava o plano
         logger.warning("material_risk annotation falhou (%s)", exc)
 
+    # Q.174.F7 — dependência de COMPONENTES (decisão do dono: dependência
+    # primeiro). O link real é ORDEMFABRICO.OF_OF_ID_MAE (peças filhas).
+    # MEDIDO live 2026-06-12: 0 peças filhas abertas com data prevista futura
+    # e 0 TPMOV=15 futuros → NÃO há ETA utilizável; inventar datas violaria o
+    # invariante #8. Por isso: anotação VISÍVEL (peça pendente + fase de
+    # consumo via BOM COMP_FP_ID), SEM piso. Quando o ERP tiver datas de
+    # peças, o mesmo mapa entra na infra start_floors (Q.174.M) sem mexer
+    # no solver. Best-effort.
+    try:
+        from sqlalchemy import text as _t
+        _dep_rows = (await session.execute(_t(
+            """
+            SELECT p."OF_OF_ID_MAE"::text AS boat_of,
+                   p."OF_ID"::text        AS piece_of,
+                   p."OF_P_ID"::text      AS piece_p,
+                   f."FP_NOME"            AS piece_fase_nome,
+                   pc."COMP_FP_ID"::text  AS fase_consumo
+            FROM factory_raw.ordemfabrico p
+            JOIN factory_raw.fases_producao f ON f."FP_ID" = p."OF_FP_ID"
+            JOIN factory_raw.ordemfabrico b ON b."OF_ID" = p."OF_OF_ID_MAE"
+            LEFT JOIN factory_raw.produto_componente pc
+              ON pc."COMP_P_ID" = b."OF_P_ID"
+             AND pc."COMP_P_P_ID" = p."OF_P_ID"
+             AND pc."COMP_ELIMINADO" IS NULL
+            WHERE p."OF_OF_ID_MAE" = ANY(:boats)
+              AND NULLIF(p."OF_DATAFIM", '') IS NULL
+            """
+        ), {"boats": [
+            int(o.order_id) for o in operations
+            if str(o.order_id).isdigit()
+        ][:5000]})).mappings().all()
+        if _dep_rows:
+            _deps_by_boat: Dict[str, list] = {}
+            for _r in _dep_rows:
+                _deps_by_boat.setdefault(str(_r["boat_of"]), []).append({
+                    "piece_of": str(_r["piece_of"]),
+                    "piece_p": str(_r["piece_p"]),
+                    "piece_fase": str(_r["piece_fase_nome"] or ""),
+                    "fase_consumo": (
+                        str(_r["fase_consumo"])
+                        if _r["fase_consumo"] is not None else None
+                    ),
+                })
+            _n_marcadas = 0
+            for _opd in result.get("operations") or []:
+                _deps = _deps_by_boat.get(str(_opd.get("order_id") or ""))
+                if not _deps:
+                    continue
+                _fase = str(_opd.get("phase_id") or "")
+                _da_fase = [
+                    d for d in _deps if d["fase_consumo"] == _fase
+                ]
+                if _da_fase:
+                    _opd["component_dependency"] = _da_fase[:3]
+                    _n_marcadas += 1
+            result.setdefault("cpo_meta", {})["component_dependencies"] = {
+                "boats_com_pecas_pendentes": len(_deps_by_boat),
+                "pecas_pendentes": len(_dep_rows),
+                "ops_marcadas": _n_marcadas,
+                "etas_disponiveis": 0,  # medido live: sem datas → sem pisos
+            }
+    except Exception as exc:  # pragma: no cover — anotação nunca trava o plano
+        logger.warning("component_dependency annotation falhou (%s)", exc)
+
     # Q.168.A — observabilidade dos due dates: quantas ordens do scope têm
     # data-alvo real (só essas o backward-scheduling/tardiness honram).
     result.setdefault("cpo_meta", {})["due_date_coverage"] = (
