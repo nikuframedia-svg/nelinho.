@@ -213,3 +213,64 @@ def test_q174_gap_pct_devolvido():
     )
     assert res.available
     assert res.gap_pct >= 0.0  # OPTIMAL → 0.0; FEASIBLE → gap real
+
+
+@pytest.mark.skipif(not cs.HAS_ORTOOLS, reason="ortools não instalado")
+def test_q174_mold_cooldown_espacia_reusos():
+    """Q.174.F2 — cooldown canónico: o molde fica ocupado dur+cooldown.
+    2 barcos no MESMO molde único → o 2º começa >= fim do 1º + 24h."""
+    state = FactoryState(tenant_id=uuid4())
+    state.phase_stations = {"LAM": 5}
+    state.skill_matrix = {"LAM": {"w1", "w2", "w3", "w4"}}
+    state.molds_by_model = {
+        "M1": [MoldInfo(molde_id="70001", modelo_id="M1")],
+    }
+    state.molds = {"70001": MoldInfo(molde_id="70001", modelo_id="M1")}
+    assert state.mold_cooldown_h == 24.0  # default canónico
+
+    ops = [
+        _op("A", "OF1", "LAM", 1, 120, mold=True, model="M1"),
+        _op("B", "OF2", "LAM", 1, 120, mold=True, model="M1"),
+    ]
+    res = CPSATScheduler(CPSATConfig(budget_s=10, deterministic=True)).solve_timing(
+        ops, state, _H0,
+    )
+    assert res.available
+    s_a, s_b = sorted((res.starts_min["A"], res.starts_min["B"]))
+    # 2º uso >= 1º fim (120) + cooldown 24h (1440 min)
+    assert s_b >= s_a + 120 + 1440
+
+
+@pytest.mark.skipif(not cs.HAS_ORTOOLS, reason="ortools não instalado")
+def test_q174_mold_cooldown_off_volta_ao_legacy():
+    """cooldown=0 (config) → ocupação = duração (comportamento Q.165.C)."""
+    state = FactoryState(tenant_id=uuid4())
+    state.phase_stations = {"LAM": 5}
+    state.skill_matrix = {"LAM": {"w1", "w2"}}
+    state.molds_by_model = {"M1": [MoldInfo(molde_id="70001", modelo_id="M1")]}
+    state.molds = {"70001": MoldInfo(molde_id="70001", modelo_id="M1")}
+    state.mold_cooldown_h = 0.0
+
+    ops = [
+        _op("A", "OF1", "LAM", 1, 120, mold=True, model="M1"),
+        _op("B", "OF2", "LAM", 1, 120, mold=True, model="M1"),
+    ]
+    res = CPSATScheduler(CPSATConfig(budget_s=10, deterministic=True)).solve_timing(
+        ops, state, _H0,
+    )
+    assert res.available
+    assert res.makespan_min <= 240  # serializa SÓ pela duração
+
+
+def test_q174_mold_cooldown_ocean_72h():
+    """Moldes Ocean (tipo do produto do molde) → 72h por defeito."""
+    state = FactoryState(tenant_id=uuid4())
+    state.molds = {
+        "70010": MoldInfo(molde_id="70010", modelo_id="M9", tipo="Ocean Ski 62"),
+        "70011": MoldInfo(molde_id="70011", modelo_id="M1", tipo="K1 Cinco"),
+    }
+    assert state.mold_cooldown_hours("70010") == 72.0
+    assert state.mold_cooldown_hours("70011") == 24.0
+    assert state.mold_cooldown_hours(None) == 24.0
+    state.mold_cooldown_h = 0.0
+    assert state.mold_cooldown_hours("70010") == 0.0  # 0 = desligado (tudo)

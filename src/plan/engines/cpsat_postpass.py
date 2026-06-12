@@ -176,6 +176,13 @@ def assign_concrete(
             worker_free_at[w] = end
             worker_load_h[w] = worker_load_h.get(w, 0.0) + dur / 60.0
         if mold_chosen:
-            mold_free_at[mold_chosen] = end
+            # Q.174.F2 — cooldown canónico do molde (≈24h; Ocean ≈72h);
+            # espelha o decoder. 0 = desligado.
+            _cd_h = float(getattr(state, "mold_cooldown_hours", lambda _m: 0.0)(
+                mold_chosen
+            ) or 0.0)
+            mold_free_at[mold_chosen] = (
+                end + timedelta(hours=_cd_h) if _cd_h > 0 else end
+            )
 
     return scheduled

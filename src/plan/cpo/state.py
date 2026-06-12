@@ -249,6 +249,12 @@ class FactoryState:
     # all molds indexed by id
     molds: Dict[str, MoldInfo] = field(default_factory=dict)
 
+    # Q.174.F2 — cooldown canónico do molde após uso (Plano_Planeia bloqueia
+    # turnos seguintes; ≈24h; Ocean ≈72h). 0 = desligado. Config
+    # `planning`/`molds.cooldown_hours[_ocean]` sobrepõe no load().
+    mold_cooldown_h: float = 24.0
+    mold_cooldown_ocean_h: float = 72.0
+
     # median historical real duration per (fase_id, modelo_id), in hours
     historical_durations: Dict[Tuple[str, str], float] = field(default_factory=dict)
 
@@ -631,6 +637,13 @@ class FactoryState:
                     state.repair_phase_ids = frozenset(
                         str(int(x)) for x in _rep
                     )
+                # Q.174.F2 — cooldown do molde configurável (0 = desligar).
+                _cd = _planning.get("molds.cooldown_hours")
+                if _cd not in (None, ""):
+                    state.mold_cooldown_h = max(0.0, float(_cd))
+                _cdo = _planning.get("molds.cooldown_hours_ocean")
+                if _cdo not in (None, ""):
+                    state.mold_cooldown_ocean_h = max(0.0, float(_cdo))
                 # Q.174.F0.5 — clientes excluídos do plano. O canónico
                 # Planeamento_Previsão exclui SEMPRE o Cliente Fábrica
                 # (e_id=19747) de toda a seleção de barcos a planear
@@ -991,6 +1004,27 @@ class FactoryState:
             (m for m in candidates if not m.em_manutencao),
             key=lambda m: str(m.molde_id),
         )
+
+    def mold_cooldown_hours(self, molde_id: Optional[str]) -> float:
+        """Q.174.F2 — cooldown CANÓNICO do molde após uso.
+
+        O `Plano_Planeia` bloqueia o molde os turnos restantes do dia + o 1º
+        turno do dia seguinte (≈24h wall-clock); moldes Ocean ficam +2 dias
+        (≈72h). O nosso modelo contínuo libertava o molde no fim da op —
+        reuso imediato que a fábrica não permite (cura no molde + preparação).
+        Config `planning`/`molds.cooldown_hours` e `molds.cooldown_hours_ocean`
+        (0 = desligar). K4=2-slots NÃO se replica: é contagem de slots por
+        turno do ERP; as nossas durações medidas já capturam o custo real
+        (análise verificada das SPs, 2026-06-08 §C).
+        """
+        base = float(self.mold_cooldown_h)
+        if base <= 0:
+            return 0.0
+        info = self.molds.get(str(molde_id or ""))
+        tipo = (info.tipo if info else "") or ""
+        if tipo.upper().startswith("OCEAN"):
+            return float(self.mold_cooldown_ocean_h)
+        return base
 
 
 

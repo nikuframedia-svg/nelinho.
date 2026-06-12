@@ -758,7 +758,13 @@ def _run_scheduling_loop(
             # Q.165.A — worker_free_at já foi posto por peer (peer_end) no loop
             # acima; a estação e o molde ocupam a janela física (batch_end).
             if mold_chosen:
-                mold_free_at[mold_chosen] = batch_end
+                # Q.174.F2 — cooldown canónico: o molde NÃO é reutilizável no
+                # fim da op (cura no molde + preparação; Plano_Planeia bloqueia
+                # os turnos seguintes ≈24h, Ocean ≈72h). 0 = desligado.
+                _cd_h = state.mold_cooldown_hours(mold_chosen)
+                mold_free_at[mold_chosen] = (
+                    batch_end + timedelta(hours=_cd_h) if _cd_h > 0 else batch_end
+                )
             progress = True
 
         pending = new_pending

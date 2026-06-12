@@ -170,6 +170,22 @@ categories:
       description: Q.173.L — fases de REPARAÇÃO para o planeador (prioridade no
         loader + exclusão no CP-SAT global). A view v_of_em_producao continua
         {14,76,77} hardcoded na BD — mudar aqui governa só o solver.
+    - key: excluded_client_ids
+      value: "19747"
+      data_type: string
+      description: Q.174.F0.5 — clientes excluídos do plano (CSV de E_IDs).
+        Canónico Planeamento_Previsão exclui SEMPRE o Cliente Fábrica 19747.
+        Vazio = sem exclusão (opt-out consciente).
+    - key: molds.cooldown_hours
+      value: 24.0
+      data_type: float
+      description: Q.174.F2 — cooldown do molde após uso (cura no molde +
+        preparação). Canónico Plano_Planeia bloqueia os turnos seguintes
+        (~24h). 0 = desligado.
+    - key: molds.cooldown_hours_ocean
+      value: 72.0
+      data_type: float
+      description: Q.174.F2 — cooldown dos moldes Ocean (canónico +2 dias ~72h).
     - key: auto_replan_plan_cap
       value: 0
       data_type: int
@@ -318,6 +334,14 @@ categories:
       value: 5.0
       data_type: float
       description: '|qty_delta| above this requires governance approval (MR06 / ST01)'
+    - key: production_warehouses
+      value: ""
+      data_type: string
+      description: Q.174.F0.4 — ARM_IDs (CSV) que contam como
+        disponível-para-produção no forecast de ruturas (stock+reservas+pedidos
+        internos, coerente). Vazio = TODOS (canónico, produto_Stock_Necessidades
+        agrega global). 79% do stock vive em armazéns de produção/WIP — o
+        conjunto é decisão da fábrica.
   quality:
     description: Quality risk thresholds + rework buffers per phase.
     settings:

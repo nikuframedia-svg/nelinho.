@@ -659,9 +659,23 @@ async def _load_molds_db(
     session: Any,
     tenant_id: UUID,
 ) -> Tuple[Dict[str, List[MoldInfo]], Dict[str, MoldInfo]]:
-    """Q.126.C — real molds from `factory_raw.of_fp.OFFP_OF_ID_MLD` joined to
-    the model (`OF_P_ID`) via `ordemfabrico`. 1186 (mold, model) pairs vs only
-    6 from ordemfabrico alone (verified in _audit/q126/). Best-effort."""
+    """Q.126.C / Q.174.F2 — moldes reais com o matching CANÓNICO.
+
+    A função canónica `of_moldes_possiveis` (corpo lido live 2026-06-12) casa
+    molde↔produto pela ASSINATURA ``(P_NP_ID, P_M_ID, P_TAM_ID)``: um molde é
+    a OF 70000-79999 em fase de molde {13,14,15,16}; serve TODOS os produtos
+    com a mesma assinatura do produto do molde. O loader antigo (links
+    `OFFP_OF_ID_MLD` preenchidos) perdia 50-100% das associações nos top-5
+    moldes (medição live). Local: 2.734 pares (454 moldes ↔ 2.061 produtos).
+
+    `em_manutencao` passa a ser DERIVADO LIVE (= `getMoldesAReparar`): molde
+    com fase atual {13,14} e op aberta → indisponível (23 live em 2026-06-12;
+    antes a flag vinha de um Excel curado morto e era sempre False — moldes
+    fisicamente em reparação eram selecionáveis).
+
+    UNION com o caminho legacy (links OFFP_OF_ID_MLD): apanha moldes usados
+    historicamente cuja OF saiu das fases de molde (não perde nada do Q.126.C).
+    Best-effort."""
     from src.plan.cpo.state import MoldInfo
 
     if session is None:
@@ -670,8 +684,32 @@ async def _load_molds_db(
     from sqlalchemy.exc import SQLAlchemyError
     sql = text(
         """
+        WITH moldes AS (
+          SELECT o."OF_ID"::text AS molde_id,
+                 p."P_NP_ID" AS np, p."P_M_ID" AS m, p."P_TAM_ID" AS tam,
+                 COALESCE(p."P_NOME", '') AS tipo,
+                 (o."OF_FP_ID" IN (13, 14) AND EXISTS (
+                    SELECT 1 FROM factory_raw.of_fp op
+                    WHERE op."OFFP_OF_ID" = o."OF_ID"
+                      AND op."OFFP_FP_ID" = o."OF_FP_ID"
+                      AND NULLIF(op."OFFP_DATAFIM", '') IS NULL
+                 )) AS em_manutencao
+          FROM factory_raw.ordemfabrico o
+          JOIN factory_raw.produto p ON p."P_ID" = o."OF_P_ID"
+          WHERE o."OF_ID" BETWEEN 70000 AND 79999
+            AND o."OF_FP_ID" IN (13, 14, 15, 16)
+        )
+        SELECT m.molde_id, pr."P_ID"::text AS modelo_id, m.em_manutencao, m.tipo
+        FROM moldes m
+        JOIN factory_raw.produto pr
+          ON pr."P_NP_ID" = m.np AND pr."P_M_ID" = m.m AND pr."P_TAM_ID" = m.tam
+
+        UNION
+
         SELECT DISTINCT op."OFFP_OF_ID_MLD"::text AS molde_id,
-                        ofb."OF_P_ID"::text        AS modelo_id
+                        ofb."OF_P_ID"::text        AS modelo_id,
+                        false AS em_manutencao,
+                        '' AS tipo
         FROM factory_raw.of_fp op
         JOIN factory_raw.ordemfabrico ofb ON ofb."OF_ID" = op."OFFP_OF_ID"
         WHERE op."OFFP_OF_ID_MLD" IS NOT NULL AND op."OFFP_OF_ID_MLD" <> 0
@@ -685,6 +723,7 @@ async def _load_molds_db(
         return {}, {}
     by_model: Dict[str, List[MoldInfo]] = {}
     by_id: Dict[str, MoldInfo] = {}
+    seen_pairs: Set[Tuple[str, str]] = set()
     for r in rows:
         molde_id = str(r["molde_id"])
         modelo_id = str(r["modelo_id"])
@@ -692,8 +731,20 @@ async def _load_molds_db(
             continue
         info = by_id.get(molde_id)
         if info is None:
-            info = MoldInfo(molde_id=molde_id, modelo_id=modelo_id, pocket_count=1)
+            info = MoldInfo(
+                molde_id=molde_id, modelo_id=modelo_id, pocket_count=1,
+                em_manutencao=bool(r["em_manutencao"]),
+                tipo=str(r["tipo"] or ""),
+            )
             by_id[molde_id] = info
+        elif bool(r["em_manutencao"]) and not info.em_manutencao:
+            # O ramo canónico manda na flag (o legacy devolve sempre false).
+            info.em_manutencao = True
+        if not info.tipo and (r["tipo"] or ""):
+            info.tipo = str(r["tipo"])
+        if (molde_id, modelo_id) in seen_pairs:
+            continue
+        seen_pairs.add((molde_id, modelo_id))
         by_model.setdefault(modelo_id, []).append(info)
     return by_model, by_id
 

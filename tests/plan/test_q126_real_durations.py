@@ -81,15 +81,19 @@ async def test_load_durations_routes_session_none_is_safe():
 
 @pytest.mark.asyncio
 async def test_load_molds_builds_by_model():
+    # Q.174.F2 — o SELECT canónico devolve também em_manutencao (derivado
+    # live de getMoldesAReparar: fase {13,14} com op aberta).
     rows = [
-        {"molde_id": "501", "modelo_id": "42366"},
-        {"molde_id": "502", "modelo_id": "42366"},
-        {"molde_id": "0", "modelo_id": "9999"},  # ignorado (mold 0)
+        {"molde_id": "501", "modelo_id": "42366", "em_manutencao": False, "tipo": "K1 Cinco"},
+        {"molde_id": "502", "modelo_id": "42366", "em_manutencao": True, "tipo": ""},
+        {"molde_id": "0", "modelo_id": "9999", "em_manutencao": False, "tipo": ""},  # mold 0 ignorado
     ]
     by_model, by_id = await _load_molds_db(_FakeSession(rows), uuid4())
     assert set(by_id) == {"501", "502"}
     assert {m.molde_id for m in by_model["42366"]} == {"501", "502"}
     assert "9999" not in by_model
+    assert by_id["502"].em_manutencao is True  # molde em reparação marcado
+    assert by_id["501"].em_manutencao is False
 
 
 @pytest.mark.asyncio

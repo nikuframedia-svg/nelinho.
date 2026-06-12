@@ -94,6 +94,15 @@ DEFAULT_SEEDS: list[ConfigSeed] = [
      "Q.173.L — fases de REPARAÇÃO para o planeador (prioridade no loader + "
      "exclusão no CP-SAT global). A view v_of_em_producao continua {14,76,77} "
      "hardcoded na BD — mudar aqui governa só o solver."),
+    ("planning", "excluded_client_ids", "19747", "string",
+     "Q.174.F0.5 — clientes excluídos do plano (CSV de E_IDs). Canónico: "
+     "Planeamento_Previsão exclui SEMPRE o Cliente Fábrica 19747. Vazio = "
+     "sem exclusão (opt-out consciente)."),
+    ("planning", "molds.cooldown_hours", 24.0, "float",
+     "Q.174.F2 — cooldown do molde após uso (cura no molde + preparação). "
+     "Canónico Plano_Planeia: bloqueado os turnos seguintes ≈24h. 0 = off."),
+    ("planning", "molds.cooldown_hours_ocean", 72.0, "float",
+     "Q.174.F2 — cooldown dos moldes Ocean (canónico: +2 dias ≈72h)."),
     ("planning", "auto_replan_plan_cap", 0, "int",
      "Q.161.B — cap de ordens do robô de fundo (0 = todos os em-produção). "
      "Lido por auto_cpo_replan_job; seeded em Q.173.O para ter UI."),
@@ -183,7 +192,7 @@ DEFAULT_SEEDS: list[ConfigSeed] = [
      "Days-to-stockout below which MATERIAL_STOCKOUT_IMMINENT fires"),
     ("supply", "adjust.auto_approve_threshold_qty", 5.0, "float",
      "|qty_delta| above this requires governance approval (MR06 / ST01)"),
-    ("supply", "production_warehouses", "", "str",
+    ("supply", "production_warehouses", "", "string",
      "Q.174.F0.4 — ARM_IDs (CSV) que contam como disponível-para-produção no "
      "forecast de ruturas (stock+reservas+pedidos internos). Vazio = TODOS "
      "(canónico produto_Stock_Necessidades agrega global). 79% do stock vive "

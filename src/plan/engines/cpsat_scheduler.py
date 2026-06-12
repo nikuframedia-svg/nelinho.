@@ -273,6 +273,27 @@ class CPSATScheduler:
                 key = mid if mid else f"order::{op.order_id}"
                 by_model_mold[key].append(op)
         mfm = getattr(state, "molds_for_model", None)
+        # Q.174.F2 — cooldown canónico: o molde fica ocupado dur+cooldown
+        # (cura no molde + preparação; Plano_Planeia bloqueia ≈24h, Ocean
+        # ≈72h). Intervalos ESTENDIDOS só no cumulative dos moldes (a op em
+        # si não muda). Relaxação anónima: usa o MENOR cooldown dos moldes do
+        # modelo (o post-pass aplica o exato por molde escolhido).
+        mch = getattr(state, "mold_cooldown_hours", None)
+
+        def _cd_min_for(model_id: str) -> int:
+            if mch is None:
+                return 0
+            try:
+                if mfm is not None and not model_id.startswith("order::"):
+                    molds = mfm(model_id)
+                    if molds:
+                        return round(60 * min(
+                            float(mch(m.molde_id)) for m in molds
+                        ))
+                return round(60 * float(mch(None)))
+            except Exception:  # pragma: no cover — defensivo
+                return 0
+
         for model_id, mops in by_model_mold.items():
             n_molds = 1
             if mfm is not None and not model_id.startswith("order::"):
@@ -281,7 +302,18 @@ class CPSATScheduler:
                 except Exception as _e:  # pragma: no cover
                     logger.warning("state.molds_for_model(%s) failed: %s", model_id, _e)
                     n_molds = 1
-            ivs = [intervals[str(o.operation_id)] for o in mops]
+            cd = _cd_min_for(model_id)
+            if cd > 0:
+                ivs = [
+                    model.NewFixedSizeIntervalVar(
+                        starts[str(o.operation_id)],
+                        dur_min[str(o.operation_id)] + cd,
+                        f"im_{o.operation_id}",
+                    )
+                    for o in mops
+                ]
+            else:
+                ivs = [intervals[str(o.operation_id)] for o in mops]
             model.AddCumulative(ivs, [1] * len(ivs), n_molds)
 
         # ── Makespan + objetivo ─────────────────────────────────────────────────
