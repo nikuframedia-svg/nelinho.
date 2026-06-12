@@ -151,6 +151,8 @@ def assign_concrete(
                 state=state, quality_weight=0.3,
                 fase_id=fase, worker_load_h=worker_load_h,
                 op_complexity=op_complexity,
+                # Q.174.F4 — disponibilidade: ausentes afundam no ranking.
+                op_duration_h=dur / 60.0,
             )
 
         # molde: earliest-free entre os do modelo (Q.165.C).
@@ -169,6 +171,29 @@ def assign_concrete(
         # piso wall-clock. Sem calendário → 24/7. Espelha o decoder.
         if calendar is not None:
             start = calendar.add_working_hours(start, 0.0)
+
+        # Q.174.F4 — garantia dura de disponibilidade (espelha o decoder):
+        # fixpoint combinado push-de-ausência → re-snap de calendário.
+        _abs_adj = getattr(state, "absence_adjusted_start", None)
+        if (
+            picked and _abs_adj is not None
+            and getattr(state, "worker_absences", None)
+        ):
+            _dur_h = max(1.0, dur) / 60.0
+            for _ in range(16):
+                pushed = start
+                for w in picked:
+                    adj = _abs_adj(w, pushed, _dur_h)
+                    if adj > pushed:
+                        pushed = adj
+                if pushed == start:
+                    break
+                start = (
+                    calendar.add_working_hours(pushed, 0.0)
+                    if calendar is not None else pushed
+                )
+
+        if calendar is not None:
             end = calendar.add_working_hours(start, dur / 60.0)
         else:
             end = start + timedelta(minutes=dur)

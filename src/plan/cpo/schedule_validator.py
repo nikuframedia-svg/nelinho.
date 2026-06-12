@@ -271,6 +271,30 @@ def _check_worker_double_booking(ops: List[_Op], report: ValidationReport) -> No
                 )
 
 
+def _check_absences(ops: List[_Op], report: ValidationReport, state: Any) -> None:
+    """Q.174.F4 — axioma novo: nenhum operador trabalha DENTRO de uma janela
+    de ausência (ENT_MOV MET=2 + overrides locais). Só corre quando o state
+    traz ``worker_absences`` (vazio = sem check, back-compat)."""
+    absences = getattr(state, "worker_absences", None) if state else None
+    if not absences:
+        return
+    report.checks_run.append("operador_disponivel")
+    for op in ops:
+        for w in op.workers:
+            for ini, fim in absences.get(str(w), ()):  # ordenadas
+                if fim <= op.start:
+                    continue
+                if ini >= op.end:
+                    break
+                report.errors.append(
+                    f"op {op.operation_id}: operador {w} AUSENTE em "
+                    f"[{ini.isoformat()} .. {fim.isoformat()}) mas alocado "
+                    f"[{op.start.isoformat()} .. {op.end.isoformat()}) "
+                    f"(disponibilidade — Q.174.F4)"
+                )
+                break
+
+
 def _check_skills(ops: List[_Op], report: ValidationReport, state: Any) -> None:
     """Axioma 5 — operador atribuído pertence ao pool da fase (só quando o
     state tem pool para essa fase; pool vazio = fase manual, sem check)."""
@@ -366,6 +390,7 @@ def validate_schedule(
     _check_order_sequence(ops, report, state)
     _check_mold_exclusive(ops, report)
     _check_worker_double_booking(ops, report)
+    _check_absences(ops, report, state)  # Q.174.F4 — disponibilidade
     _check_skills(ops, report, state)
     _check_pairs(ops, report, state)
     _check_machine_overlap(ops, report)

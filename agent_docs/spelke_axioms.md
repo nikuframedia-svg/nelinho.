@@ -93,6 +93,24 @@ CPO nunca devolve um schedule pior que o baseline (heurístico simples). É o ú
   ESTRUTURAL dos axiomas 1-6 no caminho de escrita (`validate_schedule`, Q.169.B).
   Mapa completo por caminho de execução: [axiom_parity_matrix.md](axiom_parity_matrix.md).
 
+### 8. Disponibilidade do operador (Q.174.F4)
+
+Nenhum operador é alocado DENTRO de uma janela de ausência (ENT_MOV
+MET_MET_ID=2 — faltas/baixas/férias, incl. FUTURAS — + overrides
+`plan.worker_absence`). A spec do produto: «trabalhador só pode ser alocado
+se estiver disponível».
+
+- **Where:** `state.absence_adjusted_start` (puro, fast-path com mapa vazio);
+  ranking em `_pick_workers` (ausente afunda); fixpoint duro pós-snap no
+  decoder (`_run_scheduling_loop`) e no post-pass (`assign_concrete`);
+  write-gate `schedule_validator._check_absences`.
+- **Property test:** `tests/plan/test_worker_absence_property.py` — nunca
+  toca janelas, nunca recua, mapa vazio = byte-idêntico; decoder/post-pass
+  end-to-end; validador recusa violações.
+- **Status:** 🟢 desde Q.174.J. O CP-SAT timing NÃO modela por-worker
+  (relaxação anónima) — a garantia vive no post-pass + validador, como o
+  resto da identidade de recursos.
+
 ## How to verify before merging CPO/decoder/fitness change
 
 ```bash

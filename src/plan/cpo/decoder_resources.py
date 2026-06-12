@@ -247,6 +247,7 @@ def _pick_workers(
     fase_id: Optional[str] = None,
     op_complexity: float = 0.0,
     worker_load_h: Optional[Dict[str, float]] = None,
+    op_duration_h: float = 0.0,
 ) -> List[str]:
     """Pick N workers from the pool by blending availability and experience.
 
@@ -314,8 +315,17 @@ def _pick_workers(
     _pref_rank = getattr(state, "preferred_rank_score", None) if state else None
     _pref_sector = getattr(state, "preference_score_for", None) if state else None
 
+    # Q.174.F4 — disponibilidade real: o ranking vê o operador AUSENTE
+    # (ENT_MOV/override) como "livre só depois da ausência" — quem está cá
+    # ganha naturalmente. Guard p/ stubs de teste sem o método.
+    _abs_adj = getattr(state, "absence_adjusted_start", None) if state else None
+
     def _score(worker: str) -> Tuple[float, str]:
         free_at = worker_free_at.get(worker, earliest)
+        if _abs_adj is not None and op_duration_h > 0.0:
+            abs_free = _abs_adj(worker, earliest, op_duration_h)
+            if abs_free > free_at:
+                free_at = abs_free
         hours_until_free = max(0.0, (free_at - earliest).total_seconds() / 3600.0)
         availability = 1.0 / (1.0 + hours_until_free)
         # Preferência: curados (página Melhores por fase, Q.155.D) têm precedência;
@@ -500,6 +510,8 @@ def _select_workers(
         fase_id=str(op.phase_id) if op.phase_id else None,
         op_complexity=op_complexity,
         worker_load_h=worker_load_h,  # Q.164.A — load-balancing tiebreak
+        # Q.174.F4 — disponibilidade: ausentes afundam no ranking.
+        op_duration_h=max(0.0, float(op.duration_minutes or 0)) / 60.0,
     )
     if len(picked) < total_workers_needed:
         # Sprint Q.8 — pair-preferred phases accept a solo downgrade.
@@ -697,6 +709,31 @@ def _run_scheduling_loop(
             calendar = getattr(state, "calendar", None)
             if calendar is not None:
                 start = calendar.add_working_hours(start, 0.0)
+
+            # Q.174.F4 — GARANTIA dura de disponibilidade: nenhum operador
+            # escolhido trabalha DENTRO de uma janela de ausência (ENT_MOV +
+            # overrides). Fixpoint COMBINADO com o snap de calendário (o push
+            # de ausência acaba à meia-noite → re-snap para as 08:00; o snap
+            # pode aterrar noutro dia de ausência → novo push). Monótono e
+            # limitado (o start só avança; bound de segurança 16).
+            _abs_adj = getattr(state, "absence_adjusted_start", None)
+            if _abs_adj is not None and getattr(state, "worker_absences", None):
+                _dur_h = max(
+                    1.0, max(float(p.duration_minutes) for p in batch_peers)
+                ) / 60.0
+                for _ in range(16):
+                    pushed = start
+                    for slot in batch_workers:
+                        for w in slot:
+                            adj = _abs_adj(w, pushed, _dur_h)
+                            if adj > pushed:
+                                pushed = adj
+                    if pushed == start:
+                        break
+                    start = (
+                        calendar.add_working_hours(pushed, 0.0)
+                        if calendar is not None else pushed
+                    )
 
             peer_duration_min = [
                 max(1.0, float(p.duration_minutes)) for p in batch_peers

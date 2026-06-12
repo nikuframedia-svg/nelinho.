@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import unicodedata
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Set, Tuple
 from uuid import UUID
 
@@ -258,6 +259,13 @@ class FactoryState:
     # Q.174.F3 — mediana REAL de operadores por op, por fase (of_fp×offp_eq,
     # 6 meses, amostra >= 20). Vazio = heurística PAIR (back-compat).
     team_size_median: Dict[str, int] = field(default_factory=dict)
+
+    # Q.174.F4 — janelas de INDISPONIBILIDADE por operador (ENT_MOV
+    # MET_MET_ID=2 + overrides plan.worker_absence), fundidas e ordenadas.
+    # Vazio = sem filtro (back-compat byte-idêntico).
+    worker_absences: Dict[str, List[Tuple[datetime, datetime]]] = field(
+        default_factory=dict
+    )
 
     # median historical real duration per (fase_id, modelo_id), in hours
     historical_durations: Dict[Tuple[str, str], float] = field(default_factory=dict)
@@ -578,6 +586,13 @@ class FactoryState:
         # Vazio = heurística PAIR (back-compat exacto).
         if not state.team_size_median:
             state.team_size_median = await _load_team_size_db(session, tenant_id)
+
+        # Q.174.F4 — indisponibilidades por operador (ENT_MOV MET=2 +
+        # overrides locais). Vazio = sem filtro (back-compat exacto).
+        if not state.worker_absences:
+            state.worker_absences = await _load_worker_absences_db(
+                session, tenant_id,
+            )
 
         # Q.160 — restringe o pool a "operadores ativos" (E_ACTIVO + trabalho nos
         # últimos 2 meses, ~107). Filtro input-only, mais restritivo, com guarda
@@ -1027,6 +1042,34 @@ class FactoryState:
             key=lambda m: str(m.molde_id),
         )
 
+    def absence_adjusted_start(
+        self, worker_id: str, start: datetime, duration_h: float,
+    ) -> datetime:
+        """Q.174.F4 — primeiro instante >= ``start`` em que o operador consegue
+        executar ``duration_h`` SEM tocar numa janela de ausência.
+
+        Fast-path: sem ausências carregadas (ou sem janelas deste operador)
+        devolve ``start`` intacto — custo zero no hot-path da GA. Senão salta
+        janelas sobrepostas (O(nº janelas do operador), tipicamente 1-3;
+        monótono e determinístico). A spec do produto: «trabalhador só pode
+        ser alocado se estiver disponível».
+        """
+        if not self.worker_absences:
+            return start
+        spans = self.worker_absences.get(str(worker_id))
+        if not spans:
+            return start
+        dur = timedelta(hours=max(0.0, float(duration_h)))
+        cur = start
+        for ini, fim in spans:  # ordenadas e fundidas no loader
+            if fim <= cur:
+                continue
+            if ini >= cur + dur:
+                break
+            # sobrepõe a janela [cur, cur+dur) → empurra para o fim dela
+            cur = fim
+        return cur
+
     def mold_cooldown_hours(self, molde_id: Optional[str]) -> float:
         """Q.174.F2 — cooldown CANÓNICO do molde após uso.
 
@@ -1071,6 +1114,7 @@ from src.plan.cpo.state_loaders import (
     _extract_skill_matrix,
     _load_active_operators_db,
     _load_team_size_db,
+    _load_worker_absences_db,
     _load_boat_complexity_db,
     _load_confirmed_preference_rules,
     _load_historical_durations_routes_db,

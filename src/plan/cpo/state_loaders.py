@@ -749,6 +749,106 @@ async def _load_molds_db(
     return by_model, by_id
 
 
+async def _load_worker_absences_db(
+    session: Any,
+    tenant_id: UUID,
+    horizon_days: int = 240,
+) -> Dict[str, List[Tuple[Any, Any]]]:
+    """Q.174.F4 — janelas de INDISPONIBILIDADE por operador.
+
+    Fonte primária: ``factory_raw.ent_mov`` × ``ent_mov_tipo`` com
+    ``MET_MET_ID=2`` (faltas/baixas/férias, MET 4-10 — fórmula canónica de
+    ``Report_ProducaoCapacidade_Sub_Capacidade``), janela ``[ontem, +240d]``
+    (o ERP regista ausências FUTURAS — 81 dias live em 2026-06-12, baixas
+    até setembro). O ERP guarda 1 linha por DIA (08:00→17:00).
+
+    Override local ``plan.worker_absence``: ``mode='add'`` acrescenta
+    (dia inteiro 00:00→24:00); ``mode='ignore_erp'`` anula o MOVENT_ID
+    apontado. Intervalos adjacentes/sobrepostos são FUNDIDOS por operador.
+
+    Best-effort → {} (sem espelho/tabela = sem filtro, back-compat exacto).
+    """
+    if session is None:
+        return {}
+    from datetime import datetime as _dt
+    from datetime import timedelta as _td
+
+    from sqlalchemy import text
+    from sqlalchemy.exc import SQLAlchemyError
+
+    raw: Dict[str, List[Tuple[Any, Any]]] = {}
+    ignored_movent: Set[int] = set()
+    try:
+        # 1. overrides locais (ambos os modos). Erro (tabela ausente em dev
+        #    pré-migração) não aborta o load — segue só com o ERP.
+        ov = (await session.execute(text(
+            """
+            SELECT employee_code, date_start, date_end, mode, erp_movent_id
+            FROM plan.worker_absence
+            WHERE tenant_id = CAST(:tid AS uuid)
+              AND date_end >= CURRENT_DATE - 1
+            """
+        ).bindparams(tid=str(tenant_id)))).mappings().all()
+        for r in ov:
+            if str(r["mode"]) == "ignore_erp":
+                if r["erp_movent_id"] is not None:
+                    ignored_movent.add(int(r["erp_movent_id"]))
+                continue
+            ini = _dt.combine(r["date_start"], _dt.min.time())
+            fim = _dt.combine(r["date_end"], _dt.min.time()) + _td(days=1)
+            raw.setdefault(str(r["employee_code"]), []).append((ini, fim))
+    except SQLAlchemyError as exc:  # pragma: no cover — tabela ausente
+        logger.debug("Q.174.F4 worker_absence overrides skipped: %s", exc)
+
+    try:
+        probe = await session.execute(text(
+            "SELECT to_regclass('factory_raw.ent_mov') IS NOT NULL"
+        ))
+        _scalar = getattr(probe, "scalar", None)
+        if callable(_scalar) and _scalar():
+            rows = (await session.execute(text(
+                """
+                SELECT m."MOVENT_ID" AS movent_id,
+                       m."MOVENT_E_ID"::text AS worker,
+                       NULLIF(m."MOVENT_DATA_I", '')::timestamp AS ini,
+                       NULLIF(m."MOVENT_DATA_F", '')::timestamp AS fim
+                FROM factory_raw.ent_mov m
+                JOIN factory_raw.ent_mov_tipo t
+                  ON t."MET_ID" = m."MOVENT_MET_ID" AND t."MET_MET_ID" = 2
+                WHERE NULLIF(m."MOVENT_DATA_F", '') >=
+                      to_char(now() - interval '1 day', 'YYYY-MM-DD')
+                  AND NULLIF(m."MOVENT_DATA_I", '') <=
+                      to_char(now() + make_interval(days => :h), 'YYYY-MM-DD')
+                """
+            ), {"h": int(horizon_days)})).mappings().all()
+            for r in rows:
+                if r["ini"] is None or r["fim"] is None:
+                    continue
+                if int(r["movent_id"]) in ignored_movent:
+                    continue
+                # o dia de ausência conta INTEIRO (o ERP regista 08:00→17:00;
+                # planear esse operador às 07:00 ou 18:00 seria ficção).
+                ini = _dt.combine(r["ini"].date(), _dt.min.time())
+                fim = _dt.combine(r["fim"].date(), _dt.min.time()) + _td(days=1)
+                raw.setdefault(str(r["worker"]), []).append((ini, fim))
+    except SQLAlchemyError as exc:  # pragma: no cover — outage / sem mirror
+        logger.debug("Q.174.F4 ent_mov load skipped: %s", exc)
+
+    # fusão de intervalos sobrepostos/adjacentes por operador (ordenado)
+    merged: Dict[str, List[Tuple[Any, Any]]] = {}
+    for worker, spans in raw.items():
+        spans.sort()
+        out: List[Tuple[Any, Any]] = []
+        for ini, fim in spans:
+            if out and ini <= out[-1][1]:
+                if fim > out[-1][1]:
+                    out[-1] = (out[-1][0], fim)
+            else:
+                out.append((ini, fim))
+        merged[worker] = out
+    return merged
+
+
 async def _load_team_size_db(
     session: Any,
     tenant_id: UUID,
