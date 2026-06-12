@@ -123,6 +123,35 @@ if (-not $SkipFrontend) {
     }
 }
 
+# Q.175.D — harness plan-vs-erp (condicional: só quando ERP acessível)
+# Falha se mediana de atraso do plano vs ERP > 60 dias.
+$harnessScript = Join-Path $PSScriptRoot "q174_plan_vs_erp_harness.py"
+if (Test-Path $harnessScript) {
+    $erpCheck = & .\.venv\Scripts\python.exe -c "
+import asyncio, asyncpg, os, sys
+sys.path.insert(0, '.')
+from src.shared.config import settings
+dsn = settings.database_url.replace('+asyncpg', '')
+async def chk():
+    try:
+        c = await asyncpg.connect(dsn, timeout=3)
+        r = await c.fetchval('SELECT COUNT(*) FROM factory_raw.of_fp LIMIT 1')
+        await c.close()
+        print('ok' if r is not None else 'empty')
+    except Exception:
+        print('unreachable')
+asyncio.run(chk())
+" 2>$null
+    if ($erpCheck -eq "ok") {
+        Step "harness plan-vs-erp (mediana max 60d)" {
+            & .\.venv\Scripts\python.exe $harnessScript --fail-median-days 60
+            if ($LASTEXITCODE -ne 0) { throw "harness plan-vs-erp: mediana acima de 60d - regressa ao CPO" }
+        }
+    } else {
+        Write-Host "  SKIP harness plan-vs-erp (ERP inacessivel)" -ForegroundColor DarkGray
+    }
+}
+
 $totalElapsed = [math]::Round(((Get-Date) - $totalStart).TotalSeconds, 1)
 Write-Host "" -ForegroundColor White
 if ($failures.Count -gt 0) {
