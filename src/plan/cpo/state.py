@@ -267,6 +267,10 @@ class FactoryState:
         default_factory=dict
     )
 
+    # Q.174.F5 — histórico PRÉ-gates (sugestões da secção "não planeável";
+    # nunca usado para alocar).
+    skill_matrix_history: Dict[str, Set[str]] = field(default_factory=dict)
+
     # median historical real duration per (fase_id, modelo_id), in hours
     historical_durations: Dict[Tuple[str, str], float] = field(default_factory=dict)
 
@@ -571,6 +575,14 @@ class FactoryState:
 
         if not state.skill_matrix:
             state.skill_matrix = await _load_skills_db(session, tenant_id)
+
+        # Q.174.F5 — retém o histórico PRÉ-gates (quem JÁ FEZ a fase, antes
+        # dos filtros de certificação/ativos): alimenta as sugestões da
+        # secção "não planeável" ("operadores com histórico fora do pool
+        # atual"). Nunca usado para alocar (axioma 5 intacto).
+        state.skill_matrix_history = {
+            f: set(p) for f, p in state.skill_matrix.items()
+        }
 
         # Q.158.B — gate DECLARADO (Entidade_Fase → hr.employee_skills.is_certified):
         # onde a NELO declarou QUEM PODE fazer a fase, essa é a verdade (o

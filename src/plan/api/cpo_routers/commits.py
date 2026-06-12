@@ -101,6 +101,30 @@ async def list_commits(
     return [CommitResponse(**CommitsService.to_dict(r)) for r in rows]
 
 
+@router.get("/commits/{sha}/unplannable")
+async def get_commit_unplannable(
+    sha: str,
+    tenant_id: UUID = Depends(_tenant_id),
+    db: AsyncSession = Depends(get_session),
+):
+    """Q.174.F5 — secção "não planeável" do commit (decisão do dono: plano
+    parcial + secção inviável). Lê `cpo_meta.unplannable` (status + recurso
+    em falta + sugestão por op/ordem) e os contadores dos kpis. Commits
+    antigos (pré-Q.174) devolvem lista vazia com `available=false`."""
+    service = CommitsService(db, tenant_id)
+    commit = await _resolve_commit_or_404(service, sha)
+    meta = commit.cpo_meta or {}
+    kpis = commit.kpis or {}
+    items = list(meta.get("unplannable") or [])
+    return {
+        "commit_sha": commit.sha256,
+        "available": "unplannable_count" in kpis,
+        "unplannable_count": int(kpis.get("unplannable_count") or len(items)),
+        "viable": bool(kpis.get("viable", not items)),
+        "items": items,
+    }
+
+
 @router.get("/commits/{sha}", response_model=CommitResponse)
 async def get_commit(
     sha: str,

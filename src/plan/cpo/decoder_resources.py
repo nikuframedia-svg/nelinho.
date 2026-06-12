@@ -18,9 +18,11 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from datetime import datetime, timedelta
-from typing import Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
+from src.plan.cpo import op_status
 from src.plan.cpo.chromosome import Chromosome
 from src.plan.cpo.decoder_helpers import (
     ScheduledOp,
@@ -47,6 +49,10 @@ class SchedulingLoopResult:
     setups: int
     routing_variants_applied: int
     backwards_shifts: int
+    # Q.174.F5 — razões ESTRUTURADAS por op inviável (status op_status.* +
+    # recurso em falta), paralelo a `infeasible` (que se mantém intacto —
+    # back-compat). Alimenta a secção `unplannable` do commit/API.
+    blocked: List[Dict[str, Any]] = dataclass_field(default_factory=list)
 
 
 def _precedences_met(
@@ -605,6 +611,7 @@ def _run_scheduling_loop(
     op_end_at: Dict[str, datetime] = {}
     scheduled: List[ScheduledOp] = []
     infeasible: List[str] = []
+    blocked: List[Dict[str, Any]] = []  # Q.174.F5 — razões estruturadas
     warnings: List[str] = []
     setups = 0
     routing_variants_applied = 0
@@ -669,8 +676,21 @@ def _run_scheduling_loop(
                 worker_load_h=worker_load_h,  # Q.164.A
             )
             if staffing is None:
+                pool_n = len(state.workers_for(str(op.phase_id)) or ()) if op.phase_id else 0
                 for p in batch_peers:
                     infeasible.append(p.operation_id)
+                    # Q.174.F5 — razão estruturada (secção unplannable).
+                    blocked.append({
+                        "operation_id": str(p.operation_id),
+                        "order_id": str(p.order_id),
+                        "phase_id": str(p.phase_id or ""),
+                        "status": op_status.BLOCKED_OPERADORES,
+                        "missing": {
+                            "needed": max(1, int(op.team_size)) * len(batch_peers),
+                            "pool_size": pool_n,
+                            "pair_required": bool(requires_pair(op, state)),
+                        },
+                    })
                 continue
             batch_workers, _team_size = staffing
 
@@ -680,6 +700,15 @@ def _run_scheduling_loop(
             if op.mold_required and not mold_chosen:
                 for p in batch_peers:
                     infeasible.append(p.operation_id)
+                    blocked.append({
+                        "operation_id": str(p.operation_id),
+                        "order_id": str(p.order_id),
+                        "phase_id": str(p.phase_id or ""),
+                        "status": op_status.BLOCKED_MOLDE,
+                        "missing": {
+                            "model_id": str(getattr(p, "model_id", "") or ""),
+                        },
+                    })
                 continue
 
             # Start time = max of (pred end, machine free, workers free, mold free).
@@ -754,6 +783,16 @@ def _run_scheduling_loop(
                     peer_end = start + timedelta(minutes=peer_dur)
                 if peer_end > horizon_end:
                     infeasible.append(peer.operation_id)
+                    blocked.append({
+                        "operation_id": str(peer.operation_id),
+                        "order_id": str(peer.order_id),
+                        "phase_id": str(peer.phase_id or ""),
+                        "status": op_status.BLOCKED_HORIZONTE,
+                        "missing": {
+                            "end_estimado": peer_end.isoformat(),
+                            "horizon_end": horizon_end.isoformat(),
+                        },
+                    })
                     warnings.append(
                         f"Op {peer.operation_id} exceeds horizon "
                         f"({peer_end.isoformat()} > {horizon_end.isoformat()})"
@@ -808,6 +847,13 @@ def _run_scheduling_loop(
         if not progress:
             for op in pending:
                 infeasible.append(op.operation_id)
+                blocked.append({
+                    "operation_id": str(op.operation_id),
+                    "order_id": str(op.order_id),
+                    "phase_id": str(op.phase_id or ""),
+                    "status": op_status.BLOCKED_PRECEDENCIA,
+                    "missing": {"pending_total": len(pending)},
+                })
             warnings.append(
                 f"Precedence deadlock: {len(pending)} ops unresolvable"
             )
@@ -816,6 +862,7 @@ def _run_scheduling_loop(
     return SchedulingLoopResult(
         scheduled=scheduled,
         infeasible=infeasible,
+        blocked=blocked,
         warnings=warnings,
         setups=setups,
         routing_variants_applied=routing_variants_applied,

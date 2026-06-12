@@ -708,6 +708,12 @@ def _extract_kpis(schedule_result: Dict[str, Any]) -> Dict[str, Any]:
         "solve_time_sec": schedule_result.get("solve_time_sec", 0.0),
         "status": schedule_result.get("status", "unknown"),
         "safety_net_triggered": bool(schedule_result.get("safety_net_triggered", False)),
+        # Q.174.F5 — plano parcial DECLARADO: nº de ops/ordens que ficaram
+        # fora por recurso em falta (detalhe em cpo_meta.unplannable). Entram
+        # no hash — só commits novos (a verificação histórica fica intacta:
+        # o hash de cada commit é o calculado na criação).
+        "unplannable_count": len(schedule_result.get("unplannable") or []),
+        "viable": not (schedule_result.get("unplannable") or []),
     }
 
 

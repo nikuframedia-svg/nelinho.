@@ -116,6 +116,10 @@ class CPOScheduleResponse(BaseModel):
     operations: List[Dict[str, Any]] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
     infeasible_op_ids: List[str] = Field(default_factory=list)
+    # Q.174.F5 — secção "não planeável" estruturada (decisão do dono: plano
+    # parcial + secção inviável): status + recurso em falta + sugestão por
+    # op/ordem. Default vazio = back-compat.
+    unplannable: List[Dict[str, Any]] = Field(default_factory=list)
     # Q.131.H — honestidade: ordens deixadas FORA do plano por não terem rota
     # (sem histórico nem template do ERP), e a fração de ordens planeadas. O
     # frontend mostra um aviso em vez de as omitir silenciosamente. Default

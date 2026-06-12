@@ -161,6 +161,7 @@ def decode(
         setups=loop.setups,
         warnings=loop.warnings,
         infeasible_op_ids=loop.infeasible,
+        blocked_ops=loop.blocked,  # Q.174.F5
         routing_variants_applied=loop.routing_variants_applied,
         backwards_shifts=loop.backwards_shifts,
         engine_used="cpo_v4",

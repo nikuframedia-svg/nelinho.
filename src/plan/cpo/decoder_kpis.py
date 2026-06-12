@@ -255,6 +255,7 @@ def build_result_dict(
     routing_variants_applied: int = 0,
     backwards_shifts: int = 0,
     engine_used: str = "cpo_v4",
+    blocked_ops: Optional[List[Dict[str, object]]] = None,
 ) -> Dict[str, object]:
     """Q.166.F — monta o result-dict canónico a partir de uma lista de ScheduledOp.
 
@@ -267,6 +268,7 @@ def build_result_dict(
 
     warnings = warnings or []
     infeasible_op_ids = infeasible_op_ids or []
+    blocked_ops = blocked_ops or []
 
     makespan_hours = _compute_makespan_hours(scheduled, horizon_start)
     tard = _compute_tardiness(scheduled, operations, horizon_start)
@@ -311,4 +313,8 @@ def build_result_dict(
         ),
         "warnings": warnings,
         "infeasible_op_ids": infeasible_op_ids,
+        # Q.174.F5 — secção estruturada "não planeável": status (op_status.*)
+        # + recurso em falta por op (decisão do dono: plano parcial + secção
+        # inviável, nunca silêncio). Paralela a infeasible_op_ids (intacto).
+        "unplannable": blocked_ops,
     }

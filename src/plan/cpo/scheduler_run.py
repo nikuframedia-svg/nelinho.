@@ -21,7 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -563,6 +563,31 @@ async def run_cpo_schedule(
             "coverage": round(resolver.orders_coverage, 4),
         }
 
+    # Q.174.F5 — secção "NÃO PLANEÁVEL" unificada (decisão do dono 2026-06-12:
+    # plano parcial + secção inviável — nunca silêncio, nunca plano falso).
+    # Junta as razões estruturadas do decoder (blocked → result["unplannable"]:
+    # operadores/molde/horizonte/precedência) com as ordens SEM_ROTA do
+    # resolver. O caminho CP-SAT agenda tudo no post-pass, por isso as suas
+    # entradas vêm daqui. Detalhe no cpo_meta (fora do hash, cap 200).
+    from src.plan.cpo import op_status as _op_status
+    _unplannable: List[Dict[str, Any]] = list(result.get("unplannable") or [])
+    for _u in resolver.unplanned:
+        if str(_u.get("reason")) == "rota_concluida":
+            continue  # rota concluída = nada por planear, não é bloqueio
+        _unplannable.append({
+            "operation_id": None,
+            "order_id": str(_u["order_id"]),
+            "phase_id": None,
+            "status": _op_status.SEM_ROTA,
+            "missing": {"reason": str(_u.get("reason") or "")},
+        })
+    if _unplannable:
+        from src.plan.cpo.unplannable_suggestions import enrich_unplannable
+        _unplannable = enrich_unplannable(_unplannable, state)
+    result["unplannable"] = _unplannable
+    if _unplannable:
+        result.setdefault("cpo_meta", {})["unplannable"] = _unplannable[:200]
+
     # Q.168.A — observabilidade dos due dates: quantas ordens do scope têm
     # data-alvo real (só essas o backward-scheduling/tardiness honram).
     result.setdefault("cpo_meta", {})["due_date_coverage"] = (
@@ -726,6 +751,9 @@ async def run_cpo_schedule(
         "operations": operations_out,
         "warnings": list(result.get("warnings", [])),
         "infeasible_op_ids": list(result.get("infeasible_op_ids", [])),
+        # Q.174.F5 — secção "não planeável" (status + recurso em falta por
+        # op/ordem) — plano parcial declarado, nunca silêncio.
+        "unplannable": list(result.get("unplannable", [])),
         # Q.131.H — ordens sem rota (não planeadas) + cobertura, para o
         # frontend mostrar honestamente o que ficou de fora.
         "unplanned_orders": list(result.get("unplanned_orders", [])),

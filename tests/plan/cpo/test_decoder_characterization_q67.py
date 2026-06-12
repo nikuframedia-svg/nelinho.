@@ -142,6 +142,7 @@ RESULT_KEYS = {
     "avg_utilization",
     "warnings",
     "infeasible_op_ids",
+    "unplannable",  # Q.174.F5 — secção estruturada "não planeável"
 }
 
 # Canonical per-operation dict schema.
