@@ -23,7 +23,11 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List
 
 from src.plan.cpo.decoder_helpers import ScheduledOp
-from src.plan.cpo.decoder_resources import _pick_workers, _select_mold
+from src.plan.cpo.decoder_resources import (
+    _MIN_POOL_FOR_MATCHING,
+    _pick_workers,
+    _select_mold,
+)
 from src.plan.services.phase_workcenters import station_ids_for
 
 logger = logging.getLogger(__name__)
@@ -131,10 +135,22 @@ def assign_concrete(
                 pool = set()
         picked: List[str] = []
         if pool:
+            # Q.174.F3 — paridade ICB com o decoder (Q.155.D): o boost
+            # difícil↔curado estava ADORMECIDO no caminho CP-SAT (op_complexity
+            # nunca era passado aqui — o vencedor de produção perdia o
+            # matching). Mesma isenção de fases finas do decoder.
+            op_complexity = 0.0
+            _bc = getattr(state, "boat_complexity", None)
+            if _bc is not None and len(pool) > _MIN_POOL_FOR_MATCHING:
+                try:
+                    op_complexity = _bc(str(getattr(op, "model_id", "") or ""))
+                except Exception:  # pragma: no cover — defensivo
+                    op_complexity = 0.0
             picked = _pick_workers(
                 pool, team, worker_free_at, floor,
                 state=state, quality_weight=0.3,
                 fase_id=fase, worker_load_h=worker_load_h,
+                op_complexity=op_complexity,
             )
 
         # molde: earliest-free entre os do modelo (Q.165.C).

@@ -130,6 +130,11 @@ RAW_TABLES: list[RawTable] = [
     # de transporte em ORDEMFABRICO estão mortas (OF_TR_DATA_PREVISTA parou em
     # 2009; OF_DATAENTREGA 0% nos barcos) — 72.753 OFs com transporte agendado
     # eram invisíveis (auditoria live 2026-06-12, 0/10 matches).
+    # Q.174.F3 — calendário OFICIAL de dias úteis da fábrica (2016→2078,
+    # 13k dias futuros pré-carregados; zero sábados desde 2025). É a fonte
+    # que Report_ProducaoCapacidade usa; o nosso gerador (Seg-Sex + feriados
+    # nacionais PT) perdia paragens locais (ex. S. João 24/6 no Porto).
+    RawTable("DIAS_TRABALHO", None),  # 15.6k linhas, full nightly
     RawTable("TRANSP_OF", None),  # PK composto (TROF_TR_ID, TROF_OF_ID)
     # inc_col=TR_DATA: a janela de 45d do incremental apanha transportes
     # recentes E futuros (TR_DATA >= hoje-45d inclui datas futuras) — é

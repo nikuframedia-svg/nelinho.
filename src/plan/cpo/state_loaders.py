@@ -749,6 +749,55 @@ async def _load_molds_db(
     return by_model, by_id
 
 
+async def _load_team_size_db(
+    session: Any,
+    tenant_id: UUID,
+    months: int = 6,
+) -> Dict[str, int]:
+    """Q.174.F3 — team_size REAL por fase: MÉDIA arredondada de operadores
+    por op dos últimos ``months`` meses (``of_fp`` × ``offp_eq``).
+
+    Porquê média e não mediana: a Laminagem recente é ~50.6% solo / 48.4%
+    dupla (medição live 2026-06-12) — a mediana é um coin-flip (1) que
+    subestima a procura agregada de gente em ~34%; a média (1.51→2) é a
+    melhor aproximação inteira da carga esperada (e valida a heurística
+    PAIR com dados). Fases genuinamente solo ficam a 1. Amostra >= 20;
+    a heurística fica como fallback para fases sem amostra. Best-effort → {}.
+    """
+    if session is None:
+        return {}
+    from sqlalchemy import text
+    from sqlalchemy.exc import SQLAlchemyError
+    sql = text(
+        """
+        SELECT fase,
+               GREATEST(1, ROUND(AVG(n))::int) AS tipico,
+               COUNT(*) AS amostra
+        FROM (
+          SELECT o."OFFP_ID",
+                 o."OFFP_FP_ID"::text AS fase,
+                 COUNT(DISTINCT eq."OFFPEQ_E_ID") AS n
+          FROM factory_raw.of_fp o
+          JOIN factory_raw.offp_eq eq ON eq."OFFPEQ_OFFP_ID" = o."OFFP_ID"
+          WHERE NULLIF(o."OFFP_DATAINICIO", '') >=
+                to_char(now() - make_interval(months => :months), 'YYYY-MM-DD')
+            AND o."OFFP_FP_ID" IS NOT NULL
+          GROUP BY 1, 2
+        ) x
+        GROUP BY fase
+        HAVING COUNT(*) >= 20
+        """
+    )
+    try:
+        rows = (
+            await session.execute(sql, {"months": int(months)})
+        ).mappings().all()
+    except SQLAlchemyError as exc:  # pragma: no cover — outage / missing table
+        logger.debug("Q.174.F3 team_size load skipped: %s", exc)
+        return {}
+    return {str(r["fase"]): int(r["tipico"]) for r in rows}
+
+
 async def _load_skills_db(
     session: Any,
     tenant_id: UUID,

@@ -1,25 +1,17 @@
-"""Q.53.B — factory calendar seed (plan.factory_calendar_day).
+"""Q.53.B / Q.174.F3 — factory calendar seed (plan.factory_calendar_day).
 
-The NELO ERP (MAR-KAYAKS, 284 tables) has **no** holiday / calendar
-table — scanned for `feriado`, `calendario`, `dia_util`, `CALENDARIO`
-and found nothing. Working time has always been implicit.
+Q.174.F3 — afinal o ERP TEM calendário oficial: ``DIAS_TRABALHO``
+(15.637 linhas, 2016→2078, 13k dias FUTUROS pré-carregados; é a fonte
+de ``Report_ProducaoCapacidade``). O scan antigo procurou `feriado`/
+`calendario`/`dia_util` e falhou o nome. Quando o espelho
+``factory_raw.dias_trabalho`` existe e cobre a janela, os dias úteis
+vêm DE LÁ (apanha paragens locais — ex. S. João 24/6 — e pontes que o
+gerador nunca soube); o gerador (Seg-Sex + feriados nacionais PT)
+fica como fallback para BDs sem o mirror.
 
-So this mirror does not *mirror* — it **seeds** the working-time
-master from first principles:
-
-* every Saturday and Sunday → non-working;
-* the Portuguese **national** public holidays (fixed + Easter-derived
-  movable feasts) → non-working;
-* every other weekday → working at the default single ~8h shift.
-
-It seeds a rolling window of `[today - 30d, today + horizon_days]` so
-the CPO scheduler always has calendar coverage for the planning horizon
-plus a little history for the adherence report. Idempotent: upsert by
-`(tenant_id, day)`, so re-running just refreshes labels / flags.
-
-Municipal holidays (Vila do Conde holds 24 June, São João) are NOT
-seeded — they vary and the operator can mark them via the
-`/v1/plan/calendar` API. Only the unambiguous national set is auto-seeded.
+Janela rolante `[today - 30d, today + horizon_days]`; idempotente
+(upsert por `(tenant_id, day)`). O operador continua a poder marcar
+dias via `/v1/plan/calendar` (a API escreve por cima do seed).
 """
 
 from __future__ import annotations
@@ -142,6 +134,47 @@ def build_calendar_rows(
     return rows
 
 
+async def _canonical_working_days(
+    session, start: date, end: date,
+) -> Optional[set]:
+    """Q.174.F3 — dias úteis OFICIAIS de ``factory_raw.dias_trabalho``.
+
+    Devolve o set de dias úteis na janela, ou ``None`` quando o espelho não
+    existe OU não cobre a janela até ``end`` (BD dev sem mirror / horizonte
+    além de 2078) — o caller cai no gerador. Best-effort, nunca rebenta o seed.
+    """
+    from sqlalchemy import text
+    from sqlalchemy.exc import SQLAlchemyError
+    try:
+        probe = await session.execute(text(
+            "SELECT to_regclass('factory_raw.dias_trabalho') IS NOT NULL"
+        ))
+        scalar_fn = getattr(probe, "scalar", None)
+        if not (callable(scalar_fn) and scalar_fn()):
+            return None
+        cov = await session.execute(text(
+            'SELECT MAX(CAST(NULLIF("DTRB_DATA", \'\') AS timestamp))::date '
+            "FROM factory_raw.dias_trabalho"
+        ))
+        max_day = cov.scalar()
+        if max_day is None or max_day < end:
+            logger.info(
+                "calendar: dias_trabalho não cobre a janela (max=%s < %s) — "
+                "gerador", max_day, end,
+            )
+            return None
+        rows = await session.execute(text(
+            'SELECT DISTINCT CAST(NULLIF("DTRB_DATA", \'\') AS timestamp)::date '
+            "FROM factory_raw.dias_trabalho "
+            'WHERE CAST(NULLIF("DTRB_DATA", \'\') AS timestamp)::date '
+            "      BETWEEN :s AND :e"
+        ), {"s": start, "e": end})
+        return {r[0] for r in rows.fetchall()}
+    except SQLAlchemyError as exc:  # pragma: no cover — outage
+        logger.debug("calendar: dias_trabalho indisponível (%s)", exc)
+        return None
+
+
 async def mirror_calendar(
     *,
     session,
@@ -153,7 +186,8 @@ async def mirror_calendar(
     """Seed `plan.factory_calendar_day` for a rolling window.
 
     Window: `[since or today-30d, today + horizon_days]`. Idempotent —
-    upsert by `(tenant_id, day)`.
+    upsert by `(tenant_id, day)`. Q.174.F3: dias úteis canónicos de
+    ``DIAS_TRABALHO`` quando espelhado; gerador como fallback.
     """
     today = local_today()
     start = since or (today - timedelta(days=_LOOKBACK_DAYS))
@@ -161,6 +195,23 @@ async def mirror_calendar(
 
     async with EtlRunner(session, tenant_id, source="calendar") as run:
         rows = build_calendar_rows(start, end, shift_hours=shift_hours)
+        canonical = await _canonical_working_days(session, start, end)
+        source = "gerador"
+        if canonical is not None:
+            source = "dias_trabalho"
+            shift_dec = Decimal(str(shift_hours))
+            for r in rows:
+                util = r["day"] in canonical
+                if util:
+                    r["is_working_day"] = True
+                    r["shift_hours"] = shift_dec
+                    r["label"] = None
+                else:
+                    # mantém o nome gerado (Sábado/feriado nacional) quando
+                    # existe; senão é paragem que SÓ o ERP conhece.
+                    r["is_working_day"] = False
+                    r["shift_hours"] = Decimal("0.00")
+                    r["label"] = r["label"] or "Paragem (ERP)"
         run.count_read(len(rows))
         await run.upsert(
             FactoryCalendarDay,
@@ -170,8 +221,8 @@ async def mirror_calendar(
         )
         n_off = sum(1 for r in rows if not r["is_working_day"])
         logger.info(
-            "calendar seed — %d day(s) [%s..%s], %d non-working",
-            len(rows), start, end, n_off,
+            "calendar seed (%s) — %d day(s) [%s..%s], %d non-working",
+            source, len(rows), start, end, n_off,
         )
     return run.result
 

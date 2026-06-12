@@ -255,6 +255,10 @@ class FactoryState:
     mold_cooldown_h: float = 24.0
     mold_cooldown_ocean_h: float = 72.0
 
+    # Q.174.F3 — mediana REAL de operadores por op, por fase (of_fp×offp_eq,
+    # 6 meses, amostra >= 20). Vazio = heurística PAIR (back-compat).
+    team_size_median: Dict[str, int] = field(default_factory=dict)
+
     # median historical real duration per (fase_id, modelo_id), in hours
     historical_durations: Dict[Tuple[str, str], float] = field(default_factory=dict)
 
@@ -569,6 +573,11 @@ class FactoryState:
             state.skill_matrix = _apply_qualification_gate(
                 state.skill_matrix, qualified,
             )
+
+        # Q.174.F3 — mediana real de operadores por op, por fase (6 meses).
+        # Vazio = heurística PAIR (back-compat exacto).
+        if not state.team_size_median:
+            state.team_size_median = await _load_team_size_db(session, tenant_id)
 
         # Q.160 — restringe o pool a "operadores ativos" (E_ACTIVO + trabalho nos
         # últimos 2 meses, ~107). Filtro input-only, mais restritivo, com guarda
@@ -969,6 +978,19 @@ class FactoryState:
             # override respeitado mas nunca abaixo do mínimo da fase
             return max(min_size, int(cfg["team_size_override"]))
 
+        # Q.174.F3 — entre o override e a heurística entra a MEDIANA REAL da
+        # fase (of_fp×offp_eq, 6 meses, amostra >= 20): a heurística PAIR
+        # planeava 2 pessoas em Laminagem, mas o histórico recente é ~50-68%
+        # solo — a capacidade planeada inflava. REQUIRED continuaria a impor
+        # o mínimo 2 (vazio desde Sprint Q.8); PREFERRED é preferência de
+        # ATRIBUIÇÃO (pair_assignment), não de procura.
+        med = self.team_size_median.get(str(fase_id))
+        if med:
+            required = normalized in {
+                normalize_phase_code(p) for p in self.PAIR_REQUIRED_PHASES
+            }
+            return max(2 if required else 1, int(med))
+
         # Both REQUIRED and PREFERRED return 2 here so the routing/decoder
         # plans for a pair by default. The decoder downgrades to a solo
         # assignment only when the pair pool is exhausted (PREFERRED) or
@@ -1048,6 +1070,7 @@ from src.plan.cpo.state_loaders import (
     _extract_molds,
     _extract_skill_matrix,
     _load_active_operators_db,
+    _load_team_size_db,
     _load_boat_complexity_db,
     _load_confirmed_preference_rules,
     _load_historical_durations_routes_db,
