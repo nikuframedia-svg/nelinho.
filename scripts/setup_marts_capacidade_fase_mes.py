@@ -11,11 +11,6 @@ Fórmula canónica (lida de `dbo.Report_ProducaoCapacidade_Sub_Capacidade`,
 (ausência = `ent_mov` × `ent_mov_tipo` com `MET_MET_ID = 2` = grupo Faltas:
 Injustificada / Justificada / Baixas / Férias; data = `MOVENT_DATA_I`).
 
-Granularidade: 1 row por (mês, fase). Colunas:
-  * `capacidade_dia_teorica` — barcos/dia da fase a 100% de presença.
-  * `dias_ausencia`          — dias-pessoa perdidos a faltas nesse mês.
-  * `capacidade_perdida`     — barcos-dia perdidos (Σ prod × dias-ausente).
-
 Q.175.B — agora que `factory_raw.dias_trabalho` está espelhado (Q.174.I),
 acrescenta `dias_uteis`, `capacidade_mes_teorica` e `capacidade_disponivel`
 (a fórmula completa canónica = cap_dia × dias_úteis - perdida).
@@ -62,15 +57,17 @@ abs AS (
       AND NULLIF(em."MOVENT_DATA_I", '') IS NOT NULL
     GROUP BY 1, 2
 ),
-meses AS (SELECT DISTINCT mes FROM abs),
 -- Q.175.B — dias úteis por mês (canónico: DIAS_TRABALHO; DTRB_DATA = dias que a NELO trabalha)
+-- definido ANTES de meses para que meses possa referenciar esta CTE
 dias_uteis_mes AS (
     SELECT DATE_TRUNC('month', "DTRB_DATA"::timestamp)::date AS mes,
            COUNT(*)                                           AS dias_uteis
     FROM factory_raw.dias_trabalho
     WHERE "DTRB_DATA" IS NOT NULL
     GROUP BY 1
-)
+),
+-- calendário oficial define granularidade temporal (não o histórico de faltas)
+meses AS (SELECT DISTINCT mes FROM dias_uteis_mes)
 SELECT
     m.mes                                                          AS data,
     po.fase_id                                                     AS fase_id,

@@ -204,8 +204,8 @@ def main() -> int:
 
     ours = asyncio.run(_load_our_plan())
     if ours["commit"] is None:
-        print("NOSSO: sem commit saudável -- corre o robô/POST /schedule primeiro.")
-        return 1
+        print("NOSSO: sem commit saudável -- SKIP (corre o robo/POST /schedule primeiro).")
+        return 0
     c = ours["commit"]
     print(f"NOSSO: commit {c['sha'][:8]} ({c['status']}, {c['operations']} ops, "
           f"{c['created_at'][:10]}); laminações no plano: {len(ours['lam'])}")
