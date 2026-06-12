@@ -224,6 +224,28 @@ def test_load_reservas_exclui_ofs_fechadas_q173ao():
     assert '"OF_DATAFIM" IS NULL' in src
 
 
+def test_load_bom_direcao_canonica_q174():
+    """Q.174.F0.2 — guard estático: a BOM filtra pelo PAI (``COMP_P_ID`` =
+    modelo do plano) e devolve o FILHO (``COMP_P_P_ID`` = componente).
+
+    Provado live 2026-06-12 nos 5 modelos com mais WIP: um barco real só
+    aparece como ``COMP_P_ID`` (ex. Ocean Ski 510 Pl → 20 filhos; 0 linhas
+    como ``COMP_P_P_ID``). A direção trocada devolvia 0 linhas para TODOS os
+    barcos e o forecast caía em silêncio no consumo histórico (E2 da
+    reconciliação canónica).
+    """
+    import inspect
+
+    from src.supply.services.shortage_forecast_service import ShortageForecastService
+
+    src = inspect.getsource(ShortageForecastService._load_bom)
+    assert '"COMP_P_ID" = ANY(:model_ids)' in src, (
+        "o filtro da BOM tem de ser pelo PAI (COMP_P_ID = modelo)"
+    )
+    assert 'AS model_id' in src.split('"COMP_P_ID"::text', 1)[1].splitlines()[0]
+    assert 'AS comp_id' in src.split('"COMP_P_P_ID"::text', 1)[1].splitlines()[0]
+
+
 # ---------------------------------------------------------------------------
 # _compute_consumos
 # ---------------------------------------------------------------------------

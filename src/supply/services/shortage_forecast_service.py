@@ -308,9 +308,14 @@ class ShortageForecastService:
         order_model_map = await self._load_order_model_map(ops)
         fontes.append("factory_raw.ordemfabrico")
 
-        # 3. BOM estrutural tentativa (COMP_P_P_ID = model_id).
-        #    Na NELO a BOM é invertida (barco aparece como COMP_P_ID, não como pai)
-        #    → bom_map pode ficar vazio. Fallback: consumo histórico mediano.
+        # 3. BOM estrutural (Q.174.F0.2): COMP_P_ID = PAI (o barco/modelo),
+        #    COMP_P_P_ID = FILHO (componente) — provado live 2026-06-12 nos 5
+        #    modelos com mais WIP (ex. Ocean Ski 510 Pl: 20 filhos como
+        #    COMP_P_ID, 0 como COMP_P_P_ID). O comentário anterior ("a BOM é
+        #    invertida") estava ERRADO e o filtro usava a coluna trocada →
+        #    bom_map ficava SEMPRE vazio para barcos reais e o forecast caía
+        #    em silêncio no consumo histórico. Fallback mantém-se para
+        #    modelos sem BOM.
         bom_map = await self._load_bom(ops, order_model_map)
         fontes.append("factory_raw.produto_componente")
 
@@ -645,16 +650,20 @@ class ShortageForecastService:
 
         model_ids = list({mp[0] for mp in model_phase_pairs})
 
-        # Carrega BOM para todos os modelos do plano de uma vez
+        # Carrega BOM para todos os modelos do plano de uma vez.
+        # Q.174.F0.2 — direção CERTA: COMP_P_ID = pai (modelo do plano),
+        # COMP_P_P_ID = filho (componente consumido). As linhas do configurador
+        # (COMP_P_ID NULL, ~25k, ligadas a atributo/linha) ficam fora por
+        # construção (o filtro por pai nunca casa NULL).
         q = text("""
             SELECT
-                "COMP_P_P_ID"::text  AS model_id,
-                "COMP_P_ID"::text    AS comp_id,
+                "COMP_P_ID"::text    AS model_id,
+                "COMP_P_P_ID"::text  AS comp_id,
                 "COMP_QUANTIDADE"    AS qty,
                 "COMP_FP_ID"         AS fase_id
             FROM factory_raw.produto_componente
             WHERE "COMP_ELIMINADO" IS NULL
-              AND "COMP_P_P_ID" = ANY(:model_ids)
+              AND "COMP_P_ID" = ANY(:model_ids)
         """)
         result = await self._session.execute(q, {"model_ids": model_ids})
         rows = result.fetchall()
