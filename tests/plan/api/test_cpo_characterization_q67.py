@@ -131,6 +131,7 @@ EXPECTED_ROUTES = [
     ("GET", "/v1/plan/cpo/commits/{sha}/alternatives"),
     ("POST", "/v1/plan/cpo/commits/{sha}/decide"),
     ("GET", "/v1/plan/cpo/operations/{operation_id}/worker-pairs"),
+    ("GET", "/v1/plan/cpo/operations/{operation_id}/explain"),
 ]
 
 
@@ -941,3 +942,140 @@ def test_worker_pairs_returns_ranked_pairs(monkeypatch):
     for key in ["chefe_id", "partner_id", "score"]:
         assert key in first
     assert first["score"] == 8.2
+
+# ---------------------------------------------------------------------------
+# GET /operations/{operation_id}/explain (Q.174.F8)
+# ---------------------------------------------------------------------------
+
+
+class _ExplainState:
+    """Stub de FactoryState com os acessores que o explain consulta."""
+
+    open_orders = [{"order_id": "OF-1", "modelo_id": "M1"}]
+
+    def workers_for(self, fase_id):
+        return {"E001", "E002", "E003"} if fase_id == "40" else set()
+
+    def skill_count(self, worker):
+        return {"E001": 10, "E002": 5, "E003": 1}.get(worker, 0)
+
+    def boat_complexity(self, model_id):
+        return 1.5
+
+    def preferred_rank_score(self, worker, fase_id):
+        return {"E001": 1.0}.get(worker)
+
+    def preference_score_for(self, worker, fase_id):
+        return None
+
+    def absence_adjusted_start(self, worker, start, dur_h):
+        return start
+
+
+def _explain_commit():
+    return _make_commit(operations=[
+        {
+            "operation_id": "op-0",
+            "order_id": "OF-1",
+            "phase_id": "40",
+            "workers": ["E002"],
+            "start_time": "2026-06-15T08:00:00",
+            "end_time": "2026-06-15T10:00:00",
+            "duration_minutes": 120.0,
+        },
+        {
+            "operation_id": "op-1",
+            "order_id": "OF-1",
+            "phase_id": "40",
+            "workers": ["E001"],
+            "start_time": "2026-06-15T09:00:00",
+            "end_time": "2026-06-15T10:00:00",
+            "duration_minutes": 60.0,
+        },
+    ])
+
+
+def _patch_explain(monkeypatch, commit, state=None):
+    async def _fake_latest(self):
+        return commit
+
+    async def _fake_load(_db, _tid):
+        return state if state is not None else _ExplainState()
+
+    monkeypatch.setattr("src.plan.cpo.state.FactoryState.load", _fake_load)
+    monkeypatch.setattr(
+        "src.plan.cpo.commits.CommitsService.get_latest", _fake_latest
+    )
+
+
+def test_explain_returns_404_when_no_commit(monkeypatch):
+    async def _none(self):
+        return None
+
+    async def _fake_load(_db, _tid):
+        return _ExplainState()
+
+    monkeypatch.setattr("src.plan.cpo.state.FactoryState.load", _fake_load)
+    monkeypatch.setattr(
+        "src.plan.cpo.commits.CommitsService.get_latest", _none
+    )
+
+    client = TestClient(_build_app())
+    resp = client.get(
+        "/v1/plan/cpo/operations/op-1/explain",
+        headers={"X-Tenant-Id": str(DEV_TENANT)},
+    )
+    assert resp.status_code == 404
+
+
+def test_explain_devolve_fatores_e_escolhido(monkeypatch):
+    _patch_explain(monkeypatch, _explain_commit())
+
+    client = TestClient(_build_app())
+    resp = client.get(
+        "/v1/plan/cpo/operations/op-1/explain",
+        headers={"X-Tenant-Id": str(DEV_TENANT)},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["chosen"] == ["E001"]
+    assert body["pool_size"] == 3
+    assert body["phase_id"] == "40"
+    assert body["model_id"] == "M1"
+    # pool 3 ≤ limiar de fase fina (6) → sem boost ICB (igual ao decoder)
+    assert body["op_complexity_icb"] == 0.0
+    by_id = {c["worker_id"]: c for c in body["candidates"]}
+    assert by_id["E001"]["escolhido"] is True
+    assert by_id["E001"]["rank_curado"] == 1.0
+    # E002 está noutra op até às 10h00 e esta começa às 09h00 → 1h até livre
+    assert by_id["E002"]["horas_ate_livre"] == 1.0
+    assert by_id["E002"]["carga_plano_h"] == 2.0
+    # alternativas excluem o escolhido
+    alt_ids = [c["worker_id"] for c in body["alternatives"]]
+    assert "E001" not in alt_ids
+    assert body["explain_pt"]
+    assert "legenda_pt" in body
+
+
+def test_explain_fase_sem_pool_e_honesto(monkeypatch):
+    commit = _make_commit(operations=[{
+        "operation_id": "op-cura",
+        "order_id": "OF-1",
+        "phase_id": "CURA",
+        "workers": [],
+        "start_time": "2026-06-15T08:00:00",
+        "end_time": "2026-06-16T08:00:00",
+        "duration_minutes": 1440.0,
+    }])
+    _patch_explain(monkeypatch, commit)
+
+    client = TestClient(_build_app())
+    resp = client.get(
+        "/v1/plan/cpo/operations/op-cura/explain",
+        headers={"X-Tenant-Id": str(DEV_TENANT)},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["pool_size"] == 0
+    assert body["candidates"] == []
+    assert "sem mão-de-obra" in body["explain_pt"]

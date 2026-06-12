@@ -364,6 +364,97 @@ def _pick_workers(
     return candidates[:team_size]
 
 
+def explain_pick_workers(
+    pool: set,
+    worker_free_at: Dict[str, datetime],
+    earliest: datetime,
+    *,
+    state: Optional[FactoryState] = None,
+    quality_weight: float = 0.0,
+    fase_id: Optional[str] = None,
+    op_complexity: float = 0.0,
+    worker_load_h: Optional[Dict[str, float]] = None,
+    op_duration_h: float = 0.0,
+) -> List[Dict[str, Any]]:
+    """Q.174.F8 — a MESMA fórmula do `_pick_workers`, mas devolvendo o
+    breakdown por candidato (para o endpoint `/operations/{id}/explain`).
+
+    Mantida em paralelo de propósito: o `_pick_workers` é hot-path (corre
+    por op × pool em cada decode) e não deve pagar a construção de dicts.
+    O drift é guardado por property test (hypothesis) que compara a ORDEM
+    dos dois em inputs aleatórios — se a fórmula divergir, o teste rebenta.
+
+    Devolve a lista completa do pool ordenada por `combined` DESC
+    (tie-break por worker id, igual ao `_pick_workers`).
+    """
+    if not pool:
+        return []
+    wload = worker_load_h or {}
+    _max_load = max(wload.values(), default=0.0)
+
+    qw = max(0.0, min(1.0, float(quality_weight)))
+    qw_eff = min(1.0, qw + max(0.0, float(op_complexity)) * _COMPLEXITY_SKILL_BOOST)
+
+    skill_scores: Dict[str, float] = {}
+    if state is not None and qw_eff > 0.0:
+        raw_counts = {w: float(state.skill_count(w)) for w in pool}
+        max_count = max(raw_counts.values(), default=1.0)
+        if max_count <= 0:
+            max_count = 1.0
+        skill_scores = {w: c / max_count for w, c in raw_counts.items()}
+
+    _pref_rank = getattr(state, "preferred_rank_score", None) if state else None
+    _pref_sector = getattr(state, "preference_score_for", None) if state else None
+    _abs_adj = getattr(state, "absence_adjusted_start", None) if state else None
+
+    out: List[Dict[str, Any]] = []
+    for worker in pool:
+        free_at = worker_free_at.get(worker, earliest)
+        ausente = False
+        if _abs_adj is not None and op_duration_h > 0.0:
+            abs_free = _abs_adj(worker, earliest, op_duration_h)
+            if abs_free > free_at:
+                free_at = abs_free
+                ausente = True
+        hours_until_free = max(0.0, (free_at - earliest).total_seconds() / 3600.0)
+        availability = 1.0 / (1.0 + hours_until_free)
+        rank_score = None
+        pref = None
+        if qw_eff > 0.0 and fase_id is not None:
+            if _pref_rank is not None:
+                rank_score = _pref_rank(worker, fase_id)
+            pref = rank_score
+            if pref is None and _pref_sector is not None:
+                pref = _pref_sector(worker, fase_id)
+        skill = pref if pref is not None else skill_scores.get(worker, 0.0)
+        combined = skill * qw_eff + availability * (1.0 - qw_eff)
+        if rank_score is not None:
+            combined += float(op_complexity) * _CURATED_COMPLEXITY_BONUS
+        load_frac = (wload.get(worker, 0.0) / _max_load) if _max_load > 0.0 else 0.0
+        if _max_load > 0.0:
+            combined -= _LOAD_BALANCE_PENALTY * load_frac
+        out.append({
+            "worker_id": worker,
+            "combined": combined,  # raw p/ ordenar; arredondado abaixo
+            "skill_score": round(float(skill), 4),
+            "rank_curado": (
+                round(float(rank_score), 4) if rank_score is not None else None
+            ),
+            "availability": round(availability, 4),
+            "horas_ate_livre": round(hours_until_free, 2),
+            "ausente_na_janela": ausente,
+            "carga_plano_h": round(float(wload.get(worker, 0.0)), 2),
+            "carga_frac": round(load_frac, 4),
+        })
+
+    # Ordena com o combined CRU (arredondar antes mudava a ordem em
+    # quase-empates vs `_pick_workers`); só depois arredonda p/ display.
+    out.sort(key=lambda d: (-d["combined"], d["worker_id"]))
+    for d in out:
+        d["combined"] = round(d["combined"], 4)
+    return out
+
+
 def _sanitise_permutation(
     chromosome: Chromosome,
     operations: List[SchedulingOperation],
