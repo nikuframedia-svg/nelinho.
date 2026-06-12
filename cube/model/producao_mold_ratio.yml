@@ -1,0 +1,66 @@
+cubes:
+  - name: producao_mold_ratio
+    sql_table: marts.v_mold_ratio
+    description: >
+      Q.175.C — rácio moldes/barcos-WIP por modelo de produto.
+      Matching canónico via assinatura (P_NP_ID, P_M_ID, P_TAM_ID) +
+      UNION de links históricos OFFP_OF_ID_MLD, igual ao CPO.
+      Fonte: factory_raw.ordemfabrico + factory_raw.of_fp + factory_raw.v_of_is_boat.
+      Famílias com racio < 0.10 (em_risco=true) são gargalos de laminação.
+
+    dimensions:
+      - name: modelo_id
+        sql: modelo_id
+        type: number
+        primary_key: true
+        description: ID do produto (P_ID).
+
+      - name: modelo_nome
+        sql: modelo_nome
+        type: string
+        description: Nome do produto (P_NOME).
+
+      - name: em_risco
+        sql: em_risco
+        type: boolean
+        description: >
+          true se racio < 0.10 ou sem moldes — menos de 1 molde por
+          cada 10 barcos na fila WIP. Bottleneck de laminação.
+
+    measures:
+      - name: total_modelos
+        sql: modelo_id
+        type: count_distinct
+        description: >
+          Q.175.C — número de modelos distintos em WIP.
+          Anchor: 406 modelos em 2026-06-12.
+
+      - name: modelos_em_risco
+        sql: modelo_id
+        type: count_distinct
+        filters:
+          - sql: em_risco = true
+        description: >
+          Q.175.C — modelos com racio < 0.10 (gargalo de molde).
+          Anchor: 42 em 2026-06-12 (10% do total).
+
+      - name: total_ofs_wip
+        sql: ofs_wip
+        type: sum
+        description: >
+          Q.175.C — total de OFs barco em WIP activo.
+          Anchor: 1146 OFs em 2026-06-12.
+
+      - name: total_moldes
+        sql: moldes_count
+        type: sum
+        description: >
+          Q.175.C — total de pares modelo-molde disponíveis (matching canónico).
+          Anchor: 601 pares em 2026-06-12.
+
+      - name: racio_medio
+        sql: racio
+        type: avg
+        description: >
+          Q.175.C — rácio médio moldes/OFs-WIP por modelo.
+          Para averiguação de risco global de laminação.

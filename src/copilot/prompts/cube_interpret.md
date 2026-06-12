@@ -404,19 +404,24 @@ ranking individual permitido.
 - "Porquê tantas horas extra?" → abstain (causal).
 
 ### Cube: `capacidade_fase`
-Q.167.C — capacidade de produção por fase e impacto das ausências.
+Q.167.C/Q.175.B — capacidade de produção por fase e impacto das ausências.
 Fórmula canónica (Report_ProducaoCapacidade_Sub_Capacidade): por entidade
 ACTIVA cuja fase principal (E_FP_ID) = a fase, capacidade teórica =
 E_PRODUTIVIDADE (barcos/pessoa/dia); perde-a num dia de falta (ent_mov ×
-ent_mov_tipo MET_MET_ID=2). Anchor live: Laminagem 9 barcos/dia (9 ops);
-62 486 faltas; 38 455 barcos-dia perdidos no histórico. Granularidade mensal.
+ent_mov_tipo MET_MET_ID=2). Usa DIAS_TRABALHO (calendar oficial da NELO).
+Anchor live: Laminagem 9 barcos/dia × 22 dias = 198 barcos/mês disponíveis.
 
 **Measures**
-- `capacidade_fase.capacidade_dia` — `max` — capacidade teórica barcos/dia da
-  fase (RÁCIO/dia, NUNCA somar ao longo do tempo). "Quanto produz a Laminagem
-  por dia?" → measure `.capacidade_dia` + filtro `fase contains 'Laminagem'`.
+- `capacidade_fase.capacidade_disponivel` — `sum` — barcos-mês efectivos
+  disponíveis = (cap_dia × dias_úteis) - perdida_a_faltas. **A measure
+  principal para "quanta capacidade tem a fase X?"**. Filtrar por fase+mês.
+- `capacidade_fase.capacidade_mes_teorica` — `sum` — barcos-mês a 100%
+  presença (cap_dia × dias_úteis). Referência de tecto teórico.
+- `capacidade_fase.capacidade_dia` — `max` — capacidade teórica barcos/dia
+  (RÁCIO/dia, NUNCA SUM ao longo do tempo). "Quanto produz por dia?"
 - `capacidade_fase.capacidade_perdida` — `sum` — barcos-dia perdidos a faltas.
 - `capacidade_fase.dias_ausencia` — `sum` — dias-pessoa de falta.
+- `capacidade_fase.dias_uteis` — `max` — dias úteis do mês (DIAS_TRABALHO).
 
 **Dimensions**
 - `capacidade_fase.data` — `time` — primeiro dia do mês.
@@ -424,8 +429,8 @@ ent_mov_tipo MET_MET_ID=2). Anchor live: Laminagem 9 barcos/dia (9 ops);
 - `capacidade_fase.fase_id` — `number` — `FP_ID`.
 
 **Restrições**:
-- `capacidade_dia` é rácio/dia → MAX (não SUM no tempo). `capacidade_perdida`
-  e `dias_ausencia` são aditivas (SUM).
+- `capacidade_dia` e `dias_uteis` são rácios → MAX (não SUM no tempo).
+- `capacidade_disponivel`, `capacidade_perdida`, `dias_ausencia` são aditivas.
 - "Porque há tantas faltas?" → abstain (causal).
 
 ## Operators permitidos (filters)
@@ -1202,6 +1207,66 @@ de marcar "segundo a classificação NELO registada"):
   }
 }
 ```
+
+---
+
+## `producao_mold_ratio` — Rácio moldes/barcos-WIP (Q.175.C)
+
+Fonte: `marts.v_mold_ratio`. Matching canónico (NP,M,TAM) + histórico.
+
+**Quando usar:** "quantos moldes tem o modelo X?", "quais os modelos em risco de falta de moldes?",
+"qual o rácio de cobertura de moldes?". NÃO usar para totais de produção ou capacidade.
+
+**Measures:**
+- `producao_mold_ratio.total_modelos` — `count_distinct` — modelos WIP activos. Anchor: 406.
+- `producao_mold_ratio.modelos_em_risco` — `count_distinct` (filtro `em_risco=true`) — modelos com rácio < 0.10. Anchor: 42.
+- `producao_mold_ratio.total_ofs_wip` — `sum` — total OFs barco WIP. Anchor: 1146.
+- `producao_mold_ratio.total_moldes` — `sum` — pares modelo-molde disponíveis. Anchor: 601.
+- `producao_mold_ratio.racio_medio` — `avg` — rácio médio por modelo.
+
+**Dimensions:**
+- `producao_mold_ratio.modelo_nome` — nome do produto.
+- `producao_mold_ratio.em_risco` — `boolean`; filtrar `true` para ver só bottlenecks.
+
+**Exemplos:**
+
+**Pergunta:** "Quantos modelos em WIP têm risco de falta de moldes?"
+**Saída:**
+```json
+{
+  "abstain": false,
+  "reason": "",
+  "query": {
+    "measures": ["producao_mold_ratio.modelos_em_risco", "producao_mold_ratio.total_modelos"],
+    "dimensions": [],
+    "filters": [],
+    "timeDimensions": [],
+    "order": [],
+    "limit": null
+  }
+}
+```
+
+**Pergunta:** "Mostra os modelos com mais OFs em risco de molde."
+**Saída:**
+```json
+{
+  "abstain": false,
+  "reason": "",
+  "query": {
+    "measures": ["producao_mold_ratio.total_ofs_wip", "producao_mold_ratio.total_moldes"],
+    "dimensions": ["producao_mold_ratio.modelo_nome"],
+    "filters": [
+      {"member": "producao_mold_ratio.em_risco", "operator": "equals", "values": ["true"]}
+    ],
+    "timeDimensions": [],
+    "order": [["producao_mold_ratio.total_ofs_wip", "desc"]],
+    "limit": 10
+  }
+}
+```
+
+---
 
 ## Tu agora
 
