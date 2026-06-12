@@ -94,10 +94,65 @@ def run_cpsat_global(
             if m > 0:
                 floors_min[str(oid)] = m
         floors_min = floors_min or None
-    timing = CPSATScheduler(config or CPSATConfig()).solve_timing(
-        main_ops, state, horizon_start, hint_starts_min=greedy_hint,
-        start_floors_min=floors_min,
+    # Q.174.S — TWO-STAGE quando o warm-start do greedy não serve. No scope
+    # completo o greedy excede o horizonte (makespan ~meses) → a maioria das
+    # hints cai fora do domínio e o modelo COM cooldown de moldes (Q.174.F2)
+    # é demasiado duro para o solver achar a primeira solução a frio: UNKNOWN
+    # no budget inteiro → caía SEMPRE no greedy (~810 dias). Medido live
+    # (2026-06-12, 7.428 ops): relaxado acha 541.9h em 60s; o modelo completo
+    # com esse warm-start acha 643.7h em 120s.
+    #   fase 1: modelo relaxado (sem extensão de cooldown) → solução base;
+    #   fase 2: modelo completo, warm-start da fase 1, horizonte dinâmico.
+    # Se a fase 2 não fechar no budget, usa-se o timing da fase 1: o cooldown
+    # exato é SEMPRE aplicado pelo post-pass por molde concreto (Q.174.F2) e
+    # validado no write-gate — o timing relaxado é só um piso menos realista.
+    cfg = config or CPSATConfig()
+    base_h = int(cfg.horizon_minutes)
+    hint_cover = (
+        sum(1 for v in (greedy_hint or {}).values() if int(v) <= base_h)
+        / max(1, len(greedy_hint or {}))
     )
+    scheduler = CPSATScheduler(cfg)
+    two_stage = False
+    if greedy_hint and hint_cover >= 0.5:
+        # hint maioritariamente dentro do domínio (scope interativo): o
+        # caminho single-stage de sempre converge depressa.
+        timing = scheduler.solve_timing(
+            main_ops, state, horizon_start, hint_starts_min=greedy_hint,
+            start_floors_min=floors_min,
+        )
+    else:
+        two_stage = True
+        from dataclasses import replace as _dc_replace
+
+        stage1 = CPSATScheduler(
+            _dc_replace(cfg, budget_s=cfg.budget_s * 0.4),
+        ).solve_timing(
+            main_ops, state, horizon_start,
+            start_floors_min=floors_min, relax_mold_cooldown=True,
+        )
+        if not stage1.available:
+            logger.info(
+                "CP-SAT global indisponível (fase 1 relaxada: %s) — "
+                "fallback ao greedy", stage1.reason,
+            )
+            return None
+        stage2 = CPSATScheduler(
+            _dc_replace(cfg, budget_s=cfg.budget_s * 0.6),
+        ).solve_timing(
+            main_ops, state, horizon_start,
+            hint_starts_min=dict(stage1.starts_min),
+            start_floors_min=floors_min,
+        )
+        if stage2.available:
+            timing = stage2
+        else:
+            logger.info(
+                "CP-SAT fase 2 (cooldown) sem solução no budget (%s) — "
+                "a usar o timing relaxado da fase 1 (cooldown exato é "
+                "aplicado no post-pass por molde)", stage2.reason,
+            )
+            timing = stage1
     if not timing.available:
         logger.info("CP-SAT global indisponível (%s) — fallback ao greedy", timing.reason)
         return None
@@ -157,6 +212,9 @@ def run_cpsat_global(
         # pela BD, sem logs).
         "cpsat_gap_pct": timing.gap_pct,
         "cpsat_horizon_minutes": timing.horizon_minutes_used,
+        # Q.174.S — auditável: o plano veio do caminho single-stage (hint do
+        # greedy dentro do domínio) ou do two-stage relaxado→completo.
+        "cpsat_two_stage": two_stage,
         "repair_ops_merged": len(repair_ops),
         "boats_in_main_plan": n_boats,
     }

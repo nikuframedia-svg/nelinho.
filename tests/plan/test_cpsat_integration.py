@@ -172,3 +172,115 @@ def test_engine_sem_cpsat_nao_inventa_gate(monkeypatch):
     res = CPOv4Engine(state, config=cfg).schedule(_ops(2), _machines(), _H0, _HE)
     assert res["cpo_meta"]["engine"] == "greedy_ga"
     assert "cpsat_gate" not in res["cpo_meta"]
+
+
+# ---------------------------------------------------------------------------
+# Q.174.S — two-stage: relaxado → completo (cooldown de moldes)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not cs.HAS_ORTOOLS, reason="ortools não instalado")
+def test_two_stage_quando_hint_fora_do_dominio():
+    """Hint do greedy além do horizonte (scope completo): o caminho
+    single-stage com o modelo de cooldown dava UNKNOWN no budget inteiro
+    → greedy (~810 dias). O two-stage resolve relaxado e usa o warm-start
+    no modelo completo. cpo_meta documenta o caminho."""
+    state = _state()
+    ops = _ops(3)
+    # hint inteiramente FORA do domínio (610k min >> H 216k) → two-stage.
+    hint = {str(o.operation_id): 610_000 for o in ops}
+    res = run_cpsat_global(
+        state, ops, _machines(), _H0, _HE,
+        config=cs.CPSATConfig(budget_s=10, deterministic=True),
+        greedy_hint=hint,
+    )
+    assert res is not None
+    assert res["cpo_meta"]["cpsat_two_stage"] is True
+    assert res["engine_used"] == "cpsat_global"
+    assert res["makespan_hours"] > 0
+
+
+@pytest.mark.skipif(not cs.HAS_ORTOOLS, reason="ortools não instalado")
+def test_single_stage_quando_hint_serve():
+    """Hint dentro do domínio (scope interativo): caminho de sempre.
+
+    O hint tem de ser CONSISTENTE (como o greedy real é por construção):
+    um hint degenerado encolhe o horizonte dinâmico abaixo do mínimo
+    físico e dá INFEASIBLE artificial — não é o caso de produção."""
+    state = _state()
+    ops = _ops(3)
+    # schedule plausível: A em 2 estações (0/0/120), B a seguir ao A.
+    hint = {
+        "O0A": 0, "O0B": 120,
+        "O1A": 0, "O1B": 120,
+        "O2A": 120, "O2B": 240,
+    }
+    res = run_cpsat_global(
+        state, ops, _machines(), _H0, _HE,
+        config=cs.CPSATConfig(budget_s=10, deterministic=True),
+        greedy_hint=hint,
+    )
+    assert res is not None
+    assert res["cpo_meta"]["cpsat_two_stage"] is False
+
+
+@pytest.mark.skipif(not cs.HAS_ORTOOLS, reason="ortools não instalado")
+def test_fase2_sem_solucao_usa_timing_relaxado(monkeypatch):
+    """Se a fase 2 (cooldown) não fecha no budget, o timing relaxado da
+    fase 1 segue para o post-pass — que aplica o cooldown EXATO por molde
+    (Q.174.F2); nunca se cai no greedy tendo uma solução relaxada."""
+    calls = {"n": 0}
+    real = cs.CPSATScheduler.solve_timing
+
+    def _scripted(self, ops, state, hs, **kw):
+        calls["n"] += 1
+        if kw.get("relax_mold_cooldown"):
+            return real(self, ops, state, hs, **kw)
+        # fase 2 (modelo completo) "esgota o budget"
+        return cs.CPSATTimingResult(
+            available=False, status="UNKNOWN", reason="no_solution:UNKNOWN",
+        )
+
+    monkeypatch.setattr(cs.CPSATScheduler, "solve_timing", _scripted)
+    res = run_cpsat_global(
+        _state(), _ops(3), _machines(), _H0, _HE,
+        config=cs.CPSATConfig(budget_s=10, deterministic=True),
+        greedy_hint={"O0A": 610_000},  # fora do domínio → two-stage
+    )
+    assert res is not None  # NÃO caiu no greedy
+    assert calls["n"] == 2  # fase 1 relaxada + fase 2 completa
+    assert res["cpo_meta"]["cpsat_two_stage"] is True
+
+
+@pytest.mark.skipif(not cs.HAS_ORTOOLS, reason="ortools não instalado")
+def test_relax_mold_cooldown_remove_extensao():
+    """Com relax=True, 2 barcos do mesmo modelo (1 molde, cooldown 24h)
+    podem laminar em sequência imediata (só dur); com relax=False o 2º
+    começa >= dur+cooldown depois do 1º."""
+    from src.plan.cpo.state import MoldInfo
+
+    state = _state()
+    state.molds_by_model = {"M1": [MoldInfo(molde_id="70001", modelo_id="M1")]}
+    state.mold_cooldown_h = 24.0
+    ops = [
+        SchedulingOperation(
+            operation_id=f"L{i}", order_id=f"OF{i}", product_id="M1",
+            sequence=1, operation_code="A", duration_minutes=120,
+            machine_id=None, phase_id="A", team_size=1,
+            mold_required=True, model_id="M1",
+        )
+        for i in range(2)
+    ]
+    cfg = cs.CPSATConfig(budget_s=10, deterministic=True)
+
+    relaxed = cs.CPSATScheduler(cfg).solve_timing(
+        ops, state, _H0, relax_mold_cooldown=True,
+    )
+    full = cs.CPSATScheduler(cfg).solve_timing(ops, state, _H0)
+
+    assert relaxed.available and full.available
+    r_starts = sorted(relaxed.starts_min.values())
+    f_starts = sorted(full.starts_min.values())
+    assert r_starts[1] - r_starts[0] >= 120          # exclusividade dur-only
+    assert r_starts[1] - r_starts[0] < 120 + 24 * 60  # sem extensão
+    assert f_starts[1] - f_starts[0] >= 120 + 24 * 60  # dur + cooldown

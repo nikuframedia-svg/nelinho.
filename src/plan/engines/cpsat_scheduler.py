@@ -104,10 +104,18 @@ class CPSATScheduler:
         *,
         hint_starts_min: Optional[Dict[str, int]] = None,
         start_floors_min: Optional[Dict[str, int]] = None,
+        relax_mold_cooldown: bool = False,
     ) -> CPSATTimingResult:
         """Devolve start/end (min desde horizon_start) por op, minimizando makespan.
 
         `hint_starts_min` (opcional) = warm-start de um schedule greedy (op_id→min).
+        `relax_mold_cooldown=True` remove a EXTENSÃO de cooldown dos intervalos
+        do cumulative de moldes (Q.174.F2) — usado como 1ª fase do two-stage
+        (Q.174.S): no scope completo (~7.4k ops) o modelo com cooldown é
+        demasiado duro para o solver encontrar a PRIMEIRA solução a frio
+        (UNKNOWN no budget inteiro); a solução relaxada serve de warm-start
+        à 2ª fase com o modelo completo. A exclusividade do molde (cap
+        n_molds, dur-only) mantém-se mesmo relaxado.
         Sem ortools → available=False (o caller mantém o greedy).
         """
         t0 = time.time()
@@ -293,7 +301,7 @@ class CPSATScheduler:
         mch = getattr(state, "mold_cooldown_hours", None)
 
         def _cd_min_for(model_id: str) -> int:
-            if mch is None:
+            if mch is None or relax_mold_cooldown:
                 return 0
             try:
                 if mfm is not None and not model_id.startswith("order::"):
