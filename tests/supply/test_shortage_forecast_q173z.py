@@ -297,6 +297,108 @@ def test_load_reservas_filtros_canonicos_q174():
     assert '"OF_E_ID_ENC" <> 19747' in src
 
 
+def test_explode_multinivel_sem_stock_propaga_tudo_q174():
+    """Sem cobertura da peça, a procura desce inteira aos filhos (qty×qty)."""
+    from src.supply.services.shortage_forecast_service import (
+        _explode_consumos_multinivel,
+    )
+
+    d = date(2026, 6, 20)
+    out = _explode_consumos_multinivel(
+        consumos={"100": [(d, 10.0)]},
+        bom_children={"100": [("200", 2.0)], "200": [("300", 3.0)]},
+        stock_map={},
+        producao_interna={},
+    )
+    assert out["100"] == [(d, 10.0)]          # procura da peça mantém-se
+    assert out["200"] == [(d, 20.0)]          # 10 × 2
+    assert out["300"] == [(d, 60.0)]          # 20 × 3
+
+
+def test_explode_multinivel_netting_total_q174():
+    """Peça totalmente coberta por stock → filhos NÃO herdam nada (provado
+    live OF 501298: explosão cega duplicaria — o ERP regista peça E
+    subcomponentes contra a OF do barco)."""
+    from src.supply.services.shortage_forecast_service import (
+        _explode_consumos_multinivel,
+    )
+
+    d = date(2026, 6, 20)
+    out = _explode_consumos_multinivel(
+        consumos={"100": [(d, 10.0)]},
+        bom_children={"100": [("200", 2.0)]},
+        stock_map={"100": 10.0},
+        producao_interna={},
+    )
+    assert "200" not in out
+
+
+def test_explode_multinivel_netting_parcial_q174():
+    """Cobertura parcial (stock 4 + produção interna 2 de 10) → filhos herdam
+    só o remanescente (ratio 0.4)."""
+    from src.supply.services.shortage_forecast_service import (
+        _explode_consumos_multinivel,
+    )
+
+    d = date(2026, 6, 20)
+    out = _explode_consumos_multinivel(
+        consumos={"100": [(d, 10.0)]},
+        bom_children={"100": [("200", 5.0)]},
+        stock_map={"100": 4.0},
+        producao_interna={"100": 2.0},
+    )
+    assert out["200"] == [(d, pytest.approx(20.0))]  # 10×0.4 × 5
+
+
+def test_explode_multinivel_cobertura_nao_reusada_q174():
+    """O mesmo stock não cobre procura em ramos/níveis diferentes — a
+    cobertura é consumida uma vez (cobertura_usada)."""
+    from src.supply.services.shortage_forecast_service import (
+        _explode_consumos_multinivel,
+    )
+
+    d1, d2 = date(2026, 6, 20), date(2026, 6, 25)
+    # "200" recebe procura de dois pais (nível-1 direto e via "100").
+    out = _explode_consumos_multinivel(
+        consumos={"100": [(d1, 10.0)], "200": [(d2, 6.0)]},
+        bom_children={"100": [("200", 1.0)], "200": [("300", 1.0)]},
+        stock_map={"200": 6.0},
+        producao_interna={},
+    )
+    # Nível 1: "200" tem procura própria 6 → coberta pelo stock 6 (usada).
+    # Nível 2: "200" recebe 10 via "100" → stock já gasto → desce aos filhos.
+    total_300 = sum(q for _, q in out.get("300", []))
+    assert total_300 == pytest.approx(10.0)
+
+
+def test_explode_multinivel_ciclo_limitado_q174():
+    """Ciclo a→b→a (dados sujos) termina pelo cap de profundidade."""
+    from src.supply.services.shortage_forecast_service import (
+        _explode_consumos_multinivel,
+    )
+
+    d = date(2026, 6, 20)
+    out = _explode_consumos_multinivel(
+        consumos={"a": [(d, 1.0)]},
+        bom_children={"a": [("b", 1.0)], "b": [("a", 1.0)]},
+        stock_map={},
+        producao_interna={},
+        max_depth=4,
+    )
+    # Termina; "a" e "b" acumulam procura limitada pelo cap, sem loop infinito.
+    assert sum(q for _, q in out["b"]) <= 2.0
+
+
+def test_explode_multinivel_sem_bom_e_identidade_q174():
+    """bom_children vazio → output É o input (caminho fallback intacto)."""
+    from src.supply.services.shortage_forecast_service import (
+        _explode_consumos_multinivel,
+    )
+
+    consumos = {"100": [(date(2026, 6, 20), 10.0)]}
+    assert _explode_consumos_multinivel(consumos, {}, {}, {}) == consumos
+
+
 def test_filtro_armazem_coerente_q174():
     """Q.174.F0.4 — quando `supply.production_warehouses` está definido, o
     filtro de armazém aplica-se COERENTEMENTE: stock (warehouse_id), reservas

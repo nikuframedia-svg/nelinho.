@@ -236,6 +236,81 @@ def _project_stock(
     return data_rutura, saldo_minimo
 
 
+#: Profundidade máxima da explosão multi-nível (a BOM real tem ~3-6 níveis;
+#: o cap também limita ciclos a→b→a, que existem em dados sujos).
+_BOM_MAX_DEPTH = 6
+
+
+def _explode_consumos_multinivel(
+    consumos: Dict[str, List[Tuple[date, float]]],
+    bom_children: Dict[str, List[Tuple[str, float]]],
+    stock_map: Dict[str, float],
+    producao_interna: Dict[str, float],
+    max_depth: int = _BOM_MAX_DEPTH,
+) -> Dict[str, List[Tuple[date, float]]]:
+    """Q.174.F0.6 — explosão multi-nível da BOM com netting MRP.
+
+    Regra (por nível): a procura de um material desce aos filhos SÓ na parte
+    NÃO coberta por ``stock + produção interna já pedida`` desse material —
+    se a peça existe em stock, não vamos fabricá-la, logo as matérias-primas
+    dela não são precisas. Explosão cega (provado live OF 501298: o ERP
+    regista consumo da peça E dos subcomponentes contra a OF do barco)
+    duplicaria a procura.
+
+    Simplificações documentadas (invariante #8):
+    * Datas dos filhos = datas do pai (na realidade os materiais da peça
+      consomem-se ANTES, quando a peça é produzida; sem lead time da peça no
+      ERP, manter a data é o menos inventivo — erra para o lado tardio).
+    * A cobertura de cada material é consumida UMA vez (``cobertura_usada``):
+      procura do mesmo material em níveis/ramos diferentes não reusa o mesmo
+      stock.
+
+    Função pura — testável sem BD. ``bom_children`` vazio → devolve o input.
+    """
+    if not bom_children:
+        return consumos
+
+    result: Dict[str, List[Tuple[date, float]]] = {
+        k: list(v) for k, v in consumos.items()
+    }
+    cobertura_usada: Dict[str, float] = defaultdict(float)
+    current = {k: list(v) for k, v in consumos.items()}
+
+    for _depth in range(max_depth):
+        next_level: Dict[str, List[Tuple[date, float]]] = defaultdict(list)
+        for code, demands in current.items():
+            children = bom_children.get(code)
+            if not children:
+                continue
+            total = sum(q for _, q in demands)
+            if total <= 0:
+                continue
+            disponivel = max(
+                max(stock_map.get(code, 0.0), 0.0)
+                + producao_interna.get(code, 0.0)
+                - cobertura_usada[code],
+                0.0,
+            )
+            usado = min(disponivel, total)
+            cobertura_usada[code] += usado
+            ratio = (total - usado) / total
+            if ratio <= 0:
+                continue
+            for child, qty in children:
+                if child == code or qty <= 0:
+                    continue
+                next_level[child].extend(
+                    (dt, q * qty * ratio) for dt, q in demands
+                )
+        if not next_level:
+            break
+        for code, dem in next_level.items():
+            result.setdefault(code, []).extend(dem)
+        current = next_level
+
+    return result
+
+
 def _calcular_sugestao(
     *,
     data_rutura: Optional[date],
@@ -356,17 +431,55 @@ class ShortageForecastService:
         # 4. Consumo previsto por material → lista (date, qty)
         # Fonte A (preferida): BOM estrutural × plano
         # Fonte B (fallback): mediana histórica por (modelo, material) × plano
+        bom_children: Dict[str, List[Tuple[str, float]]] = {}
         if bom_map:
             consumos_por_material = _compute_consumos(
                 ops, bom_map, order_model_map, hoje, horizonte_dias
             )
+            # Q.174.F0.6 — fecho multi-nível da BOM (77.6% das linhas são
+            # nível-2+). Sem isto, o caminho estrutural só via as PEÇAS
+            # nível-1 e as matérias-primas ficavam sem procura projetada
+            # (o fallback histórico cobria-as por acidente via TPMOV=11).
+            nivel1_ids = {
+                int(comp) for comps in bom_map.values()
+                for (comp, _q, _f) in comps if str(comp).isdigit()
+            }
+            bom_children = await self._load_bom_closure(nivel1_ids)
+            if bom_children:
+                fontes.append("factory_raw.produto_componente(multi-nivel)")
         else:
-            # BOM estrutural vazia → usar consumo histórico real como proxy
+            # BOM estrutural vazia → usar consumo histórico real como proxy.
+            # O histórico TPMOV=11 já inclui TODOS os níveis (o ERP regista
+            # peça E matérias-primas contra a OF do barco) → sem explosão.
             model_ids_no_plano = set(order_model_map.values())
             consumos_por_material = await self._compute_consumos_historicos(
                 ops, order_model_map, model_ids_no_plano, hoje, horizonte_dias
             )
             fontes.append("factory_raw.movimento(TPMOV=11,consumo_historico)")
+
+        # Q.174.F0.6 — netting MRP: os filhos só herdam a procura NÃO coberta
+        # pelo stock/produção-interna da peça (nível a nível). Carregar stock
+        # e pedidos internos para o SUPERSET (nível-1 ∪ descendentes) ANTES
+        # da explosão — a explosão precisa da cobertura das peças intermédias.
+        arm_filter = await self._load_production_warehouses()
+        if arm_filter:
+            fontes.append(
+                "supply.production_warehouses="
+                + ",".join(str(a) for a in sorted(arm_filter))
+            )
+        superset: Set[str] = set(consumos_por_material.keys())
+        for _pai, filhos in bom_children.items():
+            superset.update(c for c, _q in filhos)
+        stock_map, warehouse_map = await self._load_stock(superset, arm_filter)
+        pedintern_map, prodintern_map = await self._load_pedidos_internos(
+            superset, arm_filter
+        )
+        fontes.append("factory_raw.movimento(TPMOV=12)")
+
+        if bom_children:
+            consumos_por_material = _explode_consumos_multinivel(
+                consumos_por_material, bom_children, stock_map, prodintern_map,
+            )
 
         # Materiais relevantes = os que têm consumo previsto no horizonte
         materiais_relevantes: Set[str] = set(consumos_por_material.keys())
@@ -382,24 +495,9 @@ class ShortageForecastService:
                 fontes=fontes,
             )
 
-        # 5. Stock actual por material (agrega por warehouse)
-        # Q.174.F0.4 — armazéns que CONTAM para o disponível: config de tenant
-        # `supply`/`production_warehouses` (CSV de ARM_IDs). Default vazio =
-        # TODOS (fórmula canónica: produto_Stock_Necessidades agrega global,
-        # sem filtro de armazém — confirmado no corpo live 2026-06-12).
-        # 79% do stock vive em armazéns de produção/WIP (Montagem 96k,
-        # Lixagem 79k, Laminagem 47k) — quando a fábrica decidir o conjunto
-        # "disponível para produção", liga-se aqui SEM mexer em código, e o
-        # filtro aplica-se COERENTEMENTE a stock + reservas + pedidos internos.
-        arm_filter = await self._load_production_warehouses()
-        if arm_filter:
-            fontes.append(
-                "supply.production_warehouses="
-                + ",".join(str(a) for a in sorted(arm_filter))
-            )
-        stock_map, warehouse_map = await self._load_stock(
-            materiais_relevantes, arm_filter
-        )
+        # 5. Stock por material/armazém: já carregado acima para o superset
+        # (Q.174.F0.4 — filtro `supply.production_warehouses` coerente em
+        # stock + reservas + pedidos internos; default vazio = canónico).
         fontes.append("supply.warehouse_stock")
 
         # Excluir materiais sem stock rastreado (pseudo-componentes)
@@ -416,17 +514,10 @@ class ShortageForecastService:
         fontes.append("supply.purchase_orders")
 
         # 7. Reservas abertas por material (canónico: só OFs de barco de cliente)
+        # (pedidos internos TPMOV=12 já carregados acima para o superset —
+        # Q.174.F0.3: procura ≠19747 entra no saldo; =19747 vira sugestão.)
         reservas_map = await self._load_reservas(materiais_com_stock, arm_filter)
         fontes.append("factory_raw.movimento(TPMOV=4)")
-
-        # 7b. Q.174.F0.3 — pedidos internos abertos (TPMOV=12, canónico
-        # produto_Stock_Necessidades): procura (≠19747, sem OF) entra no
-        # saldo como as reservas; produção interna já pedida (=19747)
-        # alimenta a sugestão (não mandar comprar o que a Fábrica já vai fazer).
-        pedintern_map, prodintern_map = await self._load_pedidos_internos(
-            materiais_com_stock, arm_filter
-        )
-        fontes.append("factory_raw.movimento(TPMOV=12)")
 
         # 8. Mínimos e lead times
         master_map = await self._load_masters(materiais_com_stock)
@@ -773,6 +864,47 @@ class ShortageForecastService:
                 bom[key].append((comp_code, qty, False))  # tem_fase=False
 
         return dict(bom)
+
+    async def _load_bom_closure(
+        self,
+        root_ids: Set[int],
+        max_depth: int = _BOM_MAX_DEPTH,
+    ) -> Dict[str, List[Tuple[str, float]]]:
+        """Q.174.F0.6 — fecho descendente da BOM a partir das peças nível-1.
+
+        Devolve ``pai_code → [(filho_code, qty)]`` para TODOS os níveis abaixo
+        de ``root_ids`` (batched por nível, cap ``max_depth``, visitados não
+        re-expandem). Direção canónica: COMP_P_ID = pai, COMP_P_P_ID = filho.
+        """
+        if not root_ids:
+            return {}
+        children: Dict[str, List[Tuple[str, float]]] = {}
+        frontier = {int(r) for r in root_ids}
+        visited: Set[int] = set()
+        q = text("""
+            SELECT "COMP_P_ID"::text   AS pai,
+                   "COMP_P_P_ID"::text AS filho,
+                   "COMP_QUANTIDADE"   AS qty
+            FROM factory_raw.produto_componente
+            WHERE "COMP_ELIMINADO" IS NULL
+              AND "COMP_P_ID" = ANY(:ids)
+        """)
+        for _ in range(max_depth):
+            frontier -= visited
+            if not frontier:
+                break
+            ids = sorted(frontier)
+            visited.update(frontier)
+            result = await self._session.execute(q, {"ids": ids})
+            rows = result.fetchall()
+            frontier = set()
+            for row in rows:
+                pai, filho = str(row[0]), str(row[1])
+                qty = float(row[2]) if row[2] is not None else 0.0
+                children.setdefault(pai, []).append((filho, qty))
+                if filho.isdigit():
+                    frontier.add(int(filho))
+        return children
 
     async def _load_stock(
         self,
