@@ -38,7 +38,7 @@ def _sugestao_operadores(entry: Dict[str, Any], state: Any) -> str:
     if wf is not None and fase:
         try:
             pool = set(wf(fase) or ())
-        except Exception:  # pragma: no cover — defensivo
+        except Exception:  # noqa: BLE001  # pragma: no cover — defensivo
             pool = set()
     fora = sorted(set(history.get(fase, set())) - pool)
     if fora:

@@ -531,7 +531,7 @@ async def run_cpo_schedule(
         _delay_on = str(_mat_cfg.get("materials.delay_to_eta") or "").lower() in (
             "true", "1", "yes",
         ) or _mat_cfg.get("materials.delay_to_eta") is True
-    except Exception:  # pragma: no cover — config indisponível
+    except Exception:  # noqa: BLE001  # pragma: no cover — config indisponível
         _delay_on = False
     if _delay_on:
         try:
@@ -572,7 +572,7 @@ async def run_cpo_schedule(
                         "Q.174.F6 delay_to_eta: %d ops com piso de material",
                         len(start_floors),
                     )
-        except Exception as exc:  # pragma: no cover — forecast nunca trava o solve
+        except Exception as exc:  # noqa: BLE001  # pragma: no cover — forecast nunca trava o solve
             logger.warning("delay_to_eta forecast falhou (%s) — sem pisos", exc)
             start_floors = None
 
@@ -694,7 +694,7 @@ async def run_cpo_schedule(
                 "materiais": len(_fc2.materiais_em_risco),
             }
             result["orders_material_risk"] = len(_risk_by_order)
-    except Exception as exc:  # pragma: no cover — forecast nunca trava o plano
+    except Exception as exc:  # noqa: BLE001  # pragma: no cover — forecast nunca trava o plano
         logger.warning("material_risk annotation falhou (%s)", exc)
 
     # Q.174.F7 — dependência de COMPONENTES (decisão do dono: dependência
@@ -758,7 +758,7 @@ async def run_cpo_schedule(
                 "ops_marcadas": _n_marcadas,
                 "etas_disponiveis": 0,  # medido live: sem datas → sem pisos
             }
-    except Exception as exc:  # pragma: no cover — anotação nunca trava o plano
+    except Exception as exc:  # noqa: BLE001  # pragma: no cover — anotação nunca trava o plano
         logger.warning("component_dependency annotation falhou (%s)", exc)
 
     # Q.168.A — observabilidade dos due dates: quantas ordens do scope têm
@@ -885,7 +885,7 @@ async def run_cpo_schedule(
                 tenant_id=tenant_id,
                 session=session,
             )
-        except Exception as exc:  # pragma: no cover — motor de regras off
+        except Exception as exc:  # noqa: BLE001  # pragma: no cover — motor de regras off
             logger.debug("schedule_committed rules skipped: %s", exc)
     try:
         commits = CommitsService(session, tenant_id)
@@ -926,7 +926,7 @@ async def run_cpo_schedule(
         await _attach_effective_boost(
             session, tenant_id, operations_out, snapshot=boost_snapshot or None,
         )
-    except Exception as boost_exc:  # pragma: no cover — defensive
+    except Exception as boost_exc:  # noqa: BLE001  # pragma: no cover — defensive
         logger.warning(
             f"effective_boost attach failed: {boost_exc}", exc_info=True
         )

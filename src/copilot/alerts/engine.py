@@ -208,7 +208,7 @@ class AlertsEngine:
                 tenant_id=self.tenant_id,
                 session=self.session,
             )
-        except Exception as exc:  # pragma: no cover — motor de regras off
+        except Exception as exc:  # noqa: BLE001  # pragma: no cover — motor de regras off
             logger.debug("wip_threshold rules skipped: %s", exc)
 
     async def _load_thresholds(self) -> None:

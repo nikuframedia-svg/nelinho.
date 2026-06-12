@@ -37,7 +37,7 @@ try:  # pragma: no cover — ortools é opcional em runtime
     from ortools.sat.python import cp_model  # type: ignore
 
     HAS_ORTOOLS = True
-except Exception:  # pragma: no cover
+except Exception:  # noqa: BLE001  # pragma: no cover
     cp_model = None  # type: ignore
     HAS_ORTOOLS = False
 
@@ -172,7 +172,7 @@ class CPSATScheduler:
                 return True
             try:
                 return bool(_wf(fase))
-            except Exception:  # pragma: no cover — defensivo
+            except Exception:  # noqa: BLE001  # pragma: no cover — defensivo
                 return True
 
         pool_by_phase: Dict[str, bool] = {}
@@ -222,7 +222,7 @@ class CPSATScheduler:
                 if mg is not None:
                     try:
                         gap_h = float(mg(prev.phase_id, cur.phase_id))
-                    except Exception as _e:  # pragma: no cover — defensivo
+                    except Exception as _e:  # noqa: BLE001  # pragma: no cover — defensivo
                         logger.warning("state.min_gap_hours(%s→%s) failed: %s", prev.phase_id, cur.phase_id, _e)
                         gap_h = 0.0
                 gap = max(0, round(gap_h * 60))
@@ -241,7 +241,7 @@ class CPSATScheduler:
             if nsf is not None:
                 try:
                     n_st = max(1, int(nsf(fase)))
-                except Exception as _e:  # pragma: no cover
+                except Exception as _e:  # noqa: BLE001  # pragma: no cover
                     logger.warning("state.num_stations_for(%s) failed: %s", fase, _e)
                     n_st = 1
             model.AddCumulative(ivs, [1] * len(ivs), n_st)
@@ -251,7 +251,7 @@ class CPSATScheduler:
             if wf is not None:
                 try:
                     pool = len(wf(fase))
-                except Exception as _e:  # pragma: no cover
+                except Exception as _e:  # noqa: BLE001  # pragma: no cover
                     logger.warning("state.workers_for(%s) failed: %s", fase, _e)
                     pool = 0
             if pool > 0:
@@ -311,7 +311,7 @@ class CPSATScheduler:
                             float(mch(m.molde_id)) for m in molds
                         ))
                 return round(60 * float(mch(None)))
-            except Exception:  # pragma: no cover — defensivo
+            except Exception:  # noqa: BLE001  # pragma: no cover — defensivo
                 return 0
 
         for model_id, mops in by_model_mold.items():
@@ -319,7 +319,7 @@ class CPSATScheduler:
             if mfm is not None and not model_id.startswith("order::"):
                 try:
                     n_molds = max(1, len(mfm(model_id)))
-                except Exception as _e:  # pragma: no cover
+                except Exception as _e:  # noqa: BLE001  # pragma: no cover
                     logger.warning("state.molds_for_model(%s) failed: %s", model_id, _e)
                     n_molds = 1
             cd = _cd_min_for(model_id)

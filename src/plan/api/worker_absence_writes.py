@@ -164,7 +164,7 @@ async def create_absence(
                 tenant_id=tenant_id,
                 session=session,
             )
-        except Exception as exc:  # pragma: no cover — motor de regras off
+        except Exception as exc:  # noqa: BLE001  # pragma: no cover — motor de regras off
             logger.debug("worker_absent rules skipped: %s", exc)
 
     return row  # type: ignore[return-value]

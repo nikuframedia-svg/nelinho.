@@ -65,7 +65,7 @@ def assign_concrete(
             if nsf is not None:
                 try:
                     n = max(1, int(nsf(fase)))
-                except Exception:  # pragma: no cover
+                except Exception:  # noqa: BLE001  # pragma: no cover
                     n = 1
             ids = station_ids_for(fase, n)
             phase_stations[fase] = ids
@@ -108,7 +108,7 @@ def assign_concrete(
                 if mg is not None:
                     try:
                         gap_h = float(mg(prev.phase_id, op.phase_id))
-                    except Exception:  # pragma: no cover
+                    except Exception:  # noqa: BLE001  # pragma: no cover
                         gap_h = 0.0
                 cand = prev_end + timedelta(hours=gap_h)
             elif p_seq == o_seq and prev_oid < oid:
@@ -131,7 +131,7 @@ def assign_concrete(
         if wf is not None:
             try:
                 pool = set(wf(fase))
-            except Exception:  # pragma: no cover
+            except Exception:  # noqa: BLE001  # pragma: no cover
                 pool = set()
         picked: List[str] = []
         if pool:
@@ -144,7 +144,7 @@ def assign_concrete(
             if _bc is not None and len(pool) > _MIN_POOL_FOR_MATCHING:
                 try:
                     op_complexity = _bc(str(getattr(op, "model_id", "") or ""))
-                except Exception:  # pragma: no cover — defensivo
+                except Exception:  # noqa: BLE001  # pragma: no cover — defensivo
                     op_complexity = 0.0
             picked = _pick_workers(
                 pool, team, worker_free_at, floor,
